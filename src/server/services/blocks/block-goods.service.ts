@@ -12,10 +12,11 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
-  BLOCK_GOOD_MAX_PRICE_BUZZ,
+  BLOCK_GOOD_PURCHASE_STATUS,
   blueLegOfPayout,
   computeBlockGoodSplit,
   findManifestGood,
+  maxPriceBuzzForKind,
 } from '~/shared/constants/block-goods.constants';
 import type { BlockGoodDeclaration } from '~/shared/constants/block-goods.constants';
 import { newBlockGoodEntitlementId, newBlockGoodPurchaseId } from '~/server/utils/app-block-ids';
@@ -52,10 +53,17 @@ export const BLOCK_GOODS_LOG_NAME = 'block-goods';
 // for a future non-HTTP caller (a mod tool, a job) that does not pass through the
 // middleware; it must never be the reason a purchase is allowed.
 const APP_BLOCK_APPROVED_STATUS = 'approved';
+/**
+ * Local names for the SHARED status domain, kept so the eleven call sites below
+ * read unchanged. The values are no longer declared here: the owner-earnings
+ * read in `buzz-attribution.service.ts` filters on the same three strings, and
+ * two independent spellings of a money status is how one of them ends up wrong.
+ * See `BLOCK_GOOD_PURCHASE_STATUS` for what each value means.
+ */
 /** Claimed, charge outcome not yet settled. See `purchaseBlockGood`. */
-const PURCHASE_STATUS_PENDING = 'pending';
-const PURCHASE_STATUS_PAID = 'paid';
-const PURCHASE_STATUS_REFUNDED = 'refunded';
+const PURCHASE_STATUS_PENDING = BLOCK_GOOD_PURCHASE_STATUS.pending;
+const PURCHASE_STATUS_PAID = BLOCK_GOOD_PURCHASE_STATUS.paid;
+const PURCHASE_STATUS_REFUNDED = BLOCK_GOOD_PURCHASE_STATUS.refunded;
 
 /** What was actually paid to one recipient, in one colour. */
 export type BlockGoodPayout = {
@@ -545,7 +553,23 @@ export async function purchaseBlockGood(
 
   // Re-checked here and not only at manifest validation: a manifest approved
   // before the ceiling moved would otherwise keep charging the old price.
-  if (priceBuzz > BLOCK_GOOD_MAX_PRICE_BUZZ) {
+  //
+  // 🔴 PER-KIND, via `maxPriceBuzzForKind` — NOT the general ceiling. This used to
+  // read `BLOCK_GOOD_MAX_PRICE_BUZZ`, which made it a SECOND, DISAGREEING copy of a
+  // bound the manifest parser had already narrowed: an `app_unlock` is capped at
+  // 5,000 there and this guard admitted it to 50,000, i.e. 10x its real ceiling.
+  // Worse, the guard's own stated purpose — "a manifest approved before the ceiling
+  // moved" — is EXACTLY the app_unlock case, since every manifest approved to date
+  // predates that cap, so the one kind it most needed to catch was the one it could
+  // not see.
+  //
+  // Not reachable through the HTTP endpoint today (`resolveBlockGoodForPurchase`
+  // goes through `findManifestGood`, which refuses a catalog with ANY error), and
+  // that is precisely why it had to be fixed now rather than noticed later:
+  // `purchaseBlockGood` takes `resolved` as a CALLER-SUPPLIED input by design, and
+  // the pinned-version resolution path this file's own docs promise is a new
+  // producer that will not re-parse. When that lands, this line is the only bound.
+  if (priceBuzz > maxPriceBuzzForKind(good.kind)) {
     return {
       ok: false,
       status: 400,
@@ -1191,13 +1215,16 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
 }
 
 /**
- * 🔴 GOODS REVENUE IS INVISIBLE TO THE EXISTING APP-EARNINGS SURFACES, and that
- * is a known gap. `getRevenueForOwner` / `getAppEarnings` / `blocks.getMyApps`
- * all aggregate `BlockBuzzAttribution`; this rail records into
- * `block_good_purchase.payouts` and writes no attribution row.
- * `recordSpendAttribution` is workflow-anchored so it is not a drop-in. Until
- * something bridges them, an owner's earnings page shows generation revenue and
- * not sales.
+ * Goods revenue reaches the app-earnings surfaces by READ, never by back-filling attribution:
+ *
+ * - `blocks.getMyRevenue` (`/apps/revenue`, `/apps/[appBlockId]/revenue`) and
+ *   `appCollaborators.getAppEarnings` (the listing editor's Earnings tab) both call
+ *   `getGoodsSalesForOwner` (`src/server/services/blocks/buzz-attribution.service.ts`), an
+ *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This rail writes NO
+ *   attribution row, so it commits to nothing about whether a sale "is an attribution".
+ *
+ * `recordSpendAttribution` is workflow-anchored, so it was never a drop-in and
+ * still is not.
  *
  * Credit the app owner and RECORD what was actually paid, per colour, with each
  * leg's ledger transaction id. The record is what makes a refund a true
@@ -1284,24 +1311,12 @@ async function payBlockGoodOwner(args: {
     // Buzz blip would otherwise leave `payouts: []` and an unpaid obligation
     // with no re-runner.
     //
-    // 🔴 EACH LEG IS SKIPPED ONCE IT HAS LANDED, AND THAT IS WHAT MAKES THE
-    // RETRY CONVERGE. The comment here used to say a re-run was "deduped by the
-    // ledger rather than double-paying", which is not a property this call has.
-    // `createBuzzTransaction`'s response type — `CreateTransactionResponse` in
-    // `packages/civitai-buzz/src/responses.ts` — carries only `transactionId`
-    // and `remainingBalance`. It has NO conflict field, unlike its siblings:
-    // the multi-account response marks each leg `duplicate`, and the bulk one
-    // returns a `conflicts` array. A duplicate on THIS endpoint therefore
-    // cannot be reported in band, so it arrives as a non-2xx, and the client
-    // throws on any non-2xx. `challenge-funding.ts`'s header records the same
-    // ledger behaviour from the other side: a re-charge of an already-paid leg
-    // "conflicts".
-    //
-    // So on a mixed-colour payout whose blue leg landed and whose yellow leg
-    // blipped, every retry re-sent blue, collided with itself, and failed the
-    // whole closure — four attempts, no progress, `payouts` left `[]`, and a
-    // later refund therefore clawed back NOTHING while refunding the buyer in
-    // full. Dedupe is ours to do, here.
+    // Each leg is skipped once it has landed, so a retry sends only the legs
+    // still owed. A re-sent leg would not pay twice either: `POST /transaction`
+    // answers a duplicate external id with 200 and the existing transaction id,
+    // moving nothing, so it reads as a success here. The service does not send
+    // a 409 for a duplicate on this endpoint; the arm below is the fail-safe
+    // reading of one if it ever does.
     await withRetries(async () => {
       for (const leg of legs) {
         if (landed.has(leg.color)) continue;

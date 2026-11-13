@@ -172,6 +172,41 @@ describe('getTrainingRunState', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalled();
   });
 
+  // A moderator can set Paused by hand, so only the live step says a paused run awaits review.
+  it('marks a run held for review by its live workflow', async () => {
+    mockFindFirst.mockResolvedValue(dbVersion());
+    const wf = liveWorkflow([]);
+    wf.status = 'processing';
+    wf.steps[0].output = { ...wf.steps[0].output, moderationStatus: 'underReview' } as never;
+    mockGetWorkflow.mockResolvedValue(wf);
+
+    const state = await getTrainingRunState({
+      modelVersionId: 1,
+      userId: OWNER,
+      isModerator: false,
+      ctx,
+    });
+
+    expect(state.trainingStatus).toBe(TrainingStatus.Paused);
+    expect(state.trainingResults?.heldForReview).toBe(true);
+  });
+
+  it('drops a stale stored marker when the live workflow is no longer holding the run', async () => {
+    mockFindFirst.mockResolvedValue(
+      dbVersion({ trainingResults: { ...storedResults, heldForReview: true } })
+    );
+    mockGetWorkflow.mockResolvedValue(liveWorkflow([]));
+
+    const state = await getTrainingRunState({
+      modelVersionId: 1,
+      userId: OWNER,
+      isModerator: false,
+      ctx,
+    });
+
+    expect(state.trainingResults?.heldForReview).toBeUndefined();
+  });
+
   it('recovers a run whose stored results were lost, via the workflow id on the version', async () => {
     // The replica drops TOASTed `ModelFile.metadata`, so `trainingResults` can come back empty on
     // a run that finished fine. `meta.trainingWorkflowId` survives that and is enough to rebuild.

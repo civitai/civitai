@@ -1,10 +1,12 @@
-import { fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { appRoles } from '@civitai/auth';
 import { APP, canAccess } from '$lib/server/access';
 import { z } from 'zod';
 import { MAX_REPORT_DECISIONS, ReportStatus } from '$lib/reports';
 import { parseForm } from '$lib/server/query';
+import { ownedQueuePaths } from '$lib/server/queue-owners';
+import { safeReturnPath } from '$lib/return-path';
 import { setReportStatuses } from '$lib/server/reports.service';
 import {
   SWEEP_TASKS,
@@ -12,9 +14,31 @@ import {
   type SweepTask,
 } from '$lib/server/moderation-board.service';
 
-export const load: PageServerLoad = ({ locals }) => ({
-  roles: appRoles(locals.user, APP),
-});
+// `null` when ownership cannot be read: the dashboard then shows Everything with no My Tasks view,
+// rather than an empty "My tasks" that reads as nothing needing attention.
+async function ownedQueues(userId: number): Promise<string[] | null> {
+  try {
+    return await ownedQueuePaths(userId);
+  } catch (e) {
+    console.error('[dashboard] queue ownership unavailable', e);
+    return null;
+  }
+}
+
+export const load: PageServerLoad = async ({ locals, url }) => {
+  // `?denied=` is where the access gate sends someone. Once the grant exists the address bar still says
+  // "denied", and a refresh used to keep saying it — so a page the user can now open is opened.
+  const returnTo = safeReturnPath(url.searchParams.get('denied'));
+  // Never back to `/` itself: that is this page, and a `?denied=` nested inside one would chain.
+  const target = returnTo ? new URL(returnTo, url).pathname : '/';
+  if (returnTo && target !== '/' && canAccess(locals.user, target)) redirect(303, returnTo);
+  return {
+    roles: appRoles(locals.user, APP),
+    returnTo,
+    ownedQueues: await ownedQueues(locals.user.id),
+    wide: true,
+  };
+};
 
 /**
  * A page of marks, applied as one gesture. `<id>:<status>` per entry, because a form posts one value

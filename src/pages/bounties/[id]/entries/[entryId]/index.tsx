@@ -5,6 +5,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import type { InferGetServerSidePropsType } from 'next';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { Meta } from '~/components/Meta/Meta';
 import type { ActionIconProps, BadgeProps } from '@mantine/core';
 import {
@@ -19,16 +20,15 @@ import {
   Group,
   Loader,
   MantineProvider,
-  Menu,
   Paper,
   ScrollArea,
   SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -456,7 +456,7 @@ export default function BountyEntryDetailsPage({
       </Text>
       <Card.Section pl="md" pb="md">
         <ScrollArea.Autosize mah={200} offsetScrollbars>
-          <RenderHtml html={bountyEntry.description} />
+          <RenderHtml html={bountyEntry.description} withMentions />
         </ScrollArea.Autosize>
       </Card.Section>
     </Card>
@@ -487,6 +487,13 @@ export default function BountyEntryDetailsPage({
             {userSection}
             {awardSection}
             {shareSection}
+            {bountyEntry && (
+              <OwnerRatingControls
+                entityType="BountyEntry"
+                entityId={bountyEntry.id}
+                isOwner={!!isOwner}
+              />
+            )}
             {filesSection}
             {activeImage && (
               <VotableTags

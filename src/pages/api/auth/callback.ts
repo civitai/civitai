@@ -106,7 +106,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // Set THIS domain's civ-token cookie (Domain derived from the serving host) and continue.
   // Set THIS domain's civ-token + civ-device (the shared family device id from the hub) so its session AND
   // account switcher match the rest of the family. deviceCookie no-ops if the hub returned no id.
-  setSessionCookie(res, result.token, { host: req.headers.host, deviceCookie: result.deviceId });
+  setSessionCookie(res, result.token, {
+    host: req.headers.host,
+    deviceCookie: result.deviceId,
+    requestCookies: req.cookies,
+  });
   // One-shot marker so /api/auth/authorize can detect a session cookie that DIDN'T stick (loop recovery).
   const existing = res.getHeader('Set-Cookie');
   const all = Array.isArray(existing)
@@ -116,7 +120,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     : [];
   all.push(postLoginMarkerCookie());
   // De-crud the browser at the legacy->civ-token transition: expire every leftover next-auth cookie — the
-  // SESSION cookie (so the hybrid fallback can't keep a migrated user on the stale legacy identity) AND the
+  // SESSION cookie AND the
   // ancillary cruft (CSRF / callback-url / OAuth state + PKCE). ONLY when the browser actually still carries a
   // legacy cookie — otherwise this would add ~24 useless Set-Cookie headers to every login, bloating this hot
   // response near the edge header limit and risking the real civ-token Set-Cookie getting dropped.

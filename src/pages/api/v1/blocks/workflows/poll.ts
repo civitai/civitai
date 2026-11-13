@@ -10,6 +10,7 @@ import {
   blockWorkflowBearer,
   blockWorkflowCaller,
 } from '~/server/services/blocks/block-workflow-rest';
+import { blockPollWaitSecondsInput } from '~/server/services/blocks/workflow.service';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
 /**
@@ -19,14 +20,14 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * Read one workflow's current status — the REST twin of the `POLL_WORKFLOW`
  * bridge message, and the route a block's watch loop lives on. Optionally a LONG
  * POLL: `waitSeconds` asks the orchestrator to hold the read until the workflow
- * goes terminal (bounded by the wire schema and clamped again by
- * `resolveBlockPollWaitSeconds`, which owns the policy).
+ * goes terminal (`resolveBlockPollWaitSeconds` owns the policy).
  *
  * A thin adapter over `blocks.pollWorkflow`, the SAME procedure the page host
  * calls, so the whole ladder runs verbatim: the `ai:write:budgeted` assertion, the
  * anon refusal, the App-Blocks kill-switch against the TOKEN subject, the
  * dedicated `:poll:` rate-limit bucket (which RETURNS a non-terminal snapshot
- * rather than throwing, because a thrown 429 here destroys a paid generation), the
+ * rather than throwing; here a throw would be a 429, which a block can read as a
+ * failed generation it has already paid for), the
  * inline output-moderation scan on any generated text, the terminal read-model
  * write, the post-paid settle and the author-fee reversal.
  *
@@ -66,12 +67,10 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 export const config = { api: { bodyParser: { sizeLimit: '4kb' } } };
 
 // Mirrors `blocks.pollWorkflow`'s input minus `blockToken` (which rides the
-// Authorization header here). The `waitSeconds` bound is deliberately the LOOSER
-// of the two gates — it rejects nonsense, `resolveBlockPollWaitSeconds` decides
-// policy, and the policy stays in one place.
+// Authorization header here).
 const bodySchema = z.object({
   workflowId: z.string().min(1).max(64),
-  waitSeconds: z.number().int().min(0).max(60).optional(),
+  waitSeconds: blockPollWaitSecondsInput,
 });
 
 // Exported for unit testing (the default export is wrapped in withBlockScope,

@@ -23,9 +23,9 @@ import {
   TextInput,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import type { NotificationData } from '@mantine/notifications';
@@ -45,7 +45,6 @@ import {
   IconZoomOut,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
-import { saveAs } from 'file-saver';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
@@ -67,7 +66,7 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import { auditTrainingLabels } from '~/components/Training/Form/training-label-audit';
+import { auditTrainingTriggerWord, labelAsTrained } from '~/utils/metadata/training-trigger-word';
 import {
   blankTagStr,
   labelDescriptions,
@@ -84,12 +83,12 @@ import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   AUDIO_MIME_TYPE,
-  IMAGE_MIME_TYPE,
+  ENGINE_INPUT_IMAGE_MIME_TYPE,
   MIME_TYPES,
   VIDEO_MIME_TYPE,
   ZIP_MIME_TYPE,
 } from '~/shared/constants/mime-types';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { trainingDataVisibility } from '~/shared/utils/training-data-visibility';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   type AutoLabelType,
@@ -101,13 +100,16 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { downloadBlob } from '~/utils/file-utils';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
 import {
   showErrorNotification,
   showSuccessNotification,
   showWarningNotification,
+  withReportAction,
 } from '~/utils/notifications';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -338,7 +340,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCaption, setSearchCaption] = useState<string>('');
   const [isZoomed, setIsZoomed] = useState(false);
-  const [onlyIssues, setOnlyIssues] = useState(false);
   const [accordionUpload, setAccordionUpload] = useState<string | null>(
     imageList.length > 0 ? null : 'uploading'
   );
@@ -374,11 +375,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     autoClose: false,
     loading: false,
   };
+  // A failed upload of training data is the orchestration team's to triage.
+  const notifyUploadFailed = (message = 'Please try again (or contact us if it continues)') =>
+    updateNotification({
+      ...notificationFailBase,
+      message: withReportAction({
+        id: notificationId,
+        message,
+        title: 'Failed to upload archive',
+        text: message,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
+      }),
+    });
 
   const mediaExts = isAudio ? audioExts : isVideo ? { ...imageExts, ...videoExts } : imageExts;
   const allowedDropTypes = isAudio
     ? [...AUDIO_DROPZONE_MIME_TYPE, ...ZIP_MIME_TYPE]
-    : [...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE, ...(isVideo ? VIDEO_MIME_TYPE : [])];
+    : [...ENGINE_INPUT_IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE, ...(isVideo ? VIDEO_MIME_TYPE : [])];
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
 
@@ -396,7 +409,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const imgUrl = URL.createObjectURL(blob);
 
     // Skip validation for non-image types (e.g., videos)
-    if (!IMAGE_MIME_TYPE.includes(type as never)) return imgUrl;
+    if (!ENGINE_INPUT_IMAGE_MIME_TYPE.includes(type as never)) return imgUrl;
 
     let img: HTMLImageElement;
     try {
@@ -626,7 +639,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 type: mediaExts[fileExt],
                 url: scaledUrl,
                 label: labelStr,
-                invalidLabel: false,
                 source: source ?? null,
               });
               completedCount++;
@@ -698,7 +710,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 name: f.name,
                 type: storedType,
                 url: scaledUrl,
-                invalidLabel: false,
                 label,
                 source,
               },
@@ -791,7 +802,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     i.type === 'video' ? 'mp4' : 'jpg'
                   }`,
                   {
-                    type: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(blob.type as never)
+                    type: [...ENGINE_INPUT_IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE].includes(
+                      blob.type as never
+                    )
                       ? blob.type
                       : i.type === 'video'
                       ? MIME_TYPES.mp4
@@ -975,10 +988,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     },
     onError(error) {
       setZipping(false);
-      updateNotification({
-        ...notificationFailBase,
-        message: error.message,
-      });
+      notifyUploadFailed(error.message);
     },
   });
 
@@ -989,6 +999,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         title: 'Failed to auto tag',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
       setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
@@ -1000,6 +1011,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         title: 'Failed to auto caption',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
       setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
@@ -1069,12 +1081,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 
-  const hasIssues = imageList.some((i) => i.invalidLabel);
-
   const filteredImages = useMemo(() => {
     return imageList.filter((i) => {
-      if (hasIssues && onlyIssues && !i.invalidLabel) return false;
-
       if (labelType === 'caption') {
         if (!searchCaption.length && !selectedTags.length) return true;
         if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
@@ -1092,7 +1100,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return mergedCapts.length > 0;
       }
     });
-  }, [imageList, labelType, selectedTags, searchCaption, onlyIssues, hasIssues]);
+  }, [imageList, labelType, selectedTags, searchCaption]);
 
   useEffect(() => {
     if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
@@ -1112,24 +1120,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         try {
           const filenameBase = String(idx).padStart(3, '0');
 
-          let label = imgData.label;
-
-          if (triggerWord.length) {
-            const separator = labelType === 'caption' ? '' : ',';
-            const regMatch =
-              labelType === 'caption'
-                ? new RegExp(`^${triggerWord}( |$)`)
-                : new RegExp(`^${triggerWord}(${separator}|$)`);
-
-            if (!regMatch.test(label)) {
-              label =
-                label.length > 0
-                  ? labelType === 'caption'
-                    ? [triggerWord, label].join(' ')
-                    : [triggerWord, label].join(`${separator} `)
-                  : triggerWord;
-            }
-          }
+          const label = labelAsTrained(imgData.label, triggerWord, labelType);
 
           label.length > 0 && zip.file(`${filenameBase}.txt`, label);
 
@@ -1161,7 +1152,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const fileName = `${thisModelVersion.id}_training_data.zip`;
 
     if (dlOnly) {
-      saveAs(content, fileName);
+      downloadBlob(content, fileName);
       setZipping(false);
       return;
     }
@@ -1229,20 +1220,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 sizeKB: bytesToKB(size),
                 modelVersionId: versionId,
                 type: 'Training Data',
-                visibility:
-                  ownRights && shareDataset
-                    ? ModelFileVisibility.Public
-                    : ownRights
-                    ? ModelFileVisibility.Sensitive
-                    : ModelFileVisibility.Private,
+                visibility: trainingDataVisibility({ ownRights, shareDataset }),
                 metadata,
                 ...(result.backend === 'b2' ? { s3Path: result.key } : {}),
               });
             } catch (e: unknown) {
               setZipping(false);
-              updateNotification({
-                ...notificationFailBase,
-              });
+              // Keep the server's reason (onError above set it), not a generic retry prompt.
+              notifyUploadFailed(e instanceof Error && e.message ? e.message : undefined);
             }
           } else {
             throw new Error('Missing version data.');
@@ -1251,21 +1236,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
       if (!uploadResp) {
         setZipping(false);
-        updateNotification({
-          ...notificationFailBase,
-        });
+        notifyUploadFailed();
       }
     } catch (e) {
       setZipping(false);
-      updateNotification({
-        ...notificationFailBase,
-        message:
-          e instanceof Error
-            ? e.message.startsWith('Unexpected token')
-              ? 'Server error :('
-              : e.message
-            : '',
-      });
+      notifyUploadFailed(
+        e instanceof Error
+          ? e.message.startsWith('Unexpected token')
+            ? 'Server error :('
+            : e.message
+          : undefined
+      );
     }
   };
 
@@ -1293,12 +1274,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         await updateFileMutation.mutateAsync({
           id: modelFileId!,
           metadata: { ...existingMetadata!, ownRights, shareDataset, labelType },
-          visibility:
-            ownRights && shareDataset
-              ? ModelFileVisibility.Public
-              : ownRights
-              ? ModelFileVisibility.Sensitive
-              : ModelFileVisibility.Private,
+          visibility: trainingDataVisibility({ ownRights, shareDataset }),
         });
         setZipping(false);
       }
@@ -1317,31 +1293,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const audit = auditTrainingLabels({
-        triggerWord,
-        labels: imageList.map((i) => ({ key: getShortNameFromUrl(i), label: i.label })),
-        checkProfanity: isGreen,
-      });
-
-      if (triggerWordInvalid !== audit.triggerWordInvalid) {
-        setTriggerWordInvalid(model.id, thisMediaType, audit.triggerWordInvalid);
+      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
+      if (triggerWordInvalid !== (audit.severity !== 'clean')) {
+        setTriggerWordInvalid(model.id, thisMediaType, audit.severity !== 'clean');
       }
-      const invalidKeys = new Set(audit.invalidKeys);
-      imageList.forEach((i) => {
-        const matcher = getShortNameFromUrl(i);
-        const invalidLabel = invalidKeys.has(matcher);
-        if (!!i.invalidLabel !== invalidLabel) {
-          updateImage(model.id, thisMediaType, { matcher, invalidLabel });
-        }
-      });
 
       if (audit.severity === 'hard') {
         showNotification({
           icon: <IconX size={18} />,
           autoClose: false,
           color: 'red',
-          title: 'Inappropriate labels',
-          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${audit.offendingWords.join(
+          title: 'Inappropriate trigger word',
+          message: `This trigger word has been blocked. Please review it and resubmit. Reason: ${audit.offendingWords.join(
             ', '
           )}`,
         });
@@ -1368,19 +1331,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       };
 
       if (audit.severity === 'soft') {
-        // A trigger-word-only hit marks no image card, so copy that says "labels" sends the
-        // creator hunting through labels that are all fine.
-        const subject = [
-          audit.invalidKeys.length ? 'labels' : undefined,
-          audit.triggerWordInvalid ? 'trigger word' : undefined,
-        ]
-          .filter(isDefined)
-          .join(' and ');
         return openConfirmModal({
           title: (
             <Group gap="xs">
               <IconAlertTriangle color="gold" />
-              <Text size="lg">{`Check your ${subject}`}</Text>
+              <Text size="lg">Check your trigger word</Text>
             </Group>
           ),
           children: (
@@ -1391,7 +1346,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
             </Stack>
           ),
-          labels: { cancel: `Review ${subject}`, confirm: 'Continue anyway' },
+          labels: { cancel: 'Review trigger word', confirm: 'Continue anyway' },
           centered: true,
           onConfirm: continueSubmit,
         });
@@ -1475,6 +1430,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               openImageSelectModal({
                                 title: 'Select Media',
                                 selectSource: 'generation',
+                                outputUse: 'train',
                                 onSelect: async (media) => {
                                   await handleImport(media, 'generation');
                                 },
@@ -1691,12 +1647,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
                     onBlur={() => {
-                      const audit = auditTrainingLabels({
-                        triggerWord,
-                        labels: [],
-                        checkProfanity: isGreen,
-                      });
-                      if (audit.triggerWordInvalid) {
+                      const audit = auditTrainingTriggerWord(triggerWord, isGreen);
+                      if (audit.severity !== 'clean') {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
                           const soft = audit.severity === 'soft';
@@ -1761,13 +1713,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             ) : (
               <></>
             )}
-            {hasIssues && (
-              <Checkbox
-                label="Show only inappropriate labels"
-                checked={onlyIssues}
-                onChange={(event) => setOnlyIssues(event.currentTarget.checked)}
-              />
-            )}
             {loadingZip ? (
               <Center mt="md" style={{ flexDirection: 'column' }}>
                 <Loader />
@@ -1794,7 +1739,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         shadow="sm"
                         radius="sm"
                         withBorder
-                        className={clsx('p-1', { [styles.badLabel]: imgData.invalidLabel })}
+                        className="p-1"
                       >
                         <Card.Section className="-mx-1 -mt-1" mb="xs">
                           {AUDIO_MIME_TYPE.includes(imgData.type as never) ? (
@@ -2011,7 +1956,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     .
                   </Text>
                   <Checkbox
-                    label="I own the rights to all these files"
+                    label="I have the right, or the rightholder’s explicit permission, to redistribute these files"
                     checked={ownRights}
                     onChange={(event) => {
                       setOwnRights(model.id, thisMediaType, event.currentTarget.checked);

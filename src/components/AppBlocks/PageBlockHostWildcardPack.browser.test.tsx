@@ -5,6 +5,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { WILDCARD_MAX_CONCURRENT } from '~/components/AppBlocks/wildcardPackParse';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * W13 wildcard-pack import bridge (page surface).
@@ -46,6 +47,7 @@ vi.mock('~/utils/trpc', () => ({
     },
     generation: {
       resolveWildcardPack: { useMutation: () => ({ mutateAsync: mocks.resolve }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -239,6 +241,7 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       const payload = r.payload as { requestId: string; pack?: any; error?: string };
       expect(payload.requestId).toBe('rq_wp');
       expect(payload.error).toBeUndefined();
+      expectReplyKeys('GET_WILDCARD_PACK', 'success', ['pack'], payload);
       expect(payload.pack.lists).toEqual({
         colors: ['red', 'blue', '#ffffff'],
         animals: ['cat', 'dog'],
@@ -285,6 +288,7 @@ describe('PageBlockHost wildcard-pack bridge (W13)', () => {
       const r = replies.last('WILDCARD_PACK_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_big', error: 'too-large' });
+      expectReplyKeys('GET_WILDCARD_PACK', 'error', ['error'], r.payload);
     });
     expect(fetchedSignedUrl('huge.zip')).toBe(false);
     replies.stop();

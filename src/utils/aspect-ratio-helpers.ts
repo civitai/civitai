@@ -103,3 +103,79 @@ export function getResolutionsFromAspectRatiosMap<TAspectRatio extends string = 
   }
   return map;
 }
+
+/**
+ * What a custom width × height may be for one ecosystem. The engine's own limits
+ * (`[Range]` / `[DivisibleBy]` on its input class in civitai-orchestration) are the
+ * outer bound; `maxArea` and `maxRatio` are tighter, quality-driven caps — a model
+ * trained at ~1MP falls apart well before its engine refuses the size.
+ */
+export type CustomDimensionLimits = {
+  /** Every side is a multiple of this. */
+  step: number;
+  minSide: number;
+  maxSide: number;
+  /** width × height ceiling, enforced. */
+  maxArea: number;
+  /**
+   * width × height above which the picker warns but still allows: the model's
+   * training area, past which most checkpoints start to degrade. Not enforced.
+   */
+  recommendedArea: number;
+  /** Longest side ÷ shortest side ceiling, e.g. 2.5 allows 1600×640. */
+  maxRatio: number;
+};
+
+/**
+ * One megapixel, as the generator counts it: 1024² px, not 10⁶. So the buckets
+ * (≈1024²) read as 1 MP and 2048² — the ceiling no image may pass — reads as 4.
+ */
+export const MEGAPIXEL = 1024 * 1024;
+
+/**
+ * Bring a requested width × height inside `limits`, keeping its shape as far as the
+ * limits allow: cap the ratio, scale down to the area ceiling, clamp each side,
+ * then snap to the step. Rounding can only move a side toward the allowed range,
+ * never out of it. Returns undefined for a non-positive or non-numeric request.
+ */
+export function fitCustomDimensions(
+  requested: { width: number; height: number },
+  limits: CustomDimensionLimits
+): { width: number; height: number } | undefined {
+  let { width, height } = requested;
+  if (!(width > 0) || !(height > 0) || !isFinite(width) || !isFinite(height)) return undefined;
+  const { step, minSide, maxSide, maxArea, maxRatio } = limits;
+
+  // Ratio first: shorten the long side, which also shrinks the area.
+  if (width / height > maxRatio) width = height * maxRatio;
+  else if (height / width > maxRatio) height = width * maxRatio;
+
+  const area = width * height;
+  if (area > maxArea) {
+    const scale = Math.sqrt(maxArea / area);
+    width *= scale;
+    height *= scale;
+  }
+
+  // A long side past maxSide shrinks BOTH sides: clamping it alone below would turn
+  // 2752 × 1536 (16:9) into 2048 × 1536 (4:3) rather than 2048 × 1152.
+  const longest = Math.max(width, height);
+  if (longest > maxSide) {
+    width *= maxSide / longest;
+    height *= maxSide / longest;
+  }
+
+  const snap = (side: number) =>
+    Math.min(maxSide, Math.max(minSide, Math.round(side / step) * step));
+  width = snap(width);
+  height = snap(height);
+
+  // Rounding up may have nudged past the area or ratio ceiling: step the long side down.
+  const fits = () =>
+    width * height <= maxArea && Math.max(width, height) / Math.min(width, height) <= maxRatio;
+  while (!fits() && Math.max(width, height) - step >= minSide) {
+    if (width >= height) width -= step;
+    else height -= step;
+  }
+  return { width, height };
+}

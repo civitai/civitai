@@ -23,6 +23,12 @@ const VALID_MANIFEST = {
   },
 };
 
+/**
+ * VALID_MANIFEST plus a surface (a `page`), which `validateSubmission` also requires: a manifest
+ * declaring neither a page nor a non-empty targets array fails its build.
+ */
+const SUBMITTABLE_MANIFEST = { ...VALID_MANIFEST, page: { path: '/', title: 'Test Block' } };
+
 // H-8: the validator gates iframe.src against the app's registered
 // OauthClient.allowedOrigins. Tests that expect VALID_MANIFEST to pass must
 // supply an AppContext whose allowedOrigins covers blocks.civitai.com — the
@@ -178,6 +184,35 @@ describe('BlockManifestValidator', () => {
       expect(
         result.errors.some((e) => e.includes('allow-popups') || e.includes('not allowed'))
       ).toBe(true);
+    }
+  });
+
+  // INVARIANT GUARD (not regression coverage): zip saves go through the HOST save path
+  // (SAVE_IMAGE bytes, @civitai/app-sdk/save-zip) precisely so that an unverified app never needs a
+  // download or popup token. Pins that the unverified tier still refuses each of them, each
+  // with its own error, while the same manifest with only the allowed tokens passes.
+  it('INVARIANT GUARD: the unverified tier refuses allow-downloads and every popup token', () => {
+    const withSandbox = (sandbox: string) => ({
+      ...VALID_MANIFEST,
+      trustTier: 'unverified',
+      iframe: { ...VALID_MANIFEST.iframe, sandbox },
+    });
+    expect(
+      BlockManifestValidator.validate(withSandbox('allow-scripts allow-forms'), APP_CTX)
+    ).toEqual({
+      valid: true,
+    });
+    for (const token of ['allow-downloads', 'allow-popups', 'allow-popups-to-escape-sandbox']) {
+      const result = BlockManifestValidator.validate(
+        withSandbox(`allow-scripts ${token}`),
+        APP_CTX
+      );
+      expect(result.valid, token).toBe(false);
+      if (!result.valid) {
+        expect(result.errors, token).toContain(
+          `sandbox token "${token}" is not allowed for trustTier=unverified`
+        );
+      }
     }
   });
 
@@ -690,7 +725,7 @@ describe('BlockManifestValidator', () => {
   });
 
   /**
-   * `auth: "oauth"` × `apps:storage:*` — refused at submit, because the runtime cannot
+   * `auth: "oauth"` × `apps:storage:*` — refused, because the runtime cannot
    * serve it. An `auth: "oauth"` app is minted an OPAQUE OAuth access token when a viewer
    * is signed in, and every app-storage resolver re-verifies the RAW bearer with
    * `verifyBlockToken` (JWS + pinned `kid`), so the whole storage surface 401s for signed-in
@@ -819,14 +854,14 @@ describe('BlockManifestValidator', () => {
      */
     it('is NOT exempted by the moderator APPROVE relaxation', async () => {
       const manifest = {
-        ...VALID_MANIFEST,
+        ...SUBMITTABLE_MANIFEST,
         auth: 'oauth',
         scopes: ['models:read:self', 'apps:storage:shared:read'],
       };
       // POSITIVE CONTROL that the knob is real and IS being passed: the sensitive-scope rule
       // it governs really does stop firing under the same options object.
       const sensitive = await BlockManifestValidator.validateSubmission(
-        { ...VALID_MANIFEST, scopes: ['models:read:self', 'apps:storage:shared:write'] },
+        { ...SUBMITTABLE_MANIFEST, scopes: ['models:read:self', 'apps:storage:shared:write'] },
         APP_CTX,
         { enforceSensitiveScopeJustification: false }
       );
@@ -1220,7 +1255,7 @@ describe('BlockManifestValidator', () => {
       });
 
       it('APPROVE context is exempted through validateSubmission too', async () => {
-        const manifest = { ...VALID_MANIFEST, scopes: ['collections:read:private'] };
+        const manifest = { ...SUBMITTABLE_MANIFEST, scopes: ['collections:read:private'] };
         const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX, {
           enforceSensitiveScopeJustification: false,
         });
@@ -1251,12 +1286,136 @@ describe('BlockManifestValidator', () => {
     });
   });
 
+  // Custom events declaration. The rules live in `parseManifestAnalytics`; these
+  // pin that the validator REPORTS them, with the exact message an author sees.
+  describe('analytics.events (optional custom events declaration)', () => {
+    const withAnalytics = (analytics: unknown) => ({ ...VALID_MANIFEST, analytics });
+    const errorsFor = (analytics: unknown): string[] => {
+      const result = BlockManifestValidator.validate(withAnalytics(analytics), APP_CTX);
+      return result.valid ? [] : result.errors;
+    };
+    const manyNamed = (count: number, value: unknown) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`e_${i}`, value]));
+
+    it('accepts a manifest with no analytics key, and a full valid declaration', () => {
+      expect(errorsFor(undefined)).toEqual([]);
+      expect(
+        errorsFor({
+          events: {
+            generate_clicked: {
+              description: 'User pressed Generate',
+              properties: {
+                mode: { type: 'enum', values: ['txt2img', 'img2img'] },
+                batch: { type: 'number' },
+                advanced: { type: 'boolean' },
+              },
+            },
+            level_up: {},
+          },
+        })
+      ).toEqual([]);
+    });
+
+    it.each([
+      ['Generate', 'uppercase'],
+      ['1st_run', 'leading digit'],
+      ['_hidden', 'leading underscore'],
+      ['kebab-case', 'hyphen'],
+      ['z'.repeat(65), '65 chars'],
+    ])('rejects event name %j (%s)', (name) => {
+      expect(errorsFor({ events: { [name]: {} } })).toEqual([
+        `analytics.events key ${JSON.stringify(
+          name
+        )} must be lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _`,
+      ]);
+    });
+
+    it('rejects 51 events and accepts 50', () => {
+      expect(errorsFor({ events: manyNamed(51, {}) })).toEqual([
+        'analytics.events may declare at most 50 events (found 51)',
+      ]);
+      expect(errorsFor({ events: manyNamed(50, {}) })).toEqual([]);
+    });
+
+    it('rejects 11 properties on one event and accepts 10', () => {
+      const flag = { type: 'boolean' };
+      expect(errorsFor({ events: { tapped: { properties: manyNamed(11, flag) } } })).toEqual([
+        'analytics.events.tapped.properties may declare at most 10 properties (found 11)',
+      ]);
+      expect(errorsFor({ events: { tapped: { properties: manyNamed(10, flag) } } })).toEqual([]);
+    });
+
+    it('rejects a free-text string property type', () => {
+      expect(
+        errorsFor({ events: { searched: { properties: { query: { type: 'string' } } } } })
+      ).toEqual([
+        'analytics.events.searched.properties.query.type must be one of enum, number, boolean (free-text strings are not allowed — declare an enum)',
+      ]);
+    });
+
+    it('rejects an enum with zero values and with 51 values, and accepts 50', () => {
+      const enumOf = (values: unknown[]) => ({
+        events: { picked: { properties: { tone: { type: 'enum', values } } } },
+      });
+      const bound =
+        'analytics.events.picked.properties.tone.values must declare between 1 and 50 values';
+      expect(errorsFor(enumOf([]))).toEqual([bound]);
+      expect(errorsFor(enumOf(Array.from({ length: 51 }, (_, i) => `v${i}`)))).toEqual([bound]);
+      expect(errorsFor(enumOf(Array.from({ length: 50 }, (_, i) => `v${i}`)))).toEqual([]);
+    });
+
+    it('rejects duplicate enum values', () => {
+      expect(
+        errorsFor({
+          events: {
+            picked: { properties: { tone: { type: 'enum', values: ['warm', 'cool', 'warm'] } } },
+          },
+        })
+      ).toEqual([
+        'analytics.events.picked.properties.tone.values[2] duplicates an earlier value ("warm")',
+      ]);
+    });
+
+    it('rejects an over-long enum value and an over-long description', () => {
+      expect(
+        errorsFor({
+          events: { picked: { properties: { tone: { type: 'enum', values: ['q'.repeat(65)] } } } },
+        })
+      ).toEqual([
+        'analytics.events.picked.properties.tone.values[0] must be a non-empty string of at most 64 characters',
+      ]);
+      expect(errorsFor({ events: { picked: { description: 'd'.repeat(201) } } })).toEqual([
+        'analytics.events.picked.description must be a string of at most 200 characters',
+      ]);
+    });
+
+    it('rejects unknown keys at every level', () => {
+      expect(errorsFor({ events: {}, retention: 30 })).toEqual([
+        'analytics.retention is not allowed (analytics takes only events)',
+      ]);
+      expect(errorsFor({ events: { saved: { label: 'Saved' } } })).toEqual([
+        'analytics.events.saved.label is not allowed (an event takes only description and properties)',
+      ]);
+      expect(
+        errorsFor({ events: { saved: { properties: { n: { type: 'number', values: ['1'] } } } } })
+      ).toEqual(['analytics.events.saved.properties.n.values is not allowed on a number property']);
+    });
+
+    it('rejects a non-object analytics', () => {
+      expect(errorsFor(null)).toEqual(['analytics must be an object']);
+      expect(errorsFor([])).toEqual(['analytics must be an object']);
+    });
+  });
+
   // SUBMISSION gate: validateSubmission = the synchronous shape/security checks
   // PLUS the accurate ReDoS + input-bound gate on settings-field patterns. This
   // is what every manifest-SUBMISSION path calls (git-push webhook, developer
   // API, blocks.updateManifest, publish-request approve).
   describe('validateSubmission — settings pattern ReDoS gate', () => {
-    const withSettings = (settings: Record<string, unknown>) => ({ ...VALID_MANIFEST, settings });
+    const withSettings = (settings: Record<string, unknown>) => ({
+      ...SUBMITTABLE_MANIFEST,
+      settings,
+    });
     const stringField = (extra: Record<string, unknown>) => ({
       scope: 'publisher',
       type: 'string',
@@ -1267,7 +1426,9 @@ describe('BlockManifestValidator', () => {
     });
 
     it('accepts a normal manifest with no settings', async () => {
-      expect(await BlockManifestValidator.validateSubmission(VALID_MANIFEST, APP_CTX)).toEqual({
+      expect(
+        await BlockManifestValidator.validateSubmission(SUBMITTABLE_MANIFEST, APP_CTX)
+      ).toEqual({
         valid: true,
       });
     });

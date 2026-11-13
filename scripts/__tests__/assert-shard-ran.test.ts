@@ -176,6 +176,21 @@ describe('assert-shard-ran', () => {
     expect(r.status).toBe(0);
   });
 
+  // 🔴 The suite grew 80% in files in a month, and BASE_FILES = 2,057 set a ceiling of 926.
+  // Run 40108146824 on main had shards 1 and 2 exactly at it; in run 40113886304 they ran
+  // 927 files each, every test passing, and failed. These are the four shards of that run,
+  // the one BASE_FILES was re-measured from. Shards 1 and 2 are red under the old constant.
+  it.each([
+    ['main shard 1', 1, 15969, 0, 927],
+    ['main shard 2', 2, 14967, 26, 927],
+    ['main shard 3', 3, 16674, 55, 926],
+    ['main shard 4', 4, 16175, 4, 926],
+  ])('passes %s at the 2026-10-24 suite size', (_name, shard, passed, skipped, files) => {
+    const r = run(report(`oct-${shard}-${files}`, { passed, skipped, files }), shard, 4);
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+  });
+
   it('scales its floor and ceiling with the shard total', () => {
     const quarter = { passed: Math.round(BASE_TESTS / 4), files: Math.round(BASE_FILES / 4) };
     expect(run(report('n4', quarter), 1, 4).status).toBe(0);

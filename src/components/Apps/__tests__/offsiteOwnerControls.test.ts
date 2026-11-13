@@ -10,9 +10,9 @@ import {
 import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
- * W13 post-approval mgmt (Phase 3) — pure OWNER-control view model (the BLOCKING
+ * W13 post-approval mgmt (Phase 3) — pure OWNER-control view model (the node-tier
  * gate for the load-bearing owner-hidden-vs-mod-removed distinction that gates the
- * Republish button; the browser-mode list test is report-only). Pins the
+ * Republish button). Pins the
  * status/last-event → state matrix + the two capability predicates.
  */
 

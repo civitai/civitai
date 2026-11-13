@@ -545,7 +545,7 @@ describe('🔴 /api/v1/blocks/tools — guards that were unpinned', () => {
 // real top-of-catalog above 2,300,000. Reproduce the wrong arm outside this
 // suite with `civitai models search --query "popular"`.
 // ─────────────────────────────────────────────────────────────────────────────
-describe("🔴 /api/v1/blocks/tools — the model can RANK, not just text-match", () => {
+describe('🔴 /api/v1/blocks/tools — the model can RANK, not just text-match', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     regionBox.restricted = false;
@@ -606,6 +606,16 @@ describe("🔴 /api/v1/blocks/tools — the model can RANK, not just text-match"
 
     expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
     expect(mockResolveModelSearchIds.mock.calls[0][0].query).toBe('dreamshaper');
+  });
+
+  it('forwards baseModels and supportsGeneration to the Meili pre-step', async () => {
+    await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'dreamshaper', baseModels: ['SD 3.5 Large'], supportsGeneration: true },
+    });
+
+    expect(mockResolveModelSearchIds.mock.calls[0][0].baseModels).toEqual(['SD 3.5 Large']);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].supportsGeneration).toBe(true);
   });
 
   // 🔴 THIS ONE PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled so nobody
@@ -707,7 +717,6 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
     await invoke('POST', { name: 'search_models', arguments: { sort: 'Most Downloaded' } });
     expect(mockRunModelSearch.mock.calls[0][0].period).toBe('AllTime');
   });
-
 
   // 🔴 PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled, not counted as
   // regression coverage. Before `baseModels` existed it was an unknown key and a

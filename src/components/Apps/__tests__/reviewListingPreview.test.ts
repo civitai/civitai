@@ -10,8 +10,8 @@ import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 
 /**
  * Pure mapping gate for the mod-review listing PREVIEW builders (Item 3): review row
- * → `ListingCard` / `ListingDetail` store shapes. The browser component test for the
- * preview surface is report-only, so this is the blocking coverage for the mapping.
+ * → `ListingCard` / `ListingDetail` store shapes. This is the node-tier coverage for
+ * the mapping.
  * Pins: kind derivation, the name→slug fallback, submitter→creator chip, empty
  * recommend rollup, placeholder-nulled image URLs (not resolvable on this surface),
  * the omitted-in-preview scalars (tagline/description/serialId), kind-aware
@@ -32,7 +32,7 @@ function row(over: Partial<OffsitePendingRow> & { id: string }): OffsitePendingR
       category: 'utility',
       contentRating: 'PG',
     },
-    submittedBy: { id: 7, username: 'alice', image: 'img-key' },
+    submittedBy: { id: 7, username: 'alice', deletedAt: null, image: 'img-key' },
     ...over,
   };
 }
@@ -310,9 +310,10 @@ describe('buildListingDetailPreview', () => {
  * the other never loads this builder. So the composition is asserted here, with the
  * SUBMISSION TIMESTAMP as the thing that must not appear.
  *
- * The `installCount: 0` half is the same shape: a structural zero this builder emits,
+ * The usage count was the same shape: a structural `installCount: 0` this builder emits,
  * which the rail printed as `Installs: 0` while the header chips (which decided the
- * same question correctly) showed nothing.
+ * same question correctly) showed nothing. The rail now shows plays (`openCount`), which
+ * this builder sets to `null`.
  */
 describe('🔴 SEAM: nothing the preview builder FABRICATES reaches the details rail', () => {
   const SUBMITTED = '2026-01-01T00:00:00Z';
@@ -327,6 +328,7 @@ describe('🔴 SEAM: nothing the preview builder FABRICATES reaches the details 
     const detail = previewDetail();
     expect(detail.updatedAt).toBe(new Date(SUBMITTED).toISOString());
     expect(detail.installCount).toBe(0);
+    expect(detail.openCount).toBeNull();
   });
 
   it('POSITIVE CONTROL: rendered in the LIVE posture, both fabricated values DO show', () => {
@@ -336,7 +338,8 @@ describe('🔴 SEAM: nothing the preview builder FABRICATES reaches the details 
     expect(rows.find((r) => r.key === 'updated')?.value).toBe(
       `formatted:${new Date(SUBMITTED).toISOString()}`
     );
-    expect(rows.find((r) => r.key === 'installs')?.value).toBe('0');
+    // The play count is `null` here (no rollup), so not even the live rail shows one.
+    expect(rows.find((r) => r.key === 'plays')).toBeUndefined();
   });
 
   it('🔴 in `preview` the submission time is NOT rendered, under any label', () => {
@@ -350,10 +353,11 @@ describe('🔴 SEAM: nothing the preview builder FABRICATES reaches the details 
     expect(rows.map((r) => r.label)).not.toContain('Updated');
   });
 
-  it('🔴 in `preview` the structural zero install count is NOT rendered', () => {
+  it('🔴 in `preview` no usage count is rendered', () => {
     const rows = buildListingDetailRows(previewDetail(), { preview: true, formatDate: fmt });
-    expect(rows.find((r) => r.key === 'installs')).toBeUndefined();
+    expect(rows.find((r) => r.key === 'plays')).toBeUndefined();
     expect(rows.map((r) => r.value)).not.toContain('0');
+    expect(rows.map((r) => r.label)).not.toContain('Plays');
     expect(rows.map((r) => r.label)).not.toContain('Installs');
   });
 

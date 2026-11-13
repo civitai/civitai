@@ -2,12 +2,20 @@ import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
-import { INT4_MAX } from '~/server/schema/base.schema';
+import { CURSOR_MIN, INT4_MAX } from '~/server/schema/base.schema';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * A cursor token that is entirely an integer, sign included. Used by
+ * `parseCursor` to pick the numeric branch BEFORE the `-`-means-a-date test, so
+ * a negative integer is range-checked rather than handed to `dayjs`. Anchored
+ * and unflagged — `.test` on it is stateless.
+ */
+const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 
 export function getPagination(limit: number, page: number | undefined) {
   const take = limit > 0 ? limit : undefined;
@@ -170,7 +178,31 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // unattributable INTERNAL_SERVER_ERROR (500). Reject the malformed cursor as a
     // 400 instead. (Well-formed cursors carry real DB values, so this only fires on a
     // genuinely unparseable token — never on a legitimate cursor.)
-    if (value.includes('-')) {
+    //
+    // The date-vs-numeric split is NUMERIC-FIRST: a fully-numeric token takes the
+    // numeric branch even when it contains `-`. It used to be a bare
+    // `value.includes('-')`, which is true of every negative integer, so `'-5'`
+    // took the date branch, `dayjs.utc('-5')` reported VALID, and the resulting
+    // Date was bound into a comparison against an `int` sort column — Postgres
+    // threw and the caller got a raw 500 for a malformed input. A REST query
+    // param is ALWAYS a string, so no bound on `keysetCursorSchema`'s numeric
+    // members could see it.
+    //
+    // Deliberately narrow: an ISO timestamp contains `-` but is not fully
+    // numeric, so it still takes the date branch, and a token with no `-` already
+    // took the numeric branch. The non-numeric fallback keeps `includes('-')`, so
+    // an empty or garbage token keeps the exact branch (and error) it had — the
+    // only tokens whose classification changes are fully-numeric ones containing
+    // `-`, i.e. negative integers.
+    //
+    // 🔴 This closes ONE SPELLING, not the class, and the test file pins the rest
+    // as an open gap. The date branch below still accepts `'0-'`, `'5-'`, `'1-2'`
+    // and `'--5'` as valid dates and still binds a Date to an `int` column. A
+    // structural fix requires the date branch to demand a date SHAPE and route
+    // everything else numeric; that needs the formats a real
+    // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
+    // against a database — guessing them would turn a 500 into broken pagination.
+    if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
       const parsed = dayjs.utc(value);
       if (!parsed.isValid())
         throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
@@ -188,12 +220,44 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
       // `ct."sortKey"` caps at 1e9 and only pairs with a sort that bypasses this;
       // timestamps take the date branch. If a wider sort column is ever made
       // cursor-reachable, this guard must move with it.
-      if (parsed > INT4_MAX)
+      //
+      // The floor is `CURSOR_MIN`, the SAME constant `keysetCursorSchema` floors
+      // its numeric members at — so the same value is rejected as `-5` and as
+      // `'-5'`, rather than 400ing in one spelling and 500ing in the other, which
+      // is the defect this guard was widened for. Shared rather than restated
+      // because `base.schema.ts` records that the floor's VALUE is not settled;
+      // if it moves it must move in both spellings at once.
+      //
+      // 🔴 This floor does NOT establish that a negative cursor is impossible,
+      // and nothing here should be tightened on the strength of it — read the
+      // "WHAT IS STILL NOT ESTABLISHED" paragraph in `base.schema.ts`, which
+      // notes that `addPostImageSchema.index` is a bare `z.number()`, so a
+      // negative `i."index"` is writable and would be issuable as a nextCursor.
+      // No database was checked here either. What IS established is narrower and
+      // is all this guard rests on: a negative STRING token never had a working
+      // path — before this change it took the date branch and 500'd (or already
+      // 400'd as an Invalid Date), so rejecting it cannot regress a cursor that
+      // used to paginate. It also makes the open question observable: such a
+      // cursor now produces an attributable 400 instead of an unattributable 500,
+      // which is the trigger `base.schema.ts` names for moving the floor to the
+      // int4 minimum.
+      if (parsed < CURSOR_MIN || parsed > INT4_MAX)
         throwBadRequestError(`Invalid cursor: numeric value out of range "${value}"`);
       result[fields[i].field] = parsed;
     }
   }
   return result;
+}
+
+/**
+ * The cursor a caller hands out is the LOOKAHEAD row (`LIMIT n + 1`, then popped), so the
+ * next page must include that row: inclusive on the last sort field, strict on every head
+ * field. A strict last field skips the cursor row on every page (issue #1372, `sort=Newest`);
+ * an inclusive head field re-emits every row tied on it (`sort=Oldest`).
+ */
+function cursorOperator(order: SortOrder, isLastField: boolean) {
+  if (order === 'DESC') return isLastField ? '<=' : '<';
+  return isLastField ? '>=' : '>';
 }
 
 export function getCursor(sortString: string, cursor: string | number | bigint | Date | undefined) {
@@ -202,13 +266,13 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
   if (cursor) {
     const cursors = parseCursor(sortFields, cursor);
     const conditions: Prisma.Sql[] = [];
+    const lastIdx = sortFields.length - 1;
 
     for (let i = 0; i < sortFields.length; i++) {
       const conditionParts: Prisma.Sql[] = [];
       for (let j = 0; j <= i; j++) {
         const { field, order } = sortFields[j];
-        let operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
-        if (j < i) operator = '=';
+        const operator = j < i ? '=' : cursorOperator(order, i === lastIdx);
 
         conditionParts.push(
           Prisma.sql`${Prisma.raw(field)} ${Prisma.raw(operator)} ${cursors[field]}`
@@ -234,7 +298,7 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
  * two separate clauses suitable for a UNION ALL rewrite.
  *
  * The standard `getCursor` produces an OR-chain like:
- *   (A < a) OR (A = a AND B < b) OR (A = a AND B = b AND C >= c)
+ *   (A < a) OR (A = a AND B < b) OR (A = a AND B = b AND C <= c)
  *
  * Postgres can't push that OR predicate into an index seek — it scans the entire
  * matching range and applies a Filter, which is fast for page 1 but slows
@@ -244,8 +308,8 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
  * DESC), `getCursorClauses` returns:
  *   - `strict`: (A, ..., second_to_last) < (cursorA, ..., cursorPenult)
  *               — pushes into an `Index Cond: ROW(...) < ROW(...)` seek
- *   - `equality`: A = a AND ... AND penultimate = penultimateCursor AND last </>= lastCursor
- *               — handles the tie at the exact tuple boundary; usually 0 rows
+ *   - `equality`: A = a AND ... AND penultimate = penultimateCursor AND last <=/>= lastCursor
+ *               — the cursor row and the rest of its head-field tie (rows sorting at or after it)
  * with `splittable=true`. Combining `(strict UNION ALL equality)` reproduces the
  * original result set with the same ordering and allows the index seek.
  *
@@ -253,13 +317,9 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
  * `getCursorClauses` returns the legacy single OR-predicate in `strict` with
  * `splittable=false`. The caller should AND that into its existing WHERE.
  *
- * Why DESC-only? The legacy `getCursor` uses `>=` on the last field of every
- * AND-chain, including all head positions for ASC sorts. The resulting predicate
- * `(A >= a) OR (A = a AND B >= b)` collapses to `A >= a`, which Postgres already
- * seeks fine — and the looser equality semantics mean a UNION ALL split would
- * change which rows match. Restricting the split to DESC head fields preserves
- * the legacy result set exactly while still catching the slow path (every
- * production "feed_*" sort has DESC head fields).
+ * Why DESC-only? The tuple compare is written for `<` only, and every multi-field sort
+ * except `Oldest` has DESC head fields, so ASC-headed sorts keep the OR-predicate. An
+ * all-ASC head could split the same way with `>`; nothing semantic prevents it.
  *
  * The `prop` (cursorId encoding) matches `getCursor` exactly so callers can
  * swap helpers without touching pagination state.
@@ -283,11 +343,12 @@ export function getCursorClauses(
   // Used as a single-branch fallback when split isn't applicable.
   const buildLegacyPredicate = (): Prisma.Sql => {
     const conditions: Prisma.Sql[] = [];
+    const lastIdx = sortFields.length - 1;
     for (let i = 0; i < sortFields.length; i++) {
       const conditionParts: Prisma.Sql[] = [];
       for (let j = 0; j <= i; j++) {
         const { field, order } = sortFields[j];
-        const operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
+        const operator = j < i ? '=' : cursorOperator(order, i === lastIdx);
         conditionParts.push(
           Prisma.sql`${Prisma.raw(field)} ${Prisma.raw(operator)} ${cursors[field]}`
         );
@@ -297,15 +358,12 @@ export function getCursorClauses(
     return Prisma.sql`(${Prisma.join(conditions, ' OR ')})`;
   };
 
-  // Single-field sort: legacy predicate is `A < a` or `A >= a`, both already
-  // index-seekable. No split needed.
+  // Single-field sort: one inequality, already index-seekable.
   if (sortFields.length === 1) {
     return { strict: buildLegacyPredicate(), equality: undefined, prop, splittable: false };
   }
 
-  // Multi-field but head fields aren't all DESC: legacy predicate either
-  // collapses to a single inequality (all-ASC case) or has mixed semantics that
-  // wouldn't be preserved exactly by a tuple compare. Fall back to legacy.
+  // No tuple compare is written for non-DESC heads; see "Why DESC-only?" above.
   const lastIdx = sortFields.length - 1;
   const headFields = sortFields.slice(0, lastIdx);
   const allHeadDesc = headFields.every((f) => f.order === 'DESC');
@@ -326,13 +384,11 @@ export function getCursorClauses(
   );
   const strict = Prisma.sql`((${fieldList}) < (${valueList}))`;
 
-  // Equality branch: every head field equals its cursor value, last field uses
-  // the same comparator as legacy (< for DESC, >= for ASC).
   const lastField = sortFields[lastIdx];
   const equalityParts: Prisma.Sql[] = headFields.map(
     ({ field }) => Prisma.sql`${Prisma.raw(field)} = ${cursors[field]}`
   );
-  const lastOperator = lastField.order === 'DESC' ? '<' : '>=';
+  const lastOperator = cursorOperator(lastField.order, true);
   equalityParts.push(
     Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${
       cursors[lastField.field]

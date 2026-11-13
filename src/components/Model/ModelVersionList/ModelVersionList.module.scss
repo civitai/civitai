@@ -42,3 +42,19 @@
   overflow-x: scroll;
   overflow-y: hidden;
 }
+
+// Mantine `ThemeIcon radius="sm" size="sm"` (filled): the early-access chip beside a version
+// button when `modelPageDesignSystemMarkup` is on. Its `min-*` size (22px) beats the inline 20px width.
+.earlyAccessIcon {
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  user-select: none;
+  min-width: calc(1.375rem * var(--mantine-scale));
+  min-height: calc(1.375rem * var(--mantine-scale));
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-white);
+  border: calc(0.0625rem * var(--mantine-scale)) solid transparent;
+}

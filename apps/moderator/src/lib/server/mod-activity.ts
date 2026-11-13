@@ -1,3 +1,5 @@
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead, dbWrite } from './db';
 import { usersByIds } from './users.service';
 
@@ -8,26 +10,38 @@ import { usersByIds } from './users.service';
 // clause is valid whether or not a unique index exists, so this works both before and after the migration
 // that drops ModActivity's (activity, entityType, entityId) unique index. Naming the target would fail with
 // 42P10 once that index goes; omitting the clause fails with 23505 until it does. Do not add a target.
-export async function recordModActivity(input: {
+export async function recordModActivity(input: ModActivityInsert): Promise<void> {
+  try {
+    await insertModActivity(input);
+  } catch (e) {
+    console.error('[mod-activity] failed to record', { ...input, error: e });
+  }
+}
+
+type ModActivityInsert = {
   userId: number;
   entityType: string | null;
   entityId: number | null;
   activity: string;
-}): Promise<void> {
-  try {
-    await dbWrite
-      .insertInto('ModActivity')
-      .values({
-        userId: input.userId,
-        entityType: input.entityType,
-        entityId: input.entityId,
-        activity: input.activity,
-      })
-      .onConflict((oc) => oc.doNothing())
-      .execute();
-  } catch (e) {
-    console.error('[mod-activity] failed to record', { ...input, error: e });
-  }
+  credential?: 'sheet' | 'web';
+};
+
+/** The same row, throwing when it is not written: for a caller that must not go on without it. */
+export async function insertModActivity(input: ModActivityInsert): Promise<void> {
+  const row = await dbWrite
+    .insertInto('ModActivity')
+    .values({
+      userId: input.userId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      activity: input.activity,
+      // Named only when set, so no other writer depends on the column.
+      ...(input.credential ? { credential: input.credential } : {}),
+    })
+    .onConflict((oc) => oc.doNothing())
+    .returning('id')
+    .executeTakeFirst();
+  if (!row) throw new Error(`ModActivity ${input.activity} row was not written`);
 }
 
 /**
@@ -50,23 +64,37 @@ export async function recordModActivityBatch(input: {
   entityIds: readonly number[];
   activity: string;
 }): Promise<void> {
-  if (!input.entityIds.length) return;
   try {
-    await dbWrite
-      .insertInto('ModActivity')
-      .values(
-        input.entityIds.map((entityId) => ({
-          userId: input.userId,
-          entityType: input.entityType,
-          entityId,
-          activity: input.activity,
-        }))
-      )
-      .onConflict((oc) => oc.doNothing())
-      .execute();
+    await insertModActivityBatch(dbWrite, input);
   } catch (e) {
     console.error('[mod-activity] failed to record batch', { ...input, error: e });
   }
+}
+
+/** `recordModActivityBatch` on a caller's transaction, and throwing: a failed insert has already
+ *  aborted that transaction, so swallowing it would only move the error to the commit. */
+export async function insertModActivityBatch(
+  db: Kysely<DB>,
+  input: {
+    userId: number;
+    entityType: string | null;
+    entityIds: readonly number[];
+    activity: string;
+  }
+): Promise<void> {
+  if (!input.entityIds.length) return;
+  await db
+    .insertInto('ModActivity')
+    .values(
+      input.entityIds.map((entityId) => ({
+        userId: input.userId,
+        entityType: input.entityType,
+        entityId,
+        activity: input.activity,
+      }))
+    )
+    .onConflict((oc) => oc.doNothing())
+    .execute();
 }
 
 export type ModActivityRow = {
@@ -103,19 +131,34 @@ export async function getModActivityFor(
     .limit(limit + 1)
     .execute();
 
-  const truncated = rows.length > limit;
-  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
+  return { rows: await withModerators(rows.slice(0, limit)), truncated: rows.length > limit };
+}
 
-  return {
-    rows: rows.slice(0, limit).map((r) => ({
-      id: r.id,
-      activity: r.activity,
-      entityType: r.entityType,
-      entityId: r.entityId,
-      createdAt: r.createdAt,
-      moderatorId: r.userId,
-      moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
-    })),
-    truncated,
-  };
+/** Swaps a raw row's `userId` for who acted, with one user read for the whole batch. */
+export async function withModerators<R extends { userId: number | null }>(rows: R[]) {
+  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
+  return rows.map(({ userId, ...row }) => ({
+    ...row,
+    moderatorId: userId,
+    moderatorUsername: userId ? byId.get(userId)?.username ?? null : null,
+  }));
+}
+
+/**
+ * The most recent `activity` recorded against one entity, and the moderator who did it — "banned by" on
+ * the user report queue. Rides `ModActivity_entityType_entityId_createdAt_idx`. Null when nothing was
+ * recorded, which is not the same as nobody: a ban made before ModActivity existed has no row.
+ */
+export async function lastModActivity(entityType: string, entityId: number, activity: string) {
+  const row = await dbRead
+    .selectFrom('ModActivity as m')
+    .leftJoin('User as u', 'u.id', 'm.userId')
+    .select(['m.userId', 'u.username', 'm.createdAt'])
+    .where('m.entityType', '=', entityType)
+    .where('m.entityId', '=', entityId)
+    .where('m.activity', '=', activity)
+    .orderBy('m.createdAt', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row ? { moderatorId: row.userId, moderator: row.username, at: row.createdAt } : null;
 }

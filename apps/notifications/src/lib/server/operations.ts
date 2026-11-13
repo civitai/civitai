@@ -8,14 +8,17 @@ import format from 'pg-format';
 import { chunk } from 'lodash-es';
 import type {
   CreateNotificationRow,
+  MarkReadByKeysInput,
   MarkReadInput,
   NotificationCategory,
+  NotificationListCursor,
   NotificationRow,
 } from '@civitai/notifications';
 import { notifDbRead, notifDbWrite } from './clients/db';
-import { notificationCache, type NotificationCategoryCount } from './cache';
+import { notificationCache, redisWithin, type NotificationCategoryCount } from './cache';
 import { getNotifDbWithoutLag, isWritePool, preventReplicationLag } from './lag';
 import { logToAxiom, safeError } from './clients/axiom';
+import { countDbFallbackEnabled, countRedisDeadlineMs } from '../../env';
 
 const bulkBatchSize = 5000;
 
@@ -75,7 +78,7 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
 export async function queryNotifications(input: {
   userId: number;
   limit: number;
-  cursor?: Date;
+  cursor?: NotificationListCursor | Date;
   category?: NotificationCategory | null;
   unread?: boolean;
 }): Promise<NotificationRow[]> {
@@ -87,19 +90,27 @@ export async function queryNotifications(input: {
     params.push(category);
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
-  if (cursor) {
+  if (cursor instanceof Date) {
+    // Legacy cursor: strict, because `<=` would refetch the same page forever once equal timestamps
+    // fill one.
     params.push(cursor);
     where.push(`un."createdAt" < $${params.length}`);
+  } else if (cursor) {
+    params.push(cursor.createdAt, cursor.id);
+    const [at, id] = [`$${params.length - 1}::timestamp`, `$${params.length}::bigint`];
+    // The bare `<=` lets the ("userId", "createdAt" DESC) index bound the scan.
+    where.push(`un."createdAt" <= ${at} AND (un."createdAt" < ${at} OR un.id < ${id})`);
   }
   params.push(limit);
 
   const db = await getNotifDbWithoutLag(userId);
   const query = await db.cancellableQuery<NotificationRow>(
-    `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read
+    `SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed AS read,
+       to_char(un."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "cursorAt"
      FROM "UserNotification" un
        JOIN "Notification" n ON n."id" = un."notificationId"
      WHERE ${where.join(' AND ')}
-     ORDER BY un."createdAt" DESC
+     ORDER BY un."createdAt" DESC, un.id DESC
      LIMIT $${params.length}`,
     params
   );
@@ -181,13 +192,35 @@ async function countNotificationsImpl(input: {
 
   // Check the lag flag BEFORE the cache — if a recent write flagged this user, bust the cache and read
   // the primary to avoid a stale count. Only the cacheable variant interacts with the cache at all.
-  const db = await getNotifDbWithoutLag(userId);
-  if (cacheable) {
+  //
+  // Every redis call here is bounded (countRedisDeadlineMs) and counted when it fails or times out. What
+  // a failure then answers is countDbFallbackEnabled's call: off, an empty count at once (the badge the
+  // main app already shows when this service is down, corrected by the next poll); on, the DB — the
+  // replica when the lag flag is unreadable, leaving the cache alone, since a replica count could be the
+  // stale one the flag exists to keep out of it. After a failed cache call, skip the rest of the cache.
+  const fallback = countDbFallbackEnabled();
+  const lag = await redisWithin('lag', () => getNotifDbWithoutLag(userId), countRedisDeadlineMs);
+  if (!lag.ok && !fallback) return [];
+  const db = lag.ok ? lag.value : notifDbRead();
+  let useCache = cacheable && lag.ok;
+  if (useCache) {
     if (isWritePool(db)) {
-      await notificationCache.bustUser(userId);
+      const bust = await redisWithin(
+        'bustUser',
+        () => notificationCache.bustUser(userId),
+        countRedisDeadlineMs
+      );
+      if (!bust.ok && !fallback) return [];
+      useCache = bust.ok;
     } else {
-      const cached = await notificationCache.getUser(userId);
-      if (cached) return cached;
+      const cached = await redisWithin(
+        'get',
+        () => notificationCache.getUser(userId),
+        countRedisDeadlineMs
+      );
+      if (cached.ok && cached.value) return cached.value;
+      if (!cached.ok && !fallback) return [];
+      useCache = cached.ok;
     }
   }
 
@@ -213,7 +246,8 @@ async function countNotificationsImpl(input: {
   const rows = await query.result();
   const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
   const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
-  if (cacheable) await notificationCache.setUser(userId, result);
+  if (useCache)
+    await redisWithin('set', () => notificationCache.setUser(userId, result), countRedisDeadlineMs);
   return result;
 }
 
@@ -395,6 +429,32 @@ async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Pr
   }
 }
 
+// Synchronous, unlike markNotificationsRead: the caller corrects its badge from the returned counts.
+export async function markNotificationsReadByKeys({
+  userId,
+  keys,
+}: MarkReadByKeysInput): Promise<Array<{ category: NotificationCategory; count: number }>> {
+  const write = notifDbWrite();
+  const { rows } = await write.query<{ category: NotificationCategory }>(
+    `UPDATE "UserNotification" un SET viewed = TRUE
+     FROM "Notification" n
+     WHERE un."notificationId" = n.id AND un."userId" = $1 AND un.viewed IS FALSE
+       AND n.key = ANY($2::text[])
+     RETURNING n.category`,
+    [userId, keys]
+  );
+  if (!rows.length) return [];
+
+  const counts = new Map<NotificationCategory, number>();
+  for (const { category } of rows) counts.set(category, (counts.get(category) ?? 0) + 1);
+  for (const [category, count] of counts)
+    notificationCache.decrementUser(userId, category, count).catch(() => null);
+  // The write has committed: a failed lag mark must not turn it into a 500, whose retry finds nothing
+  // unread and returns [], leaving both badge caches high.
+  await preventReplicationLag(userId).catch(() => null);
+  return [...counts].map(([category, count]) => ({ category, count }));
+}
+
 async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<void> {
   const { id, userId, all, category } = input;
   const write = notifDbWrite();
@@ -422,8 +482,8 @@ async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<vo
   }
 
   const resp = await write.query(
-    `UPDATE "UserNotification" un SET viewed = TRUE WHERE id = $1 AND viewed IS FALSE`,
-    [id]
+    `UPDATE "UserNotification" un SET viewed = TRUE WHERE id = $1 AND "userId" = $2 AND viewed IS FALSE`,
+    [id, userId]
   );
   if (resp.rowCount) {
     await preventReplicationLag(userId);

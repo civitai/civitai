@@ -2,17 +2,19 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 // 🔴 `import type`, not a value import. A top-level VALUE import in a browser-mode
 // test resolves a SECOND copy of React and fails the whole file with "Invalid hook
 // call", reported as `Tests no tests`. A type import is erased at compile time.
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * The COMBINED code + listing-media review surface (Item 4) — browser-mode render
- * test (report-only in Tekton; the blocking gate for the pairing logic is the
+ * test (`Component tests` in CI; the node-tier gate for the pairing logic is the
  * `unifiedReviewRow` unit suite). Asserts:
  *  - BOTH stacked section headers render (App code review + Listing media);
  *  - the CODE section shows the agent ReportTabs (Scopes/Security/Code review);
@@ -51,7 +53,7 @@ const CODE_REQUEST = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const LISTING_ROW = {
@@ -68,7 +70,7 @@ const LISTING_ROW = {
     category: 'utility',
     contentRating: 'PG',
   },
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const SELECTION = {
@@ -115,8 +117,8 @@ const LISTING_PREVIEW = {
     tagline: 'a handy combo',
     category: 'utility',
     contentRating: 'PG',
-    iconUrl: 'https://cdn.example/icon.png',
-    coverUrl: 'https://cdn.example/cover.png',
+    iconUrl: LOADABLE_IMAGE_DATA_URI,
+    coverUrl: LOADABLE_IMAGE_DATA_URI,
     creator: { id: 7, username: 'dev-user', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
@@ -132,8 +134,8 @@ const LISTING_PREVIEW = {
     description: 'About the combo app.',
     category: 'utility',
     contentRating: 'PG',
-    iconUrl: 'https://cdn.example/icon.png',
-    coverUrl: 'https://cdn.example/cover.png',
+    iconUrl: LOADABLE_IMAGE_DATA_URI,
+    coverUrl: LOADABLE_IMAGE_DATA_URI,
     creator: { id: 7, username: 'dev-user', image: null },
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
@@ -141,6 +143,7 @@ const LISTING_PREVIEW = {
     // the real `projectListingDetail` always supplies them; the fixture is a stand-in
     // for that projection and must not be thinner than it.
     installCount: 0,
+    openCount: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [{ url: 'https://cdn.example/shot-1.png', caption: 'shot one' }],
     // 🔴 REQUIRED, and `[]` is not cosmetic here. `AppListingDetailBody` reads
@@ -156,8 +159,12 @@ const LISTING_PREVIEW = {
     // the `satisfies` below reachable, not because this modal reads them.
     collaborators: [],
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     isBeta: false,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     kindData: { kind: 'onsite' as const, appBlockId: 'blk_1', hasPage: false, liveUrl: '' },
   } satisfies ListingDetail,
 };
@@ -174,6 +181,35 @@ const mocks = vi.hoisted(() => ({
 // factory listing only `useFeatureFlags` made this whole FILE fail to import with
 // `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
 // collected rather than as a failure.
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
+}));
+
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true, appBlocksAgenticReview: true }),
@@ -190,7 +226,7 @@ vi.mock('~/components/Apps/AgentReviewChat', () => ({ AgentReviewChat: () => nul
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, which this file reaches through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory then failed the WHOLE FILE at the browser's ESM link step:
 // `SyntaxError: The requested module '/src/utils/notifications.tsx' does not provide an export
 // named 'showWarningNotification'`. Spread the original; override only what is silenced. #5102
@@ -239,21 +275,22 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
   return {
     ...actual,
-    trpc: {
-      useUtils: () => utils,
-      blocks: {
-        approveRequest: { useMutation: mutation('blocks.approve') },
-        rejectRequest: { useMutation: mutation('blocks.reject') },
-        getReviewStatus: { useQuery: () => ({ data: null, isLoading: false, error: null }) },
-        previewRequest: { useMutation: mutation('blocks.preview') },
-        teardownPreview: { useMutation: mutation('blocks.teardown') },
-        getPublishRequestScreenshots: {
+    trpc: makeTrpcProxy(
+      {
+        'blocks.approveRequest': { useMutation: mutation('blocks.approve') },
+        'blocks.rejectRequest': { useMutation: mutation('blocks.reject') },
+        'blocks.getReviewStatus': {
+          useQuery: () => ({ data: null, isLoading: false, error: null }),
+        },
+        'blocks.previewRequest': { useMutation: mutation('blocks.preview') },
+        'blocks.teardownPreview': { useMutation: mutation('blocks.teardown') },
+        'blocks.getPublishRequestScreenshots': {
           useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
         },
-        getPublishRequestDiff: {
+        'blocks.getPublishRequestDiff': {
           useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
-        getAgentReview: {
+        'blocks.getAgentReview': {
           useQuery: () => ({
             data: AGENT_REPORT,
             isLoading: false,
@@ -262,23 +299,26 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             refetch: vi.fn(),
           }),
         },
-        startAgentReview: { useMutation: mutation('blocks.startAgentReview') },
-        getMarketplaceMeta: {
+        'blocks.startAgentReview': { useMutation: mutation('blocks.startAgentReview') },
+        'blocks.getMarketplaceMeta': {
           useQuery: () => ({ data: undefined, isLoading: false, isError: false, error: null }),
         },
-        setMarketplaceMeta: { useMutation: mutation('blocks.setMeta') },
-      },
-      appListings: {
-        getAssets: { useQuery: () => ({ data: ASSETS, isLoading: false, error: null }) },
-        approveExternalRequest: { useMutation: mutation('appListings.approve') },
-        rejectExternalRequest: { useMutation: mutation('appListings.reject') },
+        'blocks.setMarketplaceMeta': { useMutation: mutation('blocks.setMeta') },
+        'appListings.getAssets': {
+          useQuery: () => ({ data: ASSETS, isLoading: false, error: null }),
+        },
+        'appListings.approveExternalRequest': { useMutation: mutation('appListings.approve') },
+        'appListings.rejectExternalRequest': { useMutation: mutation('appListings.reject') },
         // The mod-only listing-preview projection — returns the shadow's REAL media
         // + scalars so the media section renders the actual card + detail preview.
-        getListingPreviewForReview: {
+        'appListings.getListingPreviewForReview': {
           useQuery: () => ({ data: LISTING_PREVIEW, isLoading: false, error: null }),
         },
       },
-    },
+      // A stable `useUtils`, so every invalidate lands on the one `mocks.invalidate` spy —
+      // the proxy's default mints a fresh spy per read (test/trpcProxyStub.ts).
+      { useUtils: () => utils }
+    ),
   };
 });
 

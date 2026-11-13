@@ -2,7 +2,8 @@
  * CI entry point for the schema<->database drift delta gate.
  *
  *   pnpm --filter @civitai/db-schema drift:gate        # verdict; exit 1 on new enforced drift
- *   pnpm --filter @civitai/db-schema drift:baseline    # rewrite the baseline from this pair
+ *   pnpm --filter @civitai/db-schema drift:baseline --reason "<why>" --ref <#PR|migration>
+ *                                                      # rewrite the baseline from this pair
  *
  * READ-ONLY, AND NOT MERELY BY CONVENTION. Unlike `cli.ts`, this entry point has no database
  * code path at all: it takes a captured catalog JSON and nothing else, and there is no flag
@@ -13,7 +14,8 @@
  *
  * Exit codes:
  *   0  no new enforced drift
- *   1  this change introduces drift on columns the database already has
+ *   1  this change introduces drift on columns the database already has, or a baseline entry
+ *      carries no auditable reason
  *   2  the run cannot be trusted (bad arguments, unreadable inputs, a baseline that does not
  *      describe these inputs, or a comparison that covered nothing)
  */
@@ -22,13 +24,16 @@ import { relative, resolve } from 'node:path';
 import { assertCatalogSanity, assessCoverage, compareSchemaToCatalog } from './compare';
 import {
   absorbedEscalations,
+  acceptIntoBaseline,
   assertMeasuredSomething,
   blocking,
   buildBaseline,
   snapshotAge,
   evaluateGate,
   formatGateResult,
+  reasonProblems,
   type Baseline,
+  type BaselineEntry,
 } from './gate';
 import { parsePrismaSchema } from './parse-prisma-schema';
 import type { DbCatalog } from './types';
@@ -36,7 +41,7 @@ import type { DbCatalog } from './types';
 const PACKAGE_ROOT = resolve(__dirname, '../..');
 
 const DEFAULT_SCHEMA = 'prisma/schema.full.prisma';
-const DEFAULT_CATALOG = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-08-03.json';
+const DEFAULT_CATALOG = 'src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json';
 const DEFAULT_BASELINE = 'src/schema-drift/drift-baseline.json';
 
 const USAGE = `Usage: drift-gate [options]
@@ -44,7 +49,12 @@ const USAGE = `Usage: drift-gate [options]
   --schema <path>      Prisma schema (default: ${DEFAULT_SCHEMA})
   --catalog <path>     Captured catalog JSON (default: ${DEFAULT_CATALOG})
   --baseline <path>    Accepted-findings baseline (default: ${DEFAULT_BASELINE})
-  --update-baseline    Rewrite the baseline from this schema/catalog pair and exit 0
+  --update-baseline    Rewrite the baseline from this schema/catalog pair and exit 0.
+                       Existing entries keep their reason and ref. Any entry that needs one
+                       (a new finding, or an old entry without a valid reason) takes:
+  --reason "<text>"    why the new drift is accepted (required when there is any; at least
+                       20 characters, 4 words, not a placeholder like TODO / accepted / n/a)
+  --ref <ref>          where that was decided: a PR (#1234) or a migration directory name
   --help               This message
 
 Paths are resolved against the @civitai/db-schema package root, so the command behaves the
@@ -55,6 +65,8 @@ interface Options {
   catalogPath: string;
   baselinePath: string;
   updateBaseline: boolean;
+  reason?: string;
+  ref?: string;
   help: boolean;
 }
 
@@ -101,6 +113,12 @@ function parseArgs(argv: string[]): Options {
       case '--update-baseline':
         options.updateBaseline = true;
         break;
+      case '--reason':
+        options.reason = next();
+        break;
+      case '--ref':
+        options.ref = next();
+        break;
       case '--help':
       case '-h':
         options.help = true;
@@ -133,6 +151,9 @@ function main(): number {
     process.stdout.write(`${USAGE}\n`);
     return 0;
   }
+  if (!options.updateBaseline && (options.reason !== undefined || options.ref !== undefined)) {
+    throw new Error('--reason and --ref only apply to --update-baseline.');
+  }
 
   const schemaPath = resolve(PACKAGE_ROOT, options.schemaPath);
   const catalogPath = resolve(PACKAGE_ROOT, options.catalogPath);
@@ -162,7 +183,7 @@ function main(): number {
   const catalogRelative = relative(PACKAGE_ROOT, catalogPath).split('\\').join('/');
 
   if (options.updateBaseline) {
-    const baseline = buildBaseline(report, catalog, catalogRelative);
+    const candidate = buildBaseline(report, catalog, catalogRelative);
 
     // Read AND VALIDATE the outgoing baseline BEFORE overwriting it, so a refresh can report
     // what it is about to absorb.
@@ -198,6 +219,31 @@ function main(): number {
       }
     }
 
+    // Reasons are carried over by fingerprint, and anything that needs one takes --reason /
+    // --ref. Refused BEFORE the write, so a refusal leaves the committed file exactly as it was:
+    // the whole point is that accepting drift is a deliberate, explained act, and a refresh
+    // that wrote the new entries and then complained would have made it an accidental one.
+    const accepted = acceptIntoBaseline(
+      previous as { entries: Partial<BaselineEntry>[] } | null,
+      candidate,
+      { reason: options.reason, ref: options.ref }
+    );
+    if (!accepted.ok) {
+      process.stderr.write(
+        `Refusing to write the baseline: ${accepted.needReason.length} entr${
+          accepted.needReason.length === 1 ? 'y needs' : 'ies need'
+        } a reason and none usable was given.\n` +
+          accepted.problems.map((p) => `  - ${p}\n`).join('') +
+          '\nEntries that would be accepted without one:\n' +
+          accepted.needReason
+            .map((e) => `  ${e.kind}  ${e.table}.${e.columns.join('+')} (${e.model})\n`)
+            .join('') +
+          '\nNothing was written. Every other entry keeps the reason it already has.\n'
+      );
+      return 2;
+    }
+    const baseline = accepted.baseline;
+
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
 
     const age = snapshotAge(catalog.capturedAt, new Date());
@@ -206,8 +252,15 @@ function main(): number {
         `${relative(PACKAGE_ROOT, baselinePath)}\n` +
         `  enforced: ${baseline.entries.filter((e) => e.tier === 'enforced').length}\n` +
         `  pending : ${baseline.entries.filter((e) => e.tier === 'pending').length}\n` +
+        `  reasons carried over: ${accepted.carried}\n` +
+        `  newly accepted with --reason: ${accepted.accepted.length}` +
+        (accepted.accepted.length > 0 ? ` (ref ${options.ref})` : '') +
+        '\n' +
         `  catalog snapshot captured: ${age.label}\n`
     );
+    for (const e of accepted.accepted) {
+      process.stdout.write(`    + ${e.kind}  ${e.table}.${e.columns.join('+')} (${e.model})\n`);
+    }
     for (const note of age.warnings) process.stdout.write(`  STALE: ${note}\n`);
 
     // The refresh is usually run right after a recapture, which is exactly when a pending
@@ -270,6 +323,16 @@ function main(): number {
     return 2;
   }
 
+  // Every accepted finding must say why it is accepted. Checked AFTER the verdict is printed, so
+  // the workflow still sees the "baseline findings reproduced" line it requires and reports this
+  // as the failure it is rather than as "the gate produced no verdict". Always printed as a
+  // PAIR — problems against entries checked — so a zero is visibly a zero over the whole file.
+  const unreasoned = reasonProblems(baseline);
+  const unreasonedEntries = new Set(unreasoned.map((p) => p.fingerprint)).size;
+  process.stdout.write(
+    `  baseline entries without a valid reason: ${unreasonedEntries} of ${baseline.entries.length}\n`
+  );
+
   const blocked = blocking(result);
   if (blocked.length > 0) {
     process.stderr.write(
@@ -280,12 +343,27 @@ function main(): number {
         'migration\n(`pnpm run db:migrate:empty "..."`) — and because migrations here are ' +
         'applied by hand, also\nget it applied, then recapture the catalog snapshot.\n\n' +
         'If it is a deliberate, accepted gap, record it: run\n' +
-        '  pnpm --filter @civitai/db-schema drift:baseline\n' +
-        'and commit the baseline change with the reason in the PR description. The point of ' +
-        'the\nbaseline is that accepting drift is a reviewable act, not a silent one.\n'
+        '  pnpm --filter @civitai/db-schema drift:baseline --reason "<why>" --ref <#PR>\n' +
+        'and commit the baseline change. The reason is stored on the entry and the gate fails ' +
+        'on an\nentry without one: accepting drift is a reviewable act, not a silent one.\n'
     );
-    return 1;
   }
+
+  // Reported even when the verdict above already blocked, so one run names everything to fix.
+  if (unreasoned.length > 0) {
+    process.stderr.write(
+      `\nBLOCKED: ${unreasonedEntries} baseline entr${
+        unreasonedEntries === 1 ? 'y has' : 'ies have'
+      } no auditable reason.\n` +
+        unreasoned.map((p) => `  ${p.fingerprint}\n      ${p.problem}\n`).join('') +
+        '\nEach accepted finding must say why it is accepted (`reason`) and where that was ' +
+        'decided\n(`ref`: #PR or a migration directory name). Add them to the entries above, or ' +
+        're-accept with\n  pnpm --filter @civitai/db-schema drift:baseline --reason "<why>" ' +
+        '--ref <#PR>\n'
+    );
+  }
+
+  if (blocked.length > 0 || unreasoned.length > 0) return 1;
 
   process.stdout.write('\nOK: no new drift on columns the database already has.\n');
   return 0;

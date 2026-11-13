@@ -20,12 +20,14 @@
   import {
     articleStatusFilters,
     articleStatusBadge,
-    humanizeUnpublishReason,
     articleUrl,
+    canRestoreArticle,
   } from '$lib/articles';
+  import { articleUnpublishReasonLabel } from '$lib/article-unpublish-reasons';
   import { userUrl } from '$lib/entity-url';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import { Alert, AlertDescription, AlertTitle } from '@civitai/ui/components/ui/alert/index.js';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -61,6 +63,18 @@
 
 {#if form?.error}
   <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+{#if form?.kept?.length}
+  <Alert class="mb-4">
+    <AlertTitle>The article was deleted, but a hold kept {form.kept.length} of its images</AlertTitle>
+    <AlertDescription>
+      <ul>
+        {#each form.kept as image (image.id)}
+          <li>Image {image.id}: {image.label}</li>
+        {/each}
+      </ul>
+    </AlertDescription>
+  </Alert>
 {/if}
 
 <div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
@@ -134,10 +148,14 @@
             </a>
 
             <div class="ml-auto flex shrink-0 items-center gap-2">
-              <form method="POST" action="?/restore" use:enhance>
-                <input type="hidden" name="id" value={article.id} />
-                <Button type="submit" size="sm" variant="outline">Restore</Button>
-              </form>
+              {#if canRestoreArticle(article)}
+                <form method="POST" action="?/restore" use:enhance>
+                  <input type="hidden" name="id" value={article.id} />
+                  <Button type="submit" size="sm" variant="outline">Restore</Button>
+                </form>
+              {:else}
+                <span class="text-dark-2 text-xs">Author unpublished; only they can republish</span>
+              {/if}
               <form method="POST" action="?/delete" use:enhance={confirmDelete}>
                 <input type="hidden" name="id" value={article.id} />
                 <Button type="submit" size="sm" variant="destructive">Delete</Button>
@@ -157,11 +175,11 @@
           {/if}
 
           {#if article.status === 'UnpublishedViolation' && article.metadata?.unpublishedReason}
-            <div class="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300">
+            <div class="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-sm text-red-300 wrap-anywhere">
               <span class="font-semibold">Reason:</span>
               {article.metadata.unpublishedReason === 'other'
                 ? (article.metadata.customMessage ?? '—')
-                : humanizeUnpublishReason(article.metadata.unpublishedReason)}
+                : articleUnpublishReasonLabel(article.metadata.unpublishedReason)}
             </div>
           {/if}
 

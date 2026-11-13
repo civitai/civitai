@@ -61,6 +61,8 @@ type ResourceSelectState = Omit<
   setTab: React.Dispatch<React.SetStateAction<Tabs>>;
   filters: ResourceFilter;
   setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
+  turboPinned: boolean;
+  excludeTurbo: boolean;
   sort: ResourceSort;
   setSort: React.Dispatch<React.SetStateAction<ResourceSort>>;
   categoryTag?: string;
@@ -134,6 +136,10 @@ export function ResourceSelectProvider({
   const setFilterTypes = persist ? setStoredTypes : setLocalTypes;
   const [filterBaseModels, setFilterBaseModels] = useState<BaseModel[]>([]);
   const [loadedOnly, setLoadedOnly] = useState(false);
+  const [turboChip, setTurboChip] = useState(false);
+  const turboPinned = !!props.options?.turboOnly;
+  const turboOnly = turboPinned || turboChip;
+  const excludeTurbo = !!props.options?.excludeTurbo;
   // Not persisted: the chip renders only where `showsPricingFilter` allows, but `hidePaid` is sent
   // on every select source — a remembered `true` would filter a picker with no chip to clear it.
   const [hidePaid, setHidePaid] = useState(false);
@@ -144,12 +150,14 @@ export function ResourceSelectProvider({
             types: filterTypes,
             baseModels: filterBaseModels,
             loadedOnly,
+            turboOnly,
             hidePaid,
           })
         : action;
     setFilterTypes(next.types);
     setFilterBaseModels(next.baseModels);
     setLoadedOnly(next.loadedOnly);
+    if (!turboPinned) setTurboChip(next.turboOnly);
     setHidePaid(!!next.hidePaid);
   };
   const [categoryTag, setCategoryTag] = useState<string | undefined>();
@@ -193,8 +201,8 @@ export function ResourceSelectProvider({
   // `types`/`baseModels` are fresh arrays each render; inlining this object re-runs every memo keyed
   // on `filters`.
   const filters = useMemo(
-    () => ({ types, baseModels, loadedOnly, hidePaid }),
-    [types.join(), baseModels.join(), loadedOnly, hidePaid] // eslint-disable-line react-hooks/exhaustive-deps
+    () => ({ types, baseModels, loadedOnly, turboOnly, hidePaid }),
+    [types.join(), baseModels.join(), loadedOnly, turboOnly, hidePaid] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   function handleSelect(value: GenerationResource) {
@@ -235,6 +243,8 @@ export function ResourceSelectProvider({
         setTab,
         filters,
         setFilters,
+        turboPinned,
+        excludeTurbo,
         sort,
         setSort,
         categoryTag,

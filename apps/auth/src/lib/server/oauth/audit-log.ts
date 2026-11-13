@@ -14,7 +14,10 @@ export type OAuthEventType =
   | 'token.issued'
   | 'token.refreshed'
   | 'token.revoked'
-  | 'origin.rejected';
+  | 'origin.rejected'
+  | 'worker.token.issued'
+  | 'invite.sent'
+  | 'invite.used';
 
 interface OAuthAuditEvent {
   type: OAuthEventType;

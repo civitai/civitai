@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { SessionUser } from '@civitai/auth';
+import { parseMeta, type SessionUser } from '@civitai/auth';
 import { getUserBanDetails, type BanDetailsMeta } from './ban';
 
 // Focused parse of the content-preference fields the session exposes off `User.settings`. The main app
@@ -53,6 +53,11 @@ export interface ProducerUserRow {
   filePreferences: unknown;
   settings: unknown;
   meta: unknown;
+  /**
+   * `EXISTS` an approved `AppAccessRequest` for this user (the producer's query). Kysely types an
+   * `EXISTS` as `SqlBool` (`boolean | 0 | 1`); node-postgres returns a boolean.
+   */
+  appBuilderApproved?: boolean | 0 | 1 | null;
   profilePicture: { url: string } | null;
   referral: { id: number } | null;
 }
@@ -132,9 +137,17 @@ export function shapeSessionUser({
   const isEarlyAdopter: boolean | undefined =
     settings.isEarlyAdopter != null ? settings.isEarlyAdopter : undefined;
 
+  // App-builder grant, from the producer's EXISTS over `AppAccessRequest` — a column of the
+  // query, not of `settings`, so a settings blob carrying the same key is ignored. Sparse like
+  // `isEarlyAdopter`: only an approved user's payload changes.
+  const appBuilderApproved: true | undefined = row.appBuilderApproved ? true : undefined;
+
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
-  // is effectively undefined; reproduced exactly).
-  const fullMeta = asObject(row.meta) as { banDetails?: BanDetailsMeta } & Record<string, unknown>;
+  // is effectively undefined; reproduced here). parseMeta keeps the system-account marker on string meta.
+  const fullMeta = asObject(parseMeta(row.meta)) as { banDetails?: BanDetailsMeta } & Record<
+    string,
+    unknown
+  >;
   const { banDetails: _strippedBanDetails, ...userMeta } = fullMeta;
   const banDetails = getUserBanDetails({ meta: userMeta as { banDetails?: BanDetailsMeta } });
 
@@ -167,6 +180,7 @@ export function shapeSessionUser({
     memberInBadState,
     allowAds,
     isEarlyAdopter,
+    appBuilderApproved,
     tier: highestTier,
     meta: userMeta,
     banDetails: banDetails as Record<string, unknown> | undefined,

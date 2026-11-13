@@ -1,6 +1,15 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import {
+  admitFeedCall,
+  feedDegradeEnabled,
+  feedTimeoutWidened,
+  lastGoodKey,
+  readLastGood,
+  recordFeedCall,
+  writeLastGood,
+} from '~/server/services/feed-primary-degrade';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
 import {
   CURSOR_UNPARSED,
@@ -11,13 +20,38 @@ import {
   type FeedAnswer,
 } from '~/server/services/feed-shadow.service';
 
-export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
+// Over 7 days (2026-11) the feed service's own query time was over 2.5s for 0.09% of queries and
+// over 5s for 0.04%. That is server time, a lower bound on what this caller waits: network and
+// queueing are not in it. At the old 5s budget the caller timed out on 0.035% of requests, about
+// the server's own 0.04%, so that gap was small at the tail. A failing call holds a heavy-route
+// slot for the whole budget, so 2.5s frees it twice as fast for at least ~0.05% more slow pages
+// turned away. `feed-service-timeout-widen` (Flipt, default off) puts the budget back to 5s.
+export const FEED_PRIMARY_TIMEOUT_MS = 2_500;
+export const FEED_PRIMARY_WIDE_TIMEOUT_MS = 5_000;
+const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
-  help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
-  labelNames: ['outcome', 'reason'] as const,
+  help: 'Image-feed page requests on the feed service, by outcome',
+  labelNames: ['outcome', 'reason', 'route'] as const,
 });
+
+// Named when this answer replaced a Meilisearch fallback behind a flag; the name is kept so the
+// dashboards reading it keep their history.
+const unservedAnswerCounter = registerCounterWithLabels({
+  name: 'feed_primary_meili_off_total',
+  help: 'Image-feed requests the feed service did not serve, by the answer they got instead',
+  labelNames: ['answer', 'reason', 'route'] as const,
+});
+/** `answer`: empty (an empty page), unavailable (a retryable 503) or refused (a 400). */
+export const countUnservedAnswer = (
+  answer: 'empty' | 'unavailable' | 'refused',
+  reason: string,
+  route: FeedPrimaryRoute
+) => unservedAnswerCounter.inc({ answer, reason: reasonLabel(reason), route });
+
+/** Which caller asked: the site's image feed or the public REST images endpoint. */
+export type FeedPrimaryRoute = 'website' | 'rest';
 
 // These three mapping reasons carry request text; the rest are a fixed set.
 const UNBOUNDED_REASONS = ['sort', 'period', 'types'];
@@ -25,10 +59,25 @@ export function reasonLabel(reason: string) {
   const head = reason.split(':')[0] as string;
   return UNBOUNDED_REASONS.includes(head) ? head : reason;
 }
-const count = (outcome: string, reason = '') =>
-  requestCounter.inc({ outcome, reason: reasonLabel(reason) });
+export const countFeedPrimary = (
+  outcome: string,
+  reason = '',
+  route: FeedPrimaryRoute = 'website'
+) => requestCounter.inc({ outcome, reason: reasonLabel(reason), route });
 
 const UNMAPPED_LOG_INTERVAL_MS = 60_000;
+// A 400 is a request the mapper thought the feed could take and the feed refused: a limit the
+// two disagree on. One a minute with the feed's own reason is enough to find which.
+let refusedLoggedAt = 0;
+function logRefused(query: string, error: string | undefined, route: FeedPrimaryRoute | undefined) {
+  const now = Date.now();
+  if (now - refusedLoggedAt < UNMAPPED_LOG_INTERVAL_MS) return;
+  refusedLoggedAt = now;
+  logToAxiom(
+    { type: 'warning', name: 'feed-primary-refused', route, error, query: query.slice(0, 2000) },
+    'civitai-prod'
+  );
+}
 const unmappedLoggedAt = new Map<string, number>();
 function logUnmapped(reason: string, input: CapturableSearchInput) {
   const now = Date.now();
@@ -64,20 +113,44 @@ export type FeedPrimaryPage<T> = {
   nextCursor: string | undefined;
   feedMs: number;
   route?: string;
+  /** The feed failed and this is the pod's last good copy of the page (feed-primary-degrade). */
+  stale?: true;
 };
 export type FeedPrimaryResult<T> =
   | { ok: true; page: FeedPrimaryPage<T> }
-  | { ok: false; reason: string };
+  /** `nextCursor` is set on `hydrate:empty`: the feed's continuation past the emptied page. */
+  | { ok: false; reason: string; nextCursor?: string };
 
 export type FeedPrimaryDeps<T extends { id: number }> = {
   fetchFeed: (query: string, timeoutMs: number) => Promise<FeedAnswer>;
   /** Loads the page's records in any order; the feed's order is restored here. */
   hydrate: (ids: number[]) => Promise<T[]>;
   timeoutMs?: number;
+  route?: FeedPrimaryRoute;
 };
 
-/** The image query for hydrating exactly `ids`: the request's filters without its paging or
- *  period, both already applied by the feed (getAllImages would cut the period on createdAt). */
+export type DatapacketRescue = 'rescued' | 'still-empty';
+
+/**
+ * Loads the feed's ids. A DataPacket read that finds none of them is retried once on the read
+ * replica: DataPacket answers no rows for images the primary has (on 22 Oct 08:30 UTC, 21 of the
+ * 23 ids in a burst of empty gallery pages were on the read replica, published and scanned), and
+ * the search index fallback would hydrate from DataPacket again. Only an empty page pays for it.
+ */
+export async function hydrateWithReadRescue<T, Q extends { dbTarget?: string }>(
+  query: Q,
+  load: (query: Q) => Promise<T[]>,
+  onRescue?: (outcome: DatapacketRescue) => void
+): Promise<T[]> {
+  const rows = await load(query);
+  if (rows.length || query.dbTarget !== 'datapacket') return rows;
+  const rescued = await load({ ...query, dbTarget: 'read' });
+  onRescue?.(rescued.length ? 'rescued' : 'still-empty');
+  return rescued;
+}
+
+/** The image query for hydrating exactly `ids`: the request's filters without its paging,
+ *  period or jump, all applied by the feed (getAllImages would cut the period on createdAt). */
 export function feedHydrateQuery<
   T extends {
     cursor?: unknown;
@@ -86,16 +159,32 @@ export function feedHydrateQuery<
     entry?: number;
     limit?: number;
     period?: unknown;
+    jumpTo?: string;
     modelId?: number;
     modelVersionId?: number;
+    hubId?: number;
+    hubExcludedSources?: unknown;
   }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'modelId' | 'modelVersionId'> & {
+): Omit<
+  T,
+  | 'cursor'
+  | 'skip'
+  | 'offset'
+  | 'entry'
+  | 'period'
+  | 'jumpTo'
+  | 'modelId'
+  | 'modelVersionId'
+  | 'hubId'
+  | 'hubExcludedSources'
+> & {
   ids: number[];
   limit: number;
   period: 'AllTime';
+  throwOnStatementTimeout: true;
 } {
   const {
     cursor: _cursor,
@@ -103,67 +192,117 @@ export function feedHydrateQuery<
     offset: _offset,
     entry: _entry,
     period: _period,
+    // The feed bounds the month on sortAt; the hydrate's createdAt bound would drop an image
+    // created before the month and published inside it.
+    jumpTo: _jumpTo,
     // The feed already scoped these, and counts a creator's post on a version as a member where
     // the hydrate's resource join would drop it.
     modelId: _modelId,
     modelVersionId: _modelVersionId,
+    // The feed already applied the hub, and the database path refuses a hub outright.
+    hubId: _hubId,
+    hubExcludedSources: _hubExcludedSources,
     ...rest
   } = input;
-  return { ...rest, ids, limit: ids.length, period: 'AllTime' };
-}
-
-/** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built
- *  from what the search input carries, so segments on userId/isModerator can match. */
-export function feedFliptContext(input: {
-  currentUserId?: number;
-  isModerator?: boolean;
-}): Record<string, string> {
-  if (!input.currentUserId) return { isLoggedIn: 'false' };
-  return {
-    userId: String(input.currentUserId),
-    isModerator: String(!!input.isModerator),
-    isLoggedIn: 'true',
-  };
+  // getAllImages would answer a statement timeout with an empty page, which here would read as
+  // a page the hydrate filtered out; as an error it is a hydrate:error instead.
+  return { ...rest, ids, limit: ids.length, period: 'AllTime', throwOnStatementTimeout: true };
 }
 
 export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
+  const count = (outcome: string, reason = '') => countFeedPrimary(outcome, reason, deps.route);
   // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set,
-  // and an unpopulated new-creator board serves nothing rather than the global feed.
+  // an unpopulated new-creator board serves nothing rather than the global feed, and so does a
+  // hub that resolves to nothing for this viewer.
   if (
     (input.followed === true && input.followedUserIds?.length === 0) ||
-    (input.newCreators === true && input.newCreatorUserIds?.length === 0)
+    (input.newCreators === true && input.newCreatorUserIds?.length === 0) ||
+    (!!input.hubId && input.hubSources === null)
   ) {
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
   }
-  const mapping = mapSearchInputToFeedQuery(input, 'primary');
+  const mapping = mapSearchInputToFeedQuery(input, 'primary', deps.route);
+  // An inclusion list of only impossible ids (prod sends `tags: [0]`) matches nothing on the
+  // search index either.
+  if (!mapping.ok && (mapping.reason === 'tags:none' || mapping.reason === 'ids:none')) {
+    count('served');
+    return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
+  }
   if (!mapping.ok) {
     const rejected = mapping.reason === DEEP_OFFSET || mapping.reason === CURSOR_UNPARSED;
     count(rejected ? 'rejected' : 'unmapped', mapping.reason);
     if (mapping.reason !== DEEP_OFFSET) logUnmapped(reasonLabel(mapping.reason), input);
     return { ok: false, reason: mapping.reason };
   }
+  // Behind feed-service-degrade: a circuit breaker on the call, and an anonymous first page the
+  // feed fails to answer is served from the last good copy (see feed-primary-degrade).
+  const degrade = feedDegradeEnabled();
+  const lastGoodRoute = deps.route ?? 'website';
+  const cacheKey = degrade ? lastGoodKey(input, mapping.query) : undefined;
+  let stale = false;
   let answer: FeedAnswer;
-  try {
-    answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
-  } catch (e) {
-    const name = (e as Error)?.name;
-    const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
-    count(reason, reason === 'error' ? 'fetch' : '');
-    return { ok: false, reason };
+  const admission = degrade ? admitFeedCall() : undefined;
+  // feed_primary_requests_total counts what the feed did (served, timeout, error, breaker, ...);
+  // a stale page served in its place is counted in feed_primary_last_good_total instead.
+  if (admission && !admission.admitted) {
+    count('breaker');
+    const cached = readLastGood(lastGoodRoute, cacheKey, 'breaker');
+    if (!cached) return { ok: false, reason: 'breaker' };
+    answer = cached;
+    stale = true;
+  } else {
+    let failure: string | undefined;
+    try {
+      const timeoutMs =
+        deps.timeoutMs ??
+        (feedTimeoutWidened() ? FEED_PRIMARY_WIDE_TIMEOUT_MS : FEED_PRIMARY_TIMEOUT_MS);
+      answer = await deps.fetchFeed(mapping.query, timeoutMs);
+      if (answer.status >= 500) failure = `status:${answer.status}`;
+    } catch (e) {
+      const name = (e as Error)?.name;
+      const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
+      failure = reason;
+      answer = { status: 0, ms: 0, ids: [] };
+    }
+    if (admission) recordFeedCall(admission, failure !== undefined);
+    // Counted whether or not a stale page then answers, so the timeout and error rates stay the
+    // feed's own (they are what the timeout off-switch is decided on).
+    if (failure === 'timeout') count('timeout');
+    else if (failure === 'error') count('error', 'fetch');
+    else if (failure) count('error', failure);
+    const cached =
+      failure && degrade ? readLastGood(lastGoodRoute, cacheKey, reasonLabel(failure)) : undefined;
+    if (cached) {
+      answer = cached;
+      stale = true;
+    } else if (failure) {
+      return { ok: false, reason: failure };
+    } else if (cacheKey && answer.status === 200) {
+      writeLastGood(lastGoodRoute, cacheKey, answer);
+    }
   }
   if (answer.status !== 200) {
-    count('error', `status:${answer.status}`);
+    if (answer.status < 500) count('error', `status:${answer.status}`);
+    if (answer.status === 400) logRefused(mapping.query, answer.error, deps.route);
     return { ok: false, reason: `status:${answer.status}` };
   }
-  const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
-  if (!answer.ids.length) {
-    count('served');
-    return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
+  // A feed build without the any-of sources ignores them and answers with the open feed. Only
+  // a plan that took the union, or the feed's own empty page, is the hub.
+  if (input.hubId && !HUB_ROUTES.has(answer.route ?? '')) {
+    count('error', 'hub:route');
+    return { ok: false, reason: 'hub:route' };
   }
+  const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
+  const served = (data: T[]): FeedPrimaryResult<T> => {
+    if (!stale) count('served');
+    const page: FeedPrimaryPage<T> = { data, nextCursor, feedMs: answer.ms, route: answer.route };
+    return { ok: true, page: stale ? { ...page, stale: true } : page };
+  };
+  if (!answer.ids.length) return served([]);
   let rows: T[];
   const endHydrate = hydrateDuration.startTimer();
   try {
@@ -174,19 +313,18 @@ export async function serveFromFeed<T extends { id: number }>(
   } finally {
     endHydrate();
   }
-  // getAllImages answers its own statement timeout with an empty page; ids that hydrate to
-  // nothing are that, not the end of the feed.
+  // Every id was filtered out by the hydrate's own checks (its statement timeout is thrown, see
+  // feedHydrateQuery). That is not the end of the feed, so the feed's cursor travels with it.
   if (!rows.length) {
     count('error', 'hydrate:empty');
-    return { ok: false, reason: 'hydrate:empty' };
+    return { ok: false, reason: 'hydrate:empty', nextCursor };
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const data = answer.ids.flatMap((id) => {
     const row = byId.get(id);
     return row ? [row] : [];
   });
-  count('served');
-  return { ok: true, page: { data, nextCursor, feedMs: answer.ms, route: answer.route } };
+  return served(data);
 }
 
 export function feedPrimaryAvailable() {

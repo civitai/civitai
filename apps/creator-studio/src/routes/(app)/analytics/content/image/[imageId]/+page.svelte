@@ -10,6 +10,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
+  import CollectorsPanel from '$lib/components/CollectorsPanel.svelte';
   import ReactorsPanel from '$lib/components/ReactorsPanel.svelte';
   import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
@@ -254,7 +255,19 @@
   {/each}
 </div>
 
-<ReactorsPanel
-  endpoint="/analytics/content/image/{image.imageId}/reactors"
-  noun={image.type === 'video' ? 'video' : 'image'}
-/>
+{#if image.audienceHidden}
+  <p class="cs-panel mt-4 p-4 text-sm text-dark-2">
+    Who reacted and who collected aren't shown for a removed {image.type === 'video'
+      ? 'video'
+      : 'image'}.
+  </p>
+{:else}
+  <ReactorsPanel
+    endpoint="/analytics/content/image/{image.imageId}/reactors"
+    noun={image.type === 'video' ? 'video' : 'image'}
+  />
+  <CollectorsPanel
+    endpoint="/analytics/content/image/{image.imageId}/collectors"
+    noun={image.type === 'video' ? 'video' : 'image'}
+  />
+{/if}

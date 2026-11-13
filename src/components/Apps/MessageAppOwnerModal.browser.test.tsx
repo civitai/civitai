@@ -12,7 +12,7 @@ import {
 
 /**
  * The moderator → app-developer message composer (`appListings.messageAppOwner`, which
- * shipped with no UI at all). Browser-mode (report-only in Tekton): the two-field gate,
+ * shipped with no UI at all). Browser-mode (`Component tests` in CI): the two-field gate,
  * the collaborator opt-in, the exact mutation payload, and the failure posture.
  *
  * The gate RULE is pinned in the blocking node project by
@@ -135,13 +135,17 @@ describe('MessageAppOwnerModal — the two-field gate', () => {
     render();
     await expect
       .element(
-        page.getByText(`0/${MOD_MESSAGE_BODY_MIN} characters minimum (max ${MOD_MESSAGE_BODY_MAX})`)
+        page.getByText(`${MOD_MESSAGE_BODY_MIN}+ characters · 0/${MOD_MESSAGE_BODY_MAX} max`, {
+          exact: true,
+        })
       )
       .toBeInTheDocument();
     await page.getByTestId('apps-mod-message-body').fill('ab');
     await expect
       .element(
-        page.getByText(`2/${MOD_MESSAGE_BODY_MIN} characters minimum (max ${MOD_MESSAGE_BODY_MAX})`)
+        page.getByText(`${MOD_MESSAGE_BODY_MIN}+ characters · 2/${MOD_MESSAGE_BODY_MAX} max`, {
+          exact: true,
+        })
       )
       .toBeInTheDocument();
   });

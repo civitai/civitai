@@ -1,3 +1,4 @@
+import { outwardTrafficAllowed } from '~/env/local-origin';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -170,7 +171,11 @@ export async function sweepUncountedPlacements({
   // is two and a half hours, and an incident kill-switch left on for an
   // afternoon would have taken the entire queue past its ceiling and made it
   // permanently invisible. Nothing is claimed unless an emit could land.
-  if (!env.CLICKHOUSE_TRACKER_URL || (await isFlipt('disable-app-entity-metrics')))
+  if (
+    !env.CLICKHOUSE_TRACKER_URL ||
+    !outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED) ||
+    (await isFlipt('disable-app-entity-metrics'))
+  )
     return { ...idle, skipped: true };
 
   const staleBefore = new Date(Date.now() - CLAIM_RETRY_MS);

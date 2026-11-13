@@ -102,6 +102,9 @@ describe('the instrument itself', () => {
       'FeedbackAttachments.svelte',
       'FeedbackContextPanel.svelte',
       'FeedbackBrowserErrors.svelte',
+      'FeedbackPlatformContext.svelte',
+      'FeedbackPlatformResolution.svelte',
+      'FeedbackErrorReport.svelte',
       '+page.svelte',
     ]) {
       expect(source(file).length).toBeGreaterThan(500);
@@ -219,7 +222,7 @@ describe('typed text outlives the reload every write issues', () => {
   it('renders every section unconditionally', () => {
     const detail = source('FeedbackDetail.svelte');
     expect(detail).not.toContain('activeTab');
-    expect(detail).toContain('<FeedbackAttachments {context} />');
+    expect(detail).toContain('<FeedbackAttachments {context} {captureView} />');
     expect(detail).toContain('<FeedbackContextPanel');
     expect(detail).toContain('<FeedbackPromote');
   });
@@ -892,7 +895,11 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
     // An explicit list, deliberately NOT `readdirSync(feedbackDir)` the way the open-param scan
     // does it: `+page.svelte` and `FeedbackDetail.svelte` legitimately carry `href=`, so a
     // directory scan would turn this into noise. Add a file here when the markup moves.
-    const REQUEST_FREE_FILES = ['FeedbackContextPanel.svelte', 'FeedbackBrowserErrors.svelte'];
+    const REQUEST_FREE_FILES = [
+      'FeedbackContextPanel.svelte',
+      'FeedbackBrowserErrors.svelte',
+      'FeedbackErrorReport.svelte',
+    ];
     const combined = REQUEST_FREE_FILES.map(source).join('\n');
 
     // Positive control, PER FILE: the scan CAN match and every file in the list is really read. A
@@ -906,6 +913,7 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
     expect(count(combined, 'href=')).toBe(2);
     expect(count(combined, 'src=')).toBe(0);
     expect(count(combined, 'EdgeImage')).toBe(0);
+    expect(count(combined, '{@html')).toBe(0);
 
     // 🔴 THE STRIPPER, WITNESSED ON THIS FILE. `EdgeImage` is named once in the panel's own 🔴
     // comment explaining why it must not come back. If the raw count ever equals the stripped one,
@@ -988,5 +996,58 @@ describe('round-1 defects that a simplify would reintroduce', () => {
    */
   it('controls the lightbox dialog with a function binding', () => {
     expect(componentSource('Lightbox.svelte')).toContain('bind:open={() =>');
+  });
+});
+
+describe('the apps-platform panel', () => {
+  const PLATFORM_FILES = ['FeedbackPlatformContext.svelte', 'FeedbackPlatformResolution.svelte'];
+
+  /**
+   * 🔴 EVERY STRING IN THE PLATFORM CONTEXT WAS WRITTEN BY THE REPORTING PROGRAM — the report fields,
+   * the error excerpt, the samples — so the panel interpolates them as text. `{@html` anywhere in
+   * these files is how one of them becomes markup in a moderator's browser.
+   */
+  it('renders nothing as HTML', () => {
+    for (const file of PLATFORM_FILES) expect(source(file), file).not.toContain('{@html');
+    // Positive control: the stripped source still carries the interpolations the claim is about.
+    expect(source('FeedbackPlatformContext.svelte')).toContain('{entry.text}');
+    expect(source('FeedbackPlatformContext.svelte')).toContain('{sample.text}');
+  });
+
+  /**
+   * 🔴 THE LEDGER OF EVERY LINK, BY ITS EXPRESSION. Two point at our own report pages by a
+   * server-written integer id, and the third is a docs URL that `splitPlatformContext` only returns
+   * as `doc.href` after checking its origin. A fourth — a reporter-supplied URL rendered as a link —
+   * fails here whatever it is named. No `src=` at all: an image URL would be a read receipt.
+   */
+  it('links only to our own report pages and a docs URL the parser vetted', () => {
+    const panel = source('FeedbackPlatformContext.svelte');
+    expect(panel.match(/href=\{[^}]*\}/g)?.sort()).toEqual([
+      'href={context.doc.href}',
+      'href={feedbackReportHref(context.regressionOf)}',
+      'href={feedbackReportHref(context.reopenOf)}',
+    ]);
+    expect(count(panel, 'href=')).toBe(3);
+    for (const file of PLATFORM_FILES) {
+      expect(count(source(file), 'src='), file).toBe(0);
+      expect(count(source(file), 'EdgeImage'), file).toBe(0);
+    }
+    expect(count(source('FeedbackPlatformResolution.svelte'), 'href=')).toBe(0);
+  });
+
+  /**
+   * 🔴 PROMOTE-TO-ISSUE IS NEVER SEEDED FROM THE REPORTER'S TEXT, ON THIS AREA LIKE EVERY OTHER. A
+   * Bug is a public-board record; an agent's message and error excerpt are untrusted text. The draft
+   * starts blank from a factory that takes no row, and the form reads nothing of the report.
+   */
+  it('starts the promote draft blank and never reads the report into it', () => {
+    expect(source('FeedbackDetail.svelte')).toContain(
+      'let promoteDraft = $state(makeFeedbackPromoteDraft());'
+    );
+    const promote = source('FeedbackPromote.svelte');
+    // Positive control: the scan reads the row there.
+    expect(promote).toContain('row.bugId');
+    for (const needle of ['row.message', 'row.context', 'platform', 'splitPlatformContext'])
+      expect(promote, needle).not.toContain(needle);
   });
 });

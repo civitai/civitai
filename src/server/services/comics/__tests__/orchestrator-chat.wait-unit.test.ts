@@ -23,13 +23,12 @@ import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
  *
  * Derived, not arbitrary: HALF the measured undici headers timeout.
  *
- * `submitWorkflow` only bounds an attempt with an `AbortSignal.timeout` on the
- * whatIf path, so a real submit has no client-side abort — the practical
- * ceiling is undici's default headers timeout, measured at 300.7s against a
- * server that accepts and never responds. A `wait` at or above that never gets
- * to return its graceful 202: the fetch throws first, and
- * `submitWorkflowWithRetry` re-submits (it retries on ANY throw — it is not
- * gated on an error allow-list). Since these bodies carry no `externalId` the
+ * `submitWorkflow` bounds every real submit, but raises an attempt's budget to
+ * cover the requested `wait` plus a margin, so its own abort never undercuts a
+ * wait. The practical ceiling is still undici's default headers timeout,
+ * measured at 300.7s against a server that accepts and never responds. A `wait`
+ * at or above that never gets to return its graceful 202: the fetch throws
+ * first, and `submitWorkflowWithRetry` re-submits a network error. Since these bodies carry no `externalId` the
  * orchestrator cannot dedupe, so exceeding the timeout converts one billable
  * job into up to three.
  *
@@ -137,7 +136,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
   /**
    * Any `wait` property, wherever it appears — plus the ES-shorthand `{ wait }`
    * forward, captured as the sentinel token `wait` so it lands in the runtime
-   * bucket rather than vanishing.
+   * bucket rather than vanishing. A template's `${wait}` is not one.
    *
    * The key may be QUOTED. That is not hypothetical tidiness: with an
    * unquoted-only key pattern, a planted `{ "wait": 60000 }` passed all 8 tests
@@ -155,7 +154,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
    * `CandidateImageModal.tsx` reported as a wait site with the value
    * `'pointer'`.
    */
-  const WAIT_SITE = /(?:[{,]|^)\s*["']?\bwait["']?\s*:\s*([^,}\n]+)|\{\s*(wait)\s*\}/gm;
+  const WAIT_SITE = /(?:[{,]|^)\s*["']?\bwait["']?\s*:\s*([^,}\n]+)|(?<!\$)\{\s*(wait)\s*\}/gm;
 
   type Kind = 'literal' | 'identifier' | 'expression';
   const classify = (value: string): Kind => {
@@ -206,9 +205,11 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
    * HTTP param on one of our own endpoints — it is not an outbound orchestrator
    * wait. Excluded so the ledger tracks values we SEND. (The one such endpoint
    * that does forward to the orchestrator, `xguard-test.ts`, is still tracked
-   * via its actual forward, `wait: input.wait`.)
+   * via its actual forward, `wait: input.wait`.) A type keyword (`wait: number`)
+   * is an annotation, not a value.
    */
-  const isSchemaDecl = (token: string) => /^z(\.|$)/.test(token) || /Schema/.test(token);
+  const isSchemaDecl = (token: string) =>
+    /^z(\.|$)/.test(token) || /Schema/.test(token) || /^(number|string|boolean)$/.test(token);
 
   const sites = walk(SRC).flatMap((file) => {
     const raw = fs.readFileSync(file, 'utf8');
@@ -329,9 +330,13 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
       new Set([
         'server/services/blocks/steps/text-output-moderation.ts:SCAN_WAIT_SECONDS',
         'server/services/comics/orchestrator-chat.ts:CHAT_COMPLETION_WAIT_SECONDS',
+        'server/services/model-sfw-face.service.ts:DRAFT_WAIT_SECONDS',
         'server/services/orchestrator/orchestrator.service.ts:PERCEPTUAL_HASH_WAIT_SECONDS',
         'server/services/product-badge.service.ts:30',
+        'server/services/text-scan/harness.ts:SUGGEST_ALIASES_WAIT_SECONDS',
+        'server/services/training-studio-auto-label.service.ts:0',
         'server/services/training.service.ts:0',
+        'server/services/upload-prompt-scan.service.ts:SCAN_WAIT_SECONDS',
       ])
     );
   });
@@ -350,6 +355,9 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
         'server/services/training.service.ts:true',
         'pages/api/testing/xguard-test.ts:input.wait',
         'pages/api/testing/chat-completion-scan.ts:input.wait',
+        'server/services/text-scan/harness.ts:input.wait',
+        // Its one caller, the .com face check, passes SFW_FACE_CHECK_WAIT_SECONDS (10s).
+        'server/services/text-scan/preview.ts:waitSeconds',
       ])
     );
   });

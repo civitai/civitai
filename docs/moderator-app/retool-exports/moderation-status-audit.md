@@ -99,7 +99,7 @@ that was the point of the board:
 
 - `ReviewGrouped` — **PRESENT**. Its seven buckets (`poi`, `reported`, `csam`, `minor`, `tag`,
   `newUser`, `appeal`) are split across `getImageReviewCounts` + `appeals` + `reported`, and all three
-  UNION arms match.
+  UNION arms matched until 2026-10-15. The `reported` arm was then dropped: its badge is now `report:image`, which counts Pending non-Automated reports rather than distinct images with a Pending report, so that one bucket no longer matches Retool's.
 - `ErrorRatingQueue` — **PRESENT**, identical window and predicates.
 - `TagQueue` — **was DIVERGENT, fixed.** The count dropped Retool's `JOIN "Image" … nsfwLevel < 32`
   while the queue page kept it, so blocked images inflated a badge that could never reach zero.

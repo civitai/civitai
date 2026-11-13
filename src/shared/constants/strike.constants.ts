@@ -10,3 +10,9 @@
  */
 export const MUTE_POINTS = 2;
 export const REVIEW_MUTE_POINTS = 3;
+
+/** A scam case's strike: the review tier at once, and no expiry. */
+export const SCAM_STRIKE_POINTS = REVIEW_MUTE_POINTS;
+// `UserStrike.expiresAt` is NOT NULL and every active-strike query filters on it, so "never" is a
+// far date.
+export const SCAM_STRIKE_EXPIRES_IN_DAYS = 100 * 365;

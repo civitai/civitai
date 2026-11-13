@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  emitFeedNoImagesDrop,
-  FEED_DROP_DEFAULT_SAMPLE_RATE,
-  FEED_NOIMAGES_DROP_EVENT,
-} from '~/utils/faro/feedDrop';
+import { emitFeedNoImagesDrop, FEED_NOIMAGES_DROP_EVENT } from '~/utils/faro/feedDrop';
 
 /**
  * Unit tests for the silent browsing-level feed-drop telemetry (`emitFeedNoImagesDrop`).
@@ -94,9 +90,5 @@ describe('emitFeedNoImagesDrop', () => {
         { pushEvent, sampleRate: 1 }
       )
     ).not.toThrow();
-  });
-
-  it('exposes a default sample rate matching the resource_timing precedent', () => {
-    expect(FEED_DROP_DEFAULT_SAMPLE_RATE).toBe(0.05);
   });
 });

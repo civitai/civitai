@@ -79,6 +79,8 @@ describe('cancelSubscription({ removeRecord })', () => {
     await cancelSubscription({ userId: USER_ID });
 
     expect(del).toHaveBeenCalledTimes(1);
+    // stripe-node rejects an empty options object ("Stripe: Unknown arguments") before sending.
+    expect(del.mock.calls[0][2]).not.toEqual({});
     expect(row.deleteMany).not.toHaveBeenCalled();
   });
 });

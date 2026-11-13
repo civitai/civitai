@@ -15,6 +15,7 @@ const { envBox } = vi.hoisted(() => ({
     LOGGING: '',
     MEILI_CALL_CONCURRENCY: 50,
     SIGNALS_CALL_CONCURRENCY: 30,
+    SIGNALS_TOKEN_CALL_CONCURRENCY: 30,
     S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
     S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
   } as Record<string, unknown>,
@@ -65,6 +66,7 @@ vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
 import { bustMvCache } from '~/server/services/model-version.service';
 import { bustModelSaleCache, bustPaidAccessCache } from '~/server/services/paid-access.service';
 import { modelsSearchIndex } from '~/server/search-index';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -83,6 +85,16 @@ describe('bustMvCache', () => {
     // Once each. A consolidation that folds a second bust in at a caller is otherwise invisible here.
     expect(bustModelSaleCache).toHaveBeenCalledTimes(1);
     expect(bustPaidAccessCache).toHaveBeenCalledTimes(1);
+  });
+
+  // A caller that paces the orchestrator itself (the deleted-versions backfill) must not bust it twice.
+  it('skips only the orchestrator bust when told to', async () => {
+    await bustMvCache([11], undefined, undefined, { orchestrator: false });
+    expect(bustOrchestratorModelCache).not.toHaveBeenCalled();
+    expect(bustPaidAccessCache).toHaveBeenCalledWith('ModelVersion', [11]);
+
+    await bustMvCache([11]);
+    expect(bustOrchestratorModelCache).toHaveBeenCalledWith([11], undefined);
   });
 
   it('busts them for a single id passed unwrapped', async () => {

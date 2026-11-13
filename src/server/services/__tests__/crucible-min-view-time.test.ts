@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
 
@@ -16,6 +17,14 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   crucibleEloRedis: {
     getVoteCount: vi.fn().mockResolvedValue(0),
     incrementVoteCount: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+// The vote's ClickHouse event, sent fire-and-forget after the vote is recorded.
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  Tracker: class {
+    crucibleVote = vi.fn();
   },
 }));
 
@@ -43,7 +52,7 @@ beforeEach(() => {
     userId: where.id === 10 ? 101 : 102,
   }));
   processVote.mockResolvedValue({ winnerElo: 1532, loserElo: 1468 });
-  redisMock.sysRedis.sRem.mockResolvedValue(1);
+  redisMock.sysRedis.eval.mockResolvedValue(1);
 });
 
 describe('submitVote — minimum view time', () => {
@@ -83,7 +92,8 @@ describe('submitVote — minimum view time', () => {
 
     const { sysRedis } = await import('~/server/redis/client');
     expect(sysRedis.sAdd).not.toHaveBeenCalled();
-    expect(sysRedis.sRem).not.toHaveBeenCalled();
+    expect(sysRedis.eval).not.toHaveBeenCalled();
+    expect(sysRedis.hIncrBy).not.toHaveBeenCalled();
   });
 });
 

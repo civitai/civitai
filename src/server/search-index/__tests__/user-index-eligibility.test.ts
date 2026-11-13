@@ -54,7 +54,7 @@ const { buildUsersIndexWhere, prepareUsersBatches, pullUsersData } = await impor
 const { CLEANUP_INDEXES } = await import('~/server/meilisearch/cleanup');
 const { Prisma } = await import('@prisma/client');
 
-const ELIGIBILITY = 'u.id != -1 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
+const ELIGIBILITY = 'u.id != -1 AND u.id != -2 AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL';
 
 /** Drives the real query builders and hands back EVERY statement they issued, in order. */
 async function captureQueries(
@@ -163,5 +163,29 @@ describe('user search index eligibility', () => {
       expect(modelsSql).toContain('m.status =');
       expect(modelsSql).not.toContain('bannedAt');
     });
+  });
+});
+
+describe('the accounts the predicate admits, run in Postgres', () => {
+  it('leaves out the system accounts, deleted and banned accounts, and keeps an ordinary one', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const { FEEDBACK_CAPTURE_OWNER_ID } = await import('@civitai/shared/feedback-capture');
+    const db = new PGlite();
+    try {
+      await db.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, "deletedAt" timestamp, "bannedAt" timestamp);
+        INSERT INTO "User" VALUES
+          (-1, NULL, NULL), (${FEEDBACK_CAPTURE_OWNER_ID}, NULL, NULL), (5, NULL, NULL),
+          (6, now(), NULL), (7, NULL, now());
+      `);
+      const where = userSearchIndexEligibilitySql();
+      const { rows } = await db.query<{ id: number }>(
+        `SELECT u.id FROM "User" u WHERE ${where.sql} ORDER BY u.id`,
+        where.values
+      );
+      expect(rows.map((r) => r.id)).toEqual([5]);
+    } finally {
+      await db.close();
+    }
   });
 });

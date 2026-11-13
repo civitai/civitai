@@ -54,6 +54,7 @@ export function earlyAccessQuantityForScore(creatorScore: number): number {
 // and the main app enforces the allowance server-side.
 export {
   monthlyPricingAllowance,
+  pricingAllowanceLimits,
   pricingEligibility,
   tierAllowanceRows,
   shouldUpsellAllowance,
@@ -97,11 +98,7 @@ export const CREATOR_USAGE_CONTROLS = [
 
 export type CreatorUsageControl = (typeof CREATOR_USAGE_CONTROLS)[number]['value'];
 
-// Split so the linked form (GenerationOnlyHint.svelte) renders the same words: the joined constant is
-// also a 403 body and a `title` attribute, neither of which can carry an anchor.
-export const GENERATION_ONLY_HINT_LEAD = 'On-site-generation-only resources require a';
-export const GENERATION_ONLY_HINT_LINK = 'Gold membership';
-export const GENERATION_ONLY_HINT = `${GENERATION_ONLY_HINT_LEAD} ${GENERATION_ONLY_HINT_LINK}.`;
+export const GENERATION_ONLY_HINT = 'Sign in to make a resource generation-only.';
 
 export const isCreatorUsageControl = (v: unknown): v is CreatorUsageControl =>
   CREATOR_USAGE_CONTROLS.some((o) => o.value === v);

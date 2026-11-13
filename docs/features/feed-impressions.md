@@ -26,11 +26,47 @@ measure different things by different methods, and summed they explain neither.
 
 ## What gets recorded
 
-Impressions are entity-generic, not image-specific. Every feed card funnels
-through one of two shells — `AspectRatioImageCard` and `FeedCard` — and the
-observer lives there, so images, models, posts, articles, collections, bounties
-and bounty entries are all covered by the same code path on every surface that
-renders a card (including the homepage).
+Impressions are entity-generic, not image-specific, and every card reports
+through `useTrackImpression`. A card reaches it in one of three ways:
+
+- **Through a shell.** `AspectRatioImageCard` records the image it renders
+  automatically; `AspectRatioCard`, `ElementInView` and `FeedCard` take an
+  `impressions` prop. Model, image, post, article, collection, bounty, challenge
+  and comic cards use these.
+- **Directly**, on a root it already renders: `ImagesCard` (the /images and
+  /videos feeds, hubs, image search, user image tabs, collections),
+  `ImagesAsPostsCard` (model and 3D-model galleries), `PostsCard`,
+  `ModelShopCard`, and the ecosystem page's resource cards.
+- **Per slide**, via `ImpressionSentinel`, where a carousel shows one image at a
+  time (`ImagesAsPostsCard`'s multi-image posts, `ModelCarousel`, the ecosystem
+  example gallery). The carousel viewport clips the slides the viewer has not
+  swiped to, so they are not counted until they are shown.
+
+Coverage is enforced for feed grids: `feed-cards-track-impressions.test.ts`
+finds every card handed to a `MasonryColumns`/`MasonryGrid` `render` prop and
+fails unless that component (not merely its file) tracks, or is on a short,
+commented exemption list (moderation tools, pickers, settings lists, cards whose
+own entity is not an impression type). Rendering a shell that only tracks what it
+is given (`ElementInView`, `AspectRatioCard`, `AspectRatioImageCard`, `FeedCard`)
+does not count unless the card passes `impressions`/`impression`. Cards rendered
+any other way, such as a `.map()` into a plain grid or a carousel, are covered
+only by the named list in the same test, so a new one has to be added there.
+
+Until this guard existed, `ImagesCard` and the model gallery were untracked while
+this section claimed full coverage, so `images`-surface Image impressions before
+that change are a small fraction of the real number. Creator impression counts
+step up from the day it shipped; that step is the coverage fix, not a traffic
+change.
+
+**A blurred card still counts.** Tracking sits on the card, not on the media
+inside the browsing-level guard, so an image the viewer saw only as a blurred
+placeholder records an impression like any other. Every shell behaves this way.
+
+**The surface is where the dwell began.** It is the first path segment when the
+card became visible, not when its second elapsed: the image-detail dialog rewrites
+the URL to `/images/<id>` while the feed beneath it stays mounted, so reading it
+at the end credited hub and model-page cards to `images`. Paths whose first
+segment is not in `IMPRESSION_SURFACES` record `other`.
 
 **A card can present more than one entity.** A model card shows a model *and*
 whichever cover image the viewer's browsing level selected — two different
@@ -517,9 +553,9 @@ occurs. On day one the emitters are:
 
 | Entity type | Emitted by |
 | --- | --- |
-| `Image` | every `AspectRatioImageCard` (automatic — it is the image the card renders), plus `GenericImageCard` |
-| `Model` | `ModelCard`, `Model3DCard` |
-| `Post` | `PostCard` |
+| `Image` | every `AspectRatioImageCard` (automatic — it is the image the card renders), `GenericImageCard`, `ImagesCard`, `ImagesAsPostsCard` (cover and each slide shown), `PostsCard`, `ModelShopCard`, `ModelCarousel` slides, the ecosystem example gallery |
+| `Model` | `ModelCard`, `Model3DCard`, `ModelShopCard`, ecosystem resource cards |
+| `Post` | `PostCard`, `PostsCard`, `ImagesAsPostsCard` |
 | `Article` | `ArticleCard` |
 | `Collection` | `CollectionCard` |
 | `Bounty` | `BountyCard` |

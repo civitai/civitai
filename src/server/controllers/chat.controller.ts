@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { getModerationAccountId } from '~/server/auth/moderation-account';
+import { getMessageAuthors } from '~/server/services/message-as-civitai.service';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server';
@@ -23,7 +25,8 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns, inboxStatuses, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { deriveMuteColumns, groupRenamedNote, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -44,6 +47,8 @@ import {
   resolveChatRecipients,
   signalChatMembersUpdated,
   upsertChat,
+  deleteChatMessage,
+  editChatMessageContent,
 } from '~/server/services/chat.service';
 import {
   assertCanPromote,
@@ -65,6 +70,8 @@ import {
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type ChatAuditEventRow = {
   createdAt: string;
@@ -206,8 +213,6 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
   }
 };
 
-const inboxStatusLiterals = inboxStatuses.map((status) => `'${status}'`).join(', ');
-
 /**
  * Get number of unread messages for user
  */
@@ -219,32 +224,13 @@ export const getUnreadMessagesForUserHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const parts = await Promise.all(
+      unreadCountSql(ctx.user.id).map((sql) =>
+        dbRead.$queryRaw<{ chatId: number; cnt: number }[]>(sql)
+      )
+    );
 
-    // The badge counts what the Inbox tab holds, so the membership filter is
-    // `chatBucketFor`'s inbox case spelled in SQL. Requests (filteredAt set) are
-    // deliberately absent: a filtered request that still lights the header badge
-    // is not filtered.
-    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId"          as "chatId",
-             count(msg.id)::integer as "cnt"
-      from "ChatMember" memb
-             left join "ChatMessage" msg
-                       on msg."chatId" = memb."chatId" and
-                          (msg.id > memb."lastViewedMessageId" or
-                           memb."lastViewedMessageId" is null
-                            ) and
-                          (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt") and
-                          msg."deletedAt" is null
-      where memb."userId" = ${userId}
-        and memb.status in (${Prisma.raw(inboxStatusLiterals)})
-        and memb."notifyLevel" <> 'None'
-        and memb."filteredAt" is null
-        and msg."userId" != ${userId}
-      group by memb."chatId"
-    `;
-
-    return unread;
+    return parts.flat();
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -359,7 +345,7 @@ export const updateChatHandler = async ({
     await createMessage({
       chatId: existing.id,
       contentType: ChatMessageType.Markdown,
-      content: name ? `Group renamed to "${name}"` : 'Group name removed',
+      content: groupRenamedNote(name),
       userId: -1,
     });
 
@@ -681,7 +667,8 @@ export const modifyUserHandler = async ({
       // written, and letting an unreachable signals service throw reported the
       // action as failed after it had actually succeeded.
       await withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          timeoutMs: 10_000,
           method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
@@ -794,27 +781,13 @@ export const clearChatHandler = async ({
   }
 };
 
-/**
- * Mark all messages as read for active chats
- */
 export const markAllAsReadHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id: userId } = ctx.user;
 
-    return await dbWrite.$queryRaw<{ chatId: number; lastViewedMessageId: number }[]>`
-      update "ChatMember"
-      set "lastViewedMessageId" = data.last_msg
-      from (select *
-            from (select cm.id, cm."lastViewedMessageId" as last_viewed, max(msg.id) as last_msg
-                  from "ChatMember" cm
-                         join "ChatMessage" msg on cm."chatId" = msg."chatId"
-                  where cm."userId" = ${userId}
-                    and cm.status = 'Joined'
-                  group by 1, 2) d
-            where d.last_viewed is distinct from d.last_msg) as data
-      where "ChatMember".id = data.id
-      returning "chatId", "lastViewedMessageId"
-    `;
+    return await dbWrite.$queryRaw<{ chatId: number; lastViewedMessageId: number }[]>(
+      markAllReadSql(userId)
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1051,9 +1024,9 @@ export const createMessageHandler = async ({
 /**
  * Edit a message. Authors edit their own; moderators edit anyone's.
  *
- * Either way the pre-edit content goes to the audit log first, so a message
- * rewritten after a report was filed still resolves to what it said when it was
- * reported.
+ * Either way the pre-edit content is kept in `ChatMessageEdit`, written with the
+ * edit itself, so a message rewritten after a report was filed still resolves to
+ * what it said when it was reported.
  *
  * Content passes the same blocklist scans `createMessage` applies — the previous
  * incarnation of this handler wrote `content` through unchecked, which is why it
@@ -1074,7 +1047,7 @@ export const updateMessageHandler = async ({
 
     const existing = await dbWrite.chatMessage.findFirst({
       where: { id: messageId },
-      select: { id: true, chatId: true, userId: true, content: true, deletedAt: true },
+      select: { id: true, chatId: true, userId: true, deletedAt: true },
     });
 
     const isOwn = existing?.userId === userId;
@@ -1100,12 +1073,17 @@ export const updateMessageHandler = async ({
     await throwOnBlockedMessagePattern(scannable);
 
     const editedAt = new Date();
-    await dbWrite.chatMessage.update({
-      where: { id: existing.id },
-      data: { content: trimmed, editedAt },
+    const previousContent = await editChatMessageContent({
+      messageId: existing.id,
+      editorId: userId,
+      content: trimmed,
+      editedAt,
     });
+    // Deleted between the check above and the write.
+    if (previousContent === null) throw throwBadRequestError('Deleted messages cannot be edited');
+    if (isOwn) queueScamScan({ entityType: 'ChatMessage', entityId: existing.id });
 
-    const before = truncateAuditValue(existing.content);
+    const before = truncateAuditValue(previousContent);
     const after = truncateAuditValue(trimmed);
     await ctx.track
       .chatAudit({
@@ -1164,51 +1142,12 @@ export const deleteMessageHandler = async ({
     if (bannedAt) throw throwAuthorizationError('You are banned from performing this action');
     assertChatRedesign(ctx);
 
-    const existing = await dbWrite.chatMessage.findFirst({
-      where: { id: input.messageId },
-      select: { id: true, userId: true, chatId: true, content: true, deletedAt: true },
+    return await deleteChatMessage({
+      messageId: input.messageId,
+      actorId: userId,
+      isModerator,
+      audit: (event) => ctx.track.chatAudit(event),
     });
-
-    if (!existing || (existing.userId !== userId && !isModerator)) {
-      throw throwNotFoundError(`No message found for ID (${input.messageId})`);
-    }
-    if (existing.deletedAt) return { messageId: existing.id, chatId: existing.chatId };
-
-    const deletedAt = new Date();
-    await dbWrite.chatMessage.update({
-      where: { id: existing.id },
-      data: { deletedAt },
-    });
-
-    const { value, truncated } = truncateAuditValue(existing.content);
-    await ctx.track
-      .chatAudit({
-        type: 'delete',
-        chatId: existing.chatId,
-        messageId: existing.id,
-        actorId: userId,
-        subjectId: existing.userId,
-        actorRole: existing.userId === userId ? 'owner' : 'moderator',
-        oldValue: value,
-        newValue: '',
-        truncated,
-      })
-      .catch(() => undefined);
-
-    // Both sides need to drop it; without this the other participant keeps
-    // rendering a message that no longer exists for anyone.
-    withSignals(() =>
-      fetch(
-        `${env.SIGNALS_ENDPOINT}/groups/chat:${existing.chatId}/signals/${SignalMessages.ChatMessageDeleted}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageId: existing.id, chatId: existing.chatId }),
-        }
-      )
-    ).catch(() => undefined);
-
-    return { messageId: existing.id, chatId: existing.chatId };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -1324,7 +1263,15 @@ export const getModeratorChatHandler = async ({
       })
       .catch(() => undefined);
 
-    return { chat, messages };
+    const moderationId = getModerationAccountId();
+    const sentBy =
+      moderationId === null
+        ? {}
+        : await getMessageAuthors(
+            messages.filter((m) => m.userId === moderationId).map((m) => m.id)
+          );
+
+    return { chat, messages, sentBy };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

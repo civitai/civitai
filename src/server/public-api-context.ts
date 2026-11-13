@@ -36,6 +36,7 @@ export const publicApiContext2 = async (req: NextApiRequest, res: NextApiRespons
     signal: new AbortController().signal,
     tokenScope: TokenScope.Full,
     apiKeyId: undefined,
+    apiKeyType: undefined,
     subject: undefined,
   });
 };

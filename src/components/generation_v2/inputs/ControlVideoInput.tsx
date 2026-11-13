@@ -5,16 +5,9 @@
  * node via `meta.options`.
  */
 
-import {
-  Button,
-  Group,
-  Input,
-  RangeSlider,
-  SegmentedControl,
-  Select,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { Button, Group, Input, RangeSlider, Stack, Text } from '@mantine/core';
+import { SheetSelect } from './SheetSelect';
 import { IconVideo, IconX } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -25,7 +18,7 @@ import {
   type ControlNetCategory,
   type VideoControlNetPreprocessorKey,
 } from '~/shared/constants/controlnets.constants';
-import type { VideoValue } from '~/shared/data-graph/generation/common';
+import type { VideoValue } from '~/shared/generation/values';
 import { PreprocessorExamples } from './PreprocessorExamples';
 import { SliderInput } from './SliderInput';
 import { VideoInput } from './VideoInput';
@@ -162,19 +155,18 @@ export function ControlVideoInput({ value, onChange, meta, error }: ControlVideo
           onChange={(video) => update({ video: video as VideoValue | undefined })}
         />
 
-        <SegmentedControl
+        <ChoiceGroup
+          aria-label="Control video source"
           value={entry.mode}
           onChange={(mode) => update({ mode: mode as ControlVideoMode })}
           data={[
             { value: 'auto', label: 'Preprocess for me' },
             { value: 'preprocessed', label: 'Already preprocessed' },
           ]}
-          fullWidth
-          size="xs"
         />
 
         <Group grow align="flex-start">
-          <Select
+          <SheetSelect
             label="Type"
             value={activeCategory}
             data={categoryOptions}
@@ -186,7 +178,7 @@ export function ControlVideoInput({ value, onChange, meta, error }: ControlVideo
             }}
             comboboxProps={{ withinPortal: true }}
           />
-          <Select
+          <SheetSelect
             label="Preprocessor"
             description={
               entry.mode === 'preprocessed'

@@ -9,6 +9,7 @@ export async function notifyAir(data: { email: string; name: string }) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(data),
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) throw new Error('Failed to send confirmation to AiR');
   } else {

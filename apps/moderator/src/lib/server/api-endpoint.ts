@@ -123,6 +123,16 @@ export function defineEndpoint<S extends z.ZodType, E extends RequestEvent>(
       error(401, 'This endpoint is for signed-in moderators, not services.');
     if (!event.locals.user) error(401, 'Not signed in.');
     requireAccess(event.locals.user, def.page);
+    // A browser session acts here, so a write must be provably same-site. SvelteKit's origin check
+    // covers form posts only; a JSON body from another origin needs a preflight this app never answers.
+    const { method, headers } = event.request;
+    if (
+      method !== 'GET' &&
+      method !== 'HEAD' &&
+      (headers.get('origin') !== event.url.origin ||
+        !headers.get('content-type')?.startsWith('application/json'))
+    )
+      error(403, `Send JSON from ${event.url.origin}.`);
   });
 }
 

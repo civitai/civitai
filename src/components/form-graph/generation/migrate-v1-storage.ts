@@ -9,9 +9,7 @@ import { ecosystemByKey, ecosystemGroups } from '~/shared/constants/basemodel.co
  * starts fresh. Values are copied raw; the hub's input schemas validate them
  * on first parse, so a stale or malformed v1 value degrades to the default
  * rather than breaking the form.
- *
- * v1's records are left untouched: while the flag rolls out, sessions without
- * it still run GenerationFormV2 against them.
+
  */
 
 const V1_KEY = 'generation-graph';
@@ -60,8 +58,7 @@ export function buildV1MigrationIntent(
   }
 
   // Same bucket keys on both sides: grouped ecosystems store under the group
-  // id, standalone ones under their own key (v1's adapter groups; the port's
-  // familyScope).
+  // id, standalone ones under their own key, matching `familyScope`.
   const familyKeys = new Set<string>([
     ...ecosystemGroups.map((group) => group.id),
     ...ecosystemByKey.keys(),

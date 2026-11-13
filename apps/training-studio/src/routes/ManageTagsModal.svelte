@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconArrowBackUp, IconPencil, IconPlus, IconX } from '@tabler/icons-svelte';
+  import { IconArrowBackUp, IconFilter, IconPencil, IconPlus, IconX } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
@@ -16,12 +16,15 @@
     tagFreq,
     images,
     media,
+    onShowTag,
   }: {
     open: boolean;
     /** [tag, occurrence count], frequency-ranked (DataStep's tagFreq). */
     tagFreq: [string, number][];
     images: Img[];
     media: Media;
+    /** Filters the dataset grid to the images carrying this tag. */
+    onShowTag: (tag: string) => void;
   } = $props();
 
   let renameFrom = $state<string | null>(null);
@@ -164,6 +167,18 @@
               <span class="shrink-0 font-mono text-xs text-dark-2">
                 {count} / {trainableWithTags}
               </span>
+              <button
+                type="button"
+                aria-label="Show everything tagged {tag}"
+                title="Show everything tagged with this"
+                onclick={() => {
+                  onShowTag(tag);
+                  open = false;
+                }}
+                class="grid h-6 w-6 shrink-0 place-items-center rounded text-dark-2 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <IconFilter size={13} stroke={2} />
+              </button>
               <button
                 type="button"
                 aria-label="Rename {tag} everywhere"

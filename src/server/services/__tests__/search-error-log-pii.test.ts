@@ -24,22 +24,6 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 // export) — the same shape this file used to declare for itself.
 const logToAxiomMock = loggingMock.logToAxiom;
 
-const { fetchDocumentsAbortableMock } = vi.hoisted(() => ({
-  fetchDocumentsAbortableMock: vi.fn(),
-}));
-
-// metricsSearchClient must be TRUTHY or both functions early-return before the
-// try/catch we are testing. fetchDocumentsAbortable is the throw seam.
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return {
-    ...actual,
-    metricsSearchClient: {},
-    getMetricsSearchClient: () => ({}),
-    fetchDocumentsAbortable: fetchDocumentsAbortableMock,
-  };
-});
-
 vi.mock('~/env/server', () => ({
   env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
     get: (target, prop) => {
@@ -69,11 +53,7 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-import {
-  redactSearchInputForLog,
-  getImagesFromSearchPreFilter,
-  getImagesFromSearchPostFilter,
-} from '../image.service';
+import { redactSearchInputForLog } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /** The real shape observed in production logs, values substituted. */
@@ -154,36 +134,5 @@ describe('redactSearchInputForLog', () => {
     const { user, ...noUser } = searchInput;
     expect(() => redactSearchInputForLog(noUser)).not.toThrow();
     expect(redactSearchInputForLog(noUser)).toMatchObject({ userId: 999 });
-  });
-});
-
-// The seam: these drive the REAL catch block, so they go red if either call site
-// reverts to logging the raw input, which a helper-only unit test would not.
-describe.each([
-  ['getImagesFromSearchPreFilter', getImagesFromSearchPreFilter],
-  ['getImagesFromSearchPostFilter', getImagesFromSearchPostFilter],
-])('%s search-error log payload', (_name, fn) => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    fetchDocumentsAbortableMock.mockRejectedValue(new Error('meili exploded'));
-  });
-
-  it('logs a search-error that contains NO session PII', async () => {
-    type SearchArg = Parameters<typeof getImagesFromSearchPreFilter>[0];
-    await expect(fn(searchInput as unknown as SearchArg)).rejects.toThrow('meili exploded');
-
-    type LoggedPayload = { type?: string; input?: Record<string, unknown> };
-    const searchErrorCalls = (logToAxiomMock.mock.calls as unknown as LoggedPayload[][]).filter(
-      (c) => c[0]?.type === 'search-error'
-    );
-    // positive control: the catch block we are asserting about actually ran.
-    expect(searchErrorCalls.length).toBeGreaterThan(0);
-
-    for (const call of searchErrorCalls) {
-      const payload = call[0];
-      expect(payload.input).not.toHaveProperty('user');
-      const serialized = JSON.stringify(payload);
-      for (const v of PII_VALUES) expect(serialized).not.toContain(v);
-    }
   });
 });

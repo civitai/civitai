@@ -31,7 +31,7 @@ vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorCl
 vi.mock('~/server/utils/created-image-media-probe', () => ({
   probeCreatedImageMedia: probeMock,
 }));
-// NOTE: `@civitai/client` is deliberately NOT mocked. Narrowly stubbing it breaks this
+// NOTE: `@civitai/orchestration-client` is deliberately NOT mocked. Narrowly stubbing it breaks this
 // suite at COLLECTION (`No "BuzzClientAccount" export is defined on the mock`) because
 // `image.service` reaches far more of that surface than the orchestrator-only suites do,
 // and the real module is load-safe in this runtime — `image-scan-url-submit-rejection`

@@ -5,6 +5,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { metricsSearchClient } from '~/server/meilisearch/client';
+import { refuseRetiredIndexEndpoint } from '~/server/search-index/retired-index-read';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -48,6 +49,9 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const params = schema.parse(req.query);
 
+  // The stub check reads the feeds index; retired, it is frozen and nothing re-pulls into it.
+  if (refuseRetiredIndexEndpoint(res, METRICS_IMAGES_SEARCH_INDEX, 'backfill-stuck-published'))
+    return;
   if (!metricsSearchClient) {
     res.status(500).json({ error: 'metricsSearchClient not configured' });
     return;
@@ -66,7 +70,7 @@ export default WebhookEndpoint(async (req, res) => {
       // window (scheduled posts publish up to a few days after creation).
       // Avoid MIN(id) over a createdAt filter (full aggregation -> timeout):
       // the createdAt index makes `ORDER BY createdAt LIMIT 1` instant, and
-      // MAX(id) is a PK lookup. Mirrors images.search-index prepareBatches.
+      // MAX(id) is a PK lookup.
       const [result] = await (
         await pgDbRead.cancellableQuery<{ start: number | null; end: number | null }>(
           `

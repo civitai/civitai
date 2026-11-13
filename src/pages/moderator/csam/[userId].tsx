@@ -1,6 +1,7 @@
 import { useRouter } from 'next/router';
 import { CsamImageSelection } from '~/components/Csam/CsamImageSelection';
-import React, { useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
+import { parseLinkedImageIds } from '~/components/Csam/csam-linked-image-ids';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
 import { CsamProvider } from '~/components/Csam/CsamProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -24,10 +25,18 @@ function ReportCsamUserPage() {
 
   const features = useFeatureFlags();
   const userId = userIds[0];
-  const imageId =
-    typeof router.query.imageId === 'string'
-      ? Number(router.query.imageId) || undefined
-      : undefined;
+  const { imageId: imageIdParam, imageIds: imageIdsParam } = router.query;
+  const supplementalOf = z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .catch(undefined)
+    .parse(router.query.supplementalOf);
+  const imageIds = useMemo(
+    () => parseLinkedImageIds({ imageId: imageIdParam, imageIds: imageIdsParam }),
+    [imageIdParam, imageIdsParam]
+  );
 
   const handleStepperComplete = () => {
     if (userIds.length > 1) {
@@ -69,7 +78,7 @@ function ReportCsamUserPage() {
         <CsamImageSelection
           onNext={stepperActions.goToNextStep}
           onMissing={handleStepperComplete}
-          imageId={imageId}
+          imageIds={imageIds}
         />
       )}
       {currentStep === 2 && (
@@ -78,6 +87,7 @@ function ReportCsamUserPage() {
           onSuccess={handleStepperComplete}
           userId={user.id}
           type="Image"
+          supplementalOf={supplementalOf}
         />
       )}
     </CsamProvider>

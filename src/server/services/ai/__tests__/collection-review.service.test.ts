@@ -3,7 +3,9 @@ import {
   decideFromObservations,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
+  needsMinorReview,
   resolveRejectionMessage,
+  toObservationColumns,
 } from '~/server/services/ai/collection-review.service';
 import { NsfwLevel } from '~/server/common/enums';
 
@@ -45,14 +47,10 @@ describe('decideFromObservations', () => {
     expect(result.escalations).toContain('unreadable model response');
   });
 
-  // These collections are mostly stylized art, which is exactly what the prompt tells the model it
-  // may be unsure about. Escalating on the hedge alone would sweep up ordinary submissions.
   it('approves an age-ambiguous subject when nothing else is flagged', () => {
     expect(decideFromObservations({ ...clean, minorUncertain: true }).decision).toBe('approve');
   });
 
-  // rules/minors.md makes photorealism the bright line for minors in ANY context, so an ambiguous
-  // age matters there even when the image is otherwise wholesome.
   it.each([
     ['a suggestive context', { suggestiveStyling: true }],
     ['a photorealistic image', { isPhotorealistic: true }],
@@ -73,14 +71,39 @@ describe('decideFromObservations', () => {
   });
 
   // The prompt asks for 'R+', but models reach for the labels they know.
-  it.each(['R+', 'R', 'X', 'XXX', 'nsfw'])('treats nsfwEstimate %s as adult content', (rating) => {
-    const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
-    expect(result.decision).toBe('reject');
-    expect(result.violations).toContain('sexual/adult content');
-  });
+  it.each(['R+', 'R', 'X', 'XXX', 'nsfw', 'explicit'])(
+    'treats nsfwEstimate %s as adult content',
+    (rating) => {
+      const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
+      expect(result.decision).toBe('reject');
+      expect(result.violations).toContain('sexual/adult content');
+    }
+  );
 
-  it.each(['PG', 'PG-13'])('does not treat nsfwEstimate %s as adult content', (rating) => {
-    expect(decideFromObservations({ ...clean, nsfwEstimate: rating }).decision).toBe('approve');
+  it.each(['PG', 'PG-13', 'G', 'pg13', 'SFW'])(
+    'does not treat nsfwEstimate %s as adult content',
+    (rating) => {
+      expect(decideFromObservations({ ...clean, nsfwEstimate: rating }).decision).toBe('approve');
+    }
+  );
+
+  it.each(['mature', 'teen', '', undefined])(
+    'sends unrecognized nsfwEstimate %j to a human instead of approving',
+    (rating) => {
+      const result = decideFromObservations({ ...clean, nsfwEstimate: rating });
+      expect(result.decision).toBe('escalate');
+      expect(result.neverReject).toBe(true);
+    }
+  );
+
+  it('keeps visible sexual content rejectable behind an unrecognized nsfwEstimate', () => {
+    const result = decideFromObservations({
+      ...clean,
+      sexualContent: true,
+      nsfwEstimate: 'mature',
+    });
+    expect(result.violations).toContain('sexual/adult content');
+    expect(result.neverReject).toBeUndefined();
   });
 
   it('rejects visible sexual content', () => {
@@ -251,5 +274,63 @@ describe('neverReject', () => {
     const result = decideFromObservations({ ...clean, suggestiveStyling: true });
     expect(result.decision).toBe('escalate');
     expect(result.neverReject).toBeFalsy();
+  });
+});
+
+describe('needsMinorReview', () => {
+  it.each([
+    ['a photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
+    ['a minor depicted inappropriately', { depictsMinor: true, minorInappropriate: true }],
+    ['a possible minor', { minorUncertain: true, isPhotorealistic: true }],
+    [
+      'a minor listed before a real person',
+      { depictsRealPerson: true, depictsMinor: true, minorIsPhotorealistic: true },
+    ],
+    [
+      'a possible minor after another finding',
+      { depictsRealPerson: true, minorUncertain: true, isPhotorealistic: true },
+    ],
+  ])('sends %s to the minor queue', (_label, overrides) => {
+    expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(true);
+  });
+
+  it.each([
+    ['a clean submission', {}],
+    ['a real person likeness', { depictsRealPerson: true }],
+    ['suggestive styling', { suggestiveStyling: true }],
+    ['sexual content', { sexualContent: true }],
+    ['an age-ambiguous subject nothing else flags', { minorUncertain: true }],
+    ['an unreadable response', { hasBuzzReference: undefined }],
+  ])('leaves %s out of it', (_label, overrides) => {
+    expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(false);
+  });
+});
+
+describe('toObservationColumns', () => {
+  const COLUMNS = [
+    'minorUncertain',
+    'depictsMinor',
+    'isPhotorealistic',
+    'suggestiveStyling',
+    'sexualContent',
+  ] as const;
+  const allFalse = { ...clean, minorUncertain: false };
+
+  it.each(COLUMNS)('records %s in its own column', (key) => {
+    const columns = toObservationColumns({ ...allFalse, [key]: true });
+    expect(columns).toEqual(
+      Object.fromEntries(COLUMNS.map((column) => [column, column === key ? 1 : 0]))
+    );
+  });
+
+  it('records -1 for a field the model left out', () => {
+    expect(toObservationColumns(clean)).toMatchObject({ minorUncertain: -1, depictsMinor: 0 });
+  });
+
+  it.each([
+    ['no response', undefined],
+    ['an unreadable response', { reason: 'missing the required fields' }],
+  ])('records -1 everywhere for %s', (_label, raw) => {
+    expect(toObservationColumns(raw)).toEqual(Object.fromEntries(COLUMNS.map((c) => [c, -1])));
   });
 });

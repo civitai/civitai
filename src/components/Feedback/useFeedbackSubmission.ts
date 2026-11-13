@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { readAttachedDiagnostics } from '~/components/Feedback/attachedDiagnostics';
 import { captureConsentedScreenshot } from '~/components/Feedback/captureScreenshot';
 import { selectAttachments } from '~/components/Feedback/selectAttachments';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -6,8 +7,6 @@ import { constants } from '~/server/common/constants';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackArea } from '~/shared/constants/feedback.constants';
 import { FEEDBACK_IMAGE_MAX_COUNT } from '~/shared/constants/feedback.constants';
-import { getFaroSessionId } from '~/utils/faro/getFaroSessionId';
-import { readConsoleErrors, readNetworkErrors } from '~/utils/feedback/browserErrorLog';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -239,22 +238,9 @@ export function useFeedbackSubmission({
       }
       const screenshotId = screenshot ? (await uploadToCF(screenshot.file)).id : undefined;
 
-      // Read at submit time rather than at mount: Faro may finish starting between
-      // the two. Undefined whenever Faro is not running at all — dev/test/preview,
-      // or a session that blocked it — and the field is then simply omitted, which
-      // is the ordinary case and never blocks the submission.
-      const sessionId = getFaroSessionId();
-
-      // Read at submit time for the same reason `sessionId` is: the errors before someone gives up
-      // and files a report are the ones describing what they gave up on. Both arrays are already
-      // redacted, clipped and count-bounded by the recorder — and console repeats are already
-      // collapsed into a per-entry `count` there — so nothing is sanitized here,
-      // because a second sanitizing site is a second place to get it wrong. Empty is the ordinary
-      // case (a session with nothing wrong in it, or a browser with no `responseStatus`), and an
-      // empty array is OMITTED rather than stored: `{}` in the column reads as "we looked and
-      // found nothing", an absent key reads as "no claim", and only the second is true.
-      const consoleErrors = readConsoleErrors();
-      const networkErrors = readNetworkErrors();
+      // Read at submit time, not mount: the errors just before someone gives up and files a
+      // report describe what they gave up on, and Faro may finish starting in between.
+      const diagnostics = readAttachedDiagnostics();
 
       createFeedback.mutate({
         area,
@@ -263,9 +249,7 @@ export function useFeedbackSubmission({
           ...context,
           ...(images.length ? { images } : {}),
           ...(screenshotId ? { screenshotId } : {}),
-          ...(sessionId ? { sessionId } : {}),
-          ...(consoleErrors.length ? { consoleErrors } : {}),
-          ...(networkErrors.length ? { networkErrors } : {}),
+          ...diagnostics,
         },
       });
     } catch (error) {

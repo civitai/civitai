@@ -1,0 +1,35 @@
+{
+  "slug": "oauth-probe",
+  "frameHost": "oauth-probe.civit.ai",
+  "url": "https://civitai.com/apps/run/oauth-probe",
+  "_access": "🔴 SUSPENDED APP, REACHED BY PRIVATE RUN. `app_blocks.status` for oauth-probe read `suspended` 2026-10-10 (replica SELECT), so `/apps/run/oauth-probe` 404s for the public. It renders for a MODERATOR (also the owner or an accepted collaborator) through the private-run fallback behind `app-blocks-private-run-enabled`; the host page then carries a 'You are viewing this app as a moderator…' notice ABOVE the iframe, which `fromAppFrame` crops away. A non-moderator capture profile will hit plan.py's `not_found` refusal, and that refusal is CORRECT.",
+  "_clickable": "every selector here is a control someone confirmed does NOT mutate — it navigates, filters, expands or dismisses. plan.py cannot check that (nothing in the markup says so), so this list IS the assertion. Adding one is a deliberate act and shows up in the diff. Never list a control that posts, votes, edits or deletes.",
+  "clickable": [],
+  "_neverClick": "🔴 [data-testid=\"ask\"] — 'Ask for <scopes>' — calls `app.requestGrants(withheld)`, i.e. it opens the host's CONSENT flow for the withheld permissions. Granting is a real change to the operator's account. It must NEVER enter `clickable`, and no state may reach past it. It renders only when a declared scope is withheld AND the viewer is signed in; on the 2026-10-10 capture profile both scopes were already granted, so it was ABSENT — that is a property of that profile, not of the app.",
+  "_noRender": "🔴 AN `--evidence` TARGET, NOT A `--render` ONE — same ceiling as gen-matrix, do not 'fix' the `too_few_states` refusal. The app has exactly ONE screen and exactly ONE control (`ask`, see `_neverClick`), so there is no second non-mutating state to put beside `probe`. Measured 2026-10-10: a framed run captures and MEASURES `probe` cleanly (box 704x536 at 212,210 in a 1124x1395 capture, fill 0.67 x 0.49 — real content, not furniture) and then exits 6 at check-states, correctly. `capture.sh --evidence --no-frame` exits 0. If a framed image is wanted, `frame.py render` on the captured `probe.png` + `probe.rect.json` produces one, verified by eye rather than by the identical-box gate.",
+  "crop": {
+    "chromeTop": 182,
+    "footer": 110,
+    "right": 70,
+    "fromAppFrame": true,
+    "_comment": "same centred-column host page as panorama-360 / custom-generators: the three numbers are FLOORS and `fromAppFrame` derives the real top from the iframe's own rect at capture time. Here that matters twice over: the private-run moderator notice sits above the iframe in addition to the conditional rewards banner."
+  },
+  "ready": {
+    "testid": "verdict",
+    "_comment": "the one-sentence verdict paragraph. It is rendered by React ONLY after `initialize()` resolves the BLOCK_INIT handshake (src/main.tsx -> App.tsx), because its text is computed from the handshake's token. 🔴 NOT the boot skeleton: the manifest sets `bootSkeleton: true` and index.html paints `.boot` bars inside #root at first paint — that markup carries NO data-testid at all, so it cannot satisfy this gate early. 🔴 NOT `#root` (static shell). There is no `app-loading` testid in this app; the default loadingTestid is simply never present, which reads as 'not loading' and is correct once `verdict` exists. Measured live 2026-10-10: verdict present, `.boot` absent, 6 testids, body 783 chars."
+  },
+  "states": [
+    {
+      "name": "probe",
+      "actions": [
+        {
+          "waitForGone": "Reading…",
+          "timeoutMs": 20000,
+          "_comment": "the /api/v1/me panel paints `me-loading` ('Reading…') first; wait until it resolves to `me-error` or the field list so the shot shows a settled reading. That read is a GET as the viewer — nothing is written. The verdict renders BEFORE this resolves, which is why the ready gate alone is not enough."
+        }
+      ],
+      "caption": "See which token the host sent, what it was granted, and what the API returns for it.",
+      "_shelfLife": "🔴 THIS SCREEN IS ACCOUNT STATE, NOT STRUCTURE. Every value on it — token kind, expiry, granted/withheld scopes, the /me verdict — describes the capture profile's grants at that moment. On 2026-10-10 it read kind=block with both scopes granted and /me refused ('this block holds a block-scoped token'), i.e. the app's own verdict that the OAuth opt-in did not take effect. That is a diagnostic reading, not store art: think twice before attaching it to a listing (see reference/shelf-life-and-what-not-to-shoot.md)."
+    }
+  ]
+}

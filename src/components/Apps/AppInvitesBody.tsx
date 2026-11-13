@@ -213,7 +213,7 @@ export function invalidationsForInviteResponse(status: string): InviteInvalidati
   return [
     // The inbox itself — the responded row leaves it on either verdict.
     'appCollaborators.listMyPendingInvites',
-    // "My apps" gains a row on accept; cheap and harmless to refresh on decline.
+    // "My builds" gains a row on accept; cheap and harmless to refresh on decline.
     'appListings.listMine',
     // The sub-nav counts. BOTH verdicts — see above.
     'blocks.getNavSummary',
@@ -231,7 +231,7 @@ export function AppInvitesBody() {
       showSuccessNotification({
         message:
           result.status === 'accepted'
-            ? 'Invitation accepted — the app is now in My apps.'
+            ? 'Invitation accepted — the app is now in My builds.'
             : 'Invitation declined.',
       });
       // 🔴 DRIVEN FROM the exported list, not a parallel copy of it. A pure function that

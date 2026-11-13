@@ -1,6 +1,7 @@
+import { createHash } from 'crypto';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import dayjs from '~/shared/utils/dayjs';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
@@ -22,6 +23,7 @@ import {
   createBuzzTransactionMany,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
+  getTransactionByExternalId,
   getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
@@ -29,12 +31,15 @@ import {
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
+import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz-keyed-charge';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
+import { logToAxiom } from '~/server/logging/client';
+import { claimTipIdempotency } from '~/server/utils/block-tip-rate-limit';
 import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
-import { EntityType } from '~/shared/utils/prisma/enums';
+import { Availability, EntityType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import {
   handleLogError,
@@ -129,17 +134,19 @@ export async function createBuzzTipTransactionHandler({
    * OPTIONAL client idempotency key (App Blocks tip endpoint, audit 🟡-1). When
    * present, the tip's `externalTransactionId` is DERIVED from it deterministically
    * (`block-tip:${fromUserId}:${idempotencyKey}-${toAccountId}`) instead of a fresh
-   * `uuid()`, so the Buzz ledger's own idempotency (a duplicate
+   * `crypto.randomUUID()`, so the Buzz ledger's own idempotency (a duplicate
    * `externalTransactionId` is a benign "money already moved" conflict) becomes the
    * AUTHORITATIVE dedup: a retry after the Redis sentinel has expired (a crash
    * between charge and `finalizeTipIdempotency`) collides on the ledger = money
-   * moves once. Absent → today's per-call `uuid()` behavior (no ledger dedup),
+   * moves once. Absent → today's per-call `crypto.randomUUID()` behavior (no ledger dedup),
    * byte-identical for the on-site tip path which never passes this.
    */
   idempotencyKey?: string;
 }) {
   try {
     const { id: fromAccountId } = ctx.user;
+    // The on-site tip form's key travels in the input; the App Blocks endpoint passes its own.
+    const { idempotencyKey: inputKey, ...tipInput } = input;
     if (input.fromAccountType !== input.toAccountType) {
       throw throwBadRequestError('You cannot tip Buzz between different account types');
     }
@@ -166,12 +173,28 @@ export async function createBuzzTipTransactionHandler({
     const blocked = await amIBlockedByUser({
       userId: fromAccountId,
       targetUserId: input.toAccountId,
+      // A write path: confirm a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     if (blocked) {
       throw throwBadRequestError('You cannot send Buzz to a user that has blocked you');
     }
 
     const { entityType, entityId } = input;
+    if (entityType === 'Model' && entityId) {
+      const allVersions = await dbWrite.modelVersion.findMany({
+        where: { modelId: entityId },
+        select: { baseModel: true, status: true, availability: true },
+      });
+      const publicVersions = allVersions.filter(
+        (v) => v.status === ModelStatus.Published && v.availability !== Availability.Private
+      );
+      // A model is tipped as a whole, so it's refused only when no version can earn. Hidden versions
+      // count only when none are public, so a hidden draft can't unlock a public non-commercial model.
+      const versions = publicVersions.length ? publicVersions : allVersions;
+      if (versions.length > 0 && versions.every((v) => stopsCreatorEarnings(v.baseModel)))
+        throw throwBadRequestError(notCommerciallyAvailableMessage(versions[0].baseModel));
+    }
     let targetUserIds: number[] = input.toAccountId ? [input.toAccountId] : [];
 
     if ((entityType === 'Post' || entityType === 'Image') && entityId) {
@@ -222,28 +245,26 @@ export async function createBuzzTipTransactionHandler({
     if (amount <= 0) {
       throw throwBadRequestError('Could not split the amount between users');
     }
-    // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({
-      accountId: fromAccountId,
-      accountType: input.fromAccountType ?? 'yellow',
-    });
-
-    if ((userAccount[0]?.balance ?? 0) < finalAmount) {
-      throw throwInsufficientFundsError();
-    }
-
     // The base of every transaction's `externalTransactionId` (`${sharedId}-${toAccountId}`).
     // With a client idempotency key, DERIVE it deterministically so a retry collides
     // on the ledger's unique constraint (money moves once — see the param doc). The
     // key is charset-restricted (`^[A-Za-z0-9_-]{1,64}$`) at the endpoint, and both
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
-    // Absent key → the original per-call `uuid()` (no dedup), byte-identical to today.
+    // Absent key → the original per-call `crypto.randomUUID()` (no dedup), byte-identical to today.
+    // The on-site key is a uuid (schema-checked) under its own `tip:` namespace, after the numeric
+    // user id, so no user's id can name another's. The amount and entity that follow only separate
+    // one user's tips under one key.
+    const keyed = !!(idempotencyKey ?? inputKey);
     const sharedId = idempotencyKey
       ? `block-tip:${ctx.user.id}:${idempotencyKey}`
-      : `tip-${uuid()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
+      : inputKey
+      ? // The tip's content is part of the id, so a key reused for a different tip (another
+        // amount or entity) is that tip, charged on its own, never an earlier one recovered.
+        `tip:${ctx.user.id}:${inputKey}:${input.amount}:${entityType ?? ''}:${entityId ?? ''}`
+      : `tip-${crypto.randomUUID()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
-      ...input,
+      ...tipInput,
       fromAccountId: ctx.user.id,
       type: TransactionType.Tip,
       amount,
@@ -259,8 +280,46 @@ export async function createBuzzTipTransactionHandler({
       externalTransactionId: `${sharedId}-${toAccountId}`,
     }));
 
-    // Now, create all transactions
-    const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
+    // With a key, a leg already on the ledger moved on an earlier call. Buzz reports a replayed
+    // leg in `transactions` (with the existing id) today and in `conflicts` once it stops
+    // pre-checking duplicates, so the batch response alone cannot say which legs are new.
+    // Looked up BEFORE the balance check: a leg that already moved spent the balance this check
+    // reads, and refusing its retry as "insufficient funds" tells the client to start a new tip.
+    //
+    // No lock and no transaction here. A leg found here was moved by an earlier request and is
+    // never recorded again (`upsertBuzzTip` adds to a running total, and nothing records which
+    // request recorded a leg). The batch answer alone cannot decide who records the rest: a
+    // second request whose lookup ran before the first one committed can be answered with the
+    // first one's legs as successes. So, with a key, only the request that wins the record claim
+    // below writes the tip record, notification and metric.
+    const alreadyMoved = new Set<string>();
+    if (keyed) {
+      const existing = await Promise.all(
+        transactions.map((t) => getTransactionByExternalId(t.externalTransactionId))
+      );
+      transactions.forEach((t, i) => {
+        if (existing[i]) alreadyMoved.add(t.externalTransactionId);
+      });
+    }
+
+    // Confirm user funds for the legs still to move:
+    const owed = finalAmount - alreadyMoved.size * amount;
+    if (owed > 0) {
+      const userAccount = await getUserBuzzAccount({
+        accountId: fromAccountId,
+        accountType: input.fromAccountType ?? 'yellow',
+      });
+      if ((userAccount[0]?.balance ?? 0) < owed) {
+        throw throwInsufficientFundsError();
+      }
+    }
+
+    // Now, create all transactions. With a key, a send whose outcome is unknown (timeout, reset,
+    // 5xx) is resolved by resending it rather than reported as a failure the user retries.
+    const data = await createBuzzTransactionMany(transactions).catch((error) => {
+      if (!keyed) throw error;
+      return resolveFailedTipBatch(transactions, alreadyMoved, error, ctx.user.id);
+    });
 
     // ── LEDGER CONFLICT = MONEY ALREADY MOVED (audit 🔴-2) ───────────────────────
     // `createBuzzTransactionMany` returns `{ transactions, conflicts }`, and a
@@ -273,10 +332,11 @@ export async function createBuzzTipTransactionHandler({
     //
     // 🔴 This state is only REACHABLE because of the deterministic
     // `externalTransactionId` introduced alongside `idempotencyKey` — with the
-    // legacy per-call `uuid()` id `conflicts` was always empty here, which is why
+    // legacy per-call `crypto.randomUUID()` id `conflicts` was always empty here, which is why
     // ignoring it was previously (accidentally) safe. Concretely: tip N to X on
     // image A with key K → wait past the 10-min Redis sentinel → same K, same
-    // recipient, DIFFERENT entityId (the derivation deliberately ignores the entity)
+    // recipient, DIFFERENT entityId (the App Blocks `block-tip:` derivation ignores the entity;
+    // the on-site `tip:` id includes it, so this case is the App Blocks endpoint's)
     // → byte-identical ledger id → conflict, zero Buzz moves, yet image B would get
     // +N Buzz, a BuzzTip row, and a 200.
     //
@@ -286,7 +346,7 @@ export async function createBuzzTipTransactionHandler({
     // shaped on the wire. Both signals agree on the full-replay case above; the belt
     // is what keeps the fail direction safe (never fire a side effect for money that
     // did not move) if the identifier shape ever changes.
-    const conflictedIds = new Set(data.conflicts);
+    const conflictedIds = new Set([...data.conflicts, ...alreadyMoved]);
     const settled =
       data.transactions.length === 0
         ? []
@@ -296,7 +356,12 @@ export async function createBuzzTipTransactionHandler({
     const dedupedAmount = (transactions.length - settled.length) * amount;
     const deduped = settled.length === 0 && dedupedAmount > 0;
 
-    if (settled.length > 0) {
+    // One request per key writes the record (see the lookup above). The claim is the App Blocks
+    // tip endpoint's Redis claim (claimTipIdempotency), under its own scope so it never collides
+    // with the endpoint's claim for the same key.
+    const mayRecord =
+      settled.length > 0 && (!keyed || (await claimTipRecord(ctx.user.id, sharedId)));
+    if (mayRecord) {
       if (entityType && entityId) {
         // TODO: We might wanna notify contributors, but hardly a priority right now imho.
         await upsertBuzzTip({
@@ -320,7 +385,7 @@ export async function createBuzzTipTransactionHandler({
             type: 'tip-received',
             userId: toAccountId,
             category: NotificationCategory.Buzz,
-            key: `tip-received:${uuid()}`,
+            key: `tip-received:${crypto.randomUUID()}`,
             details: {
               amount: amount,
               user: fromUser?.username,
@@ -350,6 +415,69 @@ export async function createBuzzTipTransactionHandler({
     return { ...data, deduped, dedupedAmount };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+/**
+ * A keyed tip batch that failed. A failure that provably moved nothing is rethrown. Otherwise the
+ * same batch is resent once: the ledger answers every leg it already holds as a conflict and moves
+ * only the rest. Every leg accounted for (moved or conflicting), the batch landed and is reported
+ * as this call's (its side effects then run once, here). A resend that fails, or that leaves a leg
+ * unaccounted for (the ledger drops an insufficient-funds leg from both lists, and the first send
+ * may still be committing it), is PAYMENT_OUTCOME_UNKNOWN_MESSAGE.
+ */
+export async function resolveFailedTipBatch(
+  transactions: Parameters<typeof createBuzzTransactionMany>[0],
+  alreadyMoved: Set<string>,
+  error: unknown,
+  userId: number
+): Promise<{ transactions: string[]; conflicts: string[] }> {
+  if (chargeWasDeclined(error)) throw error;
+  const sent = transactions.filter((t) => !alreadyMoved.has(t.externalTransactionId));
+  const context = { externalTransactionId: sent[0]?.externalTransactionId ?? '', userId };
+  let resent: { transactions: string[]; conflicts: string[] };
+  try {
+    resent = await createBuzzTransactionMany(transactions);
+  } catch (resendError) {
+    throw paymentOutcomeUnknown(context, 'tip resend failed after unknown outcome', {
+      error,
+      resendError,
+    });
+  }
+  if (
+    sent.length === 0 ||
+    resent.transactions.length + resent.conflicts.length < transactions.length
+  )
+    throw paymentOutcomeUnknown(context, 'tip legs unaccounted for after resend', { error });
+  return { transactions: sent.map((t) => t.externalTransactionId), conflicts: [] };
+}
+
+/** The record claim's scope: no `:`, as claimTipIdempotency's key requires. */
+const TIP_RECORD_CLAIM_SCOPE = 'tip-record';
+
+/**
+ * Whether this request writes the tip record for `sharedId`: the first claimant does; a claim held
+ * by another request (in progress, for its 10-minute TTL) means that request recorded it.
+ *
+ * FAIL OPEN on a Redis error: the record is written. The worst case is a duplicate tip record,
+ * notification and metric; the Buzz itself moved once either way (the ledger dedupes the legs).
+ */
+async function claimTipRecord(userId: number, sharedId: string) {
+  try {
+    // The key is a hash of the tip's id: hex, inside the claim's charset, and one per tip.
+    const key = createHash('sha256').update(sharedId).digest('hex');
+    const claim = await claimTipIdempotency(userId, TIP_RECORD_CLAIM_SCOPE, key, 'record');
+    return claim.state === 'acquired';
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'tip-record-claim',
+      message: 'tip record claim failed; recording anyway',
+      userId,
+      sharedId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+    return true;
   }
 }
 

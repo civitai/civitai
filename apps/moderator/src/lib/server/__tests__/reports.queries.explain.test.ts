@@ -67,24 +67,32 @@ describe.skipIf(!h.hasDb)('report queries plan against the real schema', () => {
     await plans();
   });
 
-  // The only fragment that joins Thread to itself, and only these two types emit it.
-  it.each(['comment', 'commentV2'] as const)(
-    'getReports(%s) resolves the deep-link CASE over Thread',
-    async (type) => {
-      await service.getReports({ type, statuses: 'all', reasons: 'all' });
-      const [, page] = h.queries;
-      expect(page.sql).toMatch(/highlight/);
-      await plans();
-    }
-  );
+  it('getReports(commentV3) resolves the comment permalink', async () => {
+    await service.getReports({ type: 'commentV3', statuses: 'all', reasons: 'all' });
+    const [, page] = h.queries;
+    expect(page.sql).toMatch(/'\/comments\/'/);
+    await plans();
+  });
 
   it('getReportCounts — the materialized CTE and every union branch', async () => {
     await service.getReportCounts();
 
     const [counts] = h.queries;
     // Per-branch joins back to Report seq-scanned it once per entity type; hence the CTE.
-    expect(counts.sql).toMatch(/with .*open_reports as materialized/i);
+    expect(counts.sql).toMatch(/with .*matched as materialized/i);
     expect(counts.sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
+    await plans();
+  });
+
+  it('getReportLastActioned — the materialized CTE and every union branch', async () => {
+    await service.getReportLastActioned();
+    expect(h.queries[0].sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
+    await plans();
+  });
+
+  it('getReportOldestOpen — the materialized CTE and every union branch', async () => {
+    await service.getReportOldestOpen();
+    expect(h.queries[0].sql.match(/union all/gi)).toHaveLength(reportEntities.length - 1);
     await plans();
   });
 

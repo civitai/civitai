@@ -105,8 +105,8 @@ deliberate; the complaint is that it is unstated. Buying a boost and then cancel
 a user loses Buzz with nothing to show for it, which makes this the highest-value item in this group.
 
 **Fixed.** All three purchase points — the queue-card panel, the pre-submit alert and the mobile
-confirm — now render one shared line (`BOOST_NON_REFUNDABLE` in `download-lanes.tsx`) stating that
-the fee is not refunded if the generation is cancelled. Two testers asked for it to be coloured, one
+confirm — now render one shared line (`BOOST_REFUND_POLICY` in `download-lanes.tsx`): the boost is refunded
+if the download never starts, but not once it has. Two testers asked for it to be coloured, one
 of them twice, and the argument offered was support load — people who did not mean to click it will
 arrive in help asking for the Buzz back. It is **yellow**, not red: it matches the Buzz and boost
 colour already on those controls, where red would read as an error state at three purchase points.

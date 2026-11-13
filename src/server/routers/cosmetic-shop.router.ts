@@ -1,34 +1,46 @@
+import { itemHolderInFlightLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { getRegion } from '~/server/utils/region-blocking';
 import {
   getAllCosmeticShopSections,
   getPaginatedCosmeticShopItemInput,
   getPreviewImagesInput,
   getShopInput,
   purchaseCosmeticShopItemInput,
+  setShopItemEventTagsInput,
+  shopItemSectionInput,
   toggleWishlistShopItemInput,
   updateCosmeticShopSectionsOrderInput,
   upsertCosmeticInput,
   upsertCosmeticShopItemInput,
   upsertCosmeticShopSectionInput,
+  shopItemsFeaturedHistoryInput,
 } from '~/server/schema/cosmetic-shop.schema';
 import {
+  addShopItemToSection,
   deleteCosmeticShopItem,
   deleteCosmeticShopSection,
   getPaginatedCosmeticShopItems,
   getSectionById,
   getShopItemById,
+  getEventTagSuggestions,
+  getShopItemEventTags,
+  getShopItemSections,
   getShopSections,
   getShopSectionsWithItems,
   getUserPreviewImagesForCosmetics,
   getWishlistedShopItemIds,
   purchaseCosmeticShopItem,
+  removeShopItemFromSection,
   reorderCosmeticShopSections,
+  setShopItemEventTags,
   toggleWishlistShopItem,
   upsertCosmetic,
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
 } from '~/server/services/cosmetic-shop.service';
+import { getShopItemsFeaturedHistory } from '~/server/services/cosmetic-shop-featured-log.service';
 import {
   moderatorProcedure,
   protectedProcedure,
@@ -36,6 +48,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
@@ -84,16 +97,37 @@ export const cosmeticShopRouter = router({
       return upsertCosmeticShopSection({
         ...input,
         userId: ctx.user.id,
+        tracker: ctx.track,
       });
     }),
-  deleteShopSection: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => {
-    return deleteCosmeticShopSection(input);
+  deleteShopSection: moderatorProcedure.input(getByIdSchema).mutation(({ input, ctx }) => {
+    return deleteCosmeticShopSection({ ...input, tracker: ctx.track });
   }),
   updateSectionsOrder: moderatorProcedure
     .input(updateCosmeticShopSectionsOrderInput)
     .mutation(({ input }) => {
       return reorderCosmeticShopSections(input);
     }),
+  getShopItemSections: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemSections(input)),
+  addShopItemToSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input, ctx }) => addShopItemToSection({ ...input, tracker: ctx.track })),
+  removeShopItemFromSection: moderatorProcedure
+    .input(shopItemSectionInput)
+    .mutation(({ input, ctx }) => removeShopItemFromSection({ ...input, tracker: ctx.track })),
+  getShopItemsFeaturedHistory: moderatorProcedure
+    .input(shopItemsFeaturedHistoryInput)
+    .query(({ input }) => getShopItemsFeaturedHistory(input)),
+  // Event tags are moderator data: they decide what an official section sells.
+  getShopItemEventTags: moderatorProcedure
+    .input(shopItemSectionInput.pick({ shopItemId: true }))
+    .query(({ input }) => getShopItemEventTags(input)),
+  getEventTagSuggestions: moderatorProcedure.query(() => getEventTagSuggestions()),
+  setShopItemEventTags: moderatorProcedure
+    .input(setShopItemEventTagsInput)
+    .mutation(({ input }) => setShopItemEventTags(input)),
   // #endregion
   // #region [Public facing routes]
   getShop: publicProcedure
@@ -102,7 +136,7 @@ export const cosmeticShopRouter = router({
     .query(({ input, ctx }) => {
       return getShopSectionsWithItems({
         ...input,
-        isModerator: ctx?.user?.isModerator,
+        isModerator: eventViewerOf(ctx).isModerator,
         creatorShopEnabled: ctx?.features?.creatorShop,
         stickersEnabled: ctx?.features?.stickers,
         userId: ctx?.user?.id,
@@ -111,6 +145,7 @@ export const cosmeticShopRouter = router({
   purchaseShopItem: verifiedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })
     .input(purchaseCosmeticShopItemInput)
+    .use(itemHolderInFlightLimit)
     .mutation(({ input, ctx }) => {
       // Calculate domain-allowed account types at router level
       const [buzzType] = getAllowedAccountTypes(ctx.features);
@@ -119,7 +154,10 @@ export const cosmeticShopRouter = router({
         ...input,
         stickersEnabled: ctx.features.stickers,
         packsEnabled: ctx.features.cosmeticPacks,
+        mysteryBoxEnabled: ctx.features.mysteryBox,
+        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
         userId: ctx.user.id,
+        isModerator: eventViewerOf(ctx).isModerator,
         buzzType,
       });
     }),

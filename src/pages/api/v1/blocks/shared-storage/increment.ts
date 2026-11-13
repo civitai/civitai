@@ -9,10 +9,10 @@ import {
   withBlockScope,
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
-import {
-  assertValidCounterKey,
-  incrementSharedCounter,
-} from '~/server/routers/apps-shared.router';
+import { withLegacyStoreGate } from '~/server/services/apps/legacy-store-shutdown';
+import { incrementSharedCounter } from '~/server/routers/apps-shared.router';
+import { sendRestRateLimited } from '~/server/utils/endpoint-helpers';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
 
 /**
  * POST /api/v1/blocks/shared-storage/increment  body `{ key }`
@@ -56,7 +56,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
-    const key = assertValidCounterKey(parsed.data.key);
+    const key = parsed.data.key;
     const result = await incrementSharedCounter(bearer(req), key);
     // W13 richer audit detail — stash a structured ref so the middleware
     // finish-writer records "Bumped shared counter <key>". Best-effort.
@@ -78,6 +78,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // resolveSharedContext / the increment throw TRPCError (sub-trust → FORBIDDEN,
     // rate-limit → TOO_MANY_REQUESTS, disabled flag → FORBIDDEN, etc.).
     const trpcError = error as TRPCError;
+    const rateLimit = rateLimitMetaOf(error);
+    if (rateLimit) {
+      sendRestRateLimited(res, trpcError.message, rateLimit);
+      return;
+    }
     const statusCode =
       typeof trpcError?.code === 'string' ? getHTTPStatusCodeFromError(trpcError) : 500;
     res.status(statusCode).json({ error: trpcError?.message ?? 'Failed to increment counter' });
@@ -89,7 +94,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // origin (`Origin: null`), so it needs `ACAO: null` to clear the CORS preflight;
 // the Bearer block-JWT (no cookies) remains the sole authz gate — mirrors
 // images.ts; see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, {
+export default withBlockScope(withLegacyStoreGate('shared', baseHandler), {
   endpoint: 'shared_storage_increment',
   requiredScope: 'apps:storage:shared:write',
   allowOpaqueOrigin: true,

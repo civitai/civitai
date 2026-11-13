@@ -20,19 +20,24 @@ function buildTFIDF(tokensA: string[], tokensB: string[]): [TFIDFMap, TFIDFMap, 
   // Sets, not `Array.includes`: that made this O(vocab × tokens), and one side of
   // the server's comparison is a stored prompt whose length nothing bounds.
   const docSets = docs.map((doc) => new Set(doc));
-  const docFreq: Record<string, number> = {};
+  // Maps, not plain objects: a prompt word is a key, and one naming an
+  // Object.prototype member reads the inherited value, scoring that prompt 0.
+  const docFreq = new Map<string, number>();
   vocab.forEach((word) => {
-    docFreq[word] = docSets.reduce((count, set) => (set.has(word) ? count + 1 : count), 0);
+    docFreq.set(
+      word,
+      docSets.reduce((count, set) => (set.has(word) ? count + 1 : count), 0)
+    );
   });
 
   function tfidfVector(tokens: string[]): TFIDFMap {
     const tfidf = new Map<string, number>();
-    const termFreq: Record<string, number> = {};
-    tokens.forEach((t) => (termFreq[t] = (termFreq[t] ?? 0) + 1));
+    const termFreq = new Map<string, number>();
+    tokens.forEach((t) => termFreq.set(t, (termFreq.get(t) ?? 0) + 1));
 
     for (const word of vocab) {
-      const tf = (termFreq[word] ?? 0) / tokens.length;
-      const idf = Math.log(1 + docs.length / (1 + (docFreq[word] ?? 0)));
+      const tf = (termFreq.get(word) ?? 0) / tokens.length;
+      const idf = Math.log(1 + docs.length / (1 + (docFreq.get(word) ?? 0)));
       tfidf.set(word, tf * idf);
     }
     return tfidf;

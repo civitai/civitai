@@ -190,10 +190,112 @@ describe('createSessionClient — internal identity routing (AUTH_HUB_INTERNAL_U
       AUTH_INTERNAL_TOKEN: 'secret-123',
       AUTH_HUB_INTERNAL_URL: 'http://auth-hub.internal.svc.cluster.local:3000',
     });
-    h.verifyToken.mockImplementation(async (t: string) => ({ sub: t, iss: 'https://evil.example' }));
+    h.verifyToken.mockImplementation(async (t: string) => ({
+      sub: t,
+      iss: 'https://evil.example',
+    }));
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
     expect(await createSessionClient().getSessionUser('7')).toBeNull(); // fail closed
     expect(fetch).not.toHaveBeenCalled(); // bearer never left for the untrusted issuer
+  });
+});
+
+// A fetch that never settles on its own: it rejects only when its AbortSignal fires, like real fetch.
+const hungFetch = (_url: string, init: unknown) =>
+  new Promise((_resolve, reject) => {
+    const signal = (init as { signal: AbortSignal }).signal;
+    if (signal.aborted) return reject(signal.reason);
+    signal.addEventListener('abort', () => reject(signal.reason));
+  }) as Promise<Res>;
+
+describe('createSessionClient — resolveSessionUser (why a token did not resolve)', () => {
+  afterEach(() => vi.useRealTimers());
+  const UNAVAILABLE = { user: null, reason: 'unavailable' };
+  const INVALID = { user: null, reason: 'invalid' };
+
+  it('cache hit → the user', async () => {
+    h.store.set(key(7), richUser(7, 'cached'));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual({
+      user: richUser(7, 'cached'),
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('cold cache + hub timeout → unavailable', async () => {
+    vi.useFakeTimers();
+    stubFetch(hungFetch);
+    const p = createSessionClient().resolveSessionUser('7');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await p).toEqual(UNAVAILABLE);
+  });
+
+  it.each([
+    ['hub 500', async () => ({ ok: false, status: 500, json: async () => null })],
+    ['hub 429', async () => ({ ok: false, status: 429, json: async () => null })],
+    [
+      'unparseable 200 body',
+      async () => ({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new SyntaxError('Unexpected token');
+        },
+      }),
+    ],
+    [
+      'network error',
+      async (): Promise<Res> => {
+        throw new TypeError('fetch failed');
+      },
+    ],
+  ])('%s → unavailable, and getSessionUser still returns null', async (_name, impl) => {
+    stubFetch(impl);
+    const client = createSessionClient();
+    expect(await client.resolveSessionUser('7')).toEqual(UNAVAILABLE);
+    expect(await client.getSessionUser('7')).toBeNull();
+  });
+
+  it.each([401, 404])('hub %i → invalid', async (status) => {
+    stubFetch(async () => ({ ok: false, status, json: async () => null }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual(INVALID);
+  });
+
+  it('hub 200 with a null body → invalid', async () => {
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => null }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual(INVALID);
+  });
+
+  it('a token that fails verification → invalid, no fetch', async () => {
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().resolveSessionUser('bad')).toEqual(INVALID);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('a non-numeric subject → invalid, no fetch', async () => {
+    h.verifyToken.mockImplementation(async () => ({ sub: 'abc', iss: 'https://auth.test' }));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual(INVALID);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('an untrusted issuer → invalid, no fetch', async () => {
+    h.verifyToken.mockImplementation(async (t: string) => ({ sub: t, iss: 'https://evil.test' }));
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    expect(await createSessionClient().resolveSessionUser('7')).toEqual(INVALID);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('two concurrent cold calls that time out share one fetch and both get unavailable', async () => {
+    vi.useFakeTimers();
+    const fetch = stubFetch(hungFetch);
+    const client = createSessionClient();
+    const a = client.resolveSessionUser('7');
+    const b = client.resolveSessionUser('7');
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(await a).toEqual(UNAVAILABLE);
+    expect(await b).toEqual(UNAVAILABLE);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -458,5 +560,61 @@ describe('createSessionClient — invalidateAll (mass cutoff)', () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 204, json: async () => null }));
     await expect(createSessionClient().invalidateAll()).rejects.toThrow(/AUTH_INTERNAL_TOKEN/);
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSessionClient — cache read on a dead Redis (queued command never settles)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  // A disconnected node-redis client queues the command: no resolve, no reject.
+  const hang = () => h.cacheGet.mockImplementation(() => new Promise(() => {}));
+
+  it('getSessionUser gives up on the cache read and falls through to the hub fetch', async () => {
+    vi.useFakeTimers();
+    hang();
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    const p = createSessionClient().getSessionUser('7');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await p).toMatchObject({ id: 7 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('getSessionUserById gives up on the cache read and falls through to the hub fetch', async () => {
+    vi.useFakeTimers();
+    hang();
+    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    const p = createSessionClient().getSessionUserById(7);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await p).toMatchObject({ id: 7 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves no pending timer behind after a fast cache hit', async () => {
+    vi.useFakeTimers();
+    h.store.set(key(7), richUser(7));
+    await createSessionClient().getSessionUserById(7);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('swallows a late rejection of the abandoned read', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); // keep setImmediate real
+    let rejectRead!: (e: Error) => void;
+    h.cacheGet.mockImplementation(
+      () => new Promise((_res, rej) => (rejectRead = rej)) as Promise<never>
+    );
+    stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const p = createSessionClient().getSessionUserById(7);
+      await vi.advanceTimersByTimeAsync(1000);
+      await p;
+      rejectRead(new Error('connection closed'));
+      await vi.advanceTimersByTimeAsync(10);
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 });

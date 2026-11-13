@@ -14,6 +14,7 @@ import {
   type PermissionBadge,
 } from '~/components/PermissionIndicator/PermissionIndicatorBase';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { allowsDifferentLicenseOnMerges } from '~/server/common/constants';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
 /**
@@ -37,8 +38,8 @@ export const PermissionIndicator = ({
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
 
-  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, sfwOnly } =
-    permissions;
+  const { allowNoCredit, allowCommercialUse, allowDerivatives, sfwOnly } = permissions;
+  const allowDifferentLicense = allowsDifferentLicenseOnMerges(permissions);
   const canSellImages = allowCommercialUse.includes(CommercialUse.Image);
   const canRentCivit = allowCommercialUse.includes(CommercialUse.RentCivit);
   const canRent = allowCommercialUse.includes(CommercialUse.Rent);

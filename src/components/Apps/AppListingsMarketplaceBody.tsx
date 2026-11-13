@@ -1,29 +1,17 @@
-import { Button, Center, Group, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Center, Group, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppSubListingCard } from '~/components/Apps/AppSubListingCard';
 import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
-import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
 import { hasActiveAppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 import { useAppsStoreQueryParams } from '~/components/Apps/useAppsStoreQueryParams';
-import { RecentlyOpenedListingsView } from '~/components/Apps/RecentlyOpenedApps';
-import {
-  reconcileRecentApps,
-  selectRecentRailEntries,
-  type RecentHealMemo,
-  type ResolvedRecentApp,
-} from '~/components/Apps/recentAppsRail';
-import {
-  getRecentlyOpenedApps,
-  recordRecentlyOpenedApp,
-  type RecentApp,
-} from '~/components/Apps/recentlyOpenedAppsStore';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ListingCard, ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
+import type { StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
+import { isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -71,16 +59,8 @@ import { trpc } from '~/utils/trpc';
  * the URL is the debounced echo — see `searchInput` below.
  */
 
-const SORT_OPTIONS: { value: ListingSort; label: string }[] = [
-  { value: 'top-rated', label: 'Top rated' },
-  { value: 'popular', label: 'Most popular' },
-  { value: 'newest', label: 'Newest' },
-  { value: 'name', label: 'Name (A–Z)' },
-];
-
 export function AppListingsMarketplaceBody() {
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
   const { filters, setFilters, hasPendingWrite } = useAppsStoreQueryParams();
   const { kind, category, sort } = filters;
 
@@ -172,54 +152,10 @@ export function AppListingsMarketplaceBody() {
   useEffect(() => {
     if (hasPendingWrite()) return;
     if (searchInput !== debouncedSearch) return;
-    if (filters.query !== searchInput) setSearchInput(filters.query);
+    // Trimmed on both sides, like the echo above: a write skipped for whitespace alone leaves the
+    // URL one space off the box, and adopting that would eat or resurrect the space under the caret.
+    if (filters.query.trim() !== searchInput.trim()) setSearchInput(filters.query);
   });
-
-  // "Recently opened" rail (client-only personalisation from localStorage).
-  // SEEDED EMPTY so SSR and the first client render match — reading
-  // localStorage during render would be a hydration mismatch — and the real
-  // list loads in a post-mount effect. A viewer with no recents therefore sees
-  // the page exactly as before: `RecentlyOpenedListingsView` renders null for an
-  // empty list, so nothing (not even a spacer) is added. The rail is rendered
-  // BELOW the search/sort/filter controls precisely because of this one-frame
-  // late hydration — see the comment at its render site.
-  const [recents, setRecents] = useState<RecentApp[]>([]);
-  // 🔴 Keyed by ACCOUNT (#4048). localStorage is per browser PROFILE, not per
-  // account, and nothing clears it on an account switch — a profile that had
-  // been a moderator session rendered six on-site apps here for a viewer whose
-  // server scope returns none of them, every one of which 404s on its detail
-  // page. The store now returns only what the CURRENT viewer wrote (`null` =
-  // signed out, its own bucket). `ownerId` is in the dep list so an in-SPA
-  // sign-in / sign-out / switch re-reads rather than keeping the stale rail.
-  const ownerId = currentUser?.id ?? null;
-  useEffect(() => {
-    setRecents(getRecentlyOpenedApps(ownerId));
-  }, [ownerId]);
-  // The rail's ENTRIES are derived further down — `recentEntries` needs the
-  // loaded listings (`items`) to reconcile stale persisted entries against, and
-  // those are not available until after the query below. See it there.
-
-  // Re-opening from the rail moves that app back to the front of the store. For
-  // an OFF-SITE entry this is the only chance to record it (following the link
-  // leaves the SPA); for an on-site one the run page records it too, and the
-  // store dedups, so double-recording is harmless.
-  function handleOpenRecent(entry: ResolvedRecentApp) {
-    setRecents(
-      recordRecentlyOpenedApp(
-        {
-          id: entry.id,
-          slug: entry.slug,
-          kind: entry.kind,
-          hasPage: entry.hasPage,
-          ...(entry.blockId ? { blockId: entry.blockId } : {}),
-          ...(entry.externalUrl ? { externalUrl: entry.externalUrl } : {}),
-          ...(entry.name ? { name: entry.name } : {}),
-          ...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {}),
-        },
-        ownerId
-      )
-    );
-  }
 
   const {
     data,
@@ -247,6 +183,7 @@ export function AppListingsMarketplaceBody() {
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
+      includeSubListings: true,
     },
     {
       // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
@@ -295,116 +232,26 @@ export function AppListingsMarketplaceBody() {
        * the two result sets differ in COUNT, which still moves the grid's
        * height. That residue is real and is stated in the PR body rather than
        * papered over.
-       *
-       * 🔴 IT DOES **NOT** REPLACE THE RECENTS MEMO. `reconcileRecentApps`'s
-       * third argument exists because `items` can be empty when the rail
-       * reconciles against it; this narrows that window (a first load, an error,
-       * a cache eviction still produce it) but does not close it. Do not read
-       * this option as licence to drop that argument — `__tests__/recentAppsRail.test.ts`
-       * fails if the call goes back to two, and that guard is correct.
        */
       placeholderData: keepPreviousData,
     }
   );
 
-  const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
-
-  /**
-   * RECONCILE the persisted recents against the listings already on this page.
-   *
-   * 🔴 WHY THE RAIL NEEDS THIS. A recents entry written by the legacy
-   * `MarketplaceBody.recordRecent` carries `{id, blockId, name, iconUrl}` — no
-   * `hasPage` — and `resolveRecentApp` reads a missing `hasPage` as `false`. So a
-   * viewer's most-run apps rendered an EYE pointing at the detail page instead of
-   * a PLAY pointing at `/apps/run/…`, and no amount of clicking healed it:
-   * `handleOpenRecent` re-persists the resolved `false`. `reconcileRecentApps`
-   * takes the server's answer from the matching card. Entries with no match on
-   * the loaded pages pass through UNTOUCHED — never dropped.
-   *
-   * 🔴 MONOTONIC, because the card set is FILTER- AND PAGE-SCOPED. `items` is
-   * `data.pages.flatMap(…)` from a query keyed on `{kind, category, sort, limit}`
-   * with no `keepPreviousData`/`placeholderData`, so every sort/filter change
-   * empties it for a beat. Reconciling against that raw would flip every healed
-   * tile play→eye→play on a control the viewer touched for an unrelated reason.
-   * The third argument below is a per-mount memo (the ref) of the last
-   * card-backed result per entry id, which makes a match a one-way ratchet: only
-   * ANOTHER card can change a healed entry, and the mere absence of one cannot.
-   * The memo is bounded to the ids currently in `recents` (≤ `MAX_RECENTS_TOTAL`).
-   * 🔴 It is not optional in practice — dropping it silently restores the
-   * un-healing bug, so a test in `__tests__/recentAppsRail.test.ts` scans this
-   * file and fails if the call goes back to two arguments.
-   *
-   * 🔴 NO EFFECT, NO WRITE, NO LOOP. This is a pure derivation over a ref-held
-   * cache, deliberately not an effect that re-persists the repaired list. An
-   * effect writing the store on every `/apps` load would need a whole-list writer
-   * (`recordRecentlyOpenedApp` prepends, so looping it would REVERSE the rail) and
-   * would risk a write/render loop against state this component also reads. It
-   * buys little: the derivation re-runs on every load.
-   *
-   * 🔴 AND IT WOULD NOT BUY THE CHROME MENU ANYTHING EITHER. The store's other
-   * consumer — the app-chrome "Recently run" menu — filters on `kind`/`blockId`,
-   * and a legacy entry carries `blockId` but NOT `kind`: `MarketplaceBody`'s
-   * `recordRecent` writes only `{id, blockId, name, iconUrl}`. Such entries are
-   * admitted by ABSENCE (`undefined !== 'offsite'` is true), not by carrying the
-   * field — see the 🔴 note on `selectChromeRecentApps`, which is the authority
-   * on that gate. So persisting `kind` would not change what that menu shows;
-   * what it would change is `hasPage`, which that menu deliberately never reads.
-   *
-   * The repair still PERSISTS on the natural interaction: `handleOpenRecent`
-   * receives the RECONCILED entry, so the first click on a healed tile writes the
-   * corrected `kind`/`hasPage`/`slug` back to localStorage.
-   */
-  const healedRecentsRef = useRef<RecentHealMemo>(new Map());
-  const reconciledRecents = useMemo(
-    () => reconcileRecentApps(recents, items, healedRecentsRef.current),
-    [recents, items]
+  const gridItems = useMemo(
+    () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
+    [data]
   );
-  /**
-   * ⚠️ ACCEPTED: ONE post-paint update per tile, and only ever in the healing
-   * direction. The rail already hydrates one frame late (localStorage is
-   * client-only, seeded empty for SSR parity); this adds an update when the query
-   * first resolves a matching card, so a tile's glyph can flip eye→play after
-   * paint and its `aria-label` change may be re-announced by some assistive tech.
-   *
-   * What it is NOT is a flip-flop. Monotonic reconciliation means the emptying of
-   * `items` on a sort/filter change cannot un-heal a tile, so the glyph does not
-   * round-trip play→eye→play under a control the viewer touched for an unrelated
-   * reason. A healed tile can still change ONCE MORE, in exactly one case: its
-   * card reappears saying something DIFFERENT (the app lost its page). That is
-   * the server correcting us, and it is the whole point of correcting in both
-   * directions — not churn.
-   *
-   * Accepted rather than mitigated, on three grounds:
-   *   - NO LAYOUT SHIFT. The CTA is a fixed `ActionIcon size="md"` and both
-   *     glyphs render at 16px, so the flip is a repaint, not a reflow — nothing
-   *     moves, which is the CLS hazard the rail's placement already guards.
-   *   - NEVER MISLEADING AT ANY INSTANT. The icon, the label and the href are all
-   *     derived from one `getRecentRailAction` call, and that coupling is pinned
-   *     ("NEVER disagrees with getRecentRailTarget"). So the pre-flip state is a
-   *     correct "view details" control, and the post-flip state is a correct
-   *     "open" one — a viewer can never be shown a play glyph on a control that
-   *     navigates to the detail page.
-   *   - The alternative — withholding the rail until the query settles — delays
-   *     the "jump back in" shortcut behind a network round-trip and hides the rail
-   *     entirely when the query ERRORS, which is a worse regression than a glyph
-   *     correcting itself.
-   */
-  const recentEntries = useMemo(
-    () => selectRecentRailEntries(reconciledRecents),
-    [reconciledRecents]
-  );
-
   // Client-side search over loaded pages (name + tagline). See the ⚠️ gap note:
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
+    if (!q) return gridItems;
+    return gridItems.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
     );
-  }, [items, debouncedSearch]);
+  }, [gridItems, debouncedSearch]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty
   // grid can't tell which control emptied it. The dropdown's `Indicator` counts
@@ -449,29 +296,19 @@ export function AppListingsMarketplaceBody() {
 
   return (
     <Stack gap="md">
+      {/* No "Recently opened" strip here any more: the store is pure discovery. Recents
+          live on the viewer's "My apps" home (`/apps`, `AppsHomeBody`), merged with the
+          server's list of their apps. The card CTAs below still RECORD opens. */}
+      <Title order={2} data-testid="apps-store-heading">
+        App Marketplace
+      </Title>
+
       {/*
-        ONE control row: search (flexes) · sort · Filters. Replaces the previous
-        three stacked rows.
+        Search only. Sort and Filters live in the site sub-nav (`AppsStoreFeedFilters`,
+        mounted by `SubNav2`), the way the images feed does it; all three write the same
+        URL params this body reads.
 
-        ALIGNMENT. The row was previously `align="end"` because the search input
-        carried a visible `label="Search"` and the sort `Select` carried
-        `label="Sort"` — the labels made the two controls different heights, so
-        they could only be lined up by their BOTTOM edge, and the filter toggles
-        underneath had no label at all and sat on a third baseline. The labels
-        are gone (the placeholder + the leading magnifier already say "search",
-        and the sort control shows its own value), so all three controls are the
-        same height and the row centres cleanly.
-
-        🔴 Removing the visible label does NOT remove the accessible name —
-        `aria-label` carries it, so `getByLabelText('Search')` and a screen
-        reader still resolve the same names they did before. An icon and a
-        placeholder are not an accessible name.
-
-        The `radius="xl"` pills + `size="sm"` (36px) match the `/models` filter
-        row geometry, which is what "align the search and sort components" is
-        measured against. `wrap="wrap"` so a narrow viewport drops Filters onto
-        its own line instead of crushing the search box; `flex: 1` + a 220px
-        floor keeps search the dominant control at every width.
+        🔴 `aria-label` carries the accessible name; an icon and a placeholder are not one.
       */}
       <Group gap="sm" align="center" wrap="wrap" data-testid="apps-store-control-row">
         <TextInput
@@ -484,38 +321,7 @@ export function AppListingsMarketplaceBody() {
           size="sm"
           style={{ flex: 1, minWidth: 220 }}
         />
-        <Select
-          aria-label="Sort"
-          data={SORT_OPTIONS}
-          value={sort}
-          onChange={(v) => setFilters({ sort: (v as ListingSort) ?? 'top-rated' })}
-          allowDeselect={false}
-          radius="xl"
-          size="sm"
-          w={180}
-        />
-        <AppsStoreFiltersDropdown filters={{ kind, category }} onChange={setFilters} />
       </Group>
-
-      {/* RECENTLY OPENED — BELOW the search/sort/filter controls and ABOVE the
-          grid.
-          🔴 Deliberately not at the very top. The rail is seeded EMPTY for SSR +
-          the first client render (reading localStorage during render is a
-          hydration mismatch) and hydrates in a post-mount effect, so for a
-          viewer WITH recents it appears one frame late. Above the search input
-          that insertion pushes the whole page down by ~90px after paint — a pure
-          CLS hit on the primary controls, and one we would actually see, since
-          Faro RUM reports web-vitals for this page. Below the controls, the late
-          insertion only moves the grid, which the viewer has not yet aimed at.
-          The rail is still above the fold and above every result card, so the
-          "jump back in" shortcut keeps its priority over browsing.
-          Renders null when empty → a first-time viewer's layout is byte-identical
-          to before, and nothing shifts at all. */}
-      <RecentlyOpenedListingsView
-        entries={recentEntries}
-        canOpenPage={!!features.appBlocksPages}
-        onOpenRecent={handleOpenRecent}
-      />
 
       {/* THE FIRST-LOAD STATE. This used to be `<Center py="xl"><Loader /></Center>`
           — a spinner in a box whose height had nothing to do with the grid that
@@ -524,8 +330,8 @@ export function AppListingsMarketplaceBody() {
           the same per-cell wrapper, so the cells that appear are already the right
           size and in the right place.
           🔴 IT IS NOT "ZERO LAYOUT SHIFT". Two rows of skeletons against up to 48
-          results still changes the grid's HEIGHT on resolve, and the recents rail
-          still hydrates a frame late above it. See `AppListingCardSkeleton.tsx`.
+          results still changes the grid's HEIGHT on resolve. See
+          `AppListingCardSkeleton.tsx`.
           🔴 `showingStaleEmpty` IS THE SECOND ENTRY INTO THIS BRANCH, and it must
           stay ORDERED BEFORE `showingEmpty` below — that ordering is the whole fix.
           See its declaration for what renders without it. */}
@@ -635,9 +441,35 @@ export function AppListingsMarketplaceBody() {
             aria-busy={isPlaceholderData ? true : undefined}
           >
             <div className={gridClasses.grid} data-testid="apps-listing-grid">
-              {filteredItems.map((card) => (
+              {filteredItems.map((card, position) => (
                 <div key={card.id} data-testid="apps-listing-grid-col">
-                  <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  {isSubListingCard(card) ? (
+                    <AppSubListingCard
+                      card={card}
+                      canOpenPage={!!features.appBlocksPages}
+                      telemetry={{
+                        surface: 'sub_listing',
+                        position,
+                        sort,
+                        category,
+                        query: debouncedSearch,
+                      }}
+                    />
+                  ) : (
+                    <AppListingCard
+                      card={card}
+                      canOpenPage={!!features.appBlocksPages}
+                      // Acquisition telemetry: the card's grid position and the sort / filter /
+                      // search it was found under (`AppStore_Action`, see appStoreTelemetry.ts).
+                      telemetry={{
+                        surface: 'store_card',
+                        position,
+                        sort,
+                        category,
+                        query: debouncedSearch,
+                      }}
+                    />
+                  )}
                 </div>
               ))}
             </div>

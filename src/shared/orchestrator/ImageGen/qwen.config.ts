@@ -1,4 +1,7 @@
-import type { Qwen20bCreateImageGenInput, Qwen20bEditImageGenInput } from '@civitai/client';
+import type {
+  Qwen20bCreateImageGenInput,
+  Qwen20bEditImageGenInput,
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import {
   negativePromptSchema,
@@ -6,7 +9,7 @@ import {
   seedSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
-import { qwenVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { qwenVersionIds } from '~/shared/generation/version-ids';
 
 const engine = 'qwen';
 

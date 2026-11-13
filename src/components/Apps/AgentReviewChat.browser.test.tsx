@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 
 /**
  * AGENTIC MOD CODE-REVIEW in-modal CHAT (App Blocks P3) — browser-mode tests.
@@ -32,7 +33,16 @@ const mocks = vi.hoisted(() => ({
 
 const showError = vi.fn();
 const showSuccess = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+/*
+  🔴 SPREAD THE ORIGINAL, never a one-key factory. A factory that omits an export fails the
+  WHOLE FILE at import the day anything in its graph starts calling it — and vitest reports
+  that as 0 tests collected, not as a failing assertion, so it reads as a skipped file. This
+  PR hit it four times at once: the panel gained a `showWarningNotification` call and every
+  suite listing only two exports stopped importing. `local-rules/no-wholesale-module-mock`
+  reds on the narrow form.
+*/
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: (...a: unknown[]) => showSuccess(...a),
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
@@ -75,7 +85,10 @@ vi.mock('~/utils/trpc', () => {
           useMutation: () => ({
             mutate: (
               vars: unknown,
-              opts?: { onSuccess?: (d: { reply: string }) => void; onError?: (e: { message: string }) => void }
+              opts?: {
+                onSuccess?: (d: { reply: string }) => void;
+                onError?: (e: { message: string }) => void;
+              }
             ) => {
               mocks.chatMutate(vars);
               if (mocks.chatError) {
@@ -140,7 +153,9 @@ describe('AgentReviewChat — visibility gate (via AgentReviewPanel)', () => {
   test('hidden when there is NO report (Run button shown, no chat)', async () => {
     mocks.agentReport = null;
     renderPanel();
-    await expect.element(page.getByRole('button', { name: 'Run agentic review' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'Run agentic review' }))
+      .toBeInTheDocument();
     expect(page.getByTestId('agent-review-chat').elements()).toHaveLength(0);
   });
 
@@ -181,7 +196,9 @@ describe('AgentReviewChat — send', () => {
     mocks.agentReport = COMPLETE_REPORT;
     renderPanel();
 
-    await page.getByRole('textbox', { name: 'Ask the review agent' }).fill('why did you flag scope X?');
+    await page
+      .getByRole('textbox', { name: 'Ask the review agent' })
+      .fill('why did you flag scope X?');
     await page.getByRole('button', { name: 'Send' }).click();
 
     // Mutation called with the id + the running conversation (the user turn).
@@ -283,9 +300,7 @@ describe('AgentReviewChat — sliding window', () => {
     expect(calls[calls.length - 1][0].messages.length).toBe(MAX_SENT);
 
     // No raw validation error dead-ended the chat.
-    expect(
-      page.getByText(/Array must contain at most 20 element/).elements()
-    ).toHaveLength(0);
+    expect(page.getByText(/Array must contain at most 20 element/).elements()).toHaveLength(0);
     // The full scrollback is still in the UI (the mod sees everything): the very
     // first question is still rendered even though it dropped from the SENT slice.
     await expect.element(page.getByText('question number 1', { exact: true })).toBeInTheDocument();

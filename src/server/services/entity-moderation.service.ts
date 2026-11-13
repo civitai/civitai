@@ -1,8 +1,14 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
-import type { XGuardLabelResult, XGuardModerationOutput } from '@civitai/client';
+import type { XGuardLabelResult, XGuardModerationOutput } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type {
+  PromptIds,
+  TextScanOutcome,
+  TextScanSubject,
+} from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import type { RatedEntitySnapshot } from '~/server/services/text-scan/rated-entities';
 
 type SlimMatchedTermsText = { text: string[] };
 type SlimMatchedTermsPrompt = { positivePrompt: string[]; negativePrompt: string[] };
@@ -206,21 +212,22 @@ export async function recordEntityModerationFailure(
  */
 export type ModerationAdapter = {
   /**
-   * Bulk-resolve the current text content for entities of this type. Used by
-   * the retry job to batch-fetch content across many entities in one DB
-   * round-trip. Entities whose underlying record is gone (or, for wildcards,
-   * empty) should be absent from the returned map — the retry job treats
-   * absence as "the entity went away, clean up the EM row."
+   * Bulk-resolve the current text content for entities of this type, for the
+   * retry job. Absent means gone (or, for wildcards, empty), and the retry job
+   * deletes the EM row; an entity that exists but is not public must stay
+   * present, since a rating floor still reads its stored verdict.
    */
   resolveContent: (ids: number[]) => Promise<Map<number, string>>;
 
   /**
-   * Submit (or resubmit) one entity for moderation. The EM upsert is owned
-   * by `createXGuardModerationRequest`, so adapters typically just call the
-   * appropriate wrapper helper (`submitTextModeration`,
-   * `submitWildcardCategoryAudit`, etc.). Returns the workflow info or null
-   * when the submit failed (in which case the helper has already written
-   * the EM row as Failed for the retry job to pick up).
+   * Resubmit one entity for moderation; only the retry job calls it. The EM
+   * upsert is owned by `createXGuardModerationRequest`, so adapters typically
+   * just call the appropriate wrapper helper (`submitTextModeration`,
+   * `submitWildcardCategoryAudit`, etc.). Returns the workflow info, null when
+   * the submit failed (the helper has already written the EM row as Failed),
+   * `TEXT_SCAN_ENTITY_GONE` for an entity that no longer exists (the retry job
+   * deletes the row), or `TEXT_SCAN_ENTITY_NOT_PUBLIC` for one that exists but
+   * is not public (the retry job keeps the row and stops retrying it).
    */
   submit: (args: {
     entityId: number;
@@ -251,6 +258,29 @@ export type ModerationAdapter = {
     triggeredLabels: string[];
     output: XGuardModerationOutput;
   }) => Promise<void>;
+
+  /**
+   * Text-scan counterpart of `applyResult`, called only while the entity's text-scan mode is
+   * `active`. Must be idempotent: the orchestrator redelivers callbacks.
+   */
+  applyTextScan?: (args: {
+    entityId: number;
+    workflowId: string;
+    outcome: TextScanOutcome;
+    subject: TextScanSubject;
+    /** `textScanTextHash` of the subject as submitted; `subject` is reloaded at callback. */
+    textHash: string;
+    /** Per-label prompt ids the workflow was submitted with. */
+    promptIds?: PromptIds;
+    /** `readRating` taken before the verdict was written; undefined when the adapter has none. */
+    ratingBefore?: RatedEntitySnapshot | null;
+  }) => Promise<void>;
+
+  /**
+   * The entity's stored rating, read by the text-scan callback before it writes the verdict. Any
+   * recompute after that write applies the new floor, so a read taken later can miss the raise.
+   */
+  readRating?: (entityId: number) => Promise<RatedEntitySnapshot | null>;
 
   /**
    * Optional: business logic to apply after a terminal-failure callback

@@ -88,6 +88,7 @@ moderator reading a refusal can find the box to ask for.
 | `user.buzz.bank` | See `type = 'bank'` rows in Buzz history | `isSenior` | admin + 2 names |
 | `user.moderator.toggle` | Activate / deactivate moderator | `isSenior` | admin + 1 name |
 | `user.cosmetics.grant` | Grant a cosmetic from the shop panel | **none** — `/users` only | admin + 1 name |
+| `items.boxes.grant` | Grant mystery boxes (box page, User Lookup → Shop), and take a granted box back | **none** — new, no Retool equivalent | — |
 | `bulk-ban.execute` | Run a mass ban | `isSenior` | app-level restriction |
 | `audit.ban.execute` | Ban an account from an audit queue | — | — |
 | `csam.report.file` | File a CSAM report | — | — |

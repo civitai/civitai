@@ -17,6 +17,7 @@ const mockDbWrite = dbMock.dbWrite;
 
 const { mockTx, mockCreateImage, mockGetChallengeConfig } = vi.hoisted(() => {
   const tx = {
+    $executeRaw: vi.fn(async () => 0),
     challenge: {
       // The update path writes through a status-predicated `updateMany` (so a challenge claimed
       // for completion mid-save is not silently un-claimed), then re-reads the row to return it.

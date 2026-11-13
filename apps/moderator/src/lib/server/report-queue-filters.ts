@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { DEFAULT_REPORT_STATUSES, isReportStatus, type ReportStatus } from '$lib/reports';
 
 /**
- * The READ half of `$lib/components/ReportQueueFilterBar.svelte`.
+ * The READ half of `$lib/components/ReportFilters.svelte`.
  *
  * The bar writes these params; this parses them. They are two halves of one contract and drift here
  * produces the worst kind of bug — a filter chip that visibly toggles and changes nothing, so the UI

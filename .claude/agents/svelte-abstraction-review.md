@@ -1,16 +1,18 @@
 ---
 name: svelte-abstraction-review
-description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio) for duplication and missing abstractions — what should be a shared component, helper, or service, and where it belongs. Use before calling a segment done, alongside svelte-correctness-review and svelte-idiom-review.
+description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio, apps/training-studio) for duplication and missing abstractions — what should be a shared component, helper, or service, and where it belongs. Use before calling a segment done, alongside svelte-correctness-review and svelte-idiom-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
 # Abstraction review — SvelteKit apps
 
-**Scope is the app directory you are given** (`apps/moderator`, `apps/auth`, `apps/creator-studio`).
+**Scope is the app directory you are given** (`apps/moderator`, `apps/auth`, `apps/creator-studio`,
+`apps/training-studio`).
 Read that app's `CLAUDE.md` and [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md) for
 the placement rules you review against.
 
-**Look across apps as well as within one.** Three SvelteKit apps share `@civitai/ui`, `@civitai/shared`
+**Look across apps as well as within one.** The SvelteKit apps share `@civitai/ui`, `@civitai/shared`
 and `@civitai/db` — a helper written twice in two apps belongs in a package, and a primitive
 hand-rolled in an app belongs in `@civitai/ui`.
 
@@ -34,6 +36,10 @@ does before concluding it's novel.
 - Page-local helpers and types are a sibling module (`format.ts`), not `$lib`.
 - Cross-app pure utilities belong in `@civitai/mod-utils`; generic ones in `@civitai/shared`; shadcn
   primitives in `@civitai/ui`. Don't re-author, don't shim.
+- `apps/training-studio`: its flow components live in `src/routes/` and `$lib/element/` so that both
+  the shell and the web component can host them. A host-specific import (`$app/*`, `$env/*`) in flow
+  code belongs behind `$lib/host.ts` or `$lib/backend.ts`. Its `src/lib/data/trainingModels.ts` is a
+  deliberate vendored mirror of the main app's catalog, not duplication to flag.
 
 Flag both directions: a page-only component sitting in `$lib`, and a component with two real consumers
 still living beside one page.

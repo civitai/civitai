@@ -1,4 +1,5 @@
-import { Popover, Stack, Text, Group, Badge, Divider } from '@mantine/core';
+import { Stack, Text, Group, Badge, Divider } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';

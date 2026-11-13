@@ -12,6 +12,7 @@ import {
 // Type-only: gives the `importOriginal` spread below the real module's type
 // without an `import()` type annotation (banned by consistent-type-imports).
 import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
 /**
  * D6-seed — mod "Customize judging categories" toggle. `ChallengeUpsertForm.judging-categories
@@ -28,36 +29,27 @@ import type * as TrpcModule from '~/utils/trpc';
 // transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
 // gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const actual = await importOriginal<typeof TrpcModule>();
-  const noopQuery = () => ({ data: undefined, isLoading: false });
-  const noopMutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  // Only the queries whose data the form maps over need a value; every other procedure (and
+  // `useUtils`) answers through the proxy's inert hooks. `getJudgingCategories` stays inert:
+  // undefined data → CategoryWeights falls back to the preset constants.
+  const listQuery = () => ({ data: [], isLoading: false });
   return {
-    ...actual,
-    trpc: {
-      useUtils: () => ({
-        challenge: {
-          getModeratorList: { invalidate: vi.fn() },
-          getById: { invalidate: vi.fn() },
-          getInfinite: { invalidate: vi.fn() },
-        },
-      }),
-      challenge: {
-        getJudges: { useQuery: () => ({ data: [], isLoading: false }) },
-        // undefined data → CategoryWeights falls back to the preset constants
-        getJudgingCategories: { useQuery: noopQuery },
-        getEvents: { useQuery: () => ({ data: [], isLoading: false }) },
-        upsert: { useMutation: noopMutation },
-        upsertUserChallenge: { useMutation: noopMutation },
-      },
-      modelVersion: {
-        getVersionsByIds: { useQuery: noopQuery },
-      },
-    },
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'challenge.getJudges': { useQuery: listQuery },
+      'challenge.getEvents': { useQuery: listQuery },
+    }),
   };
 });
 
 vi.mock('~/hooks/useCFImageUpload', () => ({
-  useCFImageUpload: () => ({ uploadToCF: vi.fn(), files: [], resetFiles: vi.fn(), removeImage: vi.fn() }),
+  useCFImageUpload: () => ({
+    uploadToCF: vi.fn(),
+    files: [],
+    resetFiles: vi.fn(),
+    removeImage: vi.fn(),
+  }),
 }));
 
 // The cover-image preview pulls in EdgeMedia -> BrowserSettingsProvider -> session/env machinery
@@ -75,7 +67,10 @@ vi.mock('~/utils/notifications', () => ({
 // The form reads useFeatureFlags() (via useAvailableBuzz and ContentRatingSelect); that hook throws
 // outside FeatureFlagsCtx, so the component renders nothing without this. Yellow domain = full
 // content-rating options, matching what the mod-variant tests below expect.
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// Spread the real module: the form's import graph also reaches `useOptionalFeatureFlags` (via the
+// impression hook), and a hand-listed mock that omits it fails the file at import, collecting 0 tests.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ isGreen: false }),
 }));
 
@@ -128,9 +123,7 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
       <ChallengeUpsertForm challenge={existingChallengeNoCategories} variant="moderator" />
     );
 
-    await expect
-      .element(page.getByText(/judged against the default rubric/i))
-      .toBeInTheDocument();
+    await expect.element(page.getByText(/judged against the default rubric/i)).toBeInTheDocument();
     expect(page.getByText(/Total weight/).elements()).toHaveLength(0);
   });
 
@@ -174,9 +167,7 @@ describe('ChallengeUpsertForm — mod judging-categories toggle', () => {
     await expect.element(page.getByText('Total weight')).toBeInTheDocument();
 
     await toggle.click();
-    await expect
-      .element(page.getByText(/judged against the default rubric/i))
-      .toBeInTheDocument();
+    await expect.element(page.getByText(/judged against the default rubric/i)).toBeInTheDocument();
     expect(page.getByText(/Total weight/).elements()).toHaveLength(0);
   });
 

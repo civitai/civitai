@@ -1,19 +1,14 @@
-import { uniq } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
-import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
   dropBlockedImageDeleteQueue,
-  getImagesFromSearch,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 /**
  * GET endpoint to batch update Image.blockedFor to null for images with blockedFor = 'moderated',
@@ -21,7 +16,9 @@ import { MetricTimeframe } from '~/shared/utils/prisma/enums';
  * Secured for moderators only.
  */
 
-const BATCH_LIMIT = 100;
+// Image ids per scan step. `blockedFor` has no index outside ingestion='Blocked', so the scan walks
+// the primary key in bounded ranges on the read replica instead of one full-table query.
+const ID_RANGE = 500_000;
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
   logToAxiom(
@@ -29,80 +26,58 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     'webhooks'
   ).catch();
 
-  const features = getFeatureFlags({ user, req });
-
   const startedAt = Date.now();
-  const updatedIds: number[] = [];
+  const candidateIds: number[] = [];
 
   try {
-    let batchCount = 0;
-    let offset = 0;
-
-    while (true) {
-      console.log(
-        `[unblock-images] Fetching images: offset=${offset}, limit=${BATCH_LIMIT}, batch=${
-          batchCount + 1
-        }}`
-      );
-      const { data: images } = await getImagesFromSearch({
-        browsingLevel: allBrowsingLevelsFlag,
-        limit: BATCH_LIMIT,
-        offset,
-        period: MetricTimeframe.AllTime,
-        periodMode: 'published',
-        sort: ImageSort.Newest,
-        isModerator: true,
-        withMeta: false,
-        include: [],
-        blockedFor: ['moderated', 'Moderated'],
-      });
-      if (!images.length) {
+    const [{ maxId }] = await dbRead.$queryRaw<{ maxId: number | null }[]>`
+      SELECT max(id) AS "maxId" FROM "Image"
+    `;
+    for (let from = 0; from < (maxId ?? 0); from += ID_RANGE) {
+      const rows = await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE id > ${from} AND id <= ${from + ID_RANGE}
+          AND "blockedFor" IN ('moderated', 'Moderated')
+          AND "needsReview" IS NULL
+          AND "nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})
+      `;
+      if (rows.length) {
+        candidateIds.push(...rows.map((r) => r.id));
         console.log(
-          `[unblock-images] No more images to update. Finished at offset=${offset}, total batches=${batchCount}.`
-        );
-        break;
-      }
-
-      // Only update images that match the additional criteria (needsReview: null, nsfwLevel)
-      const filtered = images.filter(
-        (img) => img.needsReview == null && ![0, NsfwLevel.Blocked].includes(img.nsfwLevel)
-      );
-      const ids = uniq(filtered.map((img) => img.id));
-      if (ids.length > 0) {
-        updatedIds.push(...ids);
-        console.log(
-          `[unblock-images] Batch ${batchCount + 1}: Found ${
-            ids.length
-          } eligible images (filtered from ${images.length}). Running total: ${updatedIds.length}`
-        );
-      } else {
-        console.log(
-          `[unblock-images] Batch ${
-            batchCount + 1
-          }: No eligible images in this batch (filtered from ${images.length}).`
+          `[unblock-images] ids ${from}-${from + ID_RANGE}: ${
+            rows.length
+          } eligible. Running total: ${candidateIds.length}`
         );
       }
-
-      batchCount++;
-      offset += BATCH_LIMIT;
     }
 
-    console.log(`[unblock-images] Updating ${updatedIds.length} images in the database...`);
-    await dbWrite.image.updateMany({
-      where: { id: { in: updatedIds } },
+    console.log(`[unblock-images] Updating ${candidateIds.length} images in the database...`);
+    // The scan read the replica; only rows still blocked for moderation on the primary, and still
+    // matching the filter above, are cleared.
+    const unblocked = await dbWrite.image.updateManyAndReturn({
+      where: {
+        id: { in: candidateIds },
+        blockedFor: { in: ['moderated', 'Moderated'] },
+        needsReview: null,
+        nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
+      },
       data: { blockedFor: null },
+      select: { id: true },
     });
-    console.log(`[unblock-images] DB update complete.`);
+    const unblockedIds = unblocked.map((image) => image.id);
+    console.log(
+      `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${candidateIds.length} candidates.`
+    );
 
     // This clears `blockedFor` without touching `ingestion`, so any row still sitting at
     // ingestion='Blocked' would be armed for purge by trg_blocked_image_delete_queue on the
     // very update that was meant to unblock it.
-    await dropBlockedImageDeleteQueue(updatedIds);
+    await dropBlockedImageDeleteQueue(unblockedIds);
 
     // Update search index for the unblocked images
-    console.log(`[unblock-images] Updating search index for ${updatedIds.length} images...`);
+    console.log(`[unblock-images] Updating search index for ${unblockedIds.length} images...`);
     await queueImageSearchIndexUpdate({
-      ids: updatedIds,
+      ids: unblockedIds,
       action: SearchIndexUpdateQueueAction.Update,
     });
     console.log(`[unblock-images] Search index update complete.`);
@@ -112,16 +87,16 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     await trackModActivity(user.id, {
       entityType: 'image',
       activity: 'review',
-      entityId: updatedIds,
+      entityId: unblockedIds,
     });
     console.log(`[unblock-images] Moderator activity tracked for user ${user.id}.`);
 
     const elapsed = Date.now() - startedAt;
     console.log(
-      `[unblock-images] Completed. Total updated: ${updatedIds.length}, Time: ${elapsed}ms`
+      `[unblock-images] Completed. Total updated: ${unblockedIds.length}, Time: ${elapsed}ms`
     );
 
-    return res.status(200).json({ updated: updatedIds.length, ms: elapsed });
+    return res.status(200).json({ updated: unblockedIds.length, ms: elapsed });
   } catch (error) {
     const e = error as Error;
     console.error('[unblock-images] Error:', e);

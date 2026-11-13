@@ -10,13 +10,18 @@ import { QS } from '~/utils/qs';
  * `window.location.host` yields nothing during SSR, so every server-rendered cross-colour link ships
  * unstamped; and a module-scope colour leaks across requests, since one Next process serves every
  * colour concurrently. `useSyncAccount()` supplies it from context.
+ *
+ * Signed-out viewers get the bare url: there is no session to carry, and the marker would send them
+ * to the hub's login page instead of the content. It also kept crawlers (always signed out)
+ * discovering a `?sync-account=` duplicate of every cross-colour page.
  */
 export function syncAccountFor(
   url: string,
   currentColor: ColorDomain | undefined,
-  domains: ServerDomains | undefined
+  domains: ServerDomains | undefined,
+  signedIn: boolean
 ): string {
-  if (!domains || !currentColor) return url;
+  if (!signedIn || !domains || !currentColor) return url;
 
   const urlHost = extractHost(url);
   if (!urlHost) return url;

@@ -4,10 +4,12 @@ import { modelTagCache } from '~/server/redis/caches';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { withoutEpochFields } from '~/server/utils/owner-only-file-urls';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
 
 const baseUrl = getBaseUrl();
+// Subscribers get a non-Public file's download link, never its storage url (see ownerOnlyFileUrls).
 export const modelWebhooks = createWebhookProcessor({
   'new-model': {
     displayName: 'New Models',
@@ -60,6 +62,8 @@ export const modelWebhooks = createWebhookProcessor({
               ...version,
               files: castedFiles.map((file) => ({
                 ...file,
+                url: file.visibility === 'Public' ? file.url : undefined,
+                metadata: withoutEpochFields(file.metadata),
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,
@@ -126,6 +130,8 @@ export const modelWebhooks = createWebhookProcessor({
               ...version,
               files: castedFiles.map((file) => ({
                 ...file,
+                url: file.visibility === 'Public' ? file.url : undefined,
+                metadata: withoutEpochFields(file.metadata),
                 downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
                   versionId: version.id,
                   type: file.type,

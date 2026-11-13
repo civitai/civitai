@@ -12,6 +12,8 @@ export {
   moderatorArticleLookupPath,
   moderatorModelLookupPath,
   moderatorModelVersionLookupPath,
+  moderatorTrainingAuditPath,
   moderatorBulkImageManagerPath,
+  moderatorFeedbackReportPath,
   type BulkImageManagerSource,
 } from '@civitai/shared/moderator-paths';

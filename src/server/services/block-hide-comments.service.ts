@@ -1,56 +1,48 @@
-import { seededThreadChainCte } from '~/server/common/thread-chain';
 import { dbWrite } from '~/server/db/client';
 import { queryWithTimeout } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
+import type { CommentEntityType } from '~/shared/utils/prisma/enums';
+import { prismaRunner, setCommentFlags } from '~/server/services/commentv3/write.service';
 
-/**
- * The SQL twin of `ownerOfThreadContent` in block-check.service: one row per owner-bearing
- * `Thread` column, in the same precedence. A parity test holds it to `threadContentSelect`.
- */
-export const THREAD_CONTENT_OWNERS = [
-  { column: 'imageId', table: '"Image"', owner: '"userId"', key: 'id' },
-  { column: 'postId', table: '"Post"', owner: '"userId"', key: 'id' },
-  { column: 'articleId', table: '"Article"', owner: '"userId"', key: 'id' },
-  { column: 'modelId', table: '"Model"', owner: '"userId"', key: 'id' },
-  { column: 'reviewId', table: '"ResourceReview"', owner: '"userId"', key: 'id' },
-  { column: 'bountyId', table: '"Bounty"', owner: '"userId"', key: 'id' },
-  { column: 'bountyEntryId', table: '"BountyEntry"', owner: '"userId"', key: 'id' },
-  { column: 'questionId', table: '"Question"', owner: '"userId"', key: 'id' },
-  { column: 'answerId', table: '"Answer"', owner: '"userId"', key: 'id' },
-  { column: 'model3dId', table: '"Model3D"', owner: '"userId"', key: 'id' },
-  { column: 'model3dReviewId', table: '"Model3DReview"', owner: '"userId"', key: 'id' },
-  { column: 'comicProjectId', table: '"ComicProject"', owner: '"userId"', key: 'id' },
-  { column: 'challengeId', table: '"Challenge"', owner: '"createdById"', key: 'id' },
-  { column: 'appListingId', table: 'app_listings', owner: 'user_id', key: 'serial_id' },
-] as const;
+/** The ids of the sections of each type that `owner` owns. */
+export const SECTION_OWNERS: Record<CommentEntityType, (owner: string) => string> = {
+  image: (o) => `SELECT id FROM "Image" WHERE "userId" = ${o}`,
+  post: (o) => `SELECT id FROM "Post" WHERE "userId" = ${o}`,
+  article: (o) => `SELECT id FROM "Article" WHERE "userId" = ${o}`,
+  model: (o) => `SELECT id FROM "Model" WHERE "userId" = ${o}`,
+  review: (o) => `SELECT id FROM "ResourceReview" WHERE "userId" = ${o}`,
+  bounty: (o) => `SELECT id FROM "Bounty" WHERE "userId" = ${o}`,
+  bountyEntry: (o) => `SELECT id FROM "BountyEntry" WHERE "userId" = ${o}`,
+  model3d: (o) => `SELECT id FROM "Model3D" WHERE "userId" = ${o}`,
+  model3dReview: (o) => `SELECT id FROM "Model3DReview" WHERE "userId" = ${o}`,
+  challenge: (o) => `SELECT id FROM "Challenge" WHERE "createdById" = ${o}`,
+  // A listing's comments are keyed by its serial id.
+  appListing: (o) => `SELECT serial_id FROM app_listings WHERE user_id = ${o}`,
+  crucible: (o) => `SELECT id FROM "Crucible" WHERE "userId" = ${o}`,
+  storyline: (o) => `SELECT id FROM "Storyline" WHERE "userId" = ${o}`,
+  comicChapter: (o) =>
+    `SELECT ch.id FROM "ComicChapter" ch JOIN "ComicProject" p ON p.id = ch."projectId" WHERE p."userId" = ${o}`,
+};
 
-// The read resolves an owner for EVERY visible comment the author has before the LIMIT applies, so
-// the timeout is what bounds it; the ceiling bounds only the writes. Measured on the prod replica
-// 2026-09-23: 3.6s cold for a 21k-comment author, 0.3s cold at p99.9 (about 1,700 comments).
+// A join from both ends: the planner can walk the blocked user's comments (`commentv3_user`) or the
+// owner's sections (`commentv3_entity`), whichever is smaller. The timeout bounds the read, the
+// ceiling the writes.
 export const BLOCK_HIDE_READ_TIMEOUT_MS = 5_000;
 export const BLOCK_HIDE_MAX_COMMENTS = 10_000;
 export const BLOCK_HIDE_BATCH_SIZE = 1_000;
 
-const threadOwnerSql = (alias: string) =>
-  `CASE ${THREAD_CONTENT_OWNERS.map(
-    ({ column, table, owner, key }) =>
-      `WHEN ${alias}."${column}" IS NOT NULL THEN (SELECT o.${owner} FROM ${table} o WHERE o.${key} = ${alias}."${column}")`
-  ).join(' ')} END`;
-
-export const blockHideCandidatesSql = `${seededThreadChainCte(
-  `SELECT c.id "seedId", c."threadId" FROM "CommentV2" c WHERE c."userId" = $1 AND c.hidden IS NOT TRUE`
-)},
-top AS (
-  SELECT DISTINCT ON (sc."seedId") sc."seedId", sc."id" "threadId"
-  FROM seeded_chain sc
-  ORDER BY sc."seedId", sc."depth" DESC
+export const blockHideCandidatesSql = `WITH owned (t, id) AS (
+${Object.entries(SECTION_OWNERS)
+  .map(
+    ([type, owned]) => `  SELECT '${type}'::"CommentEntityType", x.id FROM (${owned('$2')}) x (id)`
+  )
+  .join('\n  UNION ALL\n')}
 )
-SELECT top."seedId" "id"
-FROM top
-JOIN "Thread" t ON t.id = top."threadId"
-WHERE ${threadOwnerSql('t')} = $2
-ORDER BY top."seedId"
+SELECT c.id FROM owned o
+JOIN "CommentV3" c ON c."entityType" = o.t AND c."entityId" = o.id
+WHERE c."userId" = $1 AND NOT c.hidden AND c."deletedAt" IS NULL
+ORDER BY c.id
 LIMIT $3`;
 
 export type BlockHideCommentsResult =
@@ -59,9 +51,8 @@ export type BlockHideCommentsResult =
   | { status: 'skipped' };
 
 /**
- * Hides every CommentV2 by `blockedUserId` whose stored thread chain ends on content `ownerId`
- * owns. Never throws: it runs after the block has committed, and the block must stand whatever
- * happens here.
+ * Hides every comment by `blockedUserId` on a section `ownerId` owns. Never throws: it runs after
+ * the block has committed, and the block must stand whatever happens here.
  */
 export async function hideBlockedUserCommentsOnOwnContent({
   ownerId,
@@ -79,18 +70,13 @@ export async function hideBlockedUserCommentsOnOwnContent({
       [blockedUserId, ownerId, BLOCK_HIDE_MAX_COMMENTS]
     );
     const ids = rows.map((r) => r.id);
-
     for (let i = 0; i < ids.length; i += BLOCK_HIDE_BATCH_SIZE) {
-      const { count: updated } = await dbWrite.commentV2.updateMany({
-        where: {
-          id: { in: ids.slice(i, i + BLOCK_HIDE_BATCH_SIZE) },
-          userId: blockedUserId,
-        },
-        data: { hidden: true },
-      });
-      count += updated;
+      const batch = ids.slice(i, i + BLOCK_HIDE_BATCH_SIZE);
+      const updated = await dbWrite.$transaction((tx) =>
+        setCommentFlags(prismaRunner(tx), batch, { hidden: true })
+      );
+      count += updated.length;
     }
-
     return { status: 'hidden', count, capped: ids.length >= BLOCK_HIDE_MAX_COMMENTS };
   } catch (error) {
     await logToAxiom({

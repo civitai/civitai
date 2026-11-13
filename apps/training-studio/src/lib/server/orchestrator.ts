@@ -1,14 +1,34 @@
 // Server half of the orchestrator reads: builds the env-configured client and delegates to the
 // client-safe cores in $lib/orchestrator-core (shared with the web-component backend).
-import { createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/orchestration-client';
 import { env } from '$env/dynamic/private';
 import * as core from '$lib/orchestrator-core';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
-import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type { BlobHead } from '$lib/upload-readiness';
+import type {
+  ArchiveKind,
+  GenerationItem,
+  TrainingDetail,
+  TrainingRow,
+} from '$lib/data/trainingRows';
 import type { Media } from '$lib/data/trainingModels';
 
 export { isFlux2 } from '$lib/orchestrator-core';
 export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
+
+/** Raw HEADs of the caller's dataset blobs, or undefined when no endpoint is configured. Never sends a
+ *  workflowId. */
+export function blobHead(token: string): BlobHead | undefined {
+  const endpoint = env.ORCHESTRATOR_ENDPOINT;
+  if (!endpoint) return undefined;
+  return (air, signal) =>
+    fetch(core.consumerBlobUrl(endpoint, air), {
+      method: 'HEAD',
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: 'manual',
+      signal,
+    });
+}
 
 export function orchestratorClient(token: string) {
   return createCivitaiClient({
@@ -41,8 +61,12 @@ export function getTrainingWorkflow(
   return core.getTrainingWorkflow(orchestratorClient(token), workflowId);
 }
 
-export function createEpochArchive(token: string, workflowId: string): Promise<core.EpochArchive> {
-  return core.createEpochArchive(orchestratorClient(token), workflowId);
+export function createEpochArchive(
+  token: string,
+  workflowId: string,
+  kind: ArchiveKind
+): Promise<core.EpochArchive[]> {
+  return core.createEpochArchive(orchestratorClient(token), workflowId, kind);
 }
 
 export function getRunDataset(

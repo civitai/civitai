@@ -4,6 +4,7 @@ import {
   PostgresAdapter,
   PostgresIntrospector,
   PostgresQueryCompiler,
+  type CompiledQuery,
   type DatabaseConnection,
 } from 'kysely';
 
@@ -33,13 +34,16 @@ import {
  * ignores its argument and hardcodes a literal emits byte-identical SQL and survives an assertion over
  * `sql`. `params[i]` holds the parameters of `sql[i]`.
  *
+ * `rows` may be a function of the compiled SQL, for a chain whose later statements depend on what an
+ * earlier one returned (a lock that finds the row, then a lookup that finds nothing).
+ *
  * `params` is a MUTABLE `unknown[][]` and says so. Being written is the parameter's whole purpose, and
  * a `readonly` annotation that has to be cast away at the one place it is used is a contract the code
  * contradicts — it reads as a promise to callers that this function does not touch their array.
  */
 export function capturingDb(
   sql: string[],
-  rows: unknown[] = [],
+  rows: unknown[] | ((sql: string) => unknown[]) = [],
   params?: unknown[][]
 ): Kysely<never> {
   class CannedRowDriver extends DummyDriver {
@@ -47,7 +51,12 @@ export function capturingDb(
       return {
         // Generic in `R` to satisfy `DatabaseConnection`; a concrete row type here makes svelte-check
         // reject the whole dialect.
-        executeQuery: async <R>() => ({ rows: rows as R[] }),
+        // A write reports the canned rows as the rows it touched, so a chain that refuses on a zero
+        // count keeps going exactly as far as it would against a matching row.
+        executeQuery: async <R>(compiled: CompiledQuery) => {
+          const answer = typeof rows === 'function' ? rows(compiled.sql) : rows;
+          return { rows: answer as R[], numAffectedRows: BigInt(answer.length) };
+        },
         streamQuery: async function* () {
           yield { rows: [] };
         },

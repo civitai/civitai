@@ -994,3 +994,76 @@ describe('getMyListingForApp — slug resolver (any top-level listing, either ki
     expect(err.message).toBe('no listing found for app rev-01JABCDEF');
   });
 });
+
+describe('getMyListingForApp — the declared rating beside the listing rating', () => {
+  it('an approved listing reports the app’s declared rating, not the raised listing rating', async () => {
+    wireFindUnique({
+      entry: {
+        id: 'apl_onsite',
+        kind: 'onsite',
+        userId: OWNER,
+        status: 'approved',
+        contentRating: 'r',
+        appBlock: { contentRating: 'g' },
+      },
+      owned: ownedRow({ contentRating: 'r' }),
+      viewByListingId: { apl_onsite: editViewRow('apls_live') },
+    });
+    withShadow(null);
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.contentRating).toBe('r');
+    expect(res.declaredContentRating).toBe('g');
+    const entryArgs = mockRead.appListing.findUnique.mock.calls
+      .map(([a]) => a as { where?: { appBlockId?: string }; select?: Record<string, unknown> })
+      .find((a) => a.where?.appBlockId != null);
+    expect(entryArgs?.select).toMatchObject({
+      kind: true,
+      appBlock: { select: { contentRating: true } },
+    });
+  });
+
+  it('an off-site listing reports no declared rating, even with an app row attached', async () => {
+    wireFindUnique({
+      entry: {
+        id: 'apl_offsite',
+        kind: 'offsite',
+        userId: OWNER,
+        status: 'approved',
+        contentRating: 'r',
+        appBlock: { contentRating: 'g' },
+      },
+      owned: ownedRow({ id: 'apl_offsite', kind: 'offsite', contentRating: 'r' }),
+      viewByListingId: { apl_offsite: editViewRow('apls_live') },
+    });
+    withShadow(null);
+
+    const res = await getMyListingForApp({ appBlockId: 'my-block', userId: OWNER });
+
+    expect(res.contentRating).toBe('r');
+    expect(res.declaredContentRating).toBeNull();
+  });
+
+  it('a pre-approval draft has no app row yet: its own rating is what the author declared', async () => {
+    mockRead.appListing.findFirst.mockResolvedValue({
+      id: 'apl_draft',
+      kind: 'onsite',
+      userId: OWNER,
+      status: 'draft',
+      contentRating: 'pg13',
+      revisionOfId: null,
+      appBlock: null,
+    });
+    wireFindUnique({
+      entry: null,
+      owned: ownedRow({ id: 'apl_draft', status: 'draft' }),
+      viewByListingId: { apl_draft: editViewRow('apls_draft') },
+    });
+
+    const res = await getMyListingForApp({ slug: 'my-app', userId: OWNER });
+
+    expect(res.contentRating).toBe('pg13');
+    expect(res.declaredContentRating).toBe('pg13');
+  });
+});

@@ -25,8 +25,8 @@
  * retry, per-entity reconcile crons (e.g. `article-ingestion-reconcile`)
  * pick up the drift.
  */
-import type { WorkflowEvent, XGuardModerationStep } from '@civitai/client';
-import { getWorkflow } from '@civitai/client';
+import type { WorkflowEvent, XGuardModerationStep } from '@civitai/orchestration-client';
+import { getWorkflow } from '@civitai/orchestration-client';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -35,6 +35,11 @@ import {
 } from '~/server/services/entity-moderation.service';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { recordXGuardScanFromWorkflow } from '~/server/services/scanner-audit.service';
+import {
+  readShadowSexualPromptMetadata,
+  recordShadowSexualPrompt,
+} from '~/server/services/shadow-sexual-prompt.service';
+import { logScanVerdict, xguardVerdict } from '~/server/services/text-scan/verdict-log';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -44,6 +49,20 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
     path: { workflowId: event.workflowId },
   });
   if (!data) throw new Error(`could not find workflow: ${event.workflowId}`);
+
+  const shadow = readShadowSexualPromptMetadata(data.metadata);
+  if (shadow) {
+    if (event.status === 'succeeded') await recordShadowSexualPrompt(data, shadow);
+    else
+      await logToAxiom({
+        name: 'shadow-sexual-prompt',
+        type: 'warning',
+        message: `Workflow ${event.status}`,
+        workflowId: event.workflowId,
+        imageId: shadow.imageId,
+      });
+    return;
+  }
 
   const entityType = data.metadata?.entityType as string | undefined;
   const entityId = data.metadata?.entityId as number | undefined;
@@ -86,6 +105,16 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
       }
 
       const adapter = getModerationAdapter(entityType);
+      void logScanVerdict(
+        xguardVerdict({
+          entityType,
+          entityId,
+          workflowId: event.workflowId,
+          blocked,
+          triggeredLabels,
+          hasAdapter: !!adapter?.applyResult,
+        })
+      );
       if (adapter?.applyResult) {
         await adapter.applyResult({
           entityId,

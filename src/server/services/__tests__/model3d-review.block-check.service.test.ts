@@ -53,13 +53,21 @@ describe('upsertModel3DReview — block enforcement', () => {
     amIBlockedByUser.mockResolvedValue(true);
 
     await expect(upsertModel3DReview({ input, user: user() })).rejects.toThrow();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: REVIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: REVIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
     expect(dbMock.dbWrite.model3DReview.create).not.toHaveBeenCalled();
   });
 
   it('writes the review when nobody blocks', async () => {
     await expect(upsertModel3DReview({ input, user: user() })).resolves.toBeDefined();
-    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: REVIEWER, targetUserId: OWNER });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({
+      userId: REVIEWER,
+      targetUserId: OWNER,
+      confirmOnPrimary: true,
+    });
     expect(dbMock.dbWrite.model3DReview.create).toHaveBeenCalledTimes(1);
   });
 

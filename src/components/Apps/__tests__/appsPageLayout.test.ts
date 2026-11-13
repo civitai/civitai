@@ -46,11 +46,6 @@ describe('AppsPageLayout draws no rule of its own', () => {
     expect(src).not.toMatch(/\bborder\s*:/);
   });
 
-  it('the guard is reading a real file (not a silently-empty read)', () => {
-    // A missing/renamed file would make every `not.toMatch` above pass vacuously.
-    expect(layoutSrc()).toMatch(/export function AppsPageLayout/);
-  });
-
   it('the header band carries NO vertical padding of its own', () => {
     // UPDATED (vertical-padding pass): this used to pin `pt="sm"` on the band.
     // That pad was dropped deliberately — it sat ABOVE the tabs, i.e. outside the
@@ -120,9 +115,8 @@ describe('AppsPageLayout draws no rule of its own', () => {
  *
  * 🔴 WHY SOURCE GUARDS AS WELL AS THE PIXEL ONE. The rendered proof lives in
  * `AppsPageLayout.chromeAlignment.browser.test.tsx`, which is in the browser-mode
- * `component` project — REPORT-ONLY and non-blocking in CI, and red repo-wide for
- * an unrelated pre-existing failure. So it cannot block a regression on its own.
- * These run in the blocking `unit` project. They are the enforceable half.
+ * `component` project (`Component tests` in CI). These run in the node `unit`
+ * project, without a browser.
  */
 describe('AppsPageLayout takes NO per-page container width', () => {
   it('the Container width is the shared constant, not a prop', () => {

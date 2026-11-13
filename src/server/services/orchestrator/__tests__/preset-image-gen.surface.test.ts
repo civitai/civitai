@@ -11,7 +11,14 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
 }));
 
 import {
+  aspectRatioDimensions,
+  type GenerationResolution,
+} from '~/shared/constants/generation.constants';
+import { PRESET_MODEL_GRAPH_SIZES } from '~/shared/generation/preset-sizes';
+import {
+  buildPresetGraphInput,
   PRESET_MODEL_CONFIG,
+  pickAspectRatioSize,
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '../preset-image-gen.service';
@@ -81,4 +88,83 @@ describe('preset image generation declares the `preset` surface', () => {
     expect(mockBuildGenerationContext).toHaveBeenCalledTimes(1);
     expect(mockBuildGenerationContext.mock.calls[0][3]).toBe('preset');
   });
+});
+
+describe('pickAspectRatioSize', () => {
+  const sizes = [
+    { label: '2:3', value: '2:3', width: 832, height: 1216 },
+    { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+    { label: '3:2', value: '3:2', width: 1216, height: 832 },
+  ];
+
+  it.each([
+    ['a listed label', '1:1', '1:1'],
+    ['a landscape ratio the model lacks, to its closest', '16:9', '3:2'],
+    ['a portrait ratio the model lacks, to its closest', '3:4', '2:3'],
+  ])('resolves %s', (_, asked, expected) => {
+    expect(pickAspectRatioSize(asked, sizes).label).toBe(expected);
+  });
+
+  it.each(['Landscape', '1:2:3'])("falls to 1:1, the graph's default, for '%s'", (label) => {
+    expect(pickAspectRatioSize(label, sizes).label).toBe('1:1');
+  });
+});
+
+describe('preset resolution', () => {
+  it.each(['Seedream', 'SeedreamLite'])(
+    '%s asks the graph for 2K on submit and what-if',
+    async (key) => {
+      const args = {
+        prompt: 'a cat',
+        aspectRatio: '1:1',
+        modelConfig: PRESET_MODEL_CONFIG[key],
+        user,
+        token: 'tok',
+        currencies: [],
+      };
+      await submitPresetImageGen({ ...args, tags: ['comics'] });
+      await whatIfPresetImageGen(args);
+      expect(mockGenerateFromGraph.mock.calls[0][0].input).toMatchObject({ resolution: '2K' });
+      expect(mockWhatIfFromGraph.mock.calls[0][0].input).toMatchObject({ resolution: '2K' });
+    }
+  );
+
+  // A registry entry that sends a resolution lists its sizes at that resolution, or the record
+  // and the image disagree.
+  it.each(Object.entries(PRESET_MODEL_CONFIG).filter(([, c]) => c.resolution))(
+    '%s lists its sizes at the resolution it sends',
+    (_, config) => {
+      const square = config.sizes.find((s) => s.value === '1:1');
+      expect(square).toMatchObject(
+        aspectRatioDimensions[config.resolution as GenerationResolution]['1:1']
+      );
+    }
+  );
+
+  it('a preset that sets no resolution leaves the graph to its default', () => {
+    const input = buildPresetGraphInput({
+      aspectRatio: '1:1',
+      quantity: 1,
+      ecosystem: 'NanoBanana',
+      versionId: 1,
+    });
+    expect(input).not.toHaveProperty('resolution');
+  });
+});
+
+// The record is made against the graph's whole list (the picker's subset would record a ratio the
+// picker never offered as its neighbour), and every entry must resolve to itself.
+describe('preset size tables', () => {
+  it.each(Object.entries(PRESET_MODEL_CONFIG))(
+    '%s records against its graph list, resolving each label to itself and a non-ratio label to 1:1',
+    (key, config) => {
+      expect(config.sizes).toBe(
+        PRESET_MODEL_GRAPH_SIZES[key as keyof typeof PRESET_MODEL_GRAPH_SIZES]
+      );
+      for (const size of config.sizes) {
+        expect(pickAspectRatioSize(size.label, config.sizes)).toBe(size);
+      }
+      expect(pickAspectRatioSize('Landscape', config.sizes).label).toBe('1:1');
+    }
+  );
 });

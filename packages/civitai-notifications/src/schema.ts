@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { notificationCategories } from './constants';
+import { cursorDate, notificationListCursor } from './cursor';
 
 // The notification producer contract — the single source of truth the notifications app validates
 // POST bodies against and that every caller types against. Moved here (from the monolith's
@@ -64,6 +65,8 @@ export const notificationRow = z.object({
   category: notificationCategory,
   details: z.record(z.string(), z.any()),
   createdAt: z.coerce.date(),
+  /** `createdAt` at full (microsecond) precision, for the list cursor. */
+  cursorAt: z.string(),
   read: z.boolean(),
 });
 export type NotificationRow = z.infer<typeof notificationRow>;
@@ -79,7 +82,8 @@ export type NotificationCategoryCount = z.infer<typeof notificationCategoryCount
 export const queryNotificationsInput = z.object({
   userId: z.number(),
   limit: z.number().optional(),
-  cursor: z.coerce.date().optional(),
+  // A bare date is the cursor of callers built before the keyset cursor; drop it once none is deployed.
+  cursor: z.union([notificationListCursor, cursorDate]).optional(),
   category: notificationCategory.nullish(),
   unread: z.boolean().optional(),
 });
@@ -99,6 +103,12 @@ export const markReadInput = z.object({
   category: notificationCategory.nullish(),
 });
 export type MarkReadInput = z.infer<typeof markReadInput>;
+
+export const markReadByKeysInput = z.object({
+  userId: z.number(),
+  keys: z.array(z.string()).min(1).max(10),
+});
+export type MarkReadByKeysInput = z.infer<typeof markReadByKeysInput>;
 
 export const notificationExistsInput = z.object({ key: z.string() });
 export type NotificationExistsInput = z.infer<typeof notificationExistsInput>;
@@ -124,3 +134,189 @@ export const cleanupNotificationsInput = z.object({
   before: z.coerce.date(),
 });
 export type CleanupNotificationsInput = z.infer<typeof cleanupNotificationsInput>;
+
+// --- System notices (POST /notifications/notices) --------------------------------------------------
+
+export const systemNoticeTypes = [
+  'system-message',
+  'system-announcement',
+  'event-reminder',
+] as const;
+export type SystemNoticeType = (typeof systemNoticeTypes)[number];
+export const MAX_NOTICE_RECIPIENTS = 50_000;
+export const MAX_NOTICE_PARAM_LENGTH = 100;
+export const MAX_NOTICE_MESSAGE_LENGTH = 500;
+export const MAX_NOTICE_TITLE_LENGTH = 60;
+
+const placeholderPattern = /\{([A-Za-z0-9_]+)\}/g;
+
+export function noticePlaceholders(message: string): string[] {
+  return [...new Set([...message.matchAll(placeholderPattern)].map((m) => m[1]))];
+}
+
+export function renderNoticeMessage(message: string, params: Record<string, string> = {}): string {
+  return message.replace(placeholderPattern, (_, name: string) => params[name] ?? `{${name}}`);
+}
+
+const noticeUserId = z.number().int().positive();
+const SITE_ORIGIN = 'https://civitai.com';
+// Browsers read "\" as "/" and drop tabs and newlines, so "/\evil.com" or "/\t/evil.com" leaves the
+// site; resolving against a fixed origin is the check that matches what the browser will do.
+function isSitePath(url: string): boolean {
+  if (!url.startsWith('/') || /[\\\s]/.test(url)) return false;
+  try {
+    return new URL(url, SITE_ORIGIN).origin === SITE_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+const hasHtml = (s: string) => /[<>]/.test(s);
+
+const noticeSendId = z.string().regex(/^[a-z0-9-]{3,80}$/, 'sendId must match [a-z0-9-]{3,80}');
+export const MAX_NOTICE_EXCLUDE_SEND_IDS = 5;
+
+export const sendSystemNoticesInput = z
+  .object({
+    sendId: noticeSendId,
+    /**
+     * Earlier sendIds whose recipients count as alreadySent here. A sendId pins its type, message,
+     * url and title, so changing any of them means a new sendId; this keeps that new send from reaching
+     * the users the old one already did.
+     */
+    excludeSendIds: z.array(noticeSendId).max(MAX_NOTICE_EXCLUDE_SEND_IDS).optional(),
+    mode: z.enum(['dry-run', 'send']).default('dry-run'),
+    type: z.enum(systemNoticeTypes),
+    message: z
+      .string()
+      .min(1)
+      .max(MAX_NOTICE_MESSAGE_LENGTH)
+      .refine((s) => !hasHtml(s), 'message may not contain HTML'),
+    url: z.string().max(1000).refine(isSitePath, 'url must be a path on this site').optional(),
+    /** Push notification title; without one the push is titled with the type's display name. */
+    title: z
+      .string()
+      .min(1)
+      .max(MAX_NOTICE_TITLE_LENGTH)
+      .refine((s) => !hasHtml(s), 'title may not contain HTML')
+      .optional(),
+    userIds: z.array(noticeUserId).optional(),
+    recipients: z
+      .array(
+        z.object({
+          userId: noticeUserId,
+          params: z.record(z.string(), z.string().max(MAX_NOTICE_PARAM_LENGTH)),
+        })
+      )
+      .optional(),
+    includeInactive: z.boolean().default(false),
+    sentBy: z.string().trim().min(1).max(200),
+    reason: z.string().trim().min(1).max(200),
+  })
+  .superRefine((input, ctx) => {
+    if (!!input.userIds === !!input.recipients) {
+      ctx.addIssue({ code: 'custom', message: 'Pass exactly one of userIds or recipients' });
+      return;
+    }
+    const ids = input.userIds ?? input.recipients!.map((r) => r.userId);
+    if (ids.length < 1 || ids.length > MAX_NOTICE_RECIPIENTS) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Between 1 and ${MAX_NOTICE_RECIPIENTS} recipients per call (got ${ids.length})`,
+      });
+      return;
+    }
+    const seen = new Set<number>();
+    const duplicates = new Set<number>();
+    for (const id of ids) (seen.has(id) ? duplicates : seen).add(id);
+    if (duplicates.size) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `Duplicate userIds: ${[...duplicates].slice(0, 100).join(', ')}`,
+      });
+    }
+
+    const placeholders = noticePlaceholders(input.message);
+    if (input.userIds) {
+      if (placeholders.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['message'],
+          message: `message has placeholders (${placeholders.join(
+            ', '
+          )}); use recipients with params`,
+        });
+      }
+      return;
+    }
+    const expected = new Set(placeholders);
+    const bad: number[] = [];
+    for (const { userId, params } of input.recipients!) {
+      const keys = Object.keys(params);
+      const rendered = renderNoticeMessage(input.message, params);
+      if (
+        keys.length !== expected.size ||
+        keys.some((k) => !expected.has(k)) ||
+        rendered.length > MAX_NOTICE_MESSAGE_LENGTH ||
+        Object.values(params).some(hasHtml)
+      ) {
+        bad.push(userId);
+      }
+    }
+    if (bad.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['recipients'],
+        message: `params must supply exactly {${placeholders.join(
+          ', '
+        )}}, with no HTML and a rendered message of at most ${MAX_NOTICE_MESSAGE_LENGTH} characters; failing userIds: ${bad
+          .slice(0, 100)
+          .join(', ')}${bad.length > 100 ? ` (+${bad.length - 100} more)` : ''}`,
+      });
+    }
+  });
+export type SendSystemNoticesInput = z.input<typeof sendSystemNoticesInput>;
+export type SendSystemNoticesParsed = z.output<typeof sendSystemNoticesInput>;
+
+export const noticeBuckets = [
+  'queued',
+  'optedOut',
+  'unknownUser',
+  'inactiveUser',
+  'alreadySent',
+] as const;
+export type NoticeBucket = (typeof noticeBuckets)[number];
+
+export type SendSystemNoticesResult = {
+  sendId: string;
+  mode: 'dry-run' | 'send';
+  requested: number;
+  counts: Record<NoticeBucket, number>;
+  samples: Array<{ userId: number; message: string; url?: string }>;
+  /** Dropped userIds per bucket, capped at 1,000 each. */
+  dropped: Partial<Record<Exclude<NoticeBucket, 'queued'>, number[]>>;
+};
+
+export const getSystemNoticeSendInput = z.object({ sendId: z.string() });
+export type GetSystemNoticeSendInput = z.infer<typeof getSystemNoticeSendInput>;
+
+export type SystemNoticeSendRecord = {
+  sendId: string;
+  type: SystemNoticeType;
+  message: string;
+  url: string | null;
+  contentHash: string;
+  sentBy: string;
+  actorUserId: number | null;
+  reason: string;
+  credential: string;
+  requested: number;
+  queued: number;
+  optedOut: number;
+  unknownUser: number;
+  inactiveUser: number;
+  alreadySent: number;
+  dryRuns: number;
+  sends: number;
+  firstAt: string;
+  lastAt: string;
+};

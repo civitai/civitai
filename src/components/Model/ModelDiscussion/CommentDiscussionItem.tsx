@@ -1,125 +1,115 @@
-import { Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
-import type { ReviewReactions } from '~/shared/utils/prisma/enums';
+import { Anchor, Badge, Button, Card, Group, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
+import type { ReactNode } from 'react';
+import { useRef, useState } from 'react';
 import {
   IconExclamationCircle,
   IconLock,
   IconMessageCircle2,
   IconPinned,
+  IconTrash,
 } from '@tabler/icons-react';
 
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { CommentEditor } from '~/components/CommentsV3/CommentComposer';
+import { CommentMenu } from '~/components/CommentsV3/CommentMenu';
+import { useCommentSection } from '~/components/CommentsV3/CommentSectionContext';
+import {
+  HiddenCommentLabel,
+  HideAgainButton,
+  useHiddenCommentReveal,
+} from '~/components/CommentsV3/HiddenComment';
+import type { CommentV3Comment } from '~/components/CommentsV3/types';
+import { useCommentReactions } from '~/components/CommentsV3/useCommentReactions';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
-import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
+import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
-import type { CommentGetAllItem } from '~/types/router';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 
 export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
   const currentUser = useCurrentUser();
+  const { locked, created, hiddenOnly } = useCommentSection();
+  // The hidden-comments dialog lists them to be read, so it does not fold them again.
+  const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden && !hiddenOnly);
+  const [editing, setEditing] = useState(false);
+  const author = comment.user;
+  const replyCount = comment.replyCount + (created[comment.id]?.length ?? 0);
 
-  const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
-    { commentId: comment.id },
-    { initialData: comment.reactions, staleTime: Infinity, refetchOnWindowFocus: false }
-  );
-  const { data: commentCount = 0 } = trpc.comment.getCommentsCount.useQuery(
-    { id: comment.id },
-    { initialData: comment._count.comments, staleTime: Infinity, refetchOnWindowFocus: false }
-  );
-
-  const queryUtils = trpc.useUtils();
-
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: id });
-
-      const previousReactions = queryUtils.comment.getReactions.getData({ commentId: id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
-    },
-    onError(_error, variables, context) {
-      queryUtils.comment.getReactions.setData(
-        { commentId: variables.id },
-        context?.previousReactions
-      );
-    },
-  });
-  const handleReactionClick = (reaction: ReviewReactions) => {
-    toggleReactionMutation.mutate({ id: comment.id, reaction });
-  };
+  const { metrics, reactions: myReactions } = useCommentReactions(comment);
 
   return (
     <Card radius="md" p="md" withBorder>
       <Group align="flex-start" justify="space-between" wrap="nowrap" mb="xs">
-        <UserAvatar
-          user={comment.user}
-          subText={<DaysFromNow date={comment.createdAt} />}
-          subTextForce
-          avatarSize="md"
-          badge={
-            modelUserId != null && comment.user.id === modelUserId ? (
-              <Badge size="xs" color="violet">
-                OP
-              </Badge>
-            ) : null
-          }
-          withUsername
-          linkToProfile
-        />
+        {!author ? (
+          <Group gap={6} wrap="nowrap">
+            <IconTrash size={16} className="text-gray-6 dark:text-dark-2" />
+            <Text size="sm" c="dimmed" fs="italic">
+              This comment was deleted
+            </Text>
+          </Group>
+        ) : concealed ? (
+          <HiddenCommentLabel onShow={reveal} />
+        ) : (
+          <UserAvatar
+            user={author}
+            subText={<DaysFromNow date={comment.createdAt} />}
+            subTextForce
+            avatarSize="md"
+            badge={
+              modelUserId != null && author.id === modelUserId ? (
+                <Badge size="xs" color="violet">
+                  OP
+                </Badge>
+              ) : null
+            }
+            withUsername
+            linkToProfile
+          />
+        )}
         <Group gap={4} wrap="nowrap">
-          {comment.pinnedAt && (
+          {author && comment.pinnedAt && (
             <Tooltip label="Pinned">
               <ThemeIcon size="sm" color="orange">
                 <IconPinned size={16} stroke={2} />
               </ThemeIcon>
             </Tooltip>
           )}
-          <CommentDiscussionMenu comment={comment} hideLockOption modelUserId={modelUserId} />
+          <CommentMenu comment={comment} lockedAbove={locked} onEdit={() => setEditing(true)} />
         </Group>
       </Group>
 
-      <ContentClamp maxHeight={100}>
-        <RenderHtml
-          html={comment.content}
-          className="text-sm"
-          withMentions
-          withProfanityFilter
-          allowStickers
-        />
-      </ContentClamp>
+      {editing ? (
+        <CommentEditor editing={comment} autoFocus onDone={() => setEditing(false)} />
+      ) : (
+        author &&
+        !concealed && (
+          <ClampedContent commentId={comment.id}>
+            <RenderHtml
+              html={comment.content}
+              className="text-sm"
+              withMentions
+              withProfanityFilter
+              allowStickers
+            />
+          </ClampedContent>
+        )
+      )}
 
       <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">
-        <ReactionPicker
-          reactions={reactions}
-          onSelect={handleReactionClick}
-          disabled={toggleReactionMutation.isPending}
-        />
+        <Group gap={4}>
+          {author && !concealed && (
+            <Reactions
+              reactions={myReactions}
+              entityId={comment.id}
+              entityType="comment"
+              metrics={metrics}
+            />
+          )}
+          {comment.hidden && !hiddenOnly && !concealed && <HideAgainButton onClick={conceal} />}
+        </Group>
         <Group gap={4} wrap="nowrap">
           {currentUser?.isModerator && comment.tosViolation && (
             <Tooltip label="Has TOS Violation">
@@ -129,9 +119,11 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
             </Tooltip>
           )}
           {comment.locked && (
-            <ThemeIcon color="yellow" size="xs">
-              <IconLock />
-            </ThemeIcon>
+            <Tooltip label="Replies locked">
+              <ThemeIcon color="yellow" size="xs">
+                <IconLock />
+              </ThemeIcon>
+            </Tooltip>
           )}
           <Button
             radius="xl"
@@ -143,7 +135,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           >
             <Group gap={2} wrap="nowrap">
               <IconMessageCircle2 size={14} />
-              <Text>{abbreviateNumber(commentCount)}</Text>
+              <Text>{abbreviateNumber(replyCount)}</Text>
             </Group>
           </Button>
         </Group>
@@ -152,4 +144,55 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
   );
 }
 
-type Props = { data: CommentGetAllItem; modelUserId?: number };
+type Props = { data: CommentV3Comment; modelUserId?: number };
+
+const CLAMP_HEIGHT = 100;
+
+/**
+ * Kept per comment so a card remounted by the virtualizer renders at its final height. The
+ * virtualizer measures a card when it attaches, before this component's layout effect can add
+ * the Show More control, so deciding on mount shifted every card below it in the column.
+ */
+const clampStateById = new Map<number, { overflows: boolean; expanded: boolean }>();
+const CLAMP_CACHE_LIMIT = 500;
+
+function rememberClampState(id: number, state: { overflows: boolean; expanded: boolean }) {
+  clampStateById.delete(id);
+  clampStateById.set(id, state);
+  if (clampStateById.size > CLAMP_CACHE_LIMIT)
+    clampStateById.delete(clampStateById.keys().next().value!);
+}
+
+function ClampedContent({ commentId, children }: { commentId: number; children: ReactNode }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const cached = clampStateById.get(commentId);
+  const [overflows, setOverflows] = useState(cached?.overflows ?? false);
+  const [expanded, setExpanded] = useState(cached?.expanded ?? false);
+
+  useIsomorphicLayoutEffect(() => {
+    rememberClampState(commentId, { overflows, expanded });
+  }, [commentId, overflows, expanded]);
+
+  useIsomorphicLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => setOverflows(el.offsetHeight > CLAMP_HEIGHT);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <>
+      <div style={{ maxHeight: expanded ? undefined : CLAMP_HEIGHT, overflow: 'hidden' }}>
+        <div ref={contentRef}>{children}</div>
+      </div>
+      {overflows && (
+        <Anchor component="button" type="button" onClick={() => setExpanded((v) => !v)}>
+          <Text size="sm">{expanded ? 'Hide' : 'Show More'}</Text>
+        </Anchor>
+      )}
+    </>
+  );
+}

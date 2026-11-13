@@ -6,10 +6,10 @@ import type {
   ComfyScheduler,
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -19,7 +19,7 @@ export const createAnimaInput = defineHandler<
 >((data, ctx) => {
   const loras = resourcesToLoras(data.resources, ctx.airs);
 
-  const diffuserModel = data.model ? ctx.airs.getOrThrow(data.model.id) : undefined;
+  const diffusionModel = data.model ? ctx.airs.getOrThrow(data.model.id) : undefined;
 
   const { preprocessSteps, controlNets } = buildControlNetSteps(
     data.controlNets,
@@ -42,7 +42,7 @@ export const createAnimaInput = defineHandler<
     quantity: data.quantity ?? 1,
     outputFormat: data.outputFormat,
     loras,
-    diffuserModel,
+    diffusionModel,
     ...(controlNets.length ? { controlNets } : {}),
   };
 

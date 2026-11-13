@@ -1,31 +1,49 @@
 <script lang="ts">
-  import { page } from '$app/state';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { dateTime } from '$lib/format';
-  import { urlWith } from '$lib/url';
-  import CursorPager from '$lib/components/CursorPager.svelte';
+  import WorkflowGateQueue from './WorkflowGateQueue.svelte';
   import type { PageData } from './$types';
+  import type { TrainingReviewRow } from '$lib/server/training-moderation.service';
 
   let { data }: { data: PageData } = $props();
+
+  const underReview = $derived(
+    data.items.filter((item: TrainingReviewRow) => item.underReview).length
+  );
+  // An unreadable run answered and is not under review; only a read with no answer leaves the
+  // count short.
+  const partial = $derived(data.unanswered || data.truncated);
 </script>
 
 <header class="page-header">
   <h1>Training Data Review</h1>
   <p>Training runs the orchestrator paused for a moderator to approve or deny the dataset.</p>
+  <p class="text-sm text-dark-2">
+    {partial ? 'At least ' : ''}{underReview.toLocaleString()} model
+    {underReview === 1 ? 'version' : 'versions'} under review.
+    Under review first, then the other paused versions; oldest first within each.
+  </p>
 </header>
 
 {#if data.workflowFilterUnavailable}
   <p class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-    The orchestrator is unreachable, so this list is unfiltered — some rows may have no workflow left
-    and will refuse to approve.
+    Some rows are listed unchecked, sorted with the rest: the orchestrator did not answer for them, or
+    answered with a run this page cannot read.{data.unanswered
+      ? ' The ones it did not answer for may have no workflow left, or be under review.'
+      : ''}
+  </p>
+{/if}
+{#if data.truncated}
+  <p class="mb-4 text-sm text-amber-200">
+    More paused versions than one load checks — the oldest were not checked.
   </p>
 {/if}
 
 {#if data.items.length === 0}
-  <!-- Rows are dropped AFTER the page limit, so an empty page does not mean an empty queue. -->
   <p class="text-sm text-dark-2">
-    {data.nextCursor
-      ? 'Nothing reviewable on this page — every row here has no live workflow. Continue to the next page.'
+    {data.truncated
+      ? 'Nothing live among the paused versions checked — the oldest were not checked.'
       : 'Nothing waiting for review.'}
   </p>
 {:else}
@@ -35,7 +53,14 @@
         class="flex items-center justify-between gap-3 rounded-xl border border-dark-4 bg-dark-6 p-4"
       >
         <div class="min-w-0">
-          <p class="truncate text-sm text-dark-0">{item.modelName} — {item.name}</p>
+          <p class="flex items-center gap-2 text-sm text-dark-0">
+            <span class="truncate">{item.modelName} — {item.name}</span>
+            {#if item.underReview}
+              <Badge variant="secondary">Under review</Badge>
+            {:else if !item.checked}
+              <Badge variant="outline">Unchecked</Badge>
+            {/if}
+          </p>
           <p class="text-xs text-dark-2">Created {dateTime(item.createdAt)}</p>
           <p class="text-xs text-dark-2">Workflow: {item.workflowId ?? 'none'}</p>
         </div>
@@ -45,4 +70,4 @@
   </ul>
 {/if}
 
-<CursorPager href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor }) : null} />
+<WorkflowGateQueue gates={data.workflowGates} />

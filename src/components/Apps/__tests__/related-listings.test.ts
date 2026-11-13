@@ -1,28 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import {
+  creatorRailHeading,
+  CREATOR_RAIL_LIMIT,
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
+  relatedRailFirstHeading,
   relatedRailHeading,
-  selectRelatedListings,
+  relatedRailSections,
+  type RelatedRailSection,
 } from '~/components/Apps/related-listings';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
  * "More in <category>" discovery-rail selection — node `unit` project: the
- * fast, deterministic suite CI runs on every PR (the browser `component` suites
- * are not run in CI at all). Pins exclude-self, category-then-popular top-up,
- * de-dup and the cap, plus the "do we even need the second query" predicate.
+ * fast, deterministic suite CI runs on every PR. Pins exclude-self, category-then-popular top-up
+ * under SEPARATE headings, de-dup and the cap, plus the "do we even need the second query"
+ * predicate.
  */
 
-function card(id: string): ListingCard {
+function card(id: string, category = 'utility'): ListingCard {
   return {
     id,
     slug: `slug-${id}`,
     kind: 'onsite',
     name: `App ${id}`,
     tagline: null,
-    category: 'utility',
+    category,
     contentRating: null,
     iconUrl: null,
     coverUrl: null,
@@ -39,70 +43,118 @@ function card(id: string): ListingCard {
 }
 
 const ids = (out: ListingCard[]) => out.map((c) => c.id);
+/** Every rendered id, in render order, across both groups. */
+const allIds = (sections: RelatedRailSection[]) => sections.flatMap((s) => ids(s.items));
+/** `[key, heading, ids]` per group — the whole rendered structure in one value. */
+const shape = (sections: RelatedRailSection[]) =>
+  sections.map((s) => [s.key, s.heading, ids(s.items)]);
 
-describe('selectRelatedListings', () => {
-  it('EXCLUDES SELF from the same-category list', () => {
-    const out = selectRelatedListings({
+// Same-category apps are `utility`; top-up apps are `games`, so a top-up landing in the
+// category group is visible in the asserted ids AND in the cards' own category.
+const same = (id: string) => card(id, 'utility');
+const pop = (id: string) => card(id, 'games');
+
+describe('🔴 relatedRailSections — the top-up never renders under "More in <category>"', () => {
+  it('🔴 a thin category renders its own apps under "More in", the top-up under "Popular apps"', () => {
+    const sections = relatedRailSections({
       selfId: 'me',
-      sameCategory: [card('a'), card('me'), card('b')],
-    });
-    expect(ids(out)).toEqual(['a', 'b']);
-  });
-
-  it('EXCLUDES SELF from the popular top-up too', () => {
-    const out = selectRelatedListings({ selfId: 'me', popular: [card('me'), card('c')] });
-    expect(ids(out)).toEqual(['c']);
-  });
-
-  it('keeps same-category order first, then tops up from popular', () => {
-    const out = selectRelatedListings({
-      selfId: 'me',
-      sameCategory: [card('a'), card('b')],
-      popular: [card('p1'), card('p2')],
+      category: 'utility',
+      sameCategory: [same('a'), same('b')],
+      popular: [pop('p1'), pop('p2')],
       limit: 4,
     });
-    expect(ids(out)).toEqual(['a', 'b', 'p1', 'p2']);
+    expect(shape(sections)).toEqual([
+      ['category', 'More in Utility', ['a', 'b']],
+      ['popular', 'Popular apps', ['p1', 'p2']],
+    ]);
+    // The relationship the heading claims: everything under "More in Utility" IS utility.
+    const categoryGroup = sections.find((s) => s.key === 'category')!;
+    expect(categoryGroup.items.every((c) => c.category === 'utility')).toBe(true);
+  });
+
+  it('a category that fills the rail renders ONE group and no popular heading', () => {
+    const many = Array.from({ length: 8 }, (_, i) => same(`c${i}`));
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: many,
+      popular: [pop('p1')],
+    });
+    expect(sections.map((s) => s.key)).toEqual(['category']);
+    expect(sections[0].items).toHaveLength(RELATED_LISTINGS_LIMIT);
+  });
+
+  it('a category holding ONLY self yields the popular group alone — no empty "More in" heading', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: [same('me')],
+      popular: [pop('p1')],
+    });
+    expect(shape(sections)).toEqual([['popular', 'Popular apps', ['p1']]]);
+  });
+
+  it('no category → a single popular group, headed "Popular apps"', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: null,
+      popular: [pop('p1'), pop('p2')],
+    });
+    expect(shape(sections)).toEqual([['popular', 'Popular apps', ['p1', 'p2']]]);
+  });
+
+  it('EXCLUDES SELF from both groups', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: [same('a'), same('me'), same('b')],
+      popular: [pop('me'), pop('c')],
+    });
+    expect(allIds(sections)).toEqual(['a', 'b', 'c']);
   });
 
   it('the top-up never duplicates an app already picked from the category', () => {
-    const out = selectRelatedListings({
+    const sections = relatedRailSections({
       selfId: 'me',
-      sameCategory: [card('a')],
-      popular: [card('a'), card('p1')],
+      category: 'utility',
+      sameCategory: [same('a')],
+      popular: [same('a'), pop('p1')],
       limit: 4,
     });
-    expect(ids(out)).toEqual(['a', 'p1']);
+    expect(shape(sections)).toEqual([
+      ['category', 'More in Utility', ['a']],
+      ['popular', 'Popular apps', ['p1']],
+    ]);
   });
 
-  it('caps at the limit even when both lists are long', () => {
-    const many = Array.from({ length: 20 }, (_, i) => card(`c${i}`));
-    expect(selectRelatedListings({ selfId: 'me', sameCategory: many, popular: many })).toHaveLength(
-      RELATED_LISTINGS_LIMIT
-    );
-  });
-
-  it('no category (sameCategory omitted) → a pure popular rail', () => {
-    const out = selectRelatedListings({ selfId: 'me', popular: [card('p1'), card('p2')] });
-    expect(ids(out)).toEqual(['p1', 'p2']);
-  });
-
-  it('nothing available → empty (the view then renders its empty note, not a broken rail)', () => {
-    expect(selectRelatedListings({ selfId: 'me' })).toEqual([]);
-  });
-
-  it('a category holding ONLY self yields the popular top-up alone', () => {
-    const out = selectRelatedListings({
+  it('the cap applies across BOTH groups, category first', () => {
+    const sections = relatedRailSections({
       selfId: 'me',
-      sameCategory: [card('me')],
-      popular: [card('p1')],
+      category: 'utility',
+      sameCategory: [same('a'), same('b'), same('c')],
+      popular: Array.from({ length: 20 }, (_, i) => pop(`p${i}`)),
+      limit: 5,
     });
-    expect(ids(out)).toEqual(['p1']);
+    expect(shape(sections)).toEqual([
+      ['category', 'More in Utility', ['a', 'b', 'c']],
+      ['popular', 'Popular apps', ['p0', 'p1']],
+    ]);
   });
 
-  it('limit 0 → empty (no accidental unbounded rail)', () => {
-    expect(selectRelatedListings({ selfId: 'me', sameCategory: [card('a')], limit: 0 })).toEqual(
-      []
-    );
+  it('nothing available → no groups (the view then renders its empty note)', () => {
+    expect(relatedRailSections({ selfId: 'me', category: 'utility' })).toEqual([]);
+  });
+
+  it('limit 0 → no groups (no accidental unbounded rail)', () => {
+    expect(
+      relatedRailSections({
+        selfId: 'me',
+        category: 'utility',
+        sameCategory: [same('a')],
+        popular: [pop('p1')],
+        limit: 0,
+      })
+    ).toEqual([]);
   });
 });
 
@@ -226,5 +278,189 @@ describe('🔴 relatedRailHeading — the rail names the category by its LABEL',
     expect(relatedRailHeading(null)).toBe('More apps');
     expect(relatedRailHeading(undefined)).toBe('More apps');
     expect(relatedRailHeading('')).toBe('More apps');
+  });
+});
+
+describe('🔴 relatedRailFirstHeading — what a link to the rail may call it', () => {
+  const sections = (o: Parameters<typeof relatedRailSections>[0]) => relatedRailSections(o);
+
+  it('a category with other apps leads with "More in <category>"', () => {
+    const s = sections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: [same('a')],
+      popular: [pop('p')],
+    });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: false })).toBe(
+      'More in Utility'
+    );
+  });
+
+  it('🔴 an app alone in its category leads with "Popular apps", not its category', () => {
+    const s = sections({
+      selfId: 'me',
+      category: 'utility',
+      sameCategory: [same('me')],
+      popular: [pop('p')],
+    });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: false })).toBe(
+      'Popular apps'
+    );
+  });
+
+  it('no category with popular apps leads with "Popular apps"', () => {
+    const s = sections({ selfId: 'me', category: null, popular: [pop('p')] });
+    expect(relatedRailFirstHeading({ category: null, sections: s, loading: false })).toBe(
+      'Popular apps'
+    );
+  });
+
+  it('an empty rail is named by the heading over its empty note', () => {
+    expect(relatedRailFirstHeading({ category: 'utility', sections: [], loading: false })).toBe(
+      'More in Utility'
+    );
+    expect(relatedRailFirstHeading({ category: null, sections: [], loading: false })).toBe(
+      'More apps'
+    );
+  });
+
+  it('while loading there is no answer yet (null), whatever the partial sections say', () => {
+    const s = sections({ selfId: 'me', category: 'utility', sameCategory: [same('a')] });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: true })).toBeNull();
+  });
+});
+
+/**
+ * "More by this developer" — the creator group, rendered FIRST.
+ *
+ * Its own cap (one row), so a prolific developer cannot push the category and popular groups
+ * off the rail; and it goes through the same self-exclusion and de-dup as the other groups, so
+ * the page you are on never appears and no app appears twice.
+ */
+describe('🔴 relatedRailSections — the creator group', () => {
+  const dev = (id: string) => card(id, 'games');
+
+  it('🔴 leads the rail, headed "More by <developer>", and EXCLUDES SELF', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [dev('me'), dev('d1'), dev('d2')],
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a')],
+      popular: [pop('p1')],
+    });
+    expect(shape(sections)).toEqual([
+      ['creator', 'More by pixelsmith', ['d1', 'd2']],
+      ['category', 'More in Utility', ['a']],
+      ['popular', 'Popular apps', ['p1']],
+    ]);
+  });
+
+  it('🔴 an app already in the creator group is not repeated in the category or popular group', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [same('a'), dev('d1')],
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a'), same('b')],
+      popular: [dev('d1'), pop('p1')],
+    });
+    expect(shape(sections)).toEqual([
+      ['creator', 'More by pixelsmith', ['a', 'd1']],
+      ['category', 'More in Utility', ['b']],
+      ['popular', 'Popular apps', ['p1']],
+    ]);
+  });
+
+  it('is capped at one row of its own, and does not shrink the rest of the rail', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: Array.from({ length: 10 }, (_, i) => dev(`d${i}`)),
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a'), same('b'), same('c')],
+      popular: Array.from({ length: 10 }, (_, i) => pop(`p${i}`)),
+      limit: 5,
+    });
+    expect(CREATOR_RAIL_LIMIT).toBe(3);
+    expect(shape(sections)).toEqual([
+      ['creator', 'More by pixelsmith', ['d0', 'd1', 'd2']],
+      ['category', 'More in Utility', ['a', 'b', 'c']],
+      ['popular', 'Popular apps', ['p0', 'p1']],
+    ]);
+  });
+
+  it('a developer whose only app is this one gets no creator group', () => {
+    const sections = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [dev('me')],
+      creatorName: 'pixelsmith',
+      sameCategory: [same('a')],
+    });
+    expect(shape(sections)).toEqual([['category', 'More in Utility', ['a']]]);
+  });
+
+  it('a link to the rail names the creator group when it leads', () => {
+    const s = relatedRailSections({
+      selfId: 'me',
+      category: 'utility',
+      creator: [dev('d1')],
+      creatorName: 'pixelsmith',
+    });
+    expect(relatedRailFirstHeading({ category: 'utility', sections: s, loading: false })).toBe(
+      'More by pixelsmith'
+    );
+  });
+});
+
+describe('creatorRailHeading', () => {
+  it('names the developer, or says "this developer" when the name is unknown', () => {
+    expect(creatorRailHeading('pixelsmith')).toBe('More by pixelsmith');
+    expect(creatorRailHeading(null)).toBe('More by this developer');
+    expect(creatorRailHeading('')).toBe('More by this developer');
+  });
+});
+
+describe('needsPopularTopUp — with a creator group', () => {
+  it('🔴 category apps the creator group takes do not count toward filling the rail', () => {
+    // Two category apps, both by this developer: the category group will render neither.
+    expect(
+      needsPopularTopUp({
+        selfId: 'me',
+        sameCategory: [card('a'), card('b')],
+        creator: [card('a'), card('b')],
+        limit: 2,
+      })
+    ).toBe(true);
+    // Control: the same category list with no creator overlap fills the rail.
+    expect(
+      needsPopularTopUp({
+        selfId: 'me',
+        sameCategory: [card('a'), card('b')],
+        creator: [card('x')],
+        limit: 2,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('isRelatedRailLoading — the creator query', () => {
+  it('loading while the enabled creator query is pending; ignored when it is disabled', () => {
+    const settled = {
+      hasCategoryFilter: true,
+      categoryPending: false,
+      wantTopUp: false,
+      popularPending: false,
+    };
+    expect(isRelatedRailLoading({ ...settled, wantCreator: true, creatorPending: true })).toBe(
+      true
+    );
+    expect(isRelatedRailLoading({ ...settled, wantCreator: false, creatorPending: true })).toBe(
+      false
+    );
+    expect(isRelatedRailLoading({ ...settled, wantCreator: true, creatorPending: false })).toBe(
+      false
+    );
   });
 });

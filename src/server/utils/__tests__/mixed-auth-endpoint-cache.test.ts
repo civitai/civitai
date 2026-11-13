@@ -15,8 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *      form takes the public arm. The `credential presented, session null` case
  *      below is the one that separates them.
  *   2. **The credentialed arm states a header.** It previously stated nothing and
- *      relied on `apiCacheMiddleware`, whose matcher is `/api/trpc/*` and
- *      `/api/v1/*` only. Two of this wrapper's twelve routes sit outside that:
+ *      relied on `apiCacheMiddleware`, whose matcher is `/api/v1/*` only. Two of this wrapper's twelve routes sit outside that:
  *      `/api/auth/freshdesk`, a redirect whose target is caller-specific and
  *      which had no `Cache-Control` at all, and the 404 arms of
  *      `/api/blocks/screenshot/[appBlockId]/[file]` — whose 200 arm sets its own
@@ -116,6 +115,11 @@ describe('MixedAuthEndpoint — the anonymous arm is preserved', () => {
   it('PRESERVES the public edge cache for an anonymous request', async () => {
     const headers = await runMixedAuth({});
     expect(headers['Cache-Control']).toBe(PUBLIC_DEFAULT);
+  });
+
+  it("never marks a verified crawler's response publicly cacheable", async () => {
+    const headers = await runMixedAuth({ headers: { 'x-civitai-verified-bot': 'googlebot' } });
+    expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);
   });
 
   it('PRESERVES the public edge cache when only unrelated cookies are present', async () => {

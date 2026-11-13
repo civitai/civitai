@@ -7,13 +7,13 @@ import type {
   Flux1KontextMaxImageGenInput,
   Flux1KontextProImageGenInput,
   ImageGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import {
   fluxKontextModeOf,
   type FluxKontextMode,
 } from '~/shared/form-graph/generation/image/flux-kontext.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type FluxKontextInput = Flux1KontextProImageGenInput | Flux1KontextMaxImageGenInput;

@@ -1,0 +1,114 @@
+// The footer: no top padding while a strip stack is showing, so the top strip meets the footer's
+// rounded edge, which clips it. Tailwind's padding is unlayered, hence the !important.
+.frame {
+  overflow: hidden;
+  // Clipping makes a flex item shrinkable to nothing; the footer keeps its height.
+  flex-shrink: 0;
+
+  // Pinned chrome, not part of the form: a drag on it doesn't pull the form (whose overscroll
+  // stretch would move the footer with it). The strip stack scrolls itself when it overflows.
+  touch-action: none;
+
+  &:has([data-strips]:not(:empty)) {
+    padding-top: 0 !important;
+  }
+
+  // Only strips showing (the footer's own row is hidden, as under the terms): no gap below them.
+  &:has(> :global(.hidden)) {
+    padding-bottom: var(--safe-area-inset-bottom, 0px) !important;
+  }
+}
+
+// Alerts as strips: edge to edge, square, compact, one line until tapped. The alerts style
+// themselves with Tailwind utilities, which beat this module, hence the !important.
+.strips {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 35dvh;
+  margin-inline: -8px;
+  overflow-y: auto;
+  // none, not contain: contain still lets Chrome stretch the strips in place and spring them back.
+  overscroll-behavior: none;
+  touch-action: pan-y;
+
+  // The cap keeps folded strips from pushing Generate off screen. An alert kept in full is one that
+  // stops Generate, so it shows whole rather than scrolling inside the stack.
+  &:has(> [data-strip-full]) {
+    max-height: none;
+  }
+
+  &:empty {
+    display: none;
+  }
+
+  // A second stack under a first (the form footer's, inside the footer slot, under the layout's) is
+  // already the footer's gap away from it, so its first item adds no padding of its own.
+  :global([data-strips]:not(:empty)) ~ * & > :first-child {
+    padding-top: 0;
+  }
+
+  > * {
+    flex: none;
+    margin: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  // A wrapped alert (one kept in full) brings its own bleed margins; the stack already bleeds.
+  > [data-strip-full] > * {
+    margin: 0 !important;
+  }
+
+  > :not([data-strip-full]) {
+    cursor: pointer;
+  }
+
+  // The stack spans the footer's padding, and the footer drops its top padding for it; only alerts
+  // fill that space themselves. Anything else (the queue, a reward) sits 8px from what is above it,
+  // and 8px from an alert under it, so it is spaced the same on both sides.
+  > :not(:global(.mantine-Alert-root), :global(.mantine-Notification-root)):not(
+      :has(:global(.mantine-Alert-root), :global(.mantine-Notification-root))
+    ) {
+    padding-inline: 8px;
+    padding-top: 8px;
+
+    // `:has()` can't nest, so an alert in a wrapper is matched by the wrapper's marker.
+    &:has(
+        + :is(:global(.mantine-Alert-root), :global(.mantine-Notification-root), [data-strip-full])
+      ) {
+      // Less the stack's 1px gap.
+      padding-bottom: 7px;
+    }
+  }
+
+  :global(.mantine-Notification-root),
+  :global(.mantine-Alert-root) {
+    padding-block: 6px !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    font-size: 12px;
+  }
+
+  :global(.mantine-Alert-title) {
+    margin-bottom: 0;
+    font-size: 13px;
+  }
+
+  > :not([data-expanded], [data-strip-full]) {
+    :global(.mantine-Notification-description),
+    :global(.mantine-Alert-message),
+    :global(.mantine-Text-root),
+    :global(.mantine-Stack-root) {
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    // A title over its message (AlertWithIcon, DismissibleAlert) folds onto one line.
+    :global(.mantine-Stack-root) > * {
+      display: inline !important;
+      margin: 0 0.4em 0 0 !important;
+    }
+  }
+}

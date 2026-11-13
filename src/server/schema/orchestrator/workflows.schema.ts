@@ -6,7 +6,6 @@ export const workflowIdSchema = z.object({
 
 export type WorkflowUpdateSchema = z.infer<typeof workflowUpdateSchema>;
 export const workflowUpdateSchema = workflowIdSchema.extend({
-  metadata: z.record(z.string(), z.any()).optional(),
   allowMatureContent: z.boolean().optional(),
 });
 
@@ -19,6 +18,12 @@ export const workflowQuerySchema = z.object({
   fromDate: z.date().optional(),
   toDate: z.date().optional(),
   excludeFailed: z.boolean().optional(),
+});
+
+export type GeneratedImagesQuerySchema = z.input<typeof generatedImagesQuerySchema>;
+export const generatedImagesQuerySchema = workflowQuerySchema.extend({
+  /** Leave out workflows an App Block ran: the generator Queue, Feed and queue counter set it. */
+  excludeAppWorkflows: z.boolean().optional(),
 });
 
 export const workflowResourceSchema = z.object({
@@ -51,15 +56,27 @@ export const tagsPatchSchema = z.object({
   op: z.enum(['add', 'remove']),
 });
 
+// The orchestrator charges for some top-level fields (`/allowMatureContent` is the yellow-Buzz
+// unlock, which must go through `updateWorkflow`'s guards), and it matches field names
+// case-insensitively.
+const workflowMetadataPointer = z
+  .string()
+  .regex(/^\/metadata(\/|$)/i, 'Workflow patches may only change /metadata');
+
 export type PatchWorkflowParams = z.infer<typeof patchWorkflowSchema>;
 export const patchWorkflowSchema = z.object({
   workflowId: z.string(),
-  patches: jsonPatchSchema.array(),
+  patches: jsonPatchSchema
+    .extend({ path: workflowMetadataPointer, from: workflowMetadataPointer.optional() })
+    .array(),
 });
 
+// Step patch paths are relative; the router roots them under the step's /metadata.
 export type PatchWorkflowStepParams = z.infer<typeof patchWorkflowStepSchema>;
-export const patchWorkflowStepSchema = patchWorkflowSchema.extend({
+export const patchWorkflowStepSchema = z.object({
+  workflowId: z.string(),
   stepName: z.string(),
+  patches: jsonPatchSchema.array(),
 });
 
 // export const deleteSchema = z.object({

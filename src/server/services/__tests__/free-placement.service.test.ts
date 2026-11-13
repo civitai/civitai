@@ -2,14 +2,33 @@ import fs from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementModeration from '~/server/services/placement-moderation.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
 import type { ResolvedPlacementSpace } from '~/server/services/placement-space.service';
-import { FREE_PLACEMENTS_PER_DAY, PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import {
+  FREE_PLACEMENTS_PER_DAY,
+  PLACEMENT_SURFACES,
+  freePlacementDayStart,
+} from '~/shared/utils/placement';
 
 const resolveSpace = vi.fn();
 const assertCanPlace = vi.fn();
 
+// The display-only allowance count (`getFreePlacementAllowance`), a Kysely read off the claim's
+// transaction. Its rows, against a real database, are pinned in
+// placement-reads.kysely-parity.test.ts.
+const { displayCount } = vi.hoisted(() => ({ displayCount: vi.fn() }));
+vi.mock('@civitai/db-queries/placement', () => ({ countPlacements: displayCount }));
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
 // `reservedFreeSlots` is deliberately NOT stubbed: it is the predicate the claim
 // decides on, and a double would let the count-under-lock be tested against a
 // shape the real query does not have.
@@ -42,8 +61,17 @@ const executeRaw = dbMock.dbWrite.$executeRaw;
  * the service asked the same question four times — which is the mistake worth
  * catching, since these differ only in their predicates.
  */
-const givenCounts = ({ usedToday = 0, pending = 0, alreadyHere = 0, reserved = 0 } = {}) =>
+const givenCounts = ({
+  usedToday = 0,
+  pending = 0,
+  alreadyHere = 0,
+  reserved = 0,
+  waivedToday = 0,
+  waivedReserved = 0,
+} = {}) =>
   placementCount.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+    // The team-waived share of a free-tier count; waived rows are a subset of the free ones.
+    if (where.data) return where.createdAt ? waivedToday : where.status ? waivedReserved : 0;
     if (where.createdAt) return usedToday;
     if (where.ownerId !== undefined) return pending;
     if (where.status) return reserved;
@@ -87,6 +115,7 @@ const whereOf = (predicate: (where: Record<string, unknown>) => boolean) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  displayCount.mockResolvedValue(0);
   givenCounts();
   givenSpace();
   assertCanPlace.mockResolvedValue(undefined);
@@ -104,6 +133,21 @@ describe('createFreePlacement', () => {
     // query is `expiresAt <= now()`, which NULL never satisfies.
     expect(written.expiresAt).toBeInstanceOf(Date);
     expect(written.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(written).not.toHaveProperty('track');
+  });
+
+  it('stores a moving sticker’s track beside its data', async () => {
+    const track = { v: 1, ms: 100, x: [[0, 0.2]], y: [[0, 0.5]], s: [[0, 0.1]], r: [[0, 0]] };
+    await createFreePlacement({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { cosmeticId: 5 },
+      track,
+    });
+
+    expect(placementCreate.mock.calls[0][0].data.track).toEqual(track);
   });
 
   // The owner is taken from the space this function resolved, from the target it
@@ -214,6 +258,25 @@ describe('createFreePlacement — the refusals the paid path makes', () => {
   });
 });
 
+describe('createFreePlacement — a surface with no free tier', () => {
+  // A `free` row on a zero-priceable surface would spend the daily allowance shared with stickers
+  // and remix galleries.
+  it('refuses a storyline before resolving anything', async () => {
+    await expect(
+      createFreePlacement({
+        surface: 'storyline',
+        targetType: 'image',
+        targetId: TARGET,
+        placerId: PLACER,
+        data: {},
+      })
+    ).rejects.toThrow(/storylines have no free tier/);
+
+    expect(resolveSpace).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe('createFreePlacement — the free-tier refusals', () => {
   it('refuses once the slots on this image are taken', async () => {
     givenCounts({ reserved: 4 });
@@ -294,6 +357,96 @@ describe('createFreePlacement — the free-tier refusals', () => {
       (where) => where.targetId !== undefined && !where.createdAt && !where.status
     );
     expect(everHere).toMatchObject({ placerId: PLACER, free: true, surface: 'sticker' });
+  });
+});
+
+describe('createFreePlacement — a team-waived row', () => {
+  const PER_DAY = 10;
+  const claimWaived = () =>
+    createFreePlacement({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: TARGET,
+      placerId: PLACER,
+      data: { imageId: 5 },
+      teamWaiver: { perDay: PER_DAY },
+    });
+
+  it('is a free row worth nothing, marked as waived, with a deadline', async () => {
+    await claimWaived();
+
+    const written = placementCreate.mock.calls[0][0].data;
+    expect(written).toMatchObject({ free: true, amount: 0, status: 'pending', ownerId: OWNER });
+    expect(written.data).toEqual({ imageId: 5, waiver: 'team' });
+    expect(written.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it('needs none of the free tier: no slots offered, the day spent, the slots taken', async () => {
+    givenSpace({ freeSlots: 0, setFreeSlots: 0 });
+    givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, reserved: 4, alreadyHere: 1 });
+
+    await expect(claimWaived()).resolves.toEqual({ id: 1 });
+  });
+
+  it('still takes the target lock, after the placer lock, so a free claim never counts mid-insert', async () => {
+    await claimWaived();
+
+    // The free claim reads reserved slots net of waived rows in two statements; a waived insert
+    // between them would undercount by one if it did not wait on the same target lock.
+    expect(executeRaw).toHaveBeenCalledTimes(2);
+    expect(String(executeRaw.mock.calls[0][0])).toContain('pg_advisory_xact_lock');
+    expect(String(executeRaw.mock.calls[1][0])).toContain('hashtext');
+  });
+
+  it("refuses once the placer has made the day's waived submissions, counted under the lock", async () => {
+    givenCounts({ waivedToday: PER_DAY });
+
+    await expect(claimWaived()).rejects.toThrow(/free team remixes for today/);
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(whereOf((where) => !!where.data && !!where.createdAt)).toEqual({
+      placerId: PLACER,
+      free: true,
+      createdAt: { gte: freePlacementDayStart() },
+      data: { path: ['waiver'], equals: 'team' },
+    });
+  });
+
+  it('allows the last one of the day', async () => {
+    givenCounts({ waivedToday: PER_DAY - 1 });
+    await expect(claimWaived()).resolves.toEqual({ id: 1 });
+  });
+
+  it('keeps every refusal the paid path makes', async () => {
+    givenCounts({ pending: PLACEMENT_SURFACES.remixGallery.maxPendingPerOwner });
+    await expect(claimWaived()).rejects.toThrow(/maximum pending/);
+
+    givenCounts();
+    assertCanPlace.mockRejectedValueOnce(new Error('blocked'));
+    await expect(claimWaived()).rejects.toThrow(/blocked/);
+
+    givenSpace({ ownerId: PLACER });
+    await expect(claimWaived()).rejects.toThrow(/your own content/);
+
+    givenSpace({ mode: 'off' });
+    await expect(claimWaived()).rejects.toThrow(/not accepting/);
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('createFreePlacement — the free tier is counted net of waived rows', () => {
+  it("a waived submission today does not spend the placer's free placement", async () => {
+    givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, waivedToday: FREE_PLACEMENTS_PER_DAY });
+    await expect(claim()).resolves.toEqual({ id: 1 });
+  });
+
+  it("a waived submission holds none of the creator's free slots", async () => {
+    givenCounts({ reserved: 4, waivedReserved: 1 });
+    await expect(claim()).resolves.toEqual({ id: 1 });
+  });
+
+  it('a free placement still counts in full', async () => {
+    givenCounts({ usedToday: FREE_PLACEMENTS_PER_DAY, waivedToday: FREE_PLACEMENTS_PER_DAY - 1 });
+    await expect(claim()).rejects.toThrow(/used your free placement for today/);
   });
 });
 
@@ -423,11 +576,73 @@ describe('the advisory locks have exactly one call site', () => {
   // article ids article.service.ts locks on.
   // creator-gallery-hidden-users takes one for the same count-then-insert reason, on a creator's
   // gallery hidden-users cap. Classed two-arg form (0x47480001), never nested inside another lock.
+  // game-frame-report takes two classed locks (0x47460001 per gfReportId, then 0x47460002 per game
+  // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
+  // support-membership-code takes one per moderator (0x4d430001) for the daily mint cap's
+  // count-then-insert, never nested inside another lock.
+  // creator-score-grant takes one per moderator (0x43530001) for the daily grant cap's
+  // count-then-insert, then the target's User row lock; never nested inside another advisory lock.
+  // platform-feedback takes one per report fingerprint so two first reports cannot both insert.
+  // One-arg form on hashtextextended of a prefixed sha256, never nested inside another lock.
+  // text-scan/prompt takes one per prompt key (single-arg hashtext form) so two saves from the same
+  // base version cannot both insert as newest; never nested inside another lock.
+  // storyline-placement takes one per placer (0x74ee0003) for the pending cap's
+  // count-then-insert, since a zero-priced continuation costs nothing to race. It is
+  // the only lock in its transaction and is never taken alongside the free path's.
+  // scan-label-flag takes one per post (0x5c1a0001) for the scan label queue's per-post cap
+  // count-then-insert; the only lock in its transaction.
+  // item-holder-lock takes one per user (0x49480001) in the shop and pack grant transactions, after
+  // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
+  // never nested inside another advisory lock.
+  // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions, except
+  // a keyed submit, where it is taken inside buzz-charge-lock's lock (always that one first).
+  // buzz-charge-lock takes one per keyed charge (one-arg hashtextextended of the charge's external
+  // id or prefix: creator-shop-submit-…, donation-k-…) around the record of a charge and any refund
+  // after a failed record; the Buzz charge itself runs outside. Taken first in its transaction; the
+  // only other lock ever taken under it is the creator lock above, so there is no cycle.
+  // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
+  // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
+  // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
+  // ingestion lock, so an article removal serialises with a recompute. The only lock in its transaction.
+  // text-scan/actions/csam-hold takes one per held entity (two-arg hashtext('csam-hold:<type>') form)
+  // around the ruled-text check and the hold write; csam-hold-decision takes the same one, in its own
+  // transaction, for a decision's final update. The only lock in either transaction.
+  // text-scan/actions/model-rules-hold takes one per model (two-arg hashtext('model-rules-hold:Model')
+  // form) around the open-hold check and the hold write. The only lock in its transaction.
+  // access-token takes one per resource (classed two-arg form, 0x41544b) around the active-token
+  // count-then-insert, article saves' shared-text reads and every go-live revoke. Always before the
+  // Article row lock; the ingestion recompute takes article.service.ts's bare id lock first, then it.
+  // apps/storage-migration-run takes one per app block (0x41534d01, hashtext of the id) around the
+  // approve gate's open-run check and the plan reservation. The only lock in its transaction.
+  // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
+  // count and claim. The only lock in its transaction.
+  // app-hibernation/hibernation.repo takes one per user (0x48424e54) as the first statement of its
+  // commit transaction, around the record, usage and User FOR SHARE reads, the decision and the upsert.
+  // The only advisory lock in its transaction, never nested inside another lock.
   const ALLOWED = [
+    'services/access-token.service.ts',
+    'services/app-hibernation/hibernation.repo.ts',
+    'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
+    'services/blocks/review-autodeploy.service.ts',
+    'services/buzz-charge-lock.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
+    'services/creator-mystery-pack.service.ts',
+    'services/creator-score-grant.service.ts',
     'services/free-placement.service.ts',
+    'services/game-frame-report.service.ts',
+    'services/item-holder-lock.ts',
+    'services/model-version-gift.service.ts',
+    'services/platform-feedback.service.ts',
+    'services/scan-label-flag.service.ts',
+    'services/storyline-placement.service.ts',
+    'services/support-membership-code.service.ts',
+    'services/text-scan/actions/csam-hold.ts',
+    'services/text-scan/actions/model-rules-hold.ts',
+    'services/text-scan/csam-hold-decision.ts',
+    'services/text-scan/prompt.ts',
   ];
 
   it('is taken only inside createFreePlacement', () => {
@@ -468,7 +683,9 @@ describe('the advisory locks have exactly one call site', () => {
 
 describe('getFreePlacementAllowance', () => {
   it('reports the day as spent and says when it comes back', async () => {
-    dbMock.dbRead.placement.count.mockResolvedValue(FREE_PLACEMENTS_PER_DAY);
+    displayCount.mockImplementation(async (_db, where) =>
+      'data' in where ? 0 : FREE_PLACEMENTS_PER_DAY
+    );
 
     const allowance = await getFreePlacementAllowance({ placerId: PLACER });
 
@@ -481,7 +698,9 @@ describe('getFreePlacementAllowance', () => {
   });
 
   it('never reports a negative remainder', async () => {
-    dbMock.dbRead.placement.count.mockResolvedValue(FREE_PLACEMENTS_PER_DAY + 5);
+    displayCount.mockImplementation(async (_db, where) =>
+      'data' in where ? 0 : FREE_PLACEMENTS_PER_DAY + 5
+    );
 
     expect((await getFreePlacementAllowance({ placerId: PLACER })).remaining).toBe(0);
   });
@@ -489,9 +708,9 @@ describe('getFreePlacementAllowance', () => {
   // The predicate is shared with the claim rather than written twice. Scope it by
   // status in one copy and the surface offers a placement the mutation refuses.
   it('asks the same question the claim decides on', async () => {
-    dbMock.dbRead.placement.count.mockResolvedValue(0);
+    displayCount.mockResolvedValue(0);
     await getFreePlacementAllowance({ placerId: PLACER });
-    const displayed = dbMock.dbRead.placement.count.mock.calls[0][0].where;
+    const displayed = displayCount.mock.calls[0][1];
 
     givenCounts();
     await claim();

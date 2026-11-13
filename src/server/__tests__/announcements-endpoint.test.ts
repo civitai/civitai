@@ -148,6 +148,28 @@ describe('request handling', () => {
     expect(arg.isModerator).toBe(false);
   });
 
+  // The service gates the second and third link button on this flag, so it must come from the
+  // session's tier — a body field claiming membership is how a free account would get three.
+  it('derives membership from the session tier, never from the body', async () => {
+    const isMemberFor = async (user: Record<string, unknown>) => {
+      upsert.mockClear();
+      await call({ method: 'POST', body: { ...validBody, isMember: true } }, user);
+      return (upsert.mock.calls[0][0] as { isMember: boolean }).isMember;
+    };
+
+    expect(await isMemberFor({ ...OK_USER, tier: 'bronze' })).toBe(true);
+    expect(await isMemberFor({ ...OK_USER, tier: 'free' })).toBe(false);
+    expect(await isMemberFor({ ...OK_USER, tier: 'gold', memberInBadState: true })).toBe(false);
+    expect(await isMemberFor(OK_USER)).toBe(false);
+  });
+
+  it('forwards every link button to the service', async () => {
+    const actions = [1, 2, 3].map((n) => ({ link: `/models/${n}`, linkText: `Button ${n}` }));
+    await call({ method: 'POST', body: { ...validBody, actions } }, { ...OK_USER, tier: 'gold' });
+
+    expect((upsert.mock.calls[0][0] as { actions: unknown }).actions).toEqual(actions);
+  });
+
   it('rejects an invalid body with 400 rather than handing it to the service', async () => {
     const res = await call({ method: 'POST', body: { title: '', content: '' } });
 

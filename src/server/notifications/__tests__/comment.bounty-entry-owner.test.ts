@@ -18,11 +18,10 @@ describe('new-bounty-entry-comment', () => {
       clickhouse: undefined,
     }) as string;
 
-  it('notifies the entry owner off the bountyEntryId thread join', () => {
-    expect(sql()).toContain(
-      'JOIN "Thread" t ON t.id = c."threadId" AND t."bountyEntryId" IS NOT NULL'
-    );
-    expect(sql()).toContain('JOIN "BountyEntry" be ON be.id = t."bountyEntryId"');
+  it('notifies the entry owner of a top-level entry comment', () => {
+    expect(sql()).toContain(`c."entityType" = 'bountyEntry'`);
+    expect(sql()).toContain('c."parentId" IS NULL');
+    expect(sql()).toContain('JOIN "BountyEntry" be ON be.id = c."entityId"');
     expect(sql()).toContain('be."userId" "ownerId"');
   });
 

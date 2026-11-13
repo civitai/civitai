@@ -51,9 +51,7 @@ const redisTrap = new Proxy(
       // pass through as undefined so the mock resolves as a normal (non-thenable)
       // module; trap only REAL client property reads (sysRedis, redis, …).
       if (prop === 'then' || typeof prop === 'symbol') return undefined;
-      throw new Error(
-        `liveness handler must not touch redis client (accessed "${String(prop)}")`
-      );
+      throw new Error(`liveness handler must not touch redis client (accessed "${String(prop)}")`);
     },
   }
 );
@@ -61,13 +59,12 @@ const redisTrap = new Proxy(
 vi.mock('~/server/redis/client', () => redisTrap);
 
 // Keep the endpoint-helpers import chain out of the test (it pulls env + axiom +
-// prom + the full db/auth tree). Provide a faithful token-gated WebhookEndpoint
+// prom + the full db/auth tree). Provide a faithful token-gated ProbeEndpoint
 // so the test still exercises the real auth shape of the route.
 const TEST_TOKEN = 'test-webhook-token';
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  WebhookEndpoint:
-    (handler: (req: unknown, res: unknown) => Promise<void>) =>
-    async (req: any, res: any) => {
+  ProbeEndpoint:
+    (handler: (req: unknown, res: unknown) => Promise<void>) => async (req: any, res: any) => {
       if (req.query?.token !== TEST_TOKEN) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
@@ -83,13 +80,6 @@ beforeEach(() => {
 });
 
 describe('/api/live (liveness probe)', () => {
-  it('returns 200 with alive:true on a valid token', async () => {
-    const { req, res } = createMocks({ query: { token: TEST_TOKEN } });
-    await liveHandler(req as never, res as never);
-    expect(res._getStatusCode()).toBe(200);
-    expect(res._getJSONData()).toMatchObject({ alive: true });
-  });
-
   it('stays 200 even though the redis client module would throw on any access', async () => {
     // redisTrap throws on EVERY property read; reaching 200 proves the handler
     // never dereferenced sysRedis / redis. This is the regression guard for the

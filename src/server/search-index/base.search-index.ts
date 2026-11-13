@@ -15,6 +15,11 @@ import {
   swapIndex,
 } from '~/server/meilisearch/util';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import {
+  forwardSearchUpdate,
+  type SearchOutboxEntity,
+  type SearchUpdateReason,
+} from '~/server/search-index/search-outbox-forward';
 import type {
   PullTask,
   PushTask,
@@ -95,6 +100,11 @@ type SearchIndexProcessor = {
    * re-running a `reset` — the index is stale for as long as it is retired.
    */
   retired?: boolean;
+  /**
+   * Forward each queued update to "Outbox" for the semantic search sync. Retiring the index does
+   * not stop it: the sync outlives the Meilisearch index.
+   */
+  outboxEntity?: SearchOutboxEntity;
 };
 
 /**
@@ -182,8 +192,8 @@ const accountForBatch = (
  *
  * `console.log`, NOT `console.error`, and that is a decision rather than an oversight: on the
  * queue-drain paths this number is nonzero by design. The Update queue legitimately carries ids
- * the index filters out — `model-scan-result` queues an Update for every scanned Draft model,
- * while `pullData` filters to Published — so an error-level line here would fire on every cron
+ * the index filters out — Draft models are queued for Update while `pullData` filters to
+ * Published — so an error-level line here would fire on every cron
  * run and train its reader to ignore it. This is a measurement; a caller that asked for a repair
  * reads the number out of `updateSync`'s return value instead.
  */
@@ -203,6 +213,49 @@ const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQue
   console.log(
     `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName} :: ${parts.join('; ')}`
   );
+};
+
+/**
+ * Put the ids of every batch that exhausted its retries back on the Update queue.
+ *
+ * The queue checkout that supplied them is destructive, so without this a failed batch's ids are
+ * gone once `commit()` runs (#5398). Called AFTER `commit()`: a checkout whose bucket-list write
+ * failed leaves the drained bucket as the queue's newest, and an id re-queued before `commit()`
+ * would land in that bucket and be deleted with it. `false` means Redis refused and the ids went
+ * to the Postgres parking lot; if that also failed or hit its cap, `persistDroppedEnqueue` reports
+ * it to Axiom.
+ */
+const requeueFailedIds = async (indexName: string, caller: string, queue: TaskQueue) => {
+  const ids = queue.failedIds;
+  if (!ids.length) return;
+  const queued = await SearchIndexUpdate.queueUpdate({
+    indexName,
+    items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+  });
+  const prefix = `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName}`;
+  const sample = describeIdSample(ids);
+  if (queued)
+    console.error(
+      `${prefix} :: re-queued ${ids.length} ids from batches that exhausted their retries ${sample}`
+    );
+  else
+    console.error(
+      `${prefix} :: could not re-queue ${ids.length} ids from failed batches to Redis ${sample}; attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
+    );
+};
+
+/** Ids named in the re-queue log line: enough to recognise the same set recurring across runs. */
+export const REQUEUE_LOG_SAMPLE_SIZE = 10;
+
+/**
+ * A bounded, order-independent fingerprint of an id set — the lowest ids plus the range — so
+ * consecutive runs re-queueing the SAME ids read identically in the log while a fresh backlog
+ * does not. Sorted because `failedIds` is in task-completion order, which varies run to run.
+ */
+const describeIdSample = (ids: number[]) => {
+  const ascending = [...ids].sort((a, b) => a - b);
+  const lowest = ascending.slice(0, REQUEUE_LOG_SAMPLE_SIZE).join(', ');
+  return `(lowest: ${lowest}; min ${ascending[0]}, max ${ascending[ascending.length - 1]})`;
 };
 
 /**
@@ -324,6 +377,7 @@ const processSearchIndexTask = async (
       return {
         start,
         type: 'push',
+        requestedIds,
         index: task.index,
         total: task.total,
         idCount: task.idCount,
@@ -388,7 +442,15 @@ export type SearchIndexUpdateSyncResult = {
   handledWithoutDocument: number;
 };
 
-export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor) {
+/**
+ * A processor that forwards to the Outbox takes a reason on every queueUpdate, so a metrics refresh
+ * (reason 'metrics', never forwarded) cannot be queued as a content change by omission.
+ */
+type QueueUpdateOptions<P> = P extends { outboxEntity: SearchOutboxEntity }
+  ? [options: { reason: SearchUpdateReason }]
+  : [options?: { reason?: SearchUpdateReason }];
+
+export function createSearchIndexUpdateProcessor<P extends SearchIndexProcessor>(processor: P) {
   const {
     indexName,
     setup,
@@ -402,6 +464,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     queues,
     updateSyncChunkSize: configuredUpdateSyncChunkSize = DEFAULT_UPDATE_SYNC_CHUNK_SIZE,
     retired = false,
+    outboxEntity,
   } = processor;
 
   // `chunk(xs, 0)`, `chunk(xs, -1)`, `chunk(xs, NaN)` and `chunk(xs, -Infinity)` all return `[]`
@@ -433,6 +496,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
      * invisible to such a test unless it can compare the two.
      */
     prepareBatches,
+    /** Exposed for the same reason as `prepareBatches`. */
+    pullData: processor.pullData,
     async getData(ids: number[]) {
       const ctx = {
         db: dbWrite,
@@ -588,6 +653,10 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // Commit queues:
       await queuedUpdates.commit();
       await queuedDeletes.commit();
+      // Also re-queues failed ids that came from `updateIds` rather than the queue: `setLastUpdate`
+      // below moves the window past them, so the queue is the only place they can be retried.
+      if (!partial && (!queues || queues.includes('update')))
+        await requeueFailedIds(indexName, 'update', queue);
 
       // Use the start time as the time of update
       // Should  help avoid missed items during the run
@@ -761,7 +830,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       return result;
     },
-    async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
+    async queueUpdate(
+      items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
+      ...[options]: QueueUpdateOptions<P>
+    ) {
+      const reason = options?.reason;
+      if (outboxEntity) await forwardSearchUpdate({ entityType: outboxEntity, items, reason });
       if (retired) return;
       await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
@@ -841,6 +915,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         logIdsWithoutDocument(indexName, 'processQueues', queue);
 
         await queuedUpdates.commit();
+        if (!partial) await requeueFailedIds(indexName, 'processQueues', queue);
       }
     },
   };

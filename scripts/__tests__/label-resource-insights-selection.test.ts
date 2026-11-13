@@ -124,6 +124,10 @@ describe('label-resource-insights selection paths', () => {
         take: 10,
         select: {
           id: true,
+          // Not a judgment input — the batch request never sees it. Selected so
+          // a written label can be announced to the models search index, which
+          // is keyed per MODEL while `ResourceInsight` is keyed per version.
+          modelId: true,
           name: true,
           baseModel: true,
           trainedWords: true,

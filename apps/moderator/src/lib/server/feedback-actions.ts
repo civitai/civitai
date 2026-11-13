@@ -16,7 +16,9 @@ import {
   linkFeedbackToBug,
   promoteFeedbackToBug,
   triageFeedback,
+  type TriageResult,
 } from '$lib/server/feedback.service';
+import { parsePlatformResolutionForm } from '$lib/server/feedback-platform-resolution';
 
 /**
  * The feedback queue's writes, owned here rather than by one route.
@@ -48,7 +50,30 @@ const triageSchema = z.object({
    * and `triageFeedback` leaves the column out of its `SET`.
    */
   note: z.string().max(5000).optional(),
+  /**
+   * Validated by `parsePlatformResolutionForm`. Whether the row is `apps-platform` is decided by the
+   * UPDATE against the stored area, never by the form.
+   */
+  resolution: z.enum(['set', 'clear']).optional(),
+  expectedResolutionAt: z.string().max(100).optional(),
+  fixedInComponent: z.string().max(100).optional(),
+  fixedInVersion: z.string().max(100).optional(),
+  publicNote: z.string().max(5000).optional(),
 });
+
+const triageFailure = (reason: Extract<TriageResult, { ok: false }>['reason']) => {
+  if (reason === 'not-platform')
+    return fail(400, { error: 'Only Apps platform reports carry a resolution.' });
+  if (reason === 'resolution-changed')
+    return fail(409, {
+      error: 'Someone else changed the resolution. Reload to see it before saving yours.',
+    });
+  if (reason === 'no-server-state')
+    return fail(409, {
+      error: 'This report has no server-side state to attach a resolution to.',
+    });
+  return fail(410, { error: 'That feedback no longer exists.', gone: true });
+};
 
 const bulkTriageSchema = z.object({
   status: statusEnum,
@@ -85,6 +110,9 @@ export const triageAction = requiresGrant(
     const input = parseForm(triageSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
 
+    const resolution = parsePlatformResolutionForm(input);
+    if (!resolution.ok) return fail(400, { error: resolution.error });
+
     const result = await triageFeedback({
       id: input.id,
       status: input.status,
@@ -96,12 +124,15 @@ export const triageAction = requiresGrant(
        * trimmed text.
        */
       note: input.note === undefined ? undefined : input.note.trim() || null,
+      resolution: resolution.value,
       moderatorId: locals.user.id,
     });
 
-    if (!result.ok) return fail(410, { error: 'That feedback no longer exists.', gone: true });
+    if (!result.ok) return triageFailure(result.reason);
     // 🔴 Zero affected rows is a REFUSAL. The UPDATE is scoped on the status the operator was
     // looking at, so nothing moving means someone else's verdict is already on the row.
+    // Success, not a refusal: what the operator asked for is what is stored.
+    if ('unchanged' in result) return { success: true, triaged: input.id, unchanged: true };
     if (!result.changed)
       return fail(409, {
         error: 'Someone else already triaged this. Reload to see the current verdict.',
@@ -214,7 +245,7 @@ export const promoteAction = requiresGrant(
       return fail(400, { error: 'Write a summary — it is what the issue board shows.' });
 
     /**
-     * 🔴 REFUSED, NOT STORED-AND-HOPED. The ClickUp webhook finds the entry to close by parsing a
+     * 🔴 REFUSED, NOT STORED-AND-HOPED. The completion webhook finds the entry to close by parsing a
      * task id back out of this column, so a URL that does not parse is a link in name only: the
      * issue board shows it, and the task completing closes nothing. That failure reports itself
      * NOWHERE — no error, no log, just an issue that stays open forever — so the only place it can
@@ -225,9 +256,9 @@ export const promoteAction = requiresGrant(
      * path that can write this column from the moderator queue — looser than the board's own create
      * form, which requires `z.url()`. A bare id and a foreign host both satisfy the matcher.
      *
-     * ⚠️ This checks the URL's SHAPE and cannot check the webhook's SCOPE: the subscription covers
-     * one ClickUp list, so a well-formed task URL from any other list stores fine and still never
-     * auto-closes. The form copy says so; this guard must not be read as covering it.
+     * ⚠️ This checks the URL's SHAPE and cannot check whether the task is private: a private HQ
+     * task does not announce its completion, so its link stores fine and never auto-closes. The form
+     * copy says so; this guard must not be read as covering it.
      *
      * Blank stays blank: the box is optional, and both functions read '' as absent.
      */
@@ -235,7 +266,7 @@ export const promoteAction = requiresGrant(
     if (clickupUrl && !isClickupTaskUrl(clickupUrl))
       return fail(400, {
         error:
-          'That does not look like a ClickUp task link — paste the task URL from ClickUp, like https://app.clickup.com/t/868kfwm3j.',
+          'That does not look like a task link — paste the task URL from HQ, like https://hq.civitai.com/t/868kfwm3j.',
       });
 
     const promoted = await promoteFeedbackToBug({

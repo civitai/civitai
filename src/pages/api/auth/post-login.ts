@@ -10,6 +10,8 @@ import {
 import { renderSignInProblemHtml } from '~/server/auth/login-error-page';
 import { logToAxiom } from '~/server/logging/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { safeSameOriginPath } from '~/utils/url-helpers';
+import { loginRedirectReasons } from '~/utils/login-helpers';
 
 // Fire-and-forget structured log — see the note in authorize.ts. `['civitai-prod'] | where name == 'auth-flow'`;
 // the `no-session-*` outcomes here are the civ-token-lands-but-won't-verify loop that authorize.ts can't see.
@@ -30,20 +32,8 @@ const logAuth = (req: NextApiRequest, outcome: string, extra?: Record<string, un
 // independently idempotent. A manual refresh of this endpoint is the only re-fire path.
 const NEW_USER_WINDOW_MS = 5 * 60 * 1000;
 
-function safeDest(dest: unknown): string {
-  if (typeof dest !== 'string' || !dest) return '/';
-  if (dest.startsWith('/') && !dest.startsWith('//') && !dest.startsWith('/\\')) return dest;
-  try {
-    const u = new URL(dest);
-    if (u.origin === new URL(getBaseUrl()).origin) return `${u.pathname}${u.search}${u.hash}`;
-  } catch {
-    /* fall through */
-  }
-  return '/';
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const dest = safeDest(req.query.dest);
+  const dest = safeSameOriginPath(req.query.dest, getBaseUrl(), '/');
 
   const session = await getServerAuthSession({ req, res });
   const user = session?.user;
@@ -96,6 +86,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // A callback:success with no matching post-login:success (a no-session-* instead) is the cookie-didn't-land
   // signature — logging both legs lets that gap be measured per color.
-  logAuth(req, 'success', { isNewUser });
+  // Known reasons only: the query value is whatever the URL carried.
+  const reason =
+    loginRedirectReason && Object.keys(loginRedirectReasons).includes(loginRedirectReason)
+      ? loginRedirectReason
+      : undefined;
+  logAuth(req, 'success', { isNewUser, reason });
   res.redirect(302, dest);
 }

@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react';
-import React from 'react';
-import { useResizeObserver } from '~/hooks/useResizeObserver';
+import React, { useEffect, useRef } from 'react';
 import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import classes from './ShowcaseGrid.module.scss';
 import clsx from 'clsx';
@@ -22,14 +21,36 @@ export function ShowcaseGrid({
   defaultWidth = 280,
   ...props
 }: Props & { children: React.ReactNode; className?: string }) {
-  const ref = useResizeObserver<HTMLDivElement>((entry) => {
-    const children = [...entry.target.childNodes] as HTMLElement[];
-    for (const child of children) {
-      const { height } = child.getBoundingClientRect();
-      if (height === 0) child.style.visibility = 'hidden';
-      else child.style.removeProperty('visibility');
-    }
-  });
+  // A card in a collapsed row still paints its hat into the clip's hat room, so it is hidden. An
+  // image card keeps its aspect-ratio height in a 0px row and can drop into one without resizing.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const grid = ref.current;
+    if (!grid) return;
+    const update = () => {
+      const bottom = grid.getBoundingClientRect().bottom;
+      for (const child of grid.children as HTMLCollectionOf<HTMLElement>) {
+        const box = child.getBoundingClientRect();
+        if (box.height === 0 || box.top >= bottom) child.style.visibility = 'hidden';
+        else child.style.removeProperty('visibility');
+      }
+    };
+    const resize = new ResizeObserver(update);
+    resize.observe(grid);
+    for (const child of grid.children) resize.observe(child);
+    const mutation = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) if (node instanceof Element) resize.observe(node);
+        for (const node of record.removedNodes) if (node instanceof Element) resize.unobserve(node);
+      }
+      update();
+    });
+    mutation.observe(grid, { childList: true });
+    return () => {
+      resize.disconnect();
+      mutation.disconnect();
+    };
+  }, []);
 
   const styleVars = {
     '--item-count': itemCount,

@@ -18,7 +18,7 @@ import {
 } from '~/server/schema/blocks/app-listing.schema';
 import type * as AppListingSchema from '~/server/schema/blocks/app-listing.schema';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import {
   jpegWithExifOrientation,
   webpWithExifOrientation,
@@ -27,7 +27,7 @@ import {
 /**
  * W13 — the shared listing ASSET step, focused on the OG-image AUTO-FILL path
  * (Accept a server-suggested icon/cover → ingest → poll the attach proc until the
- * scan lands). Browser-mode surface test (report-only in Tekton).
+ * scan lands). Browser-mode surface test (`Component tests` in CI).
  *
  * Two behaviours are asserted (the client half of the OG-pull-ingest fix):
  *  1. A freshly-ingested image is NOT attached eagerly — the row shows a
@@ -162,6 +162,10 @@ vi.mock('~/utils/trpc', () => {
             mutateAsync: mocks.removeAsync,
             isPending: false,
           }),
+        },
+        // Called unconditionally by the step (its civitai.red section); not exercised here.
+        setRedMedia: {
+          useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
         },
       },
     },
@@ -1354,5 +1358,296 @@ describe('ListingAssetStep — the precheck supplies GEOMETRY only (exclusions l
 
     await expectUploaded('cover', mislabelled, 1280, 640);
     expect(mocks.showErrorNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('ListingAssetStep — rating badges + the "imagery raised your rating" callout', () => {
+  // Levels are NsfwLevel bits: PG 1, PG-13 2, R 4.
+  const ratedPrefill = {
+    icon: { imageId: 41, url: LOADABLE_IMAGE_DATA_URI },
+    cover: { imageId: 53, url: LOADABLE_IMAGE_DATA_URI },
+    screenshots: [
+      { id: 'row-1', imageId: 61, url: LOADABLE_IMAGE_DATA_URI, caption: null, order: 0 },
+      { id: 'row-2', imageId: 67, url: LOADABLE_IMAGE_DATA_URI, caption: null, order: 1 },
+    ],
+  };
+  // The read lists the screenshots in the OPPOSITE order to the prefill, so a level can
+  // only reach its slot by image id.
+  const levels = (shot2: number | null, cover: number | null = 2) => ({
+    iconId: 41,
+    coverId: 53,
+    iconNsfwLevel: 1,
+    coverNsfwLevel: cover,
+    screenshots: [
+      { imageId: 67, nsfwLevel: shot2 },
+      { imageId: 61, nsfwLevel: 1 },
+    ],
+  });
+  const rated = (
+    over: Partial<{
+      declaredRating: string | null;
+      listingRating: string | null;
+      stage: 'live-revision' | 'live-direct' | 'was-live' | 'not-live';
+      assets: ReturnType<typeof levels>;
+    }>
+  ) =>
+    renderStep({
+      suggestions: {},
+      initial: ratedPrefill,
+      rating: {
+        declaredRating: 'g',
+        listingRating: 'r',
+        stage: 'live-revision',
+        assets: levels(4),
+        ...over,
+      },
+    });
+  const calloutText = async () => {
+    const callout = page.getByTestId('apps-listing-rating-callout');
+    await expect.element(callout).toBeInTheDocument();
+    return callout.element().textContent;
+  };
+  const staleText = async () => {
+    const stale = page.getByTestId('apps-listing-rating-stale');
+    await expect.element(stale).toBeInTheDocument();
+    return stale.element().textContent;
+  };
+  const noNotices = () => {
+    expect(page.getByTestId('apps-listing-rating-callout').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-rating-stale').elements()).toHaveLength(0);
+  };
+
+  test('each attached asset shows the rating it requires, matched to its slot by image id', async () => {
+    rated({});
+    await expect.element(page.getByTestId('apps-asset-rating-icon')).toBeInTheDocument();
+    expect(page.getByTestId('apps-asset-rating-icon').element().textContent).toBe('Rated G');
+    expect(page.getByTestId('apps-asset-rating-cover').element().textContent).toBe('Rated PG-13');
+    expect(page.getByTestId('apps-asset-rating-screenshot-0').element().textContent).toBe(
+      'Rated G'
+    );
+    expect(page.getByTestId('apps-asset-rating-screenshot-1').element().textContent).toBe(
+      'Rated R'
+    );
+  });
+
+  test('a slot whose image the read does not know yet shows no badge and drives nothing', async () => {
+    // The read still describes the icon that was just replaced (id 999, rated R).
+    rated({
+      declaredRating: 'pg13',
+      listingRating: 'pg13',
+      assets: { ...levels(1), iconId: 999, iconNsfwLevel: 4 },
+    });
+    await expect.element(page.getByTestId('apps-asset-rating-cover')).toBeInTheDocument();
+    expect(page.getByTestId('apps-asset-rating-icon').elements()).toHaveLength(0);
+    noNotices();
+  });
+
+  test('the same holds for a cover the read has not caught up with', async () => {
+    rated({
+      declaredRating: 'pg13',
+      listingRating: 'pg13',
+      assets: { ...levels(1), coverId: 998, coverNsfwLevel: 4 },
+    });
+    await expect.element(page.getByTestId('apps-asset-rating-icon')).toBeInTheDocument();
+    expect(page.getByTestId('apps-asset-rating-cover').elements()).toHaveLength(0);
+    noNotices();
+  });
+
+  test('declared G + one R screenshot on a listing already rated R: names it, says hidden, says what to do', async () => {
+    rated({});
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replacing that image alone will not lower the listing’s rating; ask a moderator to review that image’s rating.'
+    );
+  });
+
+  test('a live listing edited in place is hidden in the present tense too', async () => {
+    rated({ stage: 'live-direct' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replacing that image alone will not lower the listing’s rating; ask a moderator to review that image’s rating.'
+    );
+  });
+
+  test('a listing rated HIGHER than its images require is not said to be explained by them', async () => {
+    // Cover PG-13 is the top image; the listing carries R.
+    rated({ assets: levels(1) });
+    expect(await calloutText()).toBe(
+      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is rated R and is hidden on civitai.com (visible on civitai.red), higher still than its images require. Ask a moderator to review the listing’s rating.'
+    );
+  });
+
+  test('the same listing while it is NOT live is not said to be visible anywhere yet', async () => {
+    rated({ stage: 'not-live' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and will be hidden on civitai.com (visible on civitai.red) once it is live. Replacing that image avoids this.'
+    );
+  });
+
+  test('never live, two images at the top rating: replacing them avoids it, in the plural', async () => {
+    rated({ stage: 'not-live', assets: levels(4, 4) });
+    expect(await calloutText()).toBe(
+      'Cover (R) and Screenshot 2 (R) are rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and will be hidden on civitai.com (visible on civitai.red) once it is live. Replacing those images avoids this.'
+    );
+  });
+
+  test('a listing that WAS live keeps its rating when it goes live again: replacing the image alone will not lower it', async () => {
+    rated({ stage: 'was-live' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and will be hidden on civitai.com (visible on civitai.red) once it is live. Replacing that image alone will not lower the listing’s rating; ask a moderator to review that image’s rating.'
+    );
+  });
+
+  test('a listing that was live, not yet raised: replacing the image avoids the raise', async () => {
+    rated({ listingRating: 'g', stage: 'was-live' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated R and hidden on civitai.com (visible on civitai.red). Replacing that image avoids this.'
+    );
+  });
+
+  test('a listing raised only to PG-13 is explained without claiming it is hidden', async () => {
+    rated({ listingRating: 'pg13', assets: levels(1) });
+    expect(await calloutText()).toBe(
+      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated PG-13. Replacing that image alone will not lower the listing’s rating; ask a moderator to review that image’s rating.'
+    );
+  });
+
+  test('two images at the top rating are both named, in the plural', async () => {
+    rated({ assets: levels(4, 4) });
+    expect(await calloutText()).toBe(
+      'Cover (R) and Screenshot 2 (R) are rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replacing those images alone will not lower the listing’s rating; ask a moderator to review their ratings.'
+    );
+  });
+
+  test('not live, still rated G: going live will rate it R and hide it', async () => {
+    rated({ listingRating: 'g', stage: 'not-live' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated R and hidden on civitai.com (visible on civitai.red). Replacing that image avoids this.'
+    );
+  });
+
+  test('the callout is red when EITHER the stored or the coming rating hides the listing', async () => {
+    const alertColor = () =>
+      page.getByTestId('apps-listing-rating-callout').element().getAttribute('style') ?? '';
+    // Stored G, coming R.
+    rated({ listingRating: 'g', stage: 'not-live' });
+    await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
+    expect(alertColor()).toContain('red');
+  });
+
+  test('the callout is red when only the STORED rating hides the listing', async () => {
+    rated({ assets: levels(1) });
+    await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
+    const style =
+      page.getByTestId('apps-listing-rating-callout').element().getAttribute('style') ?? '';
+    expect(style).toContain('red');
+  });
+
+  test('the callout is yellow when neither rating hides the listing', async () => {
+    rated({ listingRating: 'pg13', assets: levels(1) });
+    await expect.element(page.getByTestId('apps-listing-rating-callout')).toBeInTheDocument();
+    const style =
+      page.getByTestId('apps-listing-rating-callout').element().getAttribute('style') ?? '';
+    expect(style).toContain('yellow');
+    expect(style).not.toContain('red');
+  });
+
+  test('not live, a PG-13 image: going live will rate it PG-13, with no hidden claim', async () => {
+    rated({ listingRating: 'g', stage: 'not-live', assets: levels(1) });
+    expect(await calloutText()).toBe(
+      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated PG-13. Replacing that image avoids this.'
+    );
+  });
+
+  test('a revision of a LIVE listing cannot raise its rating: the change will be sent back', async () => {
+    rated({ listingRating: 'pg', stage: 'live-revision' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is live and rated PG; image changes to a live listing cannot raise its rating, so a moderator will send back a change that includes this image. Replacing that image avoids this.'
+    );
+  });
+
+  test('a live listing edited in place has no review to wait for: it is simply rated below the image', async () => {
+    rated({ listingRating: 'pg', stage: 'live-direct' });
+    expect(await calloutText()).toBe(
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is live and still rated PG, below this image. Replacing that image avoids this.'
+    );
+  });
+
+  test('a listing rated R whose current images are all tame: says so and sends the author to a moderator', async () => {
+    rated({ declaredRating: 'pg13', assets: levels(1) });
+    expect(await staleText()).toBe(
+      'This listing is rated R, above the PG-13 you declared, and is hidden on civitai.com (visible on civitai.red) — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+    );
+    expect(page.getByTestId('apps-listing-rating-callout').elements()).toHaveLength(0);
+  });
+
+  test('the same state on a live listing edited in place is present tense', async () => {
+    rated({ declaredRating: 'pg13', stage: 'live-direct', assets: levels(1) });
+    expect(await staleText()).toBe(
+      'This listing is rated R, above the PG-13 you declared, and is hidden on civitai.com (visible on civitai.red) — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+    );
+  });
+
+  test('the same state on a listing that is not live says it WILL be hidden', async () => {
+    rated({ declaredRating: 'pg13', stage: 'not-live', assets: levels(1) });
+    expect(await staleText()).toBe(
+      'This listing is rated R, above the PG-13 you declared, and will be hidden on civitai.com (visible on civitai.red) once it is live — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+    );
+  });
+
+  test('the same state at PG-13 over a declared G makes no hidden claim', async () => {
+    rated({ listingRating: 'pg13', assets: levels(1, 1) });
+    expect(await staleText()).toBe(
+      'This listing is rated PG-13, above the G you declared — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+    );
+  });
+
+  test('with no declared rating to compare there is nothing to call raised', async () => {
+    rated({ declaredRating: null, assets: levels(1, 1) });
+    await expect.element(page.getByTestId('apps-asset-rating-cover')).toBeInTheDocument();
+    noNotices();
+  });
+
+  test('an image with no level yet gets no badge, and blocks the "none is rated that high" claim', async () => {
+    rated({ declaredRating: 'pg13', assets: levels(null) });
+    await expect.element(page.getByTestId('apps-asset-rating-screenshot-0')).toBeInTheDocument();
+    expect(page.getByTestId('apps-asset-rating-screenshot-1').elements()).toHaveLength(0);
+    noNotices();
+  });
+
+  test('declared R with tame imagery: badges, but no callout — nothing was raised', async () => {
+    rated({ declaredRating: 'r', assets: levels(1) });
+    await expect.element(page.getByTestId('apps-asset-rating-cover')).toBeInTheDocument();
+    noNotices();
+  });
+
+  test('without the rating prop (the submit wizards) nothing rating-related renders', async () => {
+    renderStep({ suggestions: {}, initial: ratedPrefill });
+    await expect.element(page.getByText('Screenshot 2')).toBeInTheDocument();
+    expect(page.getByTestId('apps-asset-rating-icon').elements()).toHaveLength(0);
+    noNotices();
+  });
+
+  test.each(['scanned', 'blocked'] as const)(
+    'onScanSettled fires exactly once when the scan lands %s',
+    async (status) => {
+      const onScanSettled = vi.fn();
+      mocks.ingestAsync.mockResolvedValue({ imageId: 777 });
+      mocks.setIconAsync.mockResolvedValue({ status: 'attached', iconId: 777, scanPending: true });
+      mocks.scanStatusFetch.mockResolvedValue({ statuses: [{ imageId: 777, status }] });
+      renderStep({ onScanSettled });
+      await page.getByTestId('apps-offsite-accept-icon').click();
+      await expect.element(page.getByTestId(`apps-asset-scan-${status}`)).toBeInTheDocument();
+      expect(onScanSettled).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  test('onScanSettled does not fire while the scan is still pending', async () => {
+    const onScanSettled = vi.fn();
+    mocks.ingestAsync.mockResolvedValue({ imageId: 777 });
+    mocks.setIconAsync.mockResolvedValue({ status: 'attached', iconId: 777, scanPending: true });
+    renderStep({ onScanSettled });
+    await page.getByTestId('apps-offsite-accept-icon').click();
+    await expect.element(page.getByTestId('apps-asset-scan-scanning')).toBeInTheDocument();
+    await vi.waitFor(() => expect(mocks.scanStatusFetch).toHaveBeenCalled());
+    expect(onScanSettled).not.toHaveBeenCalled();
   });
 });

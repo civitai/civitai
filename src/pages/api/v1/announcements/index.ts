@@ -1,5 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { upsertCreatorAnnouncementSchema } from '~/server/schema/announcement.schema';
+import {
+  mayAddAnnouncementActions,
+  upsertCreatorAnnouncementSchema,
+} from '~/server/schema/announcement.schema';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -84,6 +87,7 @@ export default AuthedEndpoint(
           ...parsed.data,
           userId: user.id,
           isModerator: user.isModerator ?? false,
+          isMember: mayAddAnnouncementActions(user),
         })
       );
     } catch (error) {

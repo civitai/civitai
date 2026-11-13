@@ -10,7 +10,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconConfetti, IconInfoCircle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -26,6 +26,7 @@ import {
   freeRefusalOutcome,
   freeSubmissionOffer,
   submissionMethod,
+  teamWaiverOffer,
 } from '~/components/RemixGallery/remix-gallery.utils';
 import { paidSubmissionOpen } from '~/shared/utils/remix-gallery';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -119,6 +120,14 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
     selected != null && freeInfo && slotsHeldKnown ? offer.reason : null;
 
   const method = submissionMethod(chosen, freeAvailable, paidOpen, takesFree);
+
+  // Decided apart from `method`: when it applies there is no choice to make, and
+  // the free path's refusal handling below is about the free tier, not this.
+  const waiver = teamWaiverOffer({
+    verified: selected != null && !!freeInfo?.verifiedImageIds.includes(selected),
+    open: !!visibility?.open,
+    standing: freeInfo?.teamWaiver,
+  });
 
   const submit = trpc.placement.submitToRemixGallery.useMutation({
     onSuccess: () => {
@@ -481,7 +490,23 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           </>
         )}
 
-        {selected != null && takesFree && (
+        {selected != null && waiver.note && (
+          <>
+            <Divider />
+            <Group gap="xs" wrap="nowrap" align="flex-start" className="shrink-0 px-4 pt-3">
+              <IconConfetti
+                size={14}
+                className={waiver.available ? 'text-green-500' : 'text-gray-500'}
+                style={{ flexShrink: 0, marginTop: 2 }}
+              />
+              <Text size="xs" c={waiver.available ? undefined : 'dimmed'}>
+                {waiver.note}
+              </Text>
+            </Group>
+          </>
+        )}
+
+        {selected != null && takesFree && !waiver.available && (
           <>
             <Divider />
             <Stack gap={6} className="shrink-0 px-4 pt-3">
@@ -548,7 +573,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
             beside a working PAID one — an unverified remix on an
             ordinarily-priced gallery is the commonest case there is, and the
             sentence is the only thing explaining why free is greyed out. */}
-        {selected != null && !freeRefusal && freeUnavailableReason && (
+        {selected != null && !freeRefusal && !waiver.available && freeUnavailableReason && (
           <>
             {/* Only when the control above is absent. With it present this note
                 is a caption on it, and a rule between the two reads as a section
@@ -574,7 +599,7 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               figure, computed with the helper the refund uses from the
               operator-set rate — "30%" written here would be a number this file
               cannot keep true. */}
-          {method === 'paid' && visibility?.declineFee ? (
+          {method === 'paid' && !waiver.available && visibility?.declineFee ? (
             // `min-w-0` is what makes the note wrap instead of pushing: a flex
             // item's floor is its content width otherwise, so a long sentence
             // squeezed the Submit button until its label clipped.
@@ -597,7 +622,18 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
               check a balance and open the top-up flow, and running a free
               submission through it would ask someone to have Buzz they are not
               about to spend. */}
-            {method === 'free' ? (
+            {waiver.available ? (
+              <Button
+                disabled={!selected || !visibility?.open}
+                loading={submit.isPending}
+                onClick={() =>
+                  selected != null &&
+                  submit.mutate({ hostImageId, imageId: selected, teamWaiver: true })
+                }
+              >
+                Submit free for your team
+              </Button>
+            ) : method === 'free' ? (
               <Button
                 disabled={!selected || !visibility?.open || !freeAvailable}
                 loading={submit.isPending}

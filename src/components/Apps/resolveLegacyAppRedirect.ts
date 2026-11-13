@@ -56,6 +56,10 @@
  * `/apps/store-preview/` (an open redirect) or splicing a query/fragment onto it.
  */
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import {
+  matureRatingAllowed,
+  type MatureRatingsAllowed,
+} from '~/server/services/blocks/app-listing-store-gate';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import type { AppsStoreFeatureFlags } from '~/shared/utils/app-blocks-access';
 
@@ -106,8 +110,24 @@ export function resolveLegacyAppRedirect(args: {
 export function approvedListingSlugQuery(appBlockId: string) {
   return {
     where: { appBlockId, status: 'approved', revisionOfId: null },
-    select: { slug: true },
+    // `contentRating` feeds `legacyListingSlugForViewer`, the R/X gate on the redirect.
+    select: { slug: true, contentRating: true },
   };
+}
+
+/**
+ * The slug to redirect to, or null when this viewer may not see the listing because of its
+ * rating: an R/X app off a mature-capable site, or on one when the viewer's browsing level leaves
+ * that rating out (`mature` = `matureRatingsAllowed(redCapable, level)`, the store's one rule).
+ * Null ⇒ the route 404s, so not even the slug reaches a `Location` header. Unlike the detail and
+ * run pages this route has no page of its own to show a hidden state on.
+ */
+export function legacyListingSlugForViewer(
+  row: { slug: string; contentRating: string | null } | null | undefined,
+  mature: MatureRatingsAllowed
+): string | null {
+  if (!row) return null;
+  return matureRatingAllowed(row.contentRating, mature) ? row.slug : null;
 }
 
 /**
@@ -134,9 +154,9 @@ export function approvedListingSlugQuery(appBlockId: string) {
  *
  *   1. STORE-SCOPE KIND — `scope === 'public-external' && row.kind !== 'offsite'`.
  *   2. DEPLOY — `row.kind === 'onsite' && appBlock.currentVersionDeployedAt == null`.
- *   3. MATURITY — `!redCapable && isMatureContentRating(row.contentRating)`.
+ *   3. MATURITY — applied in the page's injected lookup (`legacyListingSlugForViewer`).
  *
- * ## (1) IS NOW REPLICATED HERE. (2) and (3) ARE STILL OWED.
+ * ## (1) is applied here and (3) in the page's lookup; (2) is still owed.
  *
  * 🔴 THE ALIGNMENT ARGUMENT THIS COMMENT USED TO REST ON IS GONE — DO NOT RESTORE
  * IT. It said gate (1) was unreachable "by an accident of flag alignment": the page
@@ -166,10 +186,9 @@ export function approvedListingSlugQuery(appBlockId: string) {
  * `availability: ['mod']` fallback while the server resolves scope `none`, so the
  * page gate grants where the data layer would serve nothing.
  *
- * STILL OWED (deliberately not done here — each needs another input threaded into
- * this SSR resolver, and neither is reachable today): a `currentVersionDeployedAt`
- * filter, and a `contentRating` filter keyed on the request's red-capability. Both
- * are 0-instance today and would each affect a handful of apps at most.
+ * STILL OWED (deliberately not done here — it needs another input threaded into
+ * this SSR resolver, and it is not reachable today): a `currentVersionDeployedAt`
+ * filter. It is 0-instance today and would affect a handful of apps at most.
  *
  * ⚠️ A SIZING CLAIM THAT USED TO LIVE HERE WAS WRONG, and is corrected rather than
  * deleted so nobody re-derives it: this comment asserted that "EVERY listing that

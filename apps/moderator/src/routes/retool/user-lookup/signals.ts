@@ -26,8 +26,6 @@ export type Signals = {
   commentBurst: CommentBurst | null;
   ips: {
     addresses: { ip: string; type: string; first: string; last: string; events: number }[];
-    accounts: (LinkedAccount & { ip: string; type: string; last: string })[];
-    truncated: boolean;
   };
   socials: {
     links: { id: number; url: string; type: string }[];
@@ -53,6 +51,18 @@ export type Signals = {
     actor: string | null;
   }[];
 };
+
+/** `/api/shared-ip-accounts`: the linked accounts alone, `ip` null for a caller without User Lookup. */
+export type SharedIpAccounts = {
+  accounts: (LinkedAccount & { ip: string | null; type: string; last: string })[];
+  truncated: boolean;
+};
+
+export async function fetchSharedIpAccounts(userId: number): Promise<SharedIpAccounts> {
+  const r = await fetch(`/api/shared-ip-accounts/${userId}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
 
 export async function fetchSignals(userId: number, version: number): Promise<Signals> {
   const r = await fetch(`/api/user-signals/${userId}?v=${version}`);

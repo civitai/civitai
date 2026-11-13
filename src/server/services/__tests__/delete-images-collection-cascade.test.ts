@@ -62,7 +62,6 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -83,7 +82,7 @@ describe('deleteImages', () => {
     await deleteImages([1, 2, 3]);
 
     const deletedImages = mockQueryRaw.mock.calls.some(([strings]) =>
-      String((strings as unknown as string[])?.[0] ?? '').includes('DELETE FROM "Image"')
+      ((strings as unknown as string[]) ?? []).join('?').includes('DELETE FROM "Image"')
     );
     expect(deletedImages).toBe(true);
   });

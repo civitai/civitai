@@ -27,7 +27,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { getPackPurchaseBlockers } from '~/components/CosmeticShop/pack-purchase-blockers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { trpc } from '~/utils/trpc';
 
@@ -56,22 +56,12 @@ export const CosmeticPackPreviewModal = ({
   const acceptsBlue = !!pack?.meta.acceptsBlueBuzz;
   const accountTypes: BuzzSpendType[] =
     !acceptsBlue || payWith === 'default' ? [domainType] : ['blue', domainType];
-  const unavailable = (pack?.unavailableCount ?? 0) > 0;
-  // The server refuses a purchase that costs nothing — a free pack is
-  // repeatable, and each one stacks another consumable balance. Say so here
-  // rather than letting the button fail.
-  const nothingLeftToBuy = !!pack && pack.amountDue <= 0;
-  // The card that opened this can be stale — a pack delisted, withdrawn or sold
-  // out since it rendered would otherwise show a priced, enabled button that the
-  // server refuses.
-  const offSale = !!pack && (!pack.listed || pack.status !== CosmeticShopItemStatus.Published);
-  const soldOut =
-    !!pack &&
-    pack.availableQuantity !== null &&
-    (pack.meta.purchases ?? 0) >= pack.availableQuantity;
-  // The server refuses the lister outright. Without this the button renders
-  // priced and enabled for the one person guaranteed to fail.
-  const isOwnPack = !!pack?.isPackCreator;
+  const blockers = pack ? getPackPurchaseBlockers(pack) : undefined;
+  const unavailable = !!blockers?.unavailable;
+  const nothingLeftToBuy = !!blockers?.nothingLeftToBuy;
+  const offSale = !!blockers?.offSale;
+  const soldOut = !!blockers?.soldOut;
+  const isOwnPack = !!blockers?.isOwnPack;
 
   const handlePurchase = async () => {
     if (!pack) return;
@@ -80,6 +70,8 @@ export const CosmeticPackPreviewModal = ({
         shopItemId: pack.id,
         viaShopUserId,
         payWith: acceptsBlue ? payWith : undefined,
+        // The amount on the button: a pack whose amount due changed since is refused.
+        expectedUnitAmount: pack.amountDue,
       });
       dialog.onClose();
       // A pack buyer spent more Buzz on more things than a single purchase and
@@ -170,14 +162,7 @@ export const CosmeticPackPreviewModal = ({
                   )
                 )}
                 <BuzzTransactionButton
-                  disabled={
-                    purchasingShopItem ||
-                    unavailable ||
-                    nothingLeftToBuy ||
-                    isOwnPack ||
-                    offSale ||
-                    soldOut
-                  }
+                  disabled={purchasingShopItem || !!blockers?.blocked}
                   loading={purchasingShopItem}
                   buzzAmount={pack.amountDue}
                   radius="xl"

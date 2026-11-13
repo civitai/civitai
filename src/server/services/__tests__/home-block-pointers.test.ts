@@ -170,7 +170,7 @@ describe('a linked clone is a pointer, not a copy', () => {
       return [{ id: 900, type: HomeBlockType.Collection, metadata: {}, sourceId: 3, index: 1 }];
     });
 
-    const blocks = await getHomeBlocks({ userId: 7 });
+    const blocks = await getHomeBlocks({ userId: 7, viewer: { id: 7 } });
 
     expect((blocks[0].metadata as { title?: string }).title).toBe('Featured Images');
   });

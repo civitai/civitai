@@ -8,21 +8,19 @@ import { knobRotation } from '~/components/Sticker/draft-gesture';
  *
  * `knobRotation` wraps the knob's angle into the ±180 the draft store clamps to,
  * and `draft-gesture.test.ts` covers that thoroughly. The other half is
- * `DraftStickerLayer` **calling** it instead of inlining `atan2 + 90` — and
- * reverting that one line reintroduces `868kv5d35` in full while every test in
- * the repo stays green. There is no `DraftStickerLayer` test and no browser test
- * drives the knob, so this file is what stands between that line and a silent
- * regression.
+ * `useDraftGestures` **calling** it instead of inlining `atan2 + 90`. The hat
+ * placement browser test drives the knob only to a quarter turn, where the
+ * wrapped and unwrapped angles agree, so reverting that one line brings the bug
+ * back (a knob past the half turn is clamped, not wrapped) while every other
+ * test stays green.
  *
  * ⚠️ **What this is and is not.** It is a source guard: it reads the file and
  * checks which function the rotate branch calls. It catches the revert, which is
  * the failure that actually happened. It does **not** verify that the value
  * reaches the store, and it can be defeated by computing an unwrapped angle some
- * other way. The honest fix is a rendered test that drives a pointer over the
- * knob and reads the draft's rotation back; that needs the layer's whole mock
- * surface and would land in the `component` project, which no CI job runs. This
- * is cheaper and runs in the unit job. If someone writes the rendered test,
- * delete this.
+ * other way. The honest fix is a rendered test that drags the knob past the half
+ * turn and reads the rotation back, which the placement browser test could do.
+ * If someone writes it, delete this.
  */
 const LAYER = path.resolve(
   __dirname,
@@ -31,7 +29,7 @@ const LAYER = path.resolve(
   '..',
   'components',
   'Sticker',
-  'DraftStickerLayer.tsx'
+  'useDraftGestures.ts'
 );
 
 const source = fs.readFileSync(LAYER, 'utf8');

@@ -1,11 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "docker:pinDigests"],
-  "enabledManagers": ["dockerfile", "nvm"],
+  "enabledManagers": ["dockerfile", "nvm", "npm"],
   "schedule": ["before 6am on monday"],
   "major": {
     "description": "A major bump is never opened unasked. Majors stay VISIBLE on the Dependency Dashboard (issue #3789) with an unticked checkbox, and a branch/PR is only created once a human ticks it. Digest pins and patch/minor updates are unaffected and keep flowing automatically — they are separate updateTypes. Motivation: the first scheduled run queued three majors at once, one of which (node v24) rewrites the base image of every service under apps/ plus containers/image-stub in a single PR.",
     "dependencyDashboardApproval": true
+  },
+  "vulnerabilityAlerts": {
+    "description": "Off because the npm manager is enabled for ONE package only (see packageRules). Vulnerability-fix PRs override `enabled: false` in packageRules and ignore `schedule`, so leaving this on would open a fix PR for every npm package with an open GitHub alert. Before the npm manager was enabled, alerts had no manager to act through, so this keeps that behaviour.",
+    "enabled": false
   },
   "packageRules": [
     {
@@ -13,6 +17,12 @@
       "matchDepNames": ["node"],
       "matchFileNames": ["Dockerfile", ".nvmrc"],
       "groupName": "node runtime pin"
+    },
+    {
+      "description": "The npm manager exists here for @civitai/app-sdk ONLY; every other npm dependency (including packageManager and engines entries) stays unmanaged. src/components/AppBlocks/hostHandlerParity.ts typechecks the INSTALLED SDK's message union against the hosts' INVENTORY, and a caret on a 0.x version admits patch releases only, so without a bump PR each SDK minor is invisible to that gate.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["!@civitai/app-sdk"],
+      "enabled": false
     }
   ]
 }

@@ -7,8 +7,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * un-deadlined member parking on a silent sysRedis half-open would park the whole
  * gen submit ~11min on every request.
  *
- * Each already fail-opens (try/catch or a chained `.catch`); the gap this PR
- * closes is the missing wall-clock deadline. The SLOW tests are fail-on-revert:
+ * Each already degrades (try/catch or a chained `.catch`); the gap this PR
+ * closes is the missing wall-clock deadline. The kill switch and the gate rules no
+ * longer fail OPEN: with nothing read before they fail closed (see
+ * generation.service.last-known-good.test.ts for the last-known-good half). The SLOW tests are fail-on-revert:
  * the underlying sysRedis op NEVER settles, so if the `withSysReadDeadline(...)`
  * wrap were removed the caller would hang and the test would TIME OUT.
  */
@@ -62,9 +64,6 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   getDbWithoutLagBatch: vi.fn(),
 }));
-vi.mock('~/server/services/orchestrator/ecosystems/wan.handler', () => ({
-  wanBaseModelGroupIdMap: {},
-}));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: {} }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: vi.fn() }));
@@ -84,6 +83,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 // flag call is short-circuited and never opens a connection.
 
 import {
+  __resetGenerationConfigLastKnownForTests,
   deleteGateRule,
   getGenerationStatus,
   getGeneratorMessages,
@@ -92,13 +92,15 @@ import {
   saveGateRule,
   saveGeneratorMessage,
 } from '~/server/services/generation/generation.service';
-import type { GateRule } from '~/shared/data-graph/generation/gates';
+import type { GateRule } from '~/shared/generation/gates';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   // reset, not clear: a never-settling implementation must not leak into the next test.
   vi.resetAllMocks();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  // Each test starts as a fresh process: nothing read before.
+  __resetGenerationConfigLastKnownForTests();
 });
 
 describe('getGenerationStatus — sysRedis soft-dependency', () => {
@@ -112,24 +114,24 @@ describe('getGenerationStatus — sysRedis soft-dependency', () => {
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
-  it('DOWN: hGet throws → fails open to schema defaults (available=true), no throw, logs defaults-firing', async () => {
+  it('DOWN: hGet throws → nothing read before, so fails CLOSED (available=false), no throw, logs defaults-firing', async () => {
     mockHGet.mockRejectedValue(new Error('sysRedis connection is down'));
 
     const result = await getGenerationStatus();
 
-    expect(result.available).toBe(true); // schema default — service appears enabled
+    expect(result.available).toBe(false); // fail closed — never the schema default "enabled"
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');
     expect(mockLogSysRedisFailOpen.mock.calls[0][1]).toBe('getGenerationStatus generation.service');
   });
 
-  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → fails open to defaults (fail-on-revert)', async () => {
+  it('SLOW/half-open: hGet NEVER settles + deadline REJECTS → fails closed (fail-on-revert)', async () => {
     mockHGet.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     const result = await getGenerationStatus();
 
-    expect(result.available).toBe(true);
+    expect(result.available).toBe(false);
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');
@@ -183,26 +185,22 @@ describe('getGateRules — sysRedis soft-dependency', () => {
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
-  it('DOWN: hGetAll throws → fails open to [], no throw, logs read-degraded', async () => {
+  it('DOWN: hGetAll throws → nothing read before, so refuses (not "no rules"), logs read-degraded', async () => {
     mockGet.mockResolvedValue('1');
     mockHGetAll.mockRejectedValue(new Error('ECONNREFUSED'));
 
-    const result = await getGateRules();
-
-    expect(result).toEqual([]);
+    await expect(getGateRules()).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
     expect(mockLogSysRedisFailOpen.mock.calls[0][1]).toBe('getGateRules');
   });
 
-  it('SLOW/half-open: the read NEVER settles + deadline REJECTS → fails open to [] (fail-on-revert)', async () => {
+  it('SLOW/half-open: the read NEVER settles + deadline REJECTS → refuses (fail-on-revert)', async () => {
     mockGet.mockReturnValue(new Promise(() => undefined));
     mockHGetAll.mockReturnValue(new Promise(() => undefined));
     mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
-    const result = await getGateRules();
-
-    expect(result).toEqual([]);
+    await expect(getGateRules()).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
@@ -312,14 +310,14 @@ describe('gate-rule storage migration', () => {
 
   // The legacy array is never read once the marker is set, so a copy that fails
   // after it would lose that rule for good.
-  it('a failed copy leaves the marker unset, fails open, and the next read recovers', async () => {
+  it('a failed copy leaves the marker unset, refuses, and the next read recovers', async () => {
     const redis = fakeSysRedis({ 'generation:gate-rules': [rule('r1'), rule('r2')] });
     const copy = mockHSetNX.getMockImplementation()!;
     mockHSetNX.mockImplementationOnce(async () => {
       throw new Error('ECONNRESET');
     });
 
-    expect(await getGateRules()).toEqual([]);
+    await expect(getGateRules()).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(redis.strings.has('generation:gate-rules:migrated')).toBe(false);
 

@@ -7,9 +7,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * every future continuation silently unshifted.
  */
 
+import type * as TrainingConstants from '~/shared/constants/training.constants';
+
+// The classic trainer's submit is date-gated; these cases cover a run it still accepts.
+vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingConstants>()),
+  isClassicTrainerRetired: () => false,
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
+}));
+vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
+  assertTrainingTriggerWordAllowed: vi.fn(async () => undefined),
 }));
 vi.mock('~/utils/s3-utils', () => ({
   getGetUrl: vi.fn(async () => ({ url: 'https://example.com/data.zip' })),
@@ -69,6 +79,8 @@ const givenTrainingRow = (trainingDetailsExtra: Record<string, unknown>, fileMet
       modelVersionMetadata: {},
     },
   ]);
+  // The dataset record read above is still there after the claim.
+  dbMock.dbWrite.modelFile.count.mockResolvedValue(1);
 };
 
 const submit = (domain: 'green' | 'blue' | 'red' = 'blue') =>
@@ -76,7 +88,7 @@ const submit = (domain: 'green' | 'blue' | 'red' = 'blue') =>
     modelVersionId: MODEL_VERSION_ID,
     token: 'tok',
     user: { id: USER_ID, isModerator: false } as never,
-    features: { trainingStepsPricing: true } as never,
+    features: { krea2Training: true, trainingStepsPricing: true } as never,
     domain,
   } as never);
 
@@ -226,7 +238,7 @@ describe('createTrainingWorkflow single submission per version', () => {
       blockedModels: ['krea2'],
     } as never);
 
-    await expect(submit()).rejects.toThrow('blocked from training');
+    await expect(submit()).rejects.toThrow('Krea 2 is temporarily unavailable for training');
     expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 
@@ -260,5 +272,23 @@ describe('createTrainingWorkflow single submission per version', () => {
     await expect(submit()).rejects.toThrow('db down');
     expect(submitWorkflow).toHaveBeenCalledOnce();
     expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  // A new dataset upload replaces the training-data record with a new id and is refused once the
+  // version is claimed. One that landed between the read above and the claim would leave a paid run
+  // reporting to a record that no longer exists, so the submit checks before it pays.
+  it('refuses before paying, and releases the claim, when the dataset was replaced', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.modelFile.count.mockResolvedValue(0);
+
+    await expect(submit()).rejects.toThrow('Your training data changed while submitting');
+    expect(dbMock.dbWrite.modelFile.count).toHaveBeenCalledWith({
+      where: { id: MODEL_FILE_ID, url: 'https://example.com/data.zip' },
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenLastCalledWith({
+      where: { id: MODEL_VERSION_ID, trainingStatus: 'Submitted' },
+      data: { trainingStatus: 'Pending' },
+    });
   });
 });

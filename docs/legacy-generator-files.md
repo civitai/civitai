@@ -1,6 +1,6 @@
 # Legacy Generator Files
 
-This document tracks all files added to support the legacy generator forms. These files can be removed once the transition to the new data-graph based generator is complete.
+This document tracks all files added to support the legacy generator forms. These files can be removed once the transition to the form-graph generator is complete. (The intermediate data-graph generator this originally named was itself retired in `feat/remove-data-graph`; the files below are still legacy relative to form-graph.)
 
 ## Overview
 
@@ -61,7 +61,7 @@ src/components/ImageGeneration/GenerationForm/
 
 > `GenForm.tsx` and `WhatIfAlert.tsx` were removed along with the legacy enhancement
 > modals (see "Legacy enhancement modals" below). `generation-form.store.ts` is **kept** —
-> it's now shared infra (the v2 `FormFooter` reads `buzzType` from it).
+> it's now shared infra (the generation footer reads `buzzType` from it — `src/components/Generation/footer-parts.tsx`).
 
 ### Legacy enhancement modals
 
@@ -112,7 +112,7 @@ src/server/routers/orchestrator.router.ts
 
 ~~`syncLegacyFormStore()` in `src/store/generation-graph.store.ts`~~ — **removed.** Along
 with it: `isNewFormOnly` / `NEW_FORM_ONLY` in
-`src/shared/data-graph/generation/config/workflows.ts` (its only consumer) and the
+`src/shared/generation/config/workflows.ts` (its only consumer) and the
 legacy-sync mocks in `generation-graph.store.test.ts`.
 
 ---
@@ -123,7 +123,7 @@ These are shared infrastructure used by both old and new generators:
 
 ```
 src/store/generation-graph.store.ts          # Shared data store
-src/store/generation-form.store.ts           # UI prefs (buzzType) — read by v2 FormFooter
+src/store/generation-form.store.ts           # UI prefs (buzzType) — read by Generation/footer-parts.tsx
 src/store/remix.store.ts                     # Remix tracking
 src/server/services/orchestrator/legacy-metadata-mapper.ts  # Data conversion utils
 ```
@@ -144,7 +144,7 @@ follow-up that removed `syncLegacyFormStore`. Remaining state:
 5. [x] Remove the legacy enhancement modals + `GenForm.tsx` / `WhatIfAlert.tsx` /
    `SourceImageUpscale.tsx` / `legacy-generator.store.ts` and the modal branch in
    `useGeneratedItemWorkflows.ts` (see "Legacy enhancement modals" above)
-6. [~] `generation-form.store.ts` — **kept**, now shared infra (v2 `FormFooter` reads `buzzType`)
+6. [~] `generation-form.store.ts` — **kept**, now shared infra (`Generation/footer-parts.tsx` reads `buzzType`)
 7. [ ] Revert `steps` addition in `generation.schema.ts` (if not needed)
 8. [ ] Remove `imageUpload` route from `orchestrator.router.ts` (if not needed elsewhere)
 

@@ -11,19 +11,24 @@
  * - Strength slider for LoRA/LoCon/DoRA resources
  */
 
-import { Anchor, Badge, Group, HoverCard, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Badge, Group, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconBan, IconLock, IconShield } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { defaultStrength } from '~/shared/utils/resource.utils';
+import { strengthSliderBounds } from '~/shared/constants/generation.constants';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { NumberSlider } from '~/libs/form/components/NumberSlider';
+import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { useAppContext } from '~/providers/AppProvider';
+import { getResourceSfwOnlyMessage } from '~/components/SfwOnlyBadge/sfw-only.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { isPreviewVisible } from '~/shared/utils/resource-preview';
 import { getModelUrl } from '~/utils/string-helpers';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResidency';
+import { PartnerDisclosureIcons } from '~/components/generation_v2/PartnerDisclosureIcons';
 
 // =============================================================================
 // Types
@@ -32,7 +37,7 @@ import { ResourceResidencyStatus } from '~/components/ResourceLoad/ResourceResid
 export interface ResourceItemContentProps {
   /** The resource to display */
   resource: GenerationResource;
-  /** Current strength value (may differ from resource.strength if user changed it) */
+  /** The chosen weight; the resource's default shows until set. */
   strengthValue?: number;
   /** Called when strength changes */
   onStrengthChange?: (strength: number) => void;
@@ -174,7 +179,7 @@ export function ResourceItemContent({
   const isPrivate = status === 'private';
   const isUnavailable = status === 'unavailable';
   const isDisabled = isResourceDisabled(status);
-  const isSfwOnly = !domain.green && (resource.model.sfwOnly || resource.model.minor);
+  const sfwOnlyMessage = domain.green ? undefined : getResourceSfwOnlyMessage(resource);
   const epochDetails = resource.epochDetails;
 
   // Don't show strength slider for disabled resources
@@ -183,7 +188,7 @@ export function ResourceItemContent({
     !isDisabled &&
     ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type) &&
     onStrengthChange;
-  const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
+  const strengthBounds = strengthSliderBounds(resource.settings?.strength);
 
   const modelUrl = getModelUrl({
     modelId: resource.model.id,
@@ -239,8 +244,17 @@ export function ResourceItemContent({
                 Epoch {epochDetails.epochNumber}
               </Badge>
             )}
+            {resource.turbo && (
+              <Badge size="sm" color="orange" variant="filled" className="shrink-0">
+                Turbo
+              </Badge>
+            )}
             <ExperimentalFlask target={{ kind: 'modelVersion', key: resource.id }} />
-            {isSfwOnly && (
+            <PartnerDisclosureIcons
+              partnerService={resource.partnerService}
+              partnerTrains={resource.partnerTrains}
+            />
+            {sfwOnlyMessage && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>
                   <ThemeIcon size={18} color="green.5" variant="filled" className="shrink-0">
@@ -248,7 +262,7 @@ export function ResourceItemContent({
                   </ThemeIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Text size="sm">This resource cannot be used to generate mature content</Text>
+                  <Text size="sm">{sfwOnlyMessage}</Text>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}
@@ -318,15 +332,18 @@ export function ResourceItemContent({
         )}
       </Group>
       {hasStrength && (
-        <div className="flex w-full items-center gap-2">
-          <NumberSlider
+        <div className="mt-2 flex w-full items-center gap-2">
+          <SliderInput
             className="flex-1"
-            value={strengthValue ?? resource.strength ?? 1}
-            onChange={(strength) => onStrengthChange(strength ?? 1)}
-            min={!isSameMinMaxStrength ? resource.minStrength : -1}
-            max={!isSameMinMaxStrength ? resource.maxStrength : 2}
+            value={strengthValue ?? defaultStrength(resource)}
+            onChange={(strength) => onStrengthChange(strength)}
+            min={strengthBounds.min}
+            max={strengthBounds.max}
             step={0.05}
+            precision={2}
             disabled={disabled}
+            steppers
+            ariaLabel={`${resource.model.name} strength`}
           />
         </div>
       )}

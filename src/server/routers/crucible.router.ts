@@ -1,9 +1,13 @@
 import {
   cancelCrucibleHandler,
   removeCrucibleEntryHandler,
+  ownerRemoveCrucibleEntryHandler,
+  takeDownCrucibleHandler,
+  withdrawCrucibleEntryHandler,
   updateCrucibleHandler,
   checkEntryEligibilityHandler,
   getCreateEligibilityHandler,
+  getJudgeEligibilityHandler,
   createCrucibleHandler,
   createEntryPostHandler,
   getCrucibleByIdHandler,
@@ -17,10 +21,12 @@ import {
   getMinVotesToPlaceHandler,
   getRequiredModelsHandler,
   getJudgingProgressHandler,
+  getJudgingStatusesHandler,
   getUserActiveCruciblesHandler,
   getUserCrucibleStatsHandler,
   submitEntryHandler,
   submitVoteHandler,
+  toggleCrucibleFollowHandler,
 } from '~/server/controllers/crucible.controller';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -29,11 +35,15 @@ import {
   getCrucibleEntriesSchema,
   cancelCrucibleSchema,
   removeCrucibleEntrySchema,
+  ownerRemoveCrucibleEntrySchema,
+  takeDownCrucibleSchema,
+  withdrawCrucibleEntrySchema,
   updateCrucibleSchema,
   createCrucibleInputSchema,
   getCrucibleByIdSchema,
   getCrucibleRequiredModelsSchema,
   getJudgingProgressSchema,
+  getJudgingStatusesSchema,
   getCruciblesInfiniteSchema,
   getFeaturedCrucibleSchema,
   getJudgesCountSchema,
@@ -42,9 +52,13 @@ import {
   getJudgingSuggestionsSchema,
   getUserActiveCruciblesSchema,
   getUserCrucibleStatsSchema,
+  setCrucibleEventTagsSchema,
   submitEntrySchema,
   submitVoteSchema,
+  toggleCrucibleFollowSchema,
 } from '~/server/schema/crucible.schema';
+import { getFollowedCrucibleIds } from '~/server/services/crucible-engagement.service';
+import { getCrucibleEventTags, setCrucibleEventTags } from '~/server/services/crucible.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -84,6 +98,10 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .query(getCreateEligibilityHandler),
 
+  getJudgeEligibility: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .query(getJudgeEligibilityHandler),
+
   create: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(createCrucibleInputSchema)
@@ -116,6 +134,13 @@ export const crucibleRouter = router({
     .input(getJudgingProgressSchema)
     .query(getJudgingProgressHandler),
 
+  // protectedProcedure: a read on the feed, so a muted user must not get FORBIDDEN here.
+  getJudgingStatuses: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .input(getJudgingStatusesSchema)
+    .query(getJudgingStatusesHandler),
+
   submitVote: guardedProcedure
     .use(isFlagProtected('crucible'))
     .use(rateLimit({ limit: 60, period: 60 }))
@@ -127,10 +152,25 @@ export const crucibleRouter = router({
     .input(cancelCrucibleSchema)
     .mutation(cancelCrucibleHandler),
 
+  takeDown: moderatorProcedure
+    .use(isFlagProtected('crucible'))
+    .input(takeDownCrucibleSchema)
+    .mutation(takeDownCrucibleHandler),
+
   removeEntry: moderatorProcedure
     .use(isFlagProtected('crucible'))
     .input(removeCrucibleEntrySchema)
     .mutation(removeCrucibleEntryHandler),
+
+  ownerRemoveEntry: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(ownerRemoveCrucibleEntrySchema)
+    .mutation(ownerRemoveCrucibleEntryHandler),
+
+  withdrawEntry: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(withdrawCrucibleEntrySchema)
+    .mutation(withdrawCrucibleEntryHandler),
 
   update: guardedProcedure
     .use(isFlagProtected('crucible'))
@@ -166,4 +206,24 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(getJudgingSuggestionsSchema)
     .query(getJudgingSuggestionsHandler),
+
+  toggleFollow: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(toggleCrucibleFollowSchema)
+    .mutation(toggleCrucibleFollowHandler),
+
+  // Event tags are moderator data: no row sent to a non-moderator may carry them.
+  getEventTags: moderatorProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getCrucibleByIdSchema)
+    .query(({ input }) => getCrucibleEventTags(input.id)),
+
+  setEventTags: moderatorProcedure
+    .use(isFlagProtected('crucible'))
+    .input(setCrucibleEventTagsSchema)
+    .mutation(({ input }) => setCrucibleEventTags(input)),
+
+  getFollowedIds: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .query(({ ctx }) => getFollowedCrucibleIds(ctx.user.id)),
 });

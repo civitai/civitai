@@ -1,4 +1,5 @@
-import { Box, HoverCard, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Box, Stack, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard, Menu } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCheck,

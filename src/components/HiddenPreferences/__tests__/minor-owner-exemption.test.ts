@@ -117,11 +117,6 @@ describe('minor exclusion owner exemption', () => {
     expect(ids(run('collections', [collection], STRANGER).items)).toEqual([30]);
   });
 
-  /**
-   * 🔴 These branches' `isOwner` locals are `image.userId === currentUser?.id`, which is
-   * `undefined === undefined` for a signed-out viewer and an image without a user id. Reusing one
-   * for the minor check would exempt every such image for every signed-out viewer.
-   */
   const unownedImages = () => [
     { id: 40, nsfwLevel: NsfwLevel.R, minor: true },
     { id: 41, nsfwLevel: NsfwLevel.R },

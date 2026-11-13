@@ -2,15 +2,20 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { handleLogError, isClientAbortError } from '~/server/utils/errorHandling';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { getDownloadBlocklistValue } from '~/server/services/download-blocklist.service';
 import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
+import {
+  checkDownloadCredential,
+  DOWNLOAD_SCOPE_REFUSED,
+} from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -46,17 +51,19 @@ export default PublicEndpoint(
     // traffic to every download route at once rather than one abuser. See
     // `parseIpBlocklist`.
     const ip = getTrustedClientIp(req);
-    const ipBlacklist = parseIpBlocklist(
-      (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
-    );
+    const ipBlacklist = parseIpBlocklist(await getDownloadBlocklistValue('ip-blacklist'));
     if (ip && ipBlacklist.includes(ip)) return forbidden(req, res);
 
-    const session = await getServerAuthSession({ req, res });
-    if (!!session?.user) {
-      const userBlacklist = parseUserBlocklist(
-        (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
-      );
-      if (userBlacklist.includes(session.user.id.toString())) return forbidden(req, res);
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+    const credential = await checkDownloadCredential(req, session?.user, {
+      route: '/api/download/attachments/[fileId]',
+      requiredScope: TokenScope.ModelsRead,
+    });
+    if (credential.refuse) return res.status(403).json(DOWNLOAD_SCOPE_REFUSED);
+    const user = credential.effectiveUser;
+    if (!!user) {
+      const userBlacklist = parseUserBlocklist(await getDownloadBlocklistValue('user-blacklist'));
+      if (userBlacklist.includes(user.id.toString())) return forbidden(req, res);
     }
 
     const queryResults = schema.safeParse(req.query);
@@ -69,14 +76,14 @@ export default PublicEndpoint(
 
     const file = await getFileWithPermission({
       fileId,
-      userId: session?.user?.id,
-      isModerator: session?.user?.isModerator,
+      userId: user?.id,
+      isModerator: user?.isModerator,
     });
 
     if (!file) return notFound(req, res, 'File not found');
 
     // Handle unauthenticated downloads
-    const userId = session?.user?.id;
+    const userId = user?.id;
     if (!env.UNAUTHENTICATED_DOWNLOAD && !userId) {
       if (req.headers['content-type'] === 'application/json')
         return res.status(401).json({ error: 'Unauthorized' });
@@ -124,7 +131,7 @@ export default PublicEndpoint(
       // against a ModelFile with the same ID, serving the wrong file content.
       const { url } = await getDownloadUrl(file.url, file.name);
 
-      const tracker = new Tracker(req, res);
+      const tracker = new Tracker(req, res, session);
       tracker
         .file({ type: 'Download', entityId: file.entityId, entityType: file.entityType })
         .catch(handleLogError);

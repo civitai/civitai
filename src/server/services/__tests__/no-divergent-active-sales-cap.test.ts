@@ -13,12 +13,15 @@ import {
  *
  * ⚠️ IT CANNOT SEE THE CALL SITE, and must not be read as if it can. Nothing below imports
  * `ModelCardContext`, so replacing `chunkIds(modelIds, MODEL_SALE_IDS_PER_REQUEST)` with a literal
- * leaves every test here green — measured, a chunk of 400 is `4 passed (4)` on this file. The other
- * half of the seam, that the card surface chunks to the constant AT ALL, is pinned behaviourally by
- * `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, which runs every request the hook
- * builds through the real schema (the same 400 is `3 failed | 15 passed (18)` there). That file is
- * in the full unit suite, NOT in `test:lint-rules` — so a `test:lint-rules` run alone does not
- * cover the seam, and this comment is the only thing that says so.
+ * leaves every test here green — measured, a chunk of 400 passes every test in this file. The other
+ * half of the seam, that the card surfaces chunk to the constant AT ALL, is pinned behaviourally by
+ * `src/components/Cards/__tests__/useModelSaleBadges.test.ts` (the provider hook) and
+ * `src/components/Cards/__tests__/useModelSaleBadge.batching.test.ts` (the single-card batcher),
+ * which run every request the hooks build through the real schema (the same 400, at either call
+ * site, turns that file red; dropping the batcher's chunking
+ * entirely is rejected by that schema line itself, since its fixture is past the cap). Those files are in the full unit
+ * suite, NOT in `test:lint-rules` — so a `test:lint-rules` run alone does not cover the seam, and
+ * this comment is the only thing that says so.
  *
  * 🔴 THIS IS THE SEAM THAT ACTUALLY BROKE. The procedure was rejecting every call from a scrolled
  * feed — an input-validation 400, so the resolver never ran, no 5xx was recorded and the sale badge

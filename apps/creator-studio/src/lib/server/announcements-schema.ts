@@ -3,7 +3,13 @@ import { z } from 'zod';
 // SvelteKit plugin and cannot resolve the alias — an aliased import fails COLLECTION, which reads as
 // zero tests rather than as a failure.
 import { checkbox, numberish } from './form-fields';
-import { CONTENT_CEILING, DOMAIN_COLORS, LINK_TEXT_MAX, TITLE_MAX } from '../announcements';
+import {
+  CONTENT_CEILING,
+  DOMAIN_COLORS,
+  LINK_SLOTS,
+  LINK_TEXT_MAX,
+  TITLE_MAX,
+} from '../announcements';
 
 const optionalText = (max: number) =>
   z.preprocess(
@@ -46,6 +52,10 @@ export const announcementFormSchema = z
     endsAt: optionalDate,
     linkUrl: optionalText(2048),
     linkText: optionalText(LINK_TEXT_MAX),
+    linkUrl2: optionalText(2048),
+    linkText2: optionalText(LINK_TEXT_MAX),
+    linkUrl3: optionalText(2048),
+    linkText3: optionalText(LINK_TEXT_MAX),
     // The object key minted by the main app's upload endpoint. It becomes an `Image` row on the
     // server (resolveCoverImageId); this side never creates one, and the key is a UUID because
     // that endpoint mints it with randomUUID.
@@ -55,20 +65,67 @@ export const announcementFormSchema = z
     coverMimeType: optionalText(100),
     coverSizeKB: optionalNumber,
   })
-  // A path resolves on whichever site the reader is on, which is the point. `//host` is
-  // protocol-relative and leaves the site despite looking like a path, so it is not one.
-  .refine((v) => !v.linkUrl || /^https?:\/\//i.test(v.linkUrl) || /^\/(?!\/)/.test(v.linkUrl), {
-    message: 'Button link must be a full https:// URL or a path like /models/123',
-    path: ['linkUrl'],
+  .superRefine((v, ctx) => {
+    for (const [urlKey, textKey] of LINK_SLOTS) {
+      const url = v[urlKey];
+      const text = v[textKey];
+      // A path resolves on whichever site the reader is on, which is the point. `//host` is
+      // protocol-relative and leaves the site despite looking like a path, so it is not one.
+      if (url && !/^https?:\/\//i.test(url) && !/^\/(?!\/)/.test(url))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Button link must be a full https:// URL or a path like /models/123',
+          path: [urlKey],
+        });
+      if (!!url !== !!text)
+        ctx.addIssue({
+          code: 'custom',
+          message: 'A button needs both a link and button text',
+          path: [textKey],
+        });
+    }
   })
-  .refine((v) => !!v.linkUrl === !!v.linkText, {
-    message: 'A button needs both a link and button text',
-    path: ['linkText'],
-  });
+  .transform((v) => ({
+    ...v,
+    links: LINK_SLOTS.flatMap(([urlKey, textKey]) => {
+      const link = v[urlKey];
+      const linkText = v[textKey];
+      return link && linkText ? [{ link, linkText }] : [];
+    }),
+  }));
 // No start/end ordering refine: the main app slides the end forward (clampAnnouncementWindow);
 // rejecting here means the clamp never runs.
 
 export type AnnouncementForm = z.infer<typeof announcementFormSchema>;
+
+/** The main app's announcement endpoint body for a parsed form. */
+export function toSaveBody(form: AnnouncementForm) {
+  return {
+    id: form.id,
+    title: form.title,
+    content: form.content,
+    domain: form.domain,
+    profileOnly: form.profileOnly,
+    startsAt: form.startsAt?.toISOString() ?? null,
+    endsAt: form.endsAt?.toISOString() ?? null,
+    // `action` as well, so a main app still on the single-button schema keeps the first button
+    // rather than stripping `actions` as an unknown key and saving none. It ignores `action`
+    // once it reads `actions`.
+    ...(form.links.length ? { action: form.links[0], actions: form.links } : {}),
+    // A key, never an `Image` id: the server mints the row so the cover gets ingested and scanned.
+    ...(form.coverKey
+      ? {
+          coverImage: {
+            url: form.coverKey,
+            width: form.coverWidth,
+            height: form.coverHeight,
+            mimeType: form.coverMimeType,
+            sizeKB: form.coverSizeKB,
+          },
+        }
+      : {}),
+  };
+}
 
 export const deleteAnnouncementSchema = z.object({
   id: z.preprocess((v) => Number(v), z.number().int().positive()),

@@ -1,6 +1,7 @@
 import { getMultipliersForUser } from '~/server/services/buzz.service';
 import { getUserCapCache } from '~/server/services/creator-program.service';
 import { bustCreatorMembershipValidCache } from '~/server/services/creator-membership.service';
+import { reopenLapsedCollections } from '~/server/services/collection-collaboration-lapse';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { setVaultFromSubscription } from '~/server/services/vault.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
@@ -20,6 +21,7 @@ export const invalidateSubscriptionCaches = async (userId: number) => {
     // subscription change here can flip that validity, so bust the key so the next
     // read re-derives it (immediate, not TTL-bounded).
     ['bustCreatorMembershipValidCache', () => bustCreatorMembershipValidCache(userId)],
+    ['reopenLapsedCollections', () => reopenLapsedCollections(userId)],
   ] as const;
 
   // Run in parallel but surface individual failures — a silent rejection here

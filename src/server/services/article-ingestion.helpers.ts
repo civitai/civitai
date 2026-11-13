@@ -50,3 +50,16 @@ export function deriveArticleIngestionState({
   if (imageDone && textDone) return ArticleIngestionStatus.Scanned;
   return ArticleIngestionStatus.Pending;
 }
+
+/**
+ * The images stored on the `Article` row itself rather than in `ImageConnection`: the card cover
+ * and the optional page banner. Each is scanned, rated, rescanned and cleaned up like a content
+ * image, so every path that folds in "the cover" must fold in this list instead.
+ */
+export function articleOwnImageIds(article: {
+  coverId: number | null;
+  bannerId: number | null;
+}): number[] {
+  const ids = [article.coverId, article.bannerId].filter((id): id is number => id != null);
+  return [...new Set(ids)];
+}

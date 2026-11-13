@@ -7,6 +7,7 @@
     IconList,
     IconPlus,
     IconTrash,
+    IconX,
   } from '@tabler/icons-svelte';
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -26,9 +27,12 @@
   import { backend, browser, hrefFor, portalProps } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
   import { remixFromRun } from '$lib/reuse';
+  import { submitNotice } from '$lib/submit-notice.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ServiceStatusBanner from '$lib/components/ServiceStatusBanner.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
+  import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
   import {
     canDeleteRun,
     RUN_STATE_BADGE,
@@ -156,6 +160,7 @@
 {/snippet}
 
 <section class="flex flex-col gap-5">
+  <ServiceStatusBanner />
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">My trainings</h2>
@@ -183,6 +188,24 @@
       <Button onclick={onNew}><IconPlus size={15} stroke={2} class="mr-1.5 inline" />New training</Button>
     </div>
   </div>
+
+  {#if submitNotice.message}
+    <div
+      role="alert"
+      class="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-400"
+    >
+      <IconAlertTriangle size={15} stroke={2} class="mt-px shrink-0" />
+      <p class="m-0 flex-1 font-mono">{submitNotice.message}</p>
+      <button
+        type="button"
+        aria-label="Dismiss"
+        onclick={() => submitNotice.clear()}
+        class="shrink-0 text-dark-2 transition hover:text-white"
+      >
+        <IconX size={14} stroke={2} />
+      </button>
+    </div>
+  {/if}
 
   {#if remixError}
     <p
@@ -358,6 +381,14 @@
                 class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-xs text-dark-2"
               >
                 <IconAlertTriangle size={15} stroke={2} class="shrink-0 text-red-400" /> This run didn't complete.
+              </div>
+            {:else if r.state === 'review' || r.state === 'rejected' || r.state === 'unreviewed'}
+              <div class="rounded-md border border-dark-4 bg-dark-7 px-3 py-4 text-xs text-dark-2">
+                {r.state === 'review'
+                  ? TRAINING_REVIEW_COPY.pendingTitle
+                  : r.state === 'rejected'
+                    ? TRAINING_REVIEW_COPY.notApprovedTitle
+                    : TRAINING_REVIEW_COPY.unreviewedTitle}. Open the run for details.
               </div>
             {:else if r.sampleUrls.length > 0 && r.media !== 'audio'}
               <SampleGrid urls={r.sampleUrls} cols={4} isVideo={r.isVideo} />

@@ -12,11 +12,11 @@ the audit behind it, and every measured number.
 
 **Successor design (proposed, nothing built):**
 [paid-model-loading-boost-workflow.md](paid-model-loading-boost-workflow.md) — boosting as its own
-workflow, what it would change in the decisions below, and why `BOOST_NON_REFUNDABLE` becomes wrong
+workflow, what it would change in the decisions below, and why `BOOST_REFUND_POLICY` becomes wrong
 the day it ships.
 
 **Sources:** the 2026-08-18 lab call and the 2026-09-10 call (Justin, Koen, Briant), Koen's DMs
-(2026-09-04, 09-07, 09-10), the `@civitai/client` and `@civitai/orchestration-client` SDKs, and the
+(2026-09-04, 09-07, 09-10), the `@civitai/orchestration-client` and `@civitai/orchestration-client` SDKs, and the
 orchestrator source at `9306e7333`.
 
 > **History.** This file replaces four docs merged on 2026-09-11 — the boost model, the build plan,
@@ -89,7 +89,7 @@ fetched when the panel renders (`getBoostCost`, 30s stale), so **each boostable 
 PUT**. For a boost bought on this page, the panel keeps the ETA it would have been. The rules are pure functions in `download-status.ts`. There is no site-wide
 download queue page.
 
-**Generator — both forms** (`generation_v2` data-graph and form-graph): when the whatIf reports
+**Generator** (`src/components/form-graph/generation/`): when the whatIf reports
 downloads, `DownloadReadyAlert` shows the resource count and size, and — when the boost would read as
 a different number (`isBoostable`) — the "Normally → Boosted" comparison and a **Boost download**
 switch with its price. That same test gates the second whatIf at `downloadPriority: "high"`, so a
@@ -130,11 +130,11 @@ from `external`, so the picker marks both **Ready** and only the live read says 
 
 The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
 rate-limited, cached 30s per version (`resource-residency.service.ts`) and marked stale for any version
-whose `generatorLoaded` the webhook or the backstop job flips — otherwise the **Generation** rows name
+whose `generatorLoaded` the webhook or the backstop job flips — otherwise the picker card's **Generation** row names
 the pre-change state while the column-driven **Create** badge already shows the new one. That is the
 generator's marks, whose resources do not come from
 page data — the added-resource list batches into one request (`ResidencyBatchProvider`), while the
-checkpoint input, the two **Generation** rows (version details, picker card's back) and every
+checkpoint input, the **Generation** row on the picker card's back and every
 `ResourceItemContent` outside that provider — the compatibility confirm, the image-metadata modal and
 the metadata-extraction panel — each ask for their one id, so a modal listing ten resources is ten
 calls. Naming *downloading* or *queued* is the one thing the page's own data cannot do. The reverse
@@ -219,7 +219,7 @@ moves with `maxBuzz`.
 
 Read `node_modules/@civitai/orchestration-client/dist/generated/types.gen.d.ts` rather than trusting
 this section once it ages. The app's own orchestrator calls still go through the older
-`@civitai/client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
+`@civitai/orchestration-client`, which predates `downloadPriority` and `preparation` — hence the casts around them.
 The fleet-wide loaded list (`/v1/manager/resources/loaded`) is in neither client, so
 `getLoadedResourceAirs` (`src/server/http/orchestrator/loaded-resources.ts`) calls it through the
 orchestrator caller.
@@ -483,6 +483,8 @@ Everything here is the deploying engineer's, before this branch merges.
       offering them until those models are rebuilt. The full re-queue below covers it if that runs
       first. Why, and the per-base-model table:
       [paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
+      MiniMax H3 was unlocked after that measurement (2026-11): its stored answer is now stale-false,
+      so the same re-queue must include it, and the closing check excludes it.
       *Closes when:* a search filtered to generatable returns no community checkpoint on a locked base
       model.
 - [ ] **Re-queue EVERY model before turning `generation-coverage-next` on** — not only the ~12,900
@@ -523,7 +525,7 @@ Everything here is the deploying engineer's, before this branch merges.
       *Closes when:* it is on a dashboard someone named is watching.
 - [ ] **Watch `getResidency`** — its 120/min rate limit and its cache hit ratio. The model page and
       the picker read page/index readiness instead, so what is left on it is the generator's marks and
-      the two **Generation** rows — minus `ExternalGeneration` versions, which short-circuit before the
+      the picker card's **Generation** row — minus `ExternalGeneration` versions, which short-circuit before the
       orchestrator call.
 - [ ] **Keep `sync-generator-loaded-resources` on.** Every column-backed indicator is only as fresh
       as that job: with the flag off the column freezes at its last value, so the marks keep stating
@@ -562,7 +564,7 @@ Everything here is the deploying engineer's, before this branch merges.
 | — | **Price shown ≠ price charged, structurally.** The charging `PUT` takes no expected price; we re-price immediately before charging and refuse on a mismatch. An expected-price field on the orchestrator would close the window properly. | Koen | such a field exists, or we accept the re-price |
 | — | **Does an unbounded generation still refund?** The site sends no step `timeout` and the queue card no longer promises an automatic refund. Whether the orchestrator expires a job on its own, after how long, and whether it refunds undelivered images, is unverified — and support has no line to give a user whose job sits in the free lane. | Koen | he states the orchestrator's own expiry and refund behaviour with no step `timeout` set, and it is written into the timeouts paragraph above |
 | K3 | **Does the orchestrator refund a failed prepare?** Never exercised, because no prepare has ever been charged. Matters for the moderator tool, not the boost. | Koen | he answers |
-| 2.5 | **The rate-limit numbers are off by one** — `attempts > limit`, so 3/6/10 permit 4/7/11. Renumber to 2/5/9, or keep and say so. Documented beside the limiter either way; do not "fix" the shared comparison. | whoever closes C10 | renumbered, or the decision taken |
+| 2.5 | **Settled: the rate-limit numbers are exact.** The shared `rateLimit()` comparison used to let 3/6/10 permit 4/7/11; it now admits exactly the limit, so 3/6/10 mean what they say. | — | closed by the usage-limits 429 change |
 | 2.6 | **17 base models claim generation support in `basemodel.constants.ts` with no `GenerationBaseModel` row**, and 5 rows exist the constants do not declare. Nothing detects the disagreement. Predates this feature. | unowned | rows added, constants corrected, or a guard pins them |
 | 2.7 | **Diffusers checkpoints lose coverage** (174 of the 2,242) because the loader serves SafeTensor only. Accept as a loader constraint, or teach the loader Diffusers? | Justin | he answers, or it ships narrowed |
 | — | **Load state in search** was deferred, and the coverage widening is the surface that deferral collides with. The data exists: the index carries `versions.generatorLoaded` (readiness: the column, written by `/api/webhooks/resource-availability` as the orchestrator reports each change with `sync-generator-loaded-resources` as a 15-minute backstop, **or** an `ExternalGeneration` version); what is left is the display decision. | Justin | a decision |

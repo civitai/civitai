@@ -20,7 +20,7 @@ import type * as UserService from '~/server/services/user.service';
  */
 
 const { mockRemoveAllContent } = vi.hoisted(() => ({
-  mockRemoveAllContent: vi.fn(async () => undefined),
+  mockRemoveAllContent: vi.fn(async () => ({ incomplete: [] as string[] })),
 }));
 
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
@@ -29,6 +29,14 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 
 import { userRouter } from '~/server/routers/user.router';
+import {
+  HOLD_UNCONFIRMED,
+  LEGAL_HOLD_REFUSAL,
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+  LegalHoldUnconfirmedError,
+} from '~/server/services/legal-hold.service';
 
 const MOD_ID = 9;
 const TARGET_ID = 42;
@@ -57,7 +65,33 @@ const moderator = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockRemoveAllContent.mockResolvedValue(undefined);
+  mockRemoveAllContent.mockResolvedValue({ incomplete: [] });
+});
+
+describe('user.removeAllContent — a finished wipe', () => {
+  it('records the activity and names the cleanup steps that failed', async () => {
+    mockRemoveAllContent.mockResolvedValue({ incomplete: ['doc-store'] });
+    const track = { userActivity: vi.fn() };
+    const call = userRouter.createCaller({
+      acceptableOrigin: true,
+      user: moderator,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: {},
+      track,
+    } as never);
+
+    await expect(call.removeAllContent({ id: TARGET_ID })).resolves.toEqual({
+      incomplete: ['doc-store'],
+    });
+    expect(track.userActivity).toHaveBeenCalledWith({
+      type: 'RemoveContent',
+      targetUserId: TARGET_ID,
+    });
+  });
 });
 
 describe('user.removeAllContent — actor attribution', () => {
@@ -92,5 +126,76 @@ describe('user.removeAllContent — actor attribution', () => {
       caller({ ...moderator, id: 1, isModerator: false }).removeAllContent({ id: TARGET_ID })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockRemoveAllContent).not.toHaveBeenCalled();
+  });
+});
+
+describe('user.removeAllContent — a legal hold', () => {
+  it('answers FORBIDDEN with the hold refusal, and records no activity', async () => {
+    mockRemoveAllContent.mockRejectedValue(new LegalHoldError());
+    const track = { userActivity: vi.fn() };
+    const call = userRouter.createCaller({
+      acceptableOrigin: true,
+      user: moderator,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: {},
+      track,
+    } as never);
+
+    await expect(call.removeAllContent({ id: TARGET_ID })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: LEGAL_HOLD_REFUSAL,
+    });
+    expect(track.userActivity).not.toHaveBeenCalled();
+  });
+
+  it('says the hold could not be checked, and records no activity', async () => {
+    mockRemoveAllContent.mockRejectedValue(new LegalHoldUnconfirmedError());
+    const track = { userActivity: vi.fn() };
+    const call = userRouter.createCaller({
+      acceptableOrigin: true,
+      user: moderator,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: {},
+      track,
+    } as never);
+
+    await expect(call.removeAllContent({ id: TARGET_ID })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: HOLD_UNCONFIRMED,
+    });
+    expect(track.userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records the activity of a wipe a hold stopped part-way, and says it stopped', async () => {
+    mockRemoveAllContent.mockRejectedValue(new LegalHoldStoppedError());
+    const track = { userActivity: vi.fn() };
+    const call = userRouter.createCaller({
+      acceptableOrigin: true,
+      user: moderator,
+      apiKeyId: null,
+      tokenScope: TokenScope.Full,
+      req: { headers: {} },
+      res: { setHeader: () => undefined },
+      cache: { edgeTTL: 0 },
+      features: {},
+      track,
+    } as never);
+
+    await expect(call.removeAllContent({ id: TARGET_ID })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: LEGAL_HOLD_STOPPED,
+    });
+    expect(track.userActivity).toHaveBeenCalledWith({
+      type: 'RemoveContent',
+      targetUserId: TARGET_ID,
+    });
   });
 });

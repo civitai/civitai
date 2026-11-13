@@ -28,7 +28,7 @@ import {
 } from '~/server/schema/tag.schema';
 import { FEED_TAG_BAR_EDGE_TAG, getTag } from '~/server/services/tag.service';
 import { getFeedTagBarTags } from '~/server/services/system-cache';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { guardedProcedure, moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const tagRouter = router({
@@ -51,7 +51,13 @@ export const tagRouter = router({
       cacheIt<GetTagsInput & UserPreferencesInput>({
         ttl: 60,
         excludeKeys: ['excludedImageIds', 'excludedUserIds', 'excludedModelIds'],
-        varyBy: (ctx) => ({ adminTags: ctx.features.adminTags }),
+        varyBy: (ctx, input) => ({
+          adminTags: ctx.features.adminTags,
+          ...(input?.modelId && {
+            viewerId: ctx.user?.id ?? null,
+            viewerIsModerator: !!ctx.user?.isModerator,
+          }),
+        }),
       })
     )
     .query(getAllTagsHandler),
@@ -75,11 +81,11 @@ export const tagRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getVotableTagsSchema)
     .query(getVotableTagsHandler),
-  addTagVotes: protectedProcedure
+  addTagVotes: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(addTagVotesSchema)
     .mutation(addTagVotesHandler),
-  removeTagVotes: protectedProcedure
+  removeTagVotes: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(removeTagVotesSchema)
     .mutation(removeTagVotesHandler),

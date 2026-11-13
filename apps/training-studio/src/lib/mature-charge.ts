@@ -1,0 +1,73 @@
+export type SpendCurrency = 'yellow' | 'green';
+
+/** The accounts a submit charges, in order: Blue ahead of the paid account unless the user turned
+ *  Blue-first off, then the paid account only. */
+export function spendOrder(mode: SpendCurrency, blueFirst: boolean): string[] {
+  return blueFirst ? ['blue', mode] : [mode];
+}
+
+export type Spend = {
+  amount: number;
+  currency: SpendCurrency;
+  uncertain: boolean;
+  /** Yellow is charged only because the dataset is mature: the user must acknowledge it. */
+  matureYellow: boolean;
+};
+
+/** How much of `price` comes out of a non-Blue account, Blue spending first. Null = nothing beyond Blue.
+ *  A mature dataset never charges Green: the orchestrator refunds the Green part and charges Yellow, and a
+ *  non-member's Blue is refunded too, so the whole price lands in Yellow. `blue` undefined = the balance
+ *  couldn't be read, so assume the whole price may be non-Blue (fail safe). The one definition of
+ *  "mature forces Yellow" for every quote, note and gate. */
+export function matureSpend(args: {
+  price: number | null | undefined;
+  blue: number | undefined;
+  mode: SpendCurrency;
+  mature: boolean;
+  member: boolean;
+}): Spend | null {
+  const { price, blue, mode, mature, member } = args;
+  if (price == null || price <= 0) return null;
+  const currency: SpendCurrency = mature ? 'yellow' : mode;
+  if (mature && !member) return { amount: price, currency, uncertain: false, matureYellow: true };
+  if (typeof blue !== 'number') {
+    return { amount: price, currency, uncertain: true, matureYellow: mature };
+  }
+  if (price <= blue) return null;
+  return {
+    amount: price - Math.max(0, blue),
+    currency,
+    uncertain: false,
+    matureYellow: mature,
+  };
+}
+
+/** A mature dataset always needs the tick, even when Blue covers the quote: the balance can move before
+ *  submit, and the server refuses a mature run without it. The tick belongs to one price, one Yellow part
+ *  (`yellow`, null = Blue covers it) and one dataset; changing any un-ticks it, so "Blue pays" consent never
+ *  carries over to "all of it in Yellow" at the same price. */
+export function matureAckKey(
+  price: number | null | undefined,
+  yellow: number | null | undefined,
+  matureCount: number
+): string | null {
+  return matureCount > 0 && price != null ? `${price}:${yellow ?? '-'}:${matureCount}` : null;
+}
+
+/** Start is blocked while a mature-Yellow charge is unacknowledged. */
+export function matureAckMissing(ackedFor: string | null, key: string | null): boolean {
+  return key !== null && ackedFor !== key;
+}
+
+/** A mature dataset submitted without the user's confirm: nothing was charged. */
+export class MatureAckRequiredError extends Error {
+  readonly matureCount: number;
+  constructor(matureCount: number) {
+    super(
+      `This dataset has ${matureCount} mature image${
+        matureCount === 1 ? '' : 's'
+      }, so training on it is charged in Yellow. Confirm the charge to continue.`
+    );
+    this.matureCount = matureCount;
+  }
+}

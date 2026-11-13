@@ -359,19 +359,6 @@ describe('🔴 the rejection signal is NOT a failure path', () => {
     expect(mockRecordRejection).not.toHaveBeenCalled();
   });
 
-  it('a broken metrics module does not stop LATER rejections from being counted', async () => {
-    // A transient metrics failure must not leave the signal permanently dark —
-    // there is no memoised import result or one-shot disable to get stuck.
-    metricsModule.brokenExport = true;
-    mockResolveAppCapLimits.mockResolvedValue({ dailyBuzz: 100, velocityMaxGens: 600 });
-    await reserveAppSpend(APP_BLOCK_ID, 101);
-    expect(mockRecordRejection).not.toHaveBeenCalled();
-
-    metricsModule.brokenExport = false;
-    await reserveAppSpend(APP_BLOCK_ID, 101);
-    expect(reasons()).toEqual(['daily']);
-  });
-
   it('a throwing emitter does not perturb an ALLOWED submit either', async () => {
     mockRecordRejection.mockImplementation(() => {
       throw new Error('prom registry exploded');

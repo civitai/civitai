@@ -13,7 +13,7 @@ import {
   useSearchBox,
   useSortBy,
 } from 'react-instantsearch';
-import type { ButtonProps } from '@mantine/core';
+import type { ButtonProps, MultiSelectProps } from '@mantine/core';
 import {
   Accordion,
   Box,
@@ -21,7 +21,6 @@ import {
   Chip,
   Code,
   Group,
-  HoverCard,
   MultiSelect,
   Select,
   Text,
@@ -29,6 +28,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import React, {
   forwardRef,
   useEffect,
@@ -37,16 +37,21 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
+import { isImageSearchIndex } from '~/components/Search/semanticImageSearchClient';
 import { uniqBy } from 'lodash-es';
 import { DatePickerInput } from '@mantine/dates';
 import dayjs from '~/shared/utils/dayjs';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
+import {
+  BROWSING_LEVEL_ATTRIBUTE,
+  BROWSING_LEVEL_MATCH,
+} from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -113,8 +118,19 @@ export function SortBy({ title, ...props }: SortByProps & { title: string }) {
 
 export function SearchableMultiSelectRefinementList({
   title,
+  renderOption,
+  remoteSearch = true,
   ...props
-}: RefinementListProps & { title: string }) {
+}: RefinementListProps & {
+  title: string;
+  renderOption?: MultiSelectProps['renderOption'];
+  /**
+   * Query the facet index as the user types. Turn off for a short facet whose full list is already
+   * loaded: the remote result replaces `items`, so an empty or failed one hides options the
+   * MultiSelect's own client-side filter would still match.
+   */
+  remoteSearch?: boolean;
+}) {
   const { items, refine, searchForItems } = useRefinementList({ ...props });
   const [searchValue, setSearchValue] = useState('');
   const [debouncedSearchValue] = useDebouncedValue(searchValue, 300);
@@ -123,12 +139,22 @@ export function SearchableMultiSelectRefinementList({
     (items ?? []).filter((item) => item.isRefined) ?? []
   );
 
+  // The facet index matches word prefixes only; keep the idle list so a remote miss doesn't hide
+  // substring matches the MultiSelect would show.
+  const [loadedItems, setLoadedItems] = useState<typeof items>([]);
+  const isSearching = searchValue !== '' || debouncedSearchValue !== '';
+  useEffect(() => {
+    if (remoteSearch && !isSearching) setLoadedItems(items);
+  }, [items, isSearching, remoteSearch]);
+
+  const selectableItems = uniqBy([...refinedItems, ...loadedItems, ...items], 'value');
+
   const onUpdateSelection = (updatedSelectedItems: string[]) => {
     const addedItems = updatedSelectedItems.length > refinedItems.length;
     if (addedItems) {
       // Get the last item:
       const lastAddedValue = updatedSelectedItems[updatedSelectedItems.length - 1];
-      const item = items.find((item) => item.value === lastAddedValue);
+      const item = selectableItems.find((item) => item.value === lastAddedValue);
 
       if (!item) {
         return;
@@ -152,7 +178,7 @@ export function SearchableMultiSelectRefinementList({
   };
 
   useEffect(() => {
-    if (props.searchable) {
+    if (props.searchable && remoteSearch) {
       searchForItems(debouncedSearchValue);
     }
   }, [debouncedSearchValue]);
@@ -169,7 +195,7 @@ export function SearchableMultiSelectRefinementList({
     }
   }, [items, refinedItems]);
 
-  const data = uniqBy([...refinedItems, ...items], 'value').map((item) => ({
+  const data = selectableItems.map((item) => ({
     label: item.label,
     value: item.value,
   }));
@@ -194,6 +220,7 @@ export function SearchableMultiSelectRefinementList({
             searchValue={searchValue}
             onSearchChange={setSearchValue}
             placeholder={`Search ${title}`}
+            renderOption={renderOption}
             nothingFoundMessage={<TimeoutLoader renderTimeout={() => <span>Nothing found</span>} />}
           />
         </Accordion.Panel>
@@ -272,10 +299,11 @@ export const BrowsingLevelFilter = ({
 } & Omit<ConfigureProps, 'filters'>) => {
   const { browsingLevel } = useBrowsingSettingsAddons();
   const attribute = BROWSING_LEVEL_ATTRIBUTE[indexKey];
+  const match = BROWSING_LEVEL_MATCH[indexKey];
 
   const filters = useMemo(
-    () => buildBrowsingLevelFilters({ attribute, browsingLevel, filters: _filters }),
-    [browsingLevel, attribute, _filters]
+    () => buildBrowsingLevelFilters({ attribute, browsingLevel, match, filters: _filters }),
+    [browsingLevel, attribute, match, _filters]
   );
 
   return <ApplyCustomFilter filters={filters} {...props} />;
@@ -288,8 +316,12 @@ export const BrowsingLevelFilter = ({
 
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
-  SearchBoxProps & RenderSearchComponentProps
->(({ isMobile, onSearchDone, ...props }, ref) => {
+  SearchBoxProps &
+    RenderSearchComponentProps & {
+      /** Search on Enter or on blur, never as the user types — for an index where each search is costly. */
+      submitOnly?: boolean;
+    }
+>(({ isMobile, onSearchDone, submitOnly, ...props }, ref) => {
   const currentUser = useCurrentUser();
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
@@ -306,14 +338,20 @@ export const CustomSearchBox = forwardRef<
     focus: focusInput,
   }));
 
+  const refineSearch = (text: string) => {
+    const canSearch = currentUser?.isModerator || !getBlockedNsfwWords(text).length;
+    if (text !== query && canSearch) refine(text);
+  };
+
+  // On mobile the box sits in the header's search overlay, and the blur is what closes it and
+  // searches, so Enter there leaves through the blur.
+  const submitSearch = () => {
+    if (isMobile) blurInput();
+    else refineSearch(search);
+  };
+
   useEffect(() => {
-    const canSearch = !currentUser?.isModerator
-      ? !getBlockedNsfwWords(debouncedSearch).length
-      : true;
-    if (debouncedSearch !== query && canSearch) {
-      refine(debouncedSearch);
-      // config.refine(getBlockedPromptFilters(debouncedSearch));
-    }
+    if (!submitOnly) refineSearch(debouncedSearch);
   }, [debouncedSearch]);
 
   useEffect(() => {
@@ -323,10 +361,7 @@ export const CustomSearchBox = forwardRef<
     }
   }, [query]);
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   return (
     <TextInput
@@ -337,10 +372,16 @@ export const CustomSearchBox = forwardRef<
       onChange={(e) => setSearch(e.target.value)}
       value={search}
       placeholder="Search..."
-      onBlur={onSearchDone}
+      onBlur={(e) => {
+        if (submitOnly) refineSearch(search);
+        onSearchDone?.(e);
+      }}
       onSubmit={onSearchDone}
       ref={inputRef}
-      onKeyDown={getHotkeyHandler([['Escape', blurInput]])}
+      onKeyDown={getHotkeyHandler([
+        ['esc', blurInput],
+        ...(submitOnly ? [['Enter', submitSearch] as [string, () => void]] : []),
+      ])}
       rightSection={
         !isMobile && (
           <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
@@ -381,6 +422,19 @@ export const CustomSearchBox = forwardRef<
 
 CustomSearchBox.displayName = 'CustomSearchBox';
 
+function renderSearchBox(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} />;
+}
+
+function renderSubmitOnlySearchBox(props: RenderSearchComponentProps) {
+  return <CustomSearchBox {...props} submitOnly />;
+}
+
+/** The search page's box for an index: an image search runs on submit only. */
+export function searchBoxFor(indexName: string) {
+  return isImageSearchIndex(indexName) ? renderSubmitOnlySearchBox : renderSearchBox;
+}
+
 export function DateRangeRefinement({ title, ...props }: RangeInputProps & { title: string }) {
   const { start: active, range, refine } = useRange({ ...props });
 
@@ -417,6 +471,8 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             label="From"
             name="start"
             placeholder="Start date"
+            clearable
+            clearButtonProps={{ 'aria-label': 'Clear start date' }}
             value={startDate}
             onChange={(date) => {
               onSetDate('start', date);
@@ -428,6 +484,8 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             label="To"
             name="end"
             placeholder="End date"
+            clearable
+            clearButtonProps={{ 'aria-label': 'Clear end date' }}
             value={endDate}
             onChange={(date) => {
               onSetDate('end', date);

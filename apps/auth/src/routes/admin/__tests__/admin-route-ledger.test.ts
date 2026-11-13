@@ -47,10 +47,11 @@ function endpointRouteIds(): string[] {
 // Routes whose form actions are reachable without a hub-admin session BY DESIGN — they are the
 // unauthenticated / pre-consent steps of signing in. Anything else showing up outside /admin is a new
 // privileged surface that has to be looked at, which is what makes this list worth pinning.
-const PUBLIC_ACTION_ROUTES = ['/login', '/login/oauth/authorize', '/login/oauth/device'];
+const PUBLIC_ACTION_ROUTES = ['/invite', '/login', '/login/oauth/authorize', '/login/oauth/device'];
 
 const ADMIN_ACTION_ROUTES = [
   '/admin/access',
+  '/admin/access/[id]',
   '/admin/membership',
   '/admin/roles',
   '/admin/roles/[role]',
@@ -74,6 +75,8 @@ const ENDPOINT_ROUTES = [
   '/api/auth/identity',
   '/api/auth/impersonate',
   '/api/auth/impersonate/exit',
+  '/api/auth/internal-ping',
+  '/api/auth/invite',
   '/api/auth/jwks',
   '/api/auth/oauth/app-token',
   '/api/auth/oauth/authorize',
@@ -83,7 +86,6 @@ const ENDPOINT_ROUTES = [
   '/api/auth/oauth/device-info',
   '/api/auth/oauth/device-token',
   '/api/auth/oauth/introspect',
-  '/api/auth/oauth/legacy-exchange',
   '/api/auth/oauth/revoke',
   '/api/auth/oauth/session',
   '/api/auth/oauth/token',

@@ -58,7 +58,7 @@
 </header>
 
 <form onsubmit={search} class="mb-4 flex max-w-xl gap-2">
-  <Input bind:value={term} placeholder="A creator's user ID, e.g. 2832460" class="flex-1" />
+  <Input bind:value={term} placeholder="A creator's user ID, e.g. 12345" class="flex-1" />
   <Button type="submit">Search</Button>
 </form>
 

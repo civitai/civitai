@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
@@ -12,9 +14,19 @@ import {
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readModelVersionPrivacyViaKysely,
+  readModelVersionPrivacyViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { getVaeFiles } from '~/server/services/model.service';
+import { getVaeFiles, holdShowcaseImages } from '~/server/services/model.service';
+import {
+  getHiddenModelVersionIds,
+  isPrivateModelVersion,
+} from '~/server/services/model-visibility.service';
 import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -23,11 +35,16 @@ import { reduceToBasicFileMetadata } from '~/server/services/model-file.service'
 import type { Session } from '~/types/session';
 import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  getShowcaseImageFilter,
+  resolveShowcaseExclusions,
+} from '~/server/services/blocked-browsing-tags.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { logToAxiom } from '~/server/logging/client';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -54,9 +71,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const status = user?.isModerator ? undefined : ModelStatus.Published;
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const allowedBrowsingLevels = apiBrowsingLevel(req);
 
   try {
     const modelVersion = await dbRead.$queryRaw<
@@ -84,6 +99,7 @@ export default MixedAuthEndpoint(async function handler(
          LIMIT 1) AS "vaeId",
         mv."uploadType",
         mv."usageControl",
+        mv."availability",
         COALESCE(
           (
             SELECT json_agg(
@@ -108,6 +124,7 @@ export default MixedAuthEndpoint(async function handler(
                 'url', mf.url,
                 'sizeKB', mf."sizeKB",
                 'name', mf.name,
+                'overrideName', mf."overrideName",
                 'type', mf.type,
                 'visibility', mf.visibility,
                 'metadata', mf.metadata,
@@ -140,10 +157,15 @@ export default MixedAuthEndpoint(async function handler(
         (
           SELECT json_build_object(
             'name', m.name,
+            'sfwName', m."sfwName",
             'type', m.type,
             'nsfw', m.nsfw,
             'poi', m.poi,
-            'mode', m.mode
+            'mode', m.mode,
+            'availability', m.availability,
+            'userId', m."userId",
+            'minor', m.minor,
+            'sfwOnly', m."sfwOnly"
           )
           FROM "Model" m
           WHERE m.id = mv."modelId"
@@ -155,7 +177,7 @@ export default MixedAuthEndpoint(async function handler(
       LIMIT 1
     `.then((results) => results[0] || null);
 
-    await resModelVersionDetails(req, res, modelVersion);
+    await resModelVersionDetails(req, res, modelVersion, async () => user);
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -170,14 +192,77 @@ export default MixedAuthEndpoint(async function handler(
   }
 });
 
+/**
+ * A version's showcase at `browsingLevel`, with the tags `getShowcaseImageFilter` reads. What is
+ * excluded at every region's level is also left out in SQL, so it doesn't use up the per-version
+ * limit; what is excluded only above SFW stays in, for `showcaseVariesByRegion` to see.
+ */
+export async function getVersionShowcaseImages(modelVersionIds: number[], browsingLevel: number) {
+  const [withinSfw, withinAll] = await Promise.all([
+    resolveShowcaseExclusions({ browsingLevel: sfwBrowsingLevelsFlag }),
+    resolveShowcaseExclusions({ browsingLevel: allBrowsingLevelsFlag }),
+  ]);
+  const excludedTagIds = withinSfw.excludedTagIds.filter((id) =>
+    withinAll.excludedTagIds.includes(id)
+  );
+  const images = await getImagesForModelVersion({
+    modelVersionIds,
+    include: ['meta', 'tags'],
+    imagesPerVersion: 10,
+    browsingLevel,
+    excludedTagIds,
+    excludePoi: withinSfw.disablePoi && withinAll.disablePoi,
+    excludeMinor: withinSfw.disableMinor && withinAll.disableMinor,
+  });
+  // The tag read answered for every image (it throws otherwise); one it has no entry for has no tags.
+  return images.map((image) => ({ ...image, tags: image.tags ?? [] }));
+}
+
+const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
+
+/**
+ * Whether a caller in a region served only SFW levels could get a different body than one served
+ * every level: the version or a showcase image is above SFW, or the exclusions resolved at the two
+ * levels keep different images.
+ */
+export async function showcaseVariesByRegion(
+  versionNsfwLevel: number,
+  images: AsyncReturnType<typeof getImagesForModelVersion>
+) {
+  if (aboveSfw(versionNsfwLevel) || images.some((image) => aboveSfw(image.nsfwLevel))) return true;
+  const [withinSfw, withinAll] = await Promise.all([
+    getShowcaseImageFilter({ browsingLevel: sfwBrowsingLevelsFlag }),
+    getShowcaseImageFilter({ browsingLevel: allBrowsingLevelsFlag }),
+  ]);
+  return images.some((image) => withinSfw(image) !== withinAll(image));
+}
+
 export async function prepareModelVersionResponse(
   modelVersion: ModelVersionApiReturn & { vaeId?: number | null },
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>,
   // `null` means known-ungated; only `undefined` self-fetches.
-  paidAccess?: PublicPaidAccessDto | null
+  paidAccess?: PublicPaidAccessDto | null,
+  // The .com face, as the API v1 model list resolves it: for a caller served only safe levels.
+  showSfwFace = false,
+  // `isRedCapableHost` of the request: decides which training datasets are offered.
+  redCapable = false,
+  // `apiBrowsingLevel` of the request: the showcase's levels, and the level its exclusions resolve at.
+  browsingLevel = sfwBrowsingLevelsFlag
 ) {
-  const { files, model, metrics, vaeId, ...version } = modelVersion;
+  // `availability` and the owner only decide visibility; they are not part of the response.
+  const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
+  const {
+    availability: modelAvailability,
+    userId: ownerId,
+    minor,
+    sfwOnly,
+    ...storedModel
+  } = modelRow;
+  const withSfwFace = showSfwFace && storedModel.sfwName != null;
+  const model = resolveModelFace(storedModel, withSfwFace);
+  // A .com face has no per-version description; the .red one is not shown in its place.
+  const version = withSfwFace ? { ...storedVersion, description: null } : storedVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
   files.push(...vae);
   const castedFiles = files as Array<
@@ -186,28 +271,30 @@ export async function prepareModelVersionResponse(
   const primaryFile = getPrimaryFile(castedFiles);
   if (!primaryFile) return null;
 
-  images ??= await getImagesForModelVersion({
-    modelVersionIds: [version.id],
-    include: ['meta'],
-    imagesPerVersion: 10,
-  });
+  images ??= await getVersionShowcaseImages([version.id], browsingLevel);
+  const shows = await getShowcaseImageFilter({ browsingLevel });
+  images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));
+  images = (
+    await holdShowcaseImages(
+      { [version.id]: { images } },
+      new Map([[version.id, { modelId: version.modelId, minor, sfwOnly }]])
+    )
+  )[version.id].images;
   if (paidAccess === undefined)
     paidAccess = toPublicPaidAccessDto(
       (await getPaidAccess('ModelVersion', [version.id]))[version.id]
     );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
-  const includeImages = model.mode !== ModelModifier.TakenDown;
+  const includeImages = !isModelWithheld(model);
+  const listed = await trainingDataListing(dbRead, [{ id: version.id, files }], { redCapable });
 
   // Creator Controls: gate the version download count (public API — no owner/mod
   // bypass wired here, matching buildPublicModelResponse). The base query doesn't
   // carry meta/owner, so fetch the privacy inputs directly.
-  const privacy = await dbRead.modelVersion.findUnique({
-    where: { id: version.id },
-    select: {
-      meta: true,
-      model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
-    },
-  });
+  const { kyselyRead } = await loadKyselyDb();
+  let privacy = await readModelVersionPrivacyViaKysely(kyselyRead, version.id);
+  // `undefined` is a version whose model or user row is gone; the Prisma read throws for it.
+  if (privacy === undefined) privacy = await readModelVersionPrivacyViaPrisma(dbRead, version.id);
   // Only resolve CP membership when something is actually hidden (version meta, model
   // meta, or the owner's user default). When nothing is hidden, the resolver returns
   // NONE regardless of membership, so the cached membership read can be skipped —
@@ -245,13 +332,19 @@ export async function prepareModelVersionResponse(
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
       ? castedFiles
-          .filter((file) => file.visibility === ModelFileVisibility.Public)
+          .filter((file) => file.visibility === ModelFileVisibility.Public && listed(file))
           .map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
             ...file,
             metadata: reduceToBasicFileMetadata(metadata),
             hashes: hashesAsObject(hashes),
             name: safeDecodeURIComponent(
-              getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
+              // The stored name, so the advertised name matches the file the download route serves.
+              getDownloadFilename({
+                model: storedModel,
+                modelVersion: version,
+                file,
+                versionFiles: castedFiles,
+              })
             ),
             primary: primaryFile.id === file.id,
             // Pin the URL to THIS file — see the matching note in
@@ -274,7 +367,7 @@ export async function prepareModelVersionResponse(
           }))
       : [],
     images: includeImages
-      ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
+      ? images.map(({ url, id, userId, name, modelVersionId, tags, ...image }) => ({
           url: getEdgeUrl(url, {
             original: true,
             name: id.toString(),
@@ -292,17 +385,53 @@ export async function prepareModelVersionResponse(
   };
 }
 
+type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
+
+/**
+ * `getViewer` is only called for a version of a flagged or Private model, so a public caller pays
+ * for no session lookup. A version the viewer may not see gets the same 404 as one that does not
+ * exist.
+ */
 export async function resModelVersionDetails(
   req: NextApiRequest,
   res: NextApiResponse,
-  modelVersion: ModelVersionApiReturn | null
+  modelVersion: ModelVersionApiReturn | null,
+  getViewer: () => Promise<Viewer>
 ) {
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+  const hidden =
+    !!modelVersion && (await getHiddenModelVersionIds([modelVersion], getViewer)).size > 0;
+  const browsingLevel = apiBrowsingLevel(req);
+  if (!modelVersion || hidden) {
+    // A region held to SFW is refused versions the others are served.
+    if (browsingLevel !== allBrowsingLevelsFlag)
+      res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(404).json({ error: 'Model not found' });
+  }
 
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
-  const body = await prepareModelVersionResponse(modelVersion, baseUrl);
+  const showSfwFace = showsSfwFace(browsingLevel);
+  const images = await getVersionShowcaseImages([modelVersion.id], browsingLevel);
+  const body = await prepareModelVersionResponse(
+    modelVersion,
+    baseUrl,
+    images,
+    undefined,
+    showSfwFace,
+    isRedCapableHost(req.headers.host),
+    browsingLevel
+  );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
+  // Only its owner or a moderator gets here with a Private version: never let a cache keep it.
+  // Nor a response that varies by region, which the shared cache doesn't key on. A region held to
+  // SFW can't tell what it was not sent, so none of its responses are kept.
+  if (
+    isPrivateModelVersion(modelVersion) ||
+    browsingLevel !== allBrowsingLevelsFlag ||
+    modelVersion.model.sfwName != null ||
+    (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
+  )
+    res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);
 }

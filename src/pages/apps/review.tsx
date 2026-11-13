@@ -1,11 +1,25 @@
-import { Tabs } from '@mantine/core';
+import { Badge, Divider, Tabs, Text } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
-import { IconCheck, IconClipboardList, IconClock, IconFlag, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconDatabase,
+  IconClipboardList,
+  IconClock,
+  IconFlag,
+  IconLayoutGrid,
+  IconMessage2,
+  IconUserPlus,
+  IconX,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
+import { AppDocStoreReportsQueue } from '~/components/Apps/AppDocStoreReportsQueue';
+import { AppFeedbackModQueue } from '~/components/Apps/AppFeedbackModQueue';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
+import { SubListingReviewQueue } from '~/components/Apps/SubListingReviewQueue';
+import { AppAccessRequestsQueue } from '~/components/Moderation/AppAccessRequests/AppAccessRequestsQueue';
 // The off-site review MODAL is now PAGE-OWNED (lifted here) so a single instance is
 // shared by the unified Pending list AND the `AppListingsModerationTable` — no
 // divergence. `OffsiteReportsQueue` still powers the Reports tab.
@@ -31,6 +45,7 @@ import {
   type PriorVersionsSelection,
 } from '~/components/Apps/PriorVersionsModal';
 import { UnifiedReviewList, type VersionHistoryTarget } from '~/components/Apps/UnifiedReviewList';
+import { usePendingApprovalIds } from '~/components/Apps/reviewApprovalToasts';
 import type {
   CombinedReviewPayload,
   OffsiteReviewRequest,
@@ -38,7 +53,6 @@ import type {
 } from '~/components/Apps/unifiedReviewRow';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -50,7 +64,7 @@ import { trpc } from '~/utils/trpc';
  * /apps/review — Moderator review queue + history for Apps (on-site App Blocks AND
  * off-site external listings), UNIFIED into one list per tab.
  *
- * Five tabs:
+ * Nine tabs:
  *  - Pending  — ONE oldest-first FIFO list interleaving on-site publish requests
  *               (`blocks.listPendingRequests`) + off-site requests
  *               (`appListings.listPendingRequests`). Each row carries a kind badge
@@ -59,6 +73,13 @@ import { trpc } from '~/utils/trpc';
  *  - Rejected — unified newest-first history (on-site + off-site rejected requests).
  *  - Reports  — off-site listing report queue + mod takedown actions (unchanged).
  *  - Manage listings — the full all-status lifecycle table (reset/relist/claim/purge).
+ *  - Sub-listings — store items inside apps, and staged edits to them.
+ *  - App feedback — users' private feedback to app developers, with hide/unhide.
+ *  - Storage reports — viewer-reported shared documents in the App Blocks document store,
+ *               across apps, with hide/unhide/delete (`apps.mod.docStore.*`).
+ *  - Access requests — "Request access" submissions from `/apps/build`; approving grants builder
+ *               access (`AppAccessRequestsQueue`). Its old home, `/moderator/app-access-requests`,
+ *               redirects here.
  *
  * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
  * and the off-site `OffsiteReviewModal`. The unified list + the management table
@@ -90,12 +111,21 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-type TabValue = 'pending' | 'approved' | 'rejected' | 'reports' | 'manage';
+const TAB_VALUES = [
+  'pending',
+  'approved',
+  'rejected',
+  'reports',
+  'manage',
+  'sub-listings',
+  'app-feedback',
+  'storage-reports',
+  'access-requests',
+] as const;
+type TabValue = (typeof TAB_VALUES)[number];
 
 function isTabValue(v: unknown): v is TabValue {
-  return (
-    v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports' || v === 'manage'
-  );
+  return (TAB_VALUES as readonly unknown[]).includes(v);
 }
 
 /** Rows fetched per source per page (bounded by each proc's schema at ≤100). Mod
@@ -208,6 +238,75 @@ function mergeById<T extends { id: string }>(accumulated: T[], page: T[]): T[] {
   return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
 }
 
+/** Pending store items — new ones plus edits to approved ones — shown on the tab label. */
+export function SubListingPendingBadge() {
+  const { data } = trpc.appListings.countSubListingQueue.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data?.count) return null;
+  return (
+    <Badge size="xs" color="yellow" variant="filled" data-testid="sub-listing-pending-count">
+      {data.count}
+    </Badge>
+  );
+}
+
+/**
+ * Submissions waiting for review (on-site publish requests + listing requests), shown on the
+ * Pending tab label. A count proc, like its siblings, so the poll fetches two numbers rather
+ * than two pages of rows. Hidden at zero, like `SubListingPendingBadge`.
+ */
+export function ReviewQueuePendingBadge() {
+  const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  // Approvals still in their undo window are hidden from the Pending list (`hideIds` below), so
+  // they are not counted here either: the badge and the rows it labels agree. Clamped, since a
+  // poll can land after the server approved one but before the queue marks it committed.
+  const pendingApprovalIds = usePendingApprovalIds();
+  const total = Math.max(0, (data?.total ?? 0) - pendingApprovalIds.size);
+  if (!total) return null;
+  return (
+    <Badge size="xs" color="blue" variant="filled" data-testid="apps-review-pending-count">
+      {total}
+    </Badge>
+  );
+}
+
+/** Reports a developer flagged that no moderator has hidden yet, shown on the tab label. */
+export function AppFeedbackFlaggedBadge() {
+  const { data } = trpc.appFeedback.modCountFlagged.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data) return null;
+  return (
+    <Badge size="xs" color="red" variant="filled" data-testid="app-feedback-flagged-count">
+      {data}
+    </Badge>
+  );
+}
+
+/**
+ * Pending "Request access" submissions, shown on the tab label. Backed by its own count proc, like
+ * the sibling badges, so the poll fetches a number rather than rows. The queue's decide mutation
+ * invalidates `appAccessRequest.countPending`, so the badge moves as soon as a moderator decides.
+ */
+export function AppAccessRequestsPendingBadge() {
+  const { data } = trpc.appAccessRequest.countPending.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data) return null;
+  return (
+    <Badge size="xs" color="yellow" variant="filled" data-testid="app-access-request-pending-count">
+      {data}
+    </Badge>
+  );
+}
+
 export default function ReviewQueuePage() {
   const features = useFeatureFlags();
   const router = useRouter();
@@ -305,7 +404,7 @@ export default function ReviewQueuePage() {
       */}
       <AppsPageLayout
         title="App publish-request queue"
-        subtitle={`Moderator review for Apps. ${EMBEDDED_KIND_LABEL} + ${STANDALONE_KIND_LABEL} submissions share one queue per tab; Pending is oldest-first, history is newest-first.`}
+        subtitle="Review new apps, listings and reports. Oldest first."
       >
         <ActivePreviewsPanel />
 
@@ -316,18 +415,81 @@ export default function ReviewQueuePage() {
           }}
           keepMounted={false}
         >
-          <Tabs.List>
-            <Tabs.Tab value="pending" leftSection={<IconClock size={14} />}>
+          {/*
+            🔴 ONE ROW AT EVERY WIDTH. The list used to wrap onto four lines on a phone,
+            pushing the queue below the fold; it now scrolls sideways within itself (never
+            the page) — `review-queue-tabs` is what the mobile e2e measures.
+
+            Grouped: what is WAITING ON a moderator (with counts) first, then history and
+            admin. The group labels are decoration for sighted users (`aria-hidden`); the
+            tablist's own order carries the grouping for everyone else.
+          */}
+          <Tabs.List
+            data-testid="review-queue-tabs"
+            // Survives the production build (testids do not) — the preview e2e finds the bar by it.
+            aria-label="Review queues"
+            style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}
+          >
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={600}
+              tt="uppercase"
+              aria-hidden
+              style={{ alignSelf: 'center', whiteSpace: 'nowrap', paddingInline: 8 }}
+            >
+              To review
+            </Text>
+            <Tabs.Tab
+              value="pending"
+              leftSection={<IconClock size={14} />}
+              rightSection={<ReviewQueuePendingBadge />}
+            >
               Pending
             </Tabs.Tab>
+            <Tabs.Tab value="reports" leftSection={<IconFlag size={14} />}>
+              Reports
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="sub-listings"
+              leftSection={<IconLayoutGrid size={14} />}
+              rightSection={<SubListingPendingBadge />}
+            >
+              Sub-listings
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="app-feedback"
+              leftSection={<IconMessage2 size={14} />}
+              rightSection={<AppFeedbackFlaggedBadge />}
+            >
+              App feedback
+            </Tabs.Tab>
+            <Tabs.Tab value="storage-reports" leftSection={<IconDatabase size={14} />}>
+              Storage reports
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="access-requests"
+              leftSection={<IconUserPlus size={14} />}
+              rightSection={<AppAccessRequestsPendingBadge />}
+            >
+              Access requests
+            </Tabs.Tab>
+            <Divider orientation="vertical" mx="xs" my={6} aria-hidden />
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={600}
+              tt="uppercase"
+              aria-hidden
+              style={{ alignSelf: 'center', whiteSpace: 'nowrap', paddingInline: 8 }}
+            >
+              History &amp; admin
+            </Text>
             <Tabs.Tab value="approved" leftSection={<IconCheck size={14} />}>
               Approved
             </Tabs.Tab>
             <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
               Rejected
-            </Tabs.Tab>
-            <Tabs.Tab value="reports" leftSection={<IconFlag size={14} />}>
-              Reports
             </Tabs.Tab>
             <Tabs.Tab value="manage" leftSection={<IconClipboardList size={14} />}>
               Manage listings
@@ -367,11 +529,27 @@ export default function ReviewQueuePage() {
             <OffsiteReportsQueue />
           </Tabs.Panel>
 
+          <Tabs.Panel value="sub-listings" pt="md">
+            <SubListingReviewQueue />
+          </Tabs.Panel>
+
           <Tabs.Panel value="manage" pt="md">
             {/* Full all-status listings MANAGEMENT table (reset/relist/claim/purge).
                 Its pending rows' Review action opens the same page-owned off-site
                 modal; its lifecycle-action modals stay local to it. */}
             <AppListingsModerationTable openOffsiteReview={openOffsiteReview} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="app-feedback" pt="md">
+            <AppFeedbackModQueue />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="storage-reports" pt="md">
+            <AppDocStoreReportsQueue />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="access-requests" pt="md">
+            <AppAccessRequestsQueue />
           </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>
@@ -633,11 +811,17 @@ export function UnifiedPendingTab({
    * since been deleted. `review-queue-poll.browser.test.tsx` asserts that this tab
    * contributes no controls of its own, so the chrome cannot creep back unnoticed.
    */
+  // Approvals still in their 10-second undo window are decided: they leave the list now,
+  // and come back only if the moderator presses Undo.
+  const pendingApprovalIds = usePendingApprovalIds();
+
   return (
     <UnifiedReviewList
       onsiteItems={onsiteItems}
       offsiteItems={offsiteItems}
       direction="asc"
+      showSignals
+      hideIds={pendingApprovalIds}
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
       openCombinedReview={boundCombined}

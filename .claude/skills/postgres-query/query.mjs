@@ -35,6 +35,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const skillDir = __dirname;
 const projectRoot = resolve(__dirname, '../../..');
 
+// Which file supplied each key this script set. A key already in the process environment has no
+// entry: the caller chose it on purpose.
+const envSource = {};
+
 // Simple .env parser (avoid external dependencies)
 function loadEnv() {
   const envFiles = [
@@ -57,6 +61,7 @@ function loadEnv() {
         // must not hand the run to the root .env, which names a different database.
         if (process.env[key] === undefined) {
           process.env[key] = value;
+          envSource[key] = envPath;
         }
       }
       loaded = true;
@@ -210,6 +215,20 @@ if (!connectionString) {
   process.exit(1);
 }
 
+// The repo-root .env is the app's own config: its database keys name the local development
+// database, under the same names this skill uses for remote ones. Only --dev may read a URL from
+// it; every other target refuses rather than label a local database with a remote target's name.
+const skillEnvPath = resolve(skillDir, '.env');
+const connectionSource = envSource[connectionVar];
+if (targetName !== 'dev' && connectionSource && connectionSource !== skillEnvPath) {
+  console.error(
+    `Error: ${connectionVar} for ${target.flag} was read from ${connectionSource}, the app's own .env, ` +
+      `which does not point at ${target.label}.`
+  );
+  console.error(`Put ${connectionVar} in ${skillEnvPath} (see SKILL.md), or set it in the environment.`);
+  process.exit(1);
+}
+
 // `sslmode=require` in a connection string makes pg verify the certificate chain, and
 // it WINS over the `ssl` option below - so `--notifications` failed outright with
 // `self-signed certificate in certificate chain` against the bastion, while every other
@@ -297,10 +316,63 @@ async function main() {
   try {
     await client.connect();
 
+    // READ-ONLY BY CONSTRUCTION. Every run without --writable (and every read-only target) runs in a
+    // READ ONLY transaction, so the SERVER refuses a write, whatever the SQL is and whatever server it
+    // lands on. The replica URL alone is not enough: after a failover the read pooler can hold
+    // connections to the new primary, and the read role can still call nextval() or a SECURITY
+    // DEFINER function that writes. Three parts, each needed:
+    //   1. BEGIN READ ONLY, and the query below runs inside it.
+    //   2. A SELECT pins the snapshot. After it, Postgres refuses to turn transaction_read_only off
+    //      ("transaction read-write mode must be set before any query"), even from inside a function.
+    //   3. The user's SQL goes out as ONE statement on the extended protocol, so it cannot COMMIT the
+    //      read-only transaction and then run a second statement outside it. Several statements fail
+    //      with "cannot insert multiple commands into a prepared statement".
+    // The transaction is rolled back, never committed. Under transaction pooling (pgbouncer) all of it
+    // stays on one server connection, so the hot-standby check below speaks for the query too.
+    // Part 3 needs a pg that honours `queryMode: 'extended'`. An older pg (8.11.3 was measured) ignores
+    // the option and sends the simple protocol, where `COMMIT; INSERT ...` ends the read-only
+    // transaction and the INSERT lands. Refuse rather than run unprotected.
+    const readOnlyRun = !writable || target.readOnly;
+    if (readOnlyRun && !new pg.Query({ text: 'SELECT 1', queryMode: 'extended' }).requiresPreparation()) {
+      console.error('Error: the installed pg package cannot send a single extended-protocol statement, so a read cannot be kept read-only. Upgrade pg.');
+      await client.end();
+      process.exit(1);
+    }
+    if (readOnlyRun) {
+      await client.query('BEGIN READ ONLY');
+      const { rows } = await client.query("SELECT current_setting('transaction_read_only') AS ro");
+      if (rows[0]?.ro !== 'on') {
+        console.error(`Error: could not open a read-only transaction (transaction_read_only=${rows[0]?.ro}).`);
+        await client.end();
+        process.exit(1);
+      }
+    }
+
+    // The read-only prod target is a hot standby. A server that is not in recovery is a primary or a
+    // copy, so whatever it returns is not a prod replica read, whatever the URL's name says.
+    if (targetName === 'prod' && connectionVar === 'DATABASE_REPLICA_URL') {
+      const { rows } = await client.query(
+        'SELECT inet_server_addr()::text AS addr, pg_is_in_recovery() AS in_recovery'
+      );
+      const { addr, in_recovery: inRecovery } = rows[0] ?? {};
+      console.error(`Server: ${addr ?? '(local socket)'}, in recovery: ${inRecovery}`);
+      if (inRecovery !== true) {
+        console.error(
+          `Error: ${connectionVar} reached a server that is not a hot standby, so it is not the ` +
+            `${target.label} replica. Check ${connectionSource ?? 'the environment'}.`
+        );
+        await client.end();
+        process.exit(1);
+      }
+    }
+
     const finalQuery = explain ? `EXPLAIN ANALYZE ${query}` : query;
     const start = Date.now();
-    const queryResult = await client.query(finalQuery);
+    const queryResult = await client.query(
+      readOnlyRun ? { text: finalQuery, queryMode: 'extended' } : finalQuery
+    );
     const elapsed = Date.now() - start;
+    if (readOnlyRun) await client.query('ROLLBACK');
 
     // A MULTI-STATEMENT query resolves to an ARRAY of Results, one per statement, not to a single
     // Result. Reading `.rows` off that array yields undefined and `.rows.length` throws — which the
@@ -376,6 +448,8 @@ async function main() {
     if (err.message.includes('timeout') || err.message.includes('canceling statement')) {
       console.error(`Error: Query timed out after ${timeoutSeconds} seconds`);
       console.error('Use --timeout <seconds> to increase the limit if needed.');
+    } else if (err.message.includes('multiple commands into a prepared statement')) {
+      console.error('Error: a read runs ONE statement (it stays inside a read-only transaction). Run each statement on its own.');
     } else {
       console.error('Query error:', err.message);
     }

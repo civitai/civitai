@@ -283,7 +283,7 @@ export interface BlockInitPayload {
     expiresAt: string;
     /** Omitted by hosts that predate hub-minted OAuth tokens. */
     kind?: 'block' | 'oauth';
-    /** Present only when manifest declares ai:write:budgeted. */
+    /** Present only when the token carries ai:write:budgeted. */
     buzzBudget?: number;
   };
   context: SlotContext;
@@ -421,6 +421,13 @@ export interface BlockInitPayload {
   domain?: 'green' | 'blue' | 'red' | null;
   maxBrowsingLevel?: number;
   effectiveBrowsingLevel?: number;
+  /**
+   * Advisory local-storage hint for the SDK; see
+   * `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`. Optional and ADDED, like
+   * `viewer.signedIn`, so it cannot trip the deployed guard's missing-field /
+   * wrong-shape rejections documented above.
+   */
+  storageMode?: 'local-preview';
 }
 
 export interface BlockManifest {

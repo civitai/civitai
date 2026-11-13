@@ -7,6 +7,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
+  GENERATOR_QUEUE_INPUT,
   matchesMarkerTags,
   useGetTextToImageRequestsImages,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -23,7 +24,8 @@ export default function GeneratedOutputLightbox({
   workflowId: string;
 }) {
   const dialog = useDialogContext();
-  const { requests, markerTags, isLoading } = useGetTextToImageRequestsImages();
+  const { requests, markerTags, isLoading } =
+    useGetTextToImageRequestsImages(GENERATOR_QUEUE_INPUT);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -148,9 +150,12 @@ export default function GeneratedOutputLightbox({
           // and this panel had no padding at all, so its controls were flush to
           // the viewport bottom — which the cutout now sits inside.
           paddingBottom: 'var(--safe-area-inset-bottom)',
+          // Opened, the details grow upward; past this they scroll instead of leaving the screen.
+          maxHeight: '75dvh',
+          overflowY: 'auto',
         }}
       >
-        {images?.[slide] && (
+        {images?.[slide] && !images[slide].hideDetails && (
           <GenerationDetails
             label="Generation Details"
             params={{ ...images[slide].params, seed: images[slide].seed }}

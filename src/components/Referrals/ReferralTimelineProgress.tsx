@@ -1,4 +1,5 @@
-import { Box, Card, Group, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Box, Card, Group, Progress, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconInfoCircle } from '@tabler/icons-react';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';

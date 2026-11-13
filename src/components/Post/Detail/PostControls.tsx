@@ -1,4 +1,5 @@
-import { Menu, useMantineTheme } from '@mantine/core';
+import { useMantineTheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconEdit,
   IconFlag,
@@ -14,6 +15,9 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { GalleryPromotionModal } from '~/components/Promotion/GalleryPromotionModal';
+import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
+import { StartStorylineMenuItem } from '~/components/Storyline/StartStorylineMenuItem';
+import { isPublished } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
@@ -25,11 +29,13 @@ import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookup
 export function PostControls({
   postId,
   userId,
+  storylinePost,
   children,
 }: {
   postId: number;
   userId: number;
   isModelVersionPost?: number | null;
+  storylinePost?: StorylineSourcePost;
   children: React.ReactElement;
 }) {
   const router = useRouter();
@@ -94,6 +100,9 @@ export function PostControls({
           >
             Promote in a gallery
           </Menu.Item>
+        )}
+        {isOwner && features.storylines && storylinePost && isPublished(storylinePost) && (
+          <StartStorylineMenuItem post={storylinePost} />
         )}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">

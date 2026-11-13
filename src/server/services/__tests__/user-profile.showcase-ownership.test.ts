@@ -61,6 +61,7 @@ const storeShowcase = (showcaseItems: ShowcaseItemSchema[]) =>
     meta: {},
     settings: {},
     publicSettings: {},
+    cosmetics: [],
     profile: { userId: OWNER_ID, message: null, coverImage: null, showcaseItems },
   });
 
@@ -179,6 +180,69 @@ describe('updateUserProfile — showcase ownership', () => {
 
     await expect(updateUserProfile({ userId: OWNER_ID, showcaseItems })).resolves.toBeDefined();
     expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('updateUserProfile — custom showcase placement rows', () => {
+  it('keeps a row for an existing section and drops one that names no section', async () => {
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      id: OWNER_ID,
+      meta: {},
+      settings: {},
+      publicSettings: {},
+      cosmetics: [],
+      profile: {
+        userId: OWNER_ID,
+        message: null,
+        coverImage: null,
+        showcaseItems: [],
+        showcaseSections: [{ id: 'kept', type: 'Model', title: 'Kept', items: [OWN_MODEL] }],
+      },
+    });
+
+    await updateUserProfile({
+      userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
+      profileSectionsSettings: [
+        { key: 'custom:kept', enabled: true },
+        { key: 'custom:ghost', enabled: true },
+        { key: 'showcase', enabled: false },
+      ],
+    });
+
+    expect(tx.userProfile.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          profileSectionsSettings: [
+            { key: 'custom:kept', enabled: true },
+            { key: 'showcase', enabled: false },
+          ],
+        }),
+      })
+    );
+  });
+});
+
+describe('updateUserProfile — custom placement rows without sections', () => {
+  // A user who never created a section (the write is flag-gated) cannot store custom rows through
+  // userProfile.update.
+  it('drops every custom row when the profile has no showcase sections', async () => {
+    storeShowcase([]);
+    await updateUserProfile({
+      userId: OWNER_ID,
+      sessionUserId: OWNER_ID,
+      profileSectionsSettings: [
+        { key: 'custom:any', enabled: true },
+        { key: 'showcase', enabled: true },
+      ],
+    });
+    expect(tx.userProfile.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          profileSectionsSettings: [{ key: 'showcase', enabled: true }],
+        }),
+      })
+    );
   });
 });
 

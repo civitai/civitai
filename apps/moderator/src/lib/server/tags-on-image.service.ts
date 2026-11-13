@@ -6,6 +6,9 @@ import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { syncSearchIndexBulk } from './search-index';
 import { bustImageTagCaches } from './cache';
+import { bustAfterWrite } from './bust-after-write';
+import { invalidateThumbnails } from './thumbnail-cache';
+import { bustProfilePictures } from './profile-picture-cache';
 
 // Unset fields stay NULL; upsert_tag_on_image preserves the existing value on conflict — so a flip can pass
 // just { imageId, tagId, disabled, needsReview } without clobbering source/confidence.
@@ -88,10 +91,18 @@ export async function upsertTagsOnImageNew(args: TagOnImageArgs[]): Promise<void
   `.execute(dbWrite);
 
   const imageIds = [...new Set(items.map((x) => x.imageId))];
-  await bustImageTagCaches(imageIds);
-  await sql`SELECT update_nsfw_levels_new(ARRAY[${sql.join(
-    imageIds.map((id) => sql`${id}::int`)
-  )}])`.execute(dbWrite);
+  // Bust after the recompute (busting first lets a reader refill the thumbnail entry with the old
+  // level), and even when it throws, since the tag rows are already written.
+  try {
+    await sql`SELECT update_nsfw_levels_new(ARRAY[${sql.join(
+      imageIds.map((id) => sql`${id}::int`)
+    )}])`.execute(dbWrite);
+  } finally {
+    // Non-throwing, or a Redis failure here would skip the thumbnail and avatar refreshes below.
+    await bustAfterWrite('tag-write-cache-bust', () => bustImageTagCaches(imageIds));
+    await invalidateThumbnails(imageIds);
+    await bustProfilePictures({ imageIds });
+  }
   await queueBlockedTagReviews(items);
   void syncSearchIndexBulk({ entityType: 'image', entityIds: imageIds, action: 'update' });
 }

@@ -39,7 +39,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
@@ -89,6 +88,7 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocations: vi.fn() })
 import {
   deleteVersionById,
   publishModelVersionById,
+  purgePublicModelShowcaseEdgeCache,
   unpublishModelVersionById,
 } from '~/server/services/model-version.service';
 
@@ -114,7 +114,12 @@ function stubDeleteRows(files: { url: string; hashes: string[] }[]) {
     meta: {},
   });
   dbMock.dbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 });
-  dbMock.dbWrite.modelVersion.delete.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+  dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+    id: VERSION_ID,
+    modelId: MODEL_ID,
+  } as never);
+  // The guarded DELETE removes the one version: its owner is not held.
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
 }
 
 describe('deleteVersionById — by-hash edge-cache purge', () => {
@@ -204,7 +209,7 @@ describe('unpublishModelVersionById — by-hash edge-cache purge', () => {
     await unpublishModelVersionById({ id: VERSION_ID, user: { id: USER_ID } as never });
 
     expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
-      where: { file: { modelVersionId: VERSION_ID } },
+      where: { file: { modelVersionId: { in: [VERSION_ID] } } },
       select: { hash: true },
     });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);
@@ -273,10 +278,10 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
   it('resolves the version hashes and purges the by-hash URL(s) on publish', async () => {
     stubPublish();
 
-    await publishModelVersionById({ id: VERSION_ID });
+    await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false });
 
     expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
-      where: { file: { modelVersionId: VERSION_ID } },
+      where: { file: { modelVersionId: { in: [VERSION_ID] } } },
       select: { hash: true },
     });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);
@@ -293,9 +298,46 @@ describe('publishModelVersionById — by-hash edge-cache purge', () => {
     stubPublish();
     mockPurgeCache.mockRejectedValue(new Error('cloudflare down'));
 
-    const result = await publishModelVersionById({ id: VERSION_ID });
+    const result = await publishModelVersionById({ id: VERSION_ID, enforceTakedown: false });
 
     expect(result).toMatchObject({ id: VERSION_ID });
     expect(mockPurgeCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('purgePublicModelShowcaseEdgeCache — after a minor or SFW-only flag change', () => {
+  it('purges by-hash for every file of every version, and the model and version by-id URLs', async () => {
+    dbMock.dbRead.modelFileHash.findMany.mockResolvedValue([
+      { hash: 'AAAA1111' },
+      { hash: 'BBBB2222' },
+    ] as never);
+
+    await purgePublicModelShowcaseEdgeCache(MODEL_ID, [VERSION_ID, 4243]);
+
+    expect(dbMock.dbRead.modelFileHash.findMany).toHaveBeenCalledWith({
+      where: { file: { modelVersionId: { in: [VERSION_ID, 4243] } } },
+      select: { hash: true },
+    });
+    const urls = new Set(
+      mockPurgeCache.mock.calls.flatMap(([arg]) => (arg as { urls: string[] }).urls)
+    );
+    expect(urls).toEqual(
+      new Set([
+        'https://civitai.com/api/v1/model-versions/by-hash/AAAA1111',
+        'https://civitai.com/api/v1/model-versions/by-hash/aaaa1111',
+        'https://civitai.com/api/v1/model-versions/by-hash/BBBB2222',
+        'https://civitai.com/api/v1/model-versions/by-hash/bbbb2222',
+        `https://civitai.com/api/v1/models/${MODEL_ID}`,
+        `https://civitai.com/api/v1/model-versions/${VERSION_ID}`,
+        'https://civitai.com/api/v1/model-versions/4243',
+      ])
+    );
+  });
+
+  it('still purges the model URL when it has no versions', async () => {
+    await purgePublicModelShowcaseEdgeCache(MODEL_ID, []);
+    expect(dbMock.dbRead.modelFileHash.findMany).not.toHaveBeenCalled();
+    const urls = mockPurgeCache.mock.calls.flatMap(([arg]) => (arg as { urls: string[] }).urls);
+    expect(urls).toEqual([`https://civitai.com/api/v1/models/${MODEL_ID}`]);
   });
 });

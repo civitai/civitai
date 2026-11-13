@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { uniqBy } from 'lodash-es';
 import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
@@ -33,8 +34,12 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
 import classes from './CreatorCard.module.css';
+import { cardGlowOf } from './card-glow';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
+
+/** The 70px avatar offset plus about 100px of name. */
+const NAME_SIDE_MIN_WIDTH = 170;
 
 export const CreatorCardSimple = memo((props: CreatorCardSimpleProps) => (
   <CreatorCardSimpleContent {...props} />
@@ -102,6 +107,15 @@ const CreatorCardSimpleContent = ({
   const isVideo = backgroundImage?.data?.type === 'video';
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
+  const glow = cardGlowOf(
+    cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.CardDecoration)?.cosmetic?.data
+  );
+  const glowProps: Pick<CardProps, 'className' | 'style'> = glow
+    ? {
+        className: clsx(cardProps.className, classes.glow, glow.animated && classes.glowAnimated),
+        style: [glow.style, cardProps.style],
+      }
+    : {};
   const stats = creator?.stats;
 
   const displayStats = data
@@ -111,7 +125,7 @@ const CreatorCardSimpleContent = ({
     : // Avoid displaying stats until we load the data
       [];
   return (
-    <ElementInView component={Card} p="md" withBorder {...cardProps}>
+    <ElementInView component={Card} p="md" withBorder {...cardProps} {...glowProps}>
       <Card.Section style={{ position: 'relative' }}>
         {/* Default background as a base layer so the card always shows an image
             (no blank flash) while a custom cosmetic loads on top of it. */}
@@ -180,10 +194,11 @@ const CreatorCardSimpleContent = ({
           </Group>
           <Box className={classes.profileDetailsContainer}>
             <Stack gap="xs" className={classes.profileDetails} py={8} h="100%">
-              <Group align="center" justify="space-between" wrap="nowrap" gap="xs">
-                {/* Name side yields (shrinks + clips) so the fixed action icons
-                    below never get pushed off the card on smaller widths. */}
-                <Box style={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+              <Group align="center" justify="space-between" wrap="wrap" gap="xs">
+                {/* The name keeps NAME_SIDE_MIN_WIDTH; actions that would squeeze it wrap under it. */}
+                <Box
+                  style={{ minWidth: 0, flex: `1 1 ${NAME_SIDE_MIN_WIDTH}px`, overflow: 'hidden' }}
+                >
                   <UserProfileLink user={creator} linkToProfile>
                     <Group wrap="nowrap">
                       <Box className={classes.avatar}>
@@ -198,6 +213,7 @@ const CreatorCardSimpleContent = ({
                           }}
                           user={creatorWithCosmetics}
                           withHoverCard={false}
+                          withShowcaseHat
                         />
                       </Box>
                       <Stack gap={0} ml={70} style={{ minWidth: 0 }}>
@@ -223,7 +239,9 @@ const CreatorCardSimpleContent = ({
                     </Group>
                   </UserProfileLink>
                 </Box>
-                {actions ? <Box style={{ flexShrink: 0 }}>{actions(creator)}</Box> : null}
+                {actions ? (
+                  <Box style={{ flexShrink: 0, marginLeft: 'auto' }}>{actions(creator)}</Box>
+                ) : null}
               </Group>
             </Stack>
           </Box>

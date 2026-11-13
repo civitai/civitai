@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as TrainingDataRestricted from '~/server/services/training-data-restricted.service';
 
 // One local named `mockDbRead` served BOTH clients, and the file drives both sides of a genuine
 // split: `count` (model-file.service:599), `findFirst` (:617) and `findMany` (:36) are dbRead,
@@ -22,8 +23,21 @@ const mockDbWrite = dbMock.dbWrite;
 const { mockCacheFetch } = vi.hoisted(() => ({ mockCacheFetch: vi.fn() }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: () => ({ bust: vi.fn(), fetch: mockCacheFetch, lookupFn: undefined }),
+  // resourceDataCache, reached through updateFile's cache bust; not exercised here.
+  createCachedArray: () => ({ bust: vi.fn(), fetch: vi.fn() }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
+const { mockVersionHasStudioDataset } = vi.hoisted(() => ({
+  mockVersionHasStudioDataset: vi.fn(async (_db: unknown, _versionId: number) => false),
+}));
+// "Is a Training Studio version" has its own PGlite coverage (training-data-share.behavior.test.ts).
+vi.mock('~/server/services/training-data-restricted.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingDataRestricted>()),
+  versionHasStudioDataset: mockVersionHasStudioDataset,
+}));
+beforeEach(() => {
+  mockVersionHasStudioDataset.mockImplementation(async () => false);
+});
 
 import * as modelFileService from '~/server/services/model-file.service';
 import {
@@ -394,5 +408,122 @@ describe('getFilesForModelVersionCache — nested files array is caller-owned', 
     mockCacheFetch.mockImplementation(async () => ({ '42': { modelVersionId: 42 } }));
     const result = await getFilesForModelVersionCache([42]);
     expect(result['42']).toEqual({ modelVersionId: 42 });
+  });
+});
+
+describe('createFile / updateFile — renaming a download (overrideName)', () => {
+  const OWNER = 1;
+  const storedRow = {
+    id: 77,
+    name: 'X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    overrideName: null,
+    url: 'https://bucket/modelVersion/5/X40F7C8WA9TN0XW80MTTCT2TT0.safetensors',
+    type: 'Model',
+    metadata: {},
+    modelVersionId: 5,
+  };
+
+  beforeEach(() => {
+    // Answers the way Postgres would: the row only when the ownership scope in `where` admits it.
+    mockDbWrite.modelFile.findUnique.mockImplementation(((args: {
+      where?: { modelVersion?: { model?: { userId?: number } } };
+    }) => {
+      const scopedTo = args.where?.modelVersion?.model?.userId;
+      return Promise.resolve(scopedTo === undefined || scopedTo === OWNER ? storedRow : null);
+    }) as never);
+    mockDbWrite.modelFile.updateMany.mockResolvedValue({ count: 1 } as never);
+  });
+
+  it('refuses a user who does not own the model, and writes nothing', async () => {
+    await expect(
+      modelFileService.updateFile({ id: 77, overrideName: 'stolen.safetensors', userId: 2 })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockDbWrite.modelFile.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('leaves a stored name that is re-sent unchanged exactly as it was', async () => {
+    // Saved before the server sanitised, with no extension: rewriting it on every save would make
+    // it look changed and send it back through the blocklist.
+    mockDbWrite.modelFile.findUnique.mockResolvedValue({
+      ...storedRow,
+      overrideName: 'legacy',
+    } as never);
+    await modelFileService.updateFile({ id: 77, overrideName: 'legacy', userId: OWNER });
+    expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 77 },
+      data: { overrideName: 'legacy', metadata: undefined },
+    });
+  });
+
+  it('sanitises the name a new file is created with', async () => {
+    mockDbWrite.modelVersion.findFirst.mockResolvedValue({ id: 5 } as never);
+    mockDbWrite.modelFile.create.mockResolvedValue({ id: 78 } as never);
+    await modelFileService.createFile({
+      name: storedRow.name,
+      overrideName: '../a"\r\nb',
+      url: storedRow.url,
+      sizeKB: 1,
+      type: 'Model',
+      modelVersionId: 5,
+      select: { id: true },
+      userId: OWNER,
+    });
+    expect(mockDbWrite.modelFile.create.mock.calls[0][0].data).toMatchObject({
+      overrideName: '_a_ b.safetensors',
+    });
+  });
+
+  it.each([
+    ['the owner', { userId: OWNER }],
+    ['a moderator', { userId: 999, isModerator: true }],
+  ])('lets %s rename, sanitised server-side, without touching url or name', async (_l, who) => {
+    await modelFileService.updateFile({ id: 77, overrideName: '../a"\r\nb', ...who });
+    expect(mockDbWrite.modelFile.updateMany).toHaveBeenCalledWith({
+      where: { id: 77 },
+      data: { overrideName: '_a_ b.safetensors', metadata: undefined },
+    });
+  });
+});
+
+describe('createFile — a second Training Data file on a Training Studio version', () => {
+  /** Whether the file's own version (5) is a Training Studio version. */
+  const studioVersion = (has: boolean) =>
+    mockVersionHasStudioDataset.mockImplementation(
+      async (_db, versionId) => has && versionId === 5
+    );
+  const create = (who: { userId: number; isModerator?: boolean }) =>
+    modelFileService.createFile({
+      name: 'dataset.zip',
+      url: 'https://bucket/training-images/5/dataset.zip',
+      sizeKB: 1,
+      type: 'Training Data',
+      visibility: 'Public',
+      modelVersionId: 5,
+      select: { id: true },
+      ...who,
+    });
+  const createdVisibility = () => mockDbWrite.modelFile.create.mock.calls[0][0].data.visibility;
+
+  beforeEach(() => {
+    mockDbWrite.modelVersion.findFirst.mockResolvedValue({ id: 5 } as never);
+    mockDbWrite.modelFile.create.mockResolvedValue({ id: 78 } as never);
+  });
+
+  it("saves the owner's Public upload as Private", async () => {
+    studioVersion(true);
+    await create({ userId: 1 });
+    expect(createdVisibility()).toBe('Private');
+  });
+
+  it('keeps Public on a version with no Studio dataset', async () => {
+    studioVersion(false);
+    await create({ userId: 1 });
+    expect(createdVisibility()).toBe('Public');
+  });
+
+  it("keeps a moderator's Public upload Public", async () => {
+    studioVersion(true);
+    await create({ userId: 999, isModerator: true });
+    expect(createdVisibility()).toBe('Public');
   });
 });

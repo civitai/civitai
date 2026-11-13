@@ -14,8 +14,8 @@ import {
   TextInput,
   NumberInput,
   ThemeIcon,
-  Menu,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconArrowLeft,
   IconCheck,

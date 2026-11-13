@@ -23,6 +23,12 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 /** One prefill asset (icon/cover) — its imageId + an edge-resolved preview URL. */
 export type EditAsset = { imageId: number | null; url: string | null };
 
+/**
+ * The civitai.red icon / cover overrides as the editor reads them; `available: false` while the
+ * environment cannot store them (the picker is then replaced by a note).
+ */
+export type EditRedMedia = { available: boolean; icon: EditAsset; cover: EditAsset };
+
 /** One prefill screenshot — its row id + imageId + edge-resolved preview URL. */
 export type EditScreenshot = {
   id: string;
@@ -61,7 +67,7 @@ export type ListingEditContext = {
    * which is true for both, and the owner-specific phrasing only on a positive `'owner'`.
    * See {@link isOwnerEdit}.
    */
-  role?: 'owner' | 'editor';
+  role?: 'owner' | 'editor' | 'moderator';
   hasPendingRevision: boolean;
   shadowId: string | null;
   scalars: {
@@ -77,6 +83,8 @@ export type ListingEditContext = {
      * absent reads exactly like "not set" — see {@link editContextToForm}.
      */
     sourceRepoUrl?: string | null;
+    /** The issue-tracker / support link. OPTIONAL for the reason `sourceRepoUrl` is. */
+    issueTrackerUrl?: string | null;
     /**
      * The author's beta declaration. OPTIONAL on this type so every pre-existing edit
      * context + fixture (all of which predate the field) still type-checks, and absent reads
@@ -91,10 +99,16 @@ export type ListingEditContext = {
     screenshots: EditScreenshot[];
   };
   /**
+   * The edit target's civitai.red icon / cover overrides (`ListingAssetStep`'s `redMedia`).
+   * OPTIONAL so pre-existing edit contexts + fixtures still type-check; absent renders no
+   * civitai.red section.
+   */
+  redMedia?: EditRedMedia;
+  /**
    * OAuth-connect scope disclosure (present for the merged external-app model;
    * OPTIONAL so pre-existing non-connect edit contexts + tests still type-check):
    *   - `connectClientId`            — the linked client (null → no scope section).
-   *   - `connectAllowedScopes`       — the client's CURRENT allowedScopes = the
+   *   - `connectAllowedScopes`       — the client's CURRENT consentable scopes = the
    *     DERIVED requested set the form shows read-only + submits.
    *   - `connectRequestedScopes`     — the STORED snapshot (for drift detection).
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
@@ -166,8 +180,8 @@ export function materialEditBlockedReason(
 ): string | null {
   if (!isUnpublishedEdit(ctx)) return null;
   const fields = isOnsiteEdit(ctx)
-    ? 'name, source repository and content rating'
-    : 'name, App URL, source repository and content rating';
+    ? 'name, source repository, issue tracker and content rating'
+    : 'name, App URL, source repository, issue tracker and content rating';
 
   // 🔴 ROLE-AWARE, AND THE DEFAULT IS THE NEUTRAL ONE — see `ListingEditContext.role`.
   // `loadOwnedEditableListing` admits an accepted editor seat, so this copy is read by
@@ -240,7 +254,7 @@ export function isOwnerEdit(ctx: Pick<ListingEditContext, 'role'>): boolean {
  *
  * 🔴 A JUSTIFICATION EDIT IS NORMALLY TRIVIAL, SO THIS IS NOT "LOCK IT WHEN UNPUBLISHED".
  * `buildScalarPatch` emits `requestedScopes` when the justifications changed OR when the
- * connect client's CURRENT `allowedScopes` has DRIFTED from the stored snapshot, and
+ * connect client's CURRENT consentable scopes has DRIFTED from the stored snapshot, and
  * `materialPatchChanges` counts that key as material only when the two masks actually
  * differ. So while they agree, a justification edit is trivial and saves fine here.
  *
@@ -278,7 +292,7 @@ export function scopeDisclosureLockedForEdit(
 export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormValues {
   const base = emptyOffsiteSubmitForm();
   const s = ctx.scalars;
-  // The requested scopes are DERIVED from the client's CURRENT allowedScopes (read-
+  // The requested scopes are DERIVED from the client's CURRENT consentable scopes (read-
   // only in the form; the server re-snapshots them on save). Prefilled justifications
   // are pruned to that derived set so a scope the client no longer has doesn't seed a
   // dangling rationale.
@@ -289,6 +303,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
+    issueTrackerUrl: s.issueTrackerUrl ?? '',
     isBeta: s.isBeta === true,
     // 🔴 `s.isBeta === true &&`, not just `?? ''`. This mirrors the rule the server
     // projections apply, so the form's baseline and the wire value agree — otherwise
@@ -439,6 +454,13 @@ export function buildScalarPatch(
     patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
   }
 
+  // Issue tracker / support link — the same rule as the source link: only when retyped, cleared
+  // with `null`, and the canonical comparison is the server's.
+  const issueTrackerUrl = (current.issueTrackerUrl ?? '').trim();
+  if (issueTrackerUrl !== (original.issueTrackerUrl ?? '').trim()) {
+    patch.issueTrackerUrl = issueTrackerUrl.length > 0 ? issueTrackerUrl : null;
+  }
+
   // Beta status + note. Emitted ONLY when the author actually changed them, which is what
   // keeps the two columns out of every unrelated patch — load-bearing while the manual-apply
   // migration is outstanding, since a write naming a missing column would fail the whole
@@ -488,7 +510,7 @@ export function buildScalarPatch(
   }
 
   // OAuth-connect scope disclosure: the server re-snapshots `requestedScopes` from
-  // the client's CURRENT allowedScopes whenever the patch touches scopes, so we send
+  // the client's CURRENT consentable scopes whenever the patch touches scopes, so we send
   // the (derived) mask + shaped justifications when EITHER the justifications changed
   // OR the client's allowedScopes drifted from the stored snapshot. Both re-enter mod
   // review on an approved listing (a scope change is material). No client → no scope

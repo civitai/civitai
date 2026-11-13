@@ -1,0 +1,367 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  buildSetOwnerStatusInput,
+  feedbackEnvironmentLine,
+  feedbackForkLabel,
+  feedbackRowMeta,
+  feedbackSourceLabel,
+  INBOX_COMMITS_NOTE,
+  INBOX_EMPTY_MESSAGE,
+  INBOX_FILTER_EMPTY_MESSAGE,
+  INBOX_GENERIC_ERROR_MESSAGE,
+  INBOX_NO_ACCESS_MESSAGE,
+  INBOX_PRIVACY_NOTE,
+  INBOX_STALE_MESSAGE,
+  INBOX_STATUS_FILTERS,
+  inboxActionError,
+  inboxEmptyMessage,
+  inboxStatusFilterInput,
+  newFeedbackBadge,
+  ownerStatusChoices,
+  ownerStatusLabel,
+  recentErrorLine,
+  reporterLabel,
+} from '~/components/Apps/appFeedbackInbox';
+
+describe('ownerStatusChoices — the status control', () => {
+  it('a NEW row offers all three developer statuses', () => {
+    expect(ownerStatusChoices(null)).toEqual(['acknowledged', 'resolved', 'wont_fix']);
+  });
+
+  it('a set row offers the OTHER two, never the one it already has', () => {
+    expect(ownerStatusChoices('acknowledged')).toEqual(['resolved', 'wont_fix']);
+    expect(ownerStatusChoices('resolved')).toEqual(['acknowledged', 'wont_fix']);
+    expect(ownerStatusChoices('wont_fix')).toEqual(['acknowledged', 'resolved']);
+  });
+});
+
+describe('buildSetOwnerStatusInput — the write is scoped on what the owner last saw', () => {
+  it('sends the row the owner SAW as `expectedOwnerStatus`, so a moved row is a CONFLICT', () => {
+    expect(
+      buildSetOwnerStatusInput('apl_7', { id: 41, ownerStatus: 'acknowledged' }, 'wont_fix')
+    ).toEqual({
+      id: 41,
+      appListingId: 'apl_7',
+      ownerStatus: 'wont_fix',
+      expectedOwnerStatus: 'acknowledged',
+    });
+  });
+
+  it('a NEW row is expected as `null`, not omitted', () => {
+    const input = buildSetOwnerStatusInput('apl_8', { id: 3, ownerStatus: null }, 'resolved');
+    expect(input).toEqual({
+      id: 3,
+      appListingId: 'apl_8',
+      ownerStatus: 'resolved',
+      expectedOwnerStatus: null,
+    });
+    expect('expectedOwnerStatus' in input).toBe(true);
+  });
+});
+
+describe('inboxActionError — what a failed owner write tells the owner', () => {
+  it('CONFLICT is "already changed — refresh", never the raw server text', () => {
+    expect(
+      inboxActionError({ message: 'This feedback has changed', data: { code: 'CONFLICT' } })
+    ).toEqual({ kind: 'stale', message: INBOX_STALE_MESSAGE });
+  });
+
+  it('FORBIDDEN and UNAUTHORIZED both read as lost access', () => {
+    expect(inboxActionError({ message: 'x', data: { code: 'FORBIDDEN' } })).toEqual({
+      kind: 'no_access',
+      message: INBOX_NO_ACCESS_MESSAGE,
+    });
+    expect(inboxActionError({ message: 'x', data: { code: 'UNAUTHORIZED' } })).toEqual({
+      kind: 'no_access',
+      message: INBOX_NO_ACCESS_MESSAGE,
+    });
+  });
+
+  it('anything else, including a missing code, is the generic message', () => {
+    for (const error of [
+      { message: 'boom', data: { code: 'INTERNAL_SERVER_ERROR' } },
+      { message: '[{"code":"too_small"}]', data: { code: 'BAD_REQUEST' } },
+      { message: 'network', data: null },
+      {},
+    ]) {
+      expect(inboxActionError(error)).toEqual({
+        kind: 'other',
+        message: INBOX_GENERIC_ERROR_MESSAGE,
+      });
+    }
+  });
+
+  it('the three messages are distinct', () => {
+    expect(
+      new Set([INBOX_STALE_MESSAGE, INBOX_NO_ACCESS_MESSAGE, INBOX_GENERIC_ERROR_MESSAGE]).size
+    ).toBe(3);
+  });
+});
+
+describe('newFeedbackBadge — the /apps/build count', () => {
+  const counts = { apl_a: 2, apl_b: 7 };
+
+  it('reads THIS row’s count and links to its Feedback tab', () => {
+    expect(newFeedbackBadge(counts, { appListingId: 'apl_b', status: 'approved' })).toEqual({
+      count: 7,
+      label: '7 new feedback',
+      href: '/apps/listing/apl_b/edit?tab=feedback',
+    });
+    expect(newFeedbackBadge(counts, { appListingId: 'apl_a', status: 'draft' })?.count).toBe(2);
+  });
+
+  it('no badge for a listing with no entry, a zero, or while the counts are unresolved', () => {
+    expect(newFeedbackBadge(counts, { appListingId: 'apl_c', status: 'approved' })).toBeNull();
+    expect(
+      newFeedbackBadge({ apl_z: 0 }, { appListingId: 'apl_z', status: 'approved' })
+    ).toBeNull();
+    expect(newFeedbackBadge(undefined, { appListingId: 'apl_a', status: 'approved' })).toBeNull();
+  });
+
+  it('still shown on a REMOVED listing — the editor opens there and so does its Feedback tab', () => {
+    expect(newFeedbackBadge(counts, { appListingId: 'apl_a', status: 'removed' })?.count).toBe(2);
+  });
+
+  it('no badge where the editor route does not open — the link would be a dead end', () => {
+    expect(newFeedbackBadge(counts, { appListingId: 'apl_a', status: 'archived' })).toBeNull();
+  });
+
+  it('encodes the listing id in the href', () => {
+    expect(newFeedbackBadge({ 'a/b': 1 }, { appListingId: 'a/b', status: 'approved' })?.href).toBe(
+      '/apps/listing/a%2Fb/edit?tab=feedback'
+    );
+  });
+});
+
+describe('feedbackRowMeta — "version live when sent" and surface', () => {
+  it('version, short sha and surface', () => {
+    expect(
+      feedbackRowMeta({
+        appBlockVersion: '1.4.0',
+        appBlockSha: '3f9c2ab81d0e',
+        surface: 'page',
+      })
+    ).toEqual(['v1.4.0 (platform commit 3f9c2ab)', 'App page']);
+  });
+
+  it('the model-slot surface has its own label', () => {
+    expect(
+      feedbackRowMeta({ appBlockVersion: '2.0.1', appBlockSha: null, surface: 'slot' })
+    ).toEqual(['v2.0.1', 'Model page']);
+  });
+
+  it("names the developer's own source commit between the version and the surface", () => {
+    expect(
+      feedbackRowMeta({
+        appBlockVersion: '1.4.0',
+        appBlockSha: '07ee0915aa',
+        appSourceCommit: '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901',
+        appSourceDirty: false,
+        surface: 'page',
+      })
+    ).toEqual([
+      'v1.4.0 (platform commit 07ee091)',
+      'reported source 05c2d58 (unverified)',
+      'App page',
+    ]);
+  });
+
+  it('says "uncommitted changes" only on a known-dirty tree, never on an unknown one', () => {
+    const commit = '05c2d58a1b2c3d4e5f60718293a4b5c6d7e8f901';
+    expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: true })).toBe(
+      'reported source 05c2d58 (unverified, uncommitted changes)'
+    );
+    expect(feedbackSourceLabel({ appSourceCommit: commit, appSourceDirty: null })).toBe(
+      'reported source 05c2d58 (unverified)'
+    );
+    expect(feedbackSourceLabel({ appSourceCommit: null, appSourceDirty: true })).toBeNull();
+  });
+
+  it('a sha with no version still identifies the build', () => {
+    expect(
+      feedbackRowMeta({ appBlockVersion: null, appBlockSha: 'abcdef0123', surface: null })
+    ).toEqual(['platform commit abcdef0']);
+  });
+
+  it('nothing known → nothing rendered', () => {
+    expect(feedbackRowMeta({ appBlockVersion: null, appBlockSha: null, surface: null })).toEqual(
+      []
+    );
+  });
+});
+
+describe('labels and filters', () => {
+  it('a NULL owner status is "New"', () => {
+    expect(ownerStatusLabel(null)).toBe('New');
+    expect(ownerStatusLabel('wont_fix')).toBe("Won't fix");
+  });
+
+  it('a deleted reporter reads as such', () => {
+    expect(reporterLabel(null)).toBe('Deleted account');
+    expect(reporterLabel('kai')).toBe('kai');
+  });
+
+  it('the filter set is All, New, then each status — `all` sends no filter', () => {
+    expect(INBOX_STATUS_FILTERS.map((f) => f.value)).toEqual([
+      'all',
+      'new',
+      'acknowledged',
+      'resolved',
+      'wont_fix',
+    ]);
+    expect(inboxStatusFilterInput('all')).toBeUndefined();
+    expect(inboxStatusFilterInput('new')).toBe('new');
+    expect(inboxStatusFilterInput('resolved')).toBe('resolved');
+  });
+});
+
+describe('the copy owners read, pinned literally', () => {
+  it('privacy, empty, stale and lost-access wording', () => {
+    expect(INBOX_PRIVACY_NOTE).toBe(
+      "Private feedback from people using this app. Only this app's developer, their collaborators and Civitai moderators can read it — it never appears on the app's page."
+    );
+    expect(INBOX_EMPTY_MESSAGE).toBe('No feedback to show right now.');
+    expect(INBOX_STALE_MESSAGE).toBe('Someone already changed this feedback. Refresh to see it.');
+    expect(INBOX_NO_ACCESS_MESSAGE).toBe("You no longer have access to this app's feedback.");
+    expect(INBOX_FILTER_EMPTY_MESSAGE).toBe('No feedback with this status.');
+    expect(INBOX_GENERIC_ERROR_MESSAGE).toBe('Something went wrong. Please try again.');
+  });
+});
+
+describe('inboxEmptyMessage', () => {
+  it('unfiltered: nothing left to show (the tab only exists once a row did)', () => {
+    expect(inboxEmptyMessage('all')).toBe(INBOX_EMPTY_MESSAGE);
+  });
+
+  it('a filter that matches nothing says so', () => {
+    expect(inboxEmptyMessage('resolved')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
+    expect(inboxEmptyMessage('new')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
+  });
+});
+
+describe('recentErrorLine — one failed SDK call in the inbox', () => {
+  it('time, call, message and every detail, as one string', () => {
+    expect(
+      recentErrorLine({
+        method: 'SUBMIT_WORKFLOW',
+        message: 'Validation failed: ecosystem: Ecosystem is currently unavailable',
+        code: 'BAD_REQUEST',
+        workflowId: 'wf_8412',
+        input: { kind: 'textToImage', step: 'upscale', modelVersionId: 812 },
+        at: Date.UTC(2026, 10, 11, 12, 3, 4),
+        count: 3,
+      })
+    ).toBe(
+      '12:03:04 UTC SUBMIT_WORKFLOW: Validation failed: ecosystem: Ecosystem is currently unavailable (×3; code BAD_REQUEST; textToImage; step upscale; model version 812; workflow wf_8412)'
+    );
+  });
+
+  it('a rewritten NAVIGATE names the scopes and the app-relative route', () => {
+    expect(
+      recentErrorLine({
+        method: 'NAVIGATE',
+        message: 'Carried out differently than worded.',
+        reason: 'rewritten',
+        scope: { requested: 'unspecified', resolved: 'app' },
+        appRoute: '/generate',
+        at: Date.UTC(2026, 10, 11, 1, 2, 3),
+        count: 1,
+      })
+    ).toBe(
+      '01:02:03 UTC NAVIGATE: Carried out differently than worded. (scope unspecified → app; route /generate)'
+    );
+  });
+
+  it('a time Date cannot render reads as unknown instead of throwing', () => {
+    expect(
+      recentErrorLine({ method: 'X', message: 'm', at: 8_640_000_000_000_001, count: 1 })
+    ).toBe('unknown time X: m');
+  });
+
+  it('no details, no parentheses', () => {
+    expect(
+      recentErrorLine({
+        method: 'GET_BUZZ_BALANCE',
+        message: 'request failed',
+        at: Date.UTC(2026, 10, 11, 0, 0, 9),
+        count: 1,
+      })
+    ).toBe('00:00:09 UTC GET_BUZZ_BALANCE: request failed');
+  });
+});
+
+describe('feedbackEnvironmentLine', () => {
+  it('browser, window and route as one line', () => {
+    expect(
+      feedbackEnvironmentLine({
+        browser: { family: 'samsung', major: 26 },
+        viewport: { width: 412, height: 915 },
+        devicePixelRatio: 2.63,
+        appRoute: '/gallery/12',
+      })
+    ).toBe('Samsung Internet 26 · 412×915 @2.63x · app route /gallery/12');
+  });
+
+  it('names the OS and the scrollbar kind', () => {
+    expect(
+      feedbackEnvironmentLine({
+        browser: { family: 'chrome', major: 131 },
+        os: 'windows',
+        viewport: { width: 1280, height: 720 },
+        scrollbars: 'classic',
+      })
+    ).toBe('Chrome 131 on Windows · 1280×720 · classic scrollbars');
+    expect(feedbackEnvironmentLine({ os: 'linux', scrollbars: 'overlay' })).toBe(
+      'Linux · overlay scrollbars'
+    );
+  });
+
+  it('omits a DPR of 1 and whatever is missing', () => {
+    expect(
+      feedbackEnvironmentLine({ viewport: { width: 1280, height: 720 }, devicePixelRatio: 1 })
+    ).toBe('1280×720');
+    expect(feedbackEnvironmentLine({ browser: { family: 'other' } })).toBe('Other browser');
+    expect(feedbackEnvironmentLine({})).toBeNull();
+    expect(feedbackEnvironmentLine(null)).toBeNull();
+  });
+});
+
+describe('feedbackForkLabel', () => {
+  it('names a public upstream, its version and the commit the fork started at', () => {
+    expect(
+      feedbackForkLabel({
+        upstreamSlug: 'cool-app',
+        upstreamVersion: '1.2.0',
+        forkedAtCommit: '3f9c2ab81d0e3f9c2ab81d0e3f9c2ab81d0e3f9c',
+      })
+    ).toBe('Forked from cool-app v1.2.0 (at 3f9c2ab)');
+  });
+
+  it('a hidden upstream is not named; not a fork is null', () => {
+    expect(
+      feedbackForkLabel({ upstreamSlug: null, upstreamVersion: null, forkedAtCommit: null })
+    ).toBe('Forked from another app');
+    expect(feedbackForkLabel(null)).toBeNull();
+  });
+});
+
+describe('INBOX_COMMITS_NOTE — the checkout advice must be a command that runs', () => {
+  // Bug: the note told the owner to run `civitai app pull <slug>`. `app pull` takes the app in
+  // `--app` and the DIRECTORY as its positional, so that command exits 2. And for a fork or an
+  // App Assistant app, `app pull` clones the SOURCE repository, which does not hold the platform
+  // commit.
+  it('every `civitai app pull` it names passes the app in --app', () => {
+    const invocations = [...INBOX_COMMITS_NOTE.matchAll(/civitai app pull([^`]*)/g)].map(
+      (m) => m[1]
+    );
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const rest of invocations) expect(rest).toContain('--app');
+  });
+
+  it('places the platform commit in the build repository, and says how a source clone reaches it', () => {
+    expect(INBOX_COMMITS_NOTE).toBe(
+      "The platform commit is this release's commit in the app's build repository (civitai-apps/<slug>). For an app with no source repository, `civitai app pull <dir> --app <slug>` clones it; a clone of the source repository has to fetch it first: `git fetch` its origin URL with `civitai-apps-src` swapped for `civitai-apps`. Then `git checkout <sha>`. The reported source commit is what the developer's CLI said at submit; nothing verifies it."
+    );
+  });
+});

@@ -1,25 +1,27 @@
-import { randomUUID } from 'crypto';
 import { expect, test } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, uniqueToken } from './preview-trpc';
+import { UPLOAD_FIXTURE, uploadImage } from './preview-upload';
 
 /**
  * Post-an-image-from-the-generator e2e for a deployed PR preview.
  *
- * The generator "Post" action (GeneratedImageActions.tsx) ultimately persists the
- * image via post.create -> post.addImage, where `url` is the UUID key the browser
- * minted by re-uploading the orchestrator blob to object storage. The server-side
- * createImage (image.service.ts) inserts the Image row using that url VERBATIM —
- * there is NO blob-existence check — so a fabricated UUID exercises the exact
- * post-with-images ATTACH contract without a real generation, upload, Buzz, or GPU.
+ * The generator "Post" action (postGeneratedMedia.ts) hands the generated images to the post
+ * dropzone, which re-uploads each one to object storage and then persists it via
+ * post.create -> post.addImage, where `url` is the object key the upload endpoint minted.
  *
- * Scope (honest): this covers the SERVER contract (post.create + post.addImage — the
- * image-attach mutation no other preview spec exercises). It deliberately does NOT
- * drive the generator UI glue (selection -> transmitter store -> blob re-upload),
- * which needs the external GPU orchestrator + object storage and is unit-covered
- * upstream; and it does NOT publish/assert public visibility, because image
- * ingestion (the external scanner) is unreachable in preview so the row stays
- * Pending. The attach itself returns the created Image row, which IS the proof.
+ * post.addImage only accepts a key the server issued to the caller (see tests/preview-upload.ts),
+ * so a fabricated UUID is refused. This test uploads a real image first and attaches the key it
+ * was issued.
+ *
+ * Scope (honest): this covers the SERVER contract (key issue -> post.create ->
+ * post.addImage, the image-attach mutation no other preview spec exercises). It does NOT
+ * drive the generator UI glue (selection -> transmitter store -> dropzone re-upload), which
+ * needs the external GPU orchestrator and is unit-covered upstream, and it uses the
+ * single-PUT upload endpoint rather than the dropzone's multipart one (both record the key
+ * the same way). It does NOT publish or assert public visibility, because image ingestion
+ * (the external scanner) is unreachable in preview so the row stays Pending. The attach
+ * itself returns the created Image row, which IS the proof.
  *
  * Role: tester (free member that passes the preview gate; post.create + post.addImage
  * are guardedProcedures / MediaWrite — the ci-smoke tester fixture clears them, same
@@ -43,19 +45,20 @@ test.describe('post an image from the generator (tester)', () => {
     });
     expect(typeof post?.id, 'post.create should return a numeric post id').toBe('number');
 
-    // 2. Attach an image to it. `url` is a fabricated v4 UUID standing in for the
-    //    object-storage key the generator flow would have minted; addPostImageSchema
-    //    accepts a uuid and `type` defaults to image, so postId + url + index suffice.
-    const fakeKey = randomUUID();
+    // 2. Upload an image the way the browser does; the server issues its key to the tester.
+    const key = await uploadImage(page.request);
+
+    // 3. Attach it. addPostImageSchema accepts the key as `url` and `type` defaults to
+    //    image, so postId + url + index suffice.
     const image = await trpcMutation<{ id: number } | null>(page.request, 'post.addImage', {
       postId: post!.id,
-      url: fakeKey,
+      url: key,
       index: 0,
-      width: 512,
-      height: 512,
+      width: UPLOAD_FIXTURE.width,
+      height: UPLOAD_FIXTURE.height,
     });
 
-    // 3. post.addImage returns the created Image row (editPostImageSelect) — its numeric
+    // 4. post.addImage returns the created Image row (editPostImageSelect) — its numeric
     //    id is the proof the image attached to the post. No read-back query needed (and
     //    we avoid image.getInfinite, which routes through Meilisearch — unreachable in
     //    preview). No publish: ingestion stays Pending in preview by design.

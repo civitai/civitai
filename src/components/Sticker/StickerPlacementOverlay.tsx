@@ -1,3 +1,6 @@
+import { stickerPoseStyle } from '~/components/Sticker/sticker-pose-style';
+import { Button } from '@mantine/core';
+import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -8,6 +11,11 @@ import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
 import { placementControlPosition } from '~/components/Sticker/placement-control-position';
 import { placementMarkLayout } from '~/components/Sticker/placement-mark-layout';
 import { PENDING_CONTROL_Z } from '~/components/Sticker/placement-layers';
+import type { PeekToggleCorner } from '~/components/Sticker/peek-toggle-corner';
+import {
+  PEEK_TOGGLE_CORNER_CLASS,
+  peekToggleCorner,
+} from '~/components/Sticker/peek-toggle-corner';
 import { StickerPlacementActions } from '~/components/Sticker/StickerPlacementActions';
 import { StickerPlacementHoverCard } from '~/components/Sticker/StickerPlacementHoverCard';
 import { freeMarkerVisible } from '~/components/Sticker/free-marker';
@@ -83,8 +91,17 @@ export function StickerPlacementOverlay({
   armed = false,
   paced = true,
   step = null,
+  takenCorners,
+  hiddenIds,
+  bindPose,
 }: {
   placements: PlacedSticker[];
+  /** Hidden but kept mounted, so showing one again does not replay the reveal. */
+  hiddenIds?: ReadonlySet<number>;
+  /** A ref per sticker for playback that moves it along its track (`useTrackPlayback`). */
+  bindPose?: (id: number) => (node: HTMLElement | null) => void;
+  /** Corners another decoration draws in, which the peek toggle keeps out of. */
+  takenCorners?: PeekToggleCorner[];
   viewerId?: number;
   className?: string;
   /**
@@ -269,8 +286,7 @@ export function StickerPlacementOverlay({
   }, []);
 
   const measureSticker = useCallback(
-    (placement: PlacedSticker) => (node: HTMLDivElement | null) => {
-      const placementId = placement.id;
+    (placementId: number) => (node: HTMLDivElement | null) => {
       const existing = disposers.current.get(placementId);
       if (existing) {
         existing();
@@ -320,6 +336,25 @@ export function StickerPlacementOverlay({
     []
   );
 
+  // A pending sticker is measured for the owner's controls and still plays its track. One stable
+  // ref per sticker, so a re-render does not rebuild its animation.
+  const pendingRef = useMemo(() => {
+    const byId = new Map<number, (node: HTMLDivElement | null) => void>();
+    return (id: number) => {
+      let ref = byId.get(id);
+      if (!ref) {
+        const measure = measureSticker(id);
+        const pose = bindPose?.(id);
+        ref = (node) => {
+          measure(node);
+          pose?.(node);
+        };
+        byId.set(id, ref);
+      }
+      return ref;
+    };
+  }, [measureSticker, bindPose]);
+
   const [replayed, setReplayed] = useState(false);
   useEffect(() => {
     if (step != null) setReplayed(true);
@@ -332,6 +367,20 @@ export function StickerPlacementOverlay({
     if (!armed) setReplayed(false);
   }, [armed]);
 
+  const answering =
+    interactive &&
+    viewerId != null &&
+    placements.some((placement) => placement.isPending && placement.ownerId === viewerId);
+  const [peeking, setPeeking] = useState(false);
+  // Reset once nothing is pending, so the next request does not arrive hidden.
+  useEffect(() => {
+    if (!answering) setPeeking(false);
+  }, [answering]);
+  const peek = peeking && answering;
+  // `visibility`, not `opacity`: hidden controls must not take a tap. Not
+  // unmounted either, which would drop the measurements that position them.
+  const peekStyle: CSSProperties | undefined = peek ? { visibility: 'hidden' } : undefined;
+
   if (!placements.length) return null;
 
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
@@ -340,6 +389,12 @@ export function StickerPlacementOverlay({
   // every placed sticker and not just the one they belong to; isolation would cap
   // them at the layer's own z-index.
   const pendingControls: ReactElement[] = [];
+  const toggleCorner = peekToggleCorner(
+    visible
+      .filter((placement) => placement.isPending && placement.ownerId === viewerId)
+      .map(({ data }) => data),
+    takenCorners
+  );
 
   return (
     <>
@@ -467,13 +522,17 @@ export function StickerPlacementOverlay({
           const body = (
             <div
               key={placement.id}
-              ref={placement.isPending ? measureSticker(placement) : undefined}
-              className={clsx('absolute', interactive && 'pointer-events-auto', revealClassName)}
+              ref={placement.isPending ? pendingRef(placement.id) : bindPose?.(placement.id)}
+              className={clsx(
+                'absolute',
+                interactive && 'pointer-events-auto',
+                revealClassName,
+                // Important: the reveal animation fills `visibility: visible`, which only an
+                // important rule beats.
+                hiddenIds?.has(placement.id) && '!invisible'
+              )}
               style={{
-                left: `${placement.data.x * 100}%`,
-                top: `${placement.data.y * 100}%`,
-                width: `${placement.data.scale * 100}%`,
-                transform: `translate(-50%, -50%) rotate(${placement.data.rotation}deg)`,
+                ...stickerPoseStyle(placement.data),
                 zIndex: layer,
                 ...delayStyle,
               }}
@@ -520,6 +579,7 @@ export function StickerPlacementOverlay({
                     // and the ring goes with the edges.
                     surface === 'card' ? 'inset-0' : '-inset-1'
                   )}
+                  style={peekStyle}
                 />
               )}
 
@@ -547,7 +607,10 @@ export function StickerPlacementOverlay({
                     )}
                     // Counter-rotated: rotation runs to ±180 and a mark riding
                     // the sticker's own transform reads upside down.
-                    style={{ transform: `rotate(${-placement.data.rotation}deg)` }}
+                    style={{
+                      transform: `rotate(${-placement.data.rotation}deg)`,
+                      ...peekStyle,
+                    }}
                   >
                     {stack.map((mark) => (
                       <span key={mark.key} className={clsx(PLACEMENT_MARK_CLASS, mark.className)}>
@@ -704,7 +767,21 @@ export function StickerPlacementOverlay({
           className="pointer-events-none absolute inset-0 overflow-hidden"
           style={{ zIndex: PENDING_CONTROL_Z }}
         >
-          {pendingControls}
+          <div className="pointer-events-none absolute inset-0" style={peekStyle}>
+            {pendingControls}
+          </div>
+          <Button
+            size="sm"
+            h={44}
+            radius="xl"
+            variant="default"
+            className={clsx('pointer-events-auto absolute', PEEK_TOGGLE_CORNER_CLASS[toggleCorner])}
+            leftSection={peek ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+            aria-pressed={peek}
+            onClick={() => setPeeking(!peek)}
+          >
+            {peek ? 'Show controls' : 'Hide controls'}
+          </Button>
         </div>
       )}
     </>

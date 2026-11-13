@@ -58,7 +58,10 @@ vi.mock('~/utils/trpc', () => ({
       follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -90,7 +93,7 @@ vi.mock('~/utils/trpc', () => ({
         // Was MISSING: PageBlockHost calls `trpc.apps.shared.report.useMutation()`
         // unconditionally at render, so without this stub every test in this file
         // crashed at mount with "Cannot read properties of undefined (reading
-        // 'useMutation')". These checks are report-only, so the whole suite — the
+        // 'useMutation')". These checks were report-only, so the whole suite — the
         // guard for the launch-reveal invariants — had been silently red.
         report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },

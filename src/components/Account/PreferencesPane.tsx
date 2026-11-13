@@ -5,7 +5,9 @@ import {
   assistantToggleableFeatures,
   AutoplayGifsToggle,
   EarlyAdopterToggle,
+  FitPostImagesToggle,
   HideBlueBuzzToggle,
+  HideFromReactionListsToggle,
   ModelFileFormatSelect,
   ModelPrecisionSelect,
   ModelQuantTypeSelect,
@@ -82,6 +84,12 @@ export function PreferencesPane() {
         </SettingsSection>
       )}
 
+      <SettingsSection title="Privacy">
+        <SettingRow block>
+          <HideFromReactionListsToggle />
+        </SettingRow>
+      </SettingsSection>
+
       <SettingsSection title="Features">
         {otherToggleableFeatures.map((feature) => (
           <SettingRow block key={feature.key}>
@@ -93,6 +101,9 @@ export function PreferencesPane() {
             <HideBlueBuzzToggle />
           </SettingRow>
         )}
+        <SettingRow block>
+          <FitPostImagesToggle />
+        </SettingRow>
         <SettingRow block>
           <EarlyAdopterToggle />
         </SettingRow>

@@ -1,106 +1,59 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { page } from '$app/state';
-  import { cn } from '@civitai/ui/utils.js';
-  import { dateTime } from '$lib/format';
-  import { urlWith } from '$lib/url';
-  import RestrictionFilters from './RestrictionFilters.svelte';
-  import RestrictionDetail from './RestrictionDetail.svelte';
-  import StatusBadge from './StatusBadge.svelte';
-  import Pager from '$lib/components/Pager.svelte';
-  import { RESTRICTION_TYPE, RESTRICTION_TYPE_LABELS } from '$lib/restriction-types';
-  import type { PageData } from './$types';
+  import {
+    GENERATOR_RESTRICTION_TYPES,
+    RESTRICTION_TYPE_LABELS,
+    RESTRICTION_TYPE,
+    RULINGS_WIRED_FOR,
+  } from '$lib/restriction-types';
+  import RestrictionTriage from '$lib/components/restrictions/RestrictionTriage.svelte';
+  import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import TriageParamTabs from '$lib/components/triage/TriageParamTabs.svelte';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  const selectHref = (id: number) => urlWith(page.url, { selected: id });
-  const pageHref = (n: number) => urlWith(page.url, { page: n, selected: null });
+  const HINTS = {
+    generation: 'prompt blocked by the word list',
+    'bot-account': 'flagged as automated use',
+    scam: 'flagged as a scam',
+  } as const;
+  const typeTabs = GENERATOR_RESTRICTION_TYPES.map((value) => ({
+    value,
+    label: RESTRICTION_TYPE_LABELS[value],
+    hint: HINTS[value],
+  }));
 
-  // Captured BEFORE the ruling's reload: under the default Pending filter the actioned row leaves the
-  // list, but under "Any status" it stays, and picking the head would send the moderator back to a row
-  // they already handled. The successor is decided from the order they were working.
-  let successorId: number | null = $state(null);
-  const rememberSuccessor = () => {
-    const index = data.items.findIndex((i) => i.id === data.current?.id);
-    successorId = (data.items[index + 1] ?? data.items[index - 1])?.id ?? null;
-  };
-
-  const advance = () => {
-    const next = data.items.find((i) => i.id === successorId) ?? null;
-    goto(next ? selectHref(next.id) : urlWith(page.url, { selected: null }), {
-      keepFocus: true,
-      noScroll: true,
-    });
-  };
+  // Named rather than described: no verdict effects exist for some types, so the resolve and ban
+  // actions refuse their rows server-side. Saying so here stops a moderator reading that refusal as a bug.
+  const subtitle = $derived(
+    RULINGS_WIRED_FOR.includes(data.type)
+      ? 'Raised by the prompt-auditing system, and the rulings on them.'
+      : 'Review only — rulings are not yet wired for this type.'
+  );
 </script>
 
-<header class="page-header">
-  <h1>Generator Restrictions</h1>
-  {#if data.type === RESTRICTION_TYPE}
-    <p>Generation restrictions raised by the prompt-auditing system, and the rulings on them.</p>
-  {:else}
-    <!-- Named rather than described: the verdict path still sends generation-specific notices, so the
-         resolve and ban actions refuse these rows server-side. Saying so here is what stops a
-         moderator reading that refusal as a bug. -->
-    <p>
-      {RESTRICTION_TYPE_LABELS[data.type]} restrictions. Review only — rulings are not yet wired for this
-      type.
-    </p>
-  {/if}
-</header>
-
-<RestrictionFilters q={data.q} status={data.status} type={data.type} />
-
-<!-- A fixed-width pane here does not stack below `lg`; pinned by
-     `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`. -->
-<div data-two-pane class="grid items-start gap-6 lg:grid-cols-[26rem_1fr]">
-  <div data-pane class="flex min-w-0 flex-col">
-    {#if data.items.length === 0}
-      <p class="text-sm text-dark-2">
-        No {RESTRICTION_TYPE_LABELS[data.type].toLowerCase()} restrictions match these filters.
-      </p>
-    {:else}
-      <ul class="max-h-[70vh] overflow-auto rounded-xl border border-dark-4">
-        {#each data.items as item (item.id)}
-          <li class="border-b border-dark-4 last:border-b-0">
-            <a
-              href={selectHref(item.id)}
-              class={cn(
-                'flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-dark-5',
-                data.current?.id === item.id && 'bg-dark-5'
-              )}
-            >
-              <span class="truncate text-dark-0">
-                {item.username ?? `User #${item.userId}`}
-              </span>
-              <span class="flex shrink-0 items-center gap-2">
-                <StatusBadge status={item.status} />
-                <span class="text-xs text-dark-2">{dateTime(item.createdAt)}</span>
-              </span>
-            </a>
-          </li>
-        {/each}
-      </ul>
-
-      <Pager page={data.page} pageCount={data.pageCount} total={data.totalCount} href={pageHref} />
-    {/if}
-  </div>
-
-  <div data-pane class="min-w-0">
-    {#if data.current}
-      <!-- Ticked triggers and an open ban confirmation both describe ONE restriction. -->
-      {#key data.current.id}
-        <RestrictionDetail
-          restriction={data.current}
-          civitaiUrl={data.civitaiUrl}
-          canBan={!!data.grants['audit.ban.execute']}
-          canViewGenerations={!!data.grants['user.generations.view']}
-          onStart={rememberSuccessor}
-          onDone={advance}
-        />
-      {/key}
-    {:else}
-      <p class="text-sm text-dark-2">Select a restriction to review its triggers.</p>
-    {/if}
+<div class="flex flex-col lg:h-svh">
+  <TriagePageHeader
+    title="Generator restrictions"
+    {subtitle}
+    placeholder="Username or user ID"
+    searchLabel="Search restrictions"
+  />
+  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto border-t border-dark-4">
+    <RestrictionTriage {data} {form} fallbackType={RESTRICTION_TYPE}>
+      {#snippet tabs()}
+        {#if GENERATOR_RESTRICTION_TYPES.length > 1}
+          <TriageParamTabs
+            tabs={typeTabs}
+            current={data.type}
+            param="type"
+            defaultValue={RESTRICTION_TYPE}
+            label="Restriction type"
+            selectionParam="selected"
+            counts={data.facets?.type}
+          />
+        {/if}
+      {/snippet}
+    </RestrictionTriage>
   </div>
 </div>

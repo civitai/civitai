@@ -122,8 +122,10 @@ re-bundle it. Measured while building this: a 53-file selection containing a tra
 **16 files red** with `Cannot find module '…/deps_ssr/prom-client.js'`.
 
 The price of that separation, so it is not a surprise: the traced project mints a **second full dep
-bundle** — measured at **87 MB / 44 files** under `sha1('unit-trace')`, the same file count as the
-normal suite's, built from one trivial fixture (cold 2.5s, warm 1.3s). It lands in the
+bundle** under `sha1('unit-trace')` — measured at **87 MB / 44 files**, the same file count as the
+normal suite's, built from one trivial fixture (cold 2.5s, warm 1.3s). That was before the unit
+projects pre-bundled Mantine and enabled the client optimizer (`deps/` beside `deps_ssr/`); both
+make it bigger, by an amount not re-measured. It lands in the
 `node_modules/.vite` cache the `main` branch saves. The alternative is corrupting concurrent runs,
 so this is the right trade, but it is not free.
 

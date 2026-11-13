@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 /**
  * Mechanism + lookup contract for `modelVersionPublicDonationGoalsCache` — the DB-load-reduction
@@ -6,12 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * This exercises the REAL lookupFn (`publicDonationGoalsLookupFn` from the light
  * `donation-goals-cache` module — the exact function `caches.ts` wires into the cache) against
- * an in-memory packed-redis double + mocked db doubles. No hand-copied mirror: if someone drops
- * the security-relevant `active: true` public filter (the single guard keeping inactive/draft
- * goals out of the shared public key), the `active: true` assertion below fails.
+ * an in-memory packed-redis double + mocked db doubles: the replica's version and goal reads are
+ * Kysely statements (stubbed here), the primary's (fromWrite, and the replica-miss fallback) and
+ * the totals are Prisma. No hand-copied mirror: if someone drops the security-relevant
+ * `active: true` public filter (the single guard keeping inactive/draft goals out of the shared
+ * public key) from the Prisma read, the `active: true` assertion below fails; the Kysely
+ * statement's `active = true` is pinned by the hot-reads-6 parity suite's inactive-goal fixture.
  *
  * Pins:
- *   - the PUBLIC `active: true` goal filter is present on the real query (security invariant);
+ *   - the PUBLIC `active: true` goal filter is present on the real Prisma query (security
+ *     invariant), and the replica goal read is the Kysely statement that carries it;
  *   - dedup/TTL: a second fetch of the same id within the TTL does NOT re-issue the DB lookup;
  *   - existence: an existing version with zero public goals yields an EMPTY entry (caller → []),
  *     while a genuinely-missing version yields NO entry (caller → 404) and is NOT negatively
@@ -66,6 +71,22 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
 });
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
+// The replica's Kysely client (a sentinel: no pool is built) and its two statements.
+const { kyselyReplica, listExistingModelVersionIds, listActiveModelVersionDonationGoals } =
+  vi.hoisted(() => ({
+    kyselyReplica: { client: 'kysely-replica' },
+    listExistingModelVersionIds: vi.fn(),
+    listActiveModelVersionDonationGoals: vi.fn(),
+  }));
+vi.mock('~/server/db/kyselyDb.lazy', () => ({
+  loadKyselyDb: async () => ({ kyselyRead: kyselyReplica }),
+}));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  listExistingModelVersionIds,
+  listActiveModelVersionDonationGoals,
+}));
+
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import {
   publicDonationGoalsLookupFn,
@@ -104,6 +125,8 @@ beforeEach(() => {
   setNxMock.mockClear().mockResolvedValue(true);
   mockDbRead.modelVersion.findMany.mockReset();
   mockDbRead.donationGoal.findMany.mockReset();
+  listExistingModelVersionIds.mockReset();
+  listActiveModelVersionDonationGoals.mockReset();
   mockDbRead.$queryRaw.mockReset();
   mockDbWrite.modelVersion.findMany.mockReset();
   mockDbWrite.donationGoal.findMany.mockReset();
@@ -113,33 +136,45 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('publicDonationGoalsLookupFn — security invariant', () => {
-  it('queries donation goals with the PUBLIC active:true filter (keeps drafts out)', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
-    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
+  it('queries donation goals with the PUBLIC active:true filter on the primary (keeps drafts out)', async () => {
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
 
-    await publicDonationGoalsLookupFn([5]);
+    await publicDonationGoalsLookupFn([5], true);
 
-    const call = mockDbRead.donationGoal.findMany.mock.calls[0][0];
+    const call = mockDbWrite.donationGoal.findMany.mock.calls[0][0];
     // The one guard that keeps inactive/draft goals out of the shared public key.
     expect(call.where.active).toBe(true);
     expect(call.where.entityType).toBe('ModelVersion');
     expect(call.where.entityId).toEqual({ in: [5] });
   });
+
+  it('reads the replica goals through the Kysely active-goals statement', async () => {
+    listExistingModelVersionIds.mockResolvedValue([{ id: 5 }]);
+    listActiveModelVersionDonationGoals.mockResolvedValue([row()]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
+
+    await publicDonationGoalsLookupFn([5]);
+
+    expect(listActiveModelVersionDonationGoals.mock.calls).toEqual([[kyselyReplica, [5]]]);
+    expect(listActiveModelVersionDonationGoals.mock.calls[0][0]).toBe(kyselyReplica);
+    expect(mockDbRead.donationGoal.findMany).not.toHaveBeenCalled();
+  });
 });
 
 describe('modelVersionPublicDonationGoalsCache', () => {
   it('hits the DB once, then serves the second fetch of the same version from cache', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([row()]);
+    listExistingModelVersionIds.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    listActiveModelVersionDonationGoals.mockResolvedValue([row()]);
     mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]);
     const cache = buildCache();
 
     const first = await cache.fetch([5]);
     const second = await cache.fetch([5]);
 
-    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(1);
-    expect(mockDbRead.donationGoal.findMany).toHaveBeenCalledTimes(1);
+    expect(listExistingModelVersionIds).toHaveBeenCalledTimes(1);
+    expect(listActiveModelVersionDonationGoals).toHaveBeenCalledTimes(1);
     expect(first[5].goal).toEqual({
       id: 10,
       goalAmount: 1000,
@@ -154,20 +189,20 @@ describe('modelVersionPublicDonationGoalsCache', () => {
   });
 
   it('caches an EMPTY entry for an existing version with no public goals (returns [], not 404)', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([{ id: 8, earlyAccessEndsAt: null }]);
-    mockDbRead.donationGoal.findMany.mockResolvedValue([]);
+    listExistingModelVersionIds.mockResolvedValue([{ id: 8, earlyAccessEndsAt: null }]);
+    listActiveModelVersionDonationGoals.mockResolvedValue([]);
     const cache = buildCache();
 
     const first = await cache.fetch([8]);
     const second = await cache.fetch([8]);
 
     expect(first[8]).toEqual({ modelVersionId: 8, goal: null });
-    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(1); // positive entry cached
+    expect(listExistingModelVersionIds).toHaveBeenCalledTimes(1); // positive entry cached
     expect(second[8].goal).toBeNull();
   });
 
   it('yields NO entry for a missing version and does not negatively cache it (cacheNotFound: false)', async () => {
-    mockDbRead.modelVersion.findMany.mockResolvedValue([]); // replica miss
+    listExistingModelVersionIds.mockResolvedValue([]); // replica miss
     mockDbWrite.modelVersion.findMany.mockResolvedValue([]); // primary miss too → genuinely gone
     const cache = buildCache();
 
@@ -176,9 +211,48 @@ describe('modelVersionPublicDonationGoalsCache', () => {
 
     expect(first[999]).toBeUndefined(); // caller maps absent entry → NOT_FOUND
     // Not negatively cached → the lookup (incl. primary fallback) re-runs each time.
-    expect(mockDbRead.modelVersion.findMany).toHaveBeenCalledTimes(2);
+    expect(listExistingModelVersionIds).toHaveBeenCalledTimes(2);
     expect(mockDbWrite.modelVersion.findMany).toHaveBeenCalledTimes(2);
     expect(second[999]).toBeUndefined();
+  });
+
+  it('refresh() after a donation caches the PRIMARY total, even while the replica lags', async () => {
+    // The donation path refreshes rather than busts, so what refresh() caches must include the
+    // just-committed donation: the goal and its total come from the primary (fromWrite).
+    listExistingModelVersionIds.mockResolvedValue([{ id: 5, earlyAccessEndsAt: null }]);
+    listActiveModelVersionDonationGoals.mockResolvedValue([row()]);
+    mockDbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 250 }]); // replica: pre-donation
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([{ donationGoalId: 10, total: 300 }]); // primary: post-donation
+    const cache = buildCache();
+    expect((await cache.fetch([5]))[5].goal?.total).toBe(250);
+
+    await cache.refresh(5);
+    const afterRefresh = await cache.fetch([5]);
+
+    expect(afterRefresh[5].goal?.total).toBe(300);
+    // Served from the refreshed entry: no further replica lookup.
+    expect(listActiveModelVersionDonationGoals).toHaveBeenCalledTimes(1);
+  });
+
+  it('refresh() of a version not yet on the replica checks existence on the primary and caches it', async () => {
+    // ensureDonationGoal refreshes right after a version and its goal are created. If existence were
+    // read from the replica only, the lookup would return {} and refresh() would delete the entry.
+    listExistingModelVersionIds.mockResolvedValue([]); // replica: version not there yet
+    mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 5 }]);
+    mockDbWrite.donationGoal.findMany.mockResolvedValue([row()]);
+    mockDbWrite.$queryRaw.mockResolvedValue([]); // no donations yet
+    const cache = buildCache();
+
+    await cache.refresh(5);
+
+    expect(delMock).not.toHaveBeenCalled();
+    const fetched = await cache.fetch([5]);
+    expect(fetched[5].goal?.id).toBe(10);
+    expect(fetched[5].goal?.total).toBe(0);
+    // Served from the refreshed entry, not a read-path lookup.
+    expect(listExistingModelVersionIds).not.toHaveBeenCalled();
   });
 
   // The early-access-window + creator opt-out DISPLAY filters live at read time in getDonationGoals

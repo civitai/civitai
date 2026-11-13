@@ -10,12 +10,12 @@ import { seedance } from './seedance.graph';
 import { wan } from './wan.graph';
 import { grokVideo } from './grok.graph';
 import { mochi } from './mochi.graph';
-import { sora } from './sora.graph';
 import { hunyuan } from './hunyuan.graph';
 import { flux3Video } from './flux3-video.graph';
 import { minimax } from './minimax.graph';
 import { happyHorse } from './happy-horse.graph';
 import { veo3 } from './veo3.graph';
+import { geminiOmni } from './gemini-omni.graph';
 import { vidu } from './vidu.graph';
 import { kling } from './kling.graph';
 
@@ -37,6 +37,19 @@ const QUANTITY = defFamily((max: number) => {
     output: z.number().min(1).max(max),
     default: 1,
     meta: { min: 1, max, step: 1 },
+    // `store.set()` writes trusted intent and skips `input`, so a quantity carried in by a
+    // remix from an image family or a wider entitlement is stored verbatim and then fails
+    // `output` and blocks the submit. The footer names the field; the quantity control
+    // renders no error of its own. The image hub's twin
+    // of this field had the same hole (see `image/hub.graph.ts`).
+    //
+    // `correct`, not `coerce`: `input` already snaps the same value, so this cannot widen the
+    // server parse. Non-finite goes to the default rather than through `snap`, which
+    // propagates NaN and fails the output just as silently.
+    correct: (value: number) => {
+      const snapped = Number.isFinite(value) ? snap(value) : 1;
+      return snapped === value ? undefined : { value: snapped, reason: 'quantity_out_of_range' };
+    },
   };
 });
 
@@ -55,14 +68,9 @@ export const videoHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'MiniMaxH3';
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
-        usableEcosystems
-      ),
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
       default: defaultValue,
-      // v1 stores the ecosystem selection per OUTPUT type
+      // The ecosystem selection is stored per OUTPUT type.
       scope: 'video',
       meta: {
         compatibleEcosystems,
@@ -105,12 +113,12 @@ export const videoHub = defineGraph<RootCtx>()
       [['Seedance'], seedance],
       [['Grok'], grokVideo],
       [['Mochi'], mochi],
-      [['Sora2'], sora],
       [['HyV1'], hunyuan],
       [['Flux3Video'], flux3Video],
       [['MiniMaxH3'], minimax],
       [['HappyHorse'], happyHorse],
       [['Veo3'], veo3],
+      [['GeminiOmni'], geminiOmni],
       [['Vidu'], vidu],
       [['Kling'], kling],
     ] as const)

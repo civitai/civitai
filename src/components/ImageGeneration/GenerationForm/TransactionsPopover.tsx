@@ -1,5 +1,6 @@
-import type { TransactionInfo } from '@civitai/client';
-import { ActionIcon, Card, Popover, Text, Tooltip } from '@mantine/core';
+import type { TransactionInfo } from '@civitai/orchestration-client';
+import { ActionIcon, Card, Text } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconProgressBolt } from '@tabler/icons-react';
 import { capitalize } from '~/utils/string-helpers';
 

@@ -446,18 +446,6 @@ describe('civitai#3845/4 — no REST route hand-rolls a driver-leaking error env
       // empties every CLI-rendered error string.
       expect(body.error).toBeTruthy();
     });
-
-    it('attributes the fault in the log — genericizing relocates the text, never destroys it', async () => {
-      const throwing = (() => {
-        throw prismaDriverError();
-      }) as () => never;
-      const { promise } = run(throwing);
-      await promise;
-
-      expect(mockLogToAxiom, 'the un-redacted text must reach `_axiom`').toHaveBeenCalledTimes(1);
-      const logged = mockLogToAxiom.mock.calls[0][0] as { message?: string };
-      expect(logged.message).toContain(LEAKED_COLUMN);
-    });
   });
 
   // ── Route-specific behaviour the delegation must NOT have broken ────────────

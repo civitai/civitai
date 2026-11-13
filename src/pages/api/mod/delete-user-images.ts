@@ -1,19 +1,41 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { chunk } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { deleteImages } from '~/server/services/image.service';
+import {
+  accountHoldSql,
+  captureImageKeptSql,
+  assertAccountNotUnderLegalHold,
+  isLegalHoldAbort,
+  LEGAL_HOLD_STOPPED,
+  LegalHoldError,
+  LegalHoldStoppedError,
+  legalHoldMessage,
+} from '~/server/services/legal-hold.service';
 import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   userId: z.coerce.number(),
-  batchSize: z.coerce.number().default(100),
+  batchSize: z.coerce.number().int().min(1).default(100),
 });
 
 export default ModEndpoint(
   async function deleteUserImages(req: NextApiRequest, res: NextApiResponse) {
     try {
       const { userId, batchSize } = schema.parse(req.query);
+      if (isFeedbackCaptureOwner(userId))
+        return res.status(400).json({ error: FEEDBACK_CAPTURE_OWNER_REFUSAL });
+      const { markerView } = await assertAccountNotUnderLegalHold(userId);
+      // Repeated in each delete, so a hold that lands mid-run stops the rest.
+      const held = accountHoldSql(Prisma.sql`${userId}::int`, markerView);
+      const unlessHeld = Prisma.sql`NOT ${held}`;
 
       const images = await dbRead.image.findMany({
         where: { userId },
@@ -28,7 +50,9 @@ export default ModEndpoint(
 
       let deletedImages = 0;
       for (const batch of chunk(imageIds, batchSize)) {
-        const result = await deleteImages(batch);
+        const result = await deleteImages(batch, true, {
+          onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        });
         deletedImages += result.length;
       }
 
@@ -36,14 +60,31 @@ export default ModEndpoint(
       if (postIds.length) {
         // Only delete posts owned by the target user to avoid touching other users' posts
         // that may have referenced these images.
-        const result = await dbWrite.post.deleteMany({
-          where: { userId, id: { in: postIds } },
-        });
-        deletedPosts = result.count;
+        deletedPosts = await dbWrite.$executeRaw`
+          WITH doomed AS (
+            SELECT id FROM "Post"
+            WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+          )
+          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
+        `;
       }
+
+      // A hold that landed mid-run stopped the deletes above without an error.
+      const [after] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held`;
+      if (after?.held !== false) throw new LegalHoldStoppedError();
 
       return res.status(200).json({ deletedImages, deletedPosts });
     } catch (e) {
+      if (e instanceof LegalHoldStoppedError || isLegalHoldAbort(e))
+        return handleEndpointError(
+          res,
+          new TRPCError({ code: 'CONFLICT', message: LEGAL_HOLD_STOPPED })
+        );
+      if (e instanceof LegalHoldError)
+        return handleEndpointError(
+          res,
+          new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) })
+        );
       return handleEndpointError(res, e);
     }
   },

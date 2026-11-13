@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createKrea2Input } from '../ecosystems/krea2.handler';
-import { krea2VersionIds } from '~/shared/data-graph/generation/krea2-graph';
+import { createKrea2Input } from '../form-graph/krea2.handler';
+import {
+  KREA2_TURBO_BASE_MODEL,
+  krea2VersionIds,
+} from '~/shared/form-graph/generation/image/krea2.graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
 const communityVersionId = 8888;
@@ -79,6 +82,28 @@ describe('createKrea2Input — txt2img', () => {
       diffusionModel: airsByVersionId[communityVersionId],
       loras: { [airsByVersionId[9001]]: 0.8 },
     });
+  });
+
+  it('runs a Turbo fine-tune on the turbo build via diffusionModel', async () => {
+    const result = await input({
+      ...createData,
+      model: { id: communityVersionId, baseModel: KREA2_TURBO_BASE_MODEL },
+    });
+
+    expect(result).toMatchObject({
+      engine: 'comfy',
+      model: 'turbo',
+      diffusionModel: airsByVersionId[communityVersionId],
+    });
+  });
+
+  it('keeps the official Raw version on raw despite a Turbo tag', async () => {
+    const result = await input({
+      ...createData,
+      model: { id: krea2VersionIds.raw, baseModel: KREA2_TURBO_BASE_MODEL },
+    });
+
+    expect(result.model).toBe('raw');
   });
 
   it('keeps the FAL size tiers off the comfy path', async () => {

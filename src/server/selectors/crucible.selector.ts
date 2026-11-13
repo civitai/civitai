@@ -51,11 +51,14 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   entryFee: true,
   entryLimit: true,
   freeEntriesPerUser: true,
+  entryWarningPercent: true,
+  entryCutoffPercent: true,
   maxTotalEntries: true,
   minViewSeconds: true,
   maxClipSeconds: true,
   prizePositions: true,
   allowedResources: true,
+  allowedBaseModels: true,
   duration: true,
   status: true,
   startAt: true,
@@ -64,6 +67,8 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   updatedAt: true,
   ingestion: true,
   textNsfw: true,
+  takenDownAt: true,
+  takedownReason: true,
   user: { select: userWithCosmeticsSelect },
   image: {
     select: {
@@ -118,6 +123,7 @@ export const crucibleEntrySelect = Prisma.validator<Prisma.CrucibleEntrySelect>(
       nsfwLevel: true,
       width: true,
       height: true,
+      hash: true,
     },
   },
 });

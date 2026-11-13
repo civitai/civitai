@@ -19,6 +19,7 @@ vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
 
 import {
   getFallbackCoverImages,
+  isPublicCollectionImage,
   toCoverFields,
   toCoverImageUrl,
 } from '~/server/services/blocks/block-collections.service';
@@ -55,7 +56,12 @@ describe('toCoverFields', () => {
     // `0` is a REAL level (unrated). A consumer branches on `undefined` (no claim →
     // use its own domain ceiling) versus any supplied value (authoritative), so
     // emitting 0 for "there is no cover" silently moves it onto the other path.
-    for (const noImage of [null, undefined, { url: null, type: 'image' }, { url: '', type: 'image' }]) {
+    for (const noImage of [
+      null,
+      undefined,
+      { url: null, type: 'image' },
+      { url: '', type: 'image' },
+    ]) {
       const fields = toCoverFields(noImage);
       expect(fields.coverImageUrl).toBeNull();
       // The KEY must be missing — `{ coverNsfwLevel: undefined }` would serialise
@@ -96,7 +102,7 @@ describe('toCoverFields', () => {
     expect(b.coverNsfwLevel).toBe(16);
   });
 
-  it('a VIDEO cover keeps the poster shaping AND carries that video item\'s level', () => {
+  it("a VIDEO cover keeps the poster shaping AND carries that video item's level", () => {
     const fields = toCoverFields({ url: 'clip', type: 'video', nsfwLevel: 2 });
     const out = JSON.parse(fields.coverImageUrl!);
     expect(out.type).toBe('image');
@@ -108,7 +114,10 @@ describe('toCoverFields', () => {
     // Invariant guard, not regression coverage: a Collection's own `nsfwLevel` is
     // OR-ed over its items and cannot separate a 97%-safe collection from a
     // 1%-safe one, so the two names must never be confusable on this response.
-    const fields = toCoverFields({ url: 'k', type: 'image', nsfwLevel: 4 }) as Record<string, unknown>;
+    const fields = toCoverFields({ url: 'k', type: 'image', nsfwLevel: 4 }) as Record<
+      string,
+      unknown
+    >;
     expect('nsfwLevel' in fields).toBe(false);
   });
 });
@@ -134,14 +143,13 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
     expect(map.has(12)).toBe(false);
 
     // The raw tagged-template call must carry the browsingLevel (3) as a bound
-    // value and use a bitwise nsfwLevel predicate + DISTINCT ON so the newest
-    // PERMITTED item per collection is selected (not filtered-after-distinct).
+    // value and use a bitwise nsfwLevel predicate. Which item each collection gets
+    // (the newest PERMITTED one) is pinned against Postgres in
+    // block-collections-fallback-cover.behavior.test.ts.
     const call = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
     const [strings, ...values] = call;
     const sql = strings.join(' ? ');
     expect(sql).toContain('"nsfwLevel" &');
-    expect(sql).toContain('DISTINCT ON (ci."collectionId")');
-    expect(sql).toContain('ORDER BY ci."collectionId", ci."createdAt" DESC');
     expect(values).toContain(3);
   });
 
@@ -150,19 +158,23 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
     // level of the cover it serves, and for a fallback cover THIS row is that
     // cover. Selecting only (url,type) is what forces the endpoint to describe the
     // primary image it just rejected.
-    mockQueryRaw.mockResolvedValueOnce([{ collectionId: 10, url: 'k', type: 'image', nsfwLevel: 4 }]);
+    mockQueryRaw.mockResolvedValueOnce([
+      { collectionId: 10, url: 'k', type: 'image', nsfwLevel: 4 },
+    ]);
     const map = await getFallbackCoverImages([10], 7);
     expect(map.get(10)?.nsfwLevel).toBe(4);
 
     const [strings] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
     // The projection, not the WHERE clause: an aliased select of the column.
-    expect(strings.join(' ? ')).toContain('i."nsfwLevel" as "nsfwLevel"');
+    expect(strings.join(' ? ')).toContain('cover."nsfwLevel" as "nsfwLevel"');
   });
 
   it('a NULL nsfwLevel column reads as the real level 0 (unrated), never dropped', async () => {
     // Unrated is a value, not an absence — a row with a null level still yields a
     // usable cover, and `0` is what the wire must carry for it.
-    mockQueryRaw.mockResolvedValueOnce([{ collectionId: 10, url: 'k', type: 'image', nsfwLevel: null }]);
+    mockQueryRaw.mockResolvedValueOnce([
+      { collectionId: 10, url: 'k', type: 'image', nsfwLevel: null },
+    ]);
     const map = await getFallbackCoverImages([10], 3);
     expect(map.get(10)).toEqual({ url: 'k', type: 'image', nsfwLevel: 0 });
   });
@@ -184,7 +196,42 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
   it('a stricter ceiling is threaded through verbatim', async () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     await getFallbackCoverImages([10], 1);
-    const [, ...values] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
+    const [, ...values] = mockQueryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
     expect(values).toContain(1);
+  });
+});
+
+describe('isPublicCollectionImage', () => {
+  // The fallback query applies the same rule in SQL: block-collections-fallback-cover.behavior.test.ts.
+  const clean = {
+    ingestion: 'Scanned',
+    nsfwLevel: 1,
+    needsReview: null,
+    poi: false,
+    minor: false,
+    acceptableMinor: false,
+    tosViolation: false,
+    blockedFor: null,
+  };
+
+  it('serves a clean scanned image within the ceiling', () => {
+    expect(isPublicCollectionImage(clean, 3)).toBe(true);
+  });
+
+  it.each([
+    ['poi', { poi: true }],
+    ['minor', { minor: true }],
+    ['needsReview', { needsReview: 'poi' }],
+    ['acceptableMinor', { acceptableMinor: true }],
+    ['tosViolation', { tosViolation: true }],
+    ['blockedFor', { blockedFor: 'moderated' }],
+    ['unscanned', { ingestion: 'Pending' }],
+    ['unrated', { nsfwLevel: 0 }],
+    ['above the ceiling', { nsfwLevel: 8 }],
+  ])('refuses an image that is %s', (_state, over) => {
+    expect(isPublicCollectionImage({ ...clean, ...over }, 3)).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import {
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
 /**
  * Endpoint-wiring security tests for /api/v1/blocks/models.
@@ -43,7 +44,10 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: mockCheckRateLimit,
 }));
 
-vi.mock('~/server/middleware/block-scope.middleware', () => ({
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  // The REAL parseSubjectUserId (owner=mine derives the user id from it), so a
+  // change to how `sub` is parsed reaches these tests.
+  ...(await importOriginal<typeof BlockScopeMiddleware>()),
   // Passthrough wrapper: stamp the per-test claims and call the handler. Bypasses
   // JWT verify (covered elsewhere) so we can assert the clamp wiring directly.
   withBlockScope: (handler: any) => (req: any, res: any) => {
@@ -231,6 +235,7 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
       baseModels: 'SDXL 1.0',
       sort: 'Most Downloaded',
       limit: '20',
+      supportsGeneration: 'true',
     });
 
     const [input] = mockRunModelSearch.mock.calls[0];
@@ -244,6 +249,8 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
     expect(mockResolveModelSearchIds.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
     expect(mockResolveModelSearchIds.mock.calls[0][0].types).toEqual(['Checkpoint']);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].baseModels).toEqual(['SDXL 1.0']);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].supportsGeneration).toBe(true);
   });
 
   it('401s when no block claims were stamped (defense-in-depth; e.g. no token)', async () => {
@@ -291,5 +298,231 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
 
     expect(res.statusCode).toBe(200);
     expect(mockRunModelSearch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Distinct from each other and from every literal elsewhere in this file (42 is
+// fakeClaims' default subject), so a handler that hardcodes or swaps an id is seen.
+const SUBJECT_ID = 7311;
+const OTHER_ID = 5529;
+
+describe('/api/v1/blocks/models — owner filter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('owner=mine scopes the search to the token subject', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    const res = await invoke({ owner: 'mine', query: 'dreamshaper' });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][1].ownerUserId).toBe(SUBJECT_ID);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].ownerUserId).toBe(SUBJECT_ID);
+  });
+
+  it('owner absent or owner=any applies no owner constraint', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    for (const query of [{ query: 'x' }, { query: 'x', owner: 'any' }]) {
+      vi.clearAllMocks();
+      mockCheckRateLimit.mockResolvedValue({ allowed: true });
+      mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+      mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+      const res = await invoke(query);
+      expect(res.statusCode).toBe(200);
+      expect(mockRunModelSearch.mock.calls[0][1].ownerUserId).toBeUndefined();
+      expect(mockResolveModelSearchIds.mock.calls[0][0].ownerUserId).toBeUndefined();
+    }
+  });
+
+  it('A2: owner=mine with an anonymous subject → 401, nothing searched', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'anon' });
+    const res = await invoke({ owner: 'mine', query: 'x' });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Sign-in required' });
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+    // Refused before the rate limiter is charged.
+    expect(mockCheckRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('owner=mine with a malformed subject → 403, nothing searched', async () => {
+    for (const sub of ['user:abc', 'garbage', `user:${SUBJECT_ID}x`]) {
+      claimsBox.claims = fakeClaims({ sub });
+      const res = await invoke({ owner: 'mine', query: 'x' });
+      expect(res.statusCode, sub).toBe(403);
+      expect(res.body).toEqual({ error: 'Invalid subject claim' });
+    }
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+  });
+
+  it('an anonymous subject is still served the unscoped catalog (owner=any unchanged)', async () => {
+    claimsBox.claims = fakeClaims({ sub: 'anon' });
+    const res = await invoke({});
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][1].ownerUserId).toBeUndefined();
+  });
+
+  it('A6: owner=mine ignores a userId / username supplied in the query', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    const res = await invoke({
+      owner: 'mine',
+      query: 'x',
+      userId: String(OTHER_ID),
+      ownerUserId: String(OTHER_ID),
+      username: 'someone-else',
+      user: 'someone-else',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [input, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.ownerUserId).toBe(SUBJECT_ID);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].ownerUserId).toBe(SUBJECT_ID);
+    for (const key of ['userId', 'ownerUserId', 'username', 'user']) {
+      expect(input).not.toHaveProperty(key);
+    }
+  });
+
+  // Invariant guard: green before this change too (the schema strips unknown keys).
+  it('A6 (invariant guard): owner=any ignores a userId supplied in the query', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    await invoke({ query: 'x', userId: String(OTHER_ID), ownerUserId: String(OTHER_ID) });
+
+    const [input, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.ownerUserId).toBeUndefined();
+    expect(mockResolveModelSearchIds.mock.calls[0][0].ownerUserId).toBeUndefined();
+    expect(input).not.toHaveProperty('userId');
+    expect(input).not.toHaveProperty('ownerUserId');
+  });
+
+  it('rejects an unknown owner value with 400', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    for (const owner of ['me', String(OTHER_ID), ['mine', 'any']]) {
+      const res = await invoke({ owner });
+      expect(res.statusCode).toBe(400);
+    }
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // Invariant guard: the clamp logic is untouched by this change; this pins that
+  // owner=mine does not open a second path around it.
+  it('A5 (invariant guard): the maturity clamp still applies under owner=mine', async () => {
+    claimsBox.claims = fakeClaims({
+      sub: `user:${SUBJECT_ID}`,
+      maxBrowsingLevel: sfwBrowsingLevelsFlag,
+      domain: 'green',
+    });
+    const res = await invoke({ owner: 'mine', query: 'x', nsfw: 'true', browsingLevel: '31' });
+
+    const [input, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.nsfwImagePassthrough).toBe(false);
+    expect(input).not.toHaveProperty('browsingLevel');
+    expect(mockResolveModelSearchIds.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(res.body.maturity).toEqual({ browsingLevel: sfwBrowsingLevelsFlag, sfwOnly: true });
+  });
+
+  // A server that predates `owner` ignores it and serves the unscoped catalog with no marker, so
+  // the echo is the only way a client can tell the two apart.
+  it('echoes the applied owner filter as metadata.owner: mine, any, and any when absent', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    const cases: [Record<string, unknown>, string][] = [
+      [{ owner: 'mine' }, 'mine'],
+      [{ owner: 'mine', query: 'x' }, 'mine'],
+      [{ owner: 'any' }, 'any'],
+      [{}, 'any'],
+      [{ query: 'x' }, 'any'],
+    ];
+    for (const [query, expected] of cases) {
+      const res = await invoke(query);
+      expect(res.statusCode, JSON.stringify(query)).toBe(200);
+      expect(res.body.metadata.owner, JSON.stringify(query)).toBe(expected);
+    }
+  });
+
+  it('asks for Public-availability versions only, with or without owner', async () => {
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+    await invoke({ query: 'x' });
+    await invoke({ owner: 'mine', query: 'x' });
+    expect(mockRunModelSearch).toHaveBeenCalledTimes(2);
+    for (const [, ctx] of mockRunModelSearch.mock.calls) {
+      expect(ctx.publicVersionsOnly).toBe(true);
+    }
+  });
+});
+
+describe('/api/v1/blocks/models — modelVersionIds', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+    claimsBox.claims = fakeClaims({ sub: `user:${SUBJECT_ID}` });
+  });
+
+  it('forwards a comma-separated list as numbers', async () => {
+    const res = await invoke({ modelVersionIds: '813,9021' });
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual([813, 9021]);
+  });
+
+  it('accepts the repeated-param form too', async () => {
+    const res = await invoke({ modelVersionIds: ['813', '9021', '77'] });
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual([813, 9021, 77]);
+  });
+
+  it('accepts exactly 100 ids', async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => i + 1);
+    const res = await invoke({ modelVersionIds: ids.join(',') });
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual(ids);
+  });
+
+  it('rejects more than 100 ids, and anything that is not a positive int4, with 400', async () => {
+    const tooMany = Array.from({ length: 101 }, (_, i) => i + 1).join(',');
+    for (const bad of [tooMany, '0', '-4', '1.5', 'abc', '', '12,,13', '2147483648']) {
+      const res = await invoke({ modelVersionIds: bad });
+      expect(res.statusCode, `modelVersionIds=${bad.slice(0, 20)}`).toBe(400);
+    }
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a comma list inside a repeated param with 400', async () => {
+    const res = await invoke({ modelVersionIds: ['813', '9021,77'] });
+    expect(res.statusCode).toBe(400);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // Pins the shared helper's Number() coercion (commaDelimitedNumberArray), so a change to it is
+  // seen here: these still have to land on a positive int4 to pass.
+  it('reads ids through Number(): hex and exponent forms are coerced', async () => {
+    const res = await invoke({ modelVersionIds: '0x1f,1e3' });
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual([31, 1000]);
+  });
+
+  it('accepts the int4 maximum', async () => {
+    const res = await invoke({ modelVersionIds: '2147483647' });
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toEqual([2147483647]);
+  });
+
+  it('composes with owner=mine (both constraints apply)', async () => {
+    await invoke({ owner: 'mine', modelVersionIds: '813' });
+    const [input, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(input.modelVersionIds).toEqual([813]);
+    expect(ctx.ownerUserId).toBe(SUBJECT_ID);
+  });
+
+  it('absent → no version filter forwarded', async () => {
+    await invoke({});
+    expect(mockRunModelSearch.mock.calls[0][0].modelVersionIds).toBeUndefined();
   });
 });

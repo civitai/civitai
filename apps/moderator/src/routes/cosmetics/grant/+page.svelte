@@ -98,11 +98,23 @@
   }
 
   const grantCount = $derived(selectedCosmetics.size * selectedUsers.size);
+  const grantSummary = $derived(
+    form?.success
+      ? `${form.newlyGranted} of ${form.totalPairs} grants applied${
+          form.alreadyOwned > 0 ? `, ${form.alreadyOwned} already owned` : ''
+        }.`
+      : ''
+  );
+  const skippedUsers = $derived(
+    form?.success
+      ? form.busyUserIds.map((id) => selectedUsers.get(id) ?? String(id)).join(', ')
+      : ''
+  );
 
   const grantEnhance: SubmitFunction = ({ cancel }) => {
     if (
       !confirm(
-        `Grant ${selectedCosmetics.size} cosmetic(s) × ${selectedUsers.size} user(s) = ${grantCount} grants? Already-owned pairs are skipped.`
+        `Grant ${selectedCosmetics.size} cosmetic(s) × ${selectedUsers.size} user(s) = ${grantCount} grants? Already-owned pairs are skipped, and so is a user with a purchase, box opening or moderator change in progress (you will be told who).`
       )
     ) {
       cancel();
@@ -110,8 +122,10 @@
     }
     return async ({ result, update }) => {
       if (result.type === 'success') {
-        selectedCosmetics.clear();
-        selectedUsers.clear();
+        // Busy users were skipped: keep only them selected, so granting again finishes the job.
+        const busy = new Set<number>(result.data?.busyUserIds ?? []);
+        for (const id of [...selectedUsers.keys()]) if (!busy.has(id)) selectedUsers.delete(id);
+        if (!busy.size) selectedCosmetics.clear();
       }
       await update({ invalidateAll: false });
     };
@@ -129,11 +143,19 @@
 {#if form?.error}
   <ErrorAlert class="mb-4" message={form.error} />
 {:else if form?.success}
-  <div class="mb-4 rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
-    {form.newlyGranted} of {form.totalPairs} grants applied{form.alreadyOwned > 0
-      ? `, ${form.alreadyOwned} already owned`
-      : ''}.
-  </div>
+  {#if form.busyUserIds.length}
+    <div
+      class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-300"
+      role="status"
+    >
+      {grantSummary} Skipped {skippedUsers}: a purchase, box opening or moderator change was in
+      progress. Grant again in a moment to finish.
+    </div>
+  {:else}
+    <div class="mb-4 rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
+      {grantSummary}
+    </div>
+  {/if}
 {/if}
 
 <div class="mb-6 grid gap-4 rounded-xl border p-4 md:grid-cols-2">

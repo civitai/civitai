@@ -45,5 +45,28 @@ export function restErrorReason(body: unknown, status: number): string | null {
       : null;
   if (!reason) return null;
   const retry = b?.retryAfterSeconds;
-  return status === 429 && typeof retry === 'number' ? `${reason} — retry in ${retry}s.` : reason;
+  if (status === 429 && typeof retry === 'number') return `${reason} — retry in ${retry}s.`;
+  const issues = issueSummary(b?.issues);
+  return issues ? `${reason}: ${issues}` : reason;
 }
+
+const MAX_ISSUES = 5;
+
+/** Without the 400's `issues`, the operator sees only "Invalid request". */
+function issueSummary(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  const parts = raw.flatMap((issue) => {
+    const i = (issue ?? null) as { path?: unknown; message?: unknown } | null;
+    if (typeof i?.message !== 'string') return [];
+    const path = Array.isArray(i.path) ? i.path.join('.') : '';
+    return [path ? `${path}: ${i.message}` : i.message];
+  });
+  if (!parts.length) return null;
+  const more = parts.length > MAX_ISSUES ? ` (+${parts.length - MAX_ISSUES} more)` : '';
+  return parts.slice(0, MAX_ISSUES).join('; ') + more;
+}
+
+/** A failed call after which the far side may have acted: not a refusal, and not proven unsent. */
+export const responseMayHaveLanded = (result: { requestNeverSent?: boolean; status?: number }) =>
+  !result.requestNeverSent &&
+  (result.status === undefined || result.status >= 500 || result.status === 408);

@@ -1,11 +1,14 @@
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { cloneElement, useCallback, useMemo } from 'react';
+import { cloneElement, useCallback, useMemo, useRef } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
+import { useTeamColor } from '~/components/Events/events.utils';
+import { popAnchor, showPointPop } from '~/components/HatTurf/PointPop';
 
 /**NOTES**
  Why use zustand?
@@ -23,6 +26,11 @@ type ReactionStore = {
 
 const getReactionKey = ({ entityType, entityId }: Omit<ToggleReactionInput, 'reaction'>) =>
   `${entityType}_${entityId}`;
+
+// Per entity and reaction, across every button: requests in flight, and server answers received.
+const pending = new Map<string, number>();
+const answers = new Map<string, number>();
+const answerKey = (input: ToggleReactionInput) => `${getReactionKey(input)}_${input.reaction}`;
 
 const useStore = create<ReactionStore>()(
   devtools(
@@ -95,24 +103,64 @@ export function ReactionButton({
     } else return hasReacted ? initialCount + 1 : initialCount;
   }, [hasReactedInitial, hasReacted, initialCount]);
 
-  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation();
+  // What the store held when this button last toggled, and how many server answers had landed.
+  const snapshot = useRef<{ previous: boolean; answers: number } | undefined>(undefined);
+  // Mutation-level callbacks (not the ones passed to `mutate`) still run after this button unmounts.
+  const settle = (input: ToggleReactionInput, result?: string) => {
+    const k = answerKey(input);
+    pending.set(k, Math.max(0, (pending.get(k) ?? 0) - 1));
+    // The server applies whichever request claims the toggle first, so its answer is the truth.
+    if (result === 'created' || result === 'removed' || result === 'noop') {
+      answers.set(k, (answers.get(k) ?? 0) + 1);
+      toggleReaction({ ...input, value: result === 'created' });
+      return;
+    }
+    // Ignored or failed: undo our own change, unless a sibling's answer has landed since or one is
+    // still on its way to say what the server holds.
+    const taken = snapshot.current;
+    if (!taken || pending.get(k) || (answers.get(k) ?? 0) !== taken.answers) return;
+    toggleReaction({ ...input, value: taken.previous });
+  };
+  // `isPending` lands a render late, so two clicks in one frame both passed it.
+  const inFlight = useRef(false);
+  const showEventCosmetics = useShowEventCosmetics();
+  const teamColor = useTeamColor();
+  // The button pressed, and where it was then, for a pop once the answer lands.
+  const pressed = useRef<{ el: Element; at: { x: number; y: number } } | undefined>(undefined);
+  const { mutate, isPending: isLoading } = trpc.reaction.toggleWithPoints.useMutation({
+    onSuccess({ result, eventPoints }, variables) {
+      settle(variables, result);
+      // Only what the reaction earned the viewer's own team; the server drops other teams' grants.
+      if (!showEventCosmetics || result !== 'created' || !eventPoints?.length) return;
+      const from = pressed.current;
+      if (!from) return;
+      const at = from.el.isConnected ? popAnchor(from.el) : from.at;
+      for (const { team, points } of eventPoints)
+        showPointPop({ points, team, color: teamColor(team) }, at);
+    },
+    onError(_error, variables) {
+      settle(variables);
+    },
+    onSettled() {
+      inFlight.current = false;
+    },
+  });
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-    mutate(
-      {
-        entityId,
-        entityType,
-        reaction,
-      }
-      // {
-      //   onError(error) {
-      //     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-      //   },
-      // }
-    );
+    if (inFlight.current) return;
+    inFlight.current = true;
+    pressed.current = { el: e.currentTarget, at: popAnchor(e.currentTarget) };
+    // Read the store, not the rendered value: a sibling button for the same entity may have toggled
+    // in this same frame.
+    const previous = useStore.getState().reactions[key]?.[reaction] ?? hasReactedInitial;
+    const k = answerKey({ entityType, entityId, reaction });
+    snapshot.current = { previous, answers: answers.get(k) ?? 0 };
+    pending.set(k, (pending.get(k) ?? 0) + 1);
+    toggleReaction({ entityType, entityId, reaction, value: !previous });
+    // With event cosmetics off no pop shows, so the answer need not wait for the points.
+    mutate({ entityId, entityType, reaction, waitForPoints: showEventCosmetics });
   };
 
   const canClick = !!currentUser && !readonly && !isLoading;

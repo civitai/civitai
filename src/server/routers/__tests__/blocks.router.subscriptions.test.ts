@@ -216,19 +216,18 @@ describe('blocks.listAvailable (public)', () => {
     );
   });
 
-  it('passes launchOnly=true to the service for a NON-MOD caller (public sees page apps only)', async () => {
-    mockListAvailable.mockResolvedValue({ items: [], nextCursor: undefined });
-    // Force the flag ON for a non-mod (models the post-launch segment-widen) so
-    // the call reaches the service and we can assert the launchOnly arg.
+  it('🔴 returns empty for a NON-MOD caller even with the flag ON (post-#263 widen)', async () => {
+    // The service applies no per-listing visibility, so the procedure is moderator-only
+    // regardless of `app-blocks-enabled`; a widened flag must not reach the service.
+    mockListAvailable.mockResolvedValue({
+      items: [{ id: 'ab_testers' }, { id: 'ab_private' }],
+      nextCursor: undefined,
+    });
     mockIsAppBlocksEnabled.mockImplementation(async () => true);
     const caller = blocksRouter.createCaller(authedCtx(42, false) as never);
-    await caller.listAvailable({ limit: 20 });
-    expect(mockListAvailable).toHaveBeenCalledWith(
-      expect.objectContaining({ limit: 20 }),
-      true,
-      // 3rd arg = redCapable (no host → false).
-      false
-    );
+    const out = await caller.listAvailable({ limit: 20 });
+    expect(out).toEqual({ items: [], nextCursor: undefined });
+    expect(mockListAvailable).not.toHaveBeenCalled();
   });
 
   it('returns empty for a non-mod caller (Phase 2 internal-only gate)', async () => {
@@ -497,6 +496,23 @@ describe('Layer 1 — install procs widened to protectedProcedure (owner-scoped,
       expect(mockInstallOnModel).toHaveBeenCalledWith(
         expect.objectContaining({ modelId: 7, appBlockId: 'ab_x', installedByUserId: OWNER_ID })
       );
+    });
+
+    // `{"s":"…"}` is 8 bytes of framing; each 日 is 3 UTF-8 bytes.
+    it('caps install settings at 4096 UTF-8 bytes', async () => {
+      mockDbWriteModelFindUnique.mockResolvedValue({ userId: OWNER_ID });
+      mockInstallOnModel.mockResolvedValue({ id: 'install_1' });
+      const caller = blocksRouter.createCaller(authedCtx(OWNER_ID, true) as never);
+      const settings = (extra: string) => ({ s: '日'.repeat(1_362) + extra });
+      await caller.installOnModel({ ...input, settings: settings('ab') });
+      expect(mockInstallOnModel).toHaveBeenCalledTimes(1);
+      await expect(
+        caller.installOnModel({ ...input, settings: settings('abc') })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('settings exceeds 4KB'),
+      });
+      expect(mockInstallOnModel).toHaveBeenCalledTimes(1);
     });
 
     it('(b) non-mod NON-owner + flag ON → UNAUTHORIZED, never installs', async () => {

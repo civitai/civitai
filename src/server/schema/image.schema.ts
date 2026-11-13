@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { HAT_SORTS } from '~/shared/constants/hat-turf-feed.constants';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
@@ -21,6 +22,8 @@ import {
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { jumpToMonthSchema } from '~/shared/utils/jump-to-month';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -240,18 +243,43 @@ export const imageSchema = z.object({
   postId: z.number().nullish(),
   modelVersionId: z.number().nullish(),
   type: z.enum(MediaType).default(MediaType.image),
-  metadata: z.record(z.string(), z.any()).optional(),
+  metadata: z
+    .record(z.string(), z.any())
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   externalDetailsUrl: z.url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),
   index: z.number().optional(),
 });
 
-export const comfylessImageSchema = imageSchema.extend({
+/**
+ * The image fields a client may send. `id`, `postId` and `index` are server-owned `Image`
+ * columns: server code decides an image's row id, the post it belongs to and its position
+ * there, and assigns them explicitly at the write. Route inputs use this (or
+ * `imageReferenceInputSchema`); `imageSchema` is for server-internal callers.
+ */
+export const imageInputSchema = imageSchema.omit({ id: true, postId: true, index: true });
+export type ImageInput = z.infer<typeof imageInputSchema>;
+
+/**
+ * `imageInputSchema` plus an optional `id` naming an EXISTING row, for routes that let a
+ * client keep or link an image it already has (a cover it is re-saving, a bounty image it is
+ * keeping). The route decides whether the caller may use that row; the id is never written
+ * as a new row's primary key.
+ */
+export const imageReferenceInputSchema = imageInputSchema.extend({
+  id: z.number().int().positive().optional(),
+});
+export type ImageReferenceInput = z.infer<typeof imageReferenceInputSchema>;
+
+/** A client-proposed position within a post. */
+export const imagePositionSchema = z.number().int().min(0);
+
+export const comfylessImageSchema = imageReferenceInputSchema.extend({
   meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
 });
 
-export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
 
 export const imageUpdateSchema = z.object({
@@ -344,6 +372,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter
+// - ids: the index feed builder never applies it, so an ids batch would return the global feed
 // - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
 //   a modelId-only query would silently return the global feed (matches the
 //   /api/v1/images legacy-method logic)
@@ -398,6 +427,7 @@ export function requiresImageDbPath(input: {
   collectionId?: number | null;
   reactions?: unknown[] | null;
   imageId?: number | null;
+  ids?: number[] | null;
   modelId?: number | null;
   modelVersionId?: number | null;
   prioritizedUserIds?: number[] | null;
@@ -412,6 +442,7 @@ export function requiresImageDbPath(input: {
     !!input.collectionId ||
     !!input.reactions?.length ||
     !!input.imageId ||
+    !!input.ids?.length ||
     (!!input.modelId && !input.modelVersionId) ||
     (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
     (!!input.publishedOnly && !!input.userId)
@@ -430,6 +461,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
     hidden: z.boolean().optional(),
+    jumpTo: jumpToMonthSchema.optional(),
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
     // The viewer's level before a model gallery's cap narrows `browsingLevel`. A
@@ -480,7 +512,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
     generation: z.enum(ImageGenerationProcess).array().optional(),
-    ids: z.array(z.number()).optional(),
+    // Raw SQL serves ids queries, so keep it bounded; sticker-book sends up to 200.
+    ids: z.array(z.number()).max(200).optional(),
     imageId: z.number().optional(),
     include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),
@@ -500,6 +533,14 @@ export const getInfiniteImagesSchema = baseQuerySchema
     minorOnly: z.boolean().optional(),
     // Mod only: restrict a collection feed to entries still under review (CollectionItem.status = REVIEW).
     pendingReviewOnly: z.boolean().optional(),
+    // Hat Turf players only (getHatTurfFeedEvent); the handler drops these for anyone else.
+    hatSort: z.enum(HAT_SORTS).optional(),
+    // Whose hats a Hat Turf sort counts; none, every team's.
+    hatTeams: z.string().max(32).array().max(8).optional(),
+    // Only the images the viewer has a live Turf hat on.
+    hatTurfMine: z.boolean().optional(),
+    hideTurfHats: z.boolean().optional(),
+    hideWornHats: z.boolean().optional(),
     // Client-only on green: opt-in PG-13 on public feeds. Passes through the
     // schema so the type lines up with client filter state; the server does
     // not read it (browsing level is the authoritative cap).
@@ -531,7 +572,6 @@ export const getInfiniteImagesSchema = baseQuerySchema
 export type GetImageInput = z.infer<typeof getImageSchema>;
 export const getImageSchema = z.object({
   id: z.number(),
-  withoutPost: z.boolean().optional(),
   // excludedTagIds: z.array(z.number()).optional(),
   // excludedUserIds: z.array(z.number()).optional(),
 });
@@ -550,9 +590,8 @@ export const removeImageResourceSchema = z.object({
  * ceiling of its own that this could narrow:
  *
  * - `addEntityToShowcase` truncates the showcase it writes to
- *   `constants.profile.showcaseItemsLimit` (32). That is the only write path that
- *   truncates — `userProfile.update` takes `showcaseItems` unbounded and the service
- *   stores it as given, so a stored showcase is not guaranteed to be at or under 32.
+ *   `constants.profile.showcaseItemsLimit` (32), and `userProfile.update` rejects a
+ *   `showcaseItems` list longer than that.
  * - The notification panel dedupes image ids out of a 30-per-page infinite list, so
  *   500 is ~16 pages deep, and in practice more, since only notifications naming an
  *   image contribute an id.
@@ -632,7 +671,7 @@ export type SetVideoThumbnailInput = z.infer<typeof setVideoThumbnailSchema>;
 export const setVideoThumbnailSchema = z.object({
   imageId: z.number(),
   frame: z.number().nullable(),
-  customThumbnail: imageSchema.nullish(),
+  customThumbnail: imageInputSchema.nullish(),
   postId: z.number().optional(),
 });
 
@@ -657,6 +696,8 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema
-  .merge(imageSelectProfileFilterSchema)
-  .extend({ publishedOnly: z.boolean().optional() });
+export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema).extend({
+  publishedOnly: z.boolean().optional(),
+  /** With publishedOnly: also the caller's unpublished media from the crucible entry modal. */
+  includeEntryDrafts: z.boolean().optional(),
+});

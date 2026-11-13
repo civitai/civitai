@@ -34,14 +34,13 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 
-vi.mock('~/env/server', () => ({ env: { UNAUTHENTICATED_DOWNLOAD: true } }));
-
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
 
 import handler from '~/pages/api/download/attachments/[fileId]';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 // The handler reads the blocklist from the REPLICA only (`dbRead.keyValue.findUnique` in
 // the route). The old fixture aliased dbRead and dbWrite to one spy, so a read routed to
 // the primary would have satisfied it silently; binding dbRead alone makes that
@@ -80,6 +79,7 @@ function blocklist(...ips: string[]) {
 describe('/api/download/attachments/[fileId] — IP blocklist', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setEnv({ UNAUTHENTICATED_DOWNLOAD: true });
     // No session ⇒ the user-blacklist branch is skipped, so the only 403 this
     // handler can emit is the IP blocklist.
     mockGetServerAuthSession.mockResolvedValue(null);
@@ -219,6 +219,7 @@ describe('/api/download/attachments/[fileId] — user blocklist', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    setEnv({ UNAUTHENTICATED_DOWNLOAD: true });
     mockGetFileWithPermission.mockResolvedValue({
       id: 77,
       url: 'files/attachment.pdf',

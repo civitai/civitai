@@ -4,14 +4,33 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
+  import WalkPager from './WalkPager.svelte';
+  import { fetchJson } from '$lib/fetch-json';
   import { dateTime, num } from '$lib/format';
   import { denied } from '$lib/permissions';
-  import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
+  import { userWorkflowsRequest } from '$lib/user-workflows-request';
+  import type {
+    GeneratedWorkflow,
+    GeneratedWorkflowPage,
+    WorkflowOrigin,
+    WorkflowsByIdResult,
+    WorkflowSource,
+  } from '$lib/server/user-workflows.service';
 
   const SOURCES: { value: WorkflowSource; label: string }[] = [
+    { value: 'all', label: 'All' },
     { value: 'onsite', label: 'On-site generator' },
     { value: 'comfy', label: 'Comfy Cloud' },
   ];
+
+  // A fact about the row's tags, not a guess at how it was submitted.
+  const ORIGIN_LABEL: Record<WorkflowOrigin, string> = {
+    appblock: 'app block',
+    onsite: 'site generator',
+    comfy: 'Comfy Cloud (sends no prompt)',
+    untagged: 'no source tag',
+    other: 'other source',
+  };
 
   let {
     userId,
@@ -21,6 +40,8 @@
     open = false,
     canView,
     headerAction,
+    workflowIds = null,
+    showAllHref = null,
   }: {
     userId: number;
     title?: string;
@@ -33,6 +54,10 @@
      *  the two mounting pages post to different actions with different subject keys (`userId` vs
      *  `userRestrictionId`). */
     headerAction?: Snippet;
+    /** A raw `workflows=` value: show only these, never the account's whole history. */
+    workflowIds?: string | null;
+    /** Where "show all" goes: the same page without the filter. */
+    showAllHref?: string | null;
   } = $props();
 
   // `null` while the toggle has not been touched, so a change to `open` still reaches the panel rather
@@ -40,7 +65,7 @@
   let toggled = $state<boolean | null>(null);
   const shown = $derived(toggled ?? open);
 
-  let source = $state<WorkflowSource>('onsite');
+  let source = $state<WorkflowSource>('all');
 
   // A stack of the cursors walked so far, so Previous is an index move rather than a second query the
   // orchestrator cannot answer (its paging is forward-only). `''` is the first page.
@@ -53,7 +78,7 @@
     userId;
     untrack(() => {
       toggled = null;
-      source = 'onsite';
+      source = 'all';
     });
   });
 
@@ -68,18 +93,15 @@
     });
   });
 
+  const request = $derived(
+    userWorkflowsRequest(userId, { workflowIds, source, cursor: cursors[index] })
+  );
+  const live = $derived(browser && shown && canView);
+  const filtered = $derived(
+    live && request.kind === 'ids' ? fetchJson<WorkflowsByIdResult>(request.url) : null
+  );
   const page = $derived(
-    browser && shown && canView
-      ? fetch(
-          `/api/user-workflows/${userId}?take=20&source=${source}${
-            cursors[index] ? `&cursor=${encodeURIComponent(cursors[index])}` : ''
-          }`
-        ).then(async (r): Promise<GeneratedWorkflowPage> => {
-          const body = await r.json();
-          if (!r.ok) throw new Error(body?.error ?? String(r.status));
-          return body;
-        })
-      : null
+    live && request.kind === 'page' ? fetchJson<GeneratedWorkflowPage>(request.url) : null
   );
 
   const advance = (nextCursor: string) => {
@@ -87,6 +109,61 @@
     index += 1;
   };
 </script>
+
+{#snippet row(workflow: GeneratedWorkflow)}
+  <li class="rounded-md border border-dark-4 p-3">
+    <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
+      <span>{dateTime(workflow.createdAt)}</span>
+      <!-- On a filtered tab, a row from elsewhere (app blocks also tag `gen`) must say so. -->
+      {#if workflowIds !== null || source === 'all' || workflow.origin !== source}
+        <Badge variant="outline"
+          >{workflow.sourceTag ?? ORIGIN_LABEL[workflow.origin]}</Badge
+        >
+      {/if}
+      {#if workflow.status && workflow.status.toLowerCase() !== 'succeeded'}
+        <Badge variant="destructive">{workflow.status}</Badge>
+      {/if}
+      {#if workflow.workflow}
+        <Badge variant="secondary">{workflow.workflow}</Badge>
+      {/if}
+      {#if workflow.ecosystem}
+        <Badge variant="secondary">{workflow.ecosystem}</Badge>
+      {/if}
+      {#if workflow.unavailable > 0}
+        <span class="text-amber-300">
+          {num(workflow.unavailable)} output{workflow.unavailable === 1 ? '' : 's'} no longer
+          served
+        </span>
+      {/if}
+    </div>
+
+    {#if workflow.prompt}
+      <p class="mt-1 wrap-break-word text-sm text-dark-0">{workflow.prompt}</p>
+    {:else if workflow.paramsMissing}
+      <p class="mt-1 text-xs text-dark-2">No generation params recorded.</p>
+    {/if}
+    {#if workflow.negativePrompt}
+      <p class="mt-1 wrap-break-word text-xs text-dark-2">
+        <span class="text-dark-2">neg:</span>
+        {workflow.negativePrompt}
+      </p>
+    {/if}
+
+    {#if workflow.media.length}
+      <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {#each workflow.media as media, i (media.id + '@' + i)}
+          <!-- The orchestrator's URLs are signed and expire; nothing is proxied, so a stale
+               panel shows broken tiles rather than leaking a re-signable link. -->
+          {#if media.type === 'video'}
+            <video src={media.url} controls muted class="w-full rounded"></video>
+          {:else}
+            <img src={media.url} alt="" loading="lazy" class="w-full rounded" />
+          {/if}
+        {/each}
+      </div>
+    {/if}
+  </li>
+{/snippet}
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
   <div class="flex flex-wrap items-center justify-between gap-2">
@@ -108,12 +185,82 @@
     <p class="mt-3 text-sm text-dark-2">{denied('user.generations.view')}</p>
   {:else}
     <p class="mt-1 text-xs text-dark-2">
-      What this account has successfully generated, newest first — read from the orchestrator, so it is
-      not limited to what was published to the site.
+      {workflowIds === null
+        ? 'What this account has successfully generated, newest first'
+        : 'The listed generations of this account, failed ones included'} — read from the orchestrator,
+      so it is not limited to what was published to the site.
     </p>
   {/if}
 
-  {#if canView && shown}
+  {#if canView && shown && filtered}
+    <!-- Outside the await: a lookup can take a minute or fail, and the filter must stay clearable. -->
+    {#snippet showAll()}
+      {#if showAllHref}
+        <a href={showAllHref} class="text-xs text-blue-400 underline">show all</a>
+      {/if}
+    {/snippet}
+    {#await filtered}
+      <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-dark-2">
+        Loading the listed generations… {@render showAll()}
+      </div>
+    {:then result}
+      <div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant="secondary">
+          Showing {num(result.items.length)} flagged of this user's generations
+        </Badge>
+        {@render showAll()}
+      </div>
+      {#if result.items.length + result.notFound.length + result.unchecked.length + result.invalid === 0}
+        <p class="mt-2 text-xs text-dark-2">The link lists no workflow ids.</p>
+      {/if}
+      {#if result.invalid > 0 || result.overCap > 0}
+        <p class="mt-2 text-xs text-amber-300">
+          {#if result.invalid > 0}
+            Ignored {num(result.invalid)} entr{result.invalid === 1 ? 'y' : 'ies'} that
+            {result.invalid === 1 ? 'is' : 'are'} not a workflow id.
+          {/if}
+          {#if result.overCap > 0}
+            Only the first {num(result.cap)} ids were looked up; at least {num(result.overCap)} more
+            were not.
+          {/if}
+        </p>
+      {/if}
+      {#if result.notFound.length > 0}
+        <div class="mt-2 text-xs text-amber-300">
+          {num(result.notFound.length)} not found — not this account's, deleted, or past retention:
+          <ul class="mt-1 flex flex-wrap gap-1">
+            {#each result.notFound as id (id)}
+              <li><Badge variant="outline">{id}</Badge></li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+      {#if result.unchecked.length > 0}
+        <div class="mt-2 text-xs text-red-300">
+          {num(result.unchecked.length)} could not be checked — the orchestrator did not answer:
+          <ul class="mt-1 flex flex-wrap gap-1">
+            {#each result.unchecked as id (id)}
+              <li><Badge variant="outline">{id}</Badge></li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+      {#if result.items.length > 0}
+        <ul class="mt-3 space-y-3">
+          {#each result.items as workflow (workflow.id)}
+            {@render row(workflow)}
+          {/each}
+        </ul>
+      {/if}
+    {:catch e}
+      <p class="mt-3 text-sm text-red-300">
+        Could not load the listed generations: {e.message}
+        {@render showAll()}
+      </p>
+    {/await}
+  {/if}
+
+  {#if canView && shown && workflowIds === null}
     <Tabs
       value={source}
       onValueChange={(v) => v && (source = v as WorkflowSource)}
@@ -141,74 +288,21 @@
         {#if result.items.length === 0}
           <p class="mt-3 text-sm text-dark-2">
             No successful generations on record for this account
-            {source === 'comfy' ? ' in Comfy Cloud' : ' on-site'}.
+            {source === 'comfy' ? ' in Comfy Cloud' : source === 'onsite' ? ' on-site' : ''}.
           </p>
         {:else}
           <ul class="mt-3 space-y-3">
             {#each result.items as workflow (workflow.id)}
-              <li class="rounded-md border border-dark-4 p-3">
-                <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
-                  <span>{dateTime(workflow.createdAt)}</span>
-                  {#if workflow.workflow}
-                    <Badge variant="secondary">{workflow.workflow}</Badge>
-                  {/if}
-                  {#if workflow.ecosystem}
-                    <Badge variant="secondary">{workflow.ecosystem}</Badge>
-                  {/if}
-                  {#if workflow.unavailable > 0}
-                    <span class="text-amber-300">
-                      {num(workflow.unavailable)} output{workflow.unavailable === 1 ? '' : 's'} no longer
-                      served
-                    </span>
-                  {/if}
-                </div>
-
-                {#if workflow.prompt}
-                  <p class="mt-1 wrap-break-word text-sm text-dark-0">{workflow.prompt}</p>
-                {/if}
-                {#if workflow.negativePrompt}
-                  <p class="mt-1 wrap-break-word text-xs text-dark-2">
-                    <span class="text-dark-2">neg:</span>
-                    {workflow.negativePrompt}
-                  </p>
-                {/if}
-
-                {#if workflow.media.length}
-                  <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    {#each workflow.media as media, i (media.id + '@' + i)}
-                      <!-- The orchestrator's URLs are signed and expire; nothing is proxied, so a stale
-                           panel shows broken tiles rather than leaking a re-signable link. -->
-                      {#if media.type === 'video'}
-                        <video src={media.url} controls muted class="w-full rounded"></video>
-                      {:else}
-                        <img src={media.url} alt="" loading="lazy" class="w-full rounded" />
-                      {/if}
-                    {/each}
-                  </div>
-                {/if}
-              </li>
+              {@render row(workflow)}
             {/each}
           </ul>
 
-          <div class="mt-3 flex items-center gap-2">
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={index === 0}
-              onclick={() => (index = Math.max(0, index - 1))}
-            >
-              Previous
-            </Button>
-            <span class="text-xs text-dark-2">Page {num(index + 1)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!result.nextCursor}
-              onclick={() => result.nextCursor && advance(result.nextCursor)}
-            >
-              Next
-            </Button>
-          </div>
+          <WalkPager
+            {index}
+            hasNext={!!result.nextCursor}
+            onBack={() => (index = Math.max(0, index - 1))}
+            onNext={() => result.nextCursor && advance(result.nextCursor)}
+          />
         {/if}
       {/if}
     {:catch e}

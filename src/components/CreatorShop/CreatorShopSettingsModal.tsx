@@ -19,12 +19,14 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CreatorShopFeaturePickerModal } from '~/components/CreatorShop/CreatorShopFeaturePickerModal';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
+import { isSectionAvailable, withMissingSections } from '~/components/CreatorShop/section-meta';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import {
   useMutateCreatorShop,
   useQueryCreatorShopSettings,
 } from '~/components/CreatorShop/creator-shop.util';
 import { useSeededState } from '~/components/CreatorShop/useSeededState';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   CREATOR_SHOP_MAX_FEATURED,
   creatorShopSectionKeys,
@@ -40,6 +42,7 @@ const sectionLabels: Record<CreatorShopSectionKey, string> = {
   featured: 'Featured',
   cosmetics: 'Cosmetics',
   resold: 'From other creators',
+  services: 'Services',
   merch: 'Merch (coming soon)',
   models: 'Models',
 };
@@ -50,16 +53,7 @@ type SeedableSettings = {
 };
 
 function seedSections(settings?: SeedableSettings | null): SectionState[] {
-  const saved = settings?.sections;
-  let ordered: SectionState[];
-  if (saved?.length) {
-    ordered = saved.map((s) => ({ key: s.key, visible: s.visible }));
-    for (const key of creatorShopSectionKeys) {
-      if (!ordered.some((s) => s.key === key)) ordered.push({ key, visible: true });
-    }
-  } else {
-    ordered = creatorShopSectionKeys.map((key) => ({ key, visible: true }));
-  }
+  const ordered = withMissingSections(settings?.sections);
   // Models visibility is mirrored by the legacy `showModels` flag.
   return ordered.map((s) =>
     s.key === 'models' ? { ...s, visible: settings?.showModels ?? s.visible } : s
@@ -103,7 +97,10 @@ export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: numb
   const { settings, isLoading } = useQueryCreatorShopSettings(true, targetUserId);
   const { updateSettings } = useMutateCreatorShop();
 
+  const features = useFeatureFlags();
   const [sections, setSections] = useSeededState(settings, seedSections);
+  // A section behind an off flag is left out of the list but kept in what is saved.
+  const listed = sections.filter((s) => isSectionAvailable(s.key, features));
   const [description, setDescription] = useSeededState(settings, (s) => s?.description ?? '');
   const [enabled, setEnabled] = useSeededState(settings, (s) => s?.enabled ?? false);
   const featuredCount = settings?.featuredItemIds?.length ?? 0;
@@ -225,11 +222,11 @@ export function CreatorShopSettingsModal({ targetUserId }: { targetUserId?: numb
               modifiers={[restrictToVerticalAxis]}
             >
               <SortableContext
-                items={sections.map((s) => s.key)}
+                items={listed.map((s) => s.key)}
                 strategy={verticalListSortingStrategy}
               >
                 <Stack gap={8}>
-                  {sections.map((section) => (
+                  {listed.map((section) => (
                     <SortableItem key={section.key} id={section.key}>
                       <SectionRow section={section} onToggle={() => toggleVisible(section.key)} />
                     </SortableItem>

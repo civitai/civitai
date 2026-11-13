@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { CacheTTL } from '~/server/common/constants';
-import { hashifyObject } from '~/utils/string-helpers';
+import { queryCacheKeyHash } from '~/server/utils/query-cache-key';
 
 // Faithful in-test mirror of the real `queryCache` read-through (cache-helpers.ts):
 // a MISS runs `db.$queryRaw(query)` and stores the result keyed by the query hash; a
@@ -37,7 +37,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (query: any, options: any) => {
       cacheableOptions.push(options);
-      const key = hashifyObject(query).toString();
+      const key = queryCacheKeyHash(query);
       if (cacheableStore.has(key)) return cacheableStore.get(key);
       const result = await db.$queryRaw(query);
       cacheableStore.set(key, result);

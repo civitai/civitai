@@ -2,9 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { env } from '~/env/server';
 import { publicApiContext2 } from '~/server/public-api-context';
 import { getAllUsersInput } from '~/server/schema/user.schema';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
@@ -15,7 +15,7 @@ const schema = getAllUsersInput.extend({
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const apiCaller = await publicApiContext2(req, res);
-  const isSystemRequest = req.query.token === env.WEBHOOK_TOKEN;
+  const isSystemRequest = webhookTokenAuthenticates(req, req.query.token);
   const result = schema.safeParse(req.query);
   if (!result.success) return res.status(400).json(result.error);
 
@@ -50,8 +50,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       // Retry-After so clients/CF retry the (typically seconds-long) flap. A
       // non-transient error (real app bug / auth / NOT_FOUND) is NOT matched and
       // still surfaces as its real status.
-      const trpcStatus =
-        error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
+      const trpcStatus = error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
       if (isTransientMeiliError(error) || trpcStatus === 503) {
         if (!res.headersSent) {
           res.setHeader('Cache-Control', 'no-store');

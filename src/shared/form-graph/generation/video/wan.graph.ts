@@ -5,6 +5,7 @@ import type { GenerationAspectRatio } from '~/shared/constants/generation.consta
 import { checkpointDef } from '../checkpoint';
 import type { AspectRatioOption } from '../defs';
 import {
+  optionFallback,
   SEED,
   VIDEO,
   workflowScoped,
@@ -20,7 +21,7 @@ import {
 import { familyScope, makeTextBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
- * Wan (2.1 / 2.2 / 2.2-5b / 2.5 / 2.7 / 3.0), ported from `wan-graph.ts`.
+ * Wan (2.1 / 2.2 / 2.2-5b / 2.5 / 2.7 / 3.0).
  *
  * `.computed('wanVersion') + .discriminator('wanVersion', …)` becomes a TAGGED
  * branch, so the picked version is stamped into state under `wanVersion` and
@@ -28,8 +29,6 @@ import { familyScope, makeTextBlock, type FamilyExt, narrowEcosystem } from '../
  * workflow→ecosystem sync effect becomes a rule on the hub; v2.1's
  * resolution→ecosystem effect is a rule on v2.1 itself, auto-scoped by the tag.
  */
-
-// ---- copied from wan-graph.ts, which dies with the data-graph engine --------
 
 /** Wan version definitions - single source of truth for versions, ecosystems, and models */
 export const wanVersionDefs = [
@@ -132,8 +131,6 @@ const wanInterpolatorModels = [
   { label: 'RIFE', value: 'rife' },
 ] as const;
 
-// ---- end of wan-graph.ts copies ---------------------------------------------
-
 const versionOf = (ecosystem: string) => ecosystemToVersionDef.get(ecosystem)?.version ?? 'v2.1';
 
 /** Whether an ecosystem key belongs to the Wan family (any version, any variant). */
@@ -141,7 +138,7 @@ export const isWanEcosystem = (ecosystem: string) => ecosystemToVersionDef.has(e
 
 /**
  * The backend ecosystem for a Wan generation, DERIVED from what the user
- * actually chose. v1 stored this derived value in the same `ecosystem` key as
+ * actually chose. The retired lane stored it in the same `ecosystem` key as
  * the user's selection and kept the conflation consistent with an iterating
  * effect; here it is a pure function used where its inputs exist — the model
  * definition (declared after `resolution`) and the submission boundary.
@@ -164,7 +161,7 @@ function deriveWanBackendEcosystem(
   return isImg2vid ? def.ecosystems.i2v : def.ecosystems.t2v;
 }
 
-// Lists that wan-graph.ts keeps module-local; the option tables they build are
+// Module-local lists; the option tables they build are
 // re-derived here from the same shared helper, and pinned by the differential.
 const wan22AspectRatioList: GenerationAspectRatio[] = [
   '16:9',
@@ -187,7 +184,7 @@ const arByResolution = (
     aspectRatioDef({ options: table[resolution] ?? table[fallback]!, default: dflt })
   );
 
-const wan22MultiStepAspectRatiosByResolution = {
+const wan22AspectRatiosByResolution = {
   '480p': getAspectRatioOptions('480p', wan22AspectRatioList),
   '720p': getAspectRatioOptions('720p', wan22AspectRatioList),
 };
@@ -202,7 +199,7 @@ const wan30AspectRatiosByResolution = {
 };
 
 const AR_21 = arByResolution(wan21AspectRatiosByResolution, '480p', '1:1');
-const AR_22_MULTISTEP = arByResolution(wan22MultiStepAspectRatiosByResolution, '480p', '1:1');
+const AR_22 = arByResolution(wan22AspectRatiosByResolution, '480p', '1:1');
 const AR_25 = arByResolution(wan25AspectRatiosByResolution, '480p', '1:1');
 const AR_27 = arByResolution(wan27AspectRatiosByResolution, '720p', '16:9');
 const AR_30 = arByResolution(wan30AspectRatiosByResolution, '720p', '16:9');
@@ -238,6 +235,7 @@ const INTERPOLATOR = {
   input: z.enum(['none', 'film', 'rife']).optional(),
   output: z.enum(['none', 'film', 'rife']),
   default: 'none' as const,
+  correct: optionFallback(['none', 'film', 'rife'] as const, 'none'),
   meta: { options: wanInterpolatorModels },
 };
 const CFG = sliderDef({
@@ -345,17 +343,9 @@ const v21 = defineGraph<FamilyExt>({ scope: familyScope })
 const v22 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .use(makeTextBlock())
-  .field('aspectRatio', ({ images, resolution, _ext }) =>
-    noImages(images) ? (_ext.flags?.wan22MultiStep ? AR_22_MULTISTEP : AR_25)(resolution) : null
-  )
+  .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_22(resolution) : null))
   .field('shift', SHIFT)
-  .field('duration', ({ _ext }) =>
-    _ext.flags?.wan22MultiStep === true ? { ...DURATION_WAN, scope: 'wan' } : null
-  )
-  .field('interpolatorModel', ({ _ext }) =>
-    _ext.flags?.wan22MultiStep !== true ? INTERPOLATOR : null
-  )
-  .field('draft', ({ _ext }) => (_ext.flags?.wan22MultiStep !== true ? boolDef(false) : null))
+  .field('duration', { ...DURATION_WAN, scope: 'wan' })
   .field('resources', ({ backendEcosystem }) =>
     resourcesDef({ ecosystem: backendEcosystem, limit: 2 })
   );

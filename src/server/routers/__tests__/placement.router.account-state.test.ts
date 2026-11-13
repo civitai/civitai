@@ -1,29 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * A muted or banned account cannot make a placement, on either surface, paid or
+ * A muted or banned account cannot make a placement, on any surface, paid or
  * free.
  *
  * Placing a sticker or submitting a remix publishes content onto someone else's
  * image, so it is a posting channel aimed at a specific person — the thing a
- * mute exists to close. Both create procedures ran on `protectedProcedure` until
- * 2026-08-21, which refuses a ban and says nothing about a mute.
+ * mute exists to close. `protectedProcedure` refuses a ban and says nothing about a mute, so the
+ * create procedures are built from `guardedProcedure`.
  *
  * Asserted at the ROUTER rather than on the services, because the refusal is a
- * property of the procedure the mutation is built from — nothing inside either
- * service would change if the wrapper were swapped back.
+ * property of the procedure the mutation is built from: nothing inside the services would change if
+ * the wrapper were swapped back.
  */
 
 import type * as StickerPlacementService from '~/server/services/sticker-placement.service';
 import type * as RemixGalleryService from '~/server/services/remix-gallery.service';
+import type * as StorylinePlacementService from '~/server/services/storyline-placement.service';
 
-const { createStickerPlacement, createRemixGallerySubmission } = vi.hoisted(() => ({
-  createStickerPlacement: vi.fn(async () => ({ id: 1 })),
-  createRemixGallerySubmission: vi.fn(async () => ({ id: 2 })),
-}));
+const { createStickerPlacement, createRemixGallerySubmission, createStorylinePlacement } =
+  vi.hoisted(() => ({
+    createStickerPlacement: vi.fn(async () => ({ id: 1 })),
+    createRemixGallerySubmission: vi.fn(async () => ({ id: 2 })),
+    createStorylinePlacement: vi.fn(async () => ({ id: 3 })),
+  }));
 
-// Spread the real modules and override only the two writers: a hand-listed mock
-// would couple this test to every export the router happens to import today.
+// Spread the real modules and override only the writers: a hand-listed mock would couple this test
+// to every export the router happens to import today.
 vi.mock('~/server/services/sticker-placement.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StickerPlacementService>()),
   createStickerPlacement,
@@ -31,6 +34,10 @@ vi.mock('~/server/services/sticker-placement.service', async (importOriginal) =>
 vi.mock('~/server/services/remix-gallery.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RemixGalleryService>()),
   createRemixGallerySubmission,
+}));
+vi.mock('~/server/services/storyline-placement.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylinePlacementService>()),
+  createStorylinePlacement,
 }));
 
 import { placementRouter } from '~/server/routers/placement.router';
@@ -42,13 +49,13 @@ import {
 } from '~/server/routers/__tests__/placement.router.test-utils';
 
 /**
- * The two procedures that write a placement — one case each, and deliberately no
+ * The procedures that write a placement — one case each, and deliberately no
  * `free: true` twin.
  *
  * The free tier is covered, but not by a second call here: the guard is
  * middleware, so it refuses before the payload is looked at and cannot behave
  * differently for an offer it never sees. A free twin would run the identical
- * path — both create services are replaced above, so `free: true` reaches a mock
+ * path: the create services are replaced above, so `free: true` reaches a mock
  * argument and `createFreePlacement` is never entered — and no mutation of the
  * guard distinguishes the two. What covers the free tier is that both offers go
  * through these procedures and nothing else, which `guards exactly the
@@ -67,6 +74,12 @@ const CREATE_CALLS = [
     label: 'remix gallery',
     writer: createRemixGallerySubmission,
     input: { hostImageId: 11, imageId: 12, expectedPrice: 100 },
+  },
+  {
+    name: 'submitStorylineContinuation',
+    label: 'storyline',
+    writer: createStorylinePlacement,
+    input: { parentPostId: 11, postId: 12, expectedPrice: 0 },
   },
 ] as const;
 
@@ -98,13 +111,13 @@ beforeEach(() => vi.clearAllMocks());
 describe('placement router — account state refuses a placement', () => {
   /**
    * The load-bearing case, and the one that does not lean on the caller tests
-   * below: exactly the two placement-writing mutations are built from
+   * below: exactly the placement-writing mutations are built from
    * `guardedProcedure`, read off each procedure's middleware chain.
    *
    * A list of names would have been silenced by pasting the new name into it,
    * and would have churned on every unrelated query added to the router. This
-   * fails on what matters — a third create mutation added without the guard, or
-   * either of these two quietly reverted.
+   * fails on what matters: a new create mutation added without the guard, or one of these quietly
+   * reverted.
    */
   it('guards exactly the placement-writing mutations', () => {
     expect(guardedMiddlewares.length).toBeGreaterThan(0);
@@ -112,7 +125,7 @@ describe('placement router — account state refuses a placement', () => {
 
     const guarded = mutationNames.filter((name) => isGuarded(procedures[name]));
 
-    expect(guarded.sort()).toEqual([...new Set(CREATE_CALLS.map((call) => call.name))].sort());
+    expect(guarded.sort()).toEqual(CREATE_CALLS.map((call) => call.name).sort());
   });
 
   for (const { label, name, writer, input } of CREATE_CALLS) {

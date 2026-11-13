@@ -6,8 +6,10 @@ import { FeaturedSection } from '~/components/CreatorShop/Storefront/FeaturedSec
 import { MerchSection } from '~/components/CreatorShop/Storefront/MerchSection';
 import { ModelsSection } from '~/components/CreatorShop/Storefront/ModelsSection';
 import { ResoldSection } from '~/components/CreatorShop/Storefront/ResoldSection';
+import { ServicesSection } from '~/components/CreatorShop/Storefront/ServicesSection';
+import { storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { CreatorShopSectionKey } from '~/server/schema/creator-shop.schema';
-import { creatorShopSectionKeys } from '~/server/schema/creator-shop.schema';
 
 // Registry keyed by `CreatorShopSectionKey`: adding a section is a localized
 // change — build its element here and add its key to the schema. Each section
@@ -25,12 +27,11 @@ export function StorefrontSections({
   ownerUserId: number;
   preview?: boolean;
 }) {
-  const sectionOrder = useMemo<CreatorShopSectionKey[]>(() => {
-    const configured = shop.settings.sections;
-    if (configured && configured.length)
-      return configured.filter((s) => s.visible).map((s) => s.key);
-    return [...creatorShopSectionKeys];
-  }, [shop.settings.sections]);
+  const features = useFeatureFlags();
+  const sectionOrder = useMemo(
+    () => storefrontSectionKeys(shop.settings.sections, features),
+    [shop.settings.sections, features]
+  );
 
   const sections: Record<CreatorShopSectionKey, React.ReactNode> = {
     featured: (
@@ -48,6 +49,13 @@ export function StorefrontSections({
         items={shop.resold}
         ownedCosmeticIds={ownedCosmeticIds}
         viaShopUserId={ownerUserId}
+      />
+    ),
+    services: (
+      <ServicesSection
+        ownerUserId={ownerUserId}
+        username={username}
+        shopPublished={shop.settings.enabled === true}
       />
     ),
     merch: <MerchSection />,

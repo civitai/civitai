@@ -8,9 +8,9 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   Modal,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { IconLock, IconLockOpen, IconStar } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';

@@ -7,7 +7,11 @@ import { comicsFilterableAttributes } from '~/server/search-index/filterable-att
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { profileImageSelect } from '../selectors/image.selector';
+import {
+  getServableProfilePictures,
+  type RawQueryClient,
+} from '~/server/services/profile-picture.sql';
+import type { profileImageSelect } from '../selectors/image.selector';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -102,7 +106,7 @@ type ComicForSearchIndex = {
 //    *clean* underlying Image: ingestion = Scanned, not in review, not
 //    TOS-violated. Without the Image checks, panels whose underlying
 //    Image was flagged AFTER scan would still surface in search.
-const WHERE = [
+export const comicSearchEligibleWhere = [
   Prisma.sql`cp."status" = 'Active'::"ComicProjectStatus"`,
   Prisma.sql`cp."tosViolation" = FALSE`,
   Prisma.sql`cp."userId" != -1`,
@@ -167,6 +171,84 @@ const transformData = async ({
   return records;
 };
 
+/** The index's rows for the eligible comics that also match every one of `filters`. */
+async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
+  const where = [...comicSearchEligibleWhere, ...filters];
+  const comics = await db.$queryRaw<ComicForSearchIndex[]>`
+    WITH target AS MATERIALIZED (
+      SELECT
+        cp.id,
+        cp.name,
+        cp.description,
+        cp.genre,
+        cp."nsfwLevel",
+        cp."createdAt",
+        cp."updatedAt",
+        cp."userId"
+      FROM "ComicProject" cp
+      WHERE ${Prisma.join(where, ' AND ')}
+    ), users AS MATERIALIZED (
+      SELECT
+        u.id,
+        jsonb_build_object(
+          'id', u.id,
+          'username', u.username,
+          'deletedAt', u."deletedAt",
+          'image', u.image,
+          'profilePictureId', u."profilePictureId"
+        ) "user"
+      FROM "User" u
+      WHERE u.id IN (SELECT "userId" FROM target)
+      GROUP BY u.id
+    ), cover_images AS MATERIALIZED (
+      SELECT
+        cp.id AS "projectId",
+        i.url AS "coverImageUrl",
+        i."nsfwLevel" AS "coverImageNsfwLevel"
+      FROM "ComicProject" cp
+      JOIN "Image" i ON i.id = cp."coverImageId"
+      WHERE cp.id IN (SELECT id FROM target)
+    ), stats AS MATERIALIZED (
+      SELECT
+        t.id AS "projectId",
+        jsonb_build_object(
+          'chapterCount', (
+            SELECT COUNT(*) FROM "ComicChapter" cc
+            WHERE cc."projectId" = t.id AND cc."status" = 'Published'::"ComicChapterStatus"
+          ),
+          'followerCount', (
+            SELECT COUNT(*) FROM "ComicProjectEngagement" cpe
+            WHERE cpe."projectId" = t.id AND cpe."type" = 'Notify'::"ComicEngagementType"
+          )
+        ) stats
+      FROM target t
+    )
+    SELECT
+      t.*,
+      (SELECT "coverImageUrl" FROM cover_images ci WHERE ci."projectId" = t.id),
+      (SELECT "coverImageNsfwLevel" FROM cover_images ci WHERE ci."projectId" = t.id),
+      (SELECT "user" FROM users u WHERE u.id = t."userId"),
+      (SELECT stats FROM stats s WHERE s."projectId" = t.id)
+    FROM target t
+  `;
+
+  if (!comics.length) return null;
+
+  const profilePictures = await getServableProfilePictures(
+    db,
+    comics.map((c) => c.user.profilePictureId).filter(isDefined)
+  );
+
+  return { comics, profilePictures };
+}
+
+/** Index records for those of `ids` that are still eligible, in no particular order. */
+export async function getComicSearchRecords(db: RawQueryClient, ids: number[]) {
+  if (!ids.length) return [];
+  const data = await pullComics(db, [Prisma.sql`cp.id IN (${Prisma.join(ids)})`]);
+  return data ? transformData(data) : [];
+}
+
 export type ComicSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 type ProfileImage = Prisma.ImageGetPayload<{
@@ -175,10 +257,11 @@ type ProfileImage = Prisma.ImageGetPayload<{
 
 export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
+  outboxEntity: 'Comic',
   setup: onIndexSetup,
   prepareBatches: async ({ db, logger }, lastUpdatedAt) => {
     const where = [
-      ...WHERE,
+      ...comicSearchEligibleWhere,
       lastUpdatedAt ? Prisma.sql`cp."createdAt" >= ${lastUpdatedAt}` : undefined,
     ].filter(isDefined);
 
@@ -204,87 +287,20 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
       `PullData :: Pulling data for batch`,
       batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
     );
-    const where = [
-      ...WHERE,
-      batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
-      batch.type === 'new'
-        ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
-        : undefined,
-    ].filter(isDefined);
-
-    const comics = await db.$queryRaw<ComicForSearchIndex[]>`
-      WITH target AS MATERIALIZED (
-        SELECT
-          cp.id,
-          cp.name,
-          cp.description,
-          cp.genre,
-          cp."nsfwLevel",
-          cp."createdAt",
-          cp."updatedAt",
-          cp."userId"
-        FROM "ComicProject" cp
-        WHERE ${Prisma.join(where, ' AND ')}
-      ), users AS MATERIALIZED (
-        SELECT
-          u.id,
-          jsonb_build_object(
-            'id', u.id,
-            'username', u.username,
-            'deletedAt', u."deletedAt",
-            'image', u.image,
-            'profilePictureId', u."profilePictureId"
-          ) "user"
-        FROM "User" u
-        WHERE u.id IN (SELECT "userId" FROM target)
-        GROUP BY u.id
-      ), cover_images AS MATERIALIZED (
-        SELECT
-          cp.id AS "projectId",
-          i.url AS "coverImageUrl",
-          i."nsfwLevel" AS "coverImageNsfwLevel"
-        FROM "ComicProject" cp
-        JOIN "Image" i ON i.id = cp."coverImageId"
-        WHERE cp.id IN (SELECT id FROM target)
-      ), stats AS MATERIALIZED (
-        SELECT
-          t.id AS "projectId",
-          jsonb_build_object(
-            'chapterCount', (
-              SELECT COUNT(*) FROM "ComicChapter" cc
-              WHERE cc."projectId" = t.id AND cc."status" = 'Published'::"ComicChapterStatus"
-            ),
-            'followerCount', (
-              SELECT COUNT(*) FROM "ComicProjectEngagement" cpe
-              WHERE cpe."projectId" = t.id AND cpe."type" = 'Notify'::"ComicEngagementType"
-            )
-          ) stats
-        FROM target t
-      )
-      SELECT
-        t.*,
-        (SELECT "coverImageUrl" FROM cover_images ci WHERE ci."projectId" = t.id),
-        (SELECT "coverImageNsfwLevel" FROM cover_images ci WHERE ci."projectId" = t.id),
-        (SELECT "user" FROM users u WHERE u.id = t."userId"),
-        (SELECT stats FROM stats s WHERE s."projectId" = t.id)
-      FROM target t
-    `;
-
-    if (!comics.length) return null;
-
-    const profilePictures = await db.image.findMany({
-      where: {
-        id: { in: comics.map((c) => c.user.profilePictureId).filter(isDefined) },
-      },
-      select: profileImageSelect,
-    });
+    const data = await pullComics(
+      db,
+      [
+        batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
+        batch.type === 'new'
+          ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
+          : undefined,
+      ].filter(isDefined)
+    );
+    if (!data) return null;
 
     logger(`PullData :: Pulled comics and profile pictures`);
 
-    return {
-      comics,
-      profilePictures,
-    };
+    return data;
   },
   transformData,
   pushData: async ({ indexName }, records) => {

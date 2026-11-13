@@ -7,7 +7,8 @@ import {
 } from '~/shared/constants/domain.constants';
 
 /**
- * The OAuth provider IDs the connected-accounts UI knows how to render. `getAvailableOAuthProviders` intersects
+ * The OAuth provider IDs the connected-accounts UI knows how to render. `getAvailableOAuthProviders`
+ * (`~/server/auth/oauth-providers`) intersects
  * the hub's enabled-provider list with this set, so a provider the hub enables but that's missing here is simply
  * not surfaced. Keep in sync with the hub's provider config (`apps/auth/src/lib/server/auth/providers.ts`) and
  * `@civitai/auth`'s `ProviderId`.
@@ -96,6 +97,19 @@ export function isHostForColor(host: string, color: ColorDomain): boolean {
  * change the global color resolution.
  */
 
+/**
+ * True when `host` may serve mature App-Blocks content: a primary or alias of the RED domain.
+ * Fail-closed: an empty or missing host is not red-capable.
+ *
+ * The App Store's "is this request red-capable?" test — the two store routers, the public apps
+ * REST endpoints and the run page call this rather than re-spelling it. (The block-token mint
+ * and the block-scope middleware still spell the same expression inline when they choose a
+ * token's ceiling; they were left untouched in this change.)
+ */
+export function isRedCapableHost(host: string | null | undefined): boolean {
+  return !!host && isHostForColor(host, 'red');
+}
+
 /** Mature content ratings (App Blocks). Everything else is SFW. */
 const MATURE_CONTENT_RATINGS = new Set(['r', 'x']);
 
@@ -148,36 +162,6 @@ export function isAliasHost(host: string): boolean {
     if (cfg.aliases.includes(normalized)) return true;
   }
   return false;
-}
-
-// The OAuth providers a user can connect — sourced from the HUB, which is the SINGLE authority for provider
-// config + secrets (the spoke holds NO provider secrets). Fetched server-to-server from `GET {hub}/api/auth/
-// providers` and cached in-memory; fails OPEN to the last-good (or empty) list so an SSR render never breaks on
-// a hub blip. Server-only (reads AUTH_JWT_ISSUER). Replaces the old per-host CLIENT_ID/SECRET resolution.
-const PROVIDERS_TTL_MS = 10 * 60_000;
-let providersCache: { ids: OAuthProviderId[]; at: number } | undefined;
-
-export async function getAvailableOAuthProviders(): Promise<OAuthProviderId[]> {
-  if (providersCache && Date.now() - providersCache.at < PROVIDERS_TTL_MS)
-    return providersCache.ids;
-
-  const hub = (process.env.AUTH_JWT_ISSUER ?? '').replace(/\/+$/, '');
-  if (!hub) return providersCache?.ids ?? [];
-
-  try {
-    const res = await fetch(`${hub}/api/auth/providers`);
-    if (!res.ok) return providersCache?.ids ?? [];
-    const data = (await res.json()) as { providers?: { id?: string }[] };
-    const known = new Set<string>(oauthProviderIds);
-    const ids = (data.providers ?? [])
-      .map((p) => p?.id)
-      .filter((id): id is OAuthProviderId => typeof id === 'string' && known.has(id));
-    providersCache = { ids, at: Date.now() };
-    return ids;
-  } catch {
-    // hub unreachable — keep rendering with the last-good (or empty) list rather than throwing in SSR.
-    return providersCache?.ids ?? [];
-  }
 }
 
 /**

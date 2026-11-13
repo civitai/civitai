@@ -2,12 +2,16 @@ import { z } from 'zod';
 import { fail } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { PAGE_SIZE_OPTIONS } from '$lib/server/models';
+import { MODEL_GIFT_LINKS_FLAG } from '$lib/gift-links';
+import { darkFlagEnabled } from '$lib/server/main-app-flags';
+import { firstError } from '$lib/server/form-errors';
 import { getModelsView } from '$lib/server/models-view';
 import {
   resolveMembership,
   cappedTier,
   displayTier,
   TEST_MEMBERSHIP_COOKIE,
+  canSetGenerationOnly,
 } from '$lib/server/membership';
 import {
   setLicensingFee,
@@ -38,18 +42,19 @@ import {
 import { getCreatorSales, getSalesByVersion } from '$lib/server/monetization/sales';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
-import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
-  assertPricingAllowed,
+  assertGatePricingAllowed,
   countPricingSlotsThisMonth,
+  getFeeAllowanceBoost,
   listPricingSlots,
   recordPricingSlots,
   unpricedVersionIds,
+  versionPriceState,
 } from '$lib/server/monetization/pricing-slot';
 import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
-  monthlyPricingAllowance,
+  pricingAllowanceLimits,
   pricingEligibility,
 } from '$lib/monetization/paid-access';
 
@@ -66,11 +71,10 @@ const versionIdsSchema = z
   )
   .refine((ids) => ids.length > 0, 'Select at least one version.');
 
-const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
-  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots] =
+  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots, feeBoost] =
     await Promise.all([
       getModelsView(locals.user, url, cookies),
       resolveTotalScore(
@@ -86,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
         cookies.get(TEST_CREATOR_SCORE_COOKIE)
       ),
       listPricingSlots(locals.user.id),
+      getFeeAllowanceBoost(locals.user.id),
     ]);
 
   // Query-independent, so they stay out of getModelsView: the creator's own sale windows and the
@@ -93,7 +98,10 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
   const [sales, saleLimits] = view.salesEnabled
     ? await Promise.all([getCreatorSales(locals.user.id), getSaleLimitOverrides()])
     : [[], {}];
-  const pricingLimit = monthlyPricingAllowance(cappedTier(membership));
+  const { baseLimit, feeLimit } = pricingAllowanceLimits({
+    tier: cappedTier(membership),
+    boost: feeBoost,
+  });
   return {
     ...view,
     creatorScore,
@@ -109,7 +117,9 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       capTier: cappedTier(membership),
       pricingUsed,
       pricingSlots,
-      pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
+      pricingLimit: baseLimit,
+      feePricingLimit: feeLimit,
+      feeBoost,
       // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
       // creator at a given score sees. What it never moves is the write, which re-reads the real one.
       pricingFloor: pricingEligibility(modelsScore),
@@ -117,8 +127,9 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       maxEarlyAccessDays: earlyAccessDaysForScore(modelsScore),
       earlyAccessUsed,
       earlyAccessCap: earlyAccessQuantityForScore(modelsScore),
-      canSetGenerationOnly: await canSetGenerationOnlyFresh(locals.user),
+      canSetGenerationOnly: canSetGenerationOnly(locals.user),
     },
+    giftLinksEnabled: await darkFlagEnabled(MODEL_GIFT_LINKS_FLAG, locals.user),
   };
 };
 
@@ -254,15 +265,14 @@ export const actions: Actions = {
       }
     }
 
-    // Paid-access prices are uncapped. What is limited is how many versions gain a price this month —
-    // and only versions that are not already priced count, so re-pricing a selection is always free.
-    // Moderators are NOT exempt — see assertPricingAllowed. The fee paths in this app do not exempt
-    // them either, and one write path answering this differently is how a spoke becomes a way around it.
-    const newlyPricedIds = permanent
-      ? await unpricedVersionIds(locals.user.id, versionIds.data)
-      : [];
+    // Moderators are NOT exempt. The fee paths in this app do not exempt them either, and one write
+    // path answering this differently is how a spoke becomes a way around it.
+    const priceState = permanent
+      ? await versionPriceState(locals.user.id, versionIds.data)
+      : { unpriced: [], feeOnly: [] };
+    const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, priceState);
       if (!gate.ok) return fail(gate.status, { paidAccess: true, error: gate.error });
     }
 
@@ -386,7 +396,7 @@ export const actions: Actions = {
       versionIds.data,
       usageControl,
       cookie,
-      await canSetGenerationOnlyFresh(locals.user)
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { bulk: true, error: result.error });
     await bustVersionCache(cookie, versionIds.data);
@@ -418,7 +428,7 @@ export const actions: Actions = {
       [versionId.data],
       usageControl,
       request.headers.get('cookie') ?? '',
-      await canSetGenerationOnlyFresh(locals.user)
+      canSetGenerationOnly(locals.user)
     );
     if (!result.ok) return fail(result.status, { versionId: versionId.data, error: result.error });
     if (result.updated === 0)
@@ -454,7 +464,7 @@ export const actions: Actions = {
           locals.user.id,
           versionId.data,
           usageOnly,
-          await canSetGenerationOnlyFresh(locals.user)
+          canSetGenerationOnly(locals.user)
         );
         if (!usageResult.ok)
           return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });
@@ -467,14 +477,13 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
 
-    // Only a version with no price yet spends allowance — re-saving one that already has a price stays
-    // allowed even at the limit, so an edit can never strand a creator.
-    // Moderators are NOT exempt — see assertPricingAllowed.
-    const newlyPricedIds = permanent
-      ? await unpricedVersionIds(locals.user.id, [versionId.data])
-      : [];
+    // Moderators are NOT exempt.
+    const priceState = permanent
+      ? await versionPriceState(locals.user.id, [versionId.data])
+      : { unpriced: [], feeOnly: [] };
+    const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, priceState);
       if (!gate.ok) return fail(gate.status, { versionId: versionId.data, error: gate.error });
     }
 
@@ -497,7 +506,7 @@ export const actions: Actions = {
         locals.user.id,
         versionId.data,
         usageControl,
-        await canSetGenerationOnlyFresh(locals.user)
+        canSetGenerationOnly(locals.user)
       );
       if (!usageResult.ok)
         return fail(usageResult.status, { versionId: versionId.data, error: usageResult.error });

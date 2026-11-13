@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import TipButton from './TipButton.svelte';
 
   // A destructive submit that asks first, for bulk actions inside an existing form. Retool gated its
   // bulk review/comment deletion behind a modal; ban and purge got confirmations here and these did not,
@@ -14,6 +15,7 @@
     count,
     noun,
     submitting = false,
+    tip,
   }: {
     label: string;
     /** Form field the op is posted as, e.g. `op`. */
@@ -24,6 +26,8 @@
     /** Singular; pluralised with a bare "s". */
     noun: string;
     submitting?: boolean;
+    /** Hover text. Set it inside a `SelectionBar`. */
+    tip?: string;
   } = $props();
 
   let confirming = $state(false);
@@ -69,7 +73,8 @@
     Cancel
   </Button>
 {:else}
-  <Button
+  <TipButton
+    {tip}
     type="button"
     size="sm"
     variant="destructive"
@@ -78,5 +83,5 @@
     data-touch-target
   >
     {label}
-  </Button>
+  </TipButton>
 {/if}

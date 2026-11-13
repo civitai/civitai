@@ -4,24 +4,23 @@
  * The listing detail's right rail carries the model detail page's "Details" accordion:
  * a `.detailsPanel` of label/value rows (`ModelVersionDetails.module.scss`'s
  * `.detailRow` / `.detailLabel`). This module decides WHICH rows exist, in WHAT order,
- * and with WHAT values — so the correctness gate lives in the blocking node `unit`
- * project rather than in the report-only browser suite.
+ * and with WHAT values — so the correctness gate lives in the node `unit`
+ * project rather than in the browser suite.
  *
  * Two rules the renderer must not re-implement:
  *   1. A row whose underlying field is null/absent is OMITTED. A "Rating: —" row is
  *      noise; an absent row is the honest signal.
  *   2. In `preview` posture (the moderator listing-media review, rendering an
- *      UNAPPROVED shadow listing) the REVIEWS, INSTALLS and UPDATED rows are omitted.
+ *      UNAPPROVED shadow listing) the REVIEWS, PLAYS and UPDATED rows are omitted.
  *      One rule, three fields — every one of them is a number or a date the posture
  *      cannot supply honestly:
  *        - REVIEWS: a shadow listing has no review rows at all, so its rollup is
  *          structurally 0/0. "No reviews yet" there reads as a fact about the APP
  *          rather than about the POSTURE.
- *        - INSTALLS: identical reasoning, and it was the inconsistency this rule was
- *          widened to close. `buildListingStatChips` already returns NO chips in
- *          preview precisely so a zero cannot be read as a measurement — and then
- *          `Installs: 0` rendered here anyway, in the rail, one column over. An
- *          un-approved listing has never been installable by anyone.
+ *        - PLAYS: the preview has no metric rollup to read (this row was INSTALLS,
+ *          widened into the rule for the same reason). `buildListingStatChips` already
+ *          returns NO chips in preview precisely so a zero cannot be read as a
+ *          measurement.
  *        - UPDATED: the date a preview carries is NOT `app_listings.updated_at`.
  *          `buildListingDetailPreview` has no such field to read and substitutes the
  *          publish request's SUBMISSION time, so the row labelled "Updated" showed a
@@ -46,14 +45,31 @@ import {
   STANDALONE_KIND_LABEL,
 } from '~/components/Apps/listingKindLabels';
 import { getRatingLabel } from '~/utils/rating-label';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
-import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import {
+  offsiteContentRatingColor,
+  offsiteContentRatingLabel,
+} from '~/shared/constants/browsingLevel.constants';
+import { appsStoreCategoryHref } from '~/components/Apps/appsStoreQueryParams';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+
+/** The `rel` of the Support row's outbound, author-chosen, any-host link. */
+export const SUPPORT_LINK_REL = 'noopener noreferrer nofollow ugc';
 
 /** A single label/value row of the Details panel. */
 export type ListingDetailRow = {
   /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
-  key: 'kind' | 'category' | 'rating' | 'reviews' | 'installs' | 'updated' | 'source';
+  key:
+    | 'kind'
+    | 'category'
+    | 'rating'
+    | 'reviews'
+    | 'plays'
+    | 'installs'
+    | 'updated'
+    | 'source'
+    | 'support';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
@@ -72,6 +88,13 @@ export type ListingDetailRow = {
    */
   href?: string;
   /**
+   * The `rel` for an {@link href} row, when it must say MORE than `noopener noreferrer`. Only
+   * the `support` row sets it, to `noopener noreferrer nofollow ugc`: its destination is ANY
+   * host the author chose (the source link is host-allowlisted), so the store neither vouches
+   * for it (`nofollow`) nor presents it as its own (`ugc`). It always includes `noopener`.
+   */
+  rel?: string;
+  /**
    * When set, the row's value renders as a SAME-PAGE fragment link to this element id.
    * Only the `reviews` row sets it, and only when there is something to jump to.
    *
@@ -87,6 +110,24 @@ export type ListingDetailRow = {
    * renders — a fragment link to an id nothing renders fails SILENTLY.
    */
   anchorId?: string;
+  /**
+   * When set, the row's value renders as a SAME-SITE link to this store URL — the `/apps`
+   * grid filtered to the listing's category. Only the `category` row sets it, and only
+   * outside `preview` (the moderator review renders this panel inside a review surface,
+   * where a link would navigate the reviewer away from the decision they are making).
+   *
+   * A THIRD link field rather than a reuse of {@link href} or {@link anchorId}, for the
+   * reason `anchorId` gives: `href` obliges `target="_blank"` + `noopener` (right for an
+   * outbound third-party URL, wrong for our own store), and `anchorId` is a fragment on
+   * this page. A same-site navigation is neither.
+   */
+  storeHref?: string;
+  /**
+   * When set, the value renders as a coloured PILL in this Mantine colour instead of as
+   * text. Only the `rating` row sets it, from `offsiteContentRatingColor` — the site's
+   * existing browsing-level colours, not a palette of this panel's own.
+   */
+  pillColor?: string;
   /**
    * Mantine colour token for the value, when the value carries a verdict. Only the
    * `reviews` row sets it (the rating ladder's colour); everything else renders in the
@@ -109,7 +150,7 @@ function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
 /**
  * Build the ordered Details rows for a listing.
  *
- * @param opts.preview read-only moderator posture — omits the reviews, installs and
+ * @param opts.preview read-only moderator posture — omits the reviews, plays and
  *   updated rows (rule 2).
  * @param opts.formatDate injected so this module stays pure and the test can pin the
  *   ORDER and OMISSION rules without depending on dayjs' locale or the host timezone.
@@ -122,10 +163,11 @@ export function buildListingDetailRows(
     | 'contentRating'
     | 'recommend'
     | 'reviewCount'
+    | 'openCount'
     | 'installCount'
     | 'updatedAt'
   > &
-    Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
+    Partial<Pick<ListingDetail, 'sourceRepoUrl' | 'issueTrackerUrl'>>,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
@@ -142,10 +184,14 @@ export function buildListingDetailRows(
   // value as its fallback, so an unknown/legacy rating or a category added after
   // this client shipped degrades to the stored string rather than to a blank row.
   if (detail.category) {
+    // A link only for a category the store can actually filter by — see
+    // `appsStoreCategoryHref` — and never in preview (see `storeHref`).
+    const storeHref = opts.preview ? null : appsStoreCategoryHref(detail.category);
     rows.push({
       key: 'category',
       label: 'Category',
       value: marketplaceCategoryLabel(detail.category),
+      ...(storeHref ? { storeHref } : {}),
     });
   }
   if (detail.contentRating) {
@@ -153,20 +199,21 @@ export function buildListingDetailRows(
       key: 'rating',
       label: 'Rating',
       value: offsiteContentRatingLabel(detail.contentRating),
+      pillColor: offsiteContentRatingColor(detail.contentRating),
     });
   }
 
   // SOURCE — the app's public source repository, when the author declared one.
   //
-  // 🔴 PRESENT IN `preview`, unlike reviews / installs / updated, and that is rule 2
+  // 🔴 PRESENT IN `preview`, unlike reviews / plays / updated, and that is rule 2
   // applied rather than ignored. Rule 2 omits a row when the PREVIEW POSTURE cannot
   // supply the value honestly: a shadow listing structurally has no reviews and no
-  // installs, and the date a preview carries is the submission time wearing an
+  // metric rollup, and the date a preview carries is the submission time wearing an
   // "Updated" label. None of that is true here — the source link is a scalar the
   // shadow carries verbatim and the one `applyApprovedRevision` will publish, so
   // showing it to the moderator is the entire point of a review preview.
   //
-  // 🔴 RUNTIME-GUARDED on the type, like `installCount`/`updatedAt` above and for the
+  // 🔴 RUNTIME-GUARDED on the type, like `openCount`/`updatedAt` below and for the
   // same MEASURED reason: not every producer of a `ListingDetail`-shaped object goes
   // through `projectListingDetail` (the moderator combined-review surface builds one
   // through a cast), so a required TYPE is not a runtime guarantee. Absent, a
@@ -184,9 +231,22 @@ export function buildListingDetailRows(
     });
   }
 
+  // SUPPORT — where to report a problem (the issue tracker), right after Source. Present in
+  // `preview` for the reason Source is: the shadow carries it and approving publishes it.
+  // Runtime-guarded on the type for the same cast-producer reason.
+  if (typeof detail.issueTrackerUrl === 'string' && detail.issueTrackerUrl.length > 0) {
+    rows.push({
+      key: 'support',
+      label: 'Support',
+      value: detail.issueTrackerUrl.replace(/^https:\/\//, '').replace(/\/$/, ''),
+      href: detail.issueTrackerUrl,
+      rel: SUPPORT_LINK_REL,
+    });
+  }
+
   if (!opts.preview) {
     const { recommendPct } = detail.recommend;
-    if (recommendPct == null || detail.reviewCount === 0) {
+    if (detail.reviewCount === 0) {
       // Matches `getRecommendLabel`'s zero case. 🔴 The ladder is NOT called here: with
       // zero reviews `positiveRating` is 0, which the ladder scores `Mixed` — a verdict
       // about an app nobody has reviewed.
@@ -194,6 +254,17 @@ export function buildListingDetailRows(
       // in it, so a link would move the viewer to an empty heading. The link is an
       // affordance for content that exists.
       rows.push({ key: 'reviews', label: 'Reviews', value: 'No reviews yet' });
+    } else if (recommendPct == null) {
+      // Reviews exist, but the server withheld the percentage (too few for one to mean
+      // anything — `recommendRollup` owns the number). The counts, and no ladder verdict:
+      // one positive review must not read "Positive (1)". No colour, since there is no
+      // verdict; the link stays, because there are reviews to jump to.
+      rows.push({
+        key: 'reviews',
+        label: 'Reviews',
+        value: getRecommendLabel(detail.recommend, detail.reviewCount),
+        anchorId: LISTING_REVIEWS_ANCHOR_ID,
+      });
     } else {
       const { label, color } = getRatingLabel({
         positiveRating: recommendPct,
@@ -204,7 +275,7 @@ export function buildListingDetailRows(
         label: 'Reviews',
         value: `${label} (${detail.reviewCount.toLocaleString()})`,
         color: String(color),
-        // 🔴 Only in this branch — the zero-review row above deliberately omits it.
+        // 🔴 Only with reviews — the zero-review row above deliberately omits it.
         // No `preview` guard is needed HERE because the whole block is already inside
         // `if (!opts.preview)`. That matters: the reviews SECTION is not rendered in
         // the preview posture, so a link emitted there would point at an id that does
@@ -230,15 +301,17 @@ export function buildListingDetailRows(
   // and a required TYPE is not a runtime guarantee about a value that crossed a cast.
   // An absent field therefore takes the same path as a null `category`: omit the row.
   //
-  // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2). A shadow listing has never been
-  // installable, so the zero is a fact about the POSTURE, not about the app — the same
-  // reasoning that makes `buildListingStatChips` return no chips at all in preview.
-  if (!opts.preview && typeof detail.installCount === 'number') {
-    rows.push({
-      key: 'installs',
-      label: 'Installs',
-      value: detail.installCount.toLocaleString(),
-    });
+  // USAGE — "Plays" for an on-site listing (the store card's number), "Installs" for an
+  // off-site one, which has no play count. `listingUsageStat` is the one rule, shared with
+  // the header chip; a zero or a cast producer's `undefined` shows no row rather than
+  // throwing.
+  //
+  // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2): a preview has no metric rollup, so
+  // any number there is a fact about the POSTURE, not about the app — the same reasoning
+  // that makes `buildListingStatChips` return no chips at all in preview.
+  const usage = opts.preview ? null : listingUsageStat(detail);
+  if (usage) {
+    rows.push({ key: usage.key, label: usage.label, value: usage.count.toLocaleString() });
   }
 
   // 🔴 OMITTED IN `preview` (rule 2): a preview's `updatedAt` is not the listing row's

@@ -1,135 +1,111 @@
-import { Badge, Modal, Group, CloseButton, Alert, Center, Loader, Stack } from '@mantine/core';
-import { IconExclamationCircle } from '@tabler/icons-react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-
-import { CommentSection } from '~/components/CommentSection/CommentSection';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import {
+  Alert,
+  Button,
+  Center,
+  CloseButton,
+  Group,
+  Loader,
+  Modal,
+  Stack,
+  Title,
+} from '@mantine/core';
+import { IconArrowUp } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import { CommentComposer } from '~/components/CommentsV3/CommentComposer';
+import { CommentItem, CommentReplies } from '~/components/CommentsV3/CommentItem';
+import {
+  CommentSectionProvider,
+  useCommentSection,
+} from '~/components/CommentsV3/CommentSectionContext';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { CommentDiscussionMenu } from '~/components/Model/ModelDiscussion/CommentDiscussionMenu';
-import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { parseNumericString } from '~/utils/query-string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export default function CommentThreadModal({
-  commentId,
-  highlight,
-}: {
-  commentId: number;
-  highlight?: number;
+/** One model comment's thread, opened from its card or a model-page link (`?dialog=commentThread`). */
+export default function CommentThreadModal(props: {
+  commentId: number | string;
+  highlight?: number | string;
 }) {
+  // Routed-dialog props arrive from the URL as strings, an absent `highlight` as ''.
+  const commentId = parseNumericString(props.commentId) || undefined;
+  const highlight = parseNumericString(props.highlight) || undefined;
   const dialog = useDialogContext();
-  const queryUtils = trpc.useUtils();
-  const currentUser = useCurrentUser();
-
-  const { data: comment, isLoading: commentLoading } = trpc.comment.getById.useQuery({
-    id: commentId,
-  });
-  const { data: comments = [], isLoading: commentsLoading } = trpc.comment.getCommentsById.useQuery(
-    {
-      id: commentId,
-    }
-  );
-  const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
-    { commentId },
-    { enabled: !!comment, initialData: comment?.reactions }
-  );
+  const router = useRouter();
+  const modelId = Number(router.query.id);
+  // The model page's own input, so the dialog reads its cached model instead of fetching another.
   const { data: model } = trpc.model.getById.useQuery(
-    { id: comment?.modelId ?? -1 },
-    { enabled: !!comment }
+    { id: modelId, excludeTrainingData: true },
+    { enabled: !!modelId }
   );
-
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: id });
-
-      const previousReactions = queryUtils.comment.getReactions.getData({ commentId: id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
-    },
-    onError(_error, _variables, context) {
-      queryUtils.comment.getReactions.setData({ commentId }, context?.previousReactions);
-    },
-  });
-
-  const loading = commentLoading || commentsLoading;
+  const ownerId = model?.user.id;
 
   return (
-    <Modal {...dialog} withCloseButton={false} size={800}>
-      {loading ? (
-        <Center p="xl" style={{ height: 300 }}>
-          <Loader />
-        </Center>
-      ) : !comment ? (
-        <Alert>Comment could not be found</Alert>
-      ) : (
-        <Stack>
-          <Group justify="space-between" align="flex-start" wrap="nowrap">
-            <UserAvatar
-              user={comment.user}
-              subText={<DaysFromNow date={comment.createdAt} />}
-              subTextForce
-              badge={
-                comment.user.id === model?.user.id ? (
-                  <Badge size="xs" color="violet">
-                    OP
-                  </Badge>
-                ) : null
-              }
-              size="lg"
-              spacing="xs"
-              withUsername
-              linkToProfile
-            />
-            <Group gap={4} wrap="nowrap">
-              <CommentDiscussionMenu comment={comment} modelUserId={model?.user.id} />
-              <CloseButton onClick={dialog.onClose} />
-            </Group>
-          </Group>
-          {currentUser?.isModerator && comment.tosViolation && (
-            <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationCircle />}>
-              This comment has been marked with a TOS Violation. This is only visible for
-              moderators.
-            </AlertWithIcon>
-          )}
-          <Stack gap="xl">
-            <RenderHtml html={comment.content} withMentions withProfanityFilter allowStickers />
-            <ReactionPicker
-              reactions={reactions}
-              onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}
-            />
-            <CommentSection
-              comments={comments}
-              modelId={comment.modelId}
-              parent={comment}
-              highlights={highlight ? [highlight] : undefined}
-            />
-          </Stack>
-        </Stack>
+    <Modal {...dialog} withCloseButton={false} size={800} padding="lg">
+      <Group justify="flex-end" mb="xs">
+        <CloseButton onClick={dialog.onClose} />
+      </Group>
+      {!!modelId && !!commentId && (
+        <CommentSectionProvider
+          entityType="model"
+          entityId={modelId}
+          ownerId={ownerId}
+          badges={ownerId ? [{ userId: ownerId, label: 'OP', color: 'violet' }] : []}
+          threadId={commentId}
+          highlight={highlight}
+        >
+          <CommentThread />
+        </CommentSectionProvider>
       )}
     </Modal>
+  );
+}
+
+function CommentThread() {
+  const { focusedId, byId, focusPending, focusedThread, locked, focus, threadMissing, created } =
+    useCommentSection();
+  if (threadMissing) return <Alert>This comment could not be found.</Alert>;
+
+  const comment = focusedId ? byId.get(focusedId) : undefined;
+  if (focusPending || !comment)
+    return (
+      <Center p="xl">
+        <Loader type="bars" />
+      </Center>
+    );
+
+  const parentId = focusedThread?.ancestorIds.at(-1);
+  const threadLocked = locked || !!focusedThread?.locked;
+  const replyCount = comment.replyCount + (created[comment.id]?.length ?? 0);
+
+  return (
+    <Stack gap="xl">
+      {parentId && (
+        <Button
+          variant="subtle"
+          size="compact-sm"
+          className="self-start"
+          leftSection={<IconArrowUp size={16} />}
+          onClick={() => focus(parentId)}
+        >
+          View parent comment
+        </Button>
+      )}
+      <CommentItem comment={comment} level={1} lockedAbove={threadLocked} repliesElsewhere />
+      <Title order={3}>
+        {`${replyCount.toLocaleString()} ${replyCount === 1 ? 'Comment' : 'Comments'}`}
+      </Title>
+      <CommentComposer parent={comment} />
+      {/* The replies list insets itself to sit on a parent's reply rail, which has no rail here. */}
+      {replyCount > 0 && (
+        <div className="pl-3">
+          <CommentReplies
+            parent={comment}
+            level={2}
+            lockedAbove={threadLocked || comment.locked}
+            pageInPlace
+          />
+        </div>
+      )}
+    </Stack>
   );
 }

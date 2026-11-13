@@ -38,9 +38,10 @@ import { describe, expect, it } from 'vitest';
  *     What used to be true: the pinned nixpkgs' newest Node 24 was older than the
  *     version pinned here, so agreeing would have meant moving the nixpkgs pin too,
  *     and asserting it would have produced a red gate nobody could fix in the change
- *     that tripped it. That is no longer the case. The flake.lock bump to the
- *     2026-08-18 nixpkgs made `nodejs_24` exactly 24.19.0, and `flake.nix` now
- *     DERIVES its Node major by reading this `.nvmrc` rather than naming one.
+ *     that tripped it. The flake.lock bump to the 2026-08-18 nixpkgs made
+ *     `nodejs_24` exactly 24.19.0, and `flake.nix` now DERIVES its Node major by
+ *     reading this `.nvmrc` rather than naming one. It can still lag whenever a
+ *     security bump lands before nixpkgs carries it.
  *
  *     Why it still does not belong in this file: answering "which Node does the dev
  *     shell provide?" means evaluating Nix, which a Vitest suite cannot do. The
@@ -50,17 +51,23 @@ import { describe, expect, it } from 'vitest';
  *     three declarations below; this file owns them, and a predicate open-coded at
  *     two sites is how the two start disagreeing.
  *
- *     `engines.node` is still bracketed at MAJOR granularity, but no longer because
- *     the dev shell would violate a patch-exact floor — it does not any more.
+ *     `engines.node` is bracketed at MAJOR granularity, which also keeps a lagging
+ *     dev shell (an older 24.x patch) inside it.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const DOCKERFILE = 'Dockerfile';
 
 /**
- * How many `FROM node:` stages the root Dockerfile has today (deps + runner), and
- * how many `FROM` directives it has in TOTAL (those two, plus `FROM deps` and
- * `FROM scratch`).
+ * How many `FROM node:` stages the root Dockerfile has today, and how many `FROM`
+ * directives it has in TOTAL.
+ *
+ * The three node stages are the per-libc bases selected by the `LIBC` build-arg:
+ * `base-musl` and `runtime-musl` (Alpine: the production image's build and runtime
+ * bases) and `base-glibc` (Debian, an opt-in measurement variant; its runtime stage is
+ * `FROM base-glibc`). The other five directives are `FROM base-${LIBC}` (deps),
+ * `FROM deps` (builder), `FROM scratch` (maps), `FROM base-glibc` (runtime-glibc) and
+ * `FROM runtime-${LIBC}` (runner).
  *
  * Together these are the controls that stop the whole file passing vacuously. Every
  * verdict below is universally quantified over the tags the extractor returns — and
@@ -78,8 +85,8 @@ const DOCKERFILE = 'Dockerfile';
  * coverage control below (which compares two readers of the same file) precisely so
  * that a blind spot shared by both readers still trips something.
  */
-const EXPECTED_NODE_STAGES = 2;
-const EXPECTED_FROM_DIRECTIVES = 4;
+const EXPECTED_NODE_STAGES = 3;
+const EXPECTED_FROM_DIRECTIVES = 8;
 
 /**
  * `FROM node:<tag>`, tolerating the spellings Docker accepts and a reader writing
@@ -183,6 +190,94 @@ function versionOf(tag: string | undefined): string | undefined {
   return tag?.match(EXACT_PATCH_TAG)?.[1] ?? tag;
 }
 
+/**
+ * `FROM <ref> AS <name>` -> { name: ref }, for the stages the libc pairing verdict below
+ * names. Same tolerance for flags, case and indentation as FROM_NODE_TAG.
+ */
+const FROM_NAMED_STAGE = /^[ \t]*FROM[ \t]+(?:--\S+[ \t]+)*(\S+)[ \t]+AS[ \t]+(\S+)/gim;
+
+function namedStages(dockerfile: string): Record<string, string> {
+  return Object.fromEntries(
+    [...dockerfile.matchAll(FROM_NAMED_STAGE)].map((m) => [m[2].toLowerCase(), m[1]])
+  );
+}
+
+/**
+ * The default of `ARG <name>=<value>` in the GLOBAL scope, i.e. before the first `FROM`.
+ * That declaration is the default for a build that passes no `--build-arg`; an `ARG` of the
+ * same name inside a stage is a different thing (it only brings the global value into that
+ * stage, or sets a stage-local default), so it is ignored here.
+ */
+function globalArgDefault(dockerfile: string, name: string): string | undefined {
+  const firstFrom = dockerfile.search(/^[ \t]*FROM[ \t]/im);
+  const head = firstFrom === -1 ? dockerfile : dockerfile.slice(0, firstFrom);
+  const decl = new RegExp(`^[ \\t]*ARG[ \\t]+${name}=(\\S*)[ \\t]*$`, 'gim');
+  return [...head.matchAll(decl)].at(-1)?.[1];
+}
+
+/**
+ * Every `RUN --mount=type=cache`, with the cache id BuildKit would use for each LIBC value.
+ *
+ * The id defaults to the target path. `${LIBC}` / `$LIBC` in it expands to the build-arg only
+ * when the mount's stage re-declared `ARG LIBC` above it: a global ARG is not visible inside a
+ * stage, so without that line the variable expands to "" and every variant gets the SAME id.
+ * Modelling that is the point — a mount whose id merely CONTAINS `${LIBC}` is not per-libc.
+ */
+function cacheMounts(
+  dockerfile: string,
+  libcs: readonly string[]
+): { target: string; idByLibc: Record<string, string> }[] {
+  const mounts: { target: string; idByLibc: Record<string, string> }[] = [];
+  let libcInScope = false;
+  for (const line of dockerfile.split('\n')) {
+    if (/^[ \t]*FROM[ \t]/i.test(line)) {
+      libcInScope = false;
+      continue;
+    }
+    if (/^[ \t]*ARG[ \t]+LIBC(?:=|[ \t]*$)/i.test(line)) libcInScope = true;
+    for (const m of line.matchAll(/--mount=(\S+)/g)) {
+      const opts: Record<string, string> = Object.fromEntries(
+        m[1].split(',').map((kv) => {
+          const eq = kv.indexOf('=');
+          return eq === -1 ? [kv, ''] : [kv.slice(0, eq), kv.slice(eq + 1)];
+        })
+      );
+      if (opts.type !== 'cache') continue;
+      const target = opts.target ?? opts.dst ?? opts.destination ?? '';
+      const rawId = opts.id ?? target;
+      mounts.push({
+        target,
+        idByLibc: Object.fromEntries(
+          libcs.map((libc) => [
+            libc,
+            rawId.replace(/\$\{LIBC\}|\$LIBC\b/g, libcInScope ? libc : ''),
+          ])
+        ),
+      });
+    }
+  }
+  return mounts;
+}
+
+const LIBCS = ['musl', 'glibc'] as const;
+
+/**
+ * Every cache mount in the Dockerfile, by target, and whether it must be separate per LIBC.
+ * A ledger, so that adding (or dropping) a cache mount fails here and has to make the choice.
+ *
+ * - The pnpm store holds pnpm's side-effects cache: the post-install contents of packages
+ *   whose build scripts ran (e.g. @prisma/engines, which downloads the engine for the libc it
+ *   runs on). pnpm keys it by platform, arch and Node major, not libc, so a shared store
+ *   would hand one variant the other's install-script output.
+ * - `.next/cache` holds Next's JS-level build caches; no native artifacts, and the Turbopack
+ *   build filesystem cache is not enabled. Shared on purpose (and so production's id is
+ *   unchanged).
+ */
+const CACHE_MOUNT_IDS: Record<string, Record<(typeof LIBCS)[number], string>> = {
+  '/root/.local/share/pnpm/store': { musl: 'pnpm-store-musl', glibc: 'pnpm-store-glibc' },
+  '/app/.next/cache': { musl: '/app/.next/cache', glibc: '/app/.next/cache' },
+};
+
 function majorOf(tag: string | undefined): number {
   return Number(tag?.match(/^(\d+)/)?.[1]);
 }
@@ -225,6 +320,8 @@ function formatEmptyExtractionNote(tags: string[], digestRefs: string[]): string
     `message are absent rather than wrong — read the CONTROL failures first.${digests}`
   );
 }
+
+const stages = namedStages(dockerfileText);
 
 const emptyExtractionNote = () => formatEmptyExtractionNote(nodeTags, digestPinnedNodeRefs);
 
@@ -431,13 +528,125 @@ describe('node version is pinned and consistent across the repo', () => {
     ).toEqual([]);
   });
 
-  it('all root Dockerfile node stages use the SAME tag', () => {
+  it('all root Dockerfile node stages pin the SAME Node version', () => {
+    // The musl (production) and glibc (measurement) bases are different images, so their
+    // TAGS differ; the Node patch must not, or a glibc-vs-musl comparison also compares two
+    // V8 versions. (The Node BINARIES still differ — a musl build vs the glibc release build —
+    // which is why the comparison is read from the Prisma engine's threads, not the process.)
     expect(
-      [...new Set(nodeTags)],
-      `${DOCKERFILE} builds its stages on different node tags (${nodeTags.join(', ')}). The ` +
-        `build stage and the runtime stage must be the same engine, or the app is compiled ` +
-        `against one Node and executed on another.${emptyExtractionNote()}`
+      [...new Set(nodeTags.map(versionOf))],
+      `${DOCKERFILE} builds its stages on different Node versions (${nodeTags.join(', ')}). ` +
+        `Every stage must be the same engine, or the app is compiled against one Node and ` +
+        `executed on another.${emptyExtractionNote()}`
     ).toHaveLength(1);
+  });
+
+  it('CONTROL: the stage reader maps stage names to their base references', () => {
+    expect(
+      namedStages(
+        [
+          'FROM node:24.19.0-alpine3.24 AS base-musl',
+          'from --platform=$BUILDPLATFORM node:24.19.0-bookworm-slim as Base-Glibc',
+          'FROM base-${LIBC} AS deps',
+          'FROM scratch',
+        ].join('\n')
+      )
+    ).toEqual({
+      'base-musl': 'node:24.19.0-alpine3.24',
+      'base-glibc': 'node:24.19.0-bookworm-slim',
+      deps: 'base-${LIBC}',
+    });
+  });
+
+  it('each libc variant builds and runs on ONE base image', () => {
+    // The production (musl) pair are two separate `FROM node:` lines, so they can drift
+    // apart; the glibc runtime is `FROM base-glibc` and cannot.
+    expect(stages['base-musl'], `${DOCKERFILE} has no \`AS base-musl\` stage`).toMatch(/^node:/i);
+    expect(
+      stages['runtime-musl'],
+      `${DOCKERFILE}'s musl runtime base differs from its musl build base: the production ` +
+        `image would be compiled on one image and executed on another.`
+    ).toBe(stages['base-musl']);
+    expect(stages['base-glibc'], `${DOCKERFILE} has no \`AS base-glibc\` stage`).toMatch(/^node:/i);
+    expect(stages['runtime-glibc']).toBe('base-glibc');
+    expect(stages['deps']).toBe('base-${LIBC}');
+    expect(stages['runner']).toBe('runtime-${LIBC}');
+  });
+
+  it('CONTROL: the global-ARG reader ignores stage-scoped ARGs of the same name', () => {
+    expect(
+      globalArgDefault(
+        ['ARG LIBC=musl', 'FROM base-${LIBC} AS deps', 'ARG LIBC=glibc'].join('\n'),
+        'LIBC'
+      )
+    ).toBe('musl');
+    expect(
+      globalArgDefault(
+        ['ARG LIBC=glibc', 'FROM base-${LIBC} AS deps', 'ARG LIBC=musl'].join('\n'),
+        'LIBC'
+      )
+    ).toBe('glibc');
+    expect(globalArgDefault(['FROM x AS deps', 'ARG LIBC=musl'].join('\n'), 'LIBC')).toBe(
+      undefined
+    );
+  });
+
+  it('a build with no LIBC build-arg is the production (musl) image', () => {
+    expect(
+      globalArgDefault(dockerfileText, 'LIBC'),
+      `${DOCKERFILE}'s global \`ARG LIBC\` (the one before the first FROM) must default to ` +
+        `musl: a build that passes no build-arg is the production image.`
+    ).toBe('musl');
+  });
+
+  it('CONTROL: the cache-mount reader expands LIBC only where the stage declares it', () => {
+    const mount = 'RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/store pnpm i';
+    // Re-declared in the stage: one id per variant.
+    expect(
+      cacheMounts(['ARG LIBC=musl', 'FROM a AS deps', 'ARG LIBC', mount].join('\n'), LIBCS)
+    ).toEqual([
+      { target: '/store', idByLibc: { musl: 'pnpm-store-musl', glibc: 'pnpm-store-glibc' } },
+    ]);
+    // Only the global ARG: invisible in the stage, so both variants get the same id.
+    expect(cacheMounts(['ARG LIBC=musl', 'FROM a AS deps', mount].join('\n'), LIBCS)).toEqual([
+      { target: '/store', idByLibc: { musl: 'pnpm-store-', glibc: 'pnpm-store-' } },
+    ]);
+    // A later FROM ends the scope.
+    expect(
+      cacheMounts(['FROM a AS x', 'ARG LIBC', 'FROM x AS y', mount].join('\n'), LIBCS)
+    ).toEqual([{ target: '/store', idByLibc: { musl: 'pnpm-store-', glibc: 'pnpm-store-' } }]);
+    // No id: the id is the target. Non-cache mounts are not listed.
+    expect(
+      cacheMounts(
+        'RUN --mount=type=secret,id=s --mount=type=cache,target=/app/.next/cache next build',
+        LIBCS
+      )
+    ).toEqual([
+      {
+        target: '/app/.next/cache',
+        idByLibc: { musl: '/app/.next/cache', glibc: '/app/.next/cache' },
+      },
+    ]);
+  });
+
+  it('every cache mount has the id its ledger entry pins, per libc', () => {
+    // The pnpm store must differ per libc (see CACHE_MOUNT_IDS); the ledger also fails when a
+    // cache mount is added or removed, so a new one cannot silently be shared.
+    const mounts = cacheMounts(dockerfileText, LIBCS);
+    expect(
+      mounts.map((m) => m.target).sort(),
+      `${DOCKERFILE}'s cache mounts changed. Add the new one to CACHE_MOUNT_IDS and decide ` +
+        `whether the musl and glibc builds may share it: anything that can hold native or ` +
+        `install-script output must not.`
+    ).toEqual(Object.keys(CACHE_MOUNT_IDS).sort());
+    for (const m of mounts) {
+      expect(
+        m.idByLibc,
+        `${DOCKERFILE}'s cache mount at ${m.target} resolves to these ids. If the musl and ` +
+          `glibc ids are equal where they must differ, the stage is probably missing its own ` +
+          `\`ARG LIBC\` line (a global ARG is not visible inside a stage).`
+      ).toEqual(CACHE_MOUNT_IDS[m.target]);
+    }
   });
 
   it('.nvmrc matches the Dockerfile pin', () => {

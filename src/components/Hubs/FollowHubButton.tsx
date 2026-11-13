@@ -1,4 +1,5 @@
-import { Button, Tooltip } from '@mantine/core';
+import { Button } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { ButtonProps } from '@mantine/core';
 import { IconBookmark, IconBookmarkFilled } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

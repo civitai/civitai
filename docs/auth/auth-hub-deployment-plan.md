@@ -26,7 +26,7 @@ the per-phase checklists into one ordered procedure. It does **not** restate the
 | Artifact | Source | Build & deploy path |
 |---|---|---|
 | **Login hub** — `auth.civitai.com` (the sole session **issuer**) | `apps/auth` (SvelteKit + `adapter-node`) | **GitHub Actions → ghcr → Flux.** [`.github/workflows/auth-app.yml`](../../.github/workflows/auth-app.yml) builds `apps/auth/Dockerfile` (context = repo root) → `ghcr.io/civitai/civitai-auth:<semver>` (+ `:sha-<short>`). Triggered by pushing a **`auth-app-v*`** tag (e.g. `auth-app-v0.1.0`). PRs build-only. **No `:latest`.** Flux in `datapacket-talos` has a semver `ImagePolicy` + `ImageUpdateAutomation` on that repo → rolls out. |
-| **Main app (spoke)** — `civitai.com` + `civitai.red` | `src/` (NextAuth fully removed; new spoke `/api/auth/authorize` + `/api/auth/callback` bridge, `oauth-bridge.ts`, `session-client.ts`, legacy upgrade-on-read) | **Tekton** (`tekton.civitai.com`) builds `civitai-web` — **unchanged**. The hub is the *only* app on ghcr+Flux; the main app stays on Tekton. |
+| **Main app (spoke)** — `civitai.com` + `civitai.red` | `src/` (NextAuth fully removed; new spoke `/api/auth/authorize` + `/api/auth/callback` bridge, `oauth-bridge.ts`, `session-client.ts`) | **Tekton** (`tekton.civitai.com`) builds `civitai-web` — **unchanged**. The hub is the *only* app on ghcr+Flux; the main app stays on Tekton. |
 | **Moderator app (spoke)** — `moderator.civitai.com` | `apps/moderator` (verify-only, same-site `.civitai.com`, gates on `isModerator`) | **POC — no Dockerfile, no CI workflow in-repo yet.** Reads the shared `.civitai.com` cookie directly; needs no login UI, no bridge endpoints, no `TrustedSpokeDomain` row. Not part of this cutover. |
 
 **Build dependency note.** `@civitai/auth` (`packages/civitai-auth`) is a `workspace:*` dependency of
@@ -73,8 +73,8 @@ contract: [`apps/auth/.env.example`](../../apps/auth/.env.example). Deployment-c
 | `AUTH_JWT_KID` | ✅ | — | — | **Must not change during cutover** — changing `kid` (or the cookie name) logs everyone out. |
 | `AUTH_JWT_ISSUER` | ✅ | ✅ | ✅ | `https://auth.civitai.com`. JWT `iss`, hub origin every spoke targets, **and** the cookie `__Secure-`/Domain fallback. Empty → cookie loses its prefix + Domain → redirect loop (see §5). |
 | `AUTH_JWKS_URI` | ✅ | ✅ | ✅ | `https://auth.civitai.com/api/auth/jwks` — spoke verify key source. |
-| `AUTH_INTERNAL_TOKEN` | ✅ | ✅ | opt | Service secret for `POST /api/auth/identity` (cache bust) + legacy upgrade-on-read. **Identical hub↔main.** Mismatch = legacy→civ-token migration silently skipped (soft gate). |
-| `NEXTAUTH_SECRET` | ✅ | ✅ | — | Salt for **all active** API-key/OAuth-token hashing + email-token hash + legacy JWE decode. **Identical hub↔main** or all token auth 401s. |
+| `AUTH_INTERNAL_TOKEN` | ✅ | ✅ | ✅ | Service secret for `POST /api/auth/identity` (cache bust) and the calls an app makes to the hub on a user's behalf (refresh, session exchange, switch, accounts, impersonate, logout). **Identical on the hub, main and every spoke.** `auth_internal_parity` reports a mismatch; until the hub confirms the value, an app keeps sending those calls in the older shape. |
+| `NEXTAUTH_SECRET` | ✅ | ✅ | — | Salt for **all active** API-key/OAuth-token hashing + email-token hash. **Identical hub↔main** or all token auth 401s. |
 | `AUTH_COOKIE_DOMAIN` | ✅ | ✅ | — | Prod = `.civitai.com`; localhost = empty (host-only). |
 | `AUTH_ADMIN_USER_IDS` | ✅ | — | — | Comma list; `/admin` (TrustedSpokeDomain editor). **Fail-closed** (unset = locked). |
 | `AUTH_CORS_ORIGINS` | ✅ | — | — | Same-site `*.civitai.com` browser-client allowlist. (Cross-site login origins live in the DB table, not here.) |
@@ -152,8 +152,7 @@ Full matrix in [`oauth-post-deploy-checklist.md`](./oauth-post-deploy-checklist.
   `/.well-known/openid-configuration`, `/api/auth/jwks`); a full authorize→token→Bearer flow on the hub.
   Device-flow token poll mints exactly one token pair (the redemption race was closed in `2592d6102`).
 - **Monitor 24–48h:** flat `401` rate on `/api/v1` (a spike = secret mismatch); no redirect loops; no
-  `invalid_client` on `/session` (= a host missing from `TrustedSpokeDomain`); legacy-cookie auth count
-  **trending down** (else upgrade-on-read is failing — check `AUTH_INTERNAL_TOKEN` parity).
+  `invalid_client` on `/session` (= a host missing from `TrustedSpokeDomain`).
 - **Suites:** `@civitai/auth` vitest, hub vitest (incl. OAuth parity + `ban-session-revocation`), main-app
   `tsc`. Cross-site cookie e2e (`apps/auth/e2e/hub-login.spec.ts`, `tests/preview-auth-guard.spec.ts`) needs
   a deployed preview/hub harness — can't run on localhost.

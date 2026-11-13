@@ -44,6 +44,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticsForEntity: vi.fn().mockResolvedValue({}),
+  getEventDecorationsForEntity: vi.fn().mockResolvedValue({}),
 }));
 
 // Only `imageTagsCache.fetch` is replaced; every other export of the caches

@@ -17,13 +17,15 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const {
   mockGetAllImages,
-  mockGetImagesFromFeedSearch,
+  mockGetImagesFromFeed,
   mockImageMetaCacheFetch,
   mockGetServerAuthSession,
   mockGetFeatureFlags,
+  mockHeldLevelsByPost,
 } = vi.hoisted(() => ({
+  mockHeldLevelsByPost: vi.fn(),
   mockGetAllImages: vi.fn(),
-  mockGetImagesFromFeedSearch: vi.fn(),
+  mockGetImagesFromFeed: vi.fn(),
   mockImageMetaCacheFetch: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlags: vi.fn(),
@@ -31,10 +33,15 @@ const {
 
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: mockGetAllImages,
-  getImagesFromFeedSearch: mockGetImagesFromFeedSearch,
+  getImagesFromFeedServiceForRest: mockGetImagesFromFeed,
 }));
 vi.mock('~/server/redis/caches', () => ({
   imageMetaCache: { fetch: mockImageMetaCacheFetch },
+}));
+// Hand-listed: the route takes only these from model.service, whose import graph is large.
+vi.mock('~/server/services/model.service', () => ({
+  getHeldGalleryLevel: async () => undefined,
+  getHeldLevelsByPost: mockHeldLevelsByPost,
 }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: mockGetServerAuthSession,
@@ -128,10 +135,11 @@ describe('/api/v1/images?ids= — batch by id', () => {
     mockGetServerAuthSession.mockResolvedValue(null);
     mockGetFeatureFlags.mockReturnValue({ datapacketRead: false, canViewNsfw: false });
     mockImageMetaCacheFetch.mockResolvedValue({});
+    mockHeldLevelsByPost.mockResolvedValue(new Map());
     mockGetAllImages.mockResolvedValue({ items: IDS.map(image), nextCursor: undefined });
     // The impostor: what the global feed would answer with if `ids` ever routed
     // there. Same shape, same length, different ids.
-    mockGetImagesFromFeedSearch.mockResolvedValue({
+    mockGetImagesFromFeed.mockResolvedValue({
       items: [12097475, 12097476, 12097477].map(image),
       nextCursor: undefined,
     });
@@ -145,7 +153,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     // 🔴 The IDS, not the count — the feed impostor above has the same length.
     expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual(IDS);
     expect(mockGetAllImages).toHaveBeenCalledWith(expect.objectContaining({ ids: IDS }));
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it('a single id through ?ids= behaves like the existing ?imageId=', async () => {
@@ -166,7 +174,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([100]);
     expect(mockGetAllImages).toHaveBeenCalledWith(expect.objectContaining({ imageId: 100 }));
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it('INVARIANT: a request with no ids still reaches feed search', async () => {
@@ -174,7 +182,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(200);
-    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledTimes(1);
+    expect(mockGetImagesFromFeed).toHaveBeenCalledTimes(1);
     expect(mockGetAllImages).not.toHaveBeenCalled();
   });
 
@@ -199,7 +207,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
     expect(res._getStatusCode()).toBe(400);
     expect(mockGetAllImages).not.toHaveBeenCalled();
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -215,7 +223,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
     expect(res._getStatusCode()).toBe(400);
     expect(mockGetAllImages).not.toHaveBeenCalled();
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   // ── Misses are reported by OMISSION, on purpose ────────────────────────────
@@ -249,5 +257,55 @@ describe('/api/v1/images?ids= — batch by id', () => {
     // re-opening the disclosure should take a deliberate edit to this file, not
     // an unnoticed field.
     expect(Object.keys(data.metadata).sort()).toEqual(['nextCursor', 'nextPage']);
+  });
+
+  describe('on a minor or SFW-only model', () => {
+    const HELD_POST = 27016856;
+    const OTHER_POST = 500;
+    const rated = (id: number, nsfwLevel: number, postId = HELD_POST) => ({
+      ...image(id),
+      nsfwLevel,
+      postId,
+    });
+
+    beforeEach(() => {
+      mockHeldLevelsByPost.mockResolvedValue(new Map([[HELD_POST, { level: 1, ownerId: 9 }]]));
+    });
+
+    it("drops images above their post's held level from a batch, keeping the rest", async () => {
+      mockGetAllImages.mockResolvedValue({
+        items: [rated(1, 1), rated(2, 4), rated(3, 4, OTHER_POST)],
+        nextCursor: undefined,
+      });
+      const { req, res } = createMocks({ query: { ids: '1,2,3' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([1, 3]);
+      expect(mockHeldLevelsByPost).toHaveBeenCalledWith([HELD_POST, HELD_POST, OTHER_POST]);
+    });
+
+    it('leaves out an image on a held post that is not yet rated', async () => {
+      mockGetAllImages.mockResolvedValue({
+        items: [rated(1, 0), rated(2, 1)],
+        nextCursor: undefined,
+      });
+      const { req, res } = createMocks({ query: { ids: '1,2' } });
+
+      await handler(req, res);
+
+      expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([2]);
+    });
+
+    it("serves no image above its post's held level by ?imageId=", async () => {
+      mockGetAllImages.mockResolvedValue({ items: [rated(2, 4)], nextCursor: undefined });
+      const { req, res } = createMocks({ query: { imageId: '2' } });
+
+      await handler(req, res);
+
+      expect(res._getStatusCode()).toBe(200);
+      expect(res._getJSONData().items).toEqual([]);
+    });
   });
 });

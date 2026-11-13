@@ -2,7 +2,6 @@
   import { browser } from '$app/environment';
   import { untrack } from 'svelte';
   import { enhance, deserialize } from '$app/forms';
-  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -44,6 +43,7 @@
     needsAffirmation,
     pricingSlotsLeft,
     pricingSlotsRemaining,
+    feeSlotsRemaining,
     capTier,
     caps,
     feeCapsByType,
@@ -60,6 +60,8 @@
     pricingSlotsLeft: number;
     /** Slots the owner has left this month before this selection: limit - used. */
     pricingSlotsRemaining: number;
+    /** pricingSlotsRemaining for a licensing-fee write, which may also spend a fee boost. */
+    feeSlotsRemaining: number;
     capTier: CapTier;
 
     /** Per model/media type caps across the selection, lowest first. */
@@ -270,7 +272,7 @@
       pricingFloor: caps.pricingFloor,
       // A bulk write only prices what is UNPRICED, so a selection with nothing unpriced spends no
       // allowance and faces no floor — which is how the server answers it too (unpricedVersionIds ->
-      // assertPricingAllowed short-circuits). Null means the count has not arrived; assume it prices.
+      // the allowance check short-circuits). Null means the count has not arrived; assume it prices.
       alreadyPriced: unpricedCount === 0,
       resolving: loadingPublished,
     })
@@ -304,9 +306,10 @@
 
   // Both a fee and a permanent gate spend allowance, so both need the warning — the fee path is
   // all-or-nothing, so without it a 20-version selection just returns 403 with nothing on screen first.
+  const slotsRemaining = $derived(action === 'fee' ? feeSlotsRemaining : pricingSlotsRemaining);
   const overSlots = $derived(
     (action === 'paidAccess' || action === 'fee') &&
-      ((unpricedCount !== null && unpricedCount > pricingSlotsRemaining) ||
+      ((unpricedCount !== null && unpricedCount > slotsRemaining) ||
         !!eligibility.permBlockedReason)
   );
 
@@ -459,7 +462,7 @@
           {:else}
             <Alert.Title>Over this month's monetization limit</Alert.Title>
             <Alert.Description>
-              You can monetize {pricingSlotsRemaining} more model version{pricingSlotsRemaining ===
+              You can monetize {slotsRemaining} more model version{slotsRemaining ===
               1
                 ? ''
                 : 's'} this month, but this selection would monetize {unpricedCount}. Deselect some,
@@ -523,9 +526,6 @@
               bind:value={usageControl}
               allowGenerationOnly={caps.canSetGenerationOnly}
             />
-            {#if !caps.canSetGenerationOnly}
-              <GenerationOnlyHint />
-            {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated
               without a price.

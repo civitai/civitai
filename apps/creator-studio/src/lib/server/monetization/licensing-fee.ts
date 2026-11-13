@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { baseModelRecords, getBaseModelLicense } from '@civitai/shared/basemodel.constants';
 import { sql } from '@civitai/db/kysely';
 import { dbRead, dbWrite } from '$lib/server/db';
 import {
@@ -11,7 +12,7 @@ import {
 } from '@civitai/buzz';
 import { type Membership } from '$lib/server/membership';
 import {
-  assertPricingAllowed,
+  assertFeePricingAllowed,
   recordPricingSlots,
   releasableVersionIds,
   releasePricingSlots,
@@ -61,10 +62,10 @@ export const licensingFeeRatioSchema = z
     return perImage;
   });
 
-// Base models whose license forbids commercial use → can't carry a fee. Mirrors `nonCommercialBaseModels` in
-// the main app's server/common/constants.ts (derived from the `nonCommercial` license flag — the source of
-// truth). Keep in sync when a non-commercial base model is added there.
-const NON_COMMERCIAL_BASE_MODELS = new Set(['Ideogram 4.0']);
+// Base models whose licence forbids commercial use can't carry a fee.
+const NON_COMMERCIAL_BASE_MODELS = new Set(
+  baseModelRecords.filter((m) => getBaseModelLicense(m.id)?.nonCommercial).map((m) => m.name)
+);
 
 export type SetFeeResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
 export type BulkFeeResult =
@@ -238,7 +239,7 @@ export async function setLicensingFee(
   // "Has none" means no fee AND no permanent gate — `currentFee` alone would charge a creator a second
   // time for a version they already sell, and refuse it outright at a full month.
   const newlyPricedIds = normalized == null ? [] : await unpricedVersionIds(userId, [versionId]);
-  const gate = await assertPricingAllowed(userId, membership, newlyPricedIds.length);
+  const gate = await assertFeePricingAllowed(userId, membership, newlyPricedIds.length);
   if (!gate.ok) return gate;
 
   const needsAffirmation = normalized != null && !owned[0].affirmed;
@@ -390,7 +391,7 @@ export async function bulkSetLicensingFee(
           userId,
           owned.map((v) => v.id)
         );
-  const gate = await assertPricingAllowed(userId, membership, newlyPricedIds.length);
+  const gate = await assertFeePricingAllowed(userId, membership, newlyPricedIds.length);
   if (!gate.ok) return gate;
 
   const toAffirm = normalized == null ? [] : owned.filter((v) => !v.affirmed).map((v) => v.id);

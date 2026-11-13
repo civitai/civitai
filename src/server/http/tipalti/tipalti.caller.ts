@@ -1,8 +1,10 @@
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { QS } from '~/utils/qs';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
@@ -13,7 +15,7 @@ type TipaltiAccessToken = {
   createdAt: number;
 };
 
-class TipaltiCaller extends HttpCaller {
+export class TipaltiCaller extends HttpCaller {
   private static instance: TipaltiCaller;
   private static acessToken: TipaltiAccessToken;
 
@@ -42,7 +44,8 @@ class TipaltiCaller extends HttpCaller {
       return TipaltiCaller.acessToken;
     }
 
-    const response = await fetch(env.TIPALTI_API_TOKEN_URL, {
+    const response = await outboundFetch(env.TIPALTI_API_TOKEN_URL, {
+      timeoutMs: 30_000,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
@@ -186,15 +189,7 @@ class TipaltiCaller extends HttpCaller {
       .update(stringToSign)
       .digest('hex');
 
-    const vValue = v.split('=')[1];
-
-    return {
-      isValid: hash.toString().toLowerCase() === vValue,
-      hash: hash.toString().toLowerCase(),
-      vValue,
-      stringToSign,
-      signature,
-    };
+    return { isValid: timingSafeEqualStrings(hash.toLowerCase(), v.split('=')[1]) };
   }
 
   async createPaymentBatch(payments: Tipalti.PaymentInput[]) {
@@ -217,17 +212,20 @@ class TipaltiCaller extends HttpCaller {
     });
 
     if (response.status === 404) return null;
-    if (!response.ok) {
-      console.error('Failed to get payment by refCode', response.statusText);
-      return null;
-    }
+    if (!response.ok)
+      throw new Error(
+        `Failed to get payment by refCode: ${response.status} ${response.statusText}`
+      );
 
     const data = (await response.json()) as {
       items: Tipalti.Payment[];
       totalCount: number;
     };
 
-    if (!data.items.length) return null;
+    if (!data.items?.length) return null;
+    // Legacy refCodes could be shared by two payments; items[0] may be the other one's fees.
+    if (data.items.length > 1)
+      throw new Error(`refCode ${refCode} matches ${data.items.length} Tipalti payments`);
     return data.items[0];
   }
 }

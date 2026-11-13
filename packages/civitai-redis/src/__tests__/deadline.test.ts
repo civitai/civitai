@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { withCommandDeadline } from '../deadline';
+import { describe, it, expect, vi } from 'vitest';
+import { withCommandDeadline, withTimeout } from '../deadline';
 
 describe('withCommandDeadline', () => {
   it('returns the input promise unchanged when ms <= 0 (disabled)', async () => {
@@ -39,5 +39,34 @@ describe('withCommandDeadline', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+describe('withTimeout onTimeout hook (feeds the sys self-heal timeout count)', () => {
+  it('runs the hook once when the timer fires', async () => {
+    const onTimeout = vi.fn();
+    await expect(withTimeout(new Promise(() => undefined), 10, 'boom', onTimeout)).rejects.toThrow(
+      'boom'
+    );
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not run the hook when the promise settles first, either way', async () => {
+    const onTimeout = vi.fn();
+    await expect(withTimeout(Promise.resolve('ok'), 50, 'boom', onTimeout)).resolves.toBe('ok');
+    await expect(
+      withTimeout(Promise.reject(new Error('own')), 50, 'boom', onTimeout)
+    ).rejects.toThrow('own');
+    await new Promise((r) => setTimeout(r, 70));
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
+  it('still rejects with the timeout error when the hook throws', async () => {
+    const onTimeout = () => {
+      throw new Error('hook failed');
+    };
+    await expect(withTimeout(new Promise(() => undefined), 10, 'boom', onTimeout)).rejects.toThrow(
+      'boom'
+    );
   });
 });

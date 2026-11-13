@@ -126,8 +126,8 @@
                 <IconEye size={14} class="shrink-0" />
                 <span class="font-medium text-white">{num(impressions)}</span> Seen
               </span>
-              {#if announcement.link}
-                <span class="flex items-center gap-1" title="Clicks on this announcement's link">
+              {#if announcement.links.length}
+                <span class="flex items-center gap-1" title="Clicks on this announcement's buttons">
                   <IconPointer size={14} class="shrink-0" />
                   <span class="font-medium text-white">{num(clicks)}</span>
                   {clicks === 1 ? 'Click' : 'Clicks'}

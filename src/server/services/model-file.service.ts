@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { deleteUnlessHeld, modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -7,9 +8,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   ModelFileCreateInput,
+  ModelFileMetadata,
   ModelFileUpdateInput,
   RecentTrainingDataInput,
 } from '~/server/schema/model-file.schema';
@@ -21,16 +25,47 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { inferComponentType } from '~/server/utils/model-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import {
   ModelFileVisibility,
   ModelHashType,
   ModelStatus,
   ModelUploadType,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import {
+  bustOrchestratorAirs,
+  bustOrchestratorModelCache,
+  getOrchestratorVersionAirs,
+} from '~/server/services/orchestrator/models';
+import { bustVersionScannedFileAirs } from '~/server/services/orchestrator/scanned-file-airs';
 import { deleteModelFileObject } from '~/utils/s3-utils';
 import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import {
+  assertFileTypeChangeAllowed,
+  assertFormatChangeAllowed,
+  formatMismatch,
+  scanResetConflictMessage,
+  scanResetForFileChange,
+  scanResetWriteGuard,
+  assertVersionAcceptsNewUpload,
+} from '~/server/utils/model-file-replace';
+import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
+import {
+  cappedStudioDatasetVisibility,
+  isStudioDataset,
+  versionHasStudioDataset,
+  withoutEpochUrls,
+  withoutServerOnlyKeys,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
+import {
+  liveRunDatasetTrainingStatuses,
+  reviewedDatasetTrainingStatuses,
+} from '~/shared/constants/training.constants';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -145,12 +180,27 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   isModerator,
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
+  if (data.overrideName !== undefined)
+    data.overrideName = sanitizeOverrideName(data.overrideName, data.name) ?? undefined;
   const file = prepareFile(data);
+  // `name` is the uploaded file name, which some model types publish as the download name.
+  await throwOnBlockedUserContent([data.overrideName, data.name], {
+    isModerator,
+    surface: 'model-file',
+  });
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
     where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
   });
   if (!ownsVersion) throw throwNotFoundError();
+
+  if (
+    !isModerator &&
+    file.type === 'Training Data' &&
+    file.visibility !== ModelFileVisibility.Private &&
+    (await versionHasStudioDataset(dbWrite, data.modelVersionId))
+  )
+    file.visibility = ModelFileVisibility.Private;
 
   const result = await dbWrite.modelFile.create({
     data: {
@@ -177,75 +227,365 @@ export async function updateFile({
   // upsert callers send the file's existing version, so dropping it changes nothing for them; the
   // create branch still takes it from `modelFileCreateSchema`.
   modelVersionId: _modelVersionId,
+  uploadDomain,
+  urlFromClient,
   ...inputData
-}: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
+}: ModelFileUpdateInput & {
+  userId: number;
+  isModerator?: boolean;
+  /** The request's domain, stamped onto a new training-data upload. Never the client's value. */
+  uploadDomain?: ColorDomain | null;
+  /** A new url came from a client, so it must name an object the caller may attach. */
+  urlFromClient?: boolean;
+}) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
-    select: {
-      id: true,
-      url: true,
-      metadata: true,
-      modelVersionId: true,
-      sizeKB: true,
-      modelVersion: { select: { modelId: true } },
-    },
+    select: replaceableFileSelect,
   });
   if (!modelFile) throw throwNotFoundError();
 
-  // If URL is changing, capture the old one for S3 cleanup
-  const oldUrl = inputData.url && inputData.url !== modelFile.url ? modelFile.url : undefined;
+  // Skip a re-sent stored name: sanitising it would make it look changed and rescan it against
+  // the blocklist.
+  if (inputData.overrideName != null && inputData.overrideName !== modelFile.overrideName)
+    inputData.overrideName = sanitizeOverrideName(
+      inputData.overrideName,
+      inputData.name ?? modelFile.name
+    );
+
+  // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
+  // would leave a file whose name trips a list impossible to edit in any other way.
+  const changedNames = [
+    inputData.overrideName !== modelFile.overrideName ? inputData.overrideName : undefined,
+    inputData.name !== modelFile.name ? inputData.name : undefined,
+  ].filter(Boolean);
+  if (changedNames.length)
+    await throwOnBlockedUserContent(changedNames, { isModerator, surface: 'model-file' });
+
+  assertFileTypeChangeAllowed(modelFile, inputData.type);
+  const change = { type: inputData.type, name: inputData.name, format: metadata?.format };
+  assertFormatChangeAllowed(modelFile, change, !!isModerator);
+  if (isModerator && formatMismatch(modelFile, change))
+    logToAxiom({
+      type: 'info',
+      name: 'model-file-format-override',
+      fileId: id,
+      moderatorId: userId,
+      from: (modelFile.metadata as { format?: string } | null)?.format ?? null,
+      to: change.format,
+    }).catch(() => undefined);
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
-  // CAS guard on URL changes: only apply if the row's url is still what we read.
-  // Prevents two concurrent URL-changing updateFile calls from both scheduling a
-  // delete of the same captured `oldUrl`. Pure-metadata updates skip the guard
-  // so they aren't starved by url-change races.
-  const updateResult = await dbWrite.modelFile.updateMany({
-    where: oldUrl ? { id, url: modelFile.url } : { id },
-    data: {
-      ...inputData,
-      metadata,
+
+  if (inputData.url && inputData.url !== modelFile.url) {
+    if (urlFromClient)
+      await assertClientFileUrlAllowed({
+        url: inputData.url,
+        userId,
+        isModerator: !!isModerator,
+        modelVersionId: modelFile.modelVersionId,
+        op: 'replace',
+      });
+    // New content on a Training Studio version is unrated, so it is Private whatever was stored or sent.
+    if (
+      !isModerator &&
+      (inputData.type ?? modelFile.type) === 'Training Data' &&
+      (inputData.visibility ?? modelFile.visibility) !== ModelFileVisibility.Private &&
+      (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
+    )
+      inputData.visibility = ModelFileVisibility.Private;
+    return replaceFileContent({
+      file: modelFile,
+      input: { ...inputData, url: inputData.url, metadata },
+      userId,
+      isModerator,
+      uploadDomain: uploadDomain ?? null,
+    });
+  }
+
+  // An owner's direct edit cannot share a Studio dataset the share rules would keep unshared.
+  if (
+    !isModerator &&
+    isStudioDataset(modelFile) &&
+    (inputData.visibility !== undefined || metadata !== undefined)
+  )
+    inputData.visibility = await cappedStudioDatasetVisibility(dbWrite, {
+      modelVersionId: modelFile.modelVersionId,
+      sizeKB: modelFile.sizeKB,
+      metadata: (metadata ?? modelFile.metadata ?? {}) as Record<string, unknown>,
+      requested: inputData.visibility ?? modelFile.visibility,
+    });
+  else if (
+    !isModerator &&
+    modelFile.type === 'Training Data' &&
+    inputData.visibility !== undefined &&
+    inputData.visibility !== ModelFileVisibility.Private &&
+    (await versionHasStudioDataset(dbWrite, modelFile.modelVersionId))
+  )
+    inputData.visibility = ModelFileVisibility.Private;
+
+  const typeChanged = inputData.type !== undefined && inputData.type !== modelFile.type;
+  // The file kind can change the version's AIR (a diffusion model or UNet), and the bust after the
+  // write derives only the new one. Never throws.
+  if (typeChanged) await bustOrchestratorModelCache(modelFile.modelVersionId);
+
+  const scanReset = scanResetForFileChange(modelFile, change);
+  const { count } = await dbWrite.modelFile.updateMany({
+    // A sent type writes only over the type `typeChanged` was judged against: an edit from a stale
+    // tab would otherwise change it back with no bust.
+    where: {
+      id,
+      ...(inputData.type !== undefined && { type: modelFile.type }),
+      ...scanResetWriteGuard(modelFile, change),
     },
+    data: { ...inputData, metadata, ...scanReset },
   });
-
-  // CAS lost: another writer swapped the URL between findUnique and updateMany.
-  // Surface the conflict instead of silently returning success — the caller
-  // needs to know their write did NOT apply. Skip the cache bust too, since
-  // we didn't change anything that would invalidate it.
-  if (oldUrl && updateResult.count === 0) {
-    throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
+  // Replaced, deleted or retyped since the lookup above, or a new verdict on a relabel: nothing was
+  // written.
+  if (count === 0) {
+    if (Object.keys(scanResetWriteGuard(modelFile, change)).length)
+      throw throwBadRequestError(scanResetConflictMessage(modelFile));
+    throw throwNotFoundError();
   }
-
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
-
-  // Clean up old S3 object after DB update succeeds (best-effort).
-  // Only fires when we actually swapped the URL on this call — pure-metadata
-  // updates have no oldUrl to clean up. Terminal .catch on the chain so an
-  // Axiom-side rejection can't leak as an unhandled rejection in this
-  // fire-and-forget path. The refcount check inside deleteModelFileObject is
-  // the load-bearing safety: it skips the delete if any other ModelFile row
-  // still references the URL.
-  if (oldUrl) {
-    deleteModelFileObject(oldUrl)
-      .catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'model-file-delete-s3-object',
-          message: `Failed to delete old S3 object for file ${id}`,
-          error,
-        })
-      )
-      .catch(() => {});
-  }
+  // GenerationCoverage decides by file type and scan, so the version's cached coverage is stale.
+  if (typeChanged || Object.keys(scanReset).length)
+    await Promise.all([
+      resourceDataCache.bust([modelFile.modelVersionId]),
+      bustOrchestratorModelCache(modelFile.modelVersionId),
+      bustVersionScannedFileAirs(modelFile.modelVersionId, modelFile.modelVersion),
+    ]).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-type-change',
+        message: `Failed to bust resource caches for file ${id}`,
+        error,
+      }).catch(() => undefined)
+    );
 
   // Merge committed updates back into the snapshot so the returned record
-  // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
-  // doesn't return the updated row, and we don't want a second round-trip.
+  // reflects post-update state. `updateMany` doesn't return the updated row,
+  // and we don't want a second round-trip.
   return {
     ...modelFile,
     metadata,
     ...(inputData.sizeKB !== undefined ? { sizeKB: inputData.sizeKB } : {}),
+    replacedFileId: undefined as number | undefined,
   };
+}
+
+const replaceableFileSelect = {
+  id: true,
+  name: true,
+  overrideName: true,
+  url: true,
+  type: true,
+  visibility: true,
+  metadata: true,
+  modelVersionId: true,
+  sizeKB: true,
+  virusScanResult: true,
+  pickleScanResult: true,
+  modelVersion: {
+    select: {
+      modelId: true,
+      baseModel: true,
+      status: true,
+      trainingStatus: true,
+      uploadType: true,
+      model: { select: { type: true, userId: true } },
+    },
+  },
+} satisfies Prisma.ModelFileSelect;
+
+type ReplaceableFile = Prisma.ModelFileGetPayload<{ select: typeof replaceableFileSelect }>;
+
+/**
+ * A new upload behind an existing file becomes a new file record: the old row (and its hashes) is
+ * deleted and a new one created in its place, unscanned, so nothing recorded about the old object
+ * carries over to the new one.
+ */
+async function replaceFileContent({
+  file,
+  input,
+  userId,
+  isModerator,
+  uploadDomain,
+}: {
+  file: ReplaceableFile;
+  input: Omit<ModelFileUpdateInput, 'id' | 'modelVersionId' | 'backend' | 's3Path'> & {
+    url: string;
+  };
+  userId: number;
+  isModerator?: boolean;
+  uploadDomain: ColorDomain | null;
+}) {
+  // Fails fast on the snapshot; the transaction below re-checks against the locked version row.
+  assertVersionAcceptsNewUpload(file.modelVersion, file.type);
+
+  const { overrideName, ...fields } = input;
+  const type = (fields.type ?? file.type) as ModelFileType;
+  const metadata = { ...((fields.metadata ?? file.metadata ?? {}) as ModelFileMetadata) };
+  // Provenance is server-owned: a training-data upload carries the domain of the request that
+  // uploaded it, whatever the request said its type was.
+  delete metadata.uploadDomain;
+  if (type === 'Training Data' && uploadDomain) metadata.uploadDomain = uploadDomain;
+  // A dataset's rating and archive state describe the zip they were taken from; new content has neither.
+  delete (metadata as Record<string, unknown>).nsfwLevel;
+  delete (metadata as Record<string, unknown>).fullyRated;
+  delete (metadata as Record<string, unknown>).datasetArchive;
+  const prepared = prepareFile({
+    name: fields.name ?? file.name,
+    url: fields.url,
+    sizeKB: fields.sizeKB ?? file.sizeKB,
+    type,
+    visibility: fields.visibility ?? file.visibility,
+    metadata,
+  });
+  const fileName = prepared.name;
+
+  // The new file's type can change the version's AIR kind, and the bust after the write derives only
+  // the new one. Every time rather than on a type change: the type read above can be stale.
+  const oldAirs = await getOrchestratorVersionAirs([file.modelVersionId]);
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    // Lock the version so a training submit or a publish cannot interleave with the swap: both
+    // write this row, so they either finish first (and the re-check refuses) or wait for us.
+    const [version] = await tx.$queryRaw<
+      { status: ModelStatus; trainingStatus: TrainingStatus | null }[]
+    >`
+      SELECT status, "trainingStatus" FROM "ModelVersion"
+      WHERE id = ${file.modelVersionId}::int
+      FOR UPDATE
+    `;
+    if (!version) throw throwNotFoundError();
+    assertVersionAcceptsNewUpload(version, file.type);
+
+    // A held owner's file is not replaced: the replace deletes the old row and its bytes.
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
+      DELETE FROM "ModelFile" mf
+      USING "ModelVersion" mv, "Model" m
+      WHERE mf.id = ${file.id}
+        AND mf.url = ${file.url}
+        AND mv.id = mf."modelVersionId"
+        AND m.id = mv."modelId"
+        ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+        AND NOT ${modelRowHeldSql()}
+    `,
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: fileOwnerSql(file.id, isModerator ? undefined : userId),
+        held: modelRowHeldSql(),
+      }
+    );
+    // Another writer replaced or removed the file since we read it.
+    if (outcome === 'short')
+      throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
+
+    const row = await tx.modelFile.create({
+      data: {
+        ...prepared,
+        overrideName: overrideName !== undefined ? overrideName : file.overrideName,
+        rawScanResult: Prisma.JsonNull,
+        modelVersionId: file.modelVersionId,
+      },
+      select: { id: true },
+    });
+
+    // Other versions can link this file as a component (settings.fileId) and would lose it
+    // without a repoint. Any file type can be linked, so this always runs; "resourceId" is
+    // unindexed, so it is a scan of RecommendedResource.
+    const linkedFrom = await tx.$queryRaw<{ sourceId: number | null }[]>`
+      UPDATE "RecommendedResource"
+      SET settings = settings || jsonb_build_object(
+        'fileId', ${row.id}::int,
+        'fileName', ${fileName}::text
+      )
+      WHERE "resourceId" = ${file.modelVersionId}::int
+        AND settings->>'isLinkedComponent' = 'true'
+        AND settings->>'fileId' = ${String(file.id)}
+      RETURNING "sourceId"
+    `;
+
+    return { id: row.id, linkedSourceIds: linkedFrom.flatMap((r) => r.sourceId ?? []) };
+  });
+
+  // Logged, not thrown, from here on: the replacement has landed, and an error now would send the
+  // caller back to retry against the old id, which no longer exists.
+  await deleteFilesForModelVersionCache(file.modelVersionId).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-url-change',
+      message: `Failed to bust the file list for file ${file.id}`,
+      error,
+    }).catch(() => undefined)
+  );
+
+  // The orchestrator resolves a version's files by AIR and caches what it resolved, and
+  // resourceDataCache holds the version's coverage (and linked components) for an hour; all of it
+  // still describes the old file, as does the old file's own pinned AIR.
+  await Promise.all([
+    resourceDataCache.bust([file.modelVersionId, ...created.linkedSourceIds]),
+    bustOrchestratorModelCache(file.modelVersionId),
+    bustOrchestratorAirs(oldAirs),
+    bustVersionScannedFileAirs(file.modelVersionId, file.modelVersion, [file.id]),
+  ]).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-url-change',
+      message: `Failed to bust resource caches for file ${file.id}`,
+      error,
+    }).catch(() => undefined)
+  );
+
+  // Best-effort, after commit. The refcount check inside deleteModelFileObject skips the delete if
+  // any other ModelFile row still references the url.
+  deleteModelFileObject(file.url)
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-object',
+        message: `Failed to delete old S3 object for file ${file.id}`,
+        error,
+      })
+    )
+    .catch(() => undefined);
+  deregisterFileLocationsByFile([file.id])
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-deregister-file-locations',
+        message: `Failed to deregister file locations for file ${file.id}`,
+        error,
+      })
+    )
+    .catch(() => undefined);
+
+  return {
+    ...file,
+    id: created.id,
+    name: prepared.name,
+    overrideName: overrideName !== undefined ? overrideName : file.overrideName,
+    url: prepared.url,
+    type: prepared.type,
+    visibility: prepared.visibility ?? file.visibility,
+    sizeKB: prepared.sizeKB,
+    metadata: prepared.metadata as Prisma.JsonObject,
+    replacedFileId: file.id as number | undefined,
+  };
+}
+
+/** The file `id` with its model owner as `m."userId"`, for `ownerHeld`; only `userId`'s when given. */
+function fileOwnerSql(id: number, userId?: number) {
+  return Prisma.sql`
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf.id = ${id}
+    ${userId === undefined ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+  `;
 }
 
 export async function deleteFile({
@@ -263,6 +603,7 @@ export async function deleteFile({
       type: true,
       modelVersion: {
         select: {
+          trainingStatus: true,
           model: {
             select: { status: true },
           },
@@ -272,6 +613,29 @@ export async function deleteFile({
   });
 
   if (!file) throw throwNotFoundError();
+
+  // A dataset under review, or denied, stays on record for moderators; only they may remove it.
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    reviewedDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
+    !isModerator
+  )
+    throw throwBadRequestError(
+      "Training data for a training run under review or denied can't be deleted."
+    );
+
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    liveRunDatasetTrainingStatuses.includes(file.modelVersion.trainingStatus) &&
+    !isModerator
+  )
+    throw throwBadRequestError(
+      file.modelVersion.trainingStatus === TrainingStatus.InReview
+        ? "Training data for a training run that hasn't been published yet can't be deleted. Publish this version first."
+        : "Training data can't be deleted while its training run is in progress or awaiting review."
+    );
 
   const modelStatus = file.modelVersion.model.status;
   const isTrainingFile = file.type === 'Training Data';
@@ -284,18 +648,40 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number; url: string }[]>`
+  let rows: { modelVersionId: number; modelId: number; url: string }[] = [];
+  // A held owner's file is refused. Scoped to the caller's own files, so a stranger cannot tell a
+  // held file from a missing one.
+  await deleteUnlessHeld(
+    dbWrite.$queryRaw<typeof rows>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
+    AND NOT ${modelRowHeldSql()}
+    ${
+      // Repeats the checks above at delete time, in case the run moved on in between.
+      isModerator
+        ? Prisma.empty
+        : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
+          Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
+            [...reviewedDatasetTrainingStatuses, ...liveRunDatasetTrainingStatuses]
+          )}))`
+    }
     RETURNING
       mv.id as "modelVersionId",
       m.id as "modelId",
       mf.url as "url"
-  `;
+  `.then((deleted) => (rows = deleted).length),
+    {
+      expected: 1,
+      isModerator,
+      db: dbWrite,
+      ownerFrom: fileOwnerSql(id, isModerator ? undefined : userId),
+      held: modelRowHeldSql(),
+    }
+  );
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
@@ -418,10 +804,11 @@ export async function restoreReplacedFile({ id }: { id: number }) {
 
 export const getRecentTrainingData = async ({
   userId,
+  isModerator = false,
   limit,
   cursor = 0,
   ...filters
-}: RecentTrainingDataInput & { userId: number }) => {
+}: RecentTrainingDataInput & { userId: number; isModerator?: boolean }) => {
   const where: Prisma.ModelFileWhereInput[] = [
     { type: 'Training Data' },
     { dataPurged: false },
@@ -477,6 +864,8 @@ export const getRecentTrainingData = async ({
               select: {
                 id: true,
                 name: true,
+                status: true,
+                mode: true,
               },
             },
           },
@@ -494,7 +883,13 @@ export const getRecentTrainingData = async ({
     }
 
     return {
-      items: data,
+      items: data.map((file) => {
+        const item = { ...file, metadata: withoutServerOnlyKeys(file.metadata) };
+        // A deleted or taken-down model's epoch urls are withheld from everyone but moderators.
+        return !isModerator && isModelDeletedOrTakenDown(file.modelVersion.model)
+          ? withoutEpochUrls([item])[0]
+          : item;
+      }),
       nextCursor,
     };
   } catch (error) {

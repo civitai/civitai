@@ -146,14 +146,16 @@ const tray = () =>
  * tray, which a second `createRoot` would not reproduce.
  */
 const renderRoot = async () => {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
+  const mount = document.createElement('div');
+  document.body.appendChild(mount);
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
-  const root = createRoot(container);
+  const root = createRoot(mount);
   await act(async () => {
     root.render(tray());
   });
-  return { container, root };
+  // The tray portals to <body>, outside the mount node; body holds only this render
+  // (cleared in beforeEach), so it is the scope to query.
+  return { container: document.body, root };
 };
 
 const render = async () => (await renderRoot()).container;

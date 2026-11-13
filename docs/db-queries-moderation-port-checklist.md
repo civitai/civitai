@@ -146,7 +146,7 @@ one) and **Net-new** (moderation the moderator app doesn't cover — new domains
 ### 5. entity / text moderation (XGuard / Clavata) (`services/entity-moderation.service.ts`, `jobs/entity-moderation.ts`)
 
 - [ ] `upsertEntityModerationPending`, `recordEntityModerationSuccess`, `recordEntityModerationFailure`, `getEntityModerationWithImageNsfwLevel`
-- [ ] job orchestration: `runModQueue`, `runModChat`, `clearAutomatedReports`, `autoMuteIfScamAccount` (+ `ReportAutomated`, JobQueue)
+- [ ] job orchestration: `runModQueue`, `runModChat`, `clearAutomatedReports`, `autoMuteIfScamAccount` — now a Clavata wrapper over `services/scam-auto-mute.service.ts` (+ `ReportAutomated`, JobQueue)
 - [ ] note: main app already has a `ModerationAdapter` registry (`moderation-adapters.ts`) — decide if the package standardizes on it
 
 ### 6. appeal lifecycle (beyond image status) (`services/report.service.ts`)

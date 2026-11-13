@@ -356,8 +356,8 @@ describe('useFeatureNotice — writing', () => {
 
 describe('useFeatureNotice — audience targeting', () => {
   // 🔴 The same claim as `useFeatureNotice.audience.test.ts`, driven through a
-  // real browser render instead of happy-dom. That file is the GATE (project
-  // `unit`, which is what CI runs); this is the corroborating end-to-end pass.
+  // real browser render instead of happy-dom. That file is the node-tier check
+  // (project `unit`); this is the corroborating end-to-end pass.
   //
   // `remixGalleryExplainer` is the only registry entry that declares an
   // audience, and `navCustomize` declares none — so the pair below moves BOTH ways

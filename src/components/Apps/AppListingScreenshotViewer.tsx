@@ -1,4 +1,5 @@
-import { ActionIcon, Modal, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Modal, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useHotkeys } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { useEffect } from 'react';
@@ -318,7 +319,7 @@ export function AppListingScreenshotViewer({
 }
 
 /**
- * A round overlay arrow, ported from `TrainingSampleViewer`'s `NavButton`.
+ * A round overlay arrow's `NavButton`.
  *
  * `disabled` is the rendered form of `adjacentViableIndex` returning `undefined`, so
  * "there is nothing that way" is visible rather than a click that silently no-ops.

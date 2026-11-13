@@ -76,7 +76,9 @@ describe('blockWorkflowBodySchema — additionalResources (Page-LoRA)', () => {
   it('REJECTS strength below the minimum', () => {
     expect(() =>
       blockWorkflowBodySchema.parse(
-        baseBody({ additionalResources: [{ modelVersionId: 1, strength: LORA_STRENGTH_MIN - 0.1 }] })
+        baseBody({
+          additionalResources: [{ modelVersionId: 1, strength: LORA_STRENGTH_MIN - 0.1 }],
+        })
       )
     ).toThrow();
   });
@@ -84,7 +86,9 @@ describe('blockWorkflowBodySchema — additionalResources (Page-LoRA)', () => {
   it('REJECTS strength above the maximum', () => {
     expect(() =>
       blockWorkflowBodySchema.parse(
-        baseBody({ additionalResources: [{ modelVersionId: 1, strength: LORA_STRENGTH_MAX + 0.1 }] })
+        baseBody({
+          additionalResources: [{ modelVersionId: 1, strength: LORA_STRENGTH_MAX + 0.1 }],
+        })
       )
     ).toThrow();
   });
@@ -216,7 +220,7 @@ describe('blockWorkflowBodySchema — sourceImage host allowlist (generationSour
  * sourceImage URL canonicalization (validate-the-parse / forward-the-raw gap).
  *
  * The host allowlist validates a PARSED url but the schema used to emit the
- * ORIGINAL string, and nothing downstream re-validates (the graph's imagesNode
+ * ORIGINAL string, and nothing downstream re-validates (the graph's imagesDef
  * is a bare `url: z.string()`). That made two WHATWG-specific normalizations
  * load-bearing as security properties: `\` is treated as `/` in the authority,
  * and tab/CR/LF are deleted from anywhere in the url. Both let a raw string
@@ -438,7 +442,10 @@ describe('blockWorkflowBodySchema — sourceImages[] (multi-image conditioning)'
   // ── HOST VALIDATION APPLIES TO EVERY ELEMENT ───────────────────────────────
   it.each([
     ['a non-Civitai host', 'https://evil.example/x.jpeg'],
-    ['a host-confusion URL containing the allowed host', 'https://evil.example/?x=image.civitai.com/a.jpeg'],
+    [
+      'a host-confusion URL containing the allowed host',
+      'https://evil.example/?x=image.civitai.com/a.jpeg',
+    ],
     ['a non-https URL', 'http://image.civitai.com/x.jpeg'],
     ['a URL with a lookalike suffix', 'https://image.civitai.com.evil.example/x.jpeg'],
   ])('REJECTS %s in the LAST array element', (_label, badUrl) => {
@@ -461,7 +468,10 @@ describe('blockWorkflowBodySchema — sourceImages[] (multi-image conditioning)'
 
   it('accepts dimensions exactly at the bounds in every element', () => {
     expect(() =>
-      parseImages([img(OK, { width: DIM_MIN, height: DIM_MIN }), img(OK, { width: DIM_MAX, height: DIM_MAX })])
+      parseImages([
+        img(OK, { width: DIM_MIN, height: DIM_MIN }),
+        img(OK, { width: DIM_MAX, height: DIM_MAX }),
+      ])
     ).not.toThrow();
   });
 
@@ -478,7 +488,7 @@ describe('blockWorkflowBodySchema — sourceImages[] (multi-image conditioning)'
 
   it('is set ABOVE the largest per-ecosystem cap so no ecosystem is clamped here', () => {
     // The wire bound exists to stop an unbounded array reaching the parser, not
-    // to be the product limit. If a future ecosystem raises its imagesNode max
+    // to be the product limit. If a future ecosystem raises its imagesDef max
     // past this, the wire bound would start silently under-allowing it.
     expect(BLOCK_SOURCE_IMAGES_WIRE_MAX).toBeGreaterThan(7);
   });

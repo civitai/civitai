@@ -184,13 +184,13 @@ beforeEach(() => {
 });
 
 describe('blocks.previewRequest', () => {
-  it('moderator + flags on: reaches the service with the server modUserId', async () => {
+  it('moderator + flags on: reaches the service with the server-derived moderator actor', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.previewRequest({ publishRequestId: PUBREQ });
     expect(res.url).toBe('https://review-x.civit.ai/my-app');
     expect(mockPreviewRequest).toHaveBeenCalledWith({
       publishRequestId: PUBREQ,
-      modUserId: 1, // SERVER-derived, never client-supplied
+      actor: { kind: 'moderator', userId: 1 }, // SERVER-derived, never client-supplied
     });
   });
 

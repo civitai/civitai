@@ -1,4 +1,5 @@
-import { Chip, Divider, Drawer, Group, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, ScrollArea, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
@@ -98,12 +99,21 @@ export function ChallengeFiltersDropdown() {
     );
   }, [router]);
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters({
-      committed: committedFilters,
-      onApply: handleApply,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters({
+    committed: committedFilters,
+    onApply: handleApply,
+    onClear: handleClear,
+  });
 
   const handleStatusChange = (value: string[]) => {
     // Mirror the legacy guard: never let the pending set go fully empty.
@@ -173,7 +183,6 @@ export function ChallengeFiltersDropdown() {
           </Chip.Group>
         </Stack>
       )}
-
     </Stack>
   );
 
@@ -228,6 +237,9 @@ export function ChallengeFiltersDropdown() {
         shadow="md"
         opened={opened}
         onClose={close}
+        onChange={(next) => {
+          if (!next) close();
+        }}
         middlewares={{ flip: true, shift: true }}
         withinPortal
         withArrow

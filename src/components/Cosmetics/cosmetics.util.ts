@@ -6,6 +6,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
   GetPaginatedCosmeticsInput,
+  UnequipCosmeticInput,
 } from '~/server/schema/cosmetic.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -57,6 +58,14 @@ export const useQueryUserCosmetics = () => {
   return trpc.user.getCosmetics.useQuery(undefined, { enabled: !!currentUser });
 };
 
+export const useQueryStickerBalances = ({ enabled = true } = {}) => {
+  const currentUser = useCurrentUser();
+
+  return trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: enabled && !!currentUser,
+  });
+};
+
 export const useEquipProfileDecoration = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
@@ -103,7 +112,7 @@ export const useEquipContentDecoration = () => {
   const queryUtils = trpc.useUtils();
 
   const sharedMutationOptions = {
-    async onSuccess(_: { count: number }, payload: EquipCosmeticInput) {
+    async onSuccess(_: { count: number }, payload: UnequipCosmeticInput) {
       const { equippedToType } = payload;
 
       await queryUtils.user.getCosmetics.invalidate();
@@ -115,7 +124,11 @@ export const useEquipContentDecoration = () => {
           await queryUtils.post.getInfinite.invalidate();
           break;
         case 'Article':
-          await queryUtils.article.getInfinite.invalidate();
+          await Promise.all([
+            queryUtils.article.getInfinite.invalidate(),
+            // The article page's cover wears the hat too.
+            queryUtils.article.getById.invalidate({ id: payload.equippedToId }),
+          ]);
           break;
         case 'Image':
           await queryUtils.image.getInfinite.invalidate();
@@ -148,7 +161,7 @@ export const useEquipContentDecoration = () => {
     return equipMutation.mutateAsync(data);
   };
 
-  const handleUnequipContentDecoration = (data: EquipCosmeticInput) => {
+  const handleUnequipContentDecoration = (data: UnequipCosmeticInput) => {
     return unequipMutation.mutateAsync(data);
   };
 

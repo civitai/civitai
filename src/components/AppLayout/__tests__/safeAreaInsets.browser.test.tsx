@@ -41,8 +41,8 @@ import { INJECTED_ROOT_PROPERTIES } from '../../../../test/component-setup';
  * that ambiguity: resolved gives `100px`, dropped gives `auto` and fills the
  * parent. Each test below carries the undefined-property control alongside.
  *
- * This suite lives in `preview / component-tests`, which is REPORT-ONLY and red
- * on `main` independently of this change, so it informs and does not gate.
+ * This suite runs in CI as the `Component tests` check. Like every check here it
+ * does not block a merge.
  *
  * 🔴 RED-AT-BASE MATRIX — MEASURED, NOT ASSERTED. Ran with the four
  * `--safe-area-inset-*` declarations deleted from `globals.css` (i.e. the tree as

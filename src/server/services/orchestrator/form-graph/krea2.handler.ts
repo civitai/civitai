@@ -10,13 +10,14 @@ import type {
   ImageGenStepTemplate,
   Krea2FalImageGenInput,
   Krea2StyleReference,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import {
-  krea2VersionIds,
+  isOfficialKrea2Version,
+  isKrea2TurboModel,
   krea2VersionIdToSize,
 } from '~/shared/form-graph/generation/image/krea2.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -59,18 +60,21 @@ export const createKrea2Input = defineHandler<EcosystemData<'Krea2'>, [ImageGenS
       ];
     }
 
-    const model = isEdit ? 'edit' : data.model?.id === krea2VersionIds.turbo ? 'turbo' : 'raw';
+    const model = isEdit ? 'edit' : isKrea2TurboModel(data.model) ? 'turbo' : 'raw';
 
     const loras = resourcesToLoras('resources' in data ? data.resources : undefined, ctx.airs);
 
     const images = 'images' in data ? data.images?.map((x) => x.url) : undefined;
     if (isEdit && !images?.length) throw new Error('At least one image is required to edit');
 
-    // `model: 'edit'` selects the edit graph, not a checkpoint — the base build
-    // rides along as a diffusionModel AIR.
+    // `model` names a comfy build, not a checkpoint, so the weights ride along as
+    // a diffusionModel AIR: the base build for edit, and the checkpoint itself for a
+    // community version the FAL tiers don't cover.
     let diffusionModel: string | undefined;
     if (isEdit) {
       if (!data.model) throw new Error('A Krea 2 base model is required to edit');
+      diffusionModel = ctx.airs.getOrThrow(data.model.id);
+    } else if (data.model && !isOfficialKrea2Version(data.model.id)) {
       diffusionModel = ctx.airs.getOrThrow(data.model.id);
     }
 

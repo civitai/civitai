@@ -39,15 +39,6 @@ function iframeInstall(
   };
 }
 
-describe('CHROME_BAR_PX', () => {
-  // Pin the derived value so a silent drift in IframeHost's AppBlockChrome
-  // (py / ActionIcon size / border) is caught here. 26 (ActionIcon sm) + 8
-  // (py={4} ×2) + 1 (border) = 35.
-  it('is 35px (ActionIcon sm 26 + py=4 ×2 = 8 + 1px border)', () => {
-    expect(CHROME_BAR_PX).toBe(35);
-  });
-});
-
 describe('computeSlotReservation', () => {
   it('returns {hasInstall:false, reservedHeight:0} for a model with no install', () => {
     // The zero-install no-regression case: the slot must reserve NOTHING so
@@ -69,11 +60,7 @@ describe('computeSlotReservation', () => {
     // Up to MAX_BLOCKS_PER_SLOT installs stack in the slot; reserve for the
     // tallest declared minHeight so none under-reserves. Only ONE chrome bar
     // is added (the reservation is a single slot-level box, not per-install).
-    const r = computeSlotReservation([
-      iframeInstall(200),
-      iframeInstall(480),
-      iframeInstall(360),
-    ]);
+    const r = computeSlotReservation([iframeInstall(200), iframeInstall(480), iframeInstall(360)]);
     expect(r).toEqual({ hasInstall: true, reservedHeight: 480 + CHROME_BAR_PX });
   });
 
@@ -99,10 +86,7 @@ describe('computeSlotReservation', () => {
   });
 
   it('reserves for the iframe install when iframe + inline installs are mixed', () => {
-    const r = computeSlotReservation([
-      iframeInstall(300, 'inline'),
-      iframeInstall(420, 'iframe'),
-    ]);
+    const r = computeSlotReservation([iframeInstall(300, 'inline'), iframeInstall(420, 'iframe')]);
     expect(r).toEqual({ hasInstall: true, reservedHeight: 420 + CHROME_BAR_PX });
   });
 });

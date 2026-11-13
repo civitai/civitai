@@ -5,8 +5,18 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // listings filter on — so it must bust the getTags listing cache alongside the
 // existing per-id / per-name tag caches. This drives the handler in isolation and
 // asserts the bust fires exactly when rows were actually updated.
-const { pgQuery, batchProcessor, tagBust, tagByNameBust, bustGetTagsCache } = vi.hoisted(() => ({
+const {
+  pgQuery,
+  pgCancellableQuery,
+  batchProcessor,
+  tagBust,
+  tagByNameBust,
+  bustGetTagsCache,
+  refreshProfilePicturesForImages,
+} = vi.hoisted(() => ({
   pgQuery: vi.fn(),
+  pgCancellableQuery: vi.fn(),
+  refreshProfilePicturesForImages: vi.fn(async (_ids: number[]) => undefined),
   batchProcessor: vi.fn().mockResolvedValue(undefined),
   tagBust: vi.fn().mockResolvedValue(undefined),
   tagByNameBust: vi.fn().mockResolvedValue(undefined),
@@ -17,7 +27,11 @@ const { pgQuery, batchProcessor, tagBust, tagByNameBust, bustGetTagsCache } = vi
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: any) => handler,
 }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {},  pgDbWrite: { query: pgQuery } }));
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: {},
+  pgDbReadLong: {},
+  pgDbWrite: { query: pgQuery, cancellableQuery: pgCancellableQuery },
+}));
 vi.mock('~/server/db/db-helpers', () => ({ batchProcessor }));
 vi.mock('~/server/redis/caches', () => ({
   tagCache: { bust: tagBust },
@@ -25,6 +39,8 @@ vi.mock('~/server/redis/caches', () => ({
 }));
 // Stub tag.service so importing the handler doesn't pull the full server graph.
 vi.mock('~/server/services/tag.service', () => ({ bustGetTagsCache }));
+// Same reason: the handler only needs the profile-picture refresh.
+vi.mock('~/server/services/user.service', () => ({ refreshProfilePicturesForImages }));
 
 import handler from '~/pages/api/mod/adjust-tag-level';
 
@@ -61,5 +77,57 @@ describe('adjust-tag-level — getTags cache invalidation', () => {
     await handler(req, res);
 
     expect(bustGetTagsCache).not.toHaveBeenCalled();
+  });
+});
+
+// Avatars are gated on their cached rating, so a batch this re-rates must refresh the cached profile
+// pictures of the users whose avatar is in it — after the batch's UPDATE, and without failing it.
+describe('adjust-tag-level — profile pictures', () => {
+  type Processor = (args: {
+    batch: number[];
+    batchNumber: number;
+    batchCount: number;
+  }) => Promise<void>;
+
+  async function runOneBatch(batch: number[]) {
+    pgQuery.mockResolvedValue({ rows: [{ id: 11 }] });
+    const order: string[] = [];
+    pgCancellableQuery.mockImplementation(async (sql: string) => ({
+      result: async () => {
+        if (sql.includes('UPDATE "Image"')) order.push('update');
+        return [];
+      },
+    }));
+    refreshProfilePicturesForImages.mockImplementation(async () => {
+      order.push('refresh');
+    });
+    const { req, res } = createMocks({ tags: 'nude', nsfwLevel: '4' });
+    await handler(req, res);
+
+    const { processor } = batchProcessor.mock.calls[0][0] as { processor: Processor };
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await processor({ batch, batchNumber: 1, batchCount: 1 });
+    return order;
+  }
+
+  it('refreshes the batch after re-rating it', async () => {
+    const order = await runOneBatch([501, 502]);
+
+    expect(refreshProfilePicturesForImages).toHaveBeenCalledWith([501, 502]);
+    expect(order).toEqual(['update', 'refresh']);
+  });
+
+  it('still completes the batch when the refresh fails', async () => {
+    pgQuery.mockResolvedValue({ rows: [{ id: 11 }] });
+    refreshProfilePicturesForImages.mockRejectedValueOnce(new Error('cache down'));
+    pgCancellableQuery.mockImplementation(async () => ({ result: async () => [] }));
+    const { req, res } = createMocks({ tags: 'nude', nsfwLevel: '4' });
+    await handler(req, res);
+    const { processor } = batchProcessor.mock.calls[0][0] as { processor: Processor };
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await expect(
+      processor({ batch: [501], batchNumber: 1, batchCount: 1 })
+    ).resolves.toBeUndefined();
   });
 });

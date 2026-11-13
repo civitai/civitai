@@ -1,5 +1,11 @@
 # form-graph lane parity sweep — 2026-09-23
 
+> **Decided and executed (`feat/remove-data-graph`).** `GenerationFormV2` and the whole data-graph
+> lane are deleted. Everything below is the record of the read-across that supported that decision —
+> the lane comparison, the shadow-parse divergence analysis and the Phase 6 sizing are history and
+> are not re-checkable. Two findings outlived the sweep and are still open; they are restated at the
+> top of "What is left".
+
 A read-across of the two generation form lanes, to decide whether `GenerationFormV2` (the data-graph
 lane) can be retired. Run after the header revert of the same date (see
 [`features/generator-header-redesign.md`](features/generator-header-redesign.md)), which put the
@@ -11,11 +17,11 @@ form-graph header back on `WorkflowInput` + `SelectedWorkflowDisplay` + the `get
 
 **Lanes compared**
 
-| | data-graph | form-graph |
-|---|---|---|
-| Entry | `generation_v2/GenerationForm.tsx` (2,951 lines, one body) | `form-graph/generation/BaseGenerationForm.tsx` + four per-output bodies |
-| Footer | `generation_v2/FormFooter.tsx` | `form-graph/generation/FormFooter.tsx` (shares the v2 buzz selector and metadata footer) |
-| Provider | `GenerationFormProvider.tsx` | `BaseGenerationForm` owns the store |
+|          | data-graph                                                 | form-graph                                                                               |
+| -------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Entry    | `generation_v2/GenerationForm.tsx` (2,951 lines, one body) | `form-graph/generation/BaseGenerationForm.tsx` + four per-output bodies                  |
+| Footer   | `generation_v2/FormFooter.tsx`                             | `form-graph/generation/FormFooter.tsx` (shares the v2 buzz selector and metadata footer) |
+| Provider | `GenerationFormProvider.tsx`                               | `BaseGenerationForm` owns the store                                                      |
 
 **Method.** Three passes: the set of `<Controller name=…>` keys in each lane (104 vs 98); the set of
 imported modules by basename, footers and providers included; then each difference chased to whether
@@ -58,7 +64,7 @@ form-graph lane passes none of them, so the incompatible-option styling and the
 compatibility filter.
 
 Half of this pre-dates today: `BaseModelInput` has been wired without those props since the
-2026-09-16 restore. The other half is new — `WorkflowPicker` had its own "Switches model" badge, and
+2026-09-16 restore. The other half is new — the old `WorkflowPicker` fork had its own "Switches model" badge, and
 removing it left the lane with no compatibility affordance on either control.
 
 **Fix:** `GenerationFormBody` calls `useCompatibilityInfo({ workflow, ecosystem })` — a pure
@@ -76,18 +82,18 @@ asks first (`GenerationForm.tsx:366-420`).
 This is a **decision, not a defect**: silent redirect may be the better behaviour now that coherence
 is redirect-only. It needs to be made rather than inherited.
 
-*Closes when:* Briant states which behaviour ships, and the lane matches that statement.
+_Closes when:_ Briant states which behaviour ships, and the lane matches that statement.
 
 ### 4. Three ecosystem alerts are not rendered — FIXED
 
 All three are exported components the form-graph lane simply never mounts; none is in the shared
 `GenerationLayout`.
 
-| Alert | v2 site | What it says |
-|---|---|---|
-| `GrokEcosystemAlert` | `GenerationForm.tsx:716-721` | Grok terms notice, keyed on ecosystem |
-| `SeedanceImg2VidAlert` | `:723-730` | Seedance img2vid copyright-filter warning |
-| `ReadyAlert` | `:783` | "Potentially slow generation" — resources still downloading (reads `whatIf.ready === false`) |
+| Alert                  | v2 site                      | What it says                                                                                 |
+| ---------------------- | ---------------------------- | -------------------------------------------------------------------------------------------- |
+| `GrokEcosystemAlert`   | `GenerationForm.tsx:716-721` | Grok terms notice, keyed on ecosystem                                                        |
+| `SeedanceImg2VidAlert` | `:723-730`                   | Seedance img2vid copyright-filter warning                                                    |
+| `ReadyAlert`           | `:783`                       | "Potentially slow generation" — resources still downloading (reads `whatIf.ready === false`) |
 
 `ReadyAlert` is a separate export from `ResourceAlerts.tsx`; mounting `ResourceAlerts` does not
 bring it.
@@ -106,7 +112,7 @@ worked on both lanes.)
 
 v2 renders it once for every output type, because it has one body. The form-graph lane mounted it in
 `ImageGenerationForm.tsx` and `VideoGenerationForm.tsx` only, so unstable and content-restricted
-resource warnings did not appear on audio. `GateRuleWarnings` *is* on all four.
+resource warnings did not appear on audio. `GateRuleWarnings` _is_ on all four.
 
 **Only three of the four bodies can report anything, so "all four" was the wrong target.** Counting
 `.field(...)` declarations per hub: image has `model`/`resources`/`vae`, video has
@@ -132,7 +138,7 @@ orchestrator. v2 mounts it inside the `preprocessKind` controller; the form-grap
 it. Invisible today: `veo3ApiVersions` is `['3.1']`, one option, and v2's control hides itself below
 two (`GenerationForm.tsx:645`). It becomes a real gap the day a second Veo API version lands.
 
-*Closes when:* a second entry in `veo3ApiVersions` produces a radio group in both lanes — or the
+_Closes when:_ a second entry in `veo3ApiVersions` produces a radio group in both lanes — or the
 field is removed.
 
 ---
@@ -170,6 +176,8 @@ control in v2** — the form-graph lane renders it. The lane is not a strict sub
 
 ## Scope beyond the form: what retiring the lane actually touches
 
+**(Historical — this is the sizing that `feat/remove-data-graph` executed against.)**
+
 `grep -rln "libs/data-graph\|shared/data-graph/generation" src` outside the graph directories
 themselves: **175 files**.
 
@@ -187,8 +195,13 @@ themselves: **175 files**.
 
 ## What is left
 
-Findings **3** (needs a decision on silent redirect vs confirm modal) and **7** (latent until Veo
-ships a second API version). Neither blocks widening the flag.
+Still open, and now the only live items in this file:
+
+- **Finding 3** — needs a decision on silent redirect vs confirm modal.
+- **Finding 7** — the Veo 3 `version` field has no control; latent until `veo3ApiVersions` has a
+  second entry. _Closes when:_ a second entry produces a radio group, or the field is removed.
+
+Everything after this paragraph concerns the shadow comparison, which was deleted with the lane.
 
 Bigger than either, and not a form gap — though the largest class of it is now addressed: the shadow comparison
 (`orchestrator/form-graph/shadow-parse.ts`) is not at zero, which is the counter's own stated
@@ -235,7 +248,8 @@ So the counter should not be read as "441 bugs": one class was a hub defect, two
 upstream of it, and the largest remaining class is v1's. That is what the `corrections` labels in
 `shadow-parse` exist to make legible without this kind of manual pass.
 
-`src/components/form-graph/generation/__tests__/lane-parity.test.ts` guards the five fixed findings
-by reading both lanes' entry files, plus the image and audio bodies for the two per-body mounts — the defect class is "the call site is absent in one lane", which
-source can answer, and rendering either lane needs its whole provider stack. Mutation-checked:
-deleting `useGenerationTour()` from `BaseGenerationForm` fails it by name.
+`src/components/form-graph/generation/__tests__/generation-form-mounts.test.ts` (renamed from
+`lane-parity.test.ts` when the second lane was deleted) guards the five fixed findings by reading the
+entry file plus the image and audio bodies for the two per-body mounts — the defect class is "the call
+site is absent", which source can answer, and rendering the form needs its whole provider stack.
+Mutation-checked: deleting `useGenerationTour()` from `BaseGenerationForm` fails it by name.

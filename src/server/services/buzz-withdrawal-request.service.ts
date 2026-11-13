@@ -2,11 +2,14 @@
 // This file is part of the legacy buzz withdrawal request system.
 // Has been replaced by the creators program.
 import type { Prisma } from '@prisma/client';
-import { v4 as uuid } from 'uuid';
 import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
+import {
+  assertNoPayoutHold,
+  hasPayoutHold,
+} from '~/server/services/creator-program-prepayout-review/hold';
 import {
   payToStripeConnectAccount,
   payToTipaltiAccount,
@@ -46,6 +49,7 @@ CreateBuzzWithdrawalRequestSchema & {
   if (provider === UserPaymentConfigurationProvider.Stripe) {
     throw throwBadRequestError('We have disabled Stripe payments for the time being.');
   }
+  await assertNoPayoutHold(userId);
 
   const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
     where: { userId },
@@ -233,7 +237,10 @@ export const cancelBuzzWithdrawalRequest = async ({
   const request = await dbRead.buzzWithdrawalRequest
     .findUniqueOrThrow(requestFindArgs)
     .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'buzzWithdrawalRequest', caller: 'cancelBuzzWithdrawalRequest' });
+      dbReadFallbackCounter.inc({
+        entity: 'buzzWithdrawalRequest',
+        caller: 'cancelBuzzWithdrawalRequest',
+      });
       return dbWrite.buzzWithdrawalRequest.findUniqueOrThrow(requestFindArgs);
     });
 
@@ -391,7 +398,7 @@ export const updateBuzzWithdrawalRequest = async ({
         userId: request.userId as number,
         type: 'creators-program-withdrawal-updated',
         category: NotificationCategory.System,
-        key: `creators-program-withdrawal-updated:${uuid()}`,
+        key: `creators-program-withdrawal-updated:${crypto.randomUUID()}`,
         details: {},
       }).catch();
 
@@ -427,6 +434,18 @@ export const updateBuzzWithdrawalRequest = async ({
       request.requestedBuzzAmount,
       request.platformFeeRate
     );
+
+    // The webhook (userId -1) only records what the provider already did, so it is never refused.
+    if (
+      (status === BuzzWithdrawalRequestStatus.Approved ||
+        status === BuzzWithdrawalRequestStatus.Transferred) &&
+      userId !== -1 &&
+      request.userId &&
+      (await hasPayoutHold(request.userId))
+    )
+      throw throwBadRequestError(
+        'This user has an active payout hold. Reject the request or release the hold first.'
+      );
 
     if (status === BuzzWithdrawalRequestStatus.ExternallyResolved && !note) {
       throw throwBadRequestError(
@@ -520,7 +539,10 @@ export const updateBuzzWithdrawalRequest = async ({
       const transferRecord = await dbRead.buzzWithdrawalRequestHistory
         .findFirstOrThrow(transferRecordFindArgs)
         .catch(() => {
-          dbReadFallbackCounter.inc({ entity: 'buzzWithdrawalRequestHistory', caller: 'updateBuzzWithdrawalRequest' });
+          dbReadFallbackCounter.inc({
+            entity: 'buzzWithdrawalRequestHistory',
+            caller: 'updateBuzzWithdrawalRequest',
+          });
           return dbWrite.buzzWithdrawalRequestHistory.findFirstOrThrow(transferRecordFindArgs);
         });
 
@@ -612,7 +634,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-approved',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-approved:${uuid()}`,
+            key: `creators-program-withdrawal-approved:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
@@ -621,7 +643,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-rejected',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-rejected:${uuid()}`,
+            key: `creators-program-withdrawal-rejected:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
@@ -630,7 +652,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-transferred',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-transferred:${uuid()}`,
+            key: `creators-program-withdrawal-transferred:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
@@ -639,7 +661,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-reverted',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-reverted:${uuid()}`,
+            key: `creators-program-withdrawal-reverted:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;

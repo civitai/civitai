@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { LINK_CLASS, num } from '$lib/format';
   import type { ResourceGeneration } from './user-account';
@@ -43,7 +44,7 @@
             return r.json();
           }
         )
-      : null
+      : SSR_PENDING
   );
 
   const windowShort = $derived(WINDOWS.find(([v]) => v === days)?.[2] ?? '30d');

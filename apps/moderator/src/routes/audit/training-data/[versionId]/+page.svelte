@@ -1,5 +1,6 @@
 <script lang="ts">
   import TrainingAssetViewer from '$lib/components/TrainingAssetViewer.svelte';
+  import WorkflowDataset from '$lib/components/WorkflowDataset.svelte';
   import { LINK_CLASS } from '$lib/format';
   import { userLookupUrl, modelVersionUrl } from '$lib/entity-url';
   import ReviewActions from './ReviewActions.svelte';
@@ -42,7 +43,37 @@
   <div><dt class="text-xs text-dark-2">Completed</dt><dd>{results.completedAt ?? 'N/A'}</dd></div>
 </dl>
 
-<TrainingAssetViewer
-  versionId={detail.versionId}
-  columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
-/>
+{#if detail.studioWorkflowId}
+  <h2 class="mb-2 text-lg font-semibold text-white">Dataset</h2>
+  {#await data.studioDataset}
+    <p class="text-sm text-dark-2">Reading the dataset from the training workflow…</p>
+  {:then loaded}
+    {#if loaded?.ok}
+      {#if loaded.dataset.kind === 'blobs'}
+        <WorkflowDataset
+          workflowId={loaded.workflowId}
+          items={loaded.dataset.items}
+          itemStates={data.studioItemStates}
+        />
+      {:else}
+        <p class="text-sm text-dark-2">
+          This run's dataset is in a shape this page cannot preview.
+        </p>
+      {/if}
+    {:else if loaded}
+      <p class="mb-3 text-sm text-amber-200">Could not read the dataset: {loaded.error}</p>
+      <!-- An expired run's dataset survives only as the zip archived from it after publish. -->
+      <TrainingAssetViewer
+        versionId={detail.versionId}
+        columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+      />
+    {/if}
+  {:catch}
+    <p class="text-sm text-amber-200">Could not read the dataset from the training workflow.</p>
+  {/await}
+{:else}
+  <TrainingAssetViewer
+    versionId={detail.versionId}
+    columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+  />
+{/if}

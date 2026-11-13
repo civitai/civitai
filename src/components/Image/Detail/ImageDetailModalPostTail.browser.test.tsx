@@ -109,6 +109,12 @@ vi.mock('~/components/Collections/collection.utils', async (importOriginal) => (
   useCollection: () => ({ collection: undefined, isLoading: false }),
 }));
 vi.mock('~/components/Image/DetailV2/ImageDetail2', () => ({ ImageDetail2: () => null }));
+// The modal wraps its body in storyline mode, which reads feature flags this scaffold does not
+// mount; unmocked it throws and nothing renders. Storyline mode is not what this file tests, so
+// it stays off: no storyline images, and the seed reaches the provider untouched.
+vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
+  StorylineModeProvider: ({ children }: any) => <>{children(undefined, 'off')}</>,
+}));
 
 // The seam under test: whatever reaches the provider is what the user can navigate.
 vi.mock('~/components/Image/Detail/ImageDetailProvider', () => ({

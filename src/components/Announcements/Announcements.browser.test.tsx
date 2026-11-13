@@ -9,7 +9,7 @@ import { renderWithProviders } from '../../../test/component-setup';
  * cookie via `useGetAnnouncements`) PLUS #3000's anti-collapse mechanism (a
  * PERSISTENT `min-h` parent that stays mounted across the SSR→hydration handoff).
  *
- * The hydration/flag logic of `useGetAnnouncements` is unit-tested by the pure
+ * The hydration logic of `useGetAnnouncements` is unit-tested by the pure
  * `announcements-exposure` + `announcements-dismissed-cookie` suites, so it is
  * mocked here — these tests pin the COMPONENT's job: when does the persistent
  * reserve wrapper appear, and does the min-height floor hold when the inner
@@ -59,8 +59,8 @@ beforeEach(() => {
   };
 });
 
-describe('Announcements — flag OFF / non-exposed (byte-identical to pre-fix)', () => {
-  test('flag OFF, no exposed data → renders nothing, NO reserve wrapper', async () => {
+describe('Announcements — non-exposed', () => {
+  test('non-site, no exposed data → renders nothing, NO reserve wrapper', async () => {
     mocks.hook = {
       data: [],
       seededCount: 1,
@@ -74,7 +74,7 @@ describe('Announcements — flag OFF / non-exposed (byte-identical to pre-fix)',
     expect(document.querySelector('[data-testid="carousel"]')).toBe(null);
   });
 
-  test('flag OFF, a non-dismissed announcement (post-hydration) → carousel directly, NO reserve wrapper', async () => {
+  test('non-site, a non-dismissed announcement (post-hydration) → carousel directly, NO reserve wrapper', async () => {
     mocks.hook = {
       data: [{ id: 1, dismissed: false }],
       seededCount: 1,
@@ -89,9 +89,9 @@ describe('Announcements — flag OFF / non-exposed (byte-identical to pre-fix)',
   });
 });
 
-describe('Announcements — flag ON, persistent CLS reserve', () => {
+describe('Announcements — site, persistent CLS reserve', () => {
   test('server saw a non-dismissed announcement → persistent min-height wrapper WITH the carousel inside', async () => {
-    // The flag-ON server/first-paint shape for a non-dismisser: exposed data even
+    // The server/first-paint shape for a non-dismisser: exposed data even
     // though isClient=false, serverExposedCount>0.
     mocks.hook = {
       data: [{ id: 1, dismissed: false }],

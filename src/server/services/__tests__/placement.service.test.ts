@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubscriptionsService from '~/server/services/subscriptions.service';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import {
   MAX_DECLINE_FEE_RATE,
   MIN_DECLINE_FEE_RATE,
@@ -11,26 +12,46 @@ import {
   placementSurfaces,
 } from '~/shared/utils/placement';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-const findUnique = dbMock.dbRead.keyValue.findUnique;
+// The `placement:config` KeyValue row, read through Kysely: `undefined` for no row. Its rows,
+// against a real database, are pinned in hot-reads-5.kysely-parity.test.ts.
+const { configRead } = vi.hoisted(() => ({ configRead: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRead,
+}));
+// The many-creator score read (`placementPriceRanges`), still raw SQL.
 const queryRaw = dbMock.dbRead.$queryRaw;
 
-const getCapTier = vi.fn();
+const getCapTierViaKysely = vi.fn();
+const getCapTiers = vi.fn();
 
+// One creator's score (`placementPriceRange`), a Kysely read: `[]` for an unknown user, as the
+// query returns. Its rows, against a real database, are pinned in
+// placement-reads.kysely-parity.test.ts.
+const { userScore } = vi.hoisted(() => ({ userScore: vi.fn() }));
+vi.mock('@civitai/db-queries/placement', () => ({ getUserPlacementScore: userScore }));
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
-  getCapTier,
+  getCapTierViaKysely,
+  getCapTiers,
 }));
 
-const { getPlacementConfig, placementPriceRange, MIN_EXPIRY_HOURS, MAX_EXPIRY_HOURS } =
-  await import('~/server/services/placement.service');
+const {
+  getPlacementConfig,
+  placementPriceRange,
+  placementPriceRanges,
+  MIN_EXPIRY_HOURS,
+  MAX_EXPIRY_HOURS,
+} = await import('~/server/services/placement.service');
 
-const storedConfig = (value: unknown) => findUnique.mockResolvedValue({ value });
+const storedConfig = (value: unknown) =>
+  configRead.mockResolvedValue({ key: 'placement:config', value });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  findUnique.mockResolvedValue(null);
-  queryRaw.mockResolvedValue([{ score: 0 }]);
-  getCapTier.mockResolvedValue(null);
+  configRead.mockResolvedValue(undefined);
+  userScore.mockResolvedValue([{ score: 0 }]);
+  getCapTierViaKysely.mockResolvedValue(null);
 });
 
 describe('getPlacementConfig', () => {
@@ -85,7 +106,7 @@ describe('getPlacementConfig', () => {
 
   it('falls back to compiled defaults when the row is missing or malformed', async () => {
     for (const value of [null, { declineFeeRates: 'thirty percent' }, 42]) {
-      findUnique.mockResolvedValue(value === null ? null : { value });
+      configRead.mockResolvedValue(value === null ? undefined : { key: 'placement:config', value });
       const config = await getPlacementConfig();
       expect(config.declineFeeRate('sticker')).toBe(
         PLACEMENT_SURFACES.sticker.defaultDeclineFeeRate
@@ -135,7 +156,7 @@ describe('getPlacementConfig', () => {
   });
 
   it('survives the config read throwing', async () => {
-    findUnique.mockRejectedValue(new Error('KeyValue unavailable'));
+    configRead.mockRejectedValue(new Error('KeyValue unavailable'));
     const config = await getPlacementConfig();
     expect(config.declineFeeRate('sticker')).toBe(PLACEMENT_SURFACES.sticker.defaultDeclineFeeRate);
   });
@@ -143,22 +164,22 @@ describe('getPlacementConfig', () => {
 
 describe('placementPriceRange', () => {
   // A subscription mid-failed-payment must not buy a higher cap than the UI
-  // shows. `getCapTier` is the helper that excludes bad-state subs; using
+  // shows. `getCapTierViaKysely` is the helper that excludes bad-state subs; using
   // `getHighestTierSubscription` here would hand a lapsed gold member gold caps.
   it('resolves the tier through the cap helper, not the raw subscription', async () => {
-    getCapTier.mockResolvedValue(null);
-    queryRaw.mockResolvedValue([{ score: 100_000 }]);
+    getCapTierViaKysely.mockResolvedValue(null);
+    userScore.mockResolvedValue([{ score: 100_000 }]);
 
     const range = await placementPriceRange(1, 'sticker');
 
-    expect(getCapTier).toHaveBeenCalledWith(1);
+    expect(getCapTierViaKysely).toHaveBeenCalledWith(1);
     expect(range.tier).toBe('free');
     expect(range.max).toBe(1_000);
   });
 
   it('caps by score band and tier together', async () => {
-    getCapTier.mockResolvedValue('gold');
-    queryRaw.mockResolvedValue([{ score: 100_000 }]);
+    getCapTierViaKysely.mockResolvedValue('gold');
+    userScore.mockResolvedValue([{ score: 100_000 }]);
 
     await expect(placementPriceRange(1, 'sticker')).resolves.toMatchObject({
       tier: 'gold',
@@ -167,16 +188,81 @@ describe('placementPriceRange', () => {
   });
 
   it('treats an unknown tier string as free rather than guessing upward', async () => {
-    getCapTier.mockResolvedValue('platinum');
+    getCapTierViaKysely.mockResolvedValue('platinum');
     const range = await placementPriceRange(1, 'sticker');
     expect(range.tier).toBe('free');
   });
 
   it('treats a user with no stored score as the bottom band', async () => {
-    queryRaw.mockResolvedValue([]);
+    userScore.mockResolvedValue([]);
     const range = await placementPriceRange(1, 'sticker');
     expect(range.score).toBe(0);
     expect(range.max).toBe(100);
+  });
+});
+
+describe('placementPriceRanges', () => {
+  // Three creators in three different bands: neither score nor tier, score alone, and both.
+  const creators = [
+    { id: 1, score: 0, tier: null },
+    { id: 2, score: 25_000, tier: null },
+    { id: 3, score: 100_000, tier: 'gold' },
+  ];
+
+  it('answers each creator as placementPriceRange does, in two reads for the whole set', async () => {
+    queryRaw.mockResolvedValue(creators.map(({ id, score }) => ({ id, score })));
+    getCapTiers.mockResolvedValue(new Map(creators.map(({ id, tier }) => [id, tier])));
+    const ranges = await placementPriceRanges([1, 2, 3, 3], 'storyline');
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(getCapTiers).toHaveBeenCalledTimes(1);
+    expect(getCapTiers).toHaveBeenCalledWith([1, 2, 3]);
+
+    for (const { id, score, tier } of creators) {
+      userScore.mockResolvedValue([{ score }]);
+      getCapTierViaKysely.mockResolvedValue(tier);
+      expect(ranges.get(id)).toEqual(await placementPriceRange(id, 'storyline'));
+    }
+    expect([...ranges.values()].map((range) => range.max)).toEqual([100, 500, 5_000]);
+  });
+
+  it('puts a creator with no stored score in the bottom band', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map([[9, null]]));
+    const ranges = await placementPriceRanges([9], 'storyline');
+    expect(ranges.get(9)).toMatchObject({ score: 0, tier: 'free', max: 100 });
+  });
+
+  it('reads each creator score by id, from the stored total', async () => {
+    queryRaw.mockResolvedValue([]);
+    getCapTiers.mockResolvedValue(new Map());
+    await placementPriceRanges([4, 5], 'storyline');
+    const [strings, ...values] = queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+      `SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score FROM "User" WHERE id = ANY(?::int[])`
+    );
+    expect(values).toEqual([[4, 5]]);
+  });
+
+  it('uses a config it is handed instead of reading one, and prices the surface asked', async () => {
+    queryRaw.mockResolvedValue([{ id: 1, score: 0 }]);
+    getCapTiers.mockResolvedValue(new Map([[1, null]]));
+    const config = await getPlacementConfig();
+    configRead.mockClear();
+    const ranges = await placementPriceRanges([1], 'sticker', config);
+    expect(configRead).not.toHaveBeenCalled();
+    userScore.mockResolvedValue([{ score: 0 }]);
+    getCapTierViaKysely.mockResolvedValue(null);
+    expect(ranges.get(1)).toEqual(await placementPriceRange(1, 'sticker'));
+    expect(ranges.get(1)?.min).toBe(PLACEMENT_SURFACES.sticker.serverMinPrice);
+  });
+
+  it('reads nothing for no creators', async () => {
+    await expect(placementPriceRanges([], 'storyline')).resolves.toEqual(new Map());
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(getCapTiers).not.toHaveBeenCalled();
   });
 });
 

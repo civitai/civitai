@@ -1,10 +1,16 @@
 import {
   createNotificationPendingRow,
   createNotificationsBulkInput,
+  markReadByKeysInput,
+  sendSystemNoticesInput,
+  type SendSystemNoticesInput,
+  type SendSystemNoticesResult,
+  type SystemNoticeSendRecord,
   type CleanupNotificationsInput,
   type CountNotificationsInput,
   type CreateNotificationPendingRow,
   type CreateNotificationRow,
+  type MarkReadByKeysInput,
   type MarkReadInput,
   type NotificationCategoryCount,
   type NotificationExistsInput,
@@ -19,6 +25,9 @@ export type NotificationsClientConfig = {
   /** Shared secret for the internal-only ingress (WEBHOOK_TOKEN-style). Falls back to
    * `process.env.NOTIFICATIONS_TOKEN`. */
   token?: string;
+  /** Secret for the system notices routes (`sendSystemNotices`, `getSystemNoticeSend`), separate from
+   * `token`. Falls back to `process.env.NOTIFICATIONS_NOTICES_TOKEN`. */
+  noticesToken?: string;
   /** Override fetch (tests / non-global-fetch runtimes). */
   fetch?: typeof fetch;
   /** Per-ATTEMPT timeout in ms. Defaults to 10s. Note: with retries the worst-case total is
@@ -68,6 +77,27 @@ function safeReport(
   }
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// A test run must never reach a real notifications service, whatever stub it did or didn't load.
+// Returns true when the guard applies, so the caller also refuses redirects (a loopback stub could
+// otherwise forward the request anywhere).
+function assertEndpointAllowedInTests(endpoint: string): boolean {
+  const isTestRun = !!process.env.VITEST || process.env.NODE_ENV === 'test';
+  if (!isTestRun || process.env.CIVITAI_NOTIFICATIONS_ALLOW_REMOTE_IN_TEST === '1') return false;
+  let hostname: string | undefined;
+  try {
+    hostname = new URL(endpoint).hostname;
+  } catch {}
+  if (hostname && LOOPBACK_HOSTS.has(hostname)) return true;
+  throw new NotificationsClientError(
+    `Refusing notifications endpoint ${
+      hostname ? `"${hostname}"` : '(unparseable)'
+    } in a test run: only localhost, ` +
+      '127.0.0.1 and [::1] are allowed. Set CIVITAI_NOTIFICATIONS_ALLOW_REMOTE_IN_TEST=1 to override.'
+  );
+}
+
 function resolveConfig(config: NotificationsClientConfig) {
   const endpoint = config.endpoint ?? process.env.NOTIFICATIONS_ENDPOINT;
   if (!endpoint) {
@@ -75,8 +105,10 @@ function resolveConfig(config: NotificationsClientConfig) {
       'No notifications endpoint configured (pass `endpoint` or set NOTIFICATIONS_ENDPOINT).'
     );
   }
+  const guarded = assertEndpointAllowedInTests(endpoint);
   const fetchImpl = config.fetch ?? globalThis.fetch;
-  if (!fetchImpl) throw new NotificationsClientError('No fetch implementation available (pass `fetch`).');
+  if (!fetchImpl)
+    throw new NotificationsClientError('No fetch implementation available (pass `fetch`).');
   return {
     endpoint: endpoint.replace(/\/$/, ''),
     token: config.token ?? process.env.NOTIFICATIONS_TOKEN ?? '',
@@ -85,6 +117,7 @@ function resolveConfig(config: NotificationsClientConfig) {
     retries: config.retries ?? 2,
     retryBaseMs: config.retryBaseMs ?? 200,
     onFailure: config.onFailure,
+    redirect: guarded ? ('error' as const) : ('follow' as const),
   };
 }
 
@@ -93,7 +126,8 @@ async function postAttempt(
   body: unknown,
   token: string,
   fetchImpl: typeof fetch,
-  timeoutMs: number
+  timeoutMs: number,
+  redirect: 'error' | 'follow'
 ): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -106,6 +140,7 @@ async function postAttempt(
       },
       body: JSON.stringify(body),
       signal: controller.signal,
+      redirect,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -129,20 +164,39 @@ async function postAttempt(
 
 // Reports to `onFailure` exactly once per FINAL failure (config error / non-retryable / retries
 // exhausted) — the single choke point every request flows through.
-async function post(path: string, body: unknown, config: NotificationsClientConfig): Promise<unknown> {
+async function post(
+  path: string,
+  body: unknown,
+  config: NotificationsClientConfig
+): Promise<unknown> {
   let resolved: ReturnType<typeof resolveConfig>;
   try {
     resolved = resolveConfig(config);
   } catch (err) {
     const e = err as NotificationsClientError;
-    safeReport(config.onFailure, { path, status: e.status, retryable: false, attempts: 0, message: e.message });
+    safeReport(config.onFailure, {
+      path,
+      status: e.status,
+      retryable: false,
+      attempts: 0,
+      message: e.message,
+    });
     throw e;
   }
-  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs, onFailure } = resolved;
+  const {
+    endpoint,
+    token,
+    fetch: fetchImpl,
+    timeoutMs,
+    retries,
+    retryBaseMs,
+    onFailure,
+    redirect,
+  } = resolved;
   const url = `${endpoint}${path}`;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postAttempt(url, body, token, fetchImpl, timeoutMs);
+      return await postAttempt(url, body, token, fetchImpl, timeoutMs, redirect);
     } catch (err) {
       const e = err as NotificationsClientError;
       if (!e.retryable || attempt >= retries) {
@@ -159,6 +213,25 @@ async function post(path: string, body: unknown, config: NotificationsClientConf
       await new Promise((resolve) => setTimeout(resolve, backoff));
     }
   }
+}
+
+// A 50,000-recipient send writes in paced chunks, so it far outlasts the default per-attempt timeout.
+// No retries: a re-run is the caller's call, and idempotency per sendId makes it safe.
+function noticesConfig(config: NotificationsClientConfig): NotificationsClientConfig {
+  return {
+    timeoutMs: 10 * 60_000,
+    ...config,
+    retries: 0,
+    token: config.noticesToken ?? process.env.NOTIFICATIONS_NOTICES_TOKEN ?? '',
+  };
+}
+
+// The count feeds the bell badge, and its caller degrades a failure to no badge for the rest of the page
+// load (it is fetched once, not polled). So it gives up fast — 1.5 s per attempt — but retries once, so a
+// single blip (a pod restart, a dropped connection) doesn't zero the badge: ~3 s worst case. Other routes
+// keep the configured timeout and retries.
+function countConfig(config: NotificationsClientConfig): NotificationsClientConfig {
+  return { ...config, timeoutMs: 1500, retries: 1 };
 }
 
 // Bounds each bulk POST so a large producer run (tens of thousands of rows, each with a potentially large
@@ -183,7 +256,7 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
       }
     },
 
-    // `createdAt` arrives as an ISO string but callers need a Date (the tRPC cursor is `z.date()`).
+    // `createdAt` arrives as an ISO string; revive it to a Date.
     queryNotifications: async (input: QueryNotificationsInput): Promise<NotificationRow[]> => {
       const res = (await post('/notifications/query', input, config)) as Array<
         Omit<NotificationRow, 'createdAt'> & { createdAt: string }
@@ -192,8 +265,10 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
     },
 
     // pg returns COUNT(*) as a string; coerce.
-    countNotifications: async (input: CountNotificationsInput): Promise<NotificationCategoryCount[]> => {
-      const res = (await post('/notifications/count', input, config)) as Array<
+    countNotifications: async (
+      input: CountNotificationsInput
+    ): Promise<NotificationCategoryCount[]> => {
+      const res = (await post('/notifications/count', input, countConfig(config))) as Array<
         Omit<NotificationCategoryCount, 'count'> & { count: number | string }
       >;
       return res.map((c) => ({
@@ -207,14 +282,56 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
       await post('/notifications/mark-read', input, config);
     },
 
+    // Unlike markNotificationsRead this waits for the write and returns what it cleared, per category.
+    markNotificationsReadByKeys: async (
+      input: MarkReadByKeysInput
+    ): Promise<NotificationCategoryCount[]> => {
+      const res = (await post(
+        '/notifications/mark-read-by-key',
+        markReadByKeysInput.parse(input),
+        config
+      )) as Array<Omit<NotificationCategoryCount, 'count'> & { count: number | string }>;
+      return res.map((c) => ({ category: c.category, count: Number(c.count) }));
+    },
+
     notificationExists: async (input: NotificationExistsInput): Promise<boolean> => {
-      const res = (await post('/notifications/exists', input, config)) as { exists?: boolean } | undefined;
+      const res = (await post('/notifications/exists', input, config)) as
+        | { exists?: boolean }
+        | undefined;
       return res?.exists === true;
     },
 
-    cleanupNotifications: async (input: CleanupNotificationsInput): Promise<{ deleted: number }> => {
-      const res = (await post('/notifications/cleanup', input, config)) as { deleted?: number } | undefined;
+    cleanupNotifications: async (
+      input: CleanupNotificationsInput
+    ): Promise<{ deleted: number }> => {
+      const res = (await post('/notifications/cleanup', input, config)) as
+        | { deleted?: number }
+        | undefined;
       return { deleted: res?.deleted ?? 0 };
+    },
+
+    /** Dry run (the default) or send of a system notice. Throws on any non-2xx, including 409
+     * (sendId reused with different content, or a call already in progress) and 429 (daily ceiling). */
+    sendSystemNotices: async (input: SendSystemNoticesInput): Promise<SendSystemNoticesResult> => {
+      const body = sendSystemNoticesInput.parse(input);
+      return (await post(
+        '/notifications/notices',
+        body,
+        noticesConfig(config)
+      )) as SendSystemNoticesResult;
+    },
+
+    getSystemNoticeSend: async (sendId: string): Promise<SystemNoticeSendRecord | null> => {
+      try {
+        return (await post(
+          '/notifications/notices/get',
+          { sendId },
+          noticesConfig(config)
+        )) as SystemNoticeSendRecord;
+      } catch (err) {
+        if (err instanceof NotificationsClientError && err.status === 404) return null;
+        throw err;
+      }
     },
   };
 }

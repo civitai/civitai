@@ -27,14 +27,14 @@ import type * as EnvOther from '~/env/other';
  *     tester cohort, with `getFeatureFlags().appBlocksAuthor` mocked true for them.
  *
  * The matrix pins BOTH numbers rather than just "it can throw":
- *   - 61 attempts spread across the last 59s → TOO_MANY_REQUESTS  (kills limit > 60,
+ *   - 60 attempts spread across the last 59s → TOO_MANY_REQUESTS  (kills limit > 60,
  *     and kills a SHORTER period, which would age most of that spread out)
- *   - 60 attempts across the same window     → resolves           (kills limit < 60)
+ *   - 59 attempts across the same window     → resolves           (kills limit < 60)
  *   - 200 attempts, all 90–120s old          → resolves           (kills a LONGER
  *     period, e.g. the 3600 the write procs use, which would count every one)
  *
- * The window arithmetic is `attempts > limit` in the middleware (strictly greater), so
- * 60 recorded attempts is the last passing state and 61 is the first refusal.
+ * A limit of N admits exactly N calls, so 59 recorded attempts is the last passing state
+ * and 60 is the first refusal.
  */
 
 const AUTHOR_IDS = new Set([2]); // non-mod app-dev-tester cohort
@@ -79,7 +79,10 @@ vi.mock('~/env/other', async () => ({
 // The quota WRITE. Stubbed so the sliding-window read is the only thing under test
 // (and so a fail-open log line can't be mistaken for the limiter working).
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: mockHSetWithTTL }));
-vi.mock('~/server/utils/server-domain', () => ({ isHostForColor: () => false }));
+vi.mock('~/server/utils/server-domain', () => ({
+  isHostForColor: () => false,
+  isRedCapableHost: () => false,
+}));
 
 import { TRPCError } from '@trpc/server';
 import { appListingsRouter } from '../app-listings.router';
@@ -124,8 +127,8 @@ beforeEach(() => {
 });
 
 describe('getMyListingForApp — the rate limit is ENFORCED (civitai#4003)', () => {
-  it('refuses with TOO_MANY_REQUESTS once the window holds more than 60 attempts', async () => {
-    mockHGet.mockResolvedValue(attemptsSpanning(61, 59_000));
+  it('refuses with TOO_MANY_REQUESTS once the window holds 60 attempts', async () => {
+    mockHGet.mockResolvedValue(attemptsSpanning(60, 59_000));
 
     const err = await call().then(
       () => null,
@@ -140,7 +143,7 @@ describe('getMyListingForApp — the rate limit is ENFORCED (civitai#4003)', () 
   });
 
   it('still serves the 60th attempt in the window (the limit is 60, not lower)', async () => {
-    mockHGet.mockResolvedValue(attemptsSpanning(60, 59_000));
+    mockHGet.mockResolvedValue(attemptsSpanning(59, 59_000));
 
     await expect(call()).resolves.toEqual({ appListingId: 'apl_1', status: 'draft' });
     expect(mockGetMyListingForApp).toHaveBeenCalledTimes(1);
@@ -166,10 +169,12 @@ describe('getMyListingForApp — the rate limit is ENFORCED (civitai#4003)', () 
   });
 
   it('does not record an attempt for a refused call beyond recording nothing new', async () => {
-    mockHGet.mockResolvedValue(attemptsSpanning(61, 59_000));
+    mockHGet.mockResolvedValue(attemptsSpanning(60, 59_000));
 
     await expect(call()).rejects.toThrow();
 
-    expect(mockHSetWithTTL).not.toHaveBeenCalled();
+    // A refusal may write only the active-limit marker, never the attempt bucket.
+    const writtenKeys = mockHSetWithTTL.mock.calls.map((c: unknown[]) => String(c[1]));
+    expect(writtenKeys.filter((key) => !key.includes('trpc:limit:active:'))).toEqual([]);
   });
 });

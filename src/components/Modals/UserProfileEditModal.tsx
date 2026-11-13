@@ -12,13 +12,13 @@ import {
   Input,
   Loader,
   Paper,
-  Popover,
   Stack,
   Switch,
   Text,
   Modal,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import {
@@ -48,6 +48,12 @@ import {
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
 import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
+import {
+  dedupeBadgesByImage,
+  getBadgeImageUrl,
+  keepOwnedBadgeIds,
+  withUnownedBadgeIds,
+} from '~/shared/utils/badge-visibility';
 import * as z from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -55,10 +61,12 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';
 import type {
   BadgeCosmetic,
+  CardDecorationCosmetic,
   ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
 } from '~/server/selectors/cosmetic.selector';
+import { changedCosmeticId } from '~/components/Modals/profile-cosmetic-ids';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { UserWithProfile } from '~/types/router';
 
@@ -135,6 +143,7 @@ const schema = z.object({
   profileImage: z.string().nullish(),
   profileDecoration: cosmeticInputSchema.nullish(),
   profileBackground: cosmeticInputSchema.nullish(),
+  cardDecoration: cosmeticInputSchema.nullish(),
 });
 
 const chipProps: Partial<ChipProps> = {
@@ -164,7 +173,11 @@ export default function UserProfileEditModal() {
   const { mutate, isPending: isUpdating } = trpc.userProfile.update.useMutation({
     onSuccess: (data) => {
       if (currentUser) {
-        utils.userProfile.get.setData({ username: currentUser.username }, data);
+        // The update returns the profile without the showcase hat, which is read beside it.
+        utils.userProfile.get.setData({ username: currentUser.username }, (old) => ({
+          ...data,
+          showcaseHat: old?.showcaseHat ?? null,
+        }));
         utils.userProfile.get.invalidate({ username: currentUser.username });
       }
       showSuccessNotification({ message: 'Profile updated successfully' });
@@ -198,37 +211,37 @@ export default function UserProfileEditModal() {
     { username: currentUser ? currentUser.username : '' },
     { enabled: !!currentUser?.username }
   );
+  // claimKey is null on anyone else's profile; this editor only ever loads the owner's.
+  const owned = useMemo(
+    () =>
+      (user?.cosmetics ?? []).flatMap(({ claimKey, ...c }) =>
+        claimKey ? [{ ...c, claimKey }] : []
+      ),
+    [user]
+  );
 
-  const badges = useMemo(
+  const allBadges = useMemo(
     () =>
       user
-        ? user.cosmetics
-            .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge && !!c.data)
-            .filter((item, index, self) => {
-              const data = (item.cosmetic.data ?? {}) as BadgeCosmetic['data'];
-              const url = (data.url ?? '') as string;
-              // Keep only the first occurrence of each unique URL
-              return (
-                url &&
-                self.findIndex((b) => {
-                  const bData = (b.cosmetic.data ?? {}) as BadgeCosmetic['data'];
-                  return (bData.url ?? '') === url;
-                }) === index
-              );
-            })
+        ? owned
+            .filter(({ cosmetic: c }) => c.type === CosmeticType.Badge)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
               ...cosmetic,
               data: cosmetic.data as BadgeCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
+  );
+  const badges = useMemo(
+    () => dedupeBadgesByImage(allBadges, (badge) => getBadgeImageUrl(badge)),
+    [allBadges]
   );
 
   const nameplates = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.NamePlate && !!c.data)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
@@ -236,13 +249,13 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as NamePlateCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
   );
 
   const decorations = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileDecoration && !!c.data)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
@@ -250,13 +263,13 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as ContentDecorationCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
   );
 
   const backgrounds = useMemo(
     () =>
       user
-        ? user.cosmetics
+        ? owned
             .filter(({ cosmetic: c }) => c.type === CosmeticType.ProfileBackground && !!c.data)
             .map(({ cosmetic, cosmeticId, ...c }) => ({
               ...c,
@@ -264,7 +277,21 @@ export default function UserProfileEditModal() {
               data: cosmetic.data as ProfileBackgroundCosmetic['data'],
             }))
         : [],
-    [user]
+    [user, owned]
+  );
+
+  const cardDecorations = useMemo(
+    () =>
+      user
+        ? owned
+            .filter(({ cosmetic: c }) => c.type === CosmeticType.CardDecoration && !!c.data)
+            .map(({ cosmetic, cosmeticId, ...c }) => ({
+              ...c,
+              ...cosmetic,
+              data: cosmetic.data as CardDecorationCosmetic['data'],
+            }))
+        : [],
+    [user, owned]
   );
 
   // `getLeaderboards` is already domain-scoped, so this list is whatever is visible
@@ -287,6 +314,7 @@ export default function UserProfileEditModal() {
     nameplateId,
     profileDecoration,
     profileBackground,
+    cardDecoration,
     message,
     bio,
     sfwMessage,
@@ -302,6 +330,7 @@ export default function UserProfileEditModal() {
     'nameplateId',
     'profileDecoration',
     'profileBackground',
+    'cardDecoration',
     'message',
     'bio',
     'sfwMessage',
@@ -313,6 +342,17 @@ export default function UserProfileEditModal() {
     'creatorCardStatsPreferences',
     'privacySettings',
   ]);
+  // Every owned badge, before the one-per-image dedupe: a duplicate-image badge has no tile but is owned.
+  const ownedBadgeIds = useMemo(
+    () =>
+      owned.filter(({ cosmetic: c }) => c.type === CosmeticType.Badge).map((c) => c.cosmetic.id),
+    [owned]
+  );
+  const highlightedBadgeIds = keepOwnedBadgeIds(
+    privacySettings?.highlightedBadgeIds,
+    ownedBadgeIds
+  );
+  const hiddenBadgeIds = keepOwnedBadgeIds(privacySettings?.hiddenBadgeIds, ownedBadgeIds);
   const displayShowcase = useMemo(() => {
     const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
     return !!sections.find((s) => s.key === 'showcase' && s.enabled);
@@ -322,7 +362,7 @@ export default function UserProfileEditModal() {
 
   useEffect(() => {
     if (user && user?.profile) {
-      const equippedCosmetics = user.cosmetics
+      const equippedCosmetics = owned
         .filter((c) => !!c.equippedAt)
         .map(({ cosmetic, data, ...rest }) => ({ ...rest, ...cosmetic }));
       const selectedBadge = equippedCosmetics.find((c) => c.type === CosmeticType.Badge);
@@ -332,6 +372,9 @@ export default function UserProfileEditModal() {
       );
       const selectedProfileBackground = equippedCosmetics.find(
         (c) => c.type === CosmeticType.ProfileBackground
+      );
+      const selectedCardDecoration = equippedCosmetics.find(
+        (c) => c.type === CosmeticType.CardDecoration
       );
       const formData = {
         ...user.profile,
@@ -343,6 +386,10 @@ export default function UserProfileEditModal() {
         // TODO: Fix typing at some point :grimacing:.
         coverImage: user.profile.defaultCoverImage as unknown as FormDataSchema['coverImage'],
         sfwCoverImage: user.profile.sfwCoverImage as unknown as FormDataSchema['sfwCoverImage'],
+        // A showcase stored before `userProfile.update` was bounded can be longer than the
+        // limit; sent back whole it would fail validation on every save, silently when the
+        // Showcase section is hidden. Trimmed the way `addEntityToShowcase` trims.
+        showcaseItems: user.profile.showcaseItems?.slice(0, constants.profile.showcaseItemsLimit),
         profileImage: user?.image,
         socialLinks: (user?.links ?? [])
           .filter((link) => link.type === LinkType.Social)
@@ -362,6 +409,7 @@ export default function UserProfileEditModal() {
         badge: selectedBadge ?? null,
         profileDecoration: selectedProfileDecoration ?? null,
         profileBackground: selectedProfileBackground ?? null,
+        cardDecoration: selectedCardDecoration ?? null,
         leaderboardShowcase: user?.leaderboardShowcase ?? null,
         profilePicture: user.profilePicture
           ? (user.profilePicture as FormDataSchema['profilePicture'])
@@ -387,6 +435,7 @@ export default function UserProfileEditModal() {
       nameplateId: prevNameplateId,
       profileDecoration: prevProfileDecorationId,
       profileBackground: prevProfileBackgroundId,
+      cardDecoration: prevCardDecoration,
       leaderboardShowcase: prevLeaderboardShowcase,
       ...prevProfileData
     } = previousData.current ?? {};
@@ -396,6 +445,7 @@ export default function UserProfileEditModal() {
       badge,
       profileDecoration,
       profileBackground,
+      cardDecoration,
       leaderboardShowcase,
       creatorCardStatsPreferences,
       ...profileData
@@ -407,6 +457,7 @@ export default function UserProfileEditModal() {
       nameplateId !== prevNameplateId ||
       profileDecoration !== prevProfileDecorationId ||
       profileBackground !== prevProfileBackgroundId ||
+      changedCosmeticId(cardDecoration, prevCardDecoration) !== undefined ||
       leaderboardShowcase !== prevLeaderboardShowcase;
     const shouldUpdateProfile = !isEqual(prevProfileData, profileData);
 
@@ -419,6 +470,7 @@ export default function UserProfileEditModal() {
         nameplateId,
         profileDecorationId: profileDecoration?.id ?? null,
         profileBackgroundId: profileBackground?.id ?? null,
+        cardDecorationId: changedCosmeticId(cardDecoration, prevCardDecoration),
         leaderboardShowcase,
       });
   };
@@ -471,6 +523,7 @@ export default function UserProfileEditModal() {
     nameplateId ? nameplates.find((c) => c.id === nameplateId) : undefined,
     profileDecoration ? decorations.find((c) => c.id === profileDecoration.id) : undefined,
     profileBackground ? backgrounds.find((c) => c.id === profileBackground.id) : undefined,
+    cardDecoration ? cardDecorations.find((c) => c.id === cardDecoration.id) : undefined,
   ].filter(isDefined);
 
   return (
@@ -565,6 +618,15 @@ export default function UserProfileEditModal() {
                     data={backgrounds}
                     onShopClick={handleClose}
                   />
+                  {/* No shop link: card glows are not in the shop yet. */}
+                  {cardDecorations.length > 0 && (
+                    <InputCosmeticSelect
+                      name="cardDecoration"
+                      label="Creator Card Glow"
+                      description="Select it again to turn the glow off"
+                      data={cardDecorations}
+                    />
+                  )}
                 </>
               )}
 
@@ -575,6 +637,17 @@ export default function UserProfileEditModal() {
                   form.setValue('privacySettings', {
                     ...privacySettings,
                     showBadges: e.currentTarget.checked,
+                  })
+                }
+              />
+              <Switch
+                label="Show what my Creator Score is made of"
+                description="Visitors see the share from models, images, articles and followers, never the score"
+                checked={privacySettings?.showScoreSplit !== false}
+                onChange={(e) =>
+                  form.setValue('privacySettings', {
+                    ...privacySettings,
+                    showScoreSplit: e.currentTarget.checked,
                   })
                 }
               />
@@ -589,18 +662,24 @@ export default function UserProfileEditModal() {
               <CollapsibleSection
                 label="Highlighted badges"
                 description="Pin badges to the top of your profile's badge list."
-                count={(privacySettings?.highlightedBadgeIds ?? []).length}
+                count={highlightedBadgeIds.length}
               >
                 <HighlightedBadgesInput
-                  badges={badges}
-                  value={privacySettings?.highlightedBadgeIds ?? []}
-                  onChange={(highlightedBadgeIds) =>
+                  badges={allBadges}
+                  value={highlightedBadgeIds}
+                  onChange={(nextHighlighted) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,
-                      highlightedBadgeIds,
+                      highlightedBadgeIds: withUnownedBadgeIds(
+                        nextHighlighted,
+                        privacySettings?.highlightedBadgeIds,
+                        ownedBadgeIds
+                      ),
                       // A pinned badge can't also be hidden.
-                      hiddenBadgeIds: (privacySettings?.hiddenBadgeIds ?? []).filter(
-                        (id) => !highlightedBadgeIds.includes(id)
+                      hiddenBadgeIds: withUnownedBadgeIds(
+                        hiddenBadgeIds.filter((id) => !nextHighlighted.includes(id)),
+                        privacySettings?.hiddenBadgeIds,
+                        ownedBadgeIds
                       ),
                     })
                   }
@@ -609,19 +688,25 @@ export default function UserProfileEditModal() {
               <CollapsibleSection
                 label="Hidden badges"
                 description="Hidden badges won't be shown on your profile."
-                count={(privacySettings?.hiddenBadgeIds ?? []).length}
+                count={hiddenBadgeIds.length}
               >
                 <HighlightedBadgesInput
                   variant="hide"
-                  badges={badges}
-                  value={privacySettings?.hiddenBadgeIds ?? []}
-                  onChange={(hiddenBadgeIds) =>
+                  badges={allBadges}
+                  value={hiddenBadgeIds}
+                  onChange={(nextHidden) =>
                     form.setValue('privacySettings', {
                       ...privacySettings,
-                      hiddenBadgeIds,
+                      hiddenBadgeIds: withUnownedBadgeIds(
+                        nextHidden,
+                        privacySettings?.hiddenBadgeIds,
+                        ownedBadgeIds
+                      ),
                       // Hiding a badge unpins it.
-                      highlightedBadgeIds: (privacySettings?.highlightedBadgeIds ?? []).filter(
-                        (id) => !hiddenBadgeIds.includes(id)
+                      highlightedBadgeIds: withUnownedBadgeIds(
+                        highlightedBadgeIds.filter((id) => !nextHidden.includes(id)),
+                        privacySettings?.highlightedBadgeIds,
+                        ownedBadgeIds
                       ),
                     })
                   }
@@ -813,6 +898,7 @@ export default function UserProfileEditModal() {
             <InputProfileSectionsSettingsInput
               name="profileSectionsSettings"
               label="Page sections"
+              showcaseSections={user.profile.showcaseSections}
               description="Drag diferent sections on your profile in order of your preference"
             />
           )}

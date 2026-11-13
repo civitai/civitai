@@ -1,0 +1,109 @@
+.group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The action row's buttons are 36px (`h-9`); the badge matches them. */
+.badgeButton {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.rowBadge {
+  --hat-turf-badge-size: 36px;
+}
+
+.badgeEmpty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: var(--mantine-color-blue-6);
+  color: var(--mantine-color-white);
+}
+
+.invite {
+  width: 236px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-violet-8);
+  background-color: var(--mantine-color-violet-9);
+  color: var(--mantine-color-white);
+}
+
+.cover {
+  position: relative;
+  height: 34px;
+  background: radial-gradient(
+    120% 200% at 80% 0%,
+    var(--mantine-color-violet-6) 0%,
+    var(--mantine-color-violet-8) 55%,
+    var(--mantine-color-violet-9) 100%
+  );
+
+  /* Fades into the text below. */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, transparent 35%, var(--mantine-color-violet-9) 100%);
+  }
+}
+
+.coverHat {
+  position: absolute;
+}
+
+.inviteBody {
+  position: relative;
+  z-index: 1;
+  margin-top: -6px;
+  padding: 0 12px 10px;
+}
+
+.inviteTitle {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.inviteActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.notNow {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--mantine-color-violet-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The reaction row is 30px; the button fills it. Scoped to win over the feed button's size. */
+.group .hat {
+  width: 30px;
+  height: 30px;
+}
+
+/* The phone bottom bar: the size of its Save, Tip and chevron buttons. */
+.group.large .hat {
+  width: 36px;
+  height: 36px;
+}
+

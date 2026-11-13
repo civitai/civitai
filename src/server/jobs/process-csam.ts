@@ -5,9 +5,14 @@ import {
   getCsamsToArchive,
   getCsamsToRemoveContent,
   getCsamsToReport,
+  logBlockedCsamReports,
+  logOverdueEvidenceApprovals,
   processCsamReport,
+  sweepArchiveScratchDirs,
+  sweepStaleSendDirs,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
+import { checkCsamArchiveEvidence } from '~/server/services/csam-archive-evidence.service';
 
 /**
  * Reads a message off an unknown thrown value without assuming it has one.
@@ -29,10 +34,30 @@ function errorMessage(e: unknown): string {
   }
 }
 
+export const CSAM_SEND_JOB_LOCK_SECONDS = 4 * 60 * 60;
+
 const sendCsamReportsJob = createJob(
   'send-csam-reports',
   '0 */1 * * *',
   async () => {
+    try {
+      const removed = await sweepStaleSendDirs();
+      if (removed.length)
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          subType: 'send-scratch-sweep',
+          message: `removed ${removed.length} stale send scratch dir(s)`,
+        });
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-scratch-sweep',
+        message: errorMessage(e),
+      });
+    }
+
     const reports = await getCsamsToReport();
     // wait for each process to finish before going to the next
     for (const report of reports) {
@@ -45,11 +70,41 @@ const sendCsamReportsJob = createJob(
           type: 'error',
           subType: 'send-report',
           message: errorMessage(e),
+          reportId: report.id,
+          ncmecReportId: report.reportId ?? undefined,
         });
       }
     }
+
+    try {
+      await logBlockedCsamReports(reports.map((report) => report.id));
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-blocked-check',
+        message: errorMessage(e),
+      });
+    }
+
+    try {
+      await logOverdueEvidenceApprovals();
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-blocked-check',
+        message: errorMessage(e),
+      });
+    }
   },
-  { dedicated: true }
+  // A report's file reads can outlast the default lock, and an overlapping run would open a second
+  // CyberTip for it. keepLockOnDisconnect: see CSAM_ARCHIVE_JOB_LOCK_SECONDS.
+  {
+    dedicated: true,
+    lockExpiration: CSAM_SEND_JOB_LOCK_SECONDS,
+    keepLockOnDisconnect: true,
+  }
 );
 
 /**
@@ -114,6 +169,24 @@ const archiveCsamReportDataJob = createJob(
   'archive-csam-reports',
   '20 */1 * * *',
   async () => {
+    try {
+      const removed = await sweepArchiveScratchDirs();
+      if (removed.length)
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          subType: 'archive-scratch-sweep',
+          message: `removed ${removed.length} stale archive scratch dir(s)`,
+        });
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-scratch-sweep',
+        message: errorMessage(e),
+      });
+    }
+
     const reports = await getCsamsToArchive();
     // wait for each process to finish before going to the next
     for (const report of reports) {
@@ -125,8 +198,23 @@ const archiveCsamReportDataJob = createJob(
           type: 'error',
           subType: 'archive-data',
           message: errorMessage(e),
+          reportId: report.id,
+          hoursSinceSent: report.reportSentAt
+            ? Math.floor((Date.now() - report.reportSentAt.getTime()) / 3_600_000)
+            : null,
         });
       }
+    }
+
+    try {
+      await checkCsamArchiveEvidence();
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-evidence-check',
+        message: errorMessage(e),
+      });
     }
   },
   // `keepLockOnDisconnect` is load-bearing, not a refinement: without it the close handler releases

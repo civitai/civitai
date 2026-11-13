@@ -7,14 +7,24 @@ import { logToAxiom } from '~/server/logging/client';
 import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
-import { isPushableNotificationType } from '~/server/notifications/utils.notifications';
+import {
+  imageReactionMilestoneKey,
+  imageReactionMilestones,
+} from '~/server/notifications/reaction.notifications';
+import {
+  emailNotificationTypeList,
+  isEmailNotificationType,
+  isPushableNotificationType,
+} from '~/server/notifications/utils.notifications';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   notificationSingleRowFull,
   type DeletePushSubscriptionInput,
   type GetUserNotificationsSchema,
+  type MarkImageMilestonesReadInput,
   type MarkReadNotificationInput,
   type ToggleNotificationSettingInput,
+  type ToggleEmailSettingInput,
   type TogglePushSettingInput,
   type UpsertPushSubscriptionInput,
 } from '~/server/schema/notification.schema';
@@ -42,13 +52,20 @@ export type CreateNotificationPendingRow = z.infer<typeof createNotificationPend
 // live in that app now; the monolith keeps only the main-DB `details` enrichment + the
 // UserNotificationSettings writes below.
 
-export const createNotification = async (data: CreateNotificationPendingRow) => {
+/** `throwOnError` rethrows a failed send, after the usual logging, for a caller that must know it failed. */
+export const createNotification = async (
+  data: CreateNotificationPendingRow,
+  { throwOnError = false }: { throwOnError?: boolean } = {}
+) => {
   try {
     await notifications.createNotification(data);
   } catch (e) {
     // Client errors are logged centrally (notifications-request-failed); best-effort, so swallow them and
     // only surface a non-request error (e.g. schema validation).
-    if (e instanceof NotificationsClientError) return;
+    if (e instanceof NotificationsClientError) {
+      if (throwOnError) throw e;
+      return;
+    }
     const error = e as Error;
     logToAxiom(
       {
@@ -61,6 +78,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
       },
       'notifications'
     ).catch();
+    if (throwOnError) throw e;
   }
 };
 
@@ -71,13 +89,15 @@ export async function getUserNotifications({
   category,
   count = false,
   unread = false,
+  showSfwFace,
 }: Partial<GetUserNotificationsSchema> & {
   userId: number;
   count?: boolean;
+  showSfwFace: boolean;
 }) {
   // Base rows come from the app (notif DB); enrichment reads the MAIN db, so it stays here.
   const items = await notifications.queryNotifications({ userId, limit, cursor, category, unread });
-  await populateNotificationDetails(items);
+  await populateNotificationDetails(items, { showSfwFace });
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
@@ -112,8 +132,8 @@ export const markNotificationsRead = async ({
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
   // Best-effort: the UI already marked read optimistically, so a transient failure must not surface as a
-  // tRPC error. Client errors log centrally; only a non-request error logs here. `id` is a bigint
-  // (UserNotification.id is int4) — narrow to a JSON-safe number.
+  // tRPC error. Client errors log centrally; only a non-request error logs here. `id` is a bigint,
+  // which JSON cannot carry; ids stay far below 2^53, so a number holds it exactly.
   try {
     await notifications.markNotificationsRead({
       userId,
@@ -135,6 +155,23 @@ export const markNotificationsRead = async ({
     ).catch();
   }
 };
+
+// Best-effort: any client failure (an old app's 404 for this route, a 5xx, a timeout) is already logged
+// once as `notifications-request-failed` by the shared client, so return [] and leave the badge as it was.
+export async function markImageMilestonesRead({
+  userId,
+  imageId,
+}: MarkImageMilestonesReadInput & { userId: number }) {
+  try {
+    return await notifications.markNotificationsReadByKeys({
+      userId,
+      keys: imageReactionMilestones.map((n) => imageReactionMilestoneKey(imageId, n)),
+    });
+  } catch (e) {
+    if (e instanceof NotificationsClientError) return [];
+    throw e;
+  }
+}
 
 export const createUserNotificationSetting = async ({
   type,
@@ -237,5 +274,33 @@ export const togglePushSetting = async ({
     });
   } else {
     await dbWrite.userPushSetting.deleteMany({ where: { userId, type: { in: type } } });
+  }
+};
+
+/** The email-capable types this user gets email for: all of them except the ones opted out of. */
+export const getUserEmailSettings = async ({ userId }: { userId: number }) => {
+  const optOuts = await dbWrite.userEmailNotificationOptOut.findMany({
+    where: { userId },
+    select: { type: true },
+  });
+  const off = new Set(optOuts.map((x) => x.type));
+  return emailNotificationTypeList.filter((type) => !off.has(type));
+};
+
+export const toggleEmailSetting = async ({
+  type,
+  enabled,
+  userId,
+}: ToggleEmailSettingInput & { userId: number }) => {
+  if (enabled) {
+    await dbWrite.userEmailNotificationOptOut.deleteMany({ where: { userId, type: { in: type } } });
+  } else {
+    const invalid = type.filter((t) => !isEmailNotificationType(t));
+    if (invalid.length > 0)
+      throw throwBadRequestError(`Not an email-capable notification type: ${invalid.join(', ')}`);
+    await dbWrite.userEmailNotificationOptOut.createMany({
+      data: type.map((t) => ({ userId, type: t })),
+      skipDuplicates: true,
+    });
   }
 };

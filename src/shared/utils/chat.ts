@@ -31,9 +31,9 @@ export function chatBucketFor(member: {
 
 /**
  * The statuses an unfiltered membership can hold and still be in the inbox.
- * The header badge counts inbox conversations, so its query has to select on
- * the same thing the rail buckets on — it selected `Joined` alone, and an
- * unfiltered invitation then lit a badge no tab could account for.
+ * The header badge counts inbox and request conversations, so its query has to
+ * select on the same statuses the rail buckets on — it selected `Joined` alone,
+ * and an unfiltered invitation then lit a badge no tab could account for.
  *
  * `chatBucketFor` stays the definition; a test pins this list to it.
  */
@@ -126,6 +126,15 @@ export function filterBlockedChatMessages<T extends { userId: number }>(
 }
 
 const youVerb: Record<string, string> = { is: 'are', was: 'were', has: 'have' };
+
+/**
+ * The system note for a group rename. The name is typed by a member, so its markdown is escaped:
+ * it shows exactly as typed and can never become a link.
+ */
+export function groupRenamedNote(name: string | null | undefined): string {
+  if (!name) return 'Group name removed';
+  return `Group renamed to "${name.replace(/[\\`*_[\]()<>!#~|]/g, '\\$&')}"`;
+}
 
 /**
  * Render a system message ("<name> joined", "<name> was kicked") for one reader,

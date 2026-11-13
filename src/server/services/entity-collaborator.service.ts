@@ -3,6 +3,8 @@ import { ChatMessageType, EntityType, EntityCollaboratorStatus } from '~/shared/
 import dayjs from '~/shared/utils/dayjs';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readPostCollaboratorsViaKysely } from '~/server/services/hot-reads-5.reads';
 import type {
   GetEntityCollaboratorsInput,
   RemoveEntityCollaboratorInput,
@@ -164,29 +166,14 @@ export const getEntityCollaborators = async ({
 
   switch (entityType) {
     case EntityType.Post:
-      // Only the owner id is consulted below (the pending/rejected visibility
-      // checks). A bare `findUnique` fetched every Post column, which on this
-      // read path meant three `new Date()` and a `JSON.parse` of `metadata`
-      // per call, all discarded.
-      const entity = await dbRead.post.findUnique({
-        where: { id: entityId },
-        select: { userId: true },
-      });
-      if (!entity) {
+      // The owner id and the collaborator rows in one statement; the collaborators' users still
+      // read through Prisma, with `userWithCosmeticsSelect`.
+      const { kyselyRead } = await loadKyselyDb();
+      const read = await readPostCollaboratorsViaKysely(kyselyRead, dbRead, entityId);
+      if (!read) {
         return [];
       }
-
-      const collaborators = await dbRead.entityCollaborator.findMany({
-        where: { entityId, entityType },
-        select: {
-          user: {
-            select: userWithCosmeticsSelect,
-          },
-          entityId: true,
-          entityType: true,
-          status: true,
-        },
-      });
+      const { entity, collaborators } = read;
 
       return collaborators.filter((collaborator) => {
         if (collaborator.status === EntityCollaboratorStatus.Approved) {

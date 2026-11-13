@@ -69,6 +69,11 @@ Show the user the case, the kind, the phases and where the run will stop, for de
    1. `official-model-admin create-version --kind <kind>`, using the kind from Phase 0.
    2. **Hosted weights only:** get the files onto the version. If the weights are on Hugging Face, ask the user to queue the repo at `/moderator/huggingface-import`, then attach each transferred file with `official-model-admin attach-import` — see "From Hugging Face" in that skill's step 4; you choose the file type, so read the filenames rather than guessing. Otherwise give the user the upload link `create-version` prints and **stop until they say the upload is done**. Either way, then run `official-model-admin files --version <id>` until it reports READY. If it reports NOT READY, pass its reason on to the user.
    3. `generation-coverage add`, labelled with the base model name.
+   4. **Partner disclosure.** If a partner, not Civitai, runs the model, ask the user to choose
+      **Mark partner service** on the version's moderator menu, and **Mark partner trains** too if that
+      partner may use prompts and results to improve its models. The generator shows the icons from those bits. A 3D
+      ecosystem has no version to mark: add its key to `PARTNER_SERVICE_ECOSYSTEMS`
+      (`src/shared/constants/partner-ecosystems.constants.ts`).
 
 4. **Gate, before the deploy.** `generation-gate-rules add`:
    - case A: with `--ecosystem <key>`;

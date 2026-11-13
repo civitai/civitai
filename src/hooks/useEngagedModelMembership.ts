@@ -2,9 +2,13 @@ import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { EngagedModelType } from '~/store/engaged-models.store';
-import { useEngagedModelsStore } from '~/store/engaged-models.store';
-import { initEngagedModelsPersistence } from '~/store/engaged-models.persist';
+import { getEngagedStoreGeneration, useEngagedModelsStore } from '~/store/engaged-models.store';
+import {
+  excludeFromEngagedPersistence,
+  initEngagedModelsPersistence,
+} from '~/store/engaged-models.persist';
 import { trpcVanilla } from '~/utils/trpc';
+import { scheduleBatcherFlush } from '~/utils/trpc-batch-window';
 
 /**
  * Batched dataloader for engagement membership (PR2). Components register the
@@ -38,20 +42,37 @@ const MAX_IDS_PER_QUERY = 200; // must match getEngagedModelsByIdsSchema.max(200
  */
 export const ENGAGED_MEMBERSHIP_DEBOUNCE_MS = 80;
 
+/** How long a failed request waits before its single retry. */
+export const ENGAGED_MEMBERSHIP_RETRY_MS = 3000;
+
 // Module-level batcher state.
 const pending = new Set<number>();
 const inFlight = new Set<number>();
 let scheduled = false;
+/** The store generation `pending`/`inFlight` belong to; a store reset (sign-out) orphans both. */
+let stateGeneration = getEngagedStoreGeneration();
+
+function dropStateFromAnEarlierGeneration() {
+  const current = getEngagedStoreGeneration();
+  if (current === stateGeneration) return;
+  stateGeneration = current;
+  pending.clear();
+  inFlight.clear();
+}
 
 /**
  * Test/injection seam. Production uses the vanilla tRPC client + an ~80ms
- * debounce flush; tests swap in a controllable fetcher and a synchronous
+ * debounce flush (which, while `trpcUnifiedBatchWindow` applies, then waits for the
+ * shared batch window to close); tests swap in a controllable fetcher and a synchronous
  * scheduler. `schedule` returns void so a test override may return void too.
  */
 export const engagedMembershipBatcher = {
   fetch: (modelIds: number[]) => trpcVanilla.user.getEngagedModelsByIds.query({ modelIds }),
   schedule: (cb: () => void): void => {
-    setTimeout(cb, ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    scheduleBatcherFlush(cb, ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+  },
+  scheduleRetry: (cb: () => void): void => {
+    setTimeout(cb, ENGAGED_MEMBERSHIP_RETRY_MS);
   },
 };
 
@@ -63,6 +84,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 function flush() {
   scheduled = false;
+  dropStateFromAnEarlierGeneration();
   const { queried } = useEngagedModelsStore.getState();
 
   const toFetch: number[] = [];
@@ -73,32 +95,50 @@ function flush() {
   if (toFetch.length === 0) return;
 
   for (const id of toFetch) inFlight.add(id);
+  for (const ids of chunk(toFetch, MAX_IDS_PER_QUERY))
+    fetchChunk(ids, getEngagedStoreGeneration(), true);
+}
 
-  for (const ids of chunk(toFetch, MAX_IDS_PER_QUERY)) {
-    engagedMembershipBatcher
-      .fetch(ids)
-      .then(
-        (record) => {
-          // Re-read applyServerResult off the live store in case the store was reset.
-          useEngagedModelsStore.getState().applyServerResult(record ?? {}, ids);
-        },
-        () => {
-          // F2 (stuck-disabled): the fetch errored. If we left these ids unknown a
-          // component that stays mounted (unchanged deps → its effect never re-fires)
-          // would never re-request them, leaving its `disabled = loading = !isKnown`
-          // control PERMANENTLY dead with no retry. Mark them known-not-engaged so the
-          // control becomes actionable again. The dirty-guard still protects any id the
-          // user mutated meanwhile (locallyMutated is skipped). Trade-off, accepted: in
-          // this rare error case the F1 wrong-direction risk returns for a genuinely-ON
-          // model (it reads not-engaged) — a usable button beats a dead one, and the
-          // optimistic dual-write self-heals the store on the user's next interaction.
-          useEngagedModelsStore.getState().applyServerResult({}, ids);
-        }
-      )
-      .finally(() => {
-        for (const id of ids) inFlight.delete(id);
-      });
-  }
+/**
+ * One request for `ids`, answered into the store only if the store has not been reset since it
+ * was sent (`generation`) — a sign-out mid-request must not hand the old viewer's answer to the
+ * signed-out store. The ids stay in flight through the retry, so a card mounting meanwhile does
+ * not ask again.
+ */
+function fetchChunk(ids: number[], generation: number, retryOnError: boolean) {
+  const current = () => generation === getEngagedStoreGeneration();
+  const settle = () => {
+    if (current()) for (const id of ids) inFlight.delete(id);
+  };
+  engagedMembershipBatcher.fetch(ids).then(
+    (record) => {
+      if (current()) useEngagedModelsStore.getState().applyServerResult(record ?? {}, ids);
+      settle();
+    },
+    () => {
+      if (!current()) return;
+      if (retryOnError) {
+        // A page of cards shares one request, so a single blip would otherwise read as "not
+        // engaged" for every model on it, and on any model page opened from it, for the session.
+        engagedMembershipBatcher.scheduleRetry(() => {
+          if (!current()) return;
+          const { queried } = useEngagedModelsStore.getState();
+          const stillUnknown = ids.filter((id) => !queried.has(id));
+          for (const id of ids) if (queried.has(id)) inFlight.delete(id);
+          if (stillUnknown.length) fetchChunk(stillUnknown, generation, false);
+        });
+        return;
+      }
+      // F2 (stuck-disabled): the retry failed too. Left unknown, a mounted control (its effect
+      // never re-fires) would stay `disabled = !isKnown` for good, so mark the ids
+      // known-not-engaged — in memory only, so the next load asks again. The dirty-guard still
+      // protects ids the user mutated meanwhile. Accepted: a genuinely-ON model reads off until
+      // reload or the user's next interaction; a usable button beats a dead one.
+      excludeFromEngagedPersistence(ids);
+      useEngagedModelsStore.getState().applyServerResult({}, ids);
+      settle();
+    }
+  );
 }
 
 /**
@@ -106,6 +146,7 @@ function flush() {
  * already pending/in-flight, are skipped (dedup). Non-positive ids are ignored.
  */
 export function requestEngagedMembership(modelIds: Iterable<number>): void {
+  dropStateFromAnEarlierGeneration();
   const { queried } = useEngagedModelsStore.getState();
   let added = false;
   for (const id of modelIds) {
@@ -125,6 +166,7 @@ export function __resetEngagedMembershipBatcher(): void {
   pending.clear();
   inFlight.clear();
   scheduled = false;
+  stateGeneration = getEngagedStoreGeneration();
 }
 
 export interface EngagedMembershipResult {
@@ -155,12 +197,8 @@ export interface EngagedMembershipResult {
   isKnown: (modelId: number) => boolean;
 }
 
-/**
- * Register `modelIds` (only those the caller currently has on screen) and read
- * their membership reactively from the store. Unauthenticated users issue no
- * query and see empty membership (the endpoint is protected).
- */
-export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershipResult {
+/** Shared by the per-card read and the surface-wide prefetch, so both gate and rehydrate alike. */
+function useRegisterEngagedMembership(modelIds: number[]) {
   const currentUser = useCurrentUser();
   const validIds = modelIds.filter((id) => id > 0);
   const enabled = !!currentUser && validIds.length > 0;
@@ -185,9 +223,28 @@ export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled]);
 
-  const sets = useEngagedModelsStore(
-    useShallow((s) => modelIds.map((id) => s.membership[id]))
-  );
+  return { currentUser, validIds, enabled };
+}
+
+/**
+ * Register a whole surface's ids from the container that holds them (a feed page, a page
+ * of search hits). A card renders its body only near the viewport, so cards alone register
+ * a row at a time while the user scrolls and each row lands in its own batch window — one
+ * request per row instead of one per page. Reads nothing; the cards still read their own.
+ */
+export function useEngagedModelsPrefetch(modelIds: number[]): void {
+  useRegisterEngagedMembership(modelIds);
+}
+
+/**
+ * Register `modelIds` (only those the caller currently has on screen) and read
+ * their membership reactively from the store. Unauthenticated users issue no
+ * query and see empty membership (the endpoint is protected).
+ */
+export function useEngagedModelsMembership(modelIds: number[]): EngagedMembershipResult {
+  const { currentUser, validIds, enabled } = useRegisterEngagedMembership(modelIds);
+
+  const sets = useEngagedModelsStore(useShallow((s) => modelIds.map((id) => s.membership[id])));
   const knownFlags = useEngagedModelsStore(
     useShallow((s) => validIds.map((id) => s.queried.has(id)))
   );

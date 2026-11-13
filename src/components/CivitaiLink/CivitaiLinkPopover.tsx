@@ -1,7 +1,6 @@
 import type { GroupProps, StackProps } from '@mantine/core';
 import {
   Group,
-  Popover,
   Stack,
   Text,
   Progress,
@@ -12,12 +11,12 @@ import {
   Center,
   CopyButton,
   Button,
-  Tooltip,
   List,
   Loader,
-  Menu,
+  Modal,
   TextInput,
 } from '@mantine/core';
+import { Popover, Tooltip, Menu } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import classes from './civitai-link.module.scss';
 import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
@@ -54,12 +53,14 @@ import {
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CivitaiLinkNavSwitch } from '~/components/CivitaiLink/CivitaiLinkNavSwitch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 const CivitaiLinkWizardModal = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'), {
   ssr: false,
@@ -85,6 +86,17 @@ export function CivitaiLinkPopover() {
     </Popover>
   );
 }
+
+function CivitaiLinkDialog() {
+  const dialog = useDialogContext();
+
+  return (
+    <Modal {...dialog} withCloseButton={false} padding={0} zIndex={imageGenerationDrawerZIndex + 1}>
+      <LinkDropdown onClose={dialog.onClose} />
+    </Modal>
+  );
+}
+export const openCivitaiLinkDialog = createDialogTrigger(CivitaiLinkDialog);
 
 type HelpStatus = 'pending' | 'processing' | 'complete';
 function SupporterHelp() {
@@ -384,6 +396,7 @@ function LinkDropdown({ onClose }: { onClose: () => void }) {
           'link-ready': <ActivityList />,
         }[status]
       )}
+      <CivitaiLinkNavSwitch />
     </Paper>
   );
 }

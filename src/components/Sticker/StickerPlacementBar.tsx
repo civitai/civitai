@@ -1,14 +1,18 @@
-import { Button, CloseButton, Popover, Text } from '@mantine/core';
+import { Button, CloseButton, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
 import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
 import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { barFreeLabel, freeHintText } from '~/components/Sticker/free-offer';
 import {
   useFreePlacementStanding,
   useImagePlacementSpace,
+  resolveStickerCounts,
   useStickerPlacementCounts,
   useStickerPlacements,
 } from '~/components/Sticker/placement.util';
@@ -67,22 +71,38 @@ export function StickerPlacementBar({
   const { buttonStyling } = useReactionSettingsContext();
   const inviteStyle = useStickerInviteStyle();
 
+  const revealed = useStickerRevealStore(stickersRevealed);
+
+  // The count is approved-only, so an owner whose first placement is still
+  // pending had no entry here at all — and therefore no reveal toggle on the
+  // page the notification just sent them to. Hence the placements for every
+  // signed-in viewer, and for anyone who has revealed (the overlay on this image
+  // is already asking for exactly this, so it is the same cached call).
+  const wantPlacements = !!currentUser || revealed;
+  const {
+    byImage,
+    counts: combinedCounts,
+    isLoading: placementsLoading,
+    isError: placementsError,
+  } = useStickerPlacements([imageId], wantPlacements);
+  // Only where placements are not wanted: the combined call above carries the
+  // counts, and asking for them again was a second request for the same rows.
+  const countsOnly = useStickerPlacementCounts([imageId], !wantPlacements);
   const {
     counts,
     isLoading: countsLoading,
     isError: countsError,
-  } = useStickerPlacementCounts([imageId]);
+  } = resolveStickerCounts({
+    wantPlacements,
+    combined: { data: combinedCounts, isLoading: placementsLoading, isError: placementsError },
+    countsOnly,
+  });
   const count = counts[imageId] ?? 0;
   const { space } = useImagePlacementSpace(imageId);
-
-  // The count is approved-only, so an owner whose first placement is still
-  // pending had no entry here at all — and therefore no reveal toggle on the
-  // page the notification just sent them to.
-  const { byImage, isLoading: placementsLoading } = useStickerPlacements([imageId], !!currentUser);
   const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
 
   const openTray = useStickerPlacementDraftStore((state) => state.open);
-  const revealed = useStickerRevealStore(stickersRevealed);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const toggle = useStickerRevealStore((state) => state.toggle);
 
   // The creator has not opened this space and nobody has placed anything, so
@@ -150,7 +170,8 @@ export function StickerPlacementBar({
   // because the thing it announces is itself daily: tomorrow's allowance is news
   // again, and a permanent dismissal would mean the feature announces itself
   // exactly once per person, ever.
-  const showHint = !!hint && dismissedDay !== utcDay();
+  const turfPlayer = !!useTurfFeed()?.joined;
+  const showHint = !!hint && !turfPlayer && dismissedDay !== utcDay();
 
   // The invitation needs a zero that is KNOWN to be zero. `total` is fed by two
   // separate queries and a failure of either reads as empty, so an image with
@@ -160,7 +181,9 @@ export function StickerPlacementBar({
   const settled = !countsLoading && !placementsLoading && !countsError;
   const inviting = !total && canPlace && settled;
 
-  if (!total && !canPlace) return null;
+  // Still drawn when the bar has nothing else to say: it is the only way out of
+  // preview, and the drafts outlive whatever made `canPlace` false.
+  if (!total && !canPlace) return <StickerPreviewToggle imageId={imageId} className={className} />;
 
   return (
     <>
@@ -218,10 +241,8 @@ export function StickerPlacementBar({
             arrowSize={10}
             shadow="md"
             radius="md"
-            // Under the placement tray, which is `z-30` and fixed to the bottom
-            // of the viewport. Mantine's default (300) put this hint on top of
-            // the panel it exists to send people to — pointing at a button that
-            // was no longer the thing to press.
+            // Under the placement tray (PAGE_MODAL_Z_INDEX + 1). Mantine's default (300) put
+            // this hint on top of the panel it exists to send people to.
             zIndex={20}
             // Dismissed by its own control only. A click-outside dismissal on a
             // hint anchored to a button people are about to press would count
@@ -297,6 +318,10 @@ export function StickerPlacementBar({
                 'border-none bg-yellow-4 px-3 py-2 dark:bg-yellow-6',
                 hintClasses.wiggle
               )}
+              // Hidden while previewing, which leaves the tray that normally covers
+              // it out of the way. Not closed: `onClose` is the dismissal, and a
+              // preview is not someone waving the hint away for the day.
+              style={previewing ? { visibility: 'hidden' } : undefined}
             >
               <div className="flex items-center gap-2">
                 <Text size="xs" fw={600} c="dark.8">
@@ -317,6 +342,8 @@ export function StickerPlacementBar({
           </Popover>
         )}
       </Button.Group>
+
+      <StickerPreviewToggle imageId={imageId} className="ml-2" />
 
       {/* Told which image this bar is for, so a session left open on another
           slide cannot keep the panel on screen bound to an image nobody is

@@ -1,5 +1,6 @@
 import { trace } from '@opentelemetry/api';
 import { clickhouse } from '~/server/clickhouse/client';
+import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
@@ -108,6 +109,15 @@ export const CAPTURED_INPUT_KEYS = new Set<string>([
   'blockedFor',
 ]);
 
+/** The id sets a hub resolves to, in the shape `resolveHubSources` returns them. */
+export type FeedHubSources = {
+  userIds: number[];
+  modelVersionIds: number[];
+  collectionIds: number[];
+  tagGroups: number[][];
+  excluded: { userIds: number[]; modelVersionIds: number[]; tagGroups: number[][] };
+};
+
 export type CapturableSearchInput = {
   currentUserId?: number;
   isModerator?: boolean;
@@ -118,6 +128,7 @@ export type CapturableSearchInput = {
   useCombinedNsfwLevel?: boolean;
   limit?: number;
   cursor?: unknown;
+  jumpTo?: string;
   tags?: number[];
   excludedTagIds?: number[];
   excludedUserIds?: number[];
@@ -131,8 +142,16 @@ export type CapturableSearchInput = {
   /** Resolved by the primary path only; `newCreators` without it is not servable. */
   newCreatorUserIds?: number[];
   postId?: number;
+  postIds?: number[];
+  /** Server-only: the caller takes a post's images in the requested sort, not the author's order. */
+  postIdsInRequestedSort?: boolean;
   collectionId?: number;
   hubId?: number;
+  /**
+   * Resolved by the primary path only; `hubId` without it is not servable. `null` is a hub
+   * that resolves to nothing for this viewer, which is an empty page and never the open feed.
+   */
+  hubSources?: FeedHubSources | null;
   types?: string[];
   baseModels?: string[];
   tools?: number[];
@@ -198,10 +217,6 @@ const uintArray = (a: unknown) =>
     : [];
 const stringArray = (a: unknown) => (Array.isArray(a) ? a.map(String) : []);
 const str = (v: unknown) => (v == null ? '' : String(v));
-
-export function formatClickhouseDateTime64(epochMs: number) {
-  return new Date(epochMs).toISOString().slice(0, 23).replace('T', ' ');
-}
 
 export function buildFeedRequestRow(
   input: CapturableSearchInput,

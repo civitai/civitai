@@ -16,8 +16,10 @@ import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
-import { profileImageSelect } from '../selectors/image.selector';
+import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
+import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 
 const READ_BATCH_SIZE = 1000; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -149,10 +151,10 @@ type BountyForSearchIndex = {
 const WHERE = [
   Prisma.sql`b."userId" != -1`,
   Prisma.sql`(b."startsAt" <= NOW() OR b."expiresAt" >= NOW())`,
-  Prisma.sql`b."availability" != 'Unsearchable'::"Availability"`,
+  Prisma.sql`b."availability" NOT IN ('Unsearchable'::"Availability", 'Private'::"Availability")`,
 ];
 
-const transformData = async ({
+export const transformData = async ({
   bounties,
   imageTags,
   profilePictures,
@@ -179,6 +181,7 @@ const transformData = async ({
 
       return {
         ...bounty,
+        details: bounty.details && filterSensitiveProfanityData(bounty.details, false),
         nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
         tags: tags || [],
         images,
@@ -395,10 +398,10 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       WHERE toi."imageId" IN (${Prisma.join(imageIds)}) AND NOT toi."disabled"
     `;
 
-    const profilePictures = await db.image.findMany({
-      where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },
-      select: profileImageSelect,
-    });
+    const profilePictures = await getServableProfilePictures(
+      db,
+      bounties.map((b) => b.user.profilePictureId).filter(isDefined)
+    );
 
     logger(`PullData :: Pulled tags & profile pics.`);
 

@@ -1,7 +1,6 @@
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
   CommercialUse,
@@ -13,7 +12,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { ArticleSort, CollectionSort, ImageSort, PostSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
@@ -23,8 +22,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 
 /**
  * Comment surfaces laid out full-width, so a conversation can render open and deeply nested
- * without the indentation running out of room. Everything else gets the shallower defaults —
- * `image` and `bountyEntry` sit in narrow columns and are shallower still.
+ * without the indentation running out of room. Everything else gets the shallower defaults.
  *
  * Deep threads reach the end of an article's ceiling for 99.5% of article threads (prod,
  * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
@@ -33,28 +31,48 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor i
 const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
 
 function getCommentMaxDepth(entityType: string) {
-  if (wideCommentSurfaces.has(entityType)) return 10;
-  switch (entityType) {
-    case 'image':
-    case 'bountyEntry':
-      return 3;
-    default:
-      return 5;
+  return wideCommentSurfaces.has(entityType) ? 10 : 5;
+}
+
+/** civitai.com and the deployment's own host, each with its `image.` subdomain. */
+function chatCivHosts() {
+  let baseHost = 'civitai.com';
+  const base = env.NEXT_PUBLIC_BASE_URL;
+  if (base) {
+    try {
+      baseHost = new URL(/^https?:\/\//i.test(base) ? base : `https://${base}`).hostname;
+    } catch {
+      // unparseable: civitai.com only
+    }
   }
+  return [...new Set([baseHost, 'civitai.com'])].flatMap((host) => [host, `image.${host}`]);
 }
 
 /**
- * Surfaces that open fewer reply levels than they can hold, because something below the section
- * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
- * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
- * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ * Reply levels a surface opens up front, where it differs from "as deep as it holds" on a wide
+ * surface or "none" elsewhere. A challenge puts its entry gallery *underneath* the discussion,
+ * and opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. `image` and `bountyEntry` sit in narrow detail columns, so they open part
+ * of their depth rather than all of it.
  */
-const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
+/** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
+const v3PageBudgetOverrides: Record<string, number> = {
+  image: 10,
+  bountyEntry: 10,
+  review: 10,
+  post: 15,
+  model: 8,
+};
+const v3PageBudget = 40;
+/** Surfaces whose section leaves hidden top-level comments out, where every other shows them folded. */
+const hiddenCommentsLeftOut = new Set(['model']);
 function getCommentAutoExpandDepth(entityType: string) {
-  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const override = autoExpandDepthOverrides[entityType];
+  if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
   const ceiling = getCommentMaxDepth(entityType) - 1;
-  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+  return Math.min(override ?? ceiling, ceiling);
 }
 
 /**
@@ -86,11 +104,6 @@ export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
     period: MetricTimeframe.AllTime,
-  },
-  questionFilterDefaults: {
-    sort: QuestionSort.MostLiked,
-    period: MetricTimeframe.AllTime,
-    limit: 50,
   },
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,
@@ -326,6 +339,8 @@ export const constants = {
     minCreateAmount: 500,
     maxCreateAmount: 100000000,
     supportedBountyToModels: [BountyType.ModelCreation, BountyType.LoraCreation],
+    // The edit form saves back only the images its read returned, so writes are capped at the same number.
+    maxEntryImagesForEdit: 100,
   },
   defaultCurrency: Currency.BUZZ,
   referrals: {
@@ -397,6 +412,9 @@ export const constants = {
   article: {
     coverImageHeight: 400,
     coverImageWidth: 850,
+    // 4:1, shown full width across the top of the article page.
+    bannerImageHeight: 600,
+    bannerImageWidth: 2400,
   },
   profanity: {
     thresholds: {
@@ -426,6 +444,21 @@ export const constants = {
      */
     autoExpandBudget: 40,
     replyPageSize: 5,
+    /**
+     * The v3 suite's page, in rendered comments, replies included: top-level comments are added
+     * until the next would pass it, so one with a large thread costs its share and fewer load.
+     */
+    v3PageBudget,
+    getV3PageBudget({ entityType }: { entityType: string }) {
+      return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
+    },
+    leavesOutHiddenComments({ entityType }: { entityType: string }) {
+      return hiddenCommentsLeftOut.has(entityType);
+    },
+    /** Most replies the v3 suite opens up front under one top-level comment. */
+    v3RepliesPerRoot: 10,
+    /** Replies per "show more" page in the v3 suite. */
+    v3ReplyPageSize: 10,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
@@ -507,14 +540,14 @@ export const constants = {
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
-    // TODO disable just "image.civitai.com" with nothing else
-    civRegex: new RegExp(
-      `^(?:https?://)?(?:image\\.)?(?:${(env.NEXT_PUBLIC_BASE_URL ?? 'civitai.com')
-        .replace(/^https?:\/\//, '')
-        .replace(/\./g, '\\.')}|civitai\\.com)`
+    // Hosts a chat link may point at, matched exactly against the parsed hostname
+    // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
+    civHosts: chatCivHosts(),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only. Our other
+    // sites (civitai.red, civitai.green) come from the domain config: see `isExternalChatLink`.
+    externalHosts: ['github.com', 'twitter.com', 'x.com', 'education.civitai.com'].flatMap(
+      (host) => [host, `www.${host}`]
     ),
-    externalRegex:
-      /^(?:https?:\/\/)?(?:www\.)?(github\.com|twitter\.com|x\.com|civitai\.red(?=[/:?#]|$))/,
   },
   entityCollaborators: {
     maxCollaborators: 15,
@@ -592,7 +625,13 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
-export const POST_MINIMUM_SCHEDULE_MINUTES = 10;
+export const POST_TITLE_MAX_LENGTH = 255;
+// The scheduling window lives in @civitai/shared so the planner element and Creator Studio read the
+// same numbers; re-exported here for the many existing importers.
+export {
+  POST_MAXIMUM_SCHEDULE_MONTHS,
+  POST_MINIMUM_SCHEDULE_MINUTES,
+} from '@civitai/shared/post-scheduling';
 // Caps on resources a user can manually credit on a single uploaded/external image
 // (`ImageResourceNew.detected = false`); auto-detected resources are not counted. This is an
 // attribution action with no GPU cost, so it is intentionally decoupled from the per-tier
@@ -603,6 +642,8 @@ export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
+
+export const CYBERTIP_CONTACT_EMAIL = 'compliance@civitai.com';
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
@@ -637,28 +678,17 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'sdxl 0.9': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL0.9',
+    notice:
+      'SDXL 0.9 is licensed under the SDXL Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     name: 'SDXL 0.9 research license',
   },
   'openrail++': {
     url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL1.0',
     name: 'CreativeML Open RAIL++-M',
   },
-  'sdxl turbo': {
-    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDXL-Turbo',
-    name: 'Stability AI Non-Commercial Research Community License',
-    notice:
-      'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-  },
-  svd: {
-    url: 'https://github.com/Stability-AI/generative-models/blob/main/model_licenses/LICENSE-SDV',
-    name: 'Stable Video Diffusion Non-Commercial Research Community License',
-    notice:
-      'Stable Video Diffusion is licensed under the Stable Video Diffusion Research License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
-    restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-  },
   'playground v2': {
     url: 'https://huggingface.co/playgroundai/playground-v2-1024px-aesthetic/blob/main/LICENSE.md',
+    notice: 'Playground v2 is licensed under the Playground v2 Community License.',
     name: 'Playground v2 Community License',
   },
   agpl: {
@@ -667,13 +697,14 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'SAI NC RC': {
     url: 'https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE',
-    name: 'SAI NC RC',
+    name: 'Stability AI Non-Commercial Research Community License',
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
     restrictedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    nonCommercial: true,
   },
   'SAI CLA': {
-    url: '',
+    url: 'https://stability.ai/community-license-agreement',
     name: 'Stability AI Community License Agreement',
     notice:
       'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
@@ -682,6 +713,9 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
+    notice:
+      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of “Tencent Hunyuan” are owned by Tencent or its affiliate.',
+    poweredBy: 'Powered by Tencent Hunyuan',
     name: 'Tencent Hunyuan Community License Agreement',
   },
   'hunyuan video': {
@@ -703,9 +737,43 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
     name: 'FLUX.1 [dev] Non-Commercial License',
     notice:
-      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs Inc.',
     poweredBy:
-      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    requiresSameLicense: true,
+  },
+  // flux1D, flagged non-commercial for Krea and Kontext; Flux.1 D keeps the unflagged entry.
+  'flux1D nc': {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  'flux2 dev nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/26afe3a78bb242c0a8bb181dcc8937bb16e5c66c/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
+  },
+  'flux nc': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/92196c8e11f7b6cf2b7493e037d8c5345c559216/LICENSE.md',
+    name: 'FLUX Non-Commercial License v2.1',
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Non-Commercial License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    nonCommercial: true,
+    requiresSameLicense: true,
   },
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
@@ -713,39 +781,43 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   'ltxv license': {
     url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
-    name: 'LTX Video License',
+    name: 'LTXV Open Weights License 0.X',
   },
   'cogvideox license': {
-    url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
-    name: 'CogVideoX License',
+    url: 'https://huggingface.co/zai-org/CogVideoX-5b/blob/main/LICENSE',
+    name: 'The CogVideoX License',
   },
   noobAi: {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
-    name: 'NoobAI License',
+    name: 'Fair AI Public License 1.0-SD (NoobAI terms)',
+    requiresSameLicense: true,
   },
   mit: {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
     name: 'MIT',
   },
   openai: {
-    url: 'https://openai.com/policies/',
-    name: 'OpenAI',
+    url: 'https://openai.com/policies/services-agreement/',
+    name: 'OpenAI Services Agreement',
   },
   imagen4: {
-    url: 'https://deepmind.google/about/responsibility-safety/',
-    name: 'Imagen4',
+    url: 'https://ai.google.dev/gemini-api/terms',
+    name: 'Gemini API Additional Terms of Service',
   },
   veo3: {
-    url: 'https://policies.google.com/terms',
-    name: 'Veo 3',
+    url: 'https://ai.google.dev/gemini-api/terms',
+    name: 'Gemini API Additional Terms of Service',
   },
   seedream: {
-    url: 'https://seed.bytedance.com/en/user-agreement',
-    name: 'Seedream',
+    url: 'https://docs.byteplus.com/en/docs/ModelArk/Terms_and_Conditions',
+    name: 'BytePlus ModelArk Terms and Conditions',
   },
   ponyV7: {
     url: 'https://purplesmart.ai/license',
-    name: 'Pony',
+    name: 'Pony License',
+    notice: 'This Model is licensed under the Pony License. All Rights Reserved.',
+    poweredBy: 'Powered by PurpleSmartAI, INC',
+    requiresSameLicense: true,
   },
   ltxv2: {
     // Permalinked to the Jan 5 2026 revision these weights shipped under. Not
@@ -767,45 +839,46 @@ const baseLicenses: Record<string, LicenseDetails> = {
   },
   anima: {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
-    name: 'Anima',
+    name: 'CircleStone Labs Non-Commercial License v1.2',
     notice:
-      'The Anima Model is licensed by CircleStone Labs LLC. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+      'The CircleStone Model is licensed by CircleStone Labs LLC under the CircleStone Non-Commercial License. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
     poweredBy: 'Built on NVIDIA Cosmos',
   },
   kling: {
-    url: 'https://klingai.com/terms-of-service',
-    name: 'Kling',
+    url: 'https://kling.ai/docs/user-policy',
+    name: 'Kling AI Terms of Service',
   },
   vidu: {
     url: 'https://www.vidu.com/terms',
-    name: 'Vidu Q1',
+    name: 'Vidu Terms of Service',
   },
   'ideogram nc': {
-    // Public blob page — the nf4 `raw` URL is gated and 401s.
-    url: 'https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md',
+    // Ideogram’s own ungated copy; the Hugging Face files are gated.
+    url: 'https://ideogram.ai/legal/non-commercial-model-agreement/',
     name: 'Ideogram Non-Commercial Model Agreement',
-    // Section 3(iii) attribution wording; the URL lives on the linked license name
-    // shown above the notice, so we omit the bare URL here.
+    // Section 3(iii) wording, URL included: the licence’s own link drops /blob/main/ and 404s.
     notice:
-      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement. All rights reserved. Copyright © Ideogram, Inc.',
+      'Ideogram 4 is provided under and subject to the Ideogram Non-Commercial Model Agreement available at https://github.com/ideogram-oss/ideogram4/blob/main/model_licenses/LICENSE-IDEOGRAM-4-NON-COMMERCIAL. All rights reserved. Copyright © Ideogram, Inc.',
     // License AUP bars pornographic/obscene content. `disableMature` auto-derives
     // the restricted NSFW levels (see getRestrictedNsfwLevelsForBaseModel).
     disableMature: true,
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
+    // Redistribution must be on terms no less restrictive.
+    requiresSameLicense: true,
   },
   'bfl tos': {
-    url: 'https://bfl.ai/legal/terms-of-service',
-    name: 'Black Forest Labs Terms of Service',
+    url: 'https://bfl.ai/legal/developer-terms-of-service',
+    name: 'Black Forest Labs Developer Terms of Service',
   },
   'ideogram tos': {
-    url: 'https://ideogram.ai/legal/tos',
-    name: 'Ideogram Terms of Service',
-    // The ToS bars sexually explicit output.
+    url: 'https://ideogram.ai/legal/api-tos',
+    name: 'Ideogram Developer API Agreement and Policy',
+    // The agreement bars sexually explicit output.
     disableMature: true,
   },
   'qwen research': {
-    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
+    url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/f52e6a529129fff6a994469561673ea45a84043d/LICENSE',
     name: 'Qwen Research License Agreement',
     notice:
       'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
@@ -817,12 +890,31 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
     name: 'MiniMax H3 Community License Agreement',
     notice:
-      'Generation, training and LoRA distribution on Civitai are covered by Civitai’s own license agreement with MiniMax. If you download these weights and run them yourself, your use is instead governed by the MiniMax H3 Community License Agreement, whose grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+      'MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
     // Section IV.2 wants "MiniMax H3" in the product UI. The generator's model
     // header and ecosystem label both render it, so no `attribution` line is
     // needed under the generate button. "Powered by MiniMax H3" is the separate,
     // merely encouraged notice in III.3(a).
     poweredBy: 'MiniMax H3',
+    requiresSameLicense: true,
+  },
+  'minimax h3 image': {
+    // Same text and permalink as licence 55 in basemodel.constants.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/492fd8c4eca666f1085f57e30738c1e0d86b3439/LICENSE',
+    name: 'MiniMax-H3-Image Community License Agreement',
+    notice:
+      'MiniMax-H3-Image is licensed under the MiniMax-H3-Image Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.',
+    attribution: 'MiniMax-H3-Image',
+    poweredBy: 'MiniMax-H3-Image',
+    requiresSameLicense: true,
+  },
+  'bria fibo': {
+    // Same as licence 56 in basemodel.constants.
+    url: 'https://civitai.com/content/licenses/fibo-2-platform-license',
+    name: 'FIBO 2.0 Platform License',
+    poweredBy: 'Powered by Bria AI',
+    disableMature: true,
+    requiresSameLicense: true,
   },
   'minimax music 3': {
     // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
@@ -834,6 +926,91 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // encouraged "Powered by" form, so there is no notice and no poweredBy.
     attribution: 'MiniMax-Music3',
   },
+  'krea 2 community': {
+    // The licence link on the Hugging Face model cards, pinned to a commit.
+    url: 'https://cdn.jsdelivr.net/gh/krea-ai/krea-2@db3984fbc6e13b34c0064990fc2d95ac64d00058/assets/hf_samples/LICENSE.pdf',
+    notice:
+      'Krea 2 is licensed under the Krea 2 Community License Agreement. For more information, visit https://krea.ai/krea-2-licensing.',
+    // Section 3.1(a) binds every recipient of the model or a derivative to the Agreement.
+    requiresSameLicense: true,
+    name: 'Krea 2 Community License Agreement',
+  },
+  'flux kommunity': {
+    // Permalinked: `blob/main` would silently relabel these weights on a rewrite.
+    url: 'https://huggingface.co/black-forest-labs/flux-3-image-klein/blob/55d9cc2b0d33255ccd4fe1c9724bc3754de0ae96/LICENSE.md',
+    name: 'FLUX Kommunity License',
+    // Section 3(b) Attribution Notice, split like the other BFL licences.
+    notice:
+      'This FLUX Model is licensed by Black Forest Labs Inc. under the FLUX Kommunity License. Copyright Black Forest Labs Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    // Section 2(b): the model and its derivatives are non-commercial; only a Qualifying
+    // User's outputs may be used commercially.
+    nonCommercial: true,
+    // Section 2(a) applies every restriction to derivatives, and 3(a) makes them carry it.
+    requiresSameLicense: true,
+  },
+  'pony faipl': {
+    // Pony Diffusion V6 XL’s card: a modified FAIPL that bars inference on paid services.
+    // Civitai holds explicit permission for commercial inference, derivatives included.
+    url: 'https://civitai.com/models/257749',
+    name: 'Fair AI Public License 1.0-SD (Pony Diffusion terms)',
+  },
+  'xai enterprise': {
+    url: 'https://x.ai/legal/terms-of-service-enterprise',
+    name: 'xAI Terms of Service - Enterprise',
+  },
+  'alibaba cloud': {
+    // Model Studio, which serves HappyHorse and the API-only Qwen 2 and 3, sells under these.
+    url: 'https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service-v-3-8-0',
+    name: 'Alibaba Cloud International Website Product Terms of Service',
+  },
+  'krea tos': {
+    url: 'https://www.krea.ai/terms',
+    name: 'Krea Terms of Use',
+  },
+  'microsoft product terms': {
+    // Azure sells the MAI models as Foundry Models.
+    url: 'https://www.microsoft.com/licensing/terms/productoffering/MicrosoftAzure/MCA',
+    name: 'Microsoft Product Terms',
+  },
+  'reve tos': {
+    url: 'https://app.reve.com/terms',
+    name: 'Reve AI Terms of Service',
+  },
+  'meta model api': {
+    // Muse Image ships API-only, through Meta’s Model API.
+    url: 'https://dev.meta.ai/legal/terms-of-service',
+    name: 'Meta Model API Terms of Service',
+  },
+  'wan tos': {
+    url: 'https://wan.video/policy/termsofService',
+    name: 'Wan Terms of Service',
+  },
+  'cc by-nc 4.0': {
+    url: 'https://creativecommons.org/licenses/by-nc/4.0/',
+    name: 'CC BY-NC 4.0',
+  },
+  'sonilo tos': {
+    url: 'https://sonilo.com/terms',
+    name: 'Sonilo Terms of Service',
+  },
+  'meshy tos': {
+    // PolyGen is Meshy’s API, through fal.
+    url: 'https://www.meshy.ai/terms-of-use',
+    name: 'Meshy Terms of Service',
+  },
+  'tripo terms': {
+    url: 'https://www.tripo3d.ai/terms',
+    name: 'Tripo Terms of User Agreement',
+  },
+  'hunyuan3d 2.1': {
+    // v2 and v2-mini carry the 2.0 Community License, which has the same terms.
+    url: 'https://huggingface.co/tencent/Hunyuan3D-2.1/blob/main/LICENSE',
+    name: 'Tencent Hunyuan 3D 2.1 Community License Agreement',
+    notice:
+      'Tencent Hunyuan 3D 2.1 is licensed under the Tencent Hunyuan 3D 2.1 Community License Agreement, Copyright © 2025 Tencent. All Rights Reserved.',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -841,11 +1018,11 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 1.5': baseLicenses['openrail'],
   'SD 1.5 LCM': baseLicenses['openrail++'],
   'SD 1.5 Hyper': baseLicenses['openrail++'],
-  'SD 2.0': baseLicenses['openrail'],
-  'SD 2.0 768': baseLicenses['openrail'],
-  'SD 2.1': baseLicenses['openrail'],
-  'SD 2.1 768': baseLicenses['openrail'],
-  'SD 2.1 Unclip': baseLicenses['openrail'],
+  'SD 2.0': baseLicenses['openrail++'],
+  'SD 2.0 768': baseLicenses['openrail++'],
+  'SD 2.1': baseLicenses['openrail++'],
+  'SD 2.1 768': baseLicenses['openrail++'],
+  'SD 2.1 Unclip': baseLicenses['openrail++'],
   'SD 3': baseLicenses['SAI CLA'],
   'SD 3.5': baseLicenses['SAI CLA'],
   'SD 3.5 Medium': baseLicenses['SAI CLA'],
@@ -855,11 +1032,11 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
   'SDXL Distilled': baseLicenses['openrail++'],
-  'SDXL Turbo': baseLicenses['sdxl turbo'],
+  'SDXL Turbo': baseLicenses['SAI CLA'],
   'SDXL Lightning': baseLicenses['openrail++'],
   'SDXL Hyper': baseLicenses['openrail++'],
-  SVD: baseLicenses['svd'],
-  'SVD XT': baseLicenses['svd'],
+  SVD: baseLicenses['SAI CLA'],
+  'SVD XT': baseLicenses['SAI CLA'],
   'Playground v2': baseLicenses['playground v2'],
   'PixArt a': baseLicenses['openrail++'],
   'PixArt E': baseLicenses['openrail++'],
@@ -868,19 +1045,23 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Lumina: baseLicenses['apache 2.0'],
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
-  Pony: baseLicenses['openrail++'],
+  Pony: baseLicenses['pony faipl'],
   'Pony V7': baseLicenses['ponyV7'],
   AuraFlow: baseLicenses['apache 2.0'],
   Chroma: baseLicenses['apache 2.0'],
   'Flux.1 S': baseLicenses['apache 2.0'],
   'Flux.1 D': baseLicenses['flux1D'],
-  'Flux.1 Krea': baseLicenses['flux1D'],
-  'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.1 Krea': baseLicenses['flux1D nc'],
+  'Flux.1 Kontext': baseLicenses['flux1D nc'],
   'Flux.3': baseLicenses['bfl tos'],
+  'Flux.3 Klein': baseLicenses['flux kommunity'],
+  'Flux.3 Klein-base': baseLicenses['flux kommunity'],
+  'MOSS Image': baseLicenses['apache 2.0'],
+  'Fibo 2.0': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
-  'Flux.2 D': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B': baseLicenses['flux1D'],
-  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 D': baseLicenses['flux2 dev nc'],
+  'Flux.2 Klein 9B': baseLicenses['flux nc'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux nc'],
   'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
   'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
@@ -898,6 +1079,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Nano Banana': baseLicenses['imagen4'],
   Imagen4: baseLicenses['imagen4'],
   'Veo 3': baseLicenses['veo3'],
+  'Gemini Omni': baseLicenses['veo3'],
   'Wan Video': baseLicenses['apache 2.0'],
   'Wan Video 1.3B t2v': baseLicenses['apache 2.0'],
   'Wan Video 14B t2v': baseLicenses['apache 2.0'],
@@ -906,8 +1088,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Wan Video 2.2 I2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 T2V-A14B': baseLicenses['apache 2.0'],
   'Wan Video 2.2 TI2V-5B': baseLicenses['apache 2.0'],
-  'Wan Video 2.5 T2V': baseLicenses['apache 2.0'],
-  'Wan Video 2.5 I2V': baseLicenses['apache 2.0'],
+  'Wan Video 2.5 T2V': baseLicenses['wan tos'],
+  'Wan Video 2.5 I2V': baseLicenses['wan tos'],
   Qwen: baseLicenses['apache 2.0'],
   'Qwen 2.1': baseLicenses['qwen research'],
   Seedream: baseLicenses['seedream'],
@@ -922,7 +1104,95 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
+  'MiniMax H3 Image': baseLicenses['minimax h3 image'],
+  'Krea 2': baseLicenses['krea 2 community'],
+  'Krea 2 Turbo': baseLicenses['krea 2 community'],
+  Ernie: baseLicenses['apache 2.0'],
+  Boogu: baseLicenses['apache 2.0'],
+  'HiDream-O1': baseLicenses['mit'],
+  MageFlow: baseLicenses['mit'],
+  'Ming Image Design 0.1': baseLicenses['mit'],
+  'Ming Image Design Layer 0.1': baseLicenses['mit'],
+  'ACE Audio': baseLicenses['mit'],
+  Lens: baseLicenses['mit'],
+  Pixal3D: baseLicenses['mit'],
+  'Trellis.2': baseLicenses['mit'],
+  Grok: baseLicenses['xai enterprise'],
+  HappyHorse: baseLicenses['alibaba cloud'],
+  'Qwen 2': baseLicenses['alibaba cloud'],
+  'Qwen 3': baseLicenses['alibaba cloud'],
+  'Krea 3': baseLicenses['krea tos'],
+  MAI: baseLicenses['microsoft product terms'],
+  Reve: baseLicenses['reve tos'],
+  'Muse Image': baseLicenses['meta model api'],
+  'Wan Image 2.7': baseLicenses['wan tos'],
+  'Wan Video 2.7': baseLicenses['wan tos'],
+  'Wan Video 3.0': baseLicenses['wan tos'],
+  YuE2: baseLicenses['cc by-nc 4.0'],
+  Sonilo: baseLicenses['sonilo tos'],
+  PolyGen: baseLicenses['meshy tos'],
+  Tripo: baseLicenses['tripo terms'],
+  Hunyuan3D: baseLicenses['hunyuan3d 2.1'],
 };
+
+type CivitaiLicenseAgreement = {
+  partner: string;
+  url?: string;
+  // Shown in place of the public licence's notice, which is written for the case
+  // the agreement now headlines.
+  notice?: string;
+};
+
+// Base models Civitai uses under its own agreement with the rights holder. Display only:
+// commercial-use, mature and same-license enforcement still come from baseModelLicenses.
+export const civitaiLicenseAgreements: Partial<Record<BaseModel, CivitaiLicenseAgreement>> = {
+  'MiniMax H3': {
+    partner: 'MiniMax',
+    notice:
+      'The MiniMax H3 Community License Agreement’s grant excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America.',
+  },
+};
+
+export type LicenseLine = { label?: string; name: string; url?: string; suffix?: string };
+export type DisplayedBaseModelLicense = {
+  lines: LicenseLine[];
+  notice?: string;
+  poweredBy?: string;
+};
+
+export function getDisplayedBaseModelLicense(
+  baseModel: string
+): DisplayedBaseModelLicense | undefined {
+  const license = baseModelLicenses[baseModel as BaseModel];
+  const agreement = civitaiLicenseAgreements[baseModel as BaseModel];
+  if (!agreement) {
+    if (!license) return undefined;
+    return {
+      lines: [{ name: license.name, url: license.url }],
+      notice: license.notice,
+      poweredBy: license.poweredBy,
+    };
+  }
+
+  // The agreement covers use on Civitai only. Downloaded weights stay under the public
+  // licence, so the two scopes get equal billing rather than one demoting the other.
+  const lines: LicenseLine[] = [
+    {
+      label: 'On Civitai (generation, training, sharing LoRAs):',
+      name: `covered by Civitai’s agreement with ${agreement.partner}`,
+      url: agreement.url,
+    },
+  ];
+  if (license)
+    lines.push({
+      label: 'Downloaded weights:',
+      name: license.name,
+      url: license.url,
+      suffix: 'applies',
+    });
+
+  return { lines, notice: agreement.notice, poweredBy: license?.poweredBy };
+}
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
 export type Sampler = (typeof constants.samplers)[number];
@@ -956,6 +1226,18 @@ export function isNonCommercialBaseModel(baseModel?: string | null): boolean {
   return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.nonCommercial;
 }
 
+// Creator compensation, tips and promotion stop on every non-commercial license. Kept apart from
+// isNonCommercialBaseModel so the earnings rule can diverge from the purchase/fee rule again.
+export function stopsCreatorEarnings(baseModel?: string | null): boolean {
+  return isNonCommercialBaseModel(baseModel);
+}
+
+export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+
+export function notCommerciallyAvailableMessage(baseModel: string) {
+  return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
+}
+
 // Effective commercial-use permissions for a resource given its base model.
 // Non-commercial base models override the stored creator permission to [None] — we
 // derive this at read time rather than storing it, so it always reflects the current
@@ -985,6 +1267,28 @@ export function getEffectiveDifferentLicense(
   baseModel?: string | null
 ): boolean {
   return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
+}
+
+// "Different permissions on merges" means nothing while merges are not allowed. The upsert form
+// used to hide that box without clearing it, so ~111k models store merges off with it still on:
+// every reader goes through this rather than the raw column, and those rows are left as stored.
+export function allowsDifferentLicenseOnMerges(permissions: {
+  allowDerivatives: boolean;
+  allowDifferentLicense: boolean;
+}): boolean {
+  return permissions.allowDerivatives && permissions.allowDifferentLicense;
+}
+
+// The write-side half of the rule above. Only when the caller is writing permissions: a save that
+// omits both fields leaves the stored pair alone. `storedAllowDerivatives` covers a save that sends
+// only allowDifferentLicense to a model whose merges are already off.
+export function normalizeMergePermissions(
+  data: { allowDerivatives?: boolean; allowDifferentLicense?: boolean },
+  storedAllowDerivatives?: boolean
+) {
+  if (data.allowDerivatives === undefined && data.allowDifferentLicense === undefined) return;
+  if ((data.allowDerivatives ?? storedAllowDerivatives) === false)
+    data.allowDifferentLicense = false;
 }
 
 // Whether a model's own terms add anything to the base license, which decides if Attachment B
@@ -1020,648 +1324,6 @@ export function isNsfwLevelRestrictedForBaseModel(
   return restrictedLevels.includes(nsfwLevel);
 }
 
-export const samplerOffsets = {
-  'Euler a': 4,
-  Euler: 4,
-  Heun: 8,
-  LMS: 10,
-  DDIM: 15,
-  'DPM++ 2M Karras': 4,
-  DPM2: 4,
-  'DPM2 a': 4,
-  undefined: 4,
-} as const;
-
-export const commonAspectRatios = [
-  { label: 'Square', width: 1024, height: 1024 },
-  { label: 'Landscape', width: 1216, height: 832 },
-  { label: 'Portrait', width: 832, height: 1216 },
-];
-
-export const seedreamSizes = [
-  { label: '16:9', width: 2560, height: 1440 },
-  { label: '4:3', width: 2304, height: 1728 },
-  { label: '1:1', width: 2048, height: 2048 },
-  { label: '3:4', width: 1728, height: 2304 },
-  { label: '9:16', width: 1440, height: 2560 },
-];
-
-const seedreamSizes4K = [
-  { label: '16:9', width: 4096, height: 2304 },
-  { label: '4:3', width: 4096, height: 3072 },
-  { label: '1:1', width: 4096, height: 4096 },
-  { label: '3:4', width: 3072, height: 4096 },
-  { label: '9:16', width: 2304, height: 4096 },
-];
-
-export const qwenSizes = [
-  { label: '16:9', width: 1664, height: 928 },
-  { label: '4:3', width: 1472, height: 1104 },
-  { label: '1:1', width: 1328, height: 1328 },
-  { label: '3:4', width: 1104, height: 1472 },
-  { label: '9:16', width: 928, height: 1664 },
-];
-
-export const grokSizes = [
-  { label: '16:9', width: 1824, height: 1024 },
-  { label: '4:3', width: 1184, height: 888 },
-  { label: '1:1', width: 1024, height: 1024 },
-  { label: '3:4', width: 888, height: 1184 },
-  { label: '9:16', width: 1024, height: 1824 },
-];
-
-export const ponyV7Sizes = [
-  { label: '3:2', width: 1536, height: 1024 },
-  { label: '6:5', width: 1536, height: 1280 },
-  { label: '1:1', width: 1536, height: 1536 },
-  { label: '5:6', width: 1280, height: 1536 },
-  { label: '2:3', width: 1024, height: 1536 },
-];
-
-export const nanoBananaProSizes = [
-  { label: '16:9', width: 2560, height: 1440 },
-  { label: '4:3', width: 2304, height: 1728 },
-  { label: '1:1', width: 2048, height: 2048 },
-  { label: '3:4', width: 1728, height: 2304 },
-  { label: '9:16', width: 1440, height: 2560 },
-];
-
-export const generationResourceConfig: Record<number, MixedObject> = {
-  2470991: {
-    aspectRatios: seedreamSizes4K,
-  },
-};
-
-export type GenerationConfigKey = keyof typeof generationConfig;
-export const generationConfig = {
-  SD1: {
-    aspectRatios: [
-      { label: 'Square', width: 512, height: 512 },
-      { label: 'Landscape', width: 768, height: 512 },
-      { label: 'Portrait', width: 512, height: 768 },
-    ],
-    checkpoint: {
-      id: 128713,
-      name: '8',
-      trainedWords: [],
-      baseModel: 'SD 1.5',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 4384,
-        name: 'DreamShaper',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  SDXL: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 128078,
-      name: 'v1.0 VAE fix',
-      trainedWords: [],
-      baseModel: 'SDXL 1.0',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 101055,
-        name: 'SD XL',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Pony: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 290640,
-      name: 'V6 (start with this one)',
-      trainedWords: [],
-      baseModel: 'Pony',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 257749,
-        name: 'Pony Diffusion V6 XL',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  PonyV7: {
-    aspectRatios: ponyV7Sizes,
-    checkpoint: {
-      id: 2152373,
-      name: 'v7.0',
-      trainedWords: [],
-      baseModel: 'PonyV7',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1901521,
-        name: 'Pony V7',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Illustrious: {
-    aspectRatios: commonAspectRatios,
-    // doesn't work for all illustrios models
-    // aspectRatios: [
-    //   { label: 'Square', width: 1536, height: 1536 },
-    //   { label: 'Landscape', width: 1920, height: 1280 },
-    //   { label: 'Portrait', width: 1280, height: 1920 },
-    // ],
-    checkpoint: {
-      id: 889818,
-      name: 'v0.1',
-      trainedWords: [],
-      baseModel: 'Illustrious',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 795765,
-        name: 'Illustrious-XL',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Chroma: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2164239,
-      name: 'v1.0-HD',
-      trainedWords: [],
-      baseModel: 'Chroma',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1330309,
-        name: 'Chroma',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  NoobAI: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 1190596,
-      name: 'V-Pred-1.0-Version',
-      trainedWords: [],
-      baseModel: 'NoobAI',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 833294,
-        name: 'NoobAI-XL (NAI-XL)',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux1: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 691639,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Flux.1 D',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 618692,
-        name: 'FLUX',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  FluxKrea: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2068000,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Flux.1 Krea',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 618692,
-        name: 'FLUX',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2439067,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Flux.2 D',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_9B: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612554,
-      name: '9b',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 9B',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_9B_base: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612548,
-      name: '9b-base',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 9B-base',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_4B: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612557,
-      name: '4b',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 4B',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux2Klein_4B_base: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2612552,
-      name: '4b-base',
-      trainedWords: [],
-      baseModel: 'Flux.2 Klein 4B-base',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2165902,
-        name: 'FLUX.2 Klein',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Qwen: {
-    aspectRatios: qwenSizes,
-    checkpoint: {
-      id: 2552908,
-      name: 'fp8_e4m3fn',
-      trainedWords: [],
-      baseModel: 'Qwen',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2268063,
-        name: 'Qwen-Image-2512',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Seedream: {
-    aspectRatios: seedreamSizes,
-    checkpoint: {
-      id: 2470991,
-      name: 'v4.5',
-      trainedWords: [],
-      baseModel: 'Seedream',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1951069,
-        name: 'Seedream',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  HiDream: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 1771369,
-      name: '',
-      trainedWords: [],
-      baseModel: 'HiDream',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      covered: true,
-      model: {
-        id: 1562709,
-        name: 'HiDream',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  Flux1Kontext: {
-    aspectRatios: [
-      { label: '21:9', width: 21, height: 9 },
-      { label: '16:9', width: 16, height: 9 },
-      { label: '4:3', width: 4, height: 3 },
-      { label: '3:2', width: 3, height: 2 },
-      { label: '1:1', width: 1, height: 1 },
-      { label: '2:3', width: 2, height: 3 },
-      { label: '3:4', width: 3, height: 4 },
-      { label: '9:16', width: 9, height: 16 },
-      { label: '9:21', width: 9, height: 21 },
-    ],
-    checkpoint: {
-      id: 1892509,
-      name: 'Flux.1 Kontext [Pro]',
-      trainedWords: [],
-      baseModel: 'Flux.1 Kontext',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1672021,
-        name: 'FLUX.1 Kontext',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  // SD3: {
-  //   aspectRatios: commonAspectRatios,
-  //   checkpoint: {
-  //     id: 983309,
-  //     name: 'Large',
-  //     trainedWords: [],
-  //     baseModel: 'SD 3.5',
-  //     strength: 1,
-  //     minStrength: -1,
-  //     maxStrength: 2,
-  //     canGenerate: true,
-  //     hasAccess: true,
-  //     model: {
-  //       id: 878387,
-  //       name: 'Stable Diffusion 3.5 Large',
-  //       type: 'Checkpoint',
-  //     },
-  //   } as GenerationResource,
-  // },
-  // SD3_5M: {
-  //   aspectRatios: commonAspectRatios,
-  //   checkpoint: {
-  //     id: 1003708,
-  //     name: 'Medium',
-  //     trainedWords: [],
-  //     baseModel: 'SD 3.5 Medium',
-  //     strength: 1,
-  //     minStrength: -1,
-  //     maxStrength: 2,
-  //     canGenerate: true,
-  //     hasAccess: true,
-  //     model: {
-  //       id: 896953,
-  //       name: 'Stable Diffusion 3.5 Medium',
-  //       type: 'Checkpoint',
-  //     },
-  //   } as GenerationResource,
-  // },
-  OpenAI: {
-    aspectRatios: [
-      { label: 'Square', width: 1024, height: 1024 },
-      { label: 'Landscape', width: 1536, height: 1024 },
-      { label: 'Portrait', width: 1024, height: 1536 },
-    ],
-    checkpoint: {
-      id: 1733399,
-      name: '4o Image Gen 1',
-      trainedWords: [],
-      baseModel: 'OpenAI',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1532032,
-        name: `OpenAI's GPT-image-1`,
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-
-  Imagen4: {
-    aspectRatios: [
-      { label: '16:9', width: 16, height: 9 },
-      { label: '4:3', width: 4, height: 3 },
-      { label: '1:1', width: 1, height: 1 },
-      { label: '3:4', width: 3, height: 4 },
-      { label: '9:16', width: 9, height: 16 },
-    ],
-    checkpoint: {
-      id: 1889632,
-      name: 'Imagen 4',
-      trainedWords: [],
-      baseModel: 'Imagen4',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1669468,
-        name: `Google Imagen 4`,
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  NanoBanana: {
-    aspectRatios: nanoBananaProSizes,
-    checkpoint: {
-      id: 2154472,
-      name: 'Nano Banana',
-      trainedWords: [],
-      baseModel: 'NanoBanana',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 1903424,
-        name: `Google Nano Banana`,
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  ZImageTurbo: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2442439,
-      name: 'v1.0',
-      trainedWords: [],
-      baseModel: 'ZImageTurbo',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2168935,
-        name: 'ZImageTurbo',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-  ZImageBase: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 2635223,
-      name: 'Base',
-      trainedWords: [],
-      baseModel: 'ZImageBase',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 2342797,
-        name: 'Z Image Base',
-        type: 'Checkpoint',
-      },
-    } as GenerationResource,
-  },
-
-  Other: {
-    aspectRatios: commonAspectRatios,
-    checkpoint: {
-      id: 164821,
-      name: '',
-      trainedWords: [],
-      baseModel: 'Other',
-      strength: 1,
-      minStrength: -1,
-      maxStrength: 2,
-      canGenerate: true,
-      hasAccess: true,
-      model: {
-        id: 147759,
-        name: 'Remacri',
-        type: 'Upscaler',
-      },
-    } as GenerationResource,
-  },
-};
-
-export const generation = {
-  formStoreKey: 'generation-form',
-  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
-  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
-  defaultValues: {
-    workflow: 'txt2img',
-    cfgScale: 3.5,
-    steps: 25,
-    sampler: 'DPM++ 2M Karras',
-    scheduler: 'simple',
-    seed: null,
-    clipSkip: 2,
-    quantity: 2,
-    aspectRatio: '1:1',
-    resolution: '2k',
-    prompt: '',
-    negativePrompt: '',
-    nsfw: false,
-    baseModel: 'Flux1',
-    denoise: 0.4,
-    upscale: 1.5,
-    civitaiTip: 0,
-    creatorTip: 0.25,
-    fluxUltraAspectRatio: '4',
-    fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
-    fluxUltraRaw: false,
-    model: generationConfig.Flux1.checkpoint,
-    priority: 'low',
-    sourceImage: null,
-    openAIQuality: 'medium',
-    vae: null,
-    resources: null,
-    outputFormat: 'jpeg',
-  },
-  maxValues: {
-    seed: 4294967295,
-    clipSkip: 3,
-  },
-} as const;
 export const maxRandomSeed = 2147483647;
 // Postgres INT4 (integer) column bounds — the ceiling any value written to an
 // `integer` column (e.g. metric counts) must fit under.
@@ -1670,19 +1332,6 @@ export const PG_INT4_MIN = -2_147_483_648;
 export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
-
-// export type GenerationBaseModel = keyof typeof generationConfig;
-
-export function getGenerationConfig(baseModel = 'SD1', modelVersionId?: number) {
-  if (!(baseModel in generationConfig)) {
-    return getGenerationConfig(); // fallback to default config
-    // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
-  }
-
-  const modelConfig = modelVersionId ? generationResourceConfig[modelVersionId] : undefined;
-  const baseModelConfig = generationConfig[baseModel as keyof typeof generationConfig];
-  return { ...baseModelConfig, ...modelConfig };
-}
 
 export const MODELS_SEARCH_INDEX = 'models_v9';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
@@ -1768,12 +1417,21 @@ export const milestoneNotificationFix = '2025-05-28';
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
+/** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
+export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] = [
+  BanReasonCode.SexualMinor,
+  BanReasonCode.SexualMinorGenerator,
+  BanReasonCode.SexualMinorTraining,
+];
+
 export const banReasonDetails: Record<
   BanReasonCode,
   {
     code: BanReasonCode;
     publicBanReasonLabel?: string;
     privateBanReasonLabel: string;
+    /** Set by its own flow, never picked by hand. */
+    systemOnly?: true;
   }
 > = {
   [BanReasonCode.SexualMinor]: {
@@ -1840,6 +1498,12 @@ export const banReasonDetails: Record<
     code: BanReasonCode.RRDViolation,
     publicBanReasonLabel: 'Violated Responsible Resource Development',
     privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
+  },
+  [BanReasonCode.Chargeback]: {
+    code: BanReasonCode.Chargeback,
+    publicBanReasonLabel: 'Reversed payment',
+    privateBanReasonLabel: 'Lost payment dispute (chargeback)',
+    systemOnly: true,
   },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,
@@ -1960,6 +1624,7 @@ export const KEY_VALUE_KEYS = {
   MODEL_FILE_OPTIONS: 'modelFileOptions',
   CONTEST_SCORING: 'contestScoring',
   CREATOR_SHOP_FEES: 'creatorShopFees',
+  USER_MENU_DEFAULT_PINS: 'userMenuDefaultPins',
 } as const;
 
 // Snapshot rows are one KeyValue per run: `contestSnapshot:<collectionId>:<takenAt ISO>`.

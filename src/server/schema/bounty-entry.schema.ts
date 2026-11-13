@@ -1,8 +1,9 @@
 import { Currency } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
-import { imageGenerationSchema, imageSchema } from '~/server/schema/image.schema';
+import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';
+import { constants } from '~/server/common/constants';
 
 export type BountyEntryFileMeta = z.infer<typeof bountyEntryFileMeta>;
 
@@ -25,8 +26,16 @@ export const upsertBountyEntryInputSchema = z.object({
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
   images: z
-    .array(imageSchema.extend({ meta: imageGenerationSchema.omit({ comfy: true }).nullish() }))
-    .min(1, 'At least one example image must be uploaded'),
+    .array(
+      imageReferenceInputSchema.extend({
+        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
+      })
+    )
+    .min(1, 'At least one example image must be uploaded')
+    .max(
+      constants.bounties.maxEntryImagesForEdit,
+      `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
+    ),
   description: getSanitizedStringSchema().nullish(),
 });
 
@@ -60,5 +69,11 @@ export const submitBountyEntryInputSchema = z.object({
     )
     .min(1, 'At least one file must be provided'),
   // Already-uploaded example image UUIDs.
-  imageUuids: z.array(z.string().uuid()).min(1, 'At least one example image must be provided'),
+  imageUuids: z
+    .array(z.string().uuid())
+    .min(1, 'At least one example image must be provided')
+    .max(
+      constants.bounties.maxEntryImagesForEdit,
+      `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
+    ),
 });

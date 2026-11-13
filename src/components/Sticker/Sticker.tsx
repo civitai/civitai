@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useStickerContext } from '~/components/Sticker/StickerProvider';
-import { stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
+import { stickerInlineStyle, stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
 
 export function Sticker({
   cosmeticId,
@@ -26,7 +26,7 @@ export function Sticker({
 
   return (
     <EdgeImage
-      className={clsx('inline-block align-text-bottom', className)}
+      className={clsx('inline-block', className)}
       src={sticker.url}
       alt={`:${sticker.slug}:`}
       title={`:${sticker.slug}:`}
@@ -35,6 +35,7 @@ export function Sticker({
       // keys on `width`, which we no longer send.
       options={{ height: size * 2, anim: sticker.animated, optimized: true }}
       style={{
+        ...stickerInlineStyle(size),
         height: size,
         width: 'auto',
         maxWidth: stickerMaxWidth(size),

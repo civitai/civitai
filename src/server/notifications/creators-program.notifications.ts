@@ -74,6 +74,15 @@ export const creatorsProgramNotifications = createNotificationProcessor({
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },
+  'creators-program-cash-out-on-hold': {
+    displayName: 'Creators program - Cash-out on hold',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your Creator Program cash-out is on hold pending review. Please contact us for more information.`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
   'creators-program-withdrawal-reverted': {
     displayName: 'Creators program - Money reverted',
     category: NotificationCategory.Buzz,

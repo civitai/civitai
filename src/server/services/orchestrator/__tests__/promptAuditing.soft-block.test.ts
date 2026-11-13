@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AuditModule from '~/utils/metadata/audit';
+import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
 /**
  * The generation gate lets a user proceed past the over-eager regex categories
@@ -13,8 +14,17 @@ const {
   mockProhibited,
   mockSysRedis,
   mockUpdateUserById,
+  mockApplyPendingReviewMute,
 } = vi.hoisted(() => ({
   mockUpdateUserById: vi.fn(async () => undefined),
+  mockApplyPendingReviewMute: vi.fn(
+    async (): Promise<UserRestrictionService.PendingReviewMuteResult> => ({
+      muted: true,
+      userRestrictionId: 1,
+      deduped: false,
+      wasMuted: false,
+    })
+  ),
   mockAuditPromptEnriched: vi.fn(),
   mockModeratePrompt: vi.fn(async () => ({ flagged: false, categories: [] as string[] })),
   mockProhibited: vi.fn(),
@@ -60,6 +70,10 @@ vi.mock('~/server/services/user.service', () => ({ updateUserById: mockUpdateUse
 // stub in user.controller.leaderboard-showcase.test.ts broke the moment a `.catch` was added.
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserRestrictionService>()),
+  applyPendingReviewMute: mockApplyPendingReviewMute,
 }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
@@ -250,5 +264,116 @@ describe('auditPromptServer — proceeding past a soft block', () => {
     await expect(
       auditPromptServer({ ...options, isGreen: true, acknowledgedSoftBlock: true })
     ).rejects.toThrow(/SFW/);
+  });
+});
+
+describe('auditPromptServer — a blocked prompt with no negative prompt', () => {
+  it('records an empty negative prompt, not a placeholder', async () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    await expect(auditPromptServer(options)).rejects.toThrow();
+    expect(mockProhibited).toHaveBeenCalledWith(expect.objectContaining({ negativePrompt: '' }));
+  });
+
+  it('strips the legacy placeholder from cached entries before they become mute triggers', async () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    mockSysRedis.lLen.mockResolvedValueOnce(9);
+    mockSysRedis.lRange.mockResolvedValue([
+      JSON.stringify({ prompt: 'p', negativePrompt: '{error capturing negativePrompt}' }),
+      JSON.stringify({ prompt: 'q', negativePrompt: 'blurry' }),
+    ]);
+
+    await expect(
+      auditPromptServer({
+        ...options,
+        track: { prohibitedRequest: mockProhibited, userActivity: vi.fn() },
+      })
+    ).rejects.toThrow(/muted/);
+
+    expect(mockApplyPendingReviewMute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        triggers: [
+          expect.objectContaining({ prompt: 'p', negativePrompt: '' }),
+          expect.objectContaining({ prompt: 'q', negativePrompt: 'blurry' }),
+        ],
+      })
+    );
+    mockSysRedis.lRange.mockResolvedValue([]);
+  });
+});
+
+describe('auditPromptServer — the auto-mute outcome', () => {
+  const overThreshold = () => {
+    flagWith(trigger('nsfw_blocklist', 'rape'));
+    mockSysRedis.lLen.mockResolvedValueOnce(9);
+  };
+  const tracked = () => {
+    const userActivity = vi.fn();
+    return { userActivity, track: { prohibitedRequest: mockProhibited, userActivity } };
+  };
+
+  it('records the mute and clears the stored prompts when the account is muted', async () => {
+    overThreshold();
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'Muted' }));
+  });
+
+  it('records no mute and keeps the stored prompts when an open case already holds the mute', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockResolvedValueOnce({
+      muted: true,
+      userRestrictionId: 1,
+      deduped: true,
+      wasMuted: true,
+    });
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records the mute but keeps the stored prompts when an open case is found on an unmuted account', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockResolvedValueOnce({
+      muted: true,
+      userRestrictionId: 1,
+      deduped: true,
+      wasMuted: false,
+    });
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).toHaveBeenCalledTimes(1);
+    expect(userActivity).toHaveBeenCalledWith(expect.objectContaining({ type: 'Muted' }));
+  });
+
+  it('records no mute and keeps the stored prompts when the mute is skipped', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockResolvedValueOnce({ muted: false, skipped: 'system-account' });
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).not.toHaveBeenCalled();
+  });
+
+  it('records no mute when the mute fails', async () => {
+    overThreshold();
+    mockApplyPendingReviewMute.mockRejectedValueOnce(new Error('db down'));
+    const { userActivity, track } = tracked();
+
+    await expect(auditPromptServer({ ...options, track })).rejects.toThrow();
+
+    expect(mockSysRedis.del).not.toHaveBeenCalled();
+    expect(userActivity).not.toHaveBeenCalled();
   });
 });

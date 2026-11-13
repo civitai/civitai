@@ -12,9 +12,9 @@ import {
   Table,
   Text,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { DatePickerInput } from '@mantine/dates';
 import {
   IconCamera,

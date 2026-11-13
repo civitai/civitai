@@ -9,8 +9,10 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import type * as Caches from '~/server/redis/caches';
+import type * as Hooks from '~/server/events/points/hooks';
 import {
   CosmeticFlag,
+  STICKER_NSFW_ONLY_REFUSAL,
   STICKER_SFW_ONLY_REFUSAL,
 } from '~/shared/constants/cosmetic-flags.constants';
 import {
@@ -19,6 +21,8 @@ import {
   STICKER_REMOVAL_LOCK_HOURS,
 } from '~/shared/utils/sticker-placement';
 import type { CreateStickerPlacement } from '~/server/services/sticker-placement.service';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
+import { encodeStickerTrack } from '~/shared/utils/sticker-track';
 
 /**
  * Fixture discipline: every quantity in scope is a distinct number, so a value
@@ -47,6 +51,20 @@ const PRICE = 700;
 
 const holdPlacementEscrow = vi.fn();
 const settlePlacement = vi.fn<PrismaStub<{ settled: boolean }>>(async () => ({ settled: true }));
+// The two Kysely reads behind the listing and the counts (`listStickerPlacementRows` for
+// `getStickerPlacements` / `getStickerPlacementsAndCounts`, `listApprovedPlacementRows` for
+// `getStickerPlacementCounts`). Which rows they return for which viewer, against a real database,
+// is pinned in placement-reads.kysely-parity.test.ts; here they hand back the rows a test names.
+const { stickerRows, approvedRows, trackRows } = vi.hoisted(() => ({
+  stickerRows: vi.fn(),
+  approvedRows: vi.fn(),
+  trackRows: vi.fn(),
+}));
+vi.mock('@civitai/db-queries/placement', () => ({
+  listStickerPlacementRows: stickerRows,
+  listApprovedPlacementRows: approvedRows,
+  listPlacementTrackRows: trackRows,
+}));
 vi.mock('~/server/services/placement-escrow.service', () => ({
   holdPlacementEscrow,
   settlePlacement,
@@ -55,6 +73,13 @@ vi.mock('~/server/services/placement-escrow.service', () => ({
 
 const assertCanPlace = vi.fn(async () => undefined);
 vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlace }));
+// The event points hook, so an owner's takedown can be seen handing its id over. The hook's own
+// behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
+const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
+  onPlacementsTakenDown,
+}));
 
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
@@ -138,6 +163,8 @@ placementDeleteMany.mockImplementation(async () => {
 });
 placementFindMany.mockImplementation(async () => []);
 placementGroupBy.mockImplementation(async () => []);
+stickerRows.mockImplementation(async () => []);
+approvedRows.mockImplementation(async () => []);
 placementFindFirst.mockImplementation(async () => null);
 imageFindMany.mockImplementation(async () => []);
 transactionFindMany.mockImplementation(async () => []);
@@ -167,7 +194,23 @@ const {
   getPendingStickerPlacements,
   getMyStickerPlacements,
   getStickerPlacementCounts,
+  getStickerPlacementsAndCounts,
+  getStickerPlacementTracks,
 } = await import('~/server/services/sticker-placement.service');
+
+/**
+ * Every way a client can be handed the listing. The combined call is what current surfaces read, so
+ * each privacy and kept-off rule below has to hold through it exactly as it does through the
+ * original — the suites run once per entry rather than being copied.
+ */
+type ListingArgs = Parameters<typeof getStickerPlacements>[0];
+const LISTINGS: [string, (args: ListingArgs) => ReturnType<typeof getStickerPlacements>][] = [
+  ['getStickerPlacements', (args) => getStickerPlacements(args)],
+  [
+    'getStickerPlacementsAndCounts',
+    async (args) => (await getStickerPlacementsAndCounts(args)).placements,
+  ],
+];
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
 
@@ -385,7 +428,7 @@ describe("the creator's size limit", () => {
    * happens: the sticker just quietly gets smaller.
    */
   it('never consults the space when reading placements back', async () => {
-    placementFindMany.mockResolvedValueOnce([]);
+    stickerRows.mockResolvedValueOnce([]);
 
     await getStickerPlacements({ imageIds: [IMAGE] });
 
@@ -396,7 +439,7 @@ describe("the creator's size limit", () => {
   });
 
   it('leaves an existing placement at the size it was accepted at', async () => {
-    placementFindMany.mockResolvedValueOnce([
+    stickerRows.mockResolvedValueOnce([
       {
         id: 7,
         targetId: IMAGE,
@@ -424,7 +467,7 @@ describe("the creator's size limit", () => {
    */
   it('carries when each placement was made', async () => {
     const placedAt = new Date('2026-08-12T12:00:00Z');
-    placementFindMany.mockResolvedValueOnce([
+    stickerRows.mockResolvedValueOnce([
       {
         id: 7,
         targetId: IMAGE,
@@ -439,10 +482,9 @@ describe("the creator's size limit", () => {
 
     const [placed] = await getStickerPlacements({ imageIds: [IMAGE] });
 
+    // The rows arrive in placement order: the read's own `ORDER BY "createdAt"`, pinned against a
+    // real database in placement-reads.kysely-parity.test.ts.
     expect(placed.placedAt).toEqual(placedAt);
-    expect(placementFindMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: 'asc' } })
-    );
   });
 });
 
@@ -586,50 +628,45 @@ describe('what gets written to the row', () => {
   });
 });
 
-describe('a pending placement is visible to the person who paid for it and nobody else', () => {
-  it('scopes pending to the placer and the owner, and to nobody else', async () => {
-    await getStickerPlacements({ imageIds: [IMAGE], viewerId: PLACER });
+describe.each(LISTINGS)(
+  'a pending placement is visible to the person who paid for it and nobody else (%s)',
+  (_name, listPlacements) => {
+    // The read scopes a pending row to the viewer as its placer or its owner, and a signed-out
+    // viewer to approved rows only; that scoping is pinned against a real database in
+    // placement-reads.kysely-parity.test.ts. What this service owns is handing it the viewer.
+    it('hands the read the signed-in viewer', async () => {
+      await listPlacements({ imageIds: [IMAGE], viewerId: PLACER });
 
-    const { where } = placementFindMany.mock.calls[0][0] as {
-      where: { OR: { status: string; placerId?: number; ownerId?: number }[] };
-    };
-    const pending = where.OR.filter((clause) => clause.status === 'pending');
+      expect(stickerRows.mock.calls.map(([, input]) => input)).toEqual([
+        { surface: 'sticker', targetType: 'image', targetIds: [IMAGE], viewerId: PLACER },
+      ]);
+    });
 
-    // Asserted as whole clauses, not as a list of ids. The viewer is the same
-    // person in both roles, so `placerId ?? ownerId` collapsed them to the same
-    // value — and the test then passed with either clause duplicated, which is
-    // exactly the mutation it exists to catch. The key name is the discriminator.
-    expect(pending).toEqual([
-      { status: 'pending', placerId: PLACER },
-      { status: 'pending', ownerId: PLACER },
-    ]);
-  });
+    it('hands the read no viewer when nobody is signed in', async () => {
+      await listPlacements({ imageIds: [IMAGE] });
 
-  it('asks for approved placements only when nobody is signed in', async () => {
-    await getStickerPlacements({ imageIds: [IMAGE] });
+      expect(stickerRows.mock.calls.map(([, input]) => input)).toEqual([
+        { surface: 'sticker', targetType: 'image', targetIds: [IMAGE], viewerId: undefined },
+      ]);
+    });
 
-    const { where } = placementFindMany.mock.calls[0][0] as {
-      where: { OR: { status: string }[] };
-    };
-    expect(where.OR.map((clause) => clause.status)).toEqual(['approved']);
-  });
+    it('drops a row whose payload is not a placement rather than rendering a hole', async () => {
+      stickerRows.mockResolvedValueOnce([
+        {
+          id: 1,
+          targetId: IMAGE,
+          placerId: PLACER,
+          ownerId: OWNER,
+          status: 'approved',
+          amount: PRICE,
+          data: { legacy: true },
+        },
+      ]);
 
-  it('drops a row whose payload is not a placement rather than rendering a hole', async () => {
-    placementFindMany.mockResolvedValueOnce([
-      {
-        id: 1,
-        targetId: IMAGE,
-        placerId: PLACER,
-        ownerId: OWNER,
-        status: 'approved',
-        amount: PRICE,
-        data: { legacy: true },
-      },
-    ]);
-
-    await expect(getStickerPlacements({ imageIds: [IMAGE] })).resolves.toEqual([]);
-  });
-});
+      await expect(listPlacements({ imageIds: [IMAGE] })).resolves.toEqual([]);
+    });
+  }
+);
 
 describe('settlement state comes from the ledger, never from Placement.status', () => {
   it('reports settled when every leg carries a receipt', async () => {
@@ -932,6 +969,14 @@ describe('the owner cannot remove a sticker for a week after approving it', () =
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 
+  it('hands the takedown to the event points hook', async () => {
+    givenApproved(STICKER_REMOVAL_LOCK_HOURS + 1);
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER });
+
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([PLACEMENT]);
+  });
+
   /**
    * Fails CLOSED on a row with no `resolvedAt`. Skipping the check when the
    * column is absent would let a hand-seeded row — or anything predating the
@@ -1197,9 +1242,9 @@ describe('the note on a placement', () => {
    * — hidden ones above all — from being serialised to anonymous viewers, and
    * the whole rest of this file stays green if that strip is removed.
    */
-  describe('is never carried by the feed listing', () => {
+  describe.each(LISTINGS)('is never carried by the feed listing (%s)', (_name, listPlacements) => {
     const givenListed = (data: Record<string, unknown>) =>
-      placementFindMany.mockResolvedValueOnce([
+      stickerRows.mockResolvedValueOnce([
         {
           id: PLACEMENT,
           targetId: IMAGE,
@@ -1214,7 +1259,7 @@ describe('the note on a placement', () => {
     it('withholds the text even from the placer, who is allowed to read it', async () => {
       givenListed({ comment: 'nice hat' });
 
-      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: PLACER });
+      const [placed] = await listPlacements({ imageIds: [IMAGE], viewerId: PLACER });
 
       expect(placed.data.comment).toBeUndefined();
       // The flag has to travel, because the sticker needs a marker before
@@ -1225,7 +1270,7 @@ describe('the note on a placement', () => {
     it('does not even admit a hidden note exists, to a stranger', async () => {
       givenListed({ comment: 'nice hat', commentHidden: true });
 
-      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
+      const [placed] = await listPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
 
       expect(placed.data.comment).toBeUndefined();
       expect(placed.data.commentHidden).toBeUndefined();
@@ -1235,7 +1280,7 @@ describe('the note on a placement', () => {
     it('still marks a hidden note for the owner, who can act on it', async () => {
       givenListed({ comment: 'nice hat', commentHidden: true });
 
-      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: OWNER });
+      const [placed] = await listPlacements({ imageIds: [IMAGE], viewerId: OWNER });
 
       expect(placed.hasComment).toBe(true);
     });
@@ -1248,7 +1293,7 @@ describe('the note on a placement', () => {
     it('treats a non-string note on the row as no note at all', async () => {
       givenListed({ comment: 42 });
 
-      const [placed] = await getStickerPlacements({ imageIds: [IMAGE], viewerId: PLACER });
+      const [placed] = await listPlacements({ imageIds: [IMAGE], viewerId: PLACER });
 
       expect(placed.hasComment).toBe(false);
     });
@@ -2118,56 +2163,56 @@ describe('a sticker flagged SFW placements only', () => {
         [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
         [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
       });
-      placementFindMany.mockResolvedValue([
-        row(FLAGGED_ROW, COSMETIC),
-        row(PLAIN_ROW, OTHER_COSMETIC),
-      ]);
+      for (const read of [stickerRows, approvedRows])
+        read.mockResolvedValue([row(FLAGGED_ROW, COSMETIC), row(PLAIN_ROW, OTHER_COSMETIC)]);
       imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
     });
 
-    it('are left out of the listing on an XXX image', async () => {
-      const rows = await getStickerPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
+    describe.each(LISTINGS)('the listing (%s)', (_name, listPlacements) => {
+      it('are left out of the listing on an XXX image', async () => {
+        const rows = await listPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
 
-      expect(rows.map((placement) => placement.id)).toEqual([PLAIN_ROW]);
-      // Only the images carrying a flagged sticker are read, by image id.
-      expect(imageFindMany).toHaveBeenCalledTimes(1);
-      expect((imageFindMany.mock.calls[0][0] as { where: unknown }).where).toEqual({
-        id: { in: [IMAGE] },
-      });
-    });
-
-    it('are still shown to a moderator, who may need to act on them', async () => {
-      const rows = await getStickerPlacements({
-        imageIds: [IMAGE],
-        viewerId: STRANGER,
-        isModerator: true,
+        expect(rows.map((placement) => placement.id)).toEqual([PLAIN_ROW]);
+        // Only the images carrying a flagged sticker are read, by image id.
+        expect(imageFindMany).toHaveBeenCalledTimes(1);
+        expect((imageFindMany.mock.calls[0][0] as { where: unknown }).where).toEqual({
+          id: { in: [IMAGE] },
+        });
       });
 
-      expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
-    });
+      it('are still shown to a moderator, who may need to act on them', async () => {
+        const rows = await listPlacements({
+          imageIds: [IMAGE],
+          viewerId: STRANGER,
+          isModerator: true,
+        });
 
-    it('come back on a PG-13 image', async () => {
-      placementFindMany.mockResolvedValue([
-        row(FLAGGED_ROW, COSMETIC, SFW_IMAGE),
-        row(PLAIN_ROW, OTHER_COSMETIC, SFW_IMAGE),
-      ]);
-      imageFindMany.mockResolvedValue([{ id: SFW_IMAGE, nsfwLevel: NsfwLevel.PG13 }]);
-
-      const rows = await getStickerPlacements({ imageIds: [SFW_IMAGE] });
-
-      expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
-    });
-
-    it('cost no image read when no sticker on the page is flagged', async () => {
-      cosmeticCacheFetch.mockResolvedValue({
-        [COSMETIC]: { flags: CosmeticFlag.None },
-        [OTHER_COSMETIC]: {},
+        expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
       });
 
-      const rows = await getStickerPlacements({ imageIds: [IMAGE] });
+      it('come back on a PG-13 image', async () => {
+        stickerRows.mockResolvedValue([
+          row(FLAGGED_ROW, COSMETIC, SFW_IMAGE),
+          row(PLAIN_ROW, OTHER_COSMETIC, SFW_IMAGE),
+        ]);
+        imageFindMany.mockResolvedValue([{ id: SFW_IMAGE, nsfwLevel: NsfwLevel.PG13 }]);
 
-      expect(rows).toHaveLength(2);
-      expect(imageFindMany).not.toHaveBeenCalled();
+        const rows = await listPlacements({ imageIds: [SFW_IMAGE] });
+
+        expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
+      });
+
+      it('cost no image read when no sticker on the page is flagged', async () => {
+        cosmeticCacheFetch.mockResolvedValue({
+          [COSMETIC]: { flags: CosmeticFlag.None },
+          [OTHER_COSMETIC]: {},
+        });
+
+        const rows = await listPlacements({ imageIds: [IMAGE] });
+
+        expect(rows).toHaveLength(2);
+        expect(imageFindMany).not.toHaveBeenCalled();
+      });
     });
 
     it('are left out of the count, so it agrees with the listing', async () => {
@@ -2209,5 +2254,539 @@ describe('a sticker flagged SFW placements only', () => {
         })
       ).resolves.toMatchObject({ id: FLAGGED_ROW });
     });
+  });
+});
+
+describe('a sticker flagged NSFW placements only', () => {
+  const OTHER_COSMETIC = 181;
+  const MATURE_IMAGE = 192;
+  const FLAGGED_ROW = 203;
+  const PLAIN_ROW = 214;
+
+  const givenSticker = (flags: number, imageNsfwLevel: number) => {
+    queryRaw
+      .mockResolvedValueOnce([
+        { id: COSMETIC, createdById: SELLER, owned: true, flags, imageNsfwLevel },
+      ])
+      .mockResolvedValueOnce([{ spendable: 3, unlimited: false }]);
+  };
+
+  describe('placing it', () => {
+    it.each([
+      ['PG', NsfwLevel.PG],
+      ['PG-13', NsfwLevel.PG13],
+      ['not yet rated', 0],
+    ])('is refused on a %s image, before any row or money', async (_label, level) => {
+      givenSticker(CosmeticFlag.NsfwPlacementsOnly, level);
+
+      await expect(createStickerPlacement(placeInput)).rejects.toThrow(STICKER_NSFW_ONLY_REFUSAL);
+      expect(placementCreate).not.toHaveBeenCalled();
+      expect(holdPlacementEscrow).not.toHaveBeenCalled();
+    });
+
+    it('is refused on the free path too', async () => {
+      givenSticker(CosmeticFlag.NsfwPlacementsOnly, NsfwLevel.PG);
+
+      await expect(createStickerPlacement({ ...placeInput, free: true })).rejects.toThrow(
+        STICKER_NSFW_ONLY_REFUSAL
+      );
+      expect(createFreePlacement).not.toHaveBeenCalled();
+      expect(spendStickerUsesFor).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['R', NsfwLevel.R],
+      ['XXX', NsfwLevel.XXX],
+    ])('goes through on an %s image', async (_label, level) => {
+      givenSticker(CosmeticFlag.NsfwPlacementsOnly, level);
+
+      await expect(createStickerPlacement(placeInput)).resolves.toMatchObject({
+        placementId: PLACEMENT,
+      });
+    });
+
+    it('does not touch an unflagged sticker on a PG image', async () => {
+      givenSticker(CosmeticFlag.None, NsfwLevel.PG);
+
+      await expect(createStickerPlacement(placeInput)).resolves.toMatchObject({
+        placementId: PLACEMENT,
+      });
+    });
+  });
+
+  describe('approving a pending placement of it', () => {
+    beforeEach(() => {
+      placementFindUnique.mockResolvedValue({
+        id: PLACEMENT,
+        ownerId: OWNER,
+        placerId: PLACER,
+        targetId: IMAGE,
+        amount: PRICE,
+        status: 'pending',
+        surface: 'sticker',
+        free: false,
+        data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+        createdAt: new Date(0),
+        resolvedAt: null,
+      });
+    });
+
+    it('is refused on a PG-13 image, and nothing settles', async () => {
+      queryRaw.mockResolvedValueOnce([
+        { flags: CosmeticFlag.NsfwPlacementsOnly, imageNsfwLevel: NsfwLevel.PG13 },
+      ]);
+
+      await expect(
+        actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+      ).rejects.toThrow(/no longer go on this image/);
+      expect(settlePlacement).not.toHaveBeenCalled();
+    });
+
+    it('declines without a fee when the owner declines it on a PG image', async () => {
+      queryRaw.mockResolvedValue([
+        { flags: CosmeticFlag.NsfwPlacementsOnly, imageNsfwLevel: NsfwLevel.PG },
+      ]);
+
+      await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+      expect(calls).toEqual(['settle:declineUnshowableHost']);
+    });
+
+    it('approves on an X image', async () => {
+      queryRaw.mockResolvedValue([
+        { flags: CosmeticFlag.NsfwPlacementsOnly, imageNsfwLevel: NsfwLevel.X },
+      ]);
+
+      await actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+      expect(calls).toEqual(['settle:approve']);
+    });
+
+    it('still charges the fee on an ordinary decline of it on an X image', async () => {
+      queryRaw.mockResolvedValue([
+        { flags: CosmeticFlag.NsfwPlacementsOnly, imageNsfwLevel: NsfwLevel.X },
+      ]);
+
+      await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+      expect(calls).toEqual(['settle:decline']);
+    });
+  });
+
+  describe('placements already live', () => {
+    const row = (id: number, cosmeticId: number, targetId = IMAGE) => ({
+      id,
+      targetId,
+      placerId: PLACER,
+      ownerId: OWNER,
+      status: 'approved',
+      amount: PRICE,
+      free: false,
+      createdAt: new Date(0),
+      data: { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+    });
+
+    beforeEach(() => {
+      cosmeticCacheFetch.mockResolvedValue({
+        [COSMETIC]: { flags: CosmeticFlag.NsfwPlacementsOnly },
+        [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+      });
+      for (const read of [stickerRows, approvedRows])
+        read.mockResolvedValue([row(FLAGGED_ROW, COSMETIC), row(PLAIN_ROW, OTHER_COSMETIC)]);
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.PG }]);
+    });
+
+    describe.each(LISTINGS)('the listing (%s)', (_name, listPlacements) => {
+      it('are left out of the listing on a PG image', async () => {
+        const rows = await listPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
+
+        expect(rows.map((placement) => placement.id)).toEqual([PLAIN_ROW]);
+        expect(imageFindMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('are still shown to a moderator', async () => {
+        const rows = await listPlacements({
+          imageIds: [IMAGE],
+          viewerId: STRANGER,
+          isModerator: true,
+        });
+
+        expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
+      });
+
+      it('come back on an R image', async () => {
+        stickerRows.mockResolvedValue([
+          row(FLAGGED_ROW, COSMETIC, MATURE_IMAGE),
+          row(PLAIN_ROW, OTHER_COSMETIC, MATURE_IMAGE),
+        ]);
+        imageFindMany.mockResolvedValue([{ id: MATURE_IMAGE, nsfwLevel: NsfwLevel.R }]);
+
+        const rows = await listPlacements({ imageIds: [MATURE_IMAGE] });
+
+        expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
+      });
+    });
+
+    it('are left out of the count on a PG image, and counted again on an R one', async () => {
+      await expect(getStickerPlacementCounts([IMAGE])).resolves.toEqual({ [IMAGE]: 1 });
+
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.R }]);
+      await expect(getStickerPlacementCounts([IMAGE])).resolves.toEqual({ [IMAGE]: 2 });
+    });
+
+    it('show on the hover card on an R image', async () => {
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.R }]);
+      placementFindFirst.mockResolvedValue({
+        ...row(FLAGGED_ROW, COSMETIC),
+        placer: { id: PLACER, username: 'placer' },
+      });
+
+      await expect(
+        getStickerPlacementDetail({ placementId: FLAGGED_ROW, viewerId: STRANGER })
+      ).resolves.toMatchObject({ id: FLAGGED_ROW });
+    });
+
+    it('are not available on the hover card on a PG image, except to a moderator', async () => {
+      placementFindFirst.mockResolvedValue({
+        ...row(FLAGGED_ROW, COSMETIC),
+        placer: { id: PLACER, username: 'placer' },
+      });
+
+      await expect(
+        getStickerPlacementDetail({ placementId: FLAGGED_ROW, viewerId: STRANGER })
+      ).rejects.toThrow(/not available/);
+      await expect(
+        getStickerPlacementDetail({
+          placementId: FLAGGED_ROW,
+          viewerId: STRANGER,
+          isModerator: true,
+        })
+      ).resolves.toMatchObject({ id: FLAGGED_ROW });
+    });
+  });
+});
+
+describe('the tracks for a video', () => {
+  const OTHER_COSMETIC = 225;
+  const row = (id: number, cosmeticId: number) => ({
+    id,
+    targetId: IMAGE,
+    data: { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+    track: { v: 2, keys: [{ t: id, x: 0.5, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'linear' }] },
+  });
+
+  beforeEach(() => {
+    cosmeticCacheFetch.mockResolvedValue({
+      [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
+      [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+    });
+    imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
+    trackRows.mockResolvedValue([row(1, COSMETIC), row(2, OTHER_COSMETIC)]);
+  });
+
+  it('reads the sticker surface of that image, and withholds what the listing keeps off', async () => {
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE });
+
+    expect(trackRows).toHaveBeenCalledWith(expect.anything(), {
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: IMAGE,
+      viewerId: undefined,
+    });
+    expect(tracks.map(({ id }) => id)).toEqual([2]);
+  });
+
+  it('asks for the viewer, so their own pending stickers move as the listing shows them', async () => {
+    await getStickerPlacementTracks({ imageId: IMAGE, viewerId: 73 });
+
+    expect(trackRows).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ targetId: IMAGE, viewerId: 73 })
+    );
+  });
+
+  it('gives a moderator what the listing would show them', async () => {
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
+
+    expect(tracks.map(({ id }) => id)).toEqual([1, 2]);
+  });
+
+  it('drops a stored track that breaks the rules, so it cannot break the player', async () => {
+    trackRows.mockResolvedValue([
+      row(2, OTHER_COSMETIC),
+      { ...row(3, OTHER_COSMETIC), track: { v: 2, keys: [] } },
+      { ...row(4, OTHER_COSMETIC), track: { v: 2 } },
+    ]);
+
+    const tracks = await getStickerPlacementTracks({ imageId: IMAGE, isModerator: true });
+
+    expect(tracks.map(({ id }) => id)).toEqual([2]);
+  });
+});
+
+/**
+ * The combined listing-and-count call is what every current surface asks for, so it has to say
+ * EXACTLY what the two separate calls say — including the two places the listing and the count
+ * have always disagreed on purpose. Literal expectations throughout: deriving them from the other
+ * two functions would pass if all three drifted together.
+ */
+describe('the listing and the counts from one read', () => {
+  const OTHER_COSMETIC = 225;
+  const SECOND_IMAGE = 236;
+  const FLAGGED_ROW = 247;
+  const PLAIN_ROW = 258;
+  const PENDING_ROW = 269;
+  const BROKEN_ROW = 280;
+  const SECOND_IMAGE_ROW = 291;
+
+  const row = (
+    id: number,
+    {
+      status = 'approved',
+      cosmeticId = OTHER_COSMETIC,
+      targetId = IMAGE,
+      data = undefined as unknown,
+    }
+  ) => ({
+    id,
+    targetId,
+    placerId: PLACER,
+    ownerId: OWNER,
+    status,
+    amount: PRICE,
+    free: false,
+    createdAt: new Date(0),
+    data: data ?? { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+  });
+
+  beforeEach(() => {
+    // FLAGGED_ROW carries an SFW-only sticker on an XXX image, so it is kept off that image.
+    cosmeticCacheFetch.mockResolvedValue({
+      [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
+      [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+    });
+    imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
+    stickerRows.mockResolvedValue([
+      row(FLAGGED_ROW, { cosmeticId: COSMETIC }),
+      row(PLAIN_ROW, {}),
+      row(PENDING_ROW, { status: 'pending' }),
+      // `data` that no longer parses: never drawn, always counted.
+      row(BROKEN_ROW, { data: { nonsense: true } }),
+      row(SECOND_IMAGE_ROW, { targetId: SECOND_IMAGE }),
+    ]);
+  });
+
+  it('gives the placer their pending row in the listing, and counts approved rows only', async () => {
+    const result = await getStickerPlacementsAndCounts({
+      imageIds: [IMAGE, SECOND_IMAGE],
+      viewerId: PLACER,
+    });
+
+    expect(result.placements.map((placement) => placement.id)).toEqual([
+      PLAIN_ROW,
+      PENDING_ROW,
+      SECOND_IMAGE_ROW,
+    ]);
+    // PLAIN_ROW and BROKEN_ROW on IMAGE (FLAGGED_ROW kept off, PENDING_ROW not approved).
+    expect(result.counts).toEqual({ [IMAGE]: 2, [SECOND_IMAGE]: 1 });
+  });
+
+  it('shows a moderator the kept-off row, and still leaves it out of their count', async () => {
+    const result = await getStickerPlacementsAndCounts({
+      imageIds: [IMAGE, SECOND_IMAGE],
+      viewerId: STRANGER,
+      isModerator: true,
+    });
+
+    expect(result.placements.map((placement) => placement.id)).toEqual([
+      FLAGGED_ROW,
+      PLAIN_ROW,
+      PENDING_ROW,
+      SECOND_IMAGE_ROW,
+    ]);
+    expect(result.counts).toEqual({ [IMAGE]: 2, [SECOND_IMAGE]: 1 });
+  });
+
+  it('marks the kept-off row on a moderator’s listing, and only there', async () => {
+    const asModerator = await getStickerPlacementsAndCounts({
+      imageIds: [IMAGE, SECOND_IMAGE],
+      viewerId: STRANGER,
+      isModerator: true,
+    });
+    const asStranger = await getStickerPlacementsAndCounts({
+      imageIds: [IMAGE, SECOND_IMAGE],
+      viewerId: STRANGER,
+    });
+
+    expect(
+      asModerator.placements.filter((placement) => placement.keptOff).map((p) => p.id)
+    ).toEqual([FLAGGED_ROW]);
+    // No other payload changes shape: the field is absent, not `false`.
+    expect(asStranger.placements.some((placement) => 'keptOff' in placement)).toBe(false);
+  });
+
+  // The counts come from the listing's own rows: one read, and never the count-only one. The input
+  // is pinned whole; which rows it returns for that viewer (the pending ones only to their two
+  // parties) is pinned against a real database in placement-reads.kysely-parity.test.ts.
+  it('reads the placement rows once, scoped the way the listing has always been', async () => {
+    await getStickerPlacementsAndCounts({ imageIds: [IMAGE, SECOND_IMAGE], viewerId: PLACER });
+
+    expect(stickerRows.mock.calls.map(([, input]) => input)).toEqual([
+      {
+        surface: 'sticker',
+        targetType: 'image',
+        targetIds: [IMAGE, SECOND_IMAGE],
+        viewerId: PLACER,
+      },
+    ]);
+    expect(approvedRows).not.toHaveBeenCalled();
+  });
+
+  it('agrees with the count-only call, which keeps working for older clients', async () => {
+    // The count-only read asks the database for approved rows; the mock hands back what it would.
+    approvedRows.mockResolvedValue([
+      row(FLAGGED_ROW, { cosmeticId: COSMETIC }),
+      row(PLAIN_ROW, {}),
+      row(BROKEN_ROW, { data: { nonsense: true } }),
+      row(SECOND_IMAGE_ROW, { targetId: SECOND_IMAGE }),
+    ]);
+
+    await expect(getStickerPlacementCounts([IMAGE, SECOND_IMAGE])).resolves.toEqual({
+      [IMAGE]: 2,
+      [SECOND_IMAGE]: 1,
+    });
+  });
+
+  it('asks nothing for an empty id list', async () => {
+    await expect(getStickerPlacementsAndCounts({ imageIds: [] })).resolves.toEqual({
+      placements: [],
+      counts: {},
+    });
+    expect(stickerRows).not.toHaveBeenCalled();
+  });
+});
+
+describe('a moving sticker on a video', () => {
+  const VIDEO_SPACE = { ...OPEN_SPACE, mediaType: 'video' as const };
+  // Starts small at the image's centre-left and grows while it moves.
+  const track = encodeStickerTrack([
+    { x: 0.2, y: 0.5, scale: 0.1, rotation: 10 },
+    { x: 0.3, y: 0.5, scale: 0.15, rotation: 10 },
+    { x: 0.4, y: 0.5, scale: 0.22, rotation: 10 },
+  ]);
+  // A different pose from the track's start, so the replacement is observable.
+  const data = { ...placeInput.data, x: 0.9, y: 0.9, scale: 0.12, rotation: 0 };
+
+  beforeEach(() => givenStickerAndBalance());
+
+  it('stores the track, with `data` holding the pose at time zero', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+    await createStickerPlacement({ ...placeInput, data, track });
+
+    expect(placementCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          track,
+          data: expect.objectContaining({ x: 0.2, y: 0.5, scale: 0.1, rotation: 10 }),
+        }),
+      })
+    );
+  });
+
+  it('carries the track into a free claim', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+    await createStickerPlacement({ ...placeInput, data, track, free: true });
+
+    expect(createFreePlacement).toHaveBeenCalledWith(expect.objectContaining({ track }));
+  });
+
+  it('refuses a track on a still image, on both paths', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...OPEN_SPACE, mediaType: 'image' });
+
+    for (const free of [false, true])
+      await expect(createStickerPlacement({ ...placeInput, data, track, free })).rejects.toThrow(
+        /only be recorded on a video/
+      );
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('refuses a track that grows past the creator’s limit after a start inside it', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...VIDEO_SPACE, settings: { maxScale: 0.2 } });
+
+    await expect(createStickerPlacement({ ...placeInput, data, track })).rejects.toThrow(
+      /up to 20%/
+    );
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  describe('set with keys', () => {
+    const key = (t: number, x: number, s: number) =>
+      ({ t, x, y: 0.5, s, r: 10, o: 1, ease: 'smooth' } as const);
+    // The first key is a second in, so the start pose is that key held from time zero.
+    const keyed: StickerTrack = {
+      v: 2,
+      keys: [key(1000, 0.2, 0.1), key(2000, 0.4, 0.22), key(3000, 0.5, 0.1)],
+    };
+
+    it('stores the keys, with `data` holding the first key’s pose', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+
+      await createStickerPlacement({ ...placeInput, data, track: keyed });
+
+      expect(placementCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            track: keyed,
+            data: expect.objectContaining({ x: 0.2, y: 0.5, scale: 0.1, rotation: 10 }),
+          }),
+        })
+      );
+    });
+
+    it('refuses a shown key that the placer’s own opacity takes under the floor', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue(VIDEO_SPACE);
+      const faint: StickerTrack = { v: 2, keys: [{ ...key(0, 0.2, 0.1), o: 0.5 }] };
+
+      await expect(
+        createStickerPlacement({ ...placeInput, data: { ...data, opacity: 0.4 }, track: faint })
+      ).rejects.toThrow(/at least 30% opaque/);
+      expect(placementCreate).not.toHaveBeenCalled();
+    });
+
+    it('refuses keys that pass the creator’s limit between a first and last key inside it', async () => {
+      resolvePlacementSpaceFor.mockResolvedValue({ ...VIDEO_SPACE, settings: { maxScale: 0.2 } });
+
+      await expect(createStickerPlacement({ ...placeInput, data, track: keyed })).rejects.toThrow(
+        /up to 20%/
+      );
+      expect(placementCreate).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('a moving sticker is sized by its track, not by the pose it was sent with', () => {
+  beforeEach(() => givenStickerAndBalance());
+
+  it('accepts a request whose sent scale is over the limit when the whole track is under it', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ...OPEN_SPACE,
+      mediaType: 'video',
+      settings: { maxScale: 0.2 },
+    });
+    const track = encodeStickerTrack([
+      { x: 0.2, y: 0.5, scale: 0.1, rotation: 0 },
+      { x: 0.3, y: 0.5, scale: 0.15, rotation: 0 },
+    ]);
+
+    await createStickerPlacement({
+      ...placeInput,
+      data: { ...placeInput.data, scale: 0.35 },
+      track,
+    });
+
+    expect(placementCreate).toHaveBeenCalledTimes(1);
   });
 });

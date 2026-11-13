@@ -1,5 +1,7 @@
 import type { InputWrapperProps } from '@mantine/core';
 import {
+  ActionIcon,
+  Button,
   Group,
   Input,
   Paper,
@@ -11,12 +13,21 @@ import {
 } from '@mantine/core';
 import React, { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
-import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
-import { IconArrowsMoveVertical } from '@tabler/icons-react';
+import type {
+  ProfileSectionSchema,
+  ProfileSectionType,
+  ShowcaseSectionSchema,
+} from '~/server/schema/user-profile.schema';
+import { showcaseSectionLimits } from '~/server/schema/user-profile.schema';
+import { IconArrowsMoveVertical, IconPencil, IconPlus } from '@tabler/icons-react';
 import {
   getAllAvailableProfileSections,
+  getShowcaseSectionByKey,
+  isCustomShowcaseKey,
   profileSectionLabels,
 } from '~/components/Profile/profile.utils';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import ShowcaseSectionModal from '~/components/Profile/ShowcaseSectionModal';
 import type { DragEndEvent, Modifier, UniqueIdentifier } from '@dnd-kit/core';
 import { rectIntersection, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 
@@ -26,21 +37,27 @@ import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-ki
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { isEqual } from 'lodash-es';
 import { withController } from '~/libs/form/hoc/withController';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ProfileSectionsSettingsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ProfileSectionSchema[];
   onChange?: (value: ProfileSectionSchema[]) => void;
+  showcaseSections?: ShowcaseSectionSchema[];
 };
+
+const noShowcaseSections: ShowcaseSectionSchema[] = [];
 
 export const ProfileSectionsSettingsInput = ({
   value,
   onChange,
+  showcaseSections = noShowcaseSections,
   ...props
 }: ProfileSectionsSettingsInputProps) => {
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const [sections, setSections] = useState<ProfileSectionSchema[]>(
-    getAllAvailableProfileSections(value || [])
+    getAllAvailableProfileSections(value || [], showcaseSections)
   );
   const [error, setError] = useState('');
 
@@ -53,9 +70,19 @@ export const ProfileSectionsSettingsInput = ({
   useDidUpdate(() => {
     if (!isEqual(value, sections)) {
       // Value changed outside.
-      setSections(getAllAvailableProfileSections(value || []));
+      setSections(getAllAvailableProfileSections(value || [], showcaseSections));
     }
   }, [value]);
+
+  useDidUpdate(() => {
+    setSections((current) => getAllAvailableProfileSections(current, showcaseSections));
+  }, [showcaseSections]);
+
+  const openShowcaseSection = (sectionId?: string) =>
+    dialogStore.trigger({
+      component: ShowcaseSectionModal,
+      props: { sections: showcaseSections, sectionId },
+    });
 
   const onToggleSection = (key: string) => {
     setSections((current) =>
@@ -92,35 +119,66 @@ export const ProfileSectionsSettingsInput = ({
             strategy={verticalListSortingStrategy}
           >
             <Stack>
-              {sections.map((s) => (
-                <SortableItem key={s.key} id={s.key}>
-                  <Paper
-                    style={{
-                      backgroundColor:
-                        colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-                    }}
-                    withBorder
-                    key={s.key}
-                    p="xs"
-                    radius="md"
-                  >
-                    <Group wrap="nowrap">
-                      <IconArrowsMoveVertical />
-                      <Text size="sm">{profileSectionLabels[s.key]}</Text>
-                      <Switch
-                        checked={s.enabled}
-                        onChange={() => onToggleSection(s.key)}
-                        labelPosition="left"
-                        aria-label={profileSectionLabels[s.key]}
-                        ml="auto"
-                      />
-                    </Group>
-                  </Paper>
-                </SortableItem>
-              ))}
+              {sections.map((s) => {
+                // Kept in the saved list either way; only the toggle waits for the flag.
+                if (s.key === 'creatorJourney' && !features.creatorJourney) return null;
+                const showcase = getShowcaseSectionByKey(s.key, showcaseSections);
+                if (isCustomShowcaseKey(s.key) && (!features.profileShowcases || !showcase))
+                  return null;
+                const label = showcase
+                  ? showcase.title
+                  : profileSectionLabels[s.key as ProfileSectionType];
+                return (
+                  <SortableItem key={s.key} id={s.key}>
+                    <Paper
+                      style={{
+                        backgroundColor:
+                          colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+                      }}
+                      withBorder
+                      key={s.key}
+                      p="xs"
+                      radius="md"
+                    >
+                      <Group wrap="nowrap">
+                        <IconArrowsMoveVertical />
+                        <Text size="sm" lineClamp={1}>
+                          {label}
+                        </Text>
+                        {showcase && (
+                          <ActionIcon
+                            variant="subtle"
+                            onClick={() => openShowcaseSection(showcase.id)}
+                            aria-label={`Edit ${showcase.title}`}
+                          >
+                            <IconPencil size={16} />
+                          </ActionIcon>
+                        )}
+                        <Switch
+                          checked={s.enabled}
+                          onChange={() => onToggleSection(s.key)}
+                          labelPosition="left"
+                          aria-label={label}
+                          ml="auto"
+                        />
+                      </Group>
+                    </Paper>
+                  </SortableItem>
+                );
+              })}
             </Stack>
           </SortableContext>
         </DndContext>
+        {features.profileShowcases && (
+          <Button
+            variant="light"
+            leftSection={<IconPlus size={16} />}
+            onClick={() => openShowcaseSection()}
+            disabled={showcaseSections.length >= showcaseSectionLimits.sections}
+          >
+            Add showcase section ({showcaseSections.length}/{showcaseSectionLimits.sections})
+          </Button>
+        )}
       </Stack>
     </Input.Wrapper>
   );

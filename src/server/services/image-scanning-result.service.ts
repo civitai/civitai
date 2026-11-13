@@ -6,6 +6,11 @@ import type {
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  combineFrameAxes,
+  readRatingAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
+import {
   applyIngestionSideEffects,
   buildAndInsertScanTags,
   extractFailedSteps,
@@ -20,6 +25,8 @@ import {
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
+import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
+import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -49,9 +56,13 @@ export type ImageScanningResult = {
   csam: boolean | null;
   ageDetections: ImageScanningJointAgeDetection[];
   minorDetected: boolean;
+  /** Set when the orchestrator refuses the image; null when it passes. */
+  blockedReason: string | null;
   aiRecognition?: Recognition;
   animeRecognition?: Recognition;
   perceptualHash?: string;
+  /** Rating axes, when the rater that produces them ran. */
+  axes?: RatingAxes;
 };
 
 type RawStep = { $type?: string; name?: string; status?: string; output?: unknown };
@@ -59,7 +70,10 @@ type RawStep = { $type?: string; name?: string; status?: string; output?: unknow
 // wdTagging only ever returned general tags; the other categories would write tags no image had before.
 const INGESTED_TAG_CATEGORIES = new Set(['general']);
 
-function readScan(output: ImageScanningOutput, workflowId: string): ImageScanningResult {
+// The client package predates these fields.
+type ScanningOutput = ImageScanningOutput & { blockedReason?: string | null; ratingV2?: unknown };
+
+function readScan(output: ScanningOutput, workflowId: string): ImageScanningResult {
   const { tagging, jointAgeClassification } = output;
   // An unmapped level ('na', or one added upstream) would write a rating with no NSFW level.
   // Not "invalid media…": classifyImageScanFailure reads that as permanent, and this is recoverable.
@@ -79,8 +93,10 @@ function readScan(output: ImageScanningOutput, workflowId: string): ImageScannin
     csam: output.csam ?? null,
     ageDetections: jointAgeClassification?.detections ?? [],
     minorDetected: !!jointAgeClassification?.minorDetected,
+    blockedReason: output.blockedReason || null,
     aiRecognition: output.aiRecognition,
     animeRecognition: output.animeRecognition,
+    axes: readRatingAxes(output.ratingV2),
   };
 }
 
@@ -88,7 +104,8 @@ const higher = (a?: Recognition, b?: Recognition) => (!a || (b && b.score > a.sc
 
 // Every result is kept (a max or an OR per field), so a frame can only raise what the video reports.
 function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
-  return frames.reduce((acc, frame) => {
+  const axes = combineFrameAxes(frames.map((frame) => frame.axes));
+  const combined = frames.reduce((acc, frame) => {
     const tags = { ...acc.tags };
     for (const [tag, score] of Object.entries(frame.tags))
       tags[tag] = Math.max(score, tags[tag] ?? 0);
@@ -101,10 +118,12 @@ function combineFrames(frames: ImageScanningResult[]): ImageScanningResult {
       csam: acc.csam || frame.csam ? true : acc.csam ?? frame.csam,
       ageDetections: [...acc.ageDetections, ...frame.ageDetections],
       minorDetected: acc.minorDetected || frame.minorDetected,
+      blockedReason: acc.blockedReason ?? frame.blockedReason,
       aiRecognition: higher(acc.aiRecognition, frame.aiRecognition),
       animeRecognition: higher(acc.animeRecognition, frame.animeRecognition),
     };
   });
+  return { ...combined, axes };
 }
 
 /**
@@ -121,7 +140,7 @@ export function parseImageScanningSteps(workflowSteps: unknown[], workflowId: st
   )?.hashes?.perceptual;
 
   const single = steps.find((step) => step.$type === 'imageScanning')?.output;
-  if (single) return { ...readScan(single as ImageScanningOutput, workflowId), perceptualHash };
+  if (single) return { ...readScan(single as ScanningOutput, workflowId), perceptualHash };
 
   const frames = (
     steps.find(
@@ -134,10 +153,29 @@ export function parseImageScanningSteps(workflowSteps: unknown[], workflowId: st
     throw new Error(`Incomplete workflow: ${workflowId}. Missing imageScanning output`);
 
   return {
-    ...combineFrames(
-      frames.map((frame) => readScan(frame.output as ImageScanningOutput, workflowId))
-    ),
+    ...combineFrames(frames.map((frame) => readScan(frame.output as ScanningOutput, workflowId))),
     perceptualHash,
+  };
+}
+
+/** The scanner outputs a moderator label is later checked against; kept so they outlive the workflow. */
+export function scanLabelSnapshot(scan: ImageScanningResult) {
+  return {
+    nsfwLevel: scan.nsfwLevel,
+    csam: scan.csam,
+    minorDetected: scan.minorDetected,
+    ageDetections: scan.ageDetections.map(
+      ({ ageBand, under13Probability, under18Probability, oodProbability, domain }) => ({
+        ageBand,
+        under13Probability,
+        under18Probability,
+        oodProbability,
+        domain,
+      })
+    ),
+    tags: scan.tags,
+    aiRecognition: scan.aiRecognition,
+    animeRecognition: scan.animeRecognition,
   };
 }
 
@@ -256,6 +294,7 @@ export async function processImageScanningWorkflow({
       workflowId,
       prompt,
       negativePrompt,
+      axes: scan.axes,
       log: IMAGE_SCANNING_LOG,
     });
   } catch (error) {
@@ -300,11 +339,34 @@ export async function processImageScanningWorkflow({
     ).catch(() => null);
   }
 
+  // A label for moderators to verify, recorded after the verdict so it cannot change it.
+  if (scan.blockedReason)
+    await recordScanLabelFlag({
+      imageId,
+      source: 'orchestrator-scan',
+      reason: scan.blockedReason,
+      workflowId,
+      flaggedAt: completedAt ? new Date(completedAt) : new Date(),
+      snapshot: scanLabelSnapshot(scan),
+    });
+
   await sendIngestionSignal({
     imageId,
     userId: image.userId,
     ingestion: outcome.ingestion,
     blockedFor: outcome.blockedFor,
+    nsfwLevel: outcome.nsfwLevel,
     log: IMAGE_SCANNING_LOG,
   });
+
+  // The image scan never sees the prompt. Not awaited: the scan waits on the orchestrator, and the
+  // orchestrator re-sends a webhook that is slow to answer.
+  const { prompt, negativePrompt } = (image.meta ?? {}) as {
+    prompt?: string;
+    negativePrompt?: string;
+  };
+  if (prompt?.trim() && orchestratorNsfwLevelMap[scan.nsfwLevel] >= orchestratorNsfwLevelMap.r)
+    void labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt }).catch(
+      () => null
+    );
 }

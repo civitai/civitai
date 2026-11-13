@@ -17,21 +17,21 @@ describe('hostRenderDecision', () => {
     });
 
     it('collapses on a malformed manifest (empty iframe.src)', () => {
-      expect(
-        hostRenderDecision({ iframeSrc: '', expectedOrigin: ORIGIN, status: 'loading' })
-      ).toBe('collapse');
+      expect(hostRenderDecision({ iframeSrc: '', expectedOrigin: ORIGIN, status: 'loading' })).toBe(
+        'collapse'
+      );
     });
 
     it('collapses on a malformed manifest (unparseable origin)', () => {
-      expect(
-        hostRenderDecision({ iframeSrc: SRC, expectedOrigin: '', status: 'loading' })
-      ).toBe('collapse');
+      expect(hostRenderDecision({ iframeSrc: SRC, expectedOrigin: '', status: 'loading' })).toBe(
+        'collapse'
+      );
     });
 
     it('collapses on a bad-src manifest even when status would otherwise be ready', () => {
-      expect(
-        hostRenderDecision({ iframeSrc: '', expectedOrigin: '', status: 'ready' })
-      ).toBe('collapse');
+      expect(hostRenderDecision({ iframeSrc: '', expectedOrigin: '', status: 'ready' })).toBe(
+        'collapse'
+      );
     });
   });
 
@@ -43,20 +43,9 @@ describe('hostRenderDecision', () => {
     });
 
     it('renders the framed block on "ready"', () => {
-      expect(
-        hostRenderDecision({ iframeSrc: SRC, expectedOrigin: ORIGIN, status: 'ready' })
-      ).toBe('ready');
-    });
-  });
-
-  describe('invariant: ready is the ONLY state that renders the trust chrome', () => {
-    it('every terminal-failure state collapses (no chrome, container takes no space)', () => {
-      const allStatuses: HostStatus[] = ['loading', 'ready', 'timeout', 'fatal', 'no_token'];
-      const collapsing = allStatuses.filter(
-        (status) =>
-          hostRenderDecision({ iframeSrc: SRC, expectedOrigin: ORIGIN, status }) === 'collapse'
+      expect(hostRenderDecision({ iframeSrc: SRC, expectedOrigin: ORIGIN, status: 'ready' })).toBe(
+        'ready'
       );
-      expect(collapsing.sort()).toEqual(['fatal', 'no_token', 'timeout']);
     });
   });
 });

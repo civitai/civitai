@@ -10,10 +10,10 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBolt,
@@ -54,6 +54,8 @@ interface RequiredComponentsSectionProps {
   acceptsBlueBuzz?: boolean;
   isLoadingAccess?: boolean;
   archived?: boolean;
+  /** Base model is non-commercial and the viewer has no access: keep the lock, no purchase path. */
+  notCommerciallyLocked?: boolean;
   onPurchase?: () => void;
   /** When true, this is a component-only model and Download All should be the primary action */
   isPrimary?: boolean;
@@ -72,6 +74,7 @@ export function RequiredComponentsSection({
   acceptsBlueBuzz,
   isLoadingAccess,
   archived,
+  notCommerciallyLocked,
   onPurchase,
   isPrimary = false,
   linkedComponents = [],
@@ -351,7 +354,7 @@ export function RequiredComponentsSection({
               }
               onClick={handleDownloadAll}
               loading={downloading}
-              disabled={archived || isLoadingAccess || downloading}
+              disabled={archived || isLoadingAccess || downloading || notCommerciallyLocked}
               style={
                 needsPurchase
                   ? {
@@ -370,7 +373,9 @@ export function RequiredComponentsSection({
               <Group gap={8}>
                 <span>
                   {needsPurchase
-                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })} ${buzzLabel})`
+                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, {
+                        decimals: 0,
+                      })} ${buzzLabel})`
                     : 'Download All Components'}
                 </span>
                 {!needsPurchase && (
@@ -620,7 +625,13 @@ function ComponentGroup({
                         )}
                       </Group>
                       {fileLabel && (
-                        <Text size="xs" c="dimmed" truncate style={{ maxWidth: 200 }} title={file.name}>
+                        <Text
+                          size="xs"
+                          c="dimmed"
+                          truncate
+                          style={{ maxWidth: 200 }}
+                          title={file.name}
+                        >
                           {file.name}
                         </Text>
                       )}

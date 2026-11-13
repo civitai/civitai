@@ -1,4 +1,5 @@
-import { Badge, Button, Card, Group, Loader, Popover, Stack, Text, Title } from '@mantine/core';
+import { Badge, Button, Card, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconSticker } from '@tabler/icons-react';
 import { useState } from 'react';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
@@ -28,6 +29,7 @@ export function StickerInventoryCard({ flat }: { flat?: boolean } = {}) {
   if (flat && features.stickerBook && currentUser?.username)
     return (
       <PointerCard
+        id="stickers"
         icon={<IconSticker size={18} />}
         title="Your sticker inventory"
         description="Browse and manage your stickers in the Stickerbook."

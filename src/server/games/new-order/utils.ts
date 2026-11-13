@@ -778,19 +778,27 @@ export const getImageRatingsCounter = (imageId: number) => {
       if (validIds.length === 0) return result;
 
       // Fetch all ratings for this image in one query
-      const data = await clickhouse.$query<{ rank: string; rating: number; count: number }>`
+      const data = await clickhouse.$query<{
+        rank: string;
+        rating: number;
+        status: string;
+        count: number;
+      }>`
         SELECT
           argMax(rank, createdAt) as rank,
           argMax(rating, createdAt) as rating,
+          argMax(status, createdAt) as status,
           count() as count
         FROM knights_new_order_image_rating
         WHERE imageId = ${imageId}
         GROUP BY imageId, userId
       `;
 
-      // Group counts by rank-rating combination
+      // Group counts by rank-rating combination. Only the open round counts: votes already
+      // settled (or voided) belong to an earlier round.
       const countsByKey = new Map<string, number>();
       for (const row of data) {
+        if (row.status !== NewOrderImageRatingStatus.Pending) continue;
         const key = `${row.rank}-${row.rating}`;
         countsByKey.set(key, (countsByKey.get(key) ?? 0) + row.count);
       }
@@ -808,6 +816,16 @@ export const getImageRatingsCounter = (imageId: number) => {
 
   return counter;
 };
+
+/** Drops the vote tallies of images leaving the queues, so a later round starts from zero. */
+export async function clearImageRatings(imageIds: number[]) {
+  const BATCH = 100;
+  for (let i = 0; i < imageIds.length; i += BATCH) {
+    await Promise.all(
+      imageIds.slice(i, i + BATCH).map((id) => getImageRatingsCounter(id).reset({ all: true }))
+    );
+  }
+}
 
 export type VotingRateLimitConfig = {
   perMinute: number;

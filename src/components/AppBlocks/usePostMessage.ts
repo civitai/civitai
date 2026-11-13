@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
+import type { AppFeedbackRecentError } from '~/server/schema/app-feedback.schema';
+import type { AppFeedbackRequestHint } from './appFeedbackDiagnostics';
+import {
+  failureFromHostMessage,
+  hostRefusal,
+  pushRecentError,
+  recentErrorsAt,
+  requestHintFromBlockMessage,
+  withRequestHint,
+} from './appFeedbackDiagnostics';
 import { buildBridgeNackReply } from './bridgeNackReply';
 import type { INVENTORY } from './hostHandlerParity';
 import { recordBridgeMessage } from './bridgeMessageBeacon';
@@ -9,6 +19,7 @@ import {
   BRIDGE_NACK_NO_TOKEN,
   type BridgeHost,
   type BridgeMessageOutcome,
+  unhandledOutcomeFor,
 } from './bridgeTelemetry';
 
 /**
@@ -27,8 +38,10 @@ import {
  *
  * That matters because `hostHandlerParity`'s coverage gate is ONE-DIRECTIONAL by
  * design: the inventory MAY carry keys ahead of the published dist, and **25 of its
- * 47 keys are ahead today** — measured against the installed
- * `@civitai/app-sdk@0.14.0`, whose block→host union declares 22 members. Running
+ * 47 keys were ahead when this was written** — measured against the then-installed
+ * `@civitai/app-sdk@0.14.0`, whose block→host union declares 22 members. (Re-measured
+ * at the `@civitai/app-sdk@0.65.1` bump: 0 of 50 ahead. The installed dist only moves
+ * when `package.json` is bumped, so the count drifts back up between bumps.) Running
  * ahead is therefore the NORM here, not a curiosity, so the documented,
  * gate-satisfying way to track an upstream rename is to ADD the new key and leave
  * the old one until the published dist catches up. In exactly that state this
@@ -41,10 +54,12 @@ import {
  * three are present in 0.14.0 — zero of them is ahead. Measure it.
  *
  * ⚠️ And the consequence is worse than an absence, not better: the reports do not
- * vanish, they land on `no_handler` under the NEW type — unclamped, since it would
- * be an INVENTORY key — so `validator_rejected` sits at the zero the HELP string
- * tells a reader to read as a rollout gap while the signal is filed under another
- * outcome entirely.
+ * vanish, they land on an unhandled-message outcome under the NEW type — unclamped,
+ * since it would be an INVENTORY key — so `validator_rejected` sits at the zero the
+ * HELP string tells a reader to read as a rollout gap while the signal is filed
+ * under another outcome entirely. Which one depends on how the new key is
+ * declared: `no_handler` if `'required'`, but `not_applicable` if it copies this
+ * entry's per-host N/A rationale — the likelier edit, and the quieter series.
  *
  * It is still strictly better than the bare literal it replaced — it catches an
  * outright key deletion and a typo in either place. But NOTHING here closes the
@@ -61,9 +76,9 @@ interface UsePostMessageOptions {
    * Which host owns this bridge. Drives the `host` label on
    * `civitai_app_block_bridge_messages_total` and is REQUIRED so a new host
    * cannot be wired up without deciding what it reports as — an unlabelled host
-   * would silently merge into another host's series, and the whole point of the
-   * `no_handler` outcome is that it is per-host (a page-only message unhandled on
-   * the model slot is the expected state; unhandled on the page host is a bug).
+   * would silently merge into another host's series. It also selects
+   * `no_handler` vs `not_applicable` for an unhandled type (see
+   * `unhandledOutcomeFor`).
    */
   host: BridgeHost;
   /**
@@ -83,6 +98,14 @@ interface UsePostMessageOptions {
     host: BridgeHost;
     outcome: BridgeMessageOutcome;
   }) => void;
+  /**
+   * Called once per inbound message from OUR block — after the origin, source-window and shape
+   * checks, before any drop path — so it counts what the block sent, whatever happened to it.
+   * Feeds `App_Session.messagesToHost`. Not `onOutcome`: a NACK reports a second outcome for a
+   * message already counted, so outcomes are not one per message. Read through a ref, so an
+   * inline callback does not re-bind the listener; a throw is swallowed.
+   */
+  onInbound?: () => void;
   /**
    * Opt-in opaque-origin transport for sandboxed frames WITHOUT
    * `allow-same-origin` (unverified/external blocks). Such a frame runs at an
@@ -155,11 +178,33 @@ interface UsePostMessageResult {
    * their own reply, and the series becomes complete.
    */
   reportNoToken: (type: string) => void;
+  /**
+   * The failed replies this bridge sent the app during the current app session (newest last,
+   * time-boxed), for the feedback report. Every reply goes through one primitive, so this sees
+   * the handlers' own error replies and the NACKs alike.
+   */
+  recentFailures: () => AppFeedbackRecentError[];
+  /**
+   * Record a request the host refused or rewrote in a handler, for the same report. For the
+   * handlers whose request has no reply to carry the failure (`NAVIGATE`).
+   */
+  noteHostEvent: (entry: AppFeedbackRecentError | null) => void;
 }
 
 const RATE_LIMIT_WINDOW_MS = 1000;
 const RATE_LIMIT_MAX_MESSAGES = 30;
+
+/**
+ * Fire-and-forget telemetry that skips the shared inbound budget, so a block's own events cannot
+ * rate-limit its requests (which are not NACKed when limited, and hang to the SDK timeout). Each
+ * type's handler must bound itself; `blockEventBeacon.ts` does for TRACK_EVENT.
+ */
+export const BRIDGE_BUDGET_EXEMPT_TYPES: ReadonlySet<keyof typeof INVENTORY> = new Set([
+  'TRACK_EVENT',
+]);
 const DEDUP_WINDOW_MS = 5000;
+/** Requests awaiting a reply whose hint is kept; the oldest is dropped past this. */
+const REQUEST_HINTS_MAX = 32;
 
 /**
  * Separate budget for unsolicited-type NACKs.
@@ -280,11 +325,22 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
     host,
     appBlockId,
     onOutcome = recordBridgeMessage,
+    onInbound,
   } = opts;
+  const onInboundRef = useRef(onInbound);
+  onInboundRef.current = onInbound;
   const handlersRef = useRef<Map<string, Set<(payload: unknown) => void>>>(new Map());
   const recentTimestampsRef = useRef<number[]>([]);
   const seenRequestIdsRef = useRef<Map<string, number>>(new Map());
   const nackTimestampsRef = useRef<number[]>([]);
+  const recentFailuresRef = useRef<AppFeedbackRecentError[]>([]);
+  const requestHintsRef = useRef<Map<string, AppFeedbackRequestHint>>(new Map());
+  // A host reused across apps without remounting starts a new app session: the old app's failures
+  // must not be attached to a report about the new one.
+  useEffect(() => {
+    recentFailuresRef.current = [];
+    requestHintsRef.current.clear();
+  }, [appBlockId]);
 
   /**
    * The single outbound primitive. `send` and the NACK paths both go through it so
@@ -299,6 +355,19 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       const targetOrigin = resolveOutboundTargetOrigin(expectedOrigin, opaqueOrigin);
       if (targetOrigin === null) return; // pinned mode, no origin: refuse to post
       iframe.contentWindow.postMessage({ type, payload }, targetOrigin);
+      try {
+        const requestId = extractRequestId({ payload });
+        const hint = requestId ? requestHintsRef.current.get(requestId) : undefined;
+        if (requestId) requestHintsRef.current.delete(requestId);
+        const failure = failureFromHostMessage(type, payload, Date.now());
+        if (failure)
+          recentFailuresRef.current = pushRecentError(
+            recentFailuresRef.current,
+            withRequestHint(failure, hint)
+          );
+      } catch {
+        // swallow — diagnostics must not affect the bridge
+      }
     },
     [iframeRef, expectedOrigin, opaqueOrigin]
   );
@@ -309,6 +378,10 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
    * and abort dispatch for that message, turning an observability feature into the
    * exact silent drop it exists to remove.
    */
+  const noteHostEvent = useCallback((entry: AppFeedbackRecentError | null) => {
+    if (entry) recentFailuresRef.current = pushRecentError(recentFailuresRef.current, entry);
+  }, []);
+
   const report = useCallback(
     (type: string, outcome: BridgeMessageOutcome) => {
       try {
@@ -316,8 +389,11 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       } catch {
         // swallow — observability must not affect the bridge
       }
+      // The drops that send the app no reply at all, so the reply tap cannot see them.
+      if (outcome === 'rate_limited' || outcome === 'deduped' || outcome === 'validator_rejected')
+        noteHostEvent(hostRefusal(type, outcome, Date.now()));
     },
-    [onOutcome, appBlockId, host]
+    [onOutcome, appBlockId, host, noteHostEvent]
   );
 
   const reportNoToken = useCallback(
@@ -354,6 +430,12 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       const data = event.data as IncomingMessage | null;
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
 
+      try {
+        onInboundRef.current?.();
+      } catch {
+        // swallow — observability must not affect the bridge
+      }
+
       const now = Date.now();
 
       // ── The one drop path this host cannot observe, reported by the block ────
@@ -380,7 +462,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // 🔴 EXACTLY ONE INCREMENT, AND NOT `handled` — returning here keeps the report
       // out of the denominator, or one rejection moves two series by one and every
       // ratio read against `handled` goes quietly wrong. ABOVE the limiter and the
-      // dedup map, for the same reason the `no_handler` branch is: a flood of junk
+      // dedup map, for the same reason the unhandled-type branch is: a flood of junk
       // must not burn the budget legitimate BLOCK_ERROR reporting needs. Dedup would
       // also be wrong — these carry no `requestId`, and two rejections are two facts.
       if (data.type === BLOCK_MESSAGE_REJECTED) {
@@ -397,7 +479,9 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // lock out legitimate BLOCK_ERROR reporting.
       const subscribers = handlersRef.current.get(data.type);
       if (!subscribers || subscribers.size === 0) {
-        report(data.type, 'no_handler');
+        // Only the label differs: a `not_applicable` request must still reach the
+        // NACK below, or it hangs to its SDK timeout.
+        report(data.type, unhandledOutcomeFor(data.type, host));
         // NACK: a REQUEST-style message with no handler is the expensive silence
         // — the block awaits a reply that will never come and hangs to its SDK
         // timeout class (30s default, 120s workflow, 600s human-in-the-loop).
@@ -405,6 +489,9 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
         // is awaiting), an unknown type, and the two types whose failure reply the
         // SDK validator would drop — so this cannot put junk on the wire.
         const unhandledRequestId = extractRequestId(data);
+        // With a requestId the NACK below carries the failure; without one nothing is sent back.
+        if (typeof unhandledRequestId !== 'string')
+          noteHostEvent(hostRefusal(data.type, unhandledOutcomeFor(data.type, host), now));
         if (typeof unhandledRequestId === 'string') {
           const nackWindow = nackTimestampsRef.current.filter(
             (t) => now - t < RATE_LIMIT_WINDOW_MS
@@ -422,6 +509,12 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
           }
           nackTimestampsRef.current = nackWindow;
         }
+        return;
+      }
+
+      if ((BRIDGE_BUDGET_EXEMPT_TYPES as ReadonlySet<string>).has(data.type)) {
+        report(data.type, 'handled');
+        for (const handler of subscribers) handler(data.payload);
         return;
       }
 
@@ -462,9 +555,24 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       recentTimestampsRef.current = recentWindow;
 
       report(data.type, 'handled');
+      if (typeof payloadRequestId === 'string') {
+        try {
+          const hint = requestHintFromBlockMessage(data.type, data.payload);
+          const hints = requestHintsRef.current;
+          if (hint) {
+            if (hints.size >= REQUEST_HINTS_MAX) {
+              const oldest = hints.keys().next().value;
+              if (oldest != null) hints.delete(oldest);
+            }
+            hints.set(payloadRequestId, hint);
+          }
+        } catch {
+          // swallow — diagnostics must not affect the bridge
+        }
+      }
       for (const handler of subscribers) handler(data.payload);
     },
-    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock]
+    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host, noteHostEvent]
   );
 
   useEffect(() => {
@@ -487,5 +595,10 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
     };
   }, []);
 
-  return { send, onMessage, nack, reportNoToken };
+  const recentFailures = useCallback(
+    () => recentErrorsAt(recentFailuresRef.current, Date.now()),
+    []
+  );
+
+  return { send, onMessage, nack, reportNoToken, recentFailures, noteHostEvent };
 }

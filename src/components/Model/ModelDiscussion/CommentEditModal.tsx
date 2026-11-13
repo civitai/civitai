@@ -1,16 +1,18 @@
-import { Button, Group, LoadingOverlay, Modal, Stack } from '@mantine/core';
+import { Button, Group, Modal, Stack } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
-import type * as z from 'zod';
+import * as z from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputRTE, useForm } from '~/libs/form';
-import { commentUpsertInput } from '~/server/schema/comment.schema';
+import { commentContentSchema } from '~/server/schema/commentv3.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export default function CommentEditModal({ commentId }: { commentId?: number }) {
+const schema = z.object({ content: commentContentSchema });
+
+export default function CommentEditModal() {
   const dialog = useDialogContext();
 
   const router = useRouter();
@@ -22,28 +24,21 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
   const [initialContent, setInitialContent] = useState(value);
 
   const queryUtils = trpc.useUtils();
-  const { data, isLoading, isFetching } = trpc.comment.getById.useQuery(
-    { id: commentId ?? 0 },
-    { enabled: !!commentId, placeholderData: undefined }
-  );
-
-  const loadingComment = (isLoading || isFetching) && !!commentId;
 
   const form = useForm({
-    schema: commentUpsertInput,
-    defaultValues: { modelId, content: initialContent ?? '' },
+    schema,
+    defaultValues: { content: initialContent ?? '' },
     shouldUnregister: false,
   });
 
   const { isDirty, isSubmitted } = form.formState;
   useCatchNavigation({ unsavedChanges: isDirty && !isSubmitted });
 
-  const saveCommentMutation = trpc.comment.upsert.useMutation({
+  const saveCommentMutation = trpc.commentv3.create.useMutation({
     async onSuccess() {
-      await queryUtils.comment.getAll.invalidate();
+      await queryUtils.commentv3.getSection.invalidate({ entityType: 'model', entityId: modelId });
       // Placements just spent uses, so the picker's counts are stale.
       await queryUtils.cosmetic.getStickerBalances.invalidate();
-      if (commentId) await queryUtils.comment.getById.invalidate({ id: commentId });
       handleClose();
     },
     onError: (error) => {
@@ -53,26 +48,21 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
       });
     },
   });
-  const handleSaveComment = (values: z.infer<typeof commentUpsertInput>) => {
-    values.content = values.content?.trim() ?? '';
-    if (values.content) saveCommentMutation.mutate(values);
+  const handleSaveComment = (values: z.infer<typeof schema>) => {
+    const content = values.content?.trim() ?? '';
+    if (content) saveCommentMutation.mutate({ entityType: 'model', entityId: modelId, content });
     else dialog.onClose();
   };
 
   const handleClose = () => {
-    form.reset({ modelId, content: undefined });
+    form.reset({ content: undefined });
     dialog.onClose();
   };
 
   useEffect(() => {
-    if (data && !loadingComment) form.reset(data);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, loadingComment]);
-
-  useEffect(() => {
     if (!initialContent && value) {
       setInitialContent(value);
-      form.reset({ modelId, content: value });
+      form.reset({ content: value });
       removeValue();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,11 +74,10 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
     <Modal
       opened={dialog.opened}
       onClose={!mutating ? dialog.onClose : () => ({})}
-      title={commentId ? 'Editing comment' : 'Add a comment'}
+      title="Add a comment"
       closeOnClickOutside={!mutating}
       closeOnEscape={!mutating}
     >
-      <LoadingOverlay visible={loadingComment} />
       <Form form={form} onSubmit={handleSaveComment}>
         <Stack gap="md">
           <InputRTE
@@ -105,7 +94,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
               Cancel
             </Button>
             <Button type="submit" loading={saveCommentMutation.isPending}>
-              {!!commentId ? 'Save' : 'Comment'}
+              Comment
             </Button>
           </Group>
         </Stack>

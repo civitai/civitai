@@ -1,12 +1,22 @@
+import { sql } from '@civitai/db/kysely';
+import { APPS_PLATFORM_FEEDBACK_AREA } from '@civitai/shared/feedback.constants';
+import { feedbackCaptureView, type FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity, recordModActivityBatch } from './mod-activity';
-import { FEEDBACK_PAGE_SIZE, type FeedbackStatus } from '$lib/feedback';
+// Relative, not `$lib`: imported by the main app's moderator-seam test.
 import {
-  isFeedbackSortState,
-  type FeedbackSort,
-  type FeedbackSortColumn,
-} from '$lib/feedback-sort';
+  FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT,
+  FEEDBACK_PAGE_SIZE,
+  splitContext,
+  type FeedbackStatus,
+} from '../feedback';
+import { isFeedbackSortState, type FeedbackSort, type FeedbackSortColumn } from '../feedback-sort';
 import { MAX_INT4 } from './users.service';
+import {
+  platformResolutionContext,
+  stampPlatformChange,
+  type PlatformResolutionWrite,
+} from './feedback-platform-resolution';
 import type { PermissionSet } from '$lib/permissions';
 
 /**
@@ -68,7 +78,21 @@ export type FeedbackRow = {
   bugId: number | null;
   bugTitle: string | null;
   bugStatus: string | null;
+  /** `context.server.reporters` on an `apps-platform` row; null on every other area, and when unreadable. */
+  reporters: number | null;
 };
+
+/**
+ * 🔴 GUARDED, NEVER A BARE `::int`. `context` is JSONB with no schema at rest, and a cast that throws
+ * on one row (a string, a fraction, a number past int4) fails the whole queue page. Anything that is
+ * not a plain run of digits reads as null.
+ */
+const REPORTERS = sql<number | null>`CASE
+  WHEN f."area" = ${APPS_PLATFORM_FEEDBACK_AREA}
+   AND jsonb_typeof(f."context"->'server'->'reporters') = 'number'
+   AND (f."context"->'server'->>'reporters') ~ '^[0-9]{1,9}$'
+  THEN (f."context"->'server'->>'reporters')::int
+END`;
 
 /**
  * Every sortable column, as the SQL reference it orders by and the `FeedbackRow` field that carries
@@ -205,28 +229,29 @@ const coerceSortValue = (
 };
 
 /**
+ * Which areas the queue shows: the one picked, or every area but `FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT`.
+ * The badges count through this too, so a badge and the view it links to cannot disagree.
+ */
+const inQueueArea = (area: string | null | undefined) =>
+  area
+    ? sql<boolean>`f."area" = ${area}`
+    : sql<boolean>`f."area" NOT IN (${sql.join([...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT])})`;
+
+/**
  * Every column a `FeedbackRow` carries, joined the way it is carried, in ONE place.
  *
  * 🔴 THE QUEUE AND THE SINGLE-REPORT PAGE RENDER THE SAME PANEL, so a column added for one is a
  * column the other must carry — open-coding the projection twice is how a panel ends up showing
  * `undefined` on exactly one of the two routes, with nothing failing.
  *
- * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write here
- * reloads the page, so under replica lag an operator can see their own triage come back unapplied,
- * and their next click then posts the STALE `expectedStatus` and is refused with "someone else
- * already triaged this" over their own write.
- *
- * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
- * convention every other queue in this app follows, and a triage queue read by a handful of people
- * is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup goes to
- * the primary instead, and that is not an inconsistency — there the stale answer is a flat "no issue
- * with that number" for an issue the operator is looking at, which reads as a defect rather than as
- * a conflict.
- *
- * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
+ * 🔴 THE PRIMARY, NOT THE REPLICA — DO NOT MOVE THIS BACK TO `dbRead`. Every write on the panel
+ * reloads the page and re-reads the row through here, so on the replica a save inside the lag window
+ * comes back looking unapplied — the panel renders the pre-save row — and the operator's next click
+ * posts the stale `expectedStatus` and is refused as someone else's triage over their own write.
+ * Pinned by `feedback-read-your-writes.pglite.test.ts`, whose replica is a separate database.
  */
 const feedbackRowQuery = () =>
-  dbRead
+  dbWrite
     .selectFrom('Feedback as f')
     .leftJoin('User as u', 'u.id', 'f.userId')
     .leftJoin('User as h', 'h.id', 'f.handledById')
@@ -247,6 +272,7 @@ const feedbackRowQuery = () =>
       'f.bugId',
       'b.title as bugTitle',
       'b.status as bugStatus',
+      REPORTERS.as('reporters'),
     ]);
 
 /**
@@ -282,6 +308,7 @@ export async function getFeedbackRow(id: number): Promise<FeedbackRow | null> {
 
 export async function getFeedbackList(input: {
   statuses: readonly FeedbackStatus[];
+  /** Absent means every area except `FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT`, not every area. */
   area?: string | null;
   cursor?: number | null;
   /**
@@ -370,7 +397,7 @@ export async function getFeedbackList(input: {
 
   // An empty selection is every status, said by the caller rather than implied here.
   if (input.statuses.length) query = query.where('f.status', 'in', [...input.statuses]);
-  if (input.area) query = query.where('f.area', '=', input.area);
+  query = query.where(inQueueArea(input.area));
 
   if (input.cursor) {
     if (!sort) {
@@ -435,17 +462,22 @@ export async function getFeedbackList(input: {
 }
 
 /**
- * The sidebar badge.
+ * A sidebar badge: `new` rows in what the queue shows for the same `area` — with no area, the default
+ * view, so it leaves out the same areas; with one, that area alone (the `apps-platform` badge).
  *
- * Cheap enough to sit in `sidebar-counts.service.ts`' single `Promise.all` without `bounded()`:
- * `Feedback_status_createdAt_idx` serves it as an index-only scan, the producer is rate-limited to
- * five submissions per user per hour, and the whole map is behind a 60-second cache.
+ * Cheap enough to sit in `sidebar-counts.service.ts`' single `Promise.all` without `bounded()`: the
+ * table is small, every producer is rate-limited, and the whole map is behind a 60-second cache. The plan depends on table size and vacuum state, so no plan shape
+ * is claimed here: at tens of rows the planner seq-scans; on PGlite at 5,000+ rows it chose a
+ * bitmap heap scan before VACUUM and an index-only scan on `Feedback_area_status_createdAt_idx`
+ * after `VACUUM ANALYZE`. The no-`bounded()` decision rests on the size and cache above, not on
+ * any particular plan.
  */
-export async function countNewFeedback(): Promise<number> {
+export async function countNewFeedback(area?: string): Promise<number> {
   const row = await dbRead
-    .selectFrom('Feedback')
+    .selectFrom('Feedback as f')
     .select((eb) => eb.fn.countAll<number>().as('count'))
-    .where('status', '=', 'new')
+    .where('f.status', '=', 'new')
+    .where(inQueueArea(area))
     .executeTakeFirst();
   return Number(row?.count ?? 0);
 }
@@ -493,7 +525,9 @@ export async function getSiblingFeedback(input: {
 export type TriageResult =
   | { ok: true; changed: true }
   | { ok: true; changed: false }
-  | { ok: false; reason: 'gone' };
+  /** A resolution-only save of exactly what is stored: nothing written, nothing logged. */
+  | { ok: true; changed: false; unchanged: true }
+  | { ok: false; reason: 'gone' | 'not-platform' | 'no-server-state' | 'resolution-changed' };
 
 /**
  * Set a row's status and triage note in one statement.
@@ -519,16 +553,35 @@ export async function triageFeedback(input: {
    * no failure to notice: the UPDATE succeeds, the status moves, and the note is gone.
    */
   note?: string | null;
+  /**
+   * `apps-platform` only, written in the same statement as the status change; `undefined` leaves
+   * `context` alone. With `status === expectedStatus` it saves the resolution only. 🔴 `handledAt`
+   * anchors the platform service's reopen count, so re-stamping it for a note would restart that count.
+   */
+  resolution?: PlatformResolutionWrite;
   moderatorId: number;
 }): Promise<TriageResult> {
   const handled = input.status !== 'new';
-  const result = await dbWrite
+  const resolutionOnly = input.resolution !== undefined && input.status === input.expectedStatus;
+  const now = new Date();
+  let update = dbWrite
     .updateTable('Feedback')
     .set({
-      status: input.status,
+      ...(resolutionOnly
+        ? {}
+        : {
+            status: input.status,
+            handledById: handled ? input.moderatorId : null,
+            handledAt: handled ? now : null,
+          }),
       ...(input.note === undefined ? {} : { triageNote: input.note }),
-      handledById: handled ? input.moderatorId : null,
-      handledAt: handled ? new Date() : null,
+      // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
+      context: stampPlatformChange(
+        now,
+        input.resolution === undefined
+          ? undefined
+          : platformResolutionContext(input.resolution, { moderatorId: input.moderatorId, at: now })
+      ),
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
       //
       // Clearing it on the way back to `new` was tried and reverted. It reads as symmetric with
@@ -545,8 +598,39 @@ export async function triageFeedback(input: {
       // causes it nor is a sensible back door to it. This PR does not add one.
     })
     .where('id', '=', input.id)
-    .where('status', '=', input.expectedStatus)
-    .executeTakeFirst();
+    .where('status', '=', input.expectedStatus);
+  /**
+   * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
+   * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a
+   * missing `server` is a silent no-op that would still report "saved", and a resolution someone else
+   * changed meanwhile would be silently replaced.
+   */
+  const resolution = input.resolution;
+  // A non-string `at` reads as none, as the panel reads it — else such a row could never be cleared.
+  const atMatches =
+    resolution &&
+    sql<boolean>`(CASE WHEN jsonb_typeof("context"->'server'->'resolution'->'at') = 'string' THEN "context"->'server'->'resolution'->>'at' END) IS NOT DISTINCT FROM ${resolution.expectedAt}`;
+  /**
+   * Re-saving what is stored would move `at` — the `updatedAt` agents poll — and log a triage that
+   * changed nothing, so a resolution-only save of the stored values writes nothing — unless it also
+   * carries a triage note, which must still land.
+   */
+  const sameAsStored =
+    resolutionOnly && resolution?.kind === 'set' && input.note === undefined
+      ? sql<boolean>`(("context"->'server'->'resolution'->'fixedIn') IS NOT DISTINCT FROM ${
+          resolution.fixedIn ? JSON.stringify(resolution.fixedIn) : null
+        }::jsonb AND ("context"->'server'->'resolution'->>'publicNote') IS NOT DISTINCT FROM ${
+          resolution.publicNote
+        })`
+      : null;
+  if (resolution && atMatches) {
+    update = update
+      .where('area', '=', APPS_PLATFORM_FEEDBACK_AREA)
+      .where(sql<string>`jsonb_typeof("context"->'server')`, '=', 'object')
+      .where(atMatches);
+    if (sameAsStored) update = update.where(sql<boolean>`NOT ${sameAsStored}`);
+  }
+  const result = await update.executeTakeFirst();
 
   if (Number(result.numUpdatedRows) > 0) {
     await recordModActivity({
@@ -558,11 +642,31 @@ export async function triageFeedback(input: {
     return { ok: true, changed: true };
   }
 
-  // Zero rows has two causes and they need different words on screen. One extra read, only on the
-  // path that already failed.
-  return (await feedbackExists(dbWrite, input.id))
-    ? { ok: true, changed: false }
-    : { ok: false, reason: 'gone' };
+  // Zero rows has several causes and they need different words on screen. One extra read, only on
+  // the path that already failed.
+  if (!resolution || !atMatches)
+    return (await feedbackExists(dbWrite, input.id))
+      ? { ok: true, changed: false }
+      : { ok: false, reason: 'gone' };
+
+  const row = await dbWrite
+    .selectFrom('Feedback')
+    .select([
+      'area',
+      'status',
+      sql<string | null>`jsonb_typeof("context"->'server')`.as('serverType'),
+      atMatches.as('atMatches'),
+      (sameAsStored ?? sql<boolean>`false`).as('sameAsStored'),
+    ])
+    .where('id', '=', input.id)
+    .executeTakeFirst();
+  if (!row) return { ok: false, reason: 'gone' };
+  if (row.area !== APPS_PLATFORM_FEEDBACK_AREA) return { ok: false, reason: 'not-platform' };
+  if (row.serverType !== 'object') return { ok: false, reason: 'no-server-state' };
+  if (row.status !== input.expectedStatus) return { ok: true, changed: false };
+  if (!row.atMatches) return { ok: false, reason: 'resolution-changed' };
+  if (row.sameAsStored) return { ok: true, changed: false, unchanged: true };
+  return { ok: false, reason: 'resolution-changed' };
 }
 
 /**
@@ -595,6 +699,7 @@ export async function bulkTriageFeedback(input: {
   moderatorId: number;
 }): Promise<{ changed: number[]; actionable: number }> {
   const handled = input.status !== 'new';
+  const now = new Date();
   const byExpected = new Map<FeedbackStatus, number[]>();
   for (const row of input.rows) {
     const ids = byExpected.get(row.expectedStatus);
@@ -648,7 +753,9 @@ export async function bulkTriageFeedback(input: {
           // something about ONE report, and writing one across a selection would overwrite whatever
           // each row already had. The single-row form is where a note belongs.
           handledById: handled ? input.moderatorId : null,
-          handledAt: handled ? new Date() : null,
+          handledAt: handled ? now : null,
+          // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
+          context: stampPlatformChange(now),
           // 🔴 `bugId` UNTOUCHED, for the reason `triageFeedback` records at length — the link says
           // THIS REPORT IS ABOUT THAT ISSUE, which a status change does not make false.
         })
@@ -728,7 +835,7 @@ export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
  * mirror image: only a LINKED row has any.
  */
 export async function feedbackPanelExtras(
-  row: Pick<FeedbackRow, 'id' | 'bugId'>,
+  row: Pick<FeedbackRow, 'id' | 'bugId' | 'context'>,
   /**
    * 🔴 `PermissionSet`, NOT A LOOSE STRING RECORD — this is the ONE site that gates the issue picker
    * on both routes, so a widened key type retires the invariant `apps/moderator/CLAUDE.md` states in
@@ -738,12 +845,45 @@ export async function feedbackPanelExtras(
    * which reads as an empty `Bug` table rather than a defect — on both routes at once.
    */
   grants: PermissionSet
-): Promise<{ siblings: FeedbackSibling[]; knownIssues: KnownIssueOption[] }> {
+): Promise<{
+  siblings: FeedbackSibling[];
+  knownIssues: KnownIssueOption[];
+  captureView: FeedbackCaptureView;
+}> {
   const siblings =
     row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];
   const knownIssues =
     row.bugId === null && grants['feedback.bug.promote'] ? await getKnownIssues() : [];
-  return { siblings, knownIssues };
+  const captureView = await getFeedbackCaptureView(row.context);
+  return { siblings, knownIssues, captureView };
+}
+
+/** How the panel shows the report's page capture, from its `Image` row (read on the primary). */
+export async function getFeedbackCaptureView(context: unknown): Promise<FeedbackCaptureView> {
+  const { screenshotId, screenshotImageId, screenshotCheck } = splitContext(context);
+  const image =
+    screenshotId && screenshotImageId != null
+      ? await dbWrite
+          .selectFrom('Image')
+          .select([
+            'userId',
+            'ingestion',
+            'nsfwLevel',
+            'needsReview',
+            'blockedFor',
+            'poi',
+            'minor',
+            'tosViolation',
+          ])
+          .where('id', '=', screenshotImageId)
+          .executeTakeFirst()
+      : undefined;
+  return feedbackCaptureView({
+    screenshotId,
+    screenshotImageId,
+    screenshotCheck,
+    image: image ?? null,
+  });
 }
 
 /**
@@ -753,8 +893,8 @@ export async function feedbackPanelExtras(
  * "someone else already triaged it" — the exact confusion the split exists to remove. Callers pass
  * the primary, or the open transaction.
  *
- * ⚠️ NOT COVERED BY A TEST. The PGlite tier binds `dbRead` and `dbWrite` to one client, so a change
- * passing the replica here is invisible to it. Verified by reading the call sites only.
+ * ⚠️ NOT COVERED BY A TEST. The PGlite suites that reach this bind `dbRead` and `dbWrite` to one
+ * client, so a change passing the replica here is invisible to them. Verified by reading the call sites only.
  */
 async function feedbackExists(
   db: Pick<typeof dbWrite, 'selectFrom'>,

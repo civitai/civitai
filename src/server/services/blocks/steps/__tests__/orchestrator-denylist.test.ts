@@ -3,8 +3,11 @@ import {
   PLATFORM_INTERNAL_STEP_TYPES,
   PlatformInternalStepTypeError,
   assertStepTypeAllowed,
+  foldStepTypeCase,
   isPlatformInternalStepType,
+  isTrainingStepTypeIgnoringCase,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
+import { isTrainingStepType } from '~/server/services/blocks/steps/output';
 import { assertStepInvariants, listRegisteredSteps } from '~/server/services/blocks/steps';
 
 /**
@@ -35,6 +38,11 @@ describe('orchestrator denylist — the predicate', () => {
     expect(() => assertStepTypeAllowed('xGuardModeration')).toThrow(PlatformInternalStepTypeError);
   });
 
+  it('refuses the prompt moderation classifier, in any casing', () => {
+    expect(() => assertStepTypeAllowed('promptModeration')).toThrow(PlatformInternalStepTypeError);
+    expect(() => assertStepTypeAllowed('PromptModeration')).toThrow(PlatformInternalStepTypeError);
+  });
+
   it('prefixes the caller-supplied context when given one', () => {
     expect(() => assertStepTypeAllowed('modelHash', "block step 'x'")).toThrow(
       /block step 'x': orchestrator step type 'modelHash' is platform-internal/
@@ -55,6 +63,29 @@ describe('orchestrator denylist — the predicate', () => {
     expect(() => assertStepTypeAllowed('chatCompletion')).not.toThrow();
     expect(isPlatformInternalStepType('training')).toBe(false);
     expect(isPlatformInternalStepType('chatCompletion')).toBe(false);
+  });
+
+  // A raw comfy graph, under either `$type`, is denied on the app-reachable arms; the
+  // platform's own steps of both types are built without passing through this guard.
+  it('refuses a raw comfy or customComfy step, in any casing', () => {
+    for (const t of ['comfy', 'Comfy', 'COMFY', 'customComfy', 'CustomComfy', 'CUSTOMCOMFY']) {
+      expect(isPlatformInternalStepType(t)).toBe(true);
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
+  });
+
+  it('refuses a $type that is not ASCII letters and digits', () => {
+    for (const t of [
+      'cu\u017ftomComfy',
+      'custom Comfy',
+      'customComfy\u200b',
+      '\uff43omfy',
+      'x_guard_moderation',
+      'xGuard-Moderation',
+      'a.b',
+    ]) {
+      expect(() => assertStepTypeAllowed(t)).toThrow(PlatformInternalStepTypeError);
+    }
   });
 
   it('allows an ordinary generation type', () => {
@@ -103,13 +134,16 @@ describe('orchestrator denylist — the predicate', () => {
    */
   it('denies exactly this set — every entry pinned', () => {
     expect([...PLATFORM_INTERNAL_STEP_TYPES].sort()).toEqual([
+      'comfy',
       'comfyNodepackSnapshot',
+      'customComfy',
       'imageScanning',
       'mediaHash',
       'modelClamScan',
       'modelHash',
       'modelParseMetadata',
       'modelPickleScan',
+      'promptModeration',
       'qwenImageBench',
       'shieldstralModeration',
       'textToImage',
@@ -248,5 +282,26 @@ describe('orchestrator denylist — case normalization', () => {
       expect((e as PlatformInternalStepTypeError).stepType).toBe('XGuardModeration');
       expect((e as Error).message).toContain('XGuardModeration');
     }
+  });
+});
+
+describe('isTrainingStepTypeIgnoringCase', () => {
+  it.each(['training', 'Training', 'TRAINING', 'imageResourceTraining', 'IMAGERESOURCETRAINING'])(
+    'matches %s',
+    (t) => {
+      expect(isTrainingStepTypeIgnoringCase(t)).toBe(true);
+    }
+  );
+
+  it.each(['trainingPreview', 'train', 'polyGen', '', ' training'])('does not match %j', (t) => {
+    expect(isTrainingStepTypeIgnoringCase(t)).toBe(false);
+  });
+
+  it('uses the SAME fold as the denylist, and the exact predicate is unchanged', () => {
+    expect(foldStepTypeCase('XGuardModeration')).toBe('xguardmoderation');
+    expect(isPlatformInternalStepType('XGUARDMODERATION')).toBe(true);
+    // `isTrainingStepType` stays exact: it reads a `$type` the orchestrator returned.
+    expect(isTrainingStepType('training')).toBe(true);
+    expect(isTrainingStepType('Training')).toBe(false);
   });
 });

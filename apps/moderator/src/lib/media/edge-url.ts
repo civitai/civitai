@@ -129,10 +129,13 @@ export function getVideoUrls(
   thumbnailUrl?: string | null
 ): { mp4: string; webm: string; poster: string } {
   const mp4 = getEdgeUrl(src, { ...options, type: 'video', anim: true, transcode: true });
+  // Without `transcode` the CDN answers a video's still-frame request with the whole video, which no
+  // poster can show. Mirrors the main app's EdgeVideo cover URL.
   const poster = getEdgeUrl(thumbnailUrl ?? src, {
     ...options,
     type: 'image',
     anim: false,
+    transcode: thumbnailUrl ? undefined : true,
     original: false,
   });
   return { mp4, webm: mp4.replace('.mp4', '.webm'), poster };

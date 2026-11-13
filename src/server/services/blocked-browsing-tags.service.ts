@@ -6,6 +6,7 @@ import type { ResolvedBrowsingSettingsAddons } from '~/shared/constants/browsing
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
+import { isViewerUsername } from '~/utils/is-viewer';
 
 type AddonTarget = {
   excludedTagIds?: number[];
@@ -46,11 +47,7 @@ function applyAddonExclusions(
 
   const isOwnScoped =
     !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    !!(
-      viewer.username &&
-      input.username &&
-      input.username.toLowerCase() === viewer.username.toLowerCase()
-    );
+    isViewerUsername(viewer, input.username);
   if (!isOwnScoped && resolved.excludedTagIds.length) {
     input.excludedTagIds = [
       ...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds]),
@@ -126,4 +123,53 @@ export async function enforceBlockedBrowsingTagsForModels(
 
   applyAddonExclusions(input, resolved, viewer, opts);
   return { emptyResult: false };
+}
+
+type ShowcaseImage = {
+  userId?: number;
+  poi?: boolean | null;
+  minor?: boolean | null;
+  tags?: number[] | null;
+};
+
+/**
+ * The browsing-settings exclusions (tags, poi, minor) for a showcase at `browsingLevel`. Resolved onto
+ * a target of its own, which names no owner, so none of the tag exclusions are skipped.
+ */
+export async function resolveShowcaseExclusions({
+  browsingLevel,
+  viewer = {},
+}: {
+  browsingLevel?: number;
+  viewer?: Viewer;
+}) {
+  const rules: AddonTarget = { browsingLevel };
+  await enforceBlockedBrowsingTagsForModels(rules, viewer);
+  return {
+    excludedTagIds: rules.excludedTagIds ?? [],
+    disablePoi: !!rules.disablePoi,
+    disableMinor: !!rules.disableMinor,
+  };
+}
+
+/**
+ * `resolveShowcaseExclusions` as a filter over showcase images. The viewer's own images pass; an
+ * image with no tag ids read is hidden while any tag is excluded.
+ */
+export async function getShowcaseImageFilter({
+  browsingLevel,
+  viewer = {},
+  excludedTagIds,
+}: {
+  browsingLevel?: number;
+  viewer?: Viewer;
+  excludedTagIds?: number[];
+}) {
+  const rules = await resolveShowcaseExclusions({ browsingLevel, viewer });
+  const excluded = new Set([...rules.excludedTagIds, ...(excludedTagIds ?? [])]);
+  return (image: ShowcaseImage) =>
+    (!!viewer.id && image.userId === viewer.id) ||
+    (!(rules.disablePoi && image.poi) &&
+      !(rules.disableMinor && image.minor) &&
+      (!excluded.size || (image.tags != null && !image.tags.some((tagId) => excluded.has(tagId)))));
 }

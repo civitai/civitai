@@ -7,12 +7,23 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
-    model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    model: {
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(async () => ({ status: 'Published', availability: 'Public', meta: {} })),
+    },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
+const { onStorySparkPostsRestored } = vi.hoisted(() => ({ onStorySparkPostsRestored: vi.fn() }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkPostsRestored,
+}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
@@ -32,7 +43,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -115,6 +125,8 @@ beforeEach(() => {
   mockTx.modelVersion.findFirst.mockResolvedValue({ publishedAt: ORIGINAL_PUBLISHED_AT });
   dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockTx.$executeRaw.mockResolvedValue(0);
+  // unpublishModelById's locked read of the model row.
+  mockTx.$queryRaw.mockResolvedValue([{ status: 'Published', meta: {} }]);
   dbMock.dbWrite.post.findMany.mockResolvedValue([]);
   dbMock.dbWrite.image.findMany.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
@@ -189,5 +201,25 @@ describe('Model.lastVersionAt across a whole-model publish lifecycle', () => {
         }),
       })
     );
+  });
+});
+
+describe('publishModelById and story sparks', () => {
+  it("gives back the spark of each of the owner's posts on the versions it publishes", async () => {
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([
+      {
+        id: VERSION_ID,
+        baseModel: 'Illustrious',
+        publishedAt: null,
+        meta: {},
+        model: { type: 'LORA', userId: OWNER_ID },
+      },
+    ]);
+    dbMock.dbWrite.post.findMany.mockResolvedValue([
+      { id: 5, modelVersionId: VERSION_ID },
+      { id: 6, modelVersionId: 999 }, // another version: not republished here
+    ]);
+    await publishModelById({ id: MODEL_ID, versionIds: [VERSION_ID], republishing: true });
+    expect(onStorySparkPostsRestored).toHaveBeenCalledExactlyOnceWith({ postIds: [5] });
   });
 });

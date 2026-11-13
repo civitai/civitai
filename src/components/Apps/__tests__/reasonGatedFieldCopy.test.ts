@@ -10,8 +10,8 @@ import {
  *
  * 🔴 WHY THIS FILE IS IN THE BLOCKING `unit` PROJECT. These two strings used to be built
  * inline in `ReasonGatedField`'s JSX, where the only thing asserting them was
- * `MessageAppOwnerModal.browser.test.tsx` — the browser tier, which is REPORT-ONLY in
- * this repo's CI. Measured: deleting the ` (max N)` suffix from the counter left every
+ * `MessageAppOwnerModal.browser.test.tsx` — the browser tier, which was REPORT-ONLY in
+ * this repo's CI then. Measured: deleting the ` (max N)` suffix from the counter left every
  * blocking suite green, so the ceiling — the entire reason the `maxLength` prop was
  * added — was pinned by nothing that can stop a merge.
  *
@@ -36,14 +36,17 @@ describe('reasonGatedFieldDescription — the live counter', () => {
     ).toBeUndefined();
   });
 
-  /** The five legacy call sites. Their copy must not move. */
-  it('with NO ceiling it is exactly the floor counter', () => {
+  /**
+   * With NO ceiling it names the floor, and a ✓ once it is met. 🔴 THE REGRESSION: the old
+   * counter read "33/20 characters minimum" — a fraction past 100% — for a met floor.
+   */
+  it('with NO ceiling it is the floor requirement, ticked once met', () => {
     expect(reasonGatedFieldDescription({ length: 0, minLength: MIN, required: true })).toBe(
-      '0/20 characters minimum'
+      '20+ characters'
     );
     expect(
       reasonGatedFieldDescription({ length: 33, minLength: MIN, maxLength: null, required: true })
-    ).toBe('33/20 characters minimum');
+    ).toBe('✓ 20+ characters');
     expect(
       reasonGatedFieldDescription({
         length: 19,
@@ -51,7 +54,11 @@ describe('reasonGatedFieldDescription — the live counter', () => {
         maxLength: undefined,
         required: true,
       })
-    ).toBe('19/20 characters minimum');
+    ).toBe('20+ characters');
+    // The boundary: exactly the floor is met.
+    expect(reasonGatedFieldDescription({ length: 20, minLength: MIN, required: true })).toBe(
+      '✓ 20+ characters'
+    );
   });
 
   /**
@@ -61,10 +68,10 @@ describe('reasonGatedFieldDescription — the live counter', () => {
   it('with a ceiling it names the ceiling, appended to the same floor counter', () => {
     expect(
       reasonGatedFieldDescription({ length: 0, minLength: MIN, maxLength: MAX, required: true })
-    ).toBe('0/20 characters minimum (max 2000)');
+    ).toBe('20+ characters · 0/2000 max');
     expect(
       reasonGatedFieldDescription({ length: 2000, minLength: MIN, maxLength: MAX, required: true })
-    ).toBe('2000/20 characters minimum (max 2000)');
+    ).toBe('✓ 20+ characters · 2000/2000 max');
   });
 
   /**
@@ -75,7 +82,7 @@ describe('reasonGatedFieldDescription — the live counter', () => {
   it('the floor and the ceiling are distinct inputs', () => {
     expect(
       reasonGatedFieldDescription({ length: 1, minLength: 7, maxLength: 33, required: true })
-    ).toBe('1/7 characters minimum (max 33)');
+    ).toBe('7+ characters · 1/33 max');
   });
 });
 

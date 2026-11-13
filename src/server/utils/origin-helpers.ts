@@ -30,3 +30,8 @@ export function isAllowedOriginRequest(req: {
   const sourceHost = hostFromUrl(req.headers.origin) ?? hostFromUrl(req.headers.referer);
   return !!sourceHost && allowedOriginHosts.has(sourceHost);
 }
+
+// A cross-origin fetch can send a JSON body only after a CORS preflight; a plain HTML form cannot send one.
+export function isJsonRequest(req: { headers: { 'content-type'?: string } }): boolean {
+  return /^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '');
+}

@@ -1,4 +1,13 @@
-import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
+import {
+  Button,
+  CloseButton,
+  Group,
+  Portal,
+  Select,
+  Text,
+  TextInput,
+  ThemeIcon,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconInfoCircle,
@@ -7,13 +16,17 @@ import {
   IconSticker,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PAGE_MODAL_Z_INDEX } from '~/components/Dialog/Templates/PageModal';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
+import { SHELF_TILE_STYLE } from '~/components/Sticker/shelf-tile-style';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import {
   useFreePlacementStanding,
@@ -23,6 +36,7 @@ import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constan
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { PlaceAllButton } from '~/components/Sticker/PlaceAllButton';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
 
@@ -80,12 +94,12 @@ export function StickerPlacementTray({
   const [search, setSearch] = useState('');
   const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
   const [sortBy, setSortBy] = useState<StickerTraySort>('used');
-  const trayRef = useRef<HTMLDivElement>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -96,23 +110,21 @@ export function StickerPlacementTray({
   // image nobody is looking at.
   const showing = targetImageId === imageId && trayOpen;
 
-  // Registered after the early return below has been passed, so the element in
-  // the store is always one that is actually on screen. `showing` rather than
-  // the target alone: a panel that has been put away is not an obstacle the buy
-  // button should still be avoiding.
+  // A callback ref, not an effect reading a ref: the Portal mounts its children after
+  // the first commit, so an effect would register null. It runs only while the tray
+  // is on screen, so the element in the store is always one that is actually there —
+  // a panel that has been put away is not an obstacle the buy button should avoid.
+  const registerTray = useCallback((node: HTMLDivElement | null) => setTray(node), [setTray]);
+
   useEffect(() => {
-    if (!showing) {
-      // The panel is state, not markup: without this it survives the tray being
-      // put away and is still open on the next image opened. The typed filter is
-      // worse — it comes back showing 2 of 83 with nothing on screen saying why.
-      setShopping(false);
-      setSearch('');
-      setMineOnlyRequested(false);
-      return;
-    }
-    setTray(trayRef.current);
-    return () => setTray(null);
-  }, [showing, setTray]);
+    if (showing) return;
+    // The panel is state, not markup: without this it survives the tray being
+    // put away and is still open on the next image opened. The typed filter is
+    // worse — it comes back showing 2 of 83 with nothing on screen saying why.
+    setShopping(false);
+    setSearch('');
+    setMineOnlyRequested(false);
+  }, [showing]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
   // Same query key as the layer's, so this shares its cache rather than making a
@@ -164,7 +176,7 @@ export function StickerPlacementTray({
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
-  const { grab, dragging } = useStickerDragOut(maxScale);
+  const { grab, dragging, shelfRef } = useStickerDragOut(maxScale);
 
   /**
    * What the tray actually draws: the collection filtered by what was typed, in
@@ -242,9 +254,9 @@ export function StickerPlacementTray({
   // Before that it is an instruction about nothing.
   const instruction = drafts.length
     ? 'Drag out as many as you like, then pay to place the ones you want.'
-    : 'Drag a sticker onto the image.';
+    : 'Tap or drag a sticker onto the image.';
 
-  return (
+  const tray = (
     // Measured as the obstacle the buy button avoids, and deliberately measured
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
@@ -253,8 +265,16 @@ export function StickerPlacementTray({
     // so growing the measured obstacle is the correct half of the change, not a
     // side effect of it.
     <div
-      ref={trayRef}
-      className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      ref={registerTray}
+      {...{ [STICKER_EDITOR_ATTR]: '' }}
+      className="fixed inset-x-0 bottom-0 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      style={{
+        // Portaled to <body>, so it has to clear the image modal itself.
+        zIndex: PAGE_MODAL_Z_INDEX + 1,
+        // Hidden, not unmounted: the buy button keeps measuring this box, so its
+        // side does not flip while the controls are hidden.
+        ...(previewing ? { visibility: 'hidden' } : null),
+      }}
     >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
@@ -310,6 +330,7 @@ export function StickerPlacementTray({
                   </div>
                 ))}
               </div>
+              <PlaceAllButton price={space?.price ?? null} className="mt-1.5" />
             </div>
             {!isLoading && (worthNarrowing || !!madeByYou.size) && (
               <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
@@ -400,6 +421,7 @@ export function StickerPlacementTray({
                 )}
               </div>
             )}
+            <StickerPreviewToggle imageId={imageId} className="order-2 shrink-0 sm:order-3" />
             <CloseButton
               className="order-2 sm:order-3"
               onClick={closeTray}
@@ -413,6 +435,7 @@ export function StickerPlacementTray({
               came out wider than the visible panel, putting the track's end and the last
               sticker outside the clip. */}
           <div
+            ref={shelfRef}
             className="overflow-y-auto"
             style={{ maxHeight: trayRowsHeight(2), scrollbarWidth: 'thin' }}
           >
@@ -463,7 +486,7 @@ export function StickerPlacementTray({
                     // draft is what left a sticker asking to be bought for a use
                     // another draft had just handed back.
                     onPointerDown={grab(option.id)}
-                    style={{ touchAction: 'none', height: STICKER_TILE_HEIGHT }}
+                    style={{ ...SHELF_TILE_STYLE, height: STICKER_TILE_HEIGHT }}
                     className={clsx(
                       'flex shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||
@@ -495,4 +518,10 @@ export function StickerPlacementTray({
       </div>
     </div>
   );
+
+  // On a phone the bar sits in the image page's bottom sheet, which is slid down
+  // with a transform while collapsed. A transform makes an element the containing
+  // block for `position: fixed`, so rendered in place the tray pinned to the
+  // bottom of the sheet, below the screen.
+  return <Portal>{tray}</Portal>;
 }

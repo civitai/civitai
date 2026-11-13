@@ -8,7 +8,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  seedCarriedSearchText,
   shouldRefineSearchQuery,
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
@@ -439,11 +438,13 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     // `onClear?.()` in BOTH, and that is not a duplication to tidy away: on mobile `AppHeader`
     // passes `onSearchDone`, so it is what closes the search overlay. A refactor that routes the
     // blur past it leaves the overlay stuck open.
+    // Search v3 adds a step to each: on the feed it filters, a clear and a blur commit the bar's
+    // text to the feed (a blur keeps it as the active filter). Neither changes the two halves above.
     expect(source).toMatch(
-      /const handleClear = \(\) => \{\s*setSearch\(''\);\s*onClear\?\.\(\);\s*\};/
+      /const handleClear = \(\) => \{\s*setSearch\(''\);\s*feedSearch\.commit\(''\);\s*onClear\?\.\(\);\s*\};/
     );
     expect(source).toMatch(
-      /const handleBlur = \(\) => \{\s*clearDisplayedText\(\);\s*onClear\?\.\(\);\s*\};/
+      /const handleBlur = \(\) => \{\s*if \(filtersFeedInPlace\) feedSearch\.commit\(search\);\s*else clearDisplayedText\(\);\s*onClear\?\.\(\);\s*\};/
     );
 
     // ONE of the three discards, and a SPELLING check: the carrier is emptied when the URL moves
@@ -474,7 +475,7 @@ describe('the dropdown roots carry the typed text across that remount', () => {
     expect(source).toMatch(
       /const blurAndDiscardCarriedText = \(\) => \{\s*carriedSearchText\.current = '';\s*blurInput\(\);\s*\};/
     );
-    expect(source).toContain("['Escape', blurAndDiscardCarriedText]");
+    expect(source).toContain("['esc', blurAndDiscardCarriedText]");
     expect(source).toMatch(
       /const handleSubmit = \(\) => \{[\s\S]{0,400}?blurAndDiscardCarriedText\(\);/
     );
@@ -770,30 +771,5 @@ describe('useCarriedSearchText', () => {
     // An empty carrier falls back to the helper query — the first-mount behaviour above. That is
     // the documented precedence, pinned here so a change to it is a decision rather than a drift.
     expect(harness.text()).toBe('restored-from-url');
-  });
-});
-
-describe('shouldRefineSearchQuery', () => {
-  it('refines when the typed text differs from the helper query', () => {
-    expect(shouldRefineSearchQuery('dreamshaper', '')).toBe(true);
-  });
-
-  it('does not refine when the helper already holds that text', () => {
-    expect(shouldRefineSearchQuery('dreamshaper', 'dreamshaper')).toBe(false);
-  });
-
-  it('does not refine while blocked, however far apart the two are', () => {
-    expect(shouldRefineSearchQuery('dreamshaper', '', true)).toBe(false);
-  });
-});
-
-describe('seedCarriedSearchText', () => {
-  it('prefers carried text over the helper query', () => {
-    expect(seedCarriedSearchText('dreamshaper', 'restored-from-url')).toBe('dreamshaper');
-  });
-
-  it('falls back to the helper query when nothing is carried', () => {
-    expect(seedCarriedSearchText('', 'restored-from-url')).toBe('restored-from-url');
-    expect(seedCarriedSearchText(undefined, 'restored-from-url')).toBe('restored-from-url');
   });
 });

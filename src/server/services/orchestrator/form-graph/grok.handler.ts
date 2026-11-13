@@ -16,7 +16,7 @@ import type {
   GrokV2EditImageGenInput,
   ImageGenStepTemplate,
   VideoGenStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import {
@@ -24,7 +24,7 @@ import {
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 import { isGrokV15, isGrokV2 } from '~/shared/form-graph/generation/grok-shared';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const grokVideoAspectRatioList: GenerationAspectRatio[] = [

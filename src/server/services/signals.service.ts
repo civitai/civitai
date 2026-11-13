@@ -9,12 +9,10 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 // Degraded result returned when the signals service is transiently
 // unavailable. `accessToken` is absent → useSignalsWorker reads
 // `data?.accessToken` as undefined and never opens the SignalR connection, so
-// the request succeeds with no 500. NOTE: this does NOT self-heal — because no
-// connection is opened, the worker never emits a `connection:state === 'closed'`
-// event, so the query (staleTime: Infinity) is never re-invalidated. A tab that
-// loads during the outage gets no live updates until it remounts/reloads. That's
-// the accepted M2 tradeoff (graceful degrade > 500); closing it would need a
-// `refetchInterval` while the token is absent.
+// the request succeeds with no 500. The tab recovers on its own: while the
+// connection stays closed, useSignalsWorker re-fetches the token on a jittered
+// backoff (5-30s, doubling to a 10 min ceiling), so a tab that loads during the
+// outage picks up live updates once the service is back, without a reload.
 const SIGNALS_UNAVAILABLE: GetSignalsAccessTokenResponse = {};
 
 /**
@@ -61,9 +59,11 @@ export async function getAccessToken({ id }: GetByIdInput) {
   // a 400 (a real bad-request / client error, not a transient outage).
   let response: Response;
   try {
-    response = await withSignals(() =>
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${id}/accessToken`)
-    );
+    // Own lane: a reconnect storm of token mints must not crowd out signal
+    // pushes on the shared 'default' lane (the circuit breaker stays shared).
+    response = await withSignals(() => fetch(`${env.SIGNALS_ENDPOINT}/users/${id}/accessToken`), {
+      lane: 'token',
+    });
   } catch (err) {
     logSignalsFailSoft(
       err instanceof SignalsCallTimeoutError ? `circuit-${err.reason}` : 'fetch-failed',

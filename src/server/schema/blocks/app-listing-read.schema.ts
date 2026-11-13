@@ -2,6 +2,12 @@ import * as z from 'zod';
 
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
+import type { RestrictedListingAudience } from '~/shared/utils/app-listing-visibility';
+import { HIDDEN_APP_SLUG_MAX } from '~/shared/utils/my-apps-hidden';
+import {
+  LISTING_FORKS_PAGE_DEFAULT,
+  LISTING_FORKS_PAGE_MAX,
+} from '~/shared/constants/app-fork.constants';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH schemas + public DTOs.
@@ -38,13 +44,25 @@ export type ListingKindFilter = z.infer<typeof listingKindFilterSchema>;
  *     (up / (up+down)) DESC; a few-review 100%-recommend app can't outrank a
  *     many-review 90% app, and 0-review apps sit mid-pack at the global mean
  *     recommend rate (mirrors the AppBlock `rating` sort, on a proportion
- *     instead of a 1..5 average). Ties fall back to install_count then id.
- *   - `popular`  — install_count DESC (from the AppListingMetric rollup).
+ *     instead of a 1..5 average). Ties fall back to the `popular` key (plays, or
+ *     installs for an off-site app), then install_count, then id — most apps have
+ *     no reviews yet, so this tie-break is what orders most of the store.
+ *   - `popular`  — plays (open_count) DESC, then install_count DESC, then id (from
+ *     the AppListingMetric rollup). Plays, because that is the count the store card
+ *     shows. An off-site listing has no play count, so it ranks by installs in the
+ *     plays position (see `listingPopularSortKey`).
  *   - `newest`   — created_at DESC.
  *   - `name`     — name ASC (case-insensitive).
  */
 export const listingSortSchema = z.enum(['top-rated', 'popular', 'newest', 'name']);
 export type ListingSort = z.infer<typeof listingSortSchema>;
+
+/**
+ * Upper bound on the opaque keyset cursor. Sized for the `name` sort key (64 characters,
+ * up to 4 UTF-8 bytes each) plus id and pinned mean, base64url-encoded; lowering it stops
+ * pagination on pages ending in a long non-ASCII title.
+ */
+export const LISTING_CURSOR_MAX = 512;
 
 export const listAppListingsSchema = z.object({
   kind: listingKindFilterSchema.default('all'),
@@ -53,10 +71,32 @@ export const listAppListingsSchema = z.object({
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
   sort: listingSortSchema.default('top-rated'),
   // Opaque keyset cursor (base64url) — see app-listing.service encode/decode.
-  cursor: z.string().max(128).optional(),
+  cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
   limit: z.number().int().min(1).max(50).default(20),
+  /**
+   * Opt in to sub-listing cards (`SubListingCard`) in `items`; also needs the
+   * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
+   */
+  includeSubListings: z.boolean().optional(),
+  /**
+   * Only this developer's listings: the listing page's "More by this developer" rail and the
+   * profile Apps tab. It narrows the store predicate (`storeEligibilityWhere`), so a listing
+   * is returned exactly when this viewer could find it in the store anyway.
+   */
+  userId: z.number().int().positive().optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
+
+/** `appListings.getDeveloperTrackRecord` — whose record. */
+export const getDeveloperTrackRecordSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
+/**
+ * A developer's store track record: how many of their listings this viewer could find in the
+ * store, and the counted reviews (recommend + not recommend) on those listings.
+ */
+export type DeveloperTrackRecord = { appCount: number; reviewCount: number };
 
 /**
  * REST-query variant of {@link listAppListingsSchema} for the public
@@ -73,7 +113,7 @@ export function getAppListingsListQuery() {
     kind: listingKindFilterSchema.default('all'),
     category: z.enum(MARKETPLACE_CATEGORIES).optional(),
     sort: listingSortSchema.default('top-rated'),
-    cursor: z.string().max(128).optional(),
+    cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
     limit: z
       .preprocess(
         (v) => (v === undefined || v === null || v === '' ? undefined : Number(v)),
@@ -117,6 +157,16 @@ export const getAppListingDetailSchema = z
   });
 export type GetAppListingDetailInput = z.infer<typeof getAppListingDetailSchema>;
 
+/**
+ * `appListings.hideMyApp` / `unhideMyApp` — "Remove from My apps" (and its Undo) by listing
+ * SLUG, the one handle every home tile has. Same bound as the detail lookup's slug. Trimmed so
+ * a padded slug cannot store a second key for the same app.
+ */
+export const myAppsHideInputSchema = z.object({
+  slug: z.string().trim().min(1).max(HIDDEN_APP_SLUG_MAX),
+});
+export type MyAppsHideInput = z.infer<typeof myAppsHideInputSchema>;
+
 // ---------------------------------------------------------------------------
 // Public DTOs (allowlist projections).
 // ---------------------------------------------------------------------------
@@ -135,13 +185,15 @@ export type ListingCreatorChip = {
 
 /**
  * Recommend rollup, read from the `AppListingMetric` rollup (P5-populated).
- * `recommendPct` is `null` when there are no reviews yet (metric row absent OR
- * zero counts) so the UI can render "no reviews yet" instead of "0%".
+ * `recommendPct` is `null` when there are too few reviews for a percentage to mean
+ * anything: none at all (metric row absent OR zero counts), or fewer than the minimum
+ * `recommendRollup` applies. The counts are always present, so the UI branches on them:
+ * zero reviews → "No reviews yet", reviews but no pct → the counts, else the pct.
  */
 export type ListingRecommendRollup = {
   recommendedCount: number;
   notRecommendedCount: number;
-  /** up / (up+down) in [0,1], or null when there are no reviews yet. */
+  /** up / (up+down) in [0,1], or null below the minimum review count (incl. zero). */
   recommendPct: number | null;
 };
 
@@ -207,6 +259,18 @@ export type ListingCard = {
    */
   isBeta: boolean;
   /**
+   * MODERATOR-SET "Official" flag: the app is made by the Civitai team. Renders a badge.
+   * A provenance claim no author input can set (`app-listing-official.service.ts`).
+   *
+   * Every server projection emits it (`false` also while the manual-apply migration is
+   * outstanding). Optional in the TYPE only so hand-built fixtures and the client-side review
+   * preview need not name it; absent reads as not official.
+   *
+   * Not served by the public REST `GET /api/v1/apps` — its handler strips it, because adding a
+   * field changes a hand-documented contract (`withoutUndocumentedRestFields`).
+   */
+  isOfficial?: boolean;
+  /**
    * Play count from the `AppListingMetric` rollup (`open_count`) — how many times
    * the app was OPENED — or `null` when the number is structurally unmeasurable.
    *
@@ -217,12 +281,9 @@ export type ListingCard = {
    * so neither identifies a user, neither reveals WHO opened or installed the app or
    * WHEN, and neither gates anything. Two real deltas, both in the exposing direction:
    *
-   *   1. A NEW PUBLIC FACT, not added precision. `installCount` is already publicly
-   *      OBSERVABLE: the store's `popular` sort is `install_count DESC`, so the full
-   *      ordering of every approved listing by it is derivable from the public list
-   *      endpoint already, and surfacing the number only sharpens it. NO sort exposes
-   *      `open_count` (`listingSortSchema` = top-rated | popular | newest | name), so
-   *      this number is a genuinely new fact about the catalog.
+   *   1. The raw count is a new public fact; only the relative ordering was already
+   *      public, through the `popular` sort (`open_count` first, see
+   *      `listAppListingsSchema`).
    *   2. BULK-ENUMERABLE BY AN ANONYMOUS CALLER, because this is a CARD field while
    *      `installCount` is DETAIL-only. The card DTO is the body of `GET /api/v1/apps`
    *      — a public, anon-capable REST list returning up to 50 cards per page — so an
@@ -271,8 +332,91 @@ export type ListingCard = {
    * than needing a backfill.
    */
   openCount: number | null;
+  /**
+   * Last time the listing row changed (`app_listings.updated_at`), ISO-8601 — the card's
+   * "Updated 3 days ago" line. The same public value `ListingDetail.updatedAt` already
+   * carries for every approved listing, so this adds no fact.
+   *
+   * OPTIONAL because not every card producer has a listing row: the moderator preview
+   * card is built from a publish request, which has no `updated_at`, and leaves it out
+   * rather than stand in another date. The card renders no date when it is absent.
+   */
+  updatedAt?: string;
+  /**
+   * The listing's RESTRICTED audience as THIS VIEWER may know it, for the store badge
+   * ("Testers only" / "Moderators only" / "Unlisted") — or `null`, which renders nothing.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — A DERIVED, VIEWER-SCOPED VALUE, NOT THE `visibility`
+   * COLUMN. The raw level is an owner-only setting (see `ListingVisibilityMenuModal`), so it
+   * is never projected. This is set only for the owner, a moderator, or a viewer whose cohort
+   * the level already admits — `restrictedAudienceForViewer` is the one rule. `null` covers
+   * unset, `public`, the manual-apply column being absent, and "this viewer is not told".
+   *
+   * Not served by the public REST `GET /api/v1/apps` — its handler strips it (the field is
+   * always `null` there, and adding it would change a documented contract for nothing).
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   kindData: ListingCardKindData;
 };
+
+/**
+ * One store card for a SUB-LISTING: an item a parent app placed in the store. Public-field
+ * allowlist like `ListingCard`. `kind` and `category` are the parent's, so the grid's filters
+ * and client-side search treat it like any other card; `contentRating` is the stricter of
+ * parent and item. `runHref` is built server-side: under the parent's run route, or, for an
+ * off-site parent (`external`), from the parent's moderator-set link template. There is no
+ * author-supplied URL.
+ *
+ * Only the tRPC store grid returns these (behind the `app-store-sub-listings` flag). The
+ * public REST catalog never does.
+ */
+export type SubListingCard = {
+  cardType: 'sub-listing';
+  id: string;
+  name: string;
+  tagline: string | null;
+  kind: ListingKind;
+  category: string | null;
+  contentRating: string | null;
+  /** The item image when it is cleared for this viewer, else the parent's cover. */
+  coverUrl: string | null;
+  /** The item's author. */
+  creator: ListingCreatorChip;
+  parent: { id: string; slug: string; name: string; iconUrl: string | null };
+  runHref: string;
+  /** `runHref` leaves Civitai: open it in a new tab, whether or not the viewer can open pages. */
+  external?: true;
+};
+
+export type StoreGridItem = ListingCard | SubListingCard;
+
+/**
+ * Drop the viewer-scoped fields from a store DTO before it crosses the public REST boundary.
+ *
+ * `GET /api/v1/apps` and `/api/v1/apps/{slug}` are a hand-documented published contract and
+ * always read as an anonymous, floor-`public` viewer, so `restrictedAudience` is `null` there
+ * by construction. Serving a key that can only ever be `null` would change the documented
+ * response shape for nothing, so both handlers strip it.
+ */
+export function withoutViewerScopedFields<T extends { restrictedAudience: unknown }>(
+  dto: T
+): Omit<T, 'restrictedAudience'> {
+  const { restrictedAudience: _viewerScoped, ...rest } = dto;
+  return rest;
+}
+
+/**
+ * The store DTO exactly as the public REST `GET /api/v1/apps` and `/api/v1/apps/{slug}` serve
+ * it: {@link withoutViewerScopedFields}, and without `isOfficial`, which the tRPC store renders
+ * but the hand-documented REST contract does not list. Adding it there is a contract change
+ * that needs its docs page updated in the same piece of work, so it stays out until then.
+ */
+export function withoutUndocumentedRestFields<
+  T extends { restrictedAudience: unknown; isOfficial?: boolean }
+>(dto: T): Omit<T, 'restrictedAudience' | 'isOfficial'> {
+  const { restrictedAudience: _viewerScoped, isOfficial: _undocumented, ...rest } = dto;
+  return rest;
+}
 
 export type ListingGalleryScreenshot = {
   url: string;
@@ -311,10 +455,8 @@ export type ListingDetailKindData =
 export type ListingDetail = {
   id: string;
   /**
-   * Integer surrogate key (`app_listings.serial_id`). Carried so the detail page
-   * can mount the CommentsV2 discussion (`<CommentsProvider entityType="appListing"
-   * entityId={serialId} />`) — CommentsV2 is integer-keyed, the store `id` is a TEXT
-   * ULID. Public + non-sensitive (an opaque row number, like the numeric ids already
+   * Integer surrogate key (`app_listings.serial_id`): comments key on it, because the store `id`
+   * is a TEXT ULID. Public and non-sensitive (an opaque row number, like the numeric ids already
    * exposed for images/models/posts).
    */
   serialId: number;
@@ -359,17 +501,25 @@ export type ListingDetail = {
   /**
    * Install count from the `AppListingMetric` rollup (`install_count`).
    *
-   * 🔴 ALLOWLIST JUSTIFICATION. Already publicly OBSERVABLE, not merely public: the
-   * store's `popular` sort is `install_count DESC` (see `listAppListingsSchema`), so the
-   * full ordering of every approved listing by this number is already derivable from the
-   * public list endpoint. Surfacing the number itself adds precision, not a new fact. It
-   * is an aggregate over the whole install base — it identifies no user. Direct analogue
-   * of the model page's public download-count stat chip.
+   * 🔴 ALLOWLIST JUSTIFICATION. It is an aggregate over the whole install base — it
+   * identifies no user — and it is the store's `popular` sort tie-break (see
+   * `listAppListingsSchema`). The detail page shows it as "Installs" for an OFF-SITE
+   * listing, which has no play count; an on-site listing shows PLAYS
+   * ({@link ListingDetail.openCount}) instead — see `listingUsageStat`.
    *
    * `0` when the metric row is absent (a listing nobody has installed yet), matching how
    * the ranking SQL reads it (`COALESCE(m.install_count, 0)`).
    */
   installCount: number;
+  /**
+   * Play count — the SAME value as {@link ListingCard.openCount}, from the same
+   * `cardOpenCount` projection: a number for an on-site listing, `null` for an off-site
+   * one (unmeasurable). The detail page shows this, labelled "Plays", so the page and the
+   * store card never show two different usage numbers for one app.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION: already public on every store card, so this adds no fact.
+   */
+  openCount: number | null;
   /**
    * PUBLIC SOURCE-REPOSITORY link ("this app is open source"), or null.
    *
@@ -396,6 +546,19 @@ export type ListingDetail = {
    * Null while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   sourceRepoUrl: string | null;
+  /**
+   * PUBLIC ISSUE-TRACKER / SUPPORT link ("report a problem here"), or null.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. A link the AUTHOR chose to publish, moderator-gated on both kinds
+   * like `sourceRepoUrl` (manifest `bugs` re-reviewed on approve for on-site; a MATERIAL patch
+   * field staged on a shadow revision for off-site), and normalised by `validateIssueTrackerUrl`
+   * (https, no credentials, no port, ≤200 chars). ANY host, unlike the source link, which is why
+   * the store renders it `rel="noopener noreferrer nofollow ugc"`.
+   *
+   * DETAIL-ONLY, for the reason `sourceRepoUrl` gives. Null while the manual-apply column is
+   * outstanding (it is read by raw SQL, never selected on the row).
+   */
+  issueTrackerUrl: string | null;
   /**
    * The app's APPROVED scope ids (`AppBlock.approved_scopes`), for the pre-launch
    * permission disclosure. `[]` in THREE cases, and the third is the one readers miss:
@@ -512,6 +675,9 @@ export type ListingDetail = {
    * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   isBeta: boolean;
+  /** Same moderator-set flag as `ListingCard.isOfficial`, for the page header badge. Stripped
+   *  from the public REST `GET /api/v1/apps/{slug}` response, like the card's. */
+  isOfficial?: boolean;
   /**
    * The author's optional short beta note (≤`BETA_MESSAGE_MAX`), or null.
    *
@@ -534,7 +700,71 @@ export type ListingDetail = {
    * the MANUAL-APPLY migration is outstanding.
    */
   betaMessage: string | null;
+  /**
+   * Same viewer-scoped restricted audience as `ListingCard.restrictedAudience`, for the
+   * detail header's badge. 🔴 `private` admits no cohort, so it may reach only the owner and
+   * moderators — `restrictedAudienceForViewer` decides, not this read's caller.
+   * Stripped from the public REST `GET /api/v1/apps/{slug}` response, like the card's.
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;
+  /**
+   * The author's opt-in: "Let others fork this app's source". Read by the Fork action, which
+   * offers itself only on a forkable on-site app. `false` while the manual-apply migration is
+   * outstanding (`app-fork.service.ts`).
+   */
+  forkable: boolean;
+  /**
+   * Fork provenance, or `null` for an app that is not a fork. Shown as "Forked from …" whenever
+   * it is set — provenance is not behind the fork rollout flag.
+   *
+   * 🔴 VIEWER-SCOPED IN THE ONLY DIRECTION THAT MATTERS: the parent's name and slug are present
+   * only when THIS viewer may see the parent's store page. A hidden parent and a deleted one both
+   * read `{ visible: false }`, so this field cannot disclose a hidden listing's name or existence.
+   */
+  forkOf: ListingForkOf | null;
+};
+
+/**
+ * Where a fork came from, as the store page may disclose it. See `ListingDetail.forkOf`.
+ * JSON-safe: this DTO also crosses the public REST boundary.
+ */
+export type ListingForkOf = { visible: true; slug: string; name: string } | { visible: false };
+
+/**
+ * The published forks of one listing, newest first. Keyset-paginated on the listing id
+ * (`apl_<ULID>`, so id order is creation order); `cursor` is the last id of the previous page.
+ */
+export const listListingForksSchema = z.object({
+  listingId: z.string().min(1).max(64),
+  cursor: z.string().min(1).max(64).optional(),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(LISTING_FORKS_PAGE_MAX)
+    .optional()
+    .default(LISTING_FORKS_PAGE_DEFAULT),
+});
+export type ListListingForksInput = z.infer<typeof listListingForksSchema>;
+
+/** `appListings.startFork` — the PARENT listing to fork. Nothing else: the server picks the rest. */
+export const startForkSchema = z.object({ listingId: z.string().min(1).max(64) });
+
+/** `appListings.getForkSession` — the fork slug the App Assistant page was sent to. */
+export const getForkSessionSchema = z.object({ forkSlug: z.string().min(3).max(40) });
+
+/** One fork in a parent's fork list — only what the list renders. */
+export type ListingForkItem = { id: string; slug: string; name: string };
+
+/**
+ * A page of a listing's PUBLISHED forks. `totalCount` counts the same set the pages walk: forks
+ * this viewer could open in the store (approved, store-visible, not a revision draft).
+ */
+export type ListingForksPage = {
+  totalCount: number;
+  items: ListingForkItem[];
+  nextCursor: string | null;
 };

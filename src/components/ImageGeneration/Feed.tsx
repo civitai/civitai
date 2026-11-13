@@ -51,7 +51,7 @@ export function Feed() {
       </Center>
     );
 
-  if (!images.length)
+  if (!images.length && !hasNextPage)
     return (
       <Center h="100%">
         <Stack gap="xs" align="center" py="16">

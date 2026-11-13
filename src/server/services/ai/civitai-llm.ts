@@ -1,6 +1,8 @@
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
+import { describeProviderError } from '~/server/services/ai/provider-error';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type { SimpleMessage } from '~/server/services/ai/openrouter';
 
@@ -80,6 +82,11 @@ function appendNoPreamble(messages: SimpleMessage[]): SimpleMessage[] {
   });
 }
 
+const messageTexts = (msg: SimpleMessage) =>
+  typeof msg.content === 'string'
+    ? [msg.content]
+    : msg.content.flatMap((c) => (c.type === 'text' ? [c.text] : []));
+
 // Last-ditch JSON extractor: take the substring from the first `{` to the
 // last `}`. Handles models that wrap JSON in prose or markdown.
 function extractJsonSlice(content: string): string | null {
@@ -124,7 +131,8 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
       });
     }
 
-    const res = await fetch(url, {
+    const res = await outboundFetch(url, {
+      timeoutMs: 180_000,
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -135,11 +143,23 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error('[civitai-llm] HTTP', res.status, errText.slice(0, 500));
-      throw new Error(`Civitai LLM error ${res.status}: ${errText.slice(0, 500)}`);
+      const reason = describeProviderError(
+        { name: 'HTTPError', statusCode: res.status, body: errText },
+        { sent: finalMessages.flatMap(messageTexts) }
+      );
+      console.error('[civitai-llm] HTTP', reason);
+      throw new Error(`Civitai LLM error ${res.status}: ${reason}`);
     }
 
-    const json = (await res.json()) as ChatCompletionResponse;
+    // Not res.json(): its SyntaxError quotes the body.
+    const raw = await res.text();
+    let json: ChatCompletionResponse;
+    try {
+      json = JSON.parse(raw) as ChatCompletionResponse;
+    } catch {
+      console.error('[civitai-llm] non-JSON response body', { model, length: raw.length });
+      throw new Error(`Civitai LLM error ${res.status}: non-JSON response body`);
+    }
     const choice = json.choices?.[0];
     const content = choice?.message?.content;
 
@@ -190,12 +210,14 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
         suppressThinking,
       });
     }
-    console.error(
-      '[civitai-llm] JSON parse failed; finishReason=',
-      choice?.finish_reason,
-      '\n',
-      content
-    );
+    // Never the content, nor a SyntaxError message (V8 quotes the input in it): a model can be
+    // led to repeat the prompts it was sent.
+    console.error('[civitai-llm] JSON parse failed', {
+      model,
+      finishReason: choice?.finish_reason,
+      length: content.length,
+      fenced: fenced !== undefined,
+    });
     throw new Error('Failed to parse JSON from Civitai LLM completion');
   };
 

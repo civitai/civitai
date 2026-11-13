@@ -32,8 +32,7 @@ import { describe, expect, it } from 'vitest';
  * 🔴 WHY A SOURCE SCAN RATHER THAN A RENDER. `useGetMenuItems` is a heavy hook —
  * router, session, Mantine theme, tRPC — and the menu table is a 40-entry literal
  * inside it. Mounting it to observe two expressions would drag that whole graph
- * into the node `unit` project (the tier that BLOCKS) for no gain, and the browser
- * tier that could mount it is report-only. `appsStoreAccessCallSites.test.ts` names
+ * into the node `unit` project for no gain. `appsStoreAccessCallSites.test.ts` names
  * this exact seam as untested: "that `useGetMenuItems` hands it the real
  * `useFeatureFlags()` object and wires `appsNav.marketplace` to the right menu
  * item". This closes the second half of it.

@@ -76,6 +76,8 @@ const ENDPOINT_LABELS = new Map<string, string>([
   // `blocks.createPostFromApp`. Bounded (no per-post tail): `endpoint` is the
   // `topEndpoints` GROUP BY key, so the post id lives in `detail.entityId`.
   ['post:create', 'Posts published to a profile'],
+  // `blocks.setReactionFromApp`. Bounded: the image id and reaction live in `detail`.
+  ['reaction:set', 'Reactions set on images'],
 ]);
 
 /** The bounded tokens that can carry a legacy per-id / per-key tail. */
@@ -158,6 +160,9 @@ const WRITE_SCOPE_LABELS = new Map<string, string>([
   // is already in READ_SCOPE_LABELS.
   ['apps:storage:write', 'App-local storage writes'],
   ['apps:storage:shared:write', 'Shared storage writes'],
+  // Document store. Its base scope `apps:storage` has no row of its own: that spelling is
+  // already the legacy bridge's telemetry label above, so the two share one bucket.
+  ['apps:storage:publish', 'Shared storage publishes'],
   ['collections:write:self', 'Collection updates'],
   ['user-settings:write', 'Block settings saves'],
   // Distinct label ON PURPOSE, even though it is the same operation as the row above.
@@ -170,6 +175,8 @@ const WRITE_SCOPE_LABELS = new Map<string, string>([
   ['social:tip:self', 'Tips'],
   ['posts:write:self', 'Posts published to a profile'],
   ['goods:purchase:self', 'Item purchases'],
+  ['apps:store:items:write', 'App Store item listings'],
+  ['social:react:self', 'Reactions set on images'],
   // Not a scope — the middleware's literal placeholder for a route that requires only a
   // valid block token and no particular scope (`opts.requiredScope ?? '(any-token)'`).
   // It appears verbatim in the data, so it needs a row label.

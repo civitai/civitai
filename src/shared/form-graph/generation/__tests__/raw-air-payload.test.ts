@@ -1,18 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { runOracle, type AnyRecord } from './differential';
 import { generationHub } from '../hub.graph';
 import { reconcileSelectors } from '../reconcile';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
- * Raw-AIR (training epoch blob) resources must survive the parse boundary WITH
- * their `air` + `workflowId` — both parse engines' resource output schemas
- * strip unknown keys, and this is the exact serialization that becomes the
- * whatIf/generate wire payload (WhatIfProvider / FormFooter both send parse
- * output). A schema that drops the fields ships a resource the server cannot
- * claim: `collectRawAirResources` never sees it, and `StrictAirMap.getOrThrow`
- * 400s on the synthetic negative id — every quote fails. Found by browser E2E
- * on the hub lane, whose schema had not mirrored the data-graph one.
+ * Raw-AIR (training epoch blob) resources must survive the parse boundary WITH their `air` +
+ * `workflowId`. The resource output schema strips unknown keys, and this is the exact
+ * serialization that becomes the whatIf/generate wire payload (WhatIfProvider and FormFooter
+ * both send parse output). A schema that drops the fields ships a resource the server cannot
+ * claim: `collectRawAirResources` never sees it and `StrictAirMap.getOrThrow` 400s on the
+ * synthetic negative id, so every quote fails. Found by browser E2E, not by a unit test.
  */
 
 const AIR = 'urn:air:sdxl:lora:orchestrator:blob@blobkey123';
@@ -25,7 +22,7 @@ const EXT: GenerationCtx = {
   gateRules: [],
 };
 
-const INPUT: AnyRecord = {
+const INPUT = {
   output: 'image',
   workflow: 'txt2img',
   ecosystem: 'SDXL',
@@ -43,25 +40,12 @@ const INPUT: AnyRecord = {
   ],
 };
 
-function firstResource(data: AnyRecord) {
-  return (data.resources as AnyRecord[] | undefined)?.[0];
-}
-
 describe('raw-AIR resource fields survive the parse boundary', () => {
-  it('v1 data-graph keeps air + workflowId on the parsed resource', () => {
-    const result = runOracle(INPUT, EXT);
-
+  it('keeps air + workflowId on the parsed resource', () => {
+    const result = generationHub.parse(reconcileSelectors(INPUT).raw, EXT);
     expect(result.success).toBe(true);
-    const resource = firstResource(result.data);
-    expect(resource?.air).toBe(AIR);
-    expect(resource?.workflowId).toBe(WORKFLOW_ID);
-  });
-
-  it('form-graph hub keeps air + workflowId on the parsed resource', () => {
-    const result = generationHub.parse(reconcileSelectors(INPUT).raw, EXT as never);
-
-    expect(result.success).toBe(true);
-    const resource = firstResource((result as { data: AnyRecord }).data);
+    const resource = (result as { data: { resources?: Array<Record<string, unknown>> } }).data
+      .resources?.[0];
     expect(resource?.air).toBe(AIR);
     expect(resource?.workflowId).toBe(WORKFLOW_ID);
   });

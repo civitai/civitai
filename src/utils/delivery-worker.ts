@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import type { ResolveAttribution } from './resolve-attribution';
 import { parseKey } from './s3-utils';
 
 const deliveryWorkerEndpoint = `${env.DELIVERY_WORKER_ENDPOINT}?token=${env.DELIVERY_WORKER_TOKEN}`;
@@ -111,8 +112,13 @@ export type DeliveryWorkerStatus = {
  * Options that only the storage resolver understands. The delivery-worker
  * fallback silently ignores them, which is correct: it is the legacy path keyed
  * off `ModelFile.url` and has no notion of which host serves the bytes.
+ *
+ * `caller` and `actor` (see `ResolveAttribution`) are required so a new call site
+ * cannot leave them out. They are sent to the resolver to attribute the resolve to
+ * the code path that caused it, and change nothing about the resolve itself; a
+ * resolver that does not know the fields ignores them.
  */
-export type ResolveOptions = {
+export type ResolveOptions = ResolveAttribution & {
   /**
    * Ask for a URL addressing the storage origin rather than the CDN in front of
    * it. Only honoured for backends that have a second address; ignored otherwise.
@@ -122,12 +128,17 @@ export type ResolveOptions = {
    * `shouldResolveDirect`.
    */
   direct?: boolean;
+  /**
+   * How long the signed URL should stay valid. Sent to the storage resolver only; the resolver
+   * decides, and the legacy delivery-worker path ignores it, so read the returned expiry.
+   */
+  expiresInSeconds?: number;
 };
 
 export async function getDownloadUrlByFileId(
   fileId: number,
-  fileName?: string,
-  options?: ResolveOptions
+  fileName: string | undefined,
+  options: ResolveOptions
 ): Promise<DownloadInfo> {
   if (!storageResolverEndpoint) {
     throw new Error('STORAGE_RESOLVER_ENDPOINT is not configured');
@@ -139,14 +150,23 @@ export async function getDownloadUrlByFileId(
   // rather than asking and being refused: the resolver's granted="unauthorized"
   // counter is the signal that someone found the cost lever, and our own
   // misconfiguration must not be what fills it.
+  //
+  // `options?.` although the type makes it required: a call that slips past the
+  // type (an `any`, a JS caller) would otherwise throw here, and
+  // `resolveDownloadUrl` catches that and silently falls back to the delivery
+  // worker without ever consulting the resolver.
   const canRequestDirect = Boolean(options?.direct && storageResolverInternalToken);
 
   const body = JSON.stringify({
     fileId,
     fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
-    // Omitted rather than sent as `false` so an older resolver, which does not
-    // know the field, receives a byte-identical request to the one it does today.
+    caller: options?.caller,
+    actor: options?.actor,
+    // Omitted rather than sent as `false`, so a resolver that does not know the
+    // field never sees it on an ordinary resolve. (`caller` and `actor` above are
+    // always sent; the resolver ignores fields it does not know.)
     ...(canRequestDirect ? { direct: true } : {}),
+    ...(options?.expiresInSeconds ? { expiresInSeconds: options.expiresInSeconds } : {}),
   });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -231,10 +251,13 @@ export function isDefiniteNotFound(err: unknown): boolean {
         ABSENCE_STATUSES.has(err.resolverError.statusCode)
       );
     }
-    // Reached when the resolver was not CONSULTED at all — the disabled path, or
-    // a direct `getDownloadUrl` caller. (It cannot mean "the resolver succeeded":
+    // Reached when the resolver's /resolve was not CONSULTED — the disabled path,
+    // or a direct `getDownloadUrl` caller. (It cannot mean "the resolver succeeded":
     // `resolveDownloadUrl` returns on success rather than reaching the fallback.)
-    // The delivery worker was then the only authority, and it said not-there.
+    // The delivery worker was then the authority, and it said not-there.
+    // ⚠ A direct caller's 404 may also follow a FAILED moved-attachment lookup
+    // (`getMovedAttachmentUrl` swallows its errors), so for an attachment key this
+    // `true` is "the delivery worker said not-there", not proof the bytes are gone.
     return true;
   }
 
@@ -255,8 +278,8 @@ export function isStorageResolverEnabled(): boolean {
 export async function resolveDownloadUrl(
   fileId: number,
   fileUrl: string,
-  fileName?: string,
-  options?: ResolveOptions
+  fileName: string | undefined,
+  options: ResolveOptions
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
     let resolverError: unknown;
@@ -273,7 +296,7 @@ export async function resolveDownloadUrl(
       resolverError = err;
     }
     try {
-      return await getDownloadUrl(fileUrl, fileName);
+      return await getDownloadUrl(fileUrl, fileName, { movedAttachmentFallback: false });
     } catch (deliveryWorkerError) {
       if (deliveryWorkerError instanceof DeliveryWorkerError) {
         deliveryWorkerError.resolverError = resolverError;
@@ -281,14 +304,21 @@ export async function resolveDownloadUrl(
       throw deliveryWorkerError;
     }
   }
-  return getDownloadUrl(fileUrl, fileName);
+  return getDownloadUrl(fileUrl, fileName, { movedAttachmentFallback: false });
 }
 
 /**
  * Get download URL via the delivery worker (legacy path).
- * Used when storage resolver is not configured.
+ *
+ * `movedAttachmentFallback: false` skips the moved-attachment lookup. Model-file
+ * paths (`resolveDownloadUrl`) pass it: their moved files are already resolved
+ * by the storage resolver's `/resolve`.
  */
-export async function getDownloadUrl(fileUrl: string, fileName?: string) {
+export async function getDownloadUrl(
+  fileUrl: string,
+  fileName?: string,
+  { movedAttachmentFallback = true }: { movedAttachmentFallback?: boolean } = {}
+) {
   const { key } = parseKey(fileUrl);
   // Some of our old file keys should not be decoded. `safeDecodeURIComponent`
   // never throws on a malformed/already-encoded key — it falls back to the raw
@@ -320,8 +350,55 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   }
 
   if (!response.ok) {
+    if (response.status === 404 && movedAttachmentFallback) {
+      const moved = await getMovedAttachmentUrl(fileUrl, fileName);
+      if (moved) return moved;
+    }
     throw new DeliveryWorkerError(response.status, response.statusText);
   }
   const result = await response.json();
   return result as DownloadInfo;
+}
+
+const MOVED_ATTACHMENT_TIMEOUT_MS = 10_000;
+
+/**
+ * Signed URL for an attachment key the storage resolver has registered on its
+ * secondary storage tier, or `null` when it has none. Never throws: a resolver
+ * that is unconfigured, unreachable, answers non-OK, or returns no url or no
+ * valid `urlExpiryDate` yields `null`, so the caller throws its original
+ * delivery-worker error unchanged.
+ *
+ * Sends the file URL exactly as stored (or the bare key a caller passed); the
+ * resolver normalises it to a key and matches both its raw and decoded forms.
+ */
+async function getMovedAttachmentUrl(
+  fileUrl: string,
+  fileName: string | undefined
+): Promise<DownloadInfo | null> {
+  if (!storageResolverEndpoint || !storageResolverInternalToken) return null;
+  try {
+    const response = await fetch(`${storageResolverEndpoint}/resolve-attachment`, {
+      method: 'POST',
+      // A hung resolver must not turn a fast 404 into a held connection.
+      signal: AbortSignal.timeout(MOVED_ATTACHMENT_TIMEOUT_MS),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${storageResolverInternalToken}`,
+      },
+      body: JSON.stringify({
+        path: fileUrl,
+        fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
+      }),
+    });
+    if (!response.ok) return null;
+    const result = await response.json();
+    if (typeof result?.url !== 'string' || !result.url) return null;
+    const urlExpiryDate = new Date(result.urlExpiryDate);
+    if (typeof result.urlExpiryDate !== 'string' || Number.isNaN(urlExpiryDate.getTime()))
+      return null;
+    return { url: result.url, urlExpiryDate };
+  } catch {
+    return null;
+  }
 }

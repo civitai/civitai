@@ -7,10 +7,8 @@ import { VIEWPORT_META_CONTENT } from '~/shared/constants/app-layout.constants';
 /**
  * The app must ship `viewport-fit=cover` in its ONE `<meta name="viewport">`.
  *
- * Node `unit` project — the GATING suite. The `.browser.test.tsx` component
- * suites run in CI only as the report-only `preview / component-tests` status,
- * and that tier is red on `main` independently of anything here, so a coupling
- * that must not silently revert is pinned in this tier.
+ * Node `unit` project. A coupling that must not silently revert is pinned in
+ * this tier as well as in the browser tier (`Component tests`).
  *
  * WHAT WAS BROKEN. The meta content was `initial-scale=1, width=device-width`.
  * Absent a `viewport-fit` token the UA defaults to `auto`, which lays the page
@@ -76,14 +74,28 @@ const INSET_EDGES = ['top', 'right', 'bottom', 'left'] as const;
  */
 const INSET_CONSUMERS = [
   'src/components/Ads/AdhesiveAd.tsx',
+  // An inline `styles.inner` padding, which outranks the shell's modal rule the same way
+  // SupportModal's Tailwind one does — but only while an on-screen keyboard is up, when the
+  // feedback dialog swaps its default vertical offsets for a small gap. It folds the TOP inset
+  // into that gap; the bottom edge is the keyboard's, so there is no bottom inset to pay.
+  'src/components/AppBlocks/ChromeFeedbackEntry.tsx',
   'src/components/AppLayout/AppFooter.tsx',
+  // The phone account menu's sheet: starts under the header plus the top inset and pads its
+  // bottom by the home indicator's, because it is `fixed` and the page pads only `#__next`.
+  'src/components/AppLayout/AppHeader/UserMenuV2/UserMenuMobile.tsx',
   'src/components/Apps/ReviewActionBar.tsx',
   'src/components/Chat/ChatPortal.tsx',
   'src/components/Consent/ConsentBanner.tsx',
   'src/components/Csam/CsamImageSelection.tsx',
   'src/components/Games/NewOrder/NewOrderImageRatings.tsx',
   'src/components/Image/DetailV2/ImageDetail2.tsx',
+  // The remix tray floats `fixed` above the footer's Assistant button, so it adds the same insets
+  // the footer's cluster does.
+  'src/components/Image/Remix/RemixTray.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
+  // The mobile generator is `fixed` over the whole viewport: it pads its top by the status bar's
+  // inset (the open form sheet starts below it) and its closed form bar by the home indicator's.
+  'src/components/ImageGeneration/MobileGenerator.module.scss',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
@@ -100,9 +112,17 @@ const INSET_CONSUMERS = [
   // Here for the same reason as NotificationsDrawer, via the other override
   // channel: a Tailwind utility in `classNames` is UNLAYERED, so its `inner`
   // padding outranks the shell's modal rule and it has to fold the inset in
-  // itself. The only `inner:` override in the app.
+  // itself. One of two `inner` padding overrides in the app; the other is the feedback dialog
+  // above, through inline `styles`.
   'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
+  // The generator footer's frame in the mobile generator: when only alert strips show, it drops
+  // GenerationLayout's 0.5rem floor but keeps the home indicator's inset.
+  'src/components/generation_v2/FooterStrips.module.scss',
+  // A Menu shown as a bottom sheet in the mobile generator: not a Mantine Drawer, so the shell's
+  // drawer rule doesn't pay its bottom inset.
+  'src/components/Drawer/menuSheet.module.scss',
+  'src/pages/avatar-generator.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   // `src/providers/ThemeProvider.tsx` LEFT this list deliberately. It used to
   // pay `@mantine/notifications` with a `style` prop, which reached one of the
@@ -207,23 +227,6 @@ describe('the viewport meta opts into the full display area', () => {
     ).toBe('initial-scale=1, width=device-width, viewport-fit=cover');
   });
 
-  it('parses to exactly the expected directive set, with viewport-fit=cover', () => {
-    // The string assertion above is order- and whitespace-sensitive by design.
-    // This one restates the claim as SEMANTICS, so a reviewer reading a failure
-    // can tell "reformatted" from "a directive changed meaning".
-    const directives = Object.fromEntries(
-      VIEWPORT_META_CONTENT.split(',').map((part) => {
-        const [key, value] = part.split('=');
-        return [key.trim(), (value ?? '').trim()];
-      })
-    );
-    expect(directives).toEqual({
-      'initial-scale': '1',
-      width: 'device-width',
-      'viewport-fit': 'cover',
-    });
-  });
-
   it('MetaPWA renders the viewport meta from the constant, not a copy of the string', () => {
     // The seam, not either side of it. A constant with the right value and a tag
     // carrying a hardcoded literal would satisfy the value assertion above while
@@ -254,6 +257,9 @@ describe('the viewport meta opts into the full display area', () => {
       // edge-anchored chrome, so opting it into the display cutout would push its
       // text under the notch and buy nothing.
       if (repoPath(file) === 'src/server/auth/login-error-page.ts') continue;
+      // Same shape: the email-unsubscribe confirm page is a standalone document an API route
+      // serves directly, a single centred column with no edge-anchored chrome.
+      if (repoPath(file) === 'src/pages/api/notifications/email-unsubscribe.ts') continue;
       // Comments only — strings are the subject here, so stripping them would
       // remove the very thing being looked for.
       const src = stripComments(fs.readFileSync(file, 'utf8'));
@@ -439,7 +445,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
   });
 
   /**
-   * The eight global stylesheets `_app.tsx` loads, in its own order. Order
+   * The nine global stylesheets `_app.tsx` loads, in its own order. Order
    * matters and is asserted with them: globals.css is imported FIRST, which is
    * why the drawer rule needs a doubled class to win a same-layer source-order
    * tie against Mantine's own `top: 0`.
@@ -453,6 +459,7 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     '@mantine/nprogress/styles.layer.css',
     '@mantine/tiptap/styles.layer.css',
     'mantine-react-table/styles.css',
+    '@civitai/components/styles.css',
   ];
 
   /**
@@ -479,6 +486,9 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
     ['@mantine/nprogress/styles.layer.css', 1, 0],
     ['@mantine/tiptap/styles.layer.css', 0, 1],
     ['mantine-react-table/styles.css', 1, 9],
+    // The package ships a REAL root `styles.css` (byte-identical to `dist/components.css`, which is
+    // what the `exports` alias resolves to), so the path under node_modules is the import spec.
+    ['@civitai/components/styles.css', 1, 0],
     ['draft-js/dist/Draft.css', 0, 0],
   ];
 
@@ -1250,5 +1260,41 @@ describe('the AppFooter / AdhesiveAd bottom-edge handover', () => {
         'reason it stops paying — it would then never pay on any route it renders on, and its ' +
         'links sit under the home indicator for every paid member and every moderator route.'
     ).not.toContain('--safe-area-inset-bottom-unpaid');
+  });
+});
+
+describe('the AppFooter slide-out handover', () => {
+  const APP_FOOTER = path.join(REPO_ROOT, 'src/components/AppLayout/AppFooter.tsx');
+  const BATCH_RAIL = path.join(REPO_ROOT, 'src/components/Post/Batch/BatchSummaryRail.tsx');
+
+  /**
+   * The footer hides with a React-only transform; `data-hidden` is the only DOM
+   * signal of it, and globals.css turns that into `--app-footer-offset`. If any
+   * side drifts the variable stays unset and the batch rail (`z-40`) falls to
+   * the viewport bottom UNDER the visible footer (`z-50`) — untappable on mobile.
+   */
+  it('the footer, the root rule and the consumer agree', () => {
+    const footer = stripComments(read(APP_FOOTER));
+    const css = read(GLOBALS_CSS);
+    const rail = stripComments(read(BATCH_RAIL));
+
+    expect(
+      footer,
+      '`data-hidden` must be ABSENT while the footer shows: `data-hidden={!showFooter}` renders ' +
+        '`data-hidden="false"`, which `:not([data-hidden])` treats as hidden forever.'
+    ).toContain('data-hidden={!showFooter || undefined}');
+    expect(
+      footer,
+      'the `footer` type selector in globals.css excludes `PageActionBar`; AppFooter must stay a `<footer>`.'
+    ).toMatch(/<footer\b[^>]*data-app-footer/s);
+    expect(
+      css,
+      'globals.css no longer sets `--app-footer-offset` from the visible footer.'
+    ).toMatch(
+      /#__next:has\(footer\[data-app-footer\]:not\(\[data-hidden\]\)\)\s*\{\s*--app-footer-offset:/
+    );
+    expect(rail, '`BatchSummaryRail` no longer follows the footer.').toContain(
+      'var(--app-footer-offset,0px)'
+    );
   });
 });

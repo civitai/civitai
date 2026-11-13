@@ -6,9 +6,9 @@
  *
  * Inputs:
  *  - `typed`         — this type's SSR-seeded announcements (dismissed-independent).
- *  - `exposeSSR`     — `feedReserveCls` ON AND `type === 'site'`. When true, the
- *                      dismissed set is read from the cookie on BOTH the server and
- *                      the first client paint, so the REAL banner renders from SSR.
+ *  - `exposeSSR`     — `type === 'site'`. When true, the dismissed set is read from the
+ *                      cookie on BOTH the server and the first client paint, so the REAL
+ *                      banner renders from SSR.
  *  - `isClient`      — false on the server AND the first client render (the
  *                      `useIsClient` hydration boundary), true afterwards.
  *  - `dismissedStore`— the client cookie-backed store's dismissed ids for the type.
@@ -16,9 +16,8 @@
  *                      AppProvider context; present on SSR + first client paint).
  *
  * Behaviour:
- *  - exposeSSR OFF (flag off or non-site): keep the original `isClient` gate — []
- *    on the server + first client paint, store-driven afterwards. BYTE-IDENTICAL
- *    to the pre-fix behaviour.
+ *  - exposeSSR OFF (non-site): keep the `isClient` gate — [] on the server + first
+ *    client paint, store-driven afterwards.
  *  - exposeSSR ON: always expose; the driving dismissed set is `dismissedSeed`
  *    pre-hydration (server + first client paint agree → no hydration mismatch) and
  *    `dismissedStore` post-hydration. Because the store is initialised from the

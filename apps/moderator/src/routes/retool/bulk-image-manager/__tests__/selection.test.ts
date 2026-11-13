@@ -4,7 +4,7 @@ import { batchKey } from '../selection';
 const url = (search: string) => new URL(`https://mod.example/retool/bulk-image-manager${search}`);
 
 describe('batchKey', () => {
-  it('is unchanged by paging, so a selection can be gathered across pages', () => {
+  it('is unchanged by paging, so turning the page does not count as a new batch', () => {
     expect(batchKey(url('?source=user&q=someone&offset=200'))).toBe(
       batchKey(url('?source=user&q=someone'))
     );

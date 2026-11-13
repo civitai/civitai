@@ -73,11 +73,8 @@ describe('no z.coerce.boolean under src/pages/api', () => {
     expect(detected).toHaveLength(1);
   });
 
-  it('does not report the fixed sites, which name the pattern in their comments', () => {
+  it('does not report a fixed site, which names the pattern in its comments', () => {
     expect(findViolations([path.resolve(API_DIR, 'admin/permission.ts')])).toEqual([]);
-    expect(
-      findViolations([path.resolve(API_DIR, 'mod/daily-challenge/backfill-theme-elements.ts')])
-    ).toEqual([]);
   });
 
   it('reports no violations', () => {

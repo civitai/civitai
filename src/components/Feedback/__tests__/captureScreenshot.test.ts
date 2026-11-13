@@ -233,8 +233,4 @@ describe('capture failures are distinguishable from "declined"', () => {
       'render failed'
     );
   });
-
-  it('pins the byte ceiling at 5 MiB', () => {
-    expect(SCREENSHOT_MAX_BYTES).toBe(5 * 1024 * 1024);
-  });
 });

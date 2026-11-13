@@ -1,4 +1,9 @@
+import { createContext, useContext } from 'react';
 import { create } from 'zustand';
+import { mintPurchaseKey } from '~/utils/purchase-key';
+import type { StickerTrackKey } from '~/shared/utils/sticker-track';
+import type { CreateStickerPlacementInput } from '~/server/schema/placement.schema';
+import { keyMinShown, poseAt, upsertKey } from '~/shared/utils/sticker-track-edit';
 import {
   STICKER_PLACEMENT_DEFAULT_OPACITY,
   STICKER_PLACEMENT_DEFAULT_SCALE,
@@ -65,6 +70,14 @@ export type StickerDraft = {
   opacity: number;
   /** Set while this sticker is still unbought. Cleared by `markPurchased`. */
   purchase?: DraftPurchase;
+  /**
+   * Movement on a video: the keys, and whether the sticker is in Movement (`on`) or Static.
+   * Switching to Static parks the keys rather than dropping them; only what the sticker is in
+   * when it is placed is sent.
+   */
+  motion?: { on: boolean; keys: StickerTrackKey[] };
+  /** In Movement: the key opacity at the playhead, which the draft is drawn at. */
+  shown?: number;
 };
 
 /**
@@ -105,6 +118,11 @@ interface StickerPlacementDraftStore {
   targetImageId: number | null;
   /** Whether the panel is showing. A session outlives it. */
   trayOpen: boolean;
+  /**
+   * Every piece of placement chrome hidden — handles, the control bar, the buy
+   * button and the panel — so the drafts can be judged as they will look placed.
+   */
+  previewing: boolean;
   surface: HTMLElement | null;
   /**
    * The tray element, for the one thing outside it that has to know where it is:
@@ -147,6 +165,7 @@ interface StickerPlacementDraftStore {
   closeTray: () => void;
   /** Discard one draft, defaulting to the selected one. */
   cancelDraft: (id?: string) => void;
+  setPreviewing: (previewing: boolean) => void;
   select: (id: string) => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
@@ -214,7 +233,35 @@ interface StickerPlacementDraftStore {
    * every pointer move would let a selection change mid-drag redirect it.
    */
   move: (id: string, next: Partial<Omit<StickerDraft, 'id' | 'imageId' | 'cosmeticId'>>) => void;
+  /**
+   * Where the video is, in ms. Moving, sizing or turning a sticker in Movement sets a key here,
+   * and every sticker in Movement is drawn at its pose for this time.
+   */
+  playheadMs: number;
+  /** Moves the playhead and draws every sticker in Movement there. Sets no key. */
+  setPlayhead: (ms: number) => void;
+  /** Whether the video is playing, kept in step by the sticker timeline while it is open. */
+  videoPlaying: boolean;
+  setVideoPlaying: (playing: boolean) => void;
+  /** Static or Movement. Movement with no keys starts one at the playhead, at the current pose. */
+  setMotion: (id: string, on: boolean) => void;
+  /** Replaces a draft's keys (the timeline's edits) and redraws it at the playhead. */
+  setKeys: (id: string, keys: StickerTrackKey[]) => void;
+  /** Each draft's own pay button, by its label, for the floating Place that presses it. */
+  primaryLabels: Record<string, string>;
+  setPrimaryLabel: (id: string, label: string | null) => void;
+  /** Drafts whose own button would place them now (no purchase first), with what it would send. */
+  readyPlacements: Record<string, ReadyPlacement>;
+  setReadyPlacement: (id: string, ready: ReadyPlacement | null) => void;
+  /** Place all is running; each draft's own Place waits so nothing is placed twice. */
+  placingAll: boolean;
+  setPlacingAll: (placingAll: boolean) => void;
 }
+
+export type ReadyPlacement = {
+  free: boolean;
+  input: () => CreateStickerPlacementInput;
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -255,22 +302,10 @@ const nextDraftId = () =>
     ? crypto.randomUUID()
     : `draft-${++draftSequence}`;
 
-/**
- * A purchase's idempotency key, which the server refuses a repeat of.
- *
- * Feature-detected for the same reason the draft ids are: `crypto.randomUUID` is
- * undefined outside a secure context, and throwing here would take down the buy
- * button on any http origin that is not localhost.
- */
-let purchaseKeySequence = 0;
-const nextPurchaseKey = () =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `00000000-0000-4000-8000-${String(++purchaseKeySequence).padStart(12, '0')}`;
-
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
+  previewing: false,
   drafts: [] as StickerDraft[],
   selectedDraftId: null,
   interaction: null,
@@ -281,224 +316,329 @@ const ENDED = {
   // Cleared with the session for the same reason the keys are: it describes
   // purchases made against THESE drafts.
   paidDraftIds: [] as string[],
+  playheadMs: 0,
+  videoPlaying: false,
 };
 
-export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>((set, get) => ({
-  drafts: [],
-  packKeys: {},
-  paidDraftIds: [],
-  selectedDraftId: null,
-  targetImageId: null,
-  trayOpen: false,
-  surface: null,
-  tray: null,
-  interaction: null,
-  interactionPointerId: null,
+const createDraftStore = () =>
+  create<StickerPlacementDraftStore>((set, get) => ({
+    drafts: [],
+    packKeys: {},
+    paidDraftIds: [],
+    selectedDraftId: null,
+    targetImageId: null,
+    trayOpen: false,
+    previewing: false,
+    surface: null,
+    tray: null,
+    interaction: null,
+    interactionPointerId: null,
+    playheadMs: 0,
+    videoPlaying: false,
+    primaryLabels: {},
+    readyPlacements: {},
+    placingAll: false,
 
-  // Reopening on the image you are already placing on keeps the drafts — that is
-  // the way back to the panel after putting it away, so taking them would punish
-  // using it.
-  //
-  // A different image is a different session, and starting one DISCARDS whatever
-  // was arranged on the previous image. That is the intended behaviour, decided
-  // by Justin rather than fallen into: moving on to the next image means giving
-  // up the stickers you were applying to the last one. Note it is the *new
-  // session* that discards them, not the navigation — the drafts survive
-  // off-screen, so returning to the image before starting somewhere else brings
-  // them and the panel back. Do not add a confirmation here without asking;
-  // this looked like a silent-data-loss bug in review and is not one.
-  //
-  // Neither branch writes `interaction`. It mirrors whether the layer holds a
-  // live gesture and only the layer may write it — the different-image branch
-  // goes through ENDED, which nulls `targetImageId` and so unmounts the layer,
-  // whose cleanup clears it. The same-image branch leaves the layer mounted, so
-  // clearing here said "nothing is being dragged" while a finger still was:
-  // press `+` with a second finger mid-drag and the tray would then allow a
-  // pickup the layer refused to arm, leaving a sticker on the image that
-  // followed nothing.
-  open: (imageId) =>
-    set((state) =>
-      state.targetImageId === imageId
-        ? { targetImageId: imageId, trayOpen: true }
-        : { ...ENDED, targetImageId: imageId, trayOpen: true }
-    ),
-
-  close: () => set(ENDED),
-
-  // A session with neither a panel nor a draft has nothing left to show, and
-  // leaving `targetImageId` set would keep this image in placement mode — still
-  // revealing pending placements, still holding the surface — with nothing on
-  // screen to say so or to end it.
-  closeTray: () => set((state) => (state.drafts.length ? { trayOpen: false } : ENDED)),
-
-  cancelDraft: (id) =>
-    set((state) => {
-      const target = id ?? state.selectedDraftId;
-      const drafts = state.drafts.filter((draft) => draft.id !== target);
-      if (drafts.length === state.drafts.length) return state;
-      if (!drafts.length && !state.trayOpen) return ENDED;
-
-      return {
-        drafts,
-        // Selection follows the removal rather than emptying: the controls have
-        // to land on something while any draft is left, or the remaining ones
-        // are unreachable and there is no way to remove the next.
-        selectedDraftId:
-          state.selectedDraftId === target
-            ? drafts[drafts.length - 1]?.id ?? null
-            : state.selectedDraftId,
-        // `interaction` is deliberately NOT cleared here. It mirrors whether the
-        // layer holds a live gesture, and only the layer may write it — the tray
-        // reads it to decide whether a pickup is allowed. Clearing it from here
-        // said "no drag in progress" while a finger was still dragging something
-        // else, which let a pickup through that the layer then refused to arm:
-        // the new sticker landed on the image and never followed the pointer.
-        // Removing a draft mid-drag is harmless without this — `move` already
-        // ignores an id that is gone, and the gesture ends on its own pointerup.
-      };
-    }),
-
-  select: (id) => set({ selectedDraftId: id }),
-
-  setInteraction: (interaction, pointerId) =>
-    set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),
-  setSurface: (element) => set({ surface: element }),
-  setTray: (element) => set({ tray: element }),
-
-  markPurchased: (cosmeticId, draftId) =>
-    set((state) => ({
-      drafts: state.drafts.map((draft) =>
-        draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
-          ? { ...draft, purchase: undefined }
-          : draft
+    // Reopening on the image you are already placing on keeps the drafts — that is
+    // the way back to the panel after putting it away, so taking them would punish
+    // using it.
+    //
+    // A different image is a different session, and starting one DISCARDS whatever
+    // was arranged on the previous image. That is the intended behaviour, decided
+    // by Justin rather than fallen into: moving on to the next image means giving
+    // up the stickers you were applying to the last one. Note it is the *new
+    // session* that discards them, not the navigation — the drafts survive
+    // off-screen, so returning to the image before starting somewhere else brings
+    // them and the panel back. Do not add a confirmation here without asking;
+    // this looked like a silent-data-loss bug in review and is not one.
+    //
+    // Neither branch writes `interaction`. It mirrors whether the layer holds a
+    // live gesture and only the layer may write it — the different-image branch
+    // goes through ENDED, which nulls `targetImageId` and so unmounts the layer,
+    // whose cleanup clears it. The same-image branch leaves the layer mounted, so
+    // clearing here said "nothing is being dragged" while a finger still was:
+    // press `+` with a second finger mid-drag and the tray would then allow a
+    // pickup the layer refused to arm, leaving a sticker on the image that
+    // followed nothing.
+    open: (imageId) =>
+      set((state) =>
+        state.targetImageId === imageId
+          ? { targetImageId: imageId, trayOpen: true, previewing: false }
+          : { ...ENDED, targetImageId: imageId, trayOpen: true }
       ),
-    })),
 
-  begin: (cosmeticId, at, maxScale, purchase) =>
-    set((state) => {
-      if (state.targetImageId == null) return state;
+    close: () => set(ENDED),
 
-      const draft: StickerDraft = {
-        ...(purchase ? { purchase } : {}),
-        id: nextDraftId(),
-        imageId: state.targetImageId,
-        cosmeticId,
-        x: at?.x ?? 0.5,
-        y: at?.y ?? 0.5,
-        // The creator's ceiling, not just the global one. A creator below the
-        // 18% default is a third of the slider's range, and their space refused
-        // the very first gesture with no hint why.
-        scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
-        rotation: 0,
-        flip: false,
-        opacity: STICKER_PLACEMENT_DEFAULT_OPACITY,
-      };
+    // A session with neither a panel nor a draft has nothing left to show, and
+    // leaving `targetImageId` set would keep this image in placement mode — still
+    // revealing pending placements, still holding the surface — with nothing on
+    // screen to say so or to end it.
+    closeTray: () => set((state) => (state.drafts.length ? { trayOpen: false } : ENDED)),
 
-      // Appended and selected: the one just dragged out is the one being placed,
-      // and the drag that created it is already in flight against it.
-      return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
-    }),
+    cancelDraft: (id) =>
+      set((state) => {
+        const target = id ?? state.selectedDraftId;
+        const drafts = state.drafts.filter((draft) => draft.id !== target);
+        if (drafts.length === state.drafts.length) return state;
+        if (!drafts.length && !state.trayOpen) return ENDED;
+        if (!drafts.length) return { drafts, selectedDraftId: null, previewing: false };
 
-  packPurchaseKey: (cosmeticId) => {
-    const existing = get().packKeys[cosmeticId];
-    if (existing) return existing;
+        return {
+          drafts,
+          // Selection follows the removal rather than emptying: the controls have
+          // to land on something while any draft is left, or the remaining ones
+          // are unreachable and there is no way to remove the next.
+          selectedDraftId:
+            state.selectedDraftId === target
+              ? drafts[drafts.length - 1]?.id ?? null
+              : state.selectedDraftId,
+          // `interaction` is deliberately NOT cleared here. It mirrors whether the
+          // layer holds a live gesture, and only the layer may write it — the tray
+          // reads it to decide whether a pickup is allowed. Clearing it from here
+          // said "no drag in progress" while a finger was still dragging something
+          // else, which let a pickup through that the layer then refused to arm:
+          // the new sticker landed on the image and never followed the pointer.
+          // Removing a draft mid-drag is harmless without this — `move` already
+          // ignores an id that is gone, and the gesture ends on its own pointerup.
+        };
+      }),
 
-    const key = nextPurchaseKey();
-    set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
-    return key;
-  },
+    select: (id) => set({ selectedDraftId: id }),
 
-  markPaidForUse: (draftId) =>
-    set((state) =>
-      state.paidDraftIds.includes(draftId)
-        ? state
-        : { paidDraftIds: [...state.paidDraftIds, draftId] }
-    ),
+    setPreviewing: (previewing) =>
+      set((state) => ({ previewing: previewing && state.drafts.length > 0 })),
 
-  clearPackPurchaseKey: (cosmeticId) =>
-    set((state) => {
-      const { [cosmeticId]: _gone, ...rest } = state.packKeys;
-      return { packKeys: rest };
-    }),
+    setInteraction: (interaction, pointerId) =>
+      set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),
+    setSurface: (element) => set({ surface: element }),
+    setTray: (element) => set({ tray: element }),
 
-  duplicateDraft: (id, purchase) => {
-    const source = get().drafts.find((draft) => draft.id === id);
-    if (!source) return null;
-
-    // The id is minted here rather than inside the updater so it can be handed
-    // back: an alt-drag has to continue against the COPY, and the caller cannot
-    // ask "which one is new" from outside without racing its own update.
-    const copyId = nextDraftId();
-
-    set((state) => {
-      const copy: StickerDraft = {
-        ...source,
-        // One mechanism, not two: the caller's answer wins outright, including
-        // when the answer is "nothing to buy". `markPurchased` already writes an
-        // undefined `purchase` elsewhere in this store, so an own key holding
-        // undefined is the shape the rest of the code already reads.
-        purchase,
-        id: copyId,
-        // Offset so the copy is visibly its own sticker rather than an exact
-        // overlap the placer has to discover by dragging the top one off.
-        //
-        // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
-        // at exactly the case the nudge exists for: duplicate a sticker in the
-        // corner and the copy landed at the same point, so the button looked
-        // like it had done nothing. Nudging inward keeps the copy visible and
-        // on the image, which is also what the server requires of the position.
-        x: nudge(source.x),
-        y: nudge(source.y),
-      };
-
-      // Appended and selected, the same as a fresh pickup: the copy is the one
-      // being positioned now, and the handles belong to it.
-      return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
-    });
-
-    return copyId;
-  },
-
-  move: (id, next) =>
-    set((state) => {
-      const index = state.drafts.findIndex((draft) => draft.id === id);
-      if (index < 0) return state;
-
-      const current = state.drafts[index];
-      const moved: StickerDraft = {
-        ...current,
-        ...next,
-        x: clamp(next.x ?? current.x, 0, 1),
-        y: clamp(next.y ?? current.y, 0, 1),
-        scale: clamp(
-          next.scale ?? current.scale,
-          STICKER_PLACEMENT_MIN_SCALE,
-          STICKER_PLACEMENT_MAX_SCALE
+    markPurchased: (cosmeticId, draftId) =>
+      set((state) => ({
+        drafts: state.drafts.map((draft) =>
+          draft.cosmeticId === cosmeticId && draft.purchase && (!draftId || draft.id === draftId)
+            ? { ...draft, purchase: undefined }
+            : draft
         ),
-        rotation: clamp(
-          next.rotation ?? current.rotation,
-          -STICKER_PLACEMENT_MAX_ROTATION,
-          STICKER_PLACEMENT_MAX_ROTATION
-        ),
-        // Clamped like the rest, though nothing here can overshoot: the slider is
-        // bounded and the flip is a toggle. It matters because the server refuses
-        // rather than clamps below the floor, so a draft that got there some other
-        // way would be refused at the purchase — after the Buzz confirmation.
-        opacity: clamp(
-          next.opacity ?? current.opacity,
-          STICKER_PLACEMENT_MIN_OPACITY,
-          STICKER_PLACEMENT_MAX_OPACITY
-        ),
-      };
+      })),
 
-      // Replaced in place rather than moved to the end: order is what the drafts
-      // are drawn in, and reordering on move would make a sticker jump over its
-      // neighbours mid-drag.
-      const drafts = [...state.drafts];
-      drafts[index] = moved;
-      return { drafts };
-    }),
-}));
+    begin: (cosmeticId, at, maxScale, purchase) =>
+      set((state) => {
+        if (state.targetImageId == null) return state;
+
+        const draft: StickerDraft = {
+          ...(purchase ? { purchase } : {}),
+          id: nextDraftId(),
+          imageId: state.targetImageId,
+          cosmeticId,
+          x: at?.x ?? 0.5,
+          y: at?.y ?? 0.5,
+          // The creator's ceiling, not just the global one. A creator below the
+          // 18% default is a third of the slider's range, and their space refused
+          // the very first gesture with no hint why.
+          scale: Math.min(STICKER_PLACEMENT_DEFAULT_SCALE, maxScale ?? STICKER_PLACEMENT_MAX_SCALE),
+          rotation: 0,
+          flip: false,
+          opacity: STICKER_PLACEMENT_DEFAULT_OPACITY,
+        };
+
+        // Appended and selected: the one just dragged out is the one being placed,
+        // and the drag that created it is already in flight against it.
+        return { drafts: [...state.drafts, draft], selectedDraftId: draft.id };
+      }),
+
+    packPurchaseKey: (cosmeticId) => {
+      const existing = get().packKeys[cosmeticId];
+      if (existing) return existing;
+
+      const key = mintPurchaseKey();
+      set((state) => ({ packKeys: { ...state.packKeys, [cosmeticId]: key } }));
+      return key;
+    },
+
+    markPaidForUse: (draftId) =>
+      set((state) =>
+        state.paidDraftIds.includes(draftId)
+          ? state
+          : { paidDraftIds: [...state.paidDraftIds, draftId] }
+      ),
+
+    clearPackPurchaseKey: (cosmeticId) =>
+      set((state) => {
+        const { [cosmeticId]: _gone, ...rest } = state.packKeys;
+        return { packKeys: rest };
+      }),
+
+    duplicateDraft: (id, purchase) => {
+      const source = get().drafts.find((draft) => draft.id === id);
+      if (!source) return null;
+
+      // The id is minted here rather than inside the updater so it can be handed
+      // back: an alt-drag has to continue against the COPY, and the caller cannot
+      // ask "which one is new" from outside without racing its own update.
+      const copyId = nextDraftId();
+
+      set((state) => {
+        const copy: StickerDraft = {
+          ...source,
+          // One mechanism, not two: the caller's answer wins outright, including
+          // when the answer is "nothing to buy". `markPurchased` already writes an
+          // undefined `purchase` elsewhere in this store, so an own key holding
+          // undefined is the shape the rest of the code already reads.
+          purchase,
+          id: copyId,
+          // Offset so the copy is visibly its own sticker rather than an exact
+          // overlap the placer has to discover by dragging the top one off.
+          //
+          // 🔴 AWAY FROM THE EDGE, NOT CLAMPED TO IT. Clamping ate the whole nudge
+          // at exactly the case the nudge exists for: duplicate a sticker in the
+          // corner and the copy landed at the same point, so the button looked
+          // like it had done nothing. Nudging inward keeps the copy visible and
+          // on the image, which is also what the server requires of the position.
+          x: nudge(source.x),
+          y: nudge(source.y),
+          // Keys hold positions, so a copy that kept them would play on top of the original. A
+          // Static copy draws at its own opacity, not the key opacity the source was paused on.
+          motion: undefined,
+          shown: undefined,
+        };
+
+        // Appended and selected, the same as a fresh pickup: the copy is the one
+        // being positioned now, and the handles belong to it.
+        return { drafts: [...state.drafts, copy], selectedDraftId: copy.id };
+      });
+
+      return copyId;
+    },
+
+    move: (id, next) =>
+      set((state) => {
+        const index = state.drafts.findIndex((draft) => draft.id === id);
+        if (index < 0) return state;
+
+        const current = state.drafts[index];
+        const moved: StickerDraft = {
+          ...current,
+          ...next,
+          x: clamp(next.x ?? current.x, 0, 1),
+          y: clamp(next.y ?? current.y, 0, 1),
+          scale: clamp(
+            next.scale ?? current.scale,
+            STICKER_PLACEMENT_MIN_SCALE,
+            STICKER_PLACEMENT_MAX_SCALE
+          ),
+          rotation: clamp(
+            next.rotation ?? current.rotation,
+            -STICKER_PLACEMENT_MAX_ROTATION,
+            STICKER_PLACEMENT_MAX_ROTATION
+          ),
+          // Clamped like the rest, though nothing here can overshoot: the slider is
+          // bounded and the flip is a toggle. It matters because the server refuses
+          // rather than clamps below the floor, so a draft that got there some other
+          // way would be refused at the purchase — after the Buzz confirmation.
+          opacity: clamp(
+            next.opacity ?? current.opacity,
+            STICKER_PLACEMENT_MIN_OPACITY,
+            STICKER_PLACEMENT_MAX_OPACITY
+          ),
+        };
+
+        // Replaced in place rather than moved to the end: order is what the drafts
+        // are drawn in, and reordering on move would make a sticker jump over its
+        // neighbours mid-drag.
+        const drafts = [...state.drafts];
+        const posed = 'x' in next || 'y' in next || 'scale' in next || 'rotation' in next;
+        drafts[index] = posed && moving(current) ? withKeyAt(moved, state.playheadMs) : moved;
+        return { drafts };
+      }),
+
+    setPlayhead: (ms) =>
+      set((state) => ({
+        playheadMs: ms,
+        drafts: state.drafts.map((draft) => (moving(draft) ? drawnAt(draft, ms) : draft)),
+      })),
+
+    setVideoPlaying: (videoPlaying) => set({ videoPlaying }),
+
+    setMotion: (id, on) =>
+      set((state) => ({
+        drafts: state.drafts.map((draft) => {
+          if (draft.id !== id) return draft;
+          const keys = draft.motion?.keys.length
+            ? draft.motion.keys
+            : upsertKey([], state.playheadMs, draft);
+          const next = { ...draft, motion: { on, keys } };
+          // Static keeps the sticker where it is at the playhead; Movement draws it there.
+          return on ? drawnAt(next, state.playheadMs) : { ...next, shown: undefined };
+        }),
+      })),
+
+    setPrimaryLabel: (id, label) =>
+      set((state) => {
+        if ((state.primaryLabels[id] ?? null) === label) return state;
+        const primaryLabels = { ...state.primaryLabels };
+        if (label == null) delete primaryLabels[id];
+        else primaryLabels[id] = label;
+        return { primaryLabels };
+      }),
+
+    setReadyPlacement: (id, ready) =>
+      set((state) => {
+        const current = state.readyPlacements[id] ?? null;
+        if (current === ready) return state;
+        const readyPlacements = { ...state.readyPlacements };
+        if (ready == null) delete readyPlacements[id];
+        else readyPlacements[id] = ready;
+        return { readyPlacements };
+      }),
+
+    setPlacingAll: (placingAll) => set({ placingAll }),
+
+    setKeys: (id, keys) =>
+      set((state) => ({
+        drafts: state.drafts.map((draft) =>
+          draft.id === id && draft.motion
+            ? drawnAt({ ...draft, motion: { ...draft.motion, keys } }, state.playheadMs)
+            : draft
+        ),
+      })),
+  }));
+
+const moving = (draft: StickerDraft) => !!draft.motion?.on && draft.motion.keys.length > 0;
+
+/** The draft at its keys' pose for `ms`. */
+function drawnAt(draft: StickerDraft, ms: number): StickerDraft {
+  if (!draft.motion?.keys.length) return draft;
+  const { pose, opacity } = poseAt(draft.motion.keys, ms);
+  return { ...draft, ...pose, shown: opacity };
+}
+
+/** A sticker in Movement that was moved, sized or turned: its key at the playhead follows. */
+function withKeyAt(draft: StickerDraft, ms: number): StickerDraft {
+  if (!draft.motion) return draft;
+  const { x, y, scale, rotation } = draft;
+  return {
+    ...draft,
+    motion: {
+      ...draft.motion,
+      keys: upsertKey(draft.motion.keys, ms, { x, y, scale, rotation }, keyMinShown(draft.opacity)),
+    },
+  };
+}
+
+export const useStickerPlacementDraftStore = createDraftStore();
+export type DraftStoreHook = typeof useStickerPlacementDraftStore;
+
+/**
+ * A second, private draft store for a host whose drafts are not stickers for sale
+ * (Hat Turf hats). Sharing the global one would put a hat into the sticker tray's
+ * session and the sticker layer would render it with a buy button.
+ */
+export const createStickerPlacementDraftStore = createDraftStore;
+
+/** Which store `DraftSticker` and `useDraftGestures` read. The sticker one unless a host provides its own. */
+export const DraftStoreContext = createContext<DraftStoreHook>(useStickerPlacementDraftStore);
+export const useDraftStoreHook = () => useContext(DraftStoreContext);
 
 /** The one carrying the handles and the buy button, if any. */
 export const selectedDraft = (state: { drafts: StickerDraft[]; selectedDraftId: string | null }) =>
@@ -511,8 +651,12 @@ export const selectedDraft = (state: { drafts: StickerDraft[]; selectedDraftId: 
  * the carousel, and a stale rect silently offsets every later drag in a way that
  * reads as the sticker lagging the cursor.
  */
-export function pointerToSurfaceFraction(clientX: number, clientY: number) {
-  const surface = useStickerPlacementDraftStore.getState().surface;
+export function pointerToSurfaceFraction(
+  clientX: number,
+  clientY: number,
+  store: DraftStoreHook = useStickerPlacementDraftStore
+) {
+  const surface = store.getState().surface;
   const bounds = surface?.getBoundingClientRect();
   if (!bounds?.width || !bounds.height) return null;
 

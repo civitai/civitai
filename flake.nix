@@ -30,6 +30,10 @@
 
       nodeVersion = lib.trim (builtins.readFile ./.nvmrc);
       nodeMajor = lib.head (lib.splitString "." nodeVersion);
+      # shortcut: the locked nixpkgs can lag .nvmrc's patch (a security release can
+      # land before nixpkgs carries it), and `checks.toolchain-pins` (N2) stays red
+      # until `nix flake update nixpkgs` lands a nodejs_24 equal to .nvmrc. Remove
+      # this note once the lock catches up.
       nodejs = pkgs."nodejs_${nodeMajor}";
 
       packageJson = builtins.fromJSON (builtins.readFile ./package.json);
@@ -137,7 +141,7 @@
       #
       # The SERVERS are docker-compose's job (docker-compose.base.yml), not
       # nix's -- four postgres, two redis, minio, meilisearch, clickhouse and
-      # maildev. What the shell provides is the matching CLIENTS, because you
+      # mailpit. What the shell provides is the matching CLIENTS, because you
       # talk to those containers by hand constantly:
       #
       #   psql              -> the `db` container on :15432

@@ -1,4 +1,5 @@
-import { Anchor, Button, Group, NumberInput, Popover, Select, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Group, NumberInput, Select, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useState } from 'react';
 import type { ModelFileType } from '~/server/common/constants';
 import { getModelFileTypeOptions } from '~/utils/file-display-helpers';

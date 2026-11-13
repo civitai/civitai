@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 /**
  * Generation gate rules: hide a generator ecosystem or model version from everyone except
- * moderators, and remove that again. See SKILL.md. Writes are dry runs unless --writable.
+ * moderators, or disable it with a message during an outage, and remove either again.
+ * See SKILL.md. Writes are dry runs unless --writable.
  */
 
 import { API_URL, createCli, isMain, trpcCall, whoami } from '../mod-actions/lib.mjs';
 
 const OWNED_RULE_PREFIX = 'onboard-';
 export const isOwnedRule = (rule) => rule.id.startsWith(OWNED_RULE_PREFIX);
+
+const INCIDENT_RULE_PREFIX = 'incident-';
+export const isIncidentRule = (rule) => rule.id.startsWith(INCIDENT_RULE_PREFIX);
 
 export async function readRules() {
   return (await trpcCall('generation.getGateRules', undefined, 'GET')) ?? [];
@@ -54,11 +58,23 @@ if (isMain(import.meta.url)) {
     if (flags.ecosystem && flags.version) fail('pass --ecosystem or --version, not both');
     if (flags.ecosystem) {
       const key = required('ecosystem');
-      return { list: 'ecosystems', value: key, ruleId: `${OWNED_RULE_PREFIX}eco-${key}`, label: `ecosystem ${key}` };
+      return {
+        list: 'ecosystems',
+        value: key,
+        ruleId: `${OWNED_RULE_PREFIX}eco-${key}`,
+        incidentKey: key.toLowerCase(),
+        label: `ecosystem ${key}`,
+      };
     }
     if (flags.version) {
       const id = requiredInt('version');
-      return { list: 'modelVersionIds', value: id, ruleId: `${OWNED_RULE_PREFIX}mv-${id}`, label: `version ${id}` };
+      return {
+        list: 'modelVersionIds',
+        value: id,
+        ruleId: `${OWNED_RULE_PREFIX}mv-${id}`,
+        incidentKey: `mv-${id}`,
+        label: `version ${id}`,
+      };
     }
     fail('pass --ecosystem <key> or --version <id>');
   };
@@ -131,13 +147,70 @@ if (isMain(import.meta.url)) {
     console.log(`Removed ${target.label} (deleted rule ${target.ruleId}).`);
   };
 
+  // One incident rule per target per UTC day, so a second disable the same day rewrites it.
+  const disable = async () => {
+    const target = gateTarget();
+    const message = required('message');
+    const ruleId = `${INCIDENT_RULE_PREFIX}${target.incidentKey}-${new Date().toISOString().slice(0, 10)}`;
+    const rules = await readRules();
+
+    const open = rules.filter(
+      (r) => isIncidentRule(r) && r.id !== ruleId && r[target.list].includes(target.value)
+    );
+    for (const r of open) console.log(`Note: ${target.label} is already disabled by ${r.id}.`);
+
+    const rule = {
+      id: ruleId,
+      name: `Incident: ${target.label}`,
+      availableTo: 'moderators',
+      presentation: 'disabled',
+      message,
+      ecosystems: target.list === 'ecosystems' ? [target.value] : [],
+      workflows: [],
+      modelVersionIds: target.list === 'modelVersionIds' ? [target.value] : [],
+    };
+
+    if (!writable) return dryRun('generation.saveGateRule', rule);
+    await trpcCall('generation.saveGateRule', rule);
+    const saved = (await readRules()).find((r) => r.id === ruleId);
+    if (!saved) fail(`saved ${ruleId} but it is not in the rules read back`);
+    console.log(`Disabled:\n${describeRule(saved)}`);
+  };
+
+  const enable = async () => {
+    const target = gateTarget();
+    const rules = await readRules();
+    const incidents = rules.filter((r) => isIncidentRule(r) && r[target.list].includes(target.value));
+    if (!incidents.length) return console.log(`No incident rule disables ${target.label}.`);
+
+    const shared = incidents.filter(
+      (r) => r.ecosystems.length + r.workflows.length + r.modelVersionIds.length > 1
+    );
+    if (shared.length)
+      fail(`${shared.map((r) => r.id).join(', ')} cover more than ${target.label}; edit by hand`);
+
+    if (!writable) {
+      console.log(`[dry run] generation.deleteGateRule → ${API_URL}`);
+      for (const r of incidents) console.log(`Would delete:\n${describeRule(r)}`);
+      return console.log('Re-run with --writable to apply.');
+    }
+    for (const r of incidents) await trpcCall('generation.deleteGateRule', { id: r.id });
+    const left = (await readRules()).filter((r) => incidents.some((i) => i.id === r.id));
+    if (left.length) fail(`still present after delete: ${left.map((r) => r.id).join(', ')}`);
+    console.log(`Enabled ${target.label} (deleted ${incidents.map((r) => r.id).join(', ')}).`);
+  };
+
   const HELP = `Usage: node .claude/skills/generation-gate-rules/gate.mjs <command> [flags]
 
   whoami
   list     [--json]
   add      --ecosystem <key> | --version <id> [--message <m>] [--writable]
            (always "available to moderators, hidden")
-  remove   --ecosystem <key> | --version <id> [--from-rule <id>] [--writable]`;
+  remove   --ecosystem <key> | --version <id> [--from-rule <id>] [--writable]
+  disable  --ecosystem <key> | --version <id> --message <m> [--writable]
+           (outage: "available to moderators, disabled", shown with the message)
+  enable   --ecosystem <key> | --version <id> [--writable]
+           (deletes the incident rules that disable the target)`;
 
-  dispatch({ whoami, list, add, remove }, HELP);
+  dispatch({ whoami, list, add, remove, disable, enable }, HELP);
 }

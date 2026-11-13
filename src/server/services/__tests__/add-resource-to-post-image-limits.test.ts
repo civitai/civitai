@@ -4,6 +4,7 @@ import {
   MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
   MAX_MANUAL_RESOURCES_PER_IMAGE,
 } from '~/server/common/constants';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import type * as CommonService from '~/server/services/common.service';
 import { Availability, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
@@ -16,6 +17,10 @@ import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
  * The module scaffold mirrors update-post-image-hidemeta-bust.test.ts.
  */
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
@@ -48,6 +53,7 @@ vi.mock('~/server/redis/caches', () => {
     userPostCountCache: cacheStub(),
   };
 });
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
   createImage: vi.fn(),
   createImageResources: vi.fn(),
@@ -57,7 +63,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));
@@ -75,7 +80,7 @@ vi.mock('~/server/services/tag.service', () => ({
   findOrCreateTagsByName: vi.fn(),
   getVotableImageTags: vi.fn(),
 }));
-vi.mock('~/server/services/technique.service', () => ({ getTechniqueByName: vi.fn() }));
+vi.mock('~/server/services/technique.service', () => ({ getTechniqueForWorkflow: vi.fn() }));
 vi.mock('~/server/services/tool.service', () => ({
   getToolByAlias: vi.fn(),
   getToolByDomain: vi.fn(),
@@ -91,7 +96,9 @@ vi.mock('~/server/services/common.service', async (importOriginal) => ({
   hasEntityAccess,
 }));
 
-const { addResourceToPostImage, createPost } = await import('~/server/services/post.service');
+const { addResourceToPostImage, createPost, creditResourcesToImages } = await import(
+  '~/server/services/post.service'
+);
 
 const IMAGE_ID = 101;
 const OTHER_IMAGE_ID = 102;
@@ -264,6 +271,95 @@ describe('addResourceToPostImage manual resource limits', () => {
  * image, and creating a post on a version. A version the caller may not view must be refused with
  * exactly the error a nonexistent id gets.
  */
+describe('addResourceToPostImage post cache busting', () => {
+  it('busts each post once, however many of its images were credited', async () => {
+    const imageIds = [IMAGE_ID, OTHER_IMAGE_ID, 103];
+    arrange({ adding: ModelType.LORA, existing: [], imageIds });
+    mockImageFindMany.mockResolvedValue([
+      { postId: 7, meta: null, type: 'image' },
+      { postId: 7, meta: null, type: 'image' },
+      { postId: 8, meta: null, type: 'image' },
+    ]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await add(imageIds);
+    expect(vi.mocked(preventReplicationLag).mock.calls).toEqual([
+      ['postImages', 7],
+      ['postImages', 8],
+    ]);
+    // bustCachesForPosts reads every post in one query.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    // The post ids reach the query as one joined parameter.
+    const params = (dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[]).slice(1);
+    expect(params).toContainEqual(expect.objectContaining({ values: [7, 8] }));
+  });
+});
+
+describe('addResourceToPostImage on-site generations', () => {
+  const onSiteMeta = { civitaiResources: [{ modelVersionId: 1 }] };
+
+  it('refuses an on-site generated image, and writes nothing', async () => {
+    arrange({ adding: ModelType.LORA, existing: [] });
+    mockImageFindMany.mockResolvedValue([{ postId: null, meta: onSiteMeta, type: 'image' }]);
+    await expect(add()).rejects.toThrow('Cannot add resources to on-site generations.');
+    expectNothingWritten();
+  });
+
+  it('accepts a video carrying the same metadata', async () => {
+    arrange({ adding: ModelType.LORA, existing: [] });
+    mockImageFindMany.mockResolvedValue([{ postId: null, meta: onSiteMeta, type: 'video' }]);
+    await expect(add()).resolves.toBeDefined();
+  });
+});
+
+describe('creditResourcesToImages, as a batch credits a post', () => {
+  const onSiteMeta = { civitaiResources: [{ modelVersionId: 1 }] };
+  const version = (id: number, type: ModelType) =>
+    ({ id, model: { id: id + 1, type } } as Parameters<
+      typeof creditResourcesToImages
+    >[0]['modelVersions'][number]);
+
+  it('skips on-site generations by their stored meta and credits the rest in one insert', async () => {
+    arrange({ adding: ModelType.LORA, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    mockImageFindMany.mockResolvedValue([
+      { id: IMAGE_ID, postId: null, meta: null, type: 'image' },
+      { id: OTHER_IMAGE_ID, postId: null, meta: onSiteMeta, type: 'image' },
+    ]);
+
+    await creditResourcesToImages({
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+      modelVersions: [version(40, ModelType.LORA), version(41, ModelType.Checkpoint)],
+      user,
+      skipOnSite: true,
+    });
+
+    expect(tx.imageResourceNew.createManyAndReturn).toHaveBeenCalledTimes(1);
+    expect(tx.imageResourceNew.createManyAndReturn.mock.calls[0][0].data).toEqual([
+      { imageId: IMAGE_ID, modelVersionId: 40, detected: false },
+      { imageId: IMAGE_ID, modelVersionId: 41, detected: false },
+    ]);
+  });
+
+  it('checks the limits against every version being added together', async () => {
+    arrange({
+      adding: ModelType.Checkpoint,
+      existing: rows(MAX_MANUAL_CHECKPOINTS_PER_IMAGE - 1, ModelType.Checkpoint, false),
+    });
+    mockImageFindMany.mockResolvedValue([
+      { id: IMAGE_ID, postId: null, meta: null, type: 'image' },
+    ]);
+
+    await expect(
+      creditResourcesToImages({
+        imageIds: [IMAGE_ID],
+        modelVersions: [version(40, ModelType.Checkpoint), version(41, ModelType.Checkpoint)],
+        user,
+        skipOnSite: true,
+      })
+    ).rejects.toThrow(manualResourceLimitMessages.checkpoints);
+    expectNothingWritten();
+  });
+});
+
 describe('model version visibility on caller-supplied version ids', () => {
   const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000);
   const moderator = { id: 3, isModerator: true } as typeof user;

@@ -24,6 +24,7 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  clearImageRatings,
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
@@ -34,8 +35,10 @@ import {
   smitesCounter,
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
+import { buildFinalRatingsInsert } from '~/server/games/new-order/final-ratings-sql';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { sAddWithExpireGe } from '~/server/redis/atomic';
 import type { InfiniteQueryInput } from '~/server/schema/base.schema';
 import type {
   AddImageRatingInput,
@@ -50,7 +53,7 @@ import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/u
 import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { createReport } from '~/server/services/report.service';
-import { claimCosmetic } from '~/server/services/user.service';
+import { awardTrophyCosmetic } from '~/server/services/user.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import {
@@ -75,6 +78,11 @@ import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 
 const ACOLYTE_WRONG_ANSWER_LIMIT = 5;
+
+// Judged on the row as read, not on pool membership; matches the scan pipeline's enqueue gate.
+function isHeldForReview(image: { needsReview: string | null }) {
+  return image.needsReview !== null;
+}
 
 // Helper functions for atomic voting
 function getVoteLimitForRank(rank: NewOrderHighRankType): number {
@@ -130,7 +138,7 @@ export async function joinGame({ userId }: { userId: number }) {
   });
 
   // Grant cosmetic to new players
-  await claimCosmetic({
+  await awardTrophyCosmetic({
     id: newOrderConfig.cosmetics.badgeIds.acolyte,
     userId,
   }).catch(() => null); // Ignore if it fails
@@ -398,6 +406,16 @@ export async function addImageRating({
 }: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
+  // Warm the rated set outside the per-image lock: a cold rebuild reads ClickHouse and must not
+  // eat into the lock's 30s TTL.
+  if (!isModerator) {
+    try {
+      await ensureRatedImagesCache({ userId: playerId });
+    } catch (e) {
+      handleLogError(e as Error, 'new-order-duplicate-vote-check', { playerId, imageId });
+    }
+  }
+
   // Use distributed lock to prevent race conditions
   const result = await withSpan('games:newOrder:addRating', () =>
     withDistributedLock(
@@ -520,8 +538,10 @@ async function processImageRating({
   const voteLimit = getVoteLimitForRank(valueInQueue.rank);
 
   if (currentVoteCount >= voteLimit && valueInQueue.rank !== NewOrderRankType.Acolyte) {
-    // Vote limit already reached, remove from queue
+    // Vote limit already reached with no decision: the round ends undecided, so its votes are
+    // settled as Inconclusive, as the daily purge does for images that never reached one.
     await removeImageFromQueue({ imageId, valueInQueue });
+    await voidPendingRatings([imageId]);
     return { stats: player.stats };
   }
 
@@ -545,6 +565,25 @@ async function processImageRating({
     return { stats: player.stats };
   }
 
+  // The ratings table keeps one row per (userId, imageId): a second vote on a re-queued image
+  // would replace the player's settled row with a Pending one, so refuse it here.
+  try {
+    // Any member present is a true hit, even in a set still being completed. A miss there (the
+    // warm-up failed) is the accepted fail-open: never rebuild under the lock.
+    if (await redis?.sIsMember(ratedImagesKey(playerId), String(imageId))) {
+      logToAxiom({
+        type: 'info',
+        name: 'new-order-duplicate-vote',
+        details: { playerId, imageId },
+        message: `Player ${playerId} voted again on image ${imageId}`,
+      }).catch(() => null);
+      return { stats: player.stats };
+    }
+  } catch (e) {
+    // Fail open: a Redis blip must not fail the vote. In prod handleLogError sends the name to Axiom.
+    handleLogError(e as Error, 'new-order-duplicate-vote-check', { playerId, imageId });
+  }
+
   // Atomically increment vote count and check limits
   const newVoteCount = await valueInQueue.pool.increment({ id: imageId });
   // Also increment total ratings for this image+rating
@@ -560,6 +599,9 @@ async function processImageRating({
   });
 
   let currentNsfwLevel: NsfwLevel | undefined = image.nsfwLevel;
+  let votesVoided = false;
+  // Set only when this vote decided the image: the level decided, or null for no consensus.
+  let decidedLevel: NsfwLevel | null | undefined;
 
   // Check if we've reached vote limits after the atomic increment
   const reachedKnightVoteLimit =
@@ -570,6 +612,8 @@ async function processImageRating({
   // Now, process what to do with the image:
   if (reachedKnightVoteLimit) {
     const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
+    // Unreachable while the Knight vote limit is below maxKnightVotes: a vote past the limit is
+    // refused above.
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
       // Guard against excessive down-rating: allow down-rating by at most 1 level,
@@ -583,29 +627,41 @@ async function processImageRating({
 
         // Remove from Knight queue and escalate to Inquisitor queue for mod review
         await removeImageFromQueue({ imageId, valueInQueue });
-        await addImageToQueue({
+        const { added } = await addImageToQueue({
           imageIds: imageId,
           rankType: 'Inquisitor' as NewOrderHighRankType,
           priority: 1,
         });
 
-        logToAxiom({
-          type: 'info',
-          name: 'new-order-down-rating-escalated',
-          details: {
-            imageId,
-            currentLevel: image.nsfwLevel,
-            consensusLevel: consensus,
-            distance: Flags.distance(image.nsfwLevel, consensus),
-            voteCount: newVoteCount,
-          },
-          message: `Image ${imageId} down-rating consensus (${
-            image.nsfwLevel
-          } → ${consensus}, distance ${Flags.distance(
-            image.nsfwLevel,
-            consensus
-          )}) escalated to Inquisitor queue`,
-        }).catch(() => null);
+        if (!added) {
+          // Not escalated, so no mod decision will settle these votes: void them now. This vote is
+          // written as Inconclusive below, since its row does not exist yet.
+          votesVoided = true;
+          await voidPendingRatings([imageId]);
+          logToAxiom({
+            type: 'info',
+            name: 'new-order-escalation-skipped',
+            details: { imageId, userId: playerId },
+            message: `Image ${imageId} was not escalated to Inquisitor queue`,
+          }).catch(() => null);
+        } else
+          logToAxiom({
+            type: 'info',
+            name: 'new-order-down-rating-escalated',
+            details: {
+              imageId,
+              currentLevel: image.nsfwLevel,
+              consensusLevel: consensus,
+              distance: Flags.distance(image.nsfwLevel, consensus),
+              voteCount: newVoteCount,
+            },
+            message: `Image ${imageId} down-rating consensus (${
+              image.nsfwLevel
+            } → ${consensus}, distance ${Flags.distance(
+              image.nsfwLevel,
+              consensus
+            )}) escalated to Inquisitor queue`,
+          }).catch(() => null);
       } else {
         // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
         if (consensus) {
@@ -618,6 +674,8 @@ async function processImageRating({
             status: 'Actioned',
           });
         }
+
+        decidedLevel = consensus ? currentNsfwLevel ?? consensus : null;
 
         // Update pending ratings
         await updatePendingImageRatings({ imageId, rating: consensus });
@@ -636,13 +694,17 @@ async function processImageRating({
       currentNsfwLevel === rating
         ? NewOrderImageRatingStatus.AcolyteCorrect
         : NewOrderImageRatingStatus.AcolyteFailed;
-  } else if (reachedKnightVoteLimit && currentNsfwLevel !== undefined) {
+  } else if (votesVoided) {
+    status = NewOrderImageRatingStatus.Inconclusive;
+  } else if (decidedLevel === null) {
+    status = NewOrderImageRatingStatus.Inconclusive;
+  } else if (decidedLevel !== undefined) {
     status =
-      currentNsfwLevel === rating
+      decidedLevel === rating
         ? NewOrderImageRatingStatus.Correct
         : NewOrderImageRatingStatus.Failed;
   } else {
-    // Knights leave the image in the pending status until their vote is confirmed.
+    // Until a decision is made, Knight votes stay Pending; the decision grades them.
     status = NewOrderImageRatingStatus.Pending;
   }
 
@@ -775,7 +837,12 @@ async function processImageRating({
   }
 
   // Add newly rated image to cache incrementally (O(1) operation, no cache busting needed)
-  addRatedImage(playerId, imageId);
+  try {
+    await addRatedImage(playerId, imageId);
+  } catch (e) {
+    // The vote already landed; a lost append is the same accepted fail-open as the check.
+    handleLogError(e as Error, 'new-order-duplicate-vote-check', { playerId, imageId });
+  }
 
   // Increase all counters
   const stats = await withSpan('games:newOrder:updateStats', () =>
@@ -800,7 +867,7 @@ async function processImageRating({
     });
 
     // Grant cosmetic to new players
-    await claimCosmetic({
+    await awardTrophyCosmetic({
       id: newOrderConfig.cosmetics.badgeIds.knight,
       userId: playerId,
     }).catch(() => null); // Ignore if it fails
@@ -834,6 +901,26 @@ async function removeImageFromQueue({
   await valueInQueue.pool.reset({ id: imageId });
   await getImageRatingsCounter(imageId).reset({ all: true }); // Clear vote distribution
   await notifyQueueUpdate(valueInQueue.rank, imageId, NewOrderSignalActions.RemoveImage);
+}
+
+/**
+ * Settles every vote still Pending on these images as Inconclusive, the same way the daily
+ * rating-slot purge does. Never throws: callers are mid-request. A failed void is only logged;
+ * nothing retries it.
+ */
+async function voidPendingRatings(imageIds: number[]) {
+  if (imageIds.length === 0) return;
+  try {
+    if (!clickhouse) throw new Error('ClickHouse not available');
+    await clickhouse.insert({
+      table: 'knights_rating_updates_buffer',
+      values: imageIds.map((imageId) => ({ imageId, rating: null })),
+      format: 'JSONEachRow',
+    });
+    await processFinalRatings();
+  } catch (e) {
+    handleLogError(e as Error, 'new-order-void-pending-ratings');
+  }
 }
 
 export async function updatePendingImageRatings({
@@ -991,44 +1078,7 @@ export async function processFinalRatings() {
     const updateEnd = new Date(updateEndString);
     if (updateStart.getTime() === updateEnd.getTime()) return { status: 'no-new-data' };
 
-    await clickhouse.$exec`
-      INSERT INTO knights_new_order_image_rating
-      WITH batch as (
-        SELECT
-            imageId,
-            argMax(rating, update_time) as rating,  -- Latest rating wins
-            max(update_time) as createdAt
-        FROM knights_rating_updates_batch
-        WHERE
-          update_time > ${updateStart}
-          AND update_time <= ${updateEnd}
-        GROUP BY imageId
-      )
-      SELECT
-          orig.userId,
-          orig.imageId as imageId,
-          orig.rating as rating,
-          orig.damnedReason,
-          CASE
-              WHEN new.rating IS NULL THEN '${NewOrderImageRatingStatus.Inconclusive}'
-              WHEN new.rating = orig.rating THEN '${NewOrderImageRatingStatus.Correct}'
-              ELSE '${NewOrderImageRatingStatus.Failed}'
-          END as status,
-          orig.grantedExp,
-          CASE
-              WHEN new.rating = orig.rating THEN 1
-              ELSE 0
-          END as multiplier,
-          new.createdAt as createdAt,
-          orig.ip,
-          orig.userAgent,
-          orig.deviceId,
-          orig.rank,
-          orig.originalLevel
-      FROM knights_new_order_image_rating orig
-      JOIN batch new ON new.imageId = orig.imageId
-      WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte';
-    `;
+    await clickhouse.$exec(buildFinalRatingsInsert({ updateStart, updateEnd }));
 
     // Update last processed time and reset pending count
     await sysRedis
@@ -1217,9 +1267,9 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
     // Fetch image data from database (url, metadata)
     const imageData = await dbRead.image.findUnique({
       where: { id: imageId },
-      select: { url: true, metadata: true },
+      select: { url: true, metadata: true, needsReview: true },
     });
-    if (!imageData) return null;
+    if (!imageData || isHeldForReview(imageData)) return null;
 
     return {
       imageId,
@@ -1478,59 +1528,51 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
+function ratedImagesKey(userId: number) {
+  return `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
+}
+
 /**
  * Ensures the rated images cache is populated for a user.
  * On cache miss, fetches from ClickHouse and populates the Redis set.
  * Returns the Redis key for subsequent SMISMEMBER checks.
  *
- * Uses a sentinel member '0' (no real image has ID 0) to distinguish
- * "cache populated but user has no ratings" from "cache not populated".
+ * A set is complete only once it holds RATED_SET_COMPLETE, written after every chunk.
  */
-async function ensureRatedImagesCache({
-  userId,
-  startAt,
-  rankType,
-}: {
-  userId: number;
-  startAt: Date;
-  rankType?: NewOrderRankType;
-}) {
+// Not '0': sets built before the full-history rebuild carry '0' but were filtered by startAt/rank.
+export const RATED_SET_COMPLETE = 'complete:v2';
+
+async function ensureRatedImagesCache({ userId }: { userId: number }) {
   if (!redis || !clickhouse) throw throwInternalServerError('Redis not available');
 
-  const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
+  const key = ratedImagesKey(userId);
 
-  // Check if cache is already populated (O(1))
-  const exists = await redis.exists(key);
-  if (exists) return key;
+  // The sentinel is written last, so its presence means every chunk landed. A set without it
+  // (a build that died, or one addRatedImage created) is completed by union below.
+  if (await redis.sIsMember(key, RATED_SET_COMPLETE)) return key;
 
-  // Cache miss - fetch from ClickHouse
-  const AND = [
-    `userId = ${userId}`,
-    `createdAt >= parseDateTimeBestEffort('${startAt.toISOString()}')`,
-  ];
-  if (rankType) AND.push(`rank = '${rankType}'`);
-
+  // Full history, no startAt or rank filter: resetPlayer moves startAt forward but the ratings
+  // table still holds one row per (userId, imageId), and a vote at any rank counts as rated.
   const results = await clickhouse.$query<{ imageId: number }>`
     SELECT DISTINCT "imageId"
     FROM knights_new_order_image_rating
-    WHERE ${AND.join(' AND ')}
+    WHERE userId = ${userId}
   `;
 
-  const imageIds = results.map((r) => r.imageId);
-
-  // Always populate the set with a sentinel '0' so EXISTS returns true on next call.
-  // Real image IDs are always > 0, so the sentinel never interferes with SMISMEMBER checks.
-  const members = imageIds.length > 0 ? ['0', ...imageIds.map(String)] : ['0'];
+  const imageIds = results.map((r) => String(r.imageId));
 
   // Chunk the SADD so a heavy rater (>100K rated images) doesn't block the Redis shard
-  // for tens of ms. Each chunk is its own command (NOT inside MULTI/EXEC) so Redis can
-  // interleave other clients' commands between chunks. Sequential await keeps the burst
-  // small and predictable.
+  // for tens of ms. Sequential await keeps the burst small and predictable. Every write is a
+  // single-key union (the cache is a Redis Cluster), so concurrent rebuilds are harmless.
   const CHUNK_SIZE = 1000;
-  for (let i = 0; i < members.length; i += CHUNK_SIZE) {
-    await redis.sAdd(key, members.slice(i, i + CHUNK_SIZE));
+  for (let i = 0; i < imageIds.length; i += CHUNK_SIZE) {
+    await redis
+      .multi()
+      .sAdd(key, imageIds.slice(i, i + CHUNK_SIZE))
+      .expire(key, CacheTTL.day)
+      .exec();
   }
-  await redis.expire(key, CacheTTL.day);
+  await redis.multi().sAdd(key, [RATED_SET_COMPLETE]).expire(key, CacheTTL.day).exec();
 
   return key;
 }
@@ -1550,16 +1592,15 @@ async function filterUnratedImages(key: string, imageIds: number[]): Promise<num
 async function addRatedImage(userId: number, imageId: number) {
   if (!redis) return;
 
-  const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
-  // Add image ID to the set (O(1) operation)
-  await redis.multi().sAdd(key, [imageId.toString()]).expire(key, CacheTTL.day).exec();
+  // May create a sentinel-less set: ensureRatedImagesCache completes it by union.
+  await sAddWithExpireGe(redis, ratedImagesKey(userId), imageId.toString(), CacheTTL.day);
 }
 
 // Helper function to clear rated images cache for a player
 export async function clearRatedImages(userId: number) {
   if (!redis) return;
 
-  const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
+  const key = ratedImagesKey(userId);
   // UNLINK is non-blocking: returns immediately, frees memory in a background thread.
   // Daily-reset job fans this across all players via Promise.all; with DEL on
   // 100K-element sets that stampedes the shard.
@@ -1575,15 +1616,22 @@ export async function addImageToQueue({
   imageIds: number | number[];
   rankType: NewOrderHighRankType;
   priority?: 1 | 2 | 3;
-}) {
+}): Promise<{ added: boolean; heldIds: number[] }> {
   imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
-  if (imageIds.length === 0) return false;
+  if (imageIds.length === 0) return { added: false, heldIds: [] };
 
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+  const heldIds: number[] = [];
+  const images = (
+    await dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
+    })
+  ).filter((image) => {
+    if (!isHeldForReview(image)) return true;
+    heldIds.push(image.id);
+    return false;
   });
-  if (images.length === 0) return false;
+  if (images.length === 0) return { added: false, heldIds };
 
   // Get active filling slot for this rank
   const activeSlot = await getActiveSlot(rankType, 'filling');
@@ -1605,7 +1653,7 @@ export async function addImageToQueue({
   //   })
   //   .catch();
 
-  return true;
+  return { added: true, heldIds };
 }
 
 export async function getImagesQueue({
@@ -1637,11 +1685,7 @@ export async function getImagesQueue({
   // Ensure the rated images cache is populated (O(1) EXISTS check, ClickHouse on miss).
   // Uses SMISMEMBER per-batch instead of SMEMBERS on the full set (which was 39K-141K members
   // for active users, taking 10-38ms and blocking the Redis shard).
-  const ratedKey = await ensureRatedImagesCache({
-    userId: playerId,
-    startAt: player.startAt,
-    rankType: player.rankType,
-  });
+  const ratedKey = await ensureRatedImagesCache({ userId: playerId });
   const seenImageIds = new Set<number>();
   const isKnight = effectiveRankType === NewOrderRankType.Knight;
 
@@ -1708,7 +1752,7 @@ export async function getImagesQueue({
       const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
       if (unratedImageIds.length === 0) continue;
 
-      const images = await dbRead.image.findMany({
+      const fetched = await dbRead.image.findMany({
         where: {
           id: { in: unratedImageIds },
           type: MediaType.image,
@@ -1717,8 +1761,37 @@ export async function getImagesQueue({
             publishedAt: { not: null, lt: new Date() },
           },
         },
-        select: { id: true, url: true, nsfwLevel: true, metadata: true },
+        select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
       });
+
+      const heldIds: number[] = [];
+      const images = fetched.filter((image) => {
+        if (!isHeldForReview(image)) return true;
+        heldIds.push(image.id);
+        return false;
+      });
+      if (heldIds.length > 0) {
+        // Removal is cleanup only: the filter above is what keeps them out.
+        let removed = false;
+        try {
+          await pool.reset({ id: heldIds });
+          removed = true;
+          // The removed members shifted the rest of the pool down.
+          poolOffsets[poolIdx] -= heldIds.length;
+        } catch (e) {
+          handleLogError(e as Error, 'new-order-held-image-pool-removal');
+        }
+        // Out of the pool, so the daily purge can no longer settle their votes. Still in it, the
+        // purge will.
+        if (removed) {
+          await voidPendingRatings(heldIds);
+          try {
+            await clearImageRatings(heldIds);
+          } catch (e) {
+            handleLogError(e as Error, 'new-order-held-image-tally-clear');
+          }
+        }
+      }
 
       // Don't overshoot the target — pass 2 redistribution relies on
       // per-pool quotas being respected during pass 1. We mark `seenImageIds`
@@ -1731,7 +1804,7 @@ export async function getImagesQueue({
       sliced.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
-        ...sliced.map(({ nsfwLevel, ...image }) => ({
+        ...sliced.map(({ nsfwLevel, needsReview: _needsReview, ...image }) => ({
           ...image,
           nsfwLevel:
             effectiveRankType === NewOrderRankType.Acolyte || isModerator ? nsfwLevel : undefined,
@@ -1839,9 +1912,11 @@ export async function getImagesQueue({
         const sanityImageIds = selectedChecks.map((entry) => Number(entry.split(':')[0]));
         const sanityImagesData = await dbRead.image.findMany({
           where: { id: { in: sanityImageIds } },
-          select: { id: true, url: true, metadata: true },
+          select: { id: true, url: true, metadata: true, needsReview: true },
         });
-        const sanityImageMap = new Map(sanityImagesData.map((img) => [img.id, img]));
+        const sanityImageMap = new Map(
+          sanityImagesData.filter((img) => !isHeldForReview(img)).map((img) => [img.id, img])
+        );
 
         for (const entry of selectedChecks) {
           const [imageIdStr] = entry.split(':');
@@ -1916,6 +1991,23 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   }
 
   return raters;
+}
+
+/**
+ * After a moderator rates an image: take it out of the New Order queues and drop its vote tally.
+ * The rating is already applied, so this is cleanup and never throws.
+ */
+export async function leaveQueuesAfterModeratorRating(imageId: number) {
+  try {
+    const valueInQueue = await isImageInQueue({
+      imageId,
+      rankType: [NewOrderRankType.Knight, NewOrderRankType.Templar, 'Inquisitor'],
+    });
+    if (!valueInQueue) return;
+    await Promise.all([valueInQueue.pool.reset({ id: imageId }), clearImageRatings([imageId])]);
+  } catch (e) {
+    handleLogError(e as Error, 'new-order-mod-rating-queue-cleanup');
+  }
 }
 
 export async function isImageInQueue({
@@ -2032,14 +2124,15 @@ export async function getPlayerHistory({
         publishedAt: { not: null, lt: new Date() },
       },
     },
-    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
   });
 
   return {
     items: judgments
       .map(({ imageId, ...data }) => {
-        const image = images.find((i) => i.id === imageId);
-        if (!image) return null;
+        const found = images.find((i) => i.id === imageId);
+        if (!found || isHeldForReview(found)) return null;
+        const { needsReview: _needsReview, ...image } = found;
 
         return {
           ...data,

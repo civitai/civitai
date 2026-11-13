@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useAppContext } from '~/providers/AppProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AnnouncementType } from '~/server/schema/announcement.schema';
 import { trpc } from '~/utils/trpc';
 import {
@@ -59,7 +58,6 @@ export function dismissAnnouncements(ids: number | number[], type: AnnouncementT
 }
 
 export function useGetAnnouncements(type: AnnouncementType = 'site') {
-  const features = useFeatureFlags();
   const isClient = useIsClient();
   const dismissedStore = useAnnouncementsStore((state) => state.dismissed[type]);
   const domainColor = useDomainColor();
@@ -107,13 +105,10 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
     );
   }, [typed, type]);
 
-  // SSR-exact dismiss (durable feed-CLS fix), gated on `feedReserveCls` for the
-  // `site` feed placement. When ON, the server + first client paint both read the
-  // dismissed set from the SAME cookie (`dismissedSeed`), so SSR renders the REAL
-  // carousel (or nothing) at its true height from frame 0 — no `isClient` gate, no
-  // min-height reserve, and (steady state) no post-hydration collapse. Post-
-  // hydration we switch to the store (initialized from the same cookie → identical
-  // value → no visual change) so live dismisses stay reactive.
+  // `site` feed placement: the server + first client paint both read the dismissed set
+  // from the SAME cookie (`dismissedSeed`), so SSR renders the REAL carousel (or nothing)
+  // from frame 0 with no `isClient` gate. Post-hydration we switch to the store
+  // (initialized from the same cookie → identical value) so live dismisses stay reactive.
   //
   // BOUNDED exception: on a legacy dismisser's FIRST load of the new bundle the
   // cookie doesn't exist server-side yet (the localStorage→cookie migration is
@@ -124,11 +119,10 @@ export function useGetAnnouncements(type: AnnouncementType = 'site') {
   // paint matches SSR. Modeled by the migration-transition case in
   // `announcements-exposure.test.ts`.
   //
-  // When OFF (or type !== 'site'): behavior is byte-identical to before — the
-  // `isClient` gate zeroes `data` on the server + first client render (deferring
-  // dismissed-dependent rendering to after hydration), and the store drives
+  // Other types (generator/training panels sit outside the feed) keep the `isClient`
+  // gate: `data` is empty on the server + first client render and the store drives
   // `dismissed`. The RQ seed still primes the cache, so no bootstrap fetch fires.
-  const exposeSSR = features.feedReserveCls && type === 'site';
+  const exposeSSR = type === 'site';
 
   const announcements = useMemo(
     () =>

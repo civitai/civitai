@@ -12,7 +12,7 @@ export type ReferralDashboardProps = {
 };
 
 export type RecruiterRank = {
-  key: 'rookie' | 'recruit' | 'advocate' | 'champion' | 'legend';
+  key: 'rookie' | 'recruit' | 'advocate' | 'champion' | 'ambassador';
   name: string;
   min: number;
 };
@@ -22,15 +22,23 @@ export const RECRUITER_RANKS: RecruiterRank[] = [
   { key: 'recruit', name: 'Recruit', min: 1_000 },
   { key: 'advocate', name: 'Advocate', min: 10_000 },
   { key: 'champion', name: 'Champion', min: 50_000 },
-  { key: 'legend', name: 'Legend', min: 200_000 },
+  { key: 'ambassador', name: 'Ambassador', min: 200_000 },
 ];
+
+export const RECRUITER_RANK_ACCENT: Record<RecruiterRank['key'], string> = {
+  rookie: 'gray',
+  recruit: 'teal',
+  advocate: 'blue',
+  champion: 'grape',
+  ambassador: 'yellow',
+};
 
 export const MILESTONE_NAMES: Record<number, string> = {
   1_000: 'Rookie',
   10_000: 'Recruit',
   50_000: 'Advocate',
   200_000: 'Champion',
-  1_000_000: 'Legend',
+  1_000_000: 'Ambassador',
 };
 
 /**

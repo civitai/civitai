@@ -9,11 +9,18 @@ export const SESSION_COOKIE_BASE = 'civ-token';
 // Per-browser device id cookie (account-switch device set, section E). Same secure-prefix rules as the
 // session cookie — derive its name via `deviceCookieName(secure)`, never hardcode the prefixed literal.
 export const DEVICE_COOKIE_BASE = 'civ-device';
-// Legacy NextAuth session cookie — READ-ONLY during the cutover (decoded by the jose helper). Same secure-prefix
+// Legacy NextAuth session cookie — cleared on logout; read only by the main app's PR-preview sign-in. Same secure-prefix
 // rules as the others, so resolve its name via `legacySessionCookieName(secure)`, never hardcode the literal
 // (prod is `__Secure-civitai-token`, not `civitai-token`).
 export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
+export const HOST_COOKIE_PREFIX = '__Host-';
+
+// Which slot this app writes its session and device cookies to, read per app from AUTH_SESSION_COOKIE_MODE
+// (`sessionCookieMode()`). `shared` is today's `__Secure-` cookie on the registrable domain; `host` is a
+// `__Host-` cookie that stays on the host that set it. Readers accept both slots during the move (cookies.ts).
+export const SESSION_COOKIE_MODES = ['shared', 'host'] as const;
+export type SessionCookieMode = (typeof SESSION_COOKIE_MODES)[number];
 
 // Cross-domain account sync query param — the single marker the hub re-attaches after login and the
 // destination's useDomainSync reads to kick off the auth-code flow (/api/auth/authorize).

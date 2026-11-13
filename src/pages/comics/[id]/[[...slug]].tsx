@@ -5,14 +5,13 @@ import {
   Button,
   Container,
   CopyButton,
-  Menu,
   SegmentedControl,
   Select,
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useMediaQuery } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -46,7 +45,8 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useHideOnScroll } from '~/hooks/useHideOnScroll';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -56,7 +56,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { ChapterComments } from '~/components/Comics/ChapterComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import {
   ChapterExportButton,
   ChapterDownloadButton,
@@ -73,6 +73,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
+import { MatureContentRedirect } from '~/components/Gated/Gated';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -87,8 +88,8 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ComicChapterStatus, ComicEngagementType } from '~/shared/utils/prisma/enums';
-import { formatRelativeDate } from '~/utils/comic-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { COMIC_ON_RED_ERROR, formatRelativeDate } from '~/utils/comic-helpers';
+import { slugitOr } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -119,6 +120,7 @@ function PublicComicReader() {
     data: project,
     isLoading,
     isError,
+    error,
   } = trpc.comics.getPublicProjectForReader.useQuery(
     { id: projectId },
     { enabled: !isNaN(projectId) && projectId > 0 }
@@ -136,6 +138,21 @@ function PublicComicReader() {
         <div className={styles.spinner} />
       </div>
     );
+  } else if (
+    error?.message === COMIC_ON_RED_ERROR ||
+    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
+    // for ANY NSFW bits.
+    (project &&
+      features.isGreen &&
+      project.nsfwLevel !== 0 &&
+      Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag))
+  ) {
+    body = (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Meta title="Comic not available | Civitai" deIndex />
+        <MatureContentRedirect />
+      </div>
+    );
   } else if (isError || !project) {
     body = (
       <div className={styles.notFound}>
@@ -146,19 +163,6 @@ function PublicComicReader() {
           <IconArrowLeft size={16} />
           Browse Comics
         </Link>
-      </div>
-    );
-  } else if (
-    // Block NSFW comics on green domain. Project nsfwLevel is bit_or of all chapters, so check
-    // for ANY NSFW bits.
-    features.isGreen &&
-    project.nsfwLevel !== 0 &&
-    Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
-  ) {
-    body = (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <Meta title="Comic not available | Civitai" deIndex />
-        <Text>This content is not available on this site</Text>
       </div>
     );
   } else if (chapterDbPos == null) {
@@ -210,7 +214,7 @@ function ChapterListItem({
   });
 
   const isLocked = !canRead;
-  const projectSlug = slugit(project.name);
+  const projectSlug = slugitOr(project.name, 'comic');
   const thumbUrl = ch.panels[0]?.imageUrl ?? null;
   const daysUntilFree = ch.earlyAccessEndsAt
     ? Math.max(
@@ -221,7 +225,10 @@ function ChapterListItem({
 
   return (
     <Link
-      href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`}
+      href={`/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugitOr(
+        ch.name,
+        'chapter'
+      )}`}
       className={styles.chapterListItem}
       style={{ fontWeight: isRead ? 'normal' : 'bold' }}
     >
@@ -392,7 +399,7 @@ function ComicOverview({ project }: { project: Project }) {
   });
   const isFollowing = engagement === ComicEngagementType.Notify;
 
-  const projectSlug = slugit(project.name);
+  const projectSlug = slugitOr(project.name, 'comic');
 
   // Guard image for hero — use heroImage/coverImage if available, otherwise project-level.
   // Combine the underlying hero image's nsfwLevel with the project composite
@@ -743,7 +750,7 @@ function ComicOverview({ project }: { project: Project }) {
                 <Link
                   href={`/comics/${project.id}/${projectSlug}/${
                     (project.chapters.indexOf(firstReadable!) ?? 0) + 1
-                  }/${slugit(firstReadable?.name ?? 'chapter')}`}
+                  }/${slugitOr(firstReadable?.name, 'chapter')}`}
                   className={styles.ctaBtn}
                 >
                   <IconBook size={20} />
@@ -817,7 +824,6 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const safeIdx = chapterIdx >= 0 ? chapterIdx : 0;
   const activeChapter = chapters[safeIdx];
   const panels = activeChapter?.panels ?? [];
-  const headerRef = useRef<HTMLDivElement>(null);
   const projectMeta = project.meta as ComicProjectMeta | null;
   const isRtl = projectMeta?.readingDirection === 'rtl';
   const { canRead, canDownload } = useChapterPermission({
@@ -825,7 +831,6 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     projectUserId: project.user.id,
     earlyAccessEndsAt: activeChapter?.earlyAccessEndsAt,
   });
-  const lastScrollTop = useRef(0);
 
   // Reader mode: pages (default — bifold 2-panel spread filling the
   // viewport, edge-anchored nav) or scroll (long-form vertical scroll).
@@ -907,7 +912,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   // Connection key for ImageGuard2 — all panels in a chapter share the same key
   const chapterConnectId = `${project.id}-${activeChapter?.position ?? 0}`;
 
-  const projectSlug = slugit(project.name);
+  const projectSlug = slugitOr(project.name, 'comic');
 
   const chapterOptions = useMemo(
     () =>
@@ -930,7 +935,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     setPageIndex(startPage);
     window.scrollTo({ top: 0 });
     void router.replace(
-      `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugit(ch.name)}`,
+      `/comics/${project.id}/${projectSlug}/${ch.position + 1}/${slugitOr(ch.name, 'chapter')}`,
       undefined,
       { shallow: true }
     );
@@ -989,32 +994,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [hasPrev, hasNext, safeIdx, effectiveReaderMode, pageIndex, totalPages, isRtl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide reader header on scroll down, show on scroll up (scroll mode only).
-  // Mobile bails out — the header is non-sticky there (`position: static`)
-  // so it scrolls away naturally; running translate-Y on top of that just
-  // wastes work.
-  const handleScroll = useCallback(() => {
-    if (!headerRef.current || effectiveReaderMode === 'pages' || isMobile) return;
-    const scrollTop = window.scrollY;
-    if (scrollTop > lastScrollTop.current && scrollTop > 80) {
-      headerRef.current.style.transform = 'translateY(-100%)';
-    } else {
-      headerRef.current.style.transform = 'translateY(0)';
-    }
-    lastScrollTop.current = scrollTop;
-  }, [effectiveReaderMode, isMobile]);
-
-  useEffect(() => {
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [handleScroll]);
-
-  // Ensure header is visible in pages mode
-  useEffect(() => {
-    if (effectiveReaderMode === 'pages' && headerRef.current) {
-      headerRef.current.style.transform = 'translateY(0)';
-    }
-  }, [effectiveReaderMode]);
+  // Hide the reader header on scroll down, show it on scroll up (scroll mode only). Mobile is
+  // left out: the header is non-sticky there (`position: static`) and scrolls away by itself.
+  const headerHidden = useHideOnScroll('window', {
+    enabled: effectiveReaderMode !== 'pages' && !isMobile,
+  });
 
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
@@ -1113,9 +1097,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       <div className={styles.readerRoot}>
         {/* Sticky header — hides on scroll down */}
         <div
-          ref={headerRef}
           className={styles.readerHeader}
-          style={{ transition: 'transform 0.2s ease' }}
+          style={{
+            transition: 'transform 0.2s ease',
+            transform: headerHidden ? 'translateY(-100%)' : undefined,
+          }}
         >
           <Container size="sm">
             <div className={styles.readerHeaderInner}>
@@ -1620,10 +1606,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             {/* user's choice across navigation via localStorage. */}
             {activeChapter && (commentsVisible || hasCommentHighlight) && (
               <Container size="sm" py="xl">
-                <ChapterComments
-                  projectId={project.id}
-                  chapterPosition={activeChapter.position}
-                  userId={project.user.id}
+                <CommentSection
+                  entityType="comicChapter"
+                  entityId={activeChapter.id}
+                  ownerId={project.user.id}
                 />
               </Container>
             )}

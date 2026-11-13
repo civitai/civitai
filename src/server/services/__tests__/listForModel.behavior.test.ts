@@ -2,7 +2,6 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createSchema,
-  installPgliteQueryRaw,
   seedAppBlock,
   seedModel,
   seedModelVersion,
@@ -74,20 +73,6 @@ const manifestX = { targets: [{ slotId: SLOT }], contentRating: 'x' };
 
 let db: PGlite;
 
-// Sanity: prove the bridge fn the harness exports matches the inline one used
-// in the mock (keeps the harness export covered + asserts the contract).
-it('bridge: installPgliteQueryRaw reconstructs parameterized SQL', async () => {
-  const tmp = new PGlite();
-  await tmp.query('CREATE TABLE z (a int)');
-  await tmp.query('INSERT INTO z VALUES (7)');
-  const bridge = installPgliteQueryRaw(tmp);
-  const strings = Object.assign(['SELECT a FROM z WHERE a = ', ''], {
-    raw: ['SELECT a FROM z WHERE a = ', ''],
-  }) as unknown as TemplateStringsArray;
-  const rows = (await bridge(strings, 7)) as Array<{ a: number }>;
-  expect(rows).toEqual([{ a: 7 }]);
-});
-
 beforeAll(async () => {
   db = new PGlite();
   holder.db = db;
@@ -105,6 +90,7 @@ async function listForModel(args: {
   modelNsfwLevel?: number;
   viewerUserId?: number | null;
   redCapable?: boolean;
+  viewerBrowsingLevel?: number | null;
 }) {
   const { BlockRegistry } = await import('../block-registry.service');
   return BlockRegistry.listForModel({
@@ -118,6 +104,10 @@ async function listForModel(args: {
     // red-capable host (mature apps allowed). Default true here; the dedicated
     // host-gate describe block flips it to false to test the .com posture.
     redCapable: args.redCapable ?? true,
+    // …and with every browsing level enabled, so those tests see only the ladder. The R/X
+    // browsing-level describe below passes explicit levels. (`'viewerBrowsingLevel' in args`, so
+    // an explicit `undefined` reaches the service as "no level".)
+    viewerBrowsingLevel: 'viewerBrowsingLevel' in args ? args.viewerBrowsingLevel : 31,
   });
 }
 
@@ -526,5 +516,64 @@ describe('listForModel — NSFW-app-red-only host gate', () => {
     await seedPlatformDefault(db, { appBlockId: 'ab_x', slotId: SLOT, priority: 5 });
     const rows = await listForModel({ modelNsfwLevel: 8, redCapable: true });
     expect(blockIds(rows)).toEqual(['blk_g', 'blk_x']);
+  });
+});
+
+// =============================================================================
+// 🔴 R/X apps in a model slot follow the VIEWER'S BROWSING LEVEL too (on top of the host gate):
+// an R block needs R in the viewer's level, an X block needs X; a missing level is PG. An
+// excluded block is simply omitted — no placeholder inside someone else's model page.
+// =============================================================================
+describe("listForModel — R/X blocks follow the viewer's browsing level", () => {
+  const manifestR = { targets: [{ slotId: SLOT }], contentRating: 'r' };
+  const manifestPG13 = { targets: [{ slotId: SLOT }], contentRating: 'pg13' };
+
+  async function seedSlot(blocks: { id: string; blockId: string; manifest: unknown }[]) {
+    await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
+    let priority = 50;
+    for (const b of blocks) {
+      await seedAppBlock(db, b as never);
+      await seedPlatformDefault(db, { appBlockId: b.id, slotId: SLOT, priority: priority-- });
+    }
+  }
+
+  it.each([
+    ['PG only', 1],
+    ['signed out (no level)', undefined],
+  ])(
+    '🔴 %s on a red-capable host: the R block is omitted, the G block stays',
+    async (_l, level) => {
+      await seedSlot([
+        { id: 'ab_g', blockId: 'blk_g', manifest: manifestG },
+        { id: 'ab_r', blockId: 'blk_r', manifest: manifestR },
+      ]);
+      const rows = await listForModel({ redCapable: true, viewerBrowsingLevel: level });
+      expect(blockIds(rows)).toEqual(['blk_g']);
+    }
+  );
+
+  it('an R-enabled viewer gets the R block', async () => {
+    await seedSlot([{ id: 'ab_r', blockId: 'blk_r', manifest: manifestR }]);
+    const rows = await listForModel({ redCapable: true, viewerBrowsingLevel: 7 });
+    expect(blockIds(rows)).toEqual(['blk_r']);
+  });
+
+  it('🔴 X needs X: an R-enabled viewer does not get the X block; an X-enabled one does', async () => {
+    await seedSlot([
+      { id: 'ab_r', blockId: 'blk_r', manifest: manifestR },
+      { id: 'ab_x', blockId: 'blk_x', manifest: manifestX },
+    ]);
+    expect(blockIds(await listForModel({ redCapable: true, viewerBrowsingLevel: 7 }))).toEqual([
+      'blk_r',
+    ]);
+    expect(blockIds(await listForModel({ redCapable: true, viewerBrowsingLevel: 9 }))).toEqual([
+      'blk_x',
+    ]);
+  });
+
+  it('a PG-13 block is still listed for a PG-only viewer (not gated by the level)', async () => {
+    await seedSlot([{ id: 'ab_p', blockId: 'blk_p', manifest: manifestPG13 }]);
+    const rows = await listForModel({ redCapable: true, viewerBrowsingLevel: 1 });
+    expect(blockIds(rows)).toEqual(['blk_p']);
   });
 });

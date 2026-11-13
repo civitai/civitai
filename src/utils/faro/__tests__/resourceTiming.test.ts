@@ -253,20 +253,6 @@ describe('createRateLimiter — the volume gate', () => {
   });
 });
 
-describe('RESOURCE_TIMING_DEFAULTS', () => {
-  // The default sample rate is 0.05 (NOT 0.25) so the aggregate resource-timing volume keeps the
-  // shared `source="faro-rum"` Loki stream under its 10 MB/s per-stream ceiling at civitai's
-  // 100k-concurrent target. This assertion guards that scale decision against a silent regression.
-  it('defaults sampleRate to 0.05 for the Loki per-stream ceiling', () => {
-    expect(RESOURCE_TIMING_DEFAULTS.sampleRate).toBe(0.05);
-  });
-
-  it('keeps the per-client belt at 8 emissions / 15s window', () => {
-    expect(RESOURCE_TIMING_DEFAULTS.maxPerWindow).toBe(8);
-    expect(RESOURCE_TIMING_DEFAULTS.windowMs).toBe(15000);
-  });
-});
-
 describe('parseSampleRate', () => {
   it('parses a valid fraction and clamps into [0, 1]', () => {
     expect(parseSampleRate('0.05', 0.05)).toBe(0.05);

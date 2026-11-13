@@ -6,13 +6,12 @@ import {
   Card,
   Center,
   Group,
-  HoverCard,
   Skeleton,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import {
   IconClock,
   IconHierarchy,
@@ -32,13 +31,19 @@ import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExp
 import { RemixGalleryManageModal } from '~/components/RemixGallery/RemixGalleryManageModal';
 import { RemixGallerySubmitModal } from '~/components/RemixGallery/RemixGallerySubmitModal';
 import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
+import { TeamRemixButton } from '~/components/RemixGallery/TeamRemixButton';
 import {
   dedupeGalleryItems,
   galleryDialogImages,
   trimToWholeRows,
   type RemixGalleryItem,
 } from '~/components/RemixGallery/remix-gallery.utils';
-import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  useBrowsingLevelContext,
+  useViewerBrowsingLevelDebounced,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { SparkStorylineTile } from '~/components/RemixGallery/SparkStorylineTile';
+import type { SparkStorylineCardEntry } from '~/server/services/remix-gallery.service';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -172,20 +177,47 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
     { enabled }
   );
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.placement.getRemixGallery.useInfiniteQuery(
-      { imageId, browsingLevel },
-      {
-        enabled: enabled && !!visibility?.render,
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
-    );
+  // Asked only where there is something to list. `render` is true on nearly
+  // every image — an open gallery renders its pitch even when empty — so gating
+  // on it fetched an empty page on almost every image view. `hasEntries` is the
+  // gallery's own visibility predicate (`entryIsVisible`, same viewer level), so
+  // where it is false this query can only return nothing. The mutations that add
+  // an entry here (approving, submitting) invalidate the whole placement router,
+  // so `hasEntries` refetches, flips, and this runs.
+  const {
+    data,
+    isLoading,
+    fetchNextPage,
+    hasNextPage: morePages,
+    isFetchingNextPage,
+  } = trpc.placement.getRemixGallery.useInfiniteQuery(
+    { imageId, browsingLevel },
+    {
+      enabled: enabled && !!visibility?.hasEntries,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
+  );
+
+  // The feed card's summary, so the stories listed here are the ones its hover strip lists.
+  const { data: summaries } = trpc.placement.getRemixGalleryCardSummaries.useQuery(
+    { imageIds: [imageId], browsingLevel },
+    { enabled: enabled && !!features.storylines }
+  );
+  const storylines = features.storylines ? summaries?.[imageId]?.storylines : undefined;
 
   if (!enabled || !visibility?.render) return null;
 
-  const items: RemixGalleryItem[] = dedupeGalleryItems(
-    data?.pages.flatMap((page) => page.items) ?? []
-  );
+  // 🔴 Drawn through `hasEntries`, never straight off `data`. Once it is false the
+  // query above is disabled, and a disabled query keeps its cached page and is
+  // skipped by invalidation — so when the last entry goes, `data` can still hold
+  // it. Today every remix mutation also refetches this page, but that is a
+  // property of each caller's invalidation, and one that narrowed it would leave
+  // a removed entry on screen, still clickable.
+  const listable = !!visibility.hasEntries;
+  const hasNextPage = listable && !!morePages;
+  const items: RemixGalleryItem[] = listable
+    ? dedupeGalleryItems(data?.pages.flatMap((page) => page.items) ?? [])
+    : [];
   // Trimming only applies while more entries are waiting. On the last page the
   // remainder is everything that is left, and dropping it would make entries
   // the owner was paid for permanently unreachable.
@@ -259,6 +291,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
       </Group>
 
       <RemixGalleryExplainer />
+
+      {!!storylines?.count && <SparkStorylinesRow storylines={storylines} />}
 
       {isLoading ? (
         // A skeleton row rather than a spinner: it occupies the shape the
@@ -406,6 +440,8 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
         </Button>
       )}
 
+      {visibility.open && !isOwner && <TeamRemixButton imageId={imageId} />}
+
       {/* Wrapped rather than hidden. A signed-out visitor could open the modal
           and be told the gallery was closed — it is open, they are signed out,
           and nothing said so. */}
@@ -449,5 +485,44 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
         </Text>
       )}
     </Card>
+  );
+}
+
+/** The storylines started from this image, above its remixes. */
+function SparkStorylinesRow({
+  storylines,
+}: {
+  storylines: { count: number; entries: SparkStorylineCardEntry[] };
+}) {
+  const { blurLevels } = useBrowsingLevelContext();
+  const [hovered, setHovered] = useState<number | null>(null);
+  const label =
+    storylines.count === 1 ? '1 story started here' : `${storylines.count} stories started here`;
+
+  return (
+    <Stack gap={6}>
+      <Text size="sm" fw={600}>
+        {label}
+      </Text>
+      <div className="grid grid-cols-4 gap-3">
+        {storylines.entries.map((entry) => (
+          <div
+            key={entry.storylineId}
+            onPointerEnter={() => setHovered(entry.storylineId)}
+            onPointerLeave={() => setHovered((id) => (id === entry.storylineId ? null : id))}
+          >
+            <SparkStorylineTile
+              entry={entry}
+              blurLevels={blurLevels ?? 0}
+              paging={hovered === entry.storylineId}
+              className="w-full"
+            />
+            <Text size="xs" lineClamp={1} mt={4} title={entry.title}>
+              {entry.title}
+            </Text>
+          </div>
+        ))}
+      </div>
+    </Stack>
   );
 }

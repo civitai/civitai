@@ -1,3 +1,5 @@
+import { TRANSCRIPT_AFTER, TRANSCRIPT_AROUND, TRANSCRIPT_BEFORE } from './chat-transcript-cursor';
+
 // Cursor and numbered paging both live in the URL, and anything invalidating a batch must clear
 // BOTH (`clearPaging`) — a stale param from the other scheme reopens a page of a dead query.
 // The cursor trail holds one entry per page past the first and its last entry is always the
@@ -7,6 +9,14 @@ const TRAIL_PARAM = 'cursors';
 
 /** Distinct from the queue's own `page`: on User Reports both are live at once. */
 export const IMAGE_PAGE_PARAM = 'imgPage';
+
+/** The URL minus the image page. A selection that spans image pages is keyed on it, so anything
+ *  else — a filter, a tab, the queue beside the grid — clears the selection. */
+export function selectionKey(url: URL): string {
+  const params = new URLSearchParams(url.search);
+  params.delete(IMAGE_PAGE_PARAM);
+  return `${url.pathname}?${params}`;
+}
 
 /**
  * The second half of a COMPOUND keyset — the boundary row's value in the sorted column, where
@@ -45,11 +55,7 @@ export function clearPaging(params: URLSearchParams) {
   params.delete(CURSOR_VALUE_PARAM);
   params.delete(TRAIL_PARAM);
   params.delete(IMAGE_PAGE_PARAM);
-}
-
-/** Query string minus paging — a batch key that survives page turns. */
-export function nonPagingSearch(search: string): string {
-  const params = new URLSearchParams(search);
-  clearPaging(params);
-  return params.toString();
+  params.delete(TRANSCRIPT_BEFORE);
+  params.delete(TRANSCRIPT_AFTER);
+  params.delete(TRANSCRIPT_AROUND);
 }

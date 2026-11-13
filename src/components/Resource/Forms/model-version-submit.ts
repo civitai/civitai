@@ -95,6 +95,7 @@ export type ModelVersionSubmitData = {
   usageControl?: ModelUsageControl;
   paidAccessConfig?: FormPaidAccessConfig | null;
   rightsAffirmed?: boolean;
+  baseModelAttested?: boolean;
   skipTrainedWords?: boolean;
   trainedWords?: string[];
   clipSkip?: number | null;
@@ -117,6 +118,7 @@ export type ModelVersionSubmitContext = {
   showClipSkip: boolean;
   genMode: GenerationMode;
   requiresRightsAffirmation: boolean;
+  requiresBaseModelAttestation: boolean;
   isDirty: boolean;
   versionId: number | undefined;
   /** `toFormPaidAccessConfig(version.paidAccess, version.donationGoal)` — the dirty-check baseline. */
@@ -131,10 +133,11 @@ export type ModelVersionSubmitDecision =
       code:
         | 'nsfw_restricted_base_model'
         | 'generation_price_missing'
-        | 'rights_affirmation_required';
+        | 'rights_affirmation_required'
+        | 'base_model_attestation_required';
       title: string;
       message: string;
-      field?: 'paidAccessConfig.generationPrice' | 'rightsAffirmed';
+      field?: 'paidAccessConfig.generationPrice' | 'rightsAffirmed' | 'baseModelAttested';
     }
   | { kind: 'skip' }
   | {
@@ -198,6 +201,16 @@ export function decideModelVersionSubmit(
       title: 'Confirmation required',
       message: 'You must confirm you hold the rights to monetize this model',
       field: 'rightsAffirmed',
+    };
+  }
+
+  if (ctx.requiresBaseModelAttestation && !data.baseModelAttested) {
+    return {
+      kind: 'refuse',
+      code: 'base_model_attestation_required',
+      title: 'Confirmation required',
+      message: `Confirm you have the right to train and share this ${data.baseModel} model`,
+      field: 'baseModelAttested',
     };
   }
 

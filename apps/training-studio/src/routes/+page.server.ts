@@ -1,12 +1,18 @@
 import type { PageServerLoad } from './$types';
 import { listTrainingWorkflows } from '$lib/server/orchestrator';
 import { orchestratorToken } from '$lib/server/orchestrator-token';
-import { SAMPLE_ROWS, type TrainingRow } from '$lib/data/trainingRows';
+import { SAMPLE_ROWS, workflowToRow, type TrainingRow } from '$lib/data/trainingRows';
+import { sampleReviewWorkflows } from '$lib/data/sampleReviewRuns';
 
 export const load: PageServerLoad = async ({ locals }) => {
   // The dev-login stub isn't a real user: show the sample list so the UI is previewable.
   if (locals.devPreview) {
-    return { username: locals.user.username, image: locals.user.image, rows: SAMPLE_ROWS };
+    const held = sampleReviewWorkflows().flatMap((w) => workflowToRow(w) ?? []);
+    return {
+      username: locals.user.username,
+      image: locals.user.image,
+      rows: [...held, ...SAMPLE_ROWS],
+    };
   }
 
   // The list is where a user goes to find out what happened, so a blip degrades it to an empty list rather

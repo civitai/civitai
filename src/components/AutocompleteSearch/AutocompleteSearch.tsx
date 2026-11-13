@@ -2,14 +2,15 @@ import type { AutocompleteProps, ComboboxData } from '@mantine/core';
 import {
   Code,
   Group,
-  HoverCard,
   Select,
   Stack,
   Text,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
+import { HoverCard } from '~/components/MantineOverlays';
+import { getHotkeyHandler, useDebouncedValue } from '@mantine/hooks';
+import { useSearchFocusHotkeys } from '~/hooks/useSearchFocusHotkeys';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
 import type { Hit } from 'instantsearch.js';
 import { useRouter } from 'next/router';
@@ -26,9 +27,14 @@ import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
 import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import {
+  isImageSearchIndex,
+  withSemanticImageSearch,
+} from '~/components/Search/semanticImageSearchClient';
+import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
-import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
   shouldRefineSearchQuery,
@@ -56,19 +62,24 @@ import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
-import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
-import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
+import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 import {
+  offersImageSearch,
+  resolveSearchTarget,
+  searchesImagesFeedInPlace,
+} from '~/components/Search/search-target';
+import {
+  buildFeedSearchUrl,
   buildSearchPageUrl,
   checkAIR,
   parseQuery,
 } from '~/components/AutocompleteSearch/autocomplete-query';
+import { useFeedSearchSync } from '~/components/AutocompleteSearch/useFeedSearchSync';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
-import { includesInappropriate, includesPoi } from '~/utils/metadata/audit';
+import { getSearchRefusal } from '~/components/Search/search-refusal';
 import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
@@ -76,12 +87,10 @@ import { usePathname } from 'next/navigation';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { searchHitName } from '~/shared/utils/model-sfw-face';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id' }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
 type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
   onClear?: VoidFunction;
@@ -95,19 +104,23 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // never reaches `useInstantSearch().status`, so we can't key off that).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
   createResilientSearchClient(
-    {
-      ...meilisearch,
-      search(requests) {
-        // Prevent making a request if there is no query
-        // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-        // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-        if (requests.every(({ params }) => !params?.query)) {
-          return Promise.resolve(emptyMeiliResults(requests));
-        }
+    withSemanticComicSearch(
+      withSemanticArticleSearch(
+        withSemanticImageSearch({
+          ...meilisearch,
+          search(requests) {
+            // Prevent making a request if there is no query
+            // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+            // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+            if (requests.every(({ params }) => !params?.query)) {
+              return Promise.resolve(emptyMeiliResults(requests));
+            }
 
-        return meilisearch.search(requests);
-      },
-    },
+            return meilisearch.search(requests);
+          },
+        })
+      )
+    ),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
       onSuccess: () => autocompleteAvailability.setUnavailable(false),
@@ -147,20 +160,26 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // already said.
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
-  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
+  // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
+  const imageSearchOn = offersImageSearch(features);
+  const searchTarget = resolveSearchTarget(
+    targetData.find((t) => t.value === currentSection)?.value ?? 'models',
+    { imageSearch: imageSearchOn }
+  );
   useEffect(() => {
     // A navigation is not the switch the carry exists for. The input's blur handler empties the
     // visible text WITHOUT emptying the carrier (a blur is how you reach the category selector at
     // all), so text a user typed and walked away from would otherwise reappear — and be searched
     // again — in the next section they land in.
     //
-    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the line
-    // above collapses every first path segment outside `targetData` to `'models'`, so `/` →
-    // `/models/123/slug`, or any move between two such paths, leaves it unchanged and this never
-    // runs. The other explicit discard is `blurAndDiscardCarriedText`, on submit and on Escape;
-    // separately, emptying the input discards through the setter. Together they narrow the window
-    // rather than closing it, and the remainder is deliberate: text blurred away and then left
-    // alone survives in the carrier until the next pick from the selector re-seeds it.
+    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the
+    // statement above collapses every first path segment outside `targetData` to `'models'` (and
+    // `images` too while image search is off), so `/` → `/models/123/slug`, or any move between two
+    // such paths, leaves it unchanged and this never runs. The other explicit discard is
+    // `blurAndDiscardCarriedText`, on submit and on Escape; separately, emptying the input discards
+    // through the setter. Together they narrow the window rather than closing it, and the remainder
+    // is deliberate: text blurred away and then left alone survives in the carrier until the next
+    // pick from the selector re-seeds it.
     carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);
@@ -173,16 +192,12 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
-  // Images stays selectable while image search is retired, but images_v6 is gone — swap to a
-  // client that never reaches the network so the on-mount search can't hit the deleted index.
-  const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
-
   // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
   // because the render below reads it twice — as `data`, and in the `value` expression that
   // blanks the label when the target is not one of these.
   const enabledTargets = targetData.filter(
     ({ value }) =>
-      (features.imageSearchEntry ? true : value !== 'images') &&
+      (imageSearchOn ? true : value !== 'images') &&
       (features.bounties ? true : value !== 'bounties') &&
       (features.articles ? true : value !== 'articles') &&
       (features.toolSearch ? true : value !== 'tools') &&
@@ -234,7 +249,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={resolvedIndexName}
-        searchClient={imageSearchMaintenance ? emptySearchClient : searchClient}
+        searchClient={searchClient}
         indexName={resolvedIndexName}
         future={{ preserveSharedStateOnUnmount: false }}
       >
@@ -275,6 +290,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 ) {
   // const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const showSfwFace = useShowsSfwFace();
   const colorScheme = useComputedColorScheme('dark');
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const router = useRouter();
@@ -293,14 +309,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
 
-  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
-  // show a maintenance notice in place and never refine the query against it.
-  const imageSearchMaintenance = indexName === 'images' && !features.imageSearch;
-
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
+
+  // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
+  const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
+  // types. Enter (or the search row) opens the search page, which runs it once.
+  const submitOnly = !filtersFeedInPlace && isImageSearchIndex(searchIndexMap[indexNameProp]);
 
   const { trackSearch, trackAction } = useTrackEvent();
   // The resilient search client swallows Meili comm errors (so they never reach
@@ -323,11 +341,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     [benignPhrases, debouncedSearch]
   );
 
-  const isIllegalSearch = useMemo(() => {
-    if (!debouncedSearch) return false;
-    const illegalSearch = includesInappropriate({ prompt: auditedSearch });
-    return illegalSearch === 'minor';
-  }, [debouncedSearch, auditedSearch]);
+  const refusal = useMemo(
+    () =>
+      getSearchRefusal({
+        text: debouncedSearch,
+        auditedText: auditedSearch,
+        disablePoi: !!browsingSettingsAddons.settings.disablePoi,
+      }),
+    [debouncedSearch, auditedSearch, browsingSettingsAddons.settings.disablePoi]
+  );
+  const isIllegalSearch = refusal === 'illegal';
 
   // Check profanity in search query (only if not illegal and domain is green)
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
@@ -337,28 +360,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
-    if (imageSearchMaintenance) {
-      return [
-        {
-          key: 'image-maintenance',
-          value: debouncedSearch,
-          hit: null as any,
-          label: 'Maintenance',
-        },
-      ];
-    }
-
-    const isIllegalQuery = debouncedSearch
-      ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
-      : false;
-    const canPerformQuery = debouncedSearch
-      ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(auditedSearch)
-      : true;
-    // Raw text on purpose: this reads a different list (blocked NSFW words) which the benign
-    // phrases do not carve out, and it blocks rather than flags.
-    const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
-
-    if (isIllegalQuery) {
+    if (refusal === 'illegal') {
       return [
         {
           key: 'blocked',
@@ -381,7 +383,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       ];
     }
 
-    if (!canPerformQuery) {
+    if (refusal === 'poi') {
       return [
         {
           key: 'disabled',
@@ -391,7 +393,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         },
       ];
     }
-    if (hasBlockedWords) {
+    if (refusal === 'blocked-words') {
       return [
         {
           key: 'blocked-words',
@@ -413,9 +415,14 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       ];
     }
 
+    if (submitOnly) {
+      return search ? [{ key: 'search', value: search, hit: null as any, label: search }] : [];
+    }
+
     if (status === 'stalled') {
       return []; // Wait it out
     }
+    if (filtersFeedInPlace) return [];
 
     const items = filtered.map((hit) => ({
       key: String(hit.id),
@@ -425,7 +432,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         'prompt' in hit
           ? truncate(hit.prompt, { length: 50 })
           : 'name' in hit
-          ? hit.name
+          ? searchHitName(hit, showSfwFace)
           : 'title' in hit
           ? hit.title
           : 'username' in hit
@@ -437,7 +444,29 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, searchErrorState, filtered, results?.nbHits, query, imageSearchMaintenance]);
+    // The refusal inputs are listed because in feed mode nothing else here changes as you type.
+  }, [
+    status,
+    searchErrorState,
+    filtered,
+    results?.nbHits,
+    query,
+    showSfwFace,
+    filtersFeedInPlace,
+    debouncedSearch,
+    refusal,
+    isProfaneSearch,
+    domainColor,
+    submitOnly,
+    search,
+  ]);
+  const blockedQuery = !!refusal || (isProfaneSearch && domainColor === 'green');
+  const feedSearch = useFeedSearchSync({
+    enabled: filtersFeedInPlace,
+    debouncedSearch,
+    setSearch,
+    blocked: blockedQuery,
+  });
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -492,9 +521,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   }));
 
   // Not the refined `query`: `parseQuery` has already stripped the `#tag`/`@user` tokens out of it.
-  const searchPageUrl = () => buildSearchPageUrl(indexName, search);
+  const searchPageUrl = () =>
+    (features.feedSearch && buildFeedSearchUrl(indexName, search)) ||
+    buildSearchPageUrl(indexName, search);
 
   const handleSubmit = () => {
+    if (filtersFeedInPlace) {
+      feedSearch.commit(search);
+      blurAndDiscardCarriedText();
+      onSubmit?.();
+      return;
+    }
     if (search) {
       router.push(searchPageUrl(), undefined, { shallow: false });
 
@@ -512,16 +549,19 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // carrier goes with it.
   const handleClear = () => {
     setSearch('');
+    feedSearch.commit('');
     onClear?.();
   };
 
-  // Blur empties the input the same way it always has, but leaves the carried copy alone. Reaching
+  // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed
+  // it commits the text, which stays as the active filter. Reaching
   // the category selector REQUIRES blurring this input, so a blur that wrote through `setSearch`
   // emptied the carrier immediately before every selector-driven index switch — the one path the
   // carry exists for. `onClear?.()` still fires, unchanged: on mobile it is what closes the search
   // overlay (`AppHeader` passes `onSearchDone`), and that is not ours to change here.
   const handleBlur = () => {
-    clearDisplayedText();
+    if (filtersFeedInPlace) feedSearch.commit(search);
+    else clearDisplayedText();
     onClear?.();
   };
 
@@ -543,8 +583,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       item.key === 'profanity' ||
       item.key === 'disabled' ||
       item.key === 'blocked-words' ||
-      item.key === 'error' ||
-      item.key === 'image-maintenance'
+      item.key === 'error'
     ) {
       // Do not allow to click on blocked / notice items
       return;
@@ -563,15 +602,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     onSubmit?.();
   };
 
-  useHotkeys([
-    ['/', focusInput],
-    ['mod+k', focusInput],
-  ]);
+  useSearchFocusHotkeys(focusInput);
 
   useEffect(() => {
-    // Image search is retired and its index deleted — never send a query to it.
-    if (imageSearchMaintenance) return;
-
+    // The feed answers instead of the dropdown, so the dropdown's own search would only cost a
+    // second semantic search per keystroke.
+    if (filtersFeedInPlace) return;
     // Only set the query when the debounced search changes
     // and user didn't select from the list
     if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))
@@ -584,6 +620,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       router.push(air);
       return;
     }
+    if (submitOnly) return;
 
     const { query: cleanedSearch, filters } = parseQuery(indexName, debouncedSearch);
 
@@ -594,7 +631,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     // was unavailable restores the typed text, returns early, and then never refines when the
     // flag clears — the box reads as populated while the fresh helper's query is still empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query, indexName, searchErrorState, imageSearchMaintenance]);
+  }, [debouncedSearch, query, indexName, searchErrorState, filtersFeedInPlace]);
 
   // Clear selected item after search changes
   useEffect(() => {
@@ -616,7 +653,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         return `/comics/${hit.id as number}`;
       case 'models':
       default:
-        return `/${indexName}/${hit.id as number}/${slugit(hit.name)}`;
+        return `/${indexName}/${hit.id as number}/${slugit(
+          (showSfwFace && (hit.sfwName as string | null)) || (hit.name as string)
+        )}`;
     }
   };
 
@@ -649,7 +688,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         onBlur={handleBlur}
         onClear={handleClear}
         onKeyDown={getHotkeyHandler([
-          ['Escape', blurAndDiscardCarriedText],
+          ['esc', blurAndDiscardCarriedText],
           ['Enter', handleSubmit],
         ])}
         onOptionSubmit={handleItemClick}
@@ -720,13 +759,16 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               </Stack>
             );
           }
-          if (key === 'image-maintenance') {
+
+          if (key === 'search') {
             return (
-              <Stack gap="xs" align="center">
-                <Text size="sm" align="center">
-                  {IMAGE_SEARCH_MAINTENANCE_MESSAGE}
+              <Group gap="xs" wrap="nowrap" className="w-full">
+                <IconSearch size={16} className="shrink-0" />
+                <Text size="sm" lineClamp={1} className="flex-1">
+                  Search images for &ldquo;{item.value}&rdquo;
                 </Text>
-              </Stack>
+                <Code>Enter</Code>
+              </Group>
             );
           }
 

@@ -21,13 +21,16 @@ import type {
 } from '~/server/schema/auction.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
+import type { Context } from '~/server/createContext';
+import { canViewImageMedia } from '~/server/utils/image-media-visibility';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,
-  refundTransaction,
 } from '~/server/services/buzz.service';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -38,6 +41,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { AuctionType, Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
@@ -267,6 +271,51 @@ export const getAuctionNameBySlug = async (slug: string) => {
   });
   return auctionBase?.name ?? null;
 };
+
+type BidWithImage = { entityData?: { image?: { nsfwLevel: number; userId: number } } };
+type BidImageFilter = (image: { nsfwLevel: number; userId: number }) => boolean;
+
+/**
+ * Each bid with its image kept only when `keep` allows it. A bid's model passes the site cap on
+ * its own level, which says nothing about the one image shown for it. Unlike capNestedImages the
+ * bid stays (only its image goes), and each image has its own owner rather than one per parent.
+ */
+export function capBidImages<B extends BidWithImage>(bids: B[], keep: BidImageFilter): B[] {
+  return bids.map((bid) => {
+    const image = bid.entityData?.image;
+    if (!image || keep(image)) return bid;
+    return { ...bid, entityData: { ...bid.entityData, image: undefined } };
+  });
+}
+
+/** A bid's image is held to the request's cap like a single image; its owner and moderators keep it. */
+export const bidImagesFor =
+  (ctx: Pick<Context, 'user' | 'features' | 'req'>): BidImageFilter =>
+  (image) =>
+    canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } });
+
+export function capAuctionBidImages<T extends { bids: BidWithImage[] }>(
+  auction: T,
+  keep: BidImageFilter
+): T {
+  return { ...auction, bids: capBidImages(auction.bids, keep) };
+}
+
+/** Every subscriber to an auction's topic gets one payload, so it carries only public images. */
+export const publicSignalData = (auction: GetAuctionBySlugReturn) =>
+  capAuctionBidImages(auction, (image) =>
+    isRatingWithinCap(image.nsfwLevel, publicBrowsingLevelsFlag)
+  );
+
+/** The only way a bid change reaches the auction's topic, so no send can skip the cap. */
+const sendBidChange = (auctionId: number, auction: GetAuctionBySlugReturn) =>
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.Auction}:${auctionId}`,
+      target: SignalMessages.AuctionBidChange,
+      data: publicSignalData(auction),
+    })
+    .catch();
 
 export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
 export async function getAuctionBySlug({ slug, d }: GetAuctionBySlugInput) {
@@ -604,6 +653,9 @@ export const createBid = async ({
 
     if (mv.model.poi) throw throwBadRequestError('Invalid model version.');
 
+    if (stopsCreatorEarnings(mv.baseModel))
+      throw throwBadRequestError(notCommerciallyAvailableMessage(mv.baseModel));
+
     const allowedTypeData = getModelTypesForAuction(auctionData.auctionBase);
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) throw throwBadRequestError('Invalid model type for this auction.');
@@ -775,13 +827,7 @@ export const createBid = async ({
 
   // TODO there is probably a better way to do this that avoids refetching everything, but we need to update all positions and numbers
   const signalData = await getAuctionBySlug({ slug: auctionData.auctionBase.slug });
-  signalClient
-    .topicSend({
-      topic: `${SignalTopic.Auction}:${auctionId}`,
-      target: SignalMessages.AuctionBidChange,
-      data: signalData,
-    })
-    .catch();
+  sendBidChange(auctionId, signalData);
 
   // Notify anyone this bid knocked out of a winning position (best-effort).
   // The new bid only raises this entity's total, so we can derive the post-bid
@@ -859,17 +905,23 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   const isActive = bid.auction.startAt <= now && bid.auction.endAt > now;
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
+  // Loaded here so the refund helper stays out of this service's import cycle.
+  const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
+    '~/server/services/buzz-prefix-refund'
+  );
   for (const transactionId of bid.transactionIds) {
     await withRetries(async () => {
       if (isAuctionTransactionPrefix(transactionId)) {
-        await refundMultiAccountTransaction({
+        const refund = await refundAllLegsByPrefix({
           externalTransactionIdPrefix: transactionId,
           description: 'Deleted bid.',
         });
-
+        // A bid holds this id only after its charge went through, so no legs is a fault.
+        if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
+          throw new Error(`No transactions found under ${transactionId}`);
         return;
       } else {
-        await refundTransaction(transactionId, 'Deleted bid.');
+        await refundTransactionOnce(transactionId, 'Deleted bid.');
         return;
       }
     });
@@ -883,36 +935,34 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   });
 
   const signalData = await getAuctionBySlug({ slug: bid.auction.auctionBase.slug });
-  signalClient
-    .topicSend({
-      topic: `${SignalTopic.Auction}:${bid.auction.id}`,
-      target: SignalMessages.AuctionBidChange,
-      data: signalData,
-    })
-    .catch();
+  sendBidChange(bid.auction.id, signalData);
 };
 
-export const deleteBidsForModel = async ({
-  modelId,
+/**
+ * Reads no model row, so it still works once the model is gone. A bid already marked deleted is
+ * skipped, so a second run refunds nothing again; which is also why a refund that fails here is
+ * returned in `refundFailed` rather than left for a re-run.
+ */
+export const refundBidsForVersions = async ({
+  versionIds,
+  name,
+  notificationKey,
   tx,
 }: {
-  modelId: number;
+  versionIds: number[];
+  /** The model name shown in the cancellation notice. */
+  name: string | null;
+  /** Scopes the notice's dedupe key: one notice per key per day. */
+  notificationKey: number;
   tx?: Prisma.TransactionClient;
 }) => {
+  if (!versionIds.length) return { bidsDeleted: [], recurringBidsDeleted: [], refundFailed: [] };
   const db = tx ?? dbWrite;
   const now = new Date();
-
-  const model = await db.model.findFirst({
-    where: { id: modelId },
-    select: { name: true, modelVersions: { select: { id: true } } },
-  });
-
-  if (!model) throw throwNotFoundError('Model not found.');
-  const versionIds = model.modelVersions.map((mv) => mv.id);
-  if (!versionIds.length) {
-    // early return if no versions
-    return { bidsDeleted: [], recurringBidsDeleted: [] };
-  }
+  // Loaded here so the refund helper stays out of this service's import cycle.
+  const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
+    '~/server/services/buzz-prefix-refund'
+  );
 
   const aData = await db.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
@@ -929,11 +979,11 @@ export const deleteBidsForModel = async ({
 
   let deletedIds: number[] = [];
   let deletedRecurringIds: number[] = [];
+  const refundFailed: string[] = [];
 
   if (aIds.length > 0) {
-    // we could reverse the logic here and refund first
     const deleted = await db.bid.updateManyAndReturn({
-      where: { auctionId: { in: aIds }, entityId: { in: versionIds } },
+      where: { auctionId: { in: aIds }, entityId: { in: versionIds }, deleted: false },
       data: {
         deleted: true,
       },
@@ -949,17 +999,21 @@ export const deleteBidsForModel = async ({
         try {
           await withRetries(async () => {
             if (isAuctionTransactionPrefix(transactionId)) {
-              await refundMultiAccountTransaction({
+              const refund = await refundAllLegsByPrefix({
                 externalTransactionIdPrefix: transactionId,
                 description: 'Deleted bid - model not available.',
               });
+              // A bid holds this id only after its charge went through, so no legs is a fault.
+              if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
+                throw new Error(`No transactions found under ${transactionId}`);
+            } else {
+              await refundTransactionOnce(transactionId, 'Deleted bid - model not available.');
             }
-
-            await refundTransaction(transactionId, 'Deleted bid - model not available.');
 
             return;
           });
         } catch (e) {
+          refundFailed.push(transactionId);
           const error = e as Error;
           logToAxiom({
             name: 'handle-auctions',
@@ -975,7 +1029,7 @@ export const deleteBidsForModel = async ({
 
     if (deleted.length > 0) {
       const details: DetailsCanceledBid = {
-        name: model?.name ?? null,
+        name,
         reason: 'Model not available',
         recurring: false,
       };
@@ -983,7 +1037,7 @@ export const deleteBidsForModel = async ({
         userIds: uniq(deleted.map((d) => d.userId)),
         category: NotificationCategory.System,
         type: 'canceled-bid-auction',
-        key: `canceled-bid-auction:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
+        key: `canceled-bid-auction:${notificationKey}:${formatDate(now, 'YYYY-MM-DD')}`,
         details,
       });
 
@@ -1001,7 +1055,7 @@ export const deleteBidsForModel = async ({
       where: { id: { in: recToDelete.map((r) => r.id) } },
     });
     const details: DetailsCanceledBid = {
-      name: model?.name ?? null,
+      name,
       reason: 'Model no longer available',
       recurring: true,
     };
@@ -1009,7 +1063,7 @@ export const deleteBidsForModel = async ({
       userIds: uniq(recToDelete.map((d) => d.userId)),
       category: NotificationCategory.System,
       type: 'canceled-bid-auction',
-      key: `canceled-bid-auction:recurring:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
+      key: `canceled-bid-auction:recurring:${notificationKey}:${formatDate(now, 'YYYY-MM-DD')}`,
       details,
     });
 
@@ -1018,150 +1072,53 @@ export const deleteBidsForModel = async ({
 
   for (const a of aData) {
     const signalData = await getAuctionBySlug({ slug: a.auctionBase.slug });
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.Auction}:${a.id}`,
-        target: SignalMessages.AuctionBidChange,
-        data: signalData,
-      })
-      .catch();
+    sendBidChange(a.id, signalData);
   }
 
   return {
     bidsDeleted: deletedIds,
     recurringBidsDeleted: deletedRecurringIds,
+    /** Transaction ids whose refund still failed after retries; their bids are already cancelled. */
+    refundFailed,
   };
 };
 
-export const deleteBidsForModelVersion = async ({
+export const deleteBidsForModel = async ({
+  modelId,
+  tx,
+}: {
+  modelId: number;
+  tx?: Prisma.TransactionClient;
+}) => {
+  const db = tx ?? dbWrite;
+
+  const model = await db.model.findFirst({
+    where: { id: modelId },
+    select: { name: true, modelVersions: { select: { id: true } } },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found.');
+  return refundBidsForVersions({
+    versionIds: model.modelVersions.map((mv) => mv.id),
+    name: model.name,
+    notificationKey: modelId,
+    tx,
+  });
+};
+
+export const deleteBidsForModelVersion = ({
   modelVersionId,
   tx,
 }: {
   modelVersionId: number;
   tx?: Prisma.TransactionClient;
-}) => {
-  const dbClient = tx ?? dbWrite;
-  // TODO combine this function with one above
-  const now = new Date();
-
-  const aData = await dbClient.auction.findMany({
-    where: { startAt: { lte: now }, endAt: { gt: now } },
-    select: {
-      id: true,
-      auctionBase: {
-        select: {
-          slug: true,
-        },
-      },
-    },
+}) =>
+  refundBidsForVersions({
+    versionIds: [modelVersionId],
+    name: 'a model',
+    notificationKey: modelVersionId,
+    tx,
   });
-  const aIds = aData.map((a) => a.id);
-
-  let deletedIds: number[] = [];
-  let deletedRecurringIds: number[] = [];
-
-  if (aIds.length > 0) {
-    // we could reverse the logic here and refund first
-    const deleted = await dbClient.bid.updateManyAndReturn({
-      where: { auctionId: { in: aIds }, entityId: modelVersionId },
-      data: {
-        deleted: true,
-      },
-      select: {
-        id: true,
-        userId: true,
-        transactionIds: true,
-      },
-    });
-
-    for (const bid of deleted) {
-      for (const transactionId of bid.transactionIds) {
-        try {
-          await withRetries(async () => {
-            if (isAuctionTransactionPrefix(transactionId)) {
-              await refundMultiAccountTransaction({
-                externalTransactionIdPrefix: transactionId,
-                description: 'Deleted bid - model not available.',
-              });
-            } else {
-              await refundTransaction(transactionId, 'Deleted bid - model not available.');
-            }
-
-            return;
-          });
-        } catch (e) {
-          const error = e as Error;
-          logToAxiom({
-            name: 'handle-auctions',
-            type: 'error',
-            message: `Failed to refund user for removed bid`,
-            stack: error.stack,
-            cause: error.cause,
-            data: { transactionId, message: error.message },
-          }).catch();
-        }
-      }
-    }
-
-    if (deleted.length > 0) {
-      const details: DetailsCanceledBid = {
-        name: 'a model',
-        reason: 'Model not available',
-        recurring: false,
-      };
-      await createNotification({
-        userIds: uniq(deleted.map((d) => d.userId)),
-        category: NotificationCategory.System,
-        type: 'canceled-bid-auction',
-        key: `canceled-bid-auction:${modelVersionId}:${formatDate(now, 'YYYY-MM-DD')}`,
-        details,
-      });
-
-      deletedIds = deleted.map((d) => d.id);
-    }
-  }
-
-  const recToDelete = await dbClient.bidRecurring.findMany({
-    where: { entityId: modelVersionId },
-    select: { id: true, userId: true },
-  });
-
-  if (recToDelete.length > 0) {
-    await dbClient.bidRecurring.deleteMany({
-      where: { id: { in: recToDelete.map((r) => r.id) } },
-    });
-    const details: DetailsCanceledBid = {
-      name: 'a model',
-      reason: 'Model no longer available',
-      recurring: true,
-    };
-    await createNotification({
-      userIds: uniq(recToDelete.map((d) => d.userId)),
-      category: NotificationCategory.System,
-      type: 'canceled-bid-auction',
-      key: `canceled-bid-auction:recurring:${modelVersionId}:${formatDate(now, 'YYYY-MM-DD')}`,
-      details,
-    });
-
-    deletedRecurringIds = recToDelete.map((d) => d.id);
-  }
-
-  for (const a of aData) {
-    const signalData = await getAuctionBySlug({ slug: a.auctionBase.slug });
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.Auction}:${a.id}`,
-        target: SignalMessages.AuctionBidChange,
-        data: signalData,
-      })
-      .catch();
-  }
-
-  return {
-    bidsDeleted: deletedIds,
-    recurringBidsDeleted: deletedRecurringIds,
-  };
-};
 
 export const deleteRecurringBid = async ({
   userId,
@@ -1232,6 +1189,7 @@ export const moveRecurringBidToLatest = async ({
     if (mv.model.status !== ModelStatus.Published) return false;
     if ((mv.model.meta as ModelMeta | null)?.cannotPromote === true) return false;
     if (mv.model.poi) return false;
+    if (stopsCreatorEarnings(mv.baseModel)) return false;
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) return false;
     if (!!bid.auctionBase.ecosystem && bid.auctionBase.ecosystem !== miscAuctionName) {

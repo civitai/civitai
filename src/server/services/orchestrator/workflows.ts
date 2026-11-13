@@ -5,7 +5,7 @@ import type {
   UpdateWorkflowRequest,
   Workflow,
   WorkflowTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
@@ -17,7 +17,8 @@ import {
   updateWorkflow as clientUpdateWorkflow,
   handleError,
   refreshBlob,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
+import { TRPCError } from '@trpc/server';
 import type * as z from 'zod';
 import { isDev, isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
@@ -26,7 +27,6 @@ import type {
   TagsPatchSchema,
   workflowIdSchema,
   workflowQuerySchema,
-  workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
@@ -43,6 +43,11 @@ import {
   withSpan,
 } from '~/server/utils/otel-helpers';
 import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
+import {
+  annotateOrchestratorMissingBlob,
+  annotateOrchestratorSubmitFailure,
+} from '~/server/services/orchestrator/submit-failure';
 import {
   isUpstreamNetworkError,
   isUpstreamServerOrNetworkError,
@@ -105,6 +110,55 @@ const ORCHESTRATOR_GET_TIMEOUT_MS = 20_000;
 // orchestrator-side root fix (stamp source dims / bound the download) is orch #261.
 const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
 
+// Bounds for a REAL (non-whatIf) submit. Unbounded, an orchestrator that accepts the connection
+// and never answers parks the request for as long as the socket lives, and the retry loop does it
+// up to three times. The generate submit's p99 was measured at ~1.5s over one day and ~13.7s over
+// seven, so 30s per attempt sits above the tail; the trade-off is that the rare slower-than-30s
+// success now ends as a 503 instead. The 60s deadline caps the whole call, retries and backoff
+// included. A timed-out attempt may still have been accepted and charged, and may still be in
+// flight, so it is never retried (a 5xx or a network error still is); a generate submit's error
+// tells the user to check their queue before retrying. A caller that asks the orchestrator to hold
+// the request open (`query.wait`, in seconds) gets at least that wait plus SUBMIT_WAIT_MARGIN_MS
+// for the attempt and the deadline, and no retry is started with less than that left. The floor is
+// capped at SUBMIT_WAIT_FLOOR_MAX_MS, under the HTTP client's ~300s headers timeout, so a very long
+// wait ends as our own (unretried) timeout rather than a retried network error.
+// `ORCHESTRATOR_SUBMIT_BOUNDS=off` is the off-switch (read per call).
+const SUBMIT_ATTEMPT_TIMEOUT_MS = 30_000;
+const SUBMIT_DEADLINE_MS = 60_000;
+const SUBMIT_WAIT_MARGIN_MS = 15_000;
+const SUBMIT_WAIT_FLOOR_MAX_MS = 280_000;
+
+/** The budget an attempt needs to cover the caller's `query.wait` (seconds), or undefined. */
+function waitFloorMs(query: unknown) {
+  const wait = (query as { wait?: unknown } | undefined)?.wait;
+  if (typeof wait !== 'number' || !(wait > 0)) return undefined;
+  return Math.min(wait * 1000 + SUBMIT_WAIT_MARGIN_MS, SUBMIT_WAIT_FLOOR_MAX_MS);
+}
+
+/** Never cut off a wait the caller asked the orchestrator for: raise both bounds to cover it. */
+function boundsCoveringWait(
+  bounds: { perAttemptTimeoutMs?: number; deadlineMs?: number },
+  query: unknown
+) {
+  const floorMs = waitFloorMs(query);
+  if (floorMs == null) return bounds;
+  return {
+    ...(bounds.perAttemptTimeoutMs == null
+      ? {}
+      : { perAttemptTimeoutMs: Math.max(bounds.perAttemptTimeoutMs, floorMs) }),
+    ...(bounds.deadlineMs == null ? {} : { deadlineMs: Math.max(bounds.deadlineMs, floorMs) }),
+  };
+}
+
+// The generate submit's 503: it may have been accepted before the failure, so a blind re-click
+// could be a second charge. Keeps the "temporarily unavailable" wording of the generic message.
+const SUBMIT_MAY_BE_QUEUED_MESSAGE =
+  'Generation services are temporarily unavailable. Your request may already be queued — check your queue before retrying.';
+
+function submitBoundsDisabled() {
+  return process.env.ORCHESTRATOR_SUBMIT_BOUNDS === 'off';
+}
+
 // Classify an orchestrator CLIENT failure as a fired abort deadline vs any other error — for the additive
 // metrics ONLY (does NOT touch control flow / error mapping). Originally the read-backstop classifier
 // (#2883, ORCHESTRATOR_GET_TIMEOUT_MS / ORCHESTRATOR_QUERY_TIMEOUT_MS); it now has FOUR call sites, two of
@@ -130,7 +184,12 @@ export async function queryWorkflows({
   fromDate,
   toDate,
   ...query
-}: z.output<typeof workflowQuerySchema> & { token: string; hideMatureContent: boolean }) {
+}: z.output<typeof workflowQuerySchema> & {
+  token: string;
+  hideMatureContent: boolean;
+  /** Workflows carrying any of these tags are left out. Server-set only, never client input. */
+  excludeTags?: string[];
+}) {
   const client = createOrchestratorClient(token);
 
   // Additive read instrumentation: time ONLY the orchestrator client network call (not the whole handler) and
@@ -326,9 +385,23 @@ export async function submitWorkflow({
   }
 
   // whatIf is a side-effect-free cost estimate and passes `query:{whatif:true}`;
-  // generate passes no whatif. Scope the per-attempt timeout to whatIf ONLY so a real
-  // generation submit is never false-aborted (same marker used by the closed #2807).
+  // generate passes no whatif. The two get different bounds (see the constants above).
   const isWhatif = (query as { whatif?: boolean } | undefined)?.whatif === true;
+  // The queue wording is only for the generation form's submit, where the user has a queue to
+  // check. Every other caller (training, scans, comics, resource loads, presets) keeps the same
+  // bounds below but the generic copy.
+  const unavailableMessage =
+    !isWhatif && clampSubmitSource(source) === 'generate'
+      ? SUBMIT_MAY_BE_QUEUED_MESSAGE
+      : ORCHESTRATOR_UNAVAILABLE_MESSAGE;
+  const bounds = boundsCoveringWait(
+    isWhatif
+      ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS }
+      : submitBoundsDisabled()
+      ? {}
+      : { perAttemptTimeoutMs: SUBMIT_ATTEMPT_TIMEOUT_MS, deadlineMs: SUBMIT_DEADLINE_MS },
+    query
+  );
 
   // 🔴 The span and the histogram that close this gap are recorded ONE LEVEL DOWN, inside
   // `submitWorkflowWithRetry`, NOT here. That placement is deliberate: image ingestion calls the retry
@@ -346,9 +419,9 @@ export async function submitWorkflow({
       },
       {
         // KEEP the default 3 retries on BOTH paths (transient orchestrator blips still
-        // recover). For whatIf, additionally bound each attempt so a stuck img2img
-        // source-download can't park ~30s × 3 (~90s) and head-of-line-block the api pool.
-        ...(isWhatif ? { perAttemptTimeoutMs: WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS } : {}),
+        // recover), but bound each attempt so a stuck orchestrator can't park the request and
+        // head-of-line-block the api pool; a real submit also gets one overall deadline.
+        ...bounds,
         // Declared source only. The whatIf coercion is NOT applied here: it lives in the wrapper, which
         // reads `options.query` itself, so a caller that goes DIRECT to the wrapper with a whatIf query
         // is classified the same way this one is. Keeping it here would have made the label's own
@@ -365,8 +438,7 @@ export async function submitWorkflow({
     // (useWhatIfFromGraph) degrades a 503 to a default cost estimate, so the user gets
     // an instant fallback instead of a ~90s hang. A genuine code-bug throw bubbles
     // unchanged (→ 500) so real bugs stay visible.
-    if (isUpstreamNetworkError(e))
-      throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, e);
+    if (isUpstreamNetworkError(e)) throw throwServiceUnavailableError(unavailableMessage, e);
     throw e;
   }
 
@@ -384,11 +456,16 @@ export async function submitWorkflow({
     let message = orchestratorErrorMessage(error);
     if (
       body.allowMatureContent === false &&
-      message === 'Prompt requires mature content but workflow does not allow it' &&
-      body.currencies?.includes('green')
-    )
-      message =
-        'The prompt has been blocked due to mature content which is not supported by the current model';
+      message === 'Prompt requires mature content but workflow does not allow it'
+    ) {
+      // `nsfwLevel: 'pg13'` is only set for private or epoch resources (orchestration-new.service).
+      if (body.nsfwLevel === 'pg13')
+        message =
+          'The prompt has been blocked due to mature content, which private and in-training resources cannot generate';
+      else if (body.currencies?.includes('green'))
+        message =
+          'The prompt has been blocked due to mature content, which is not allowed on this site';
+    }
 
     if (!isProd) {
       console.log('----Workflow Error----');
@@ -399,7 +476,16 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
-    throwOrchestratorFailure({ error, response, message });
+    try {
+      throwOrchestratorFailure({ error, response, message, unavailableMessage });
+    } catch (e) {
+      // Additive: record which attempt received this response and its status, as a
+      // non-enumerable property (see `submit-failure.ts`). The thrown error is
+      // otherwise unchanged.
+      if (typeof response?.status === 'number')
+        annotateOrchestratorSubmitFailure(e, { attempt: result.attempts, status: response.status });
+      throw e;
+    }
   }
 
   return result.data;
@@ -412,7 +498,7 @@ type ClientSubmitResult = Awaited<ReturnType<typeof clientSubmitWorkflow>>;
  * Merge the ambient W3C trace context into an outbound submit's headers WITHOUT clobbering anything the
  * caller set (caller-supplied values always win, per-key).
  *
- * Why this is not a one-line spread: `@civitai/client`'s `headers` is a UNION — a plain record, a
+ * Why this is not a one-line spread: `@civitai/orchestration-client`'s `headers` is a UNION — a plain record, a
  * `Headers` instance, or a `[name, value][]` array. Spreading a `Headers` instance yields `{}`, which
  * would silently DROP every header the caller set; spreading an array yields index keys. So the plain
  * record (the only shape any caller in this repo actually uses today) is spread, and the other two are
@@ -438,14 +524,19 @@ export type SubmitWorkflowRetryOptions = {
   /** Base backoff in ms; delay before retry N = baseDelayMs * 3 ** (N - 1). Default 500. */
   baseDelayMs?: number;
   /**
-   * Bounds EACH attempt with a FRESH `AbortSignal.timeout(perAttemptTimeoutMs)` created
-   * per loop iteration — a fired timeout aborts only that one attempt and the loop still
-   * retries (NOT a single deadline shared across all attempts). The aborted attempt
-   * throws a `TimeoutError`, which the existing catch below treats as a transient network
-   * failure → backoff + retry until `maxAttempts`. `undefined` ⇒ unbounded attempts
-   * (current behavior; the generate/write path passes nothing and is byte-identical).
+   * Bounds EACH attempt with a FRESH timeout signal created per loop iteration — a fired
+   * timeout aborts only that one attempt and the loop may still retry. The aborted attempt
+   * surfaces a `TimeoutError`. For a whatIf the loop treats it as a transient failure → backoff
+   * + retry until `maxAttempts`; for any other submit it stops there, because the attempt may
+   * have been accepted and may still be in flight. `undefined` ⇒ unbounded attempts.
    */
   perAttemptTimeoutMs?: number;
+  /**
+   * One deadline for the whole call, attempts and backoff included. An attempt's budget is
+   * capped by what remains, and no new attempt (or backoff) starts once too little remains;
+   * the last attempt's result or error is then returned as the final one. `undefined` ⇒ none.
+   */
+  deadlineMs?: number;
   /**
    * Invoked right before each backoff sleep — useful for logging/metrics. This is ADDITIONAL to the
    * built-in `orchestrator_submit_retries_total` increment, which fires first and unconditionally: a
@@ -461,7 +552,7 @@ export type SubmitWorkflowRetryOptions = {
 };
 
 /**
- * Thin wrapper around the `@civitai/client` `submitWorkflow` that re-submits on
+ * Thin wrapper around the `@civitai/orchestration-client` `submitWorkflow` that re-submits on
  * transient infra failures (5xx responses, or a network error / no response) with
  * bounded exponential backoff. 4xx responses are returned immediately — client
  * errors won't recover. Returns the raw client result of the final attempt plus an
@@ -556,11 +647,30 @@ export async function submitWorkflowWithRetry(
  */
 async function submitWorkflowRetryLoop(
   options: SubmitOptions,
-  { maxAttempts = 3, baseDelayMs = 500, perAttemptTimeoutMs, onRetry }: SubmitWorkflowRetryOptions,
+  {
+    maxAttempts = 3,
+    baseDelayMs = 500,
+    perAttemptTimeoutMs,
+    deadlineMs,
+    onRetry,
+  }: SubmitWorkflowRetryOptions,
   source: OrchestratorSubmitSource,
   progress: { attempts: number }
 ): Promise<ClientSubmitResult & { attempts: number }> {
   let lastError: unknown;
+  // Date.now (not performance.now) so the deadline and the timers that enforce it share a clock.
+  const deadlineAt = deadlineMs == null ? undefined : Date.now() + deadlineMs;
+  const remainingMs = () => (deadlineAt == null ? Infinity : deadlineAt - Date.now());
+  // A timed-out attempt may have been accepted, and may still be in flight. A retry is only safe
+  // when nothing is persisted (whatIf): a keyed retry would rely on the orchestrator's
+  // `(user, externalId)` dedupe being atomic against an in-flight first attempt, which is
+  // unverified. So a timed-out real submit is never retried.
+  const ambiguousRetryIsSafe = source === 'whatIf';
+  // Whether another attempt may start after `delayMs` of backoff. A retry must have at least the
+  // budget the caller's `wait` needs: one that would be cut off before its wait could end is a
+  // second (charged) workflow followed by a failure.
+  const minAttemptMs = Math.max(MIN_SUBMIT_ATTEMPT_MS, waitFloorMs(options.query) ?? 0);
+  const canStartAnother = (delayMs: number) => remainingMs() - delayMs >= minAttemptMs;
 
   // Count the retry BEFORE handing control to the caller's own hook, so neither a caller that supplies
   // one nor a caller whose hook throws can suppress the counter. Wiring this at all is the fix for a
@@ -574,6 +684,10 @@ async function submitWorkflowRetryLoop(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     progress.attempts = attempt;
     let result: ClientSubmitResult | undefined;
+    // This attempt's budget: its own cap, further capped by what is left of the deadline.
+    const budgetMs = Math.min(perAttemptTimeoutMs ?? Infinity, remainingMs());
+    const attemptTimer = Number.isFinite(budgetMs) ? timeoutSignal(budgetMs) : undefined;
+    const isFinal = () => attempt >= maxAttempts;
     try {
       // PER-ATTEMPT span. Without it a retried submit and a single slow submit are the same
       // observation: one long parent interval. With it a ~95s park resolves into either three
@@ -596,12 +710,12 @@ async function submitWorkflowRetryLoop(
             // orchestrator's spans parent onto the attempt that actually made the call rather than
             // all three collapsing onto one id. Caller-supplied headers always win, per-key.
             headers: withTraceHeaders(options.headers),
-            ...(perAttemptTimeoutMs == null
+            ...(attemptTimer == null
               ? {}
               : {
                   signal: options.signal
-                    ? AbortSignal.any([options.signal, AbortSignal.timeout(perAttemptTimeoutMs)])
-                    : AbortSignal.timeout(perAttemptTimeoutMs),
+                    ? AbortSignal.any([options.signal, attemptTimer.signal])
+                    : attemptTimer.signal,
                 }),
           };
           return clientSubmitWorkflow(attemptOptions);
@@ -610,7 +724,10 @@ async function submitWorkflowRetryLoop(
     } catch (e) {
       // Network failure / no response. Out of retries → surface it like a direct call would.
       lastError = e;
-      if (attempt >= maxAttempts) throw e;
+      const timedOut = !!attemptTimer?.signal.aborted;
+      if (isFinal() || (timedOut && !ambiguousRetryIsSafe)) throw e;
+      const delayMs = submitWorkflowBackoffMs(baseDelayMs, attempt);
+      if (!canStartAnother(delayMs)) throw e;
       await submitWorkflowBackoff({
         attempt,
         status: undefined,
@@ -618,11 +735,19 @@ async function submitWorkflowRetryLoop(
         onRetry: instrumentedOnRetry,
       });
       continue;
+    } finally {
+      attemptTimer?.clear();
     }
 
     const status = result.response?.status;
     const retryable = !result.data && (status == null || status >= 500);
-    if (!retryable || attempt >= maxAttempts) {
+    const timedOut = !result.data && !!attemptTimer?.signal.aborted;
+    if (
+      !retryable ||
+      isFinal() ||
+      (timedOut && !ambiguousRetryIsSafe) ||
+      !canStartAnother(submitWorkflowBackoffMs(baseDelayMs, attempt))
+    ) {
       return Object.assign(result, { attempts: attempt });
     }
 
@@ -644,9 +769,33 @@ async function submitWorkflowBackoff({
   baseDelayMs: number;
   onRetry?: SubmitWorkflowRetryOptions['onRetry'];
 }) {
-  const delayMs = baseDelayMs * 3 ** (attempt - 1);
+  const delayMs = submitWorkflowBackoffMs(baseDelayMs, attempt);
   onRetry?.({ attempt, status, delayMs });
   await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+function submitWorkflowBackoffMs(baseDelayMs: number, attempt: number) {
+  return baseDelayMs * 3 ** (attempt - 1);
+}
+
+// Below this much remaining deadline, a further attempt is not started: it could not complete.
+const MIN_SUBMIT_ATTEMPT_MS = 1_000;
+
+/**
+ * A timeout signal built on `setTimeout` rather than `AbortSignal.timeout`, so it is cleared when
+ * the attempt settles (no timer outlives the request) and follows the same clock as the deadline.
+ * Aborts with a `TimeoutError`, the shape `isUpstreamNetworkError` and the metrics classify.
+ */
+function timeoutSignal(ms: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException(`orchestrator submit attempt timed out after ${ms}ms`, 'TimeoutError')
+      ),
+    Math.max(0, ms)
+  );
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
 export async function cancelWorkflow({
@@ -700,17 +849,29 @@ export async function deleteManyWorkflows({
 export async function updateWorkflow({
   workflowId,
   token,
+  throwOnError,
   ...body
-}: UpdateWorkflowRequest & { token: string; workflowId: string }) {
+}: UpdateWorkflowRequest & {
+  token: string;
+  workflowId: string;
+  /**
+   * Surface a refused update (the orchestrator's 400 for an unlock it won't charge, a 403 for
+   * insufficient Buzz) as a throw. Off by default, as for `deleteWorkflow`: the generated client
+   * resolves on an HTTP error, and the metadata writers have always treated a failed write as done.
+   */
+  throwOnError?: boolean;
+}) {
   const client = createOrchestratorClient(token);
 
-  await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  const { error, response } = await clientUpdateWorkflow({ client, path: { workflowId }, body });
+  if (throwOnError && !response?.ok)
+    throwOrchestratorFailure({ error, response, message: orchestratorErrorMessage(error) });
   return await getWorkflow({ token, path: { workflowId } });
 }
 
 /**
  * Moves the workflow's pending downloads to the high lane. With `whatif` the orchestrator prices the
- * change without charging for it. `@civitai/client`, which every call here goes through, predates
+ * change without charging for it. `@civitai/orchestration-client`, which every call here goes through, predates
  * `downloadPriority` and this route's `whatif` query, hence the casts.
  */
 export async function setWorkflowDownloadPriority({
@@ -738,28 +899,36 @@ export async function setWorkflowDownloadPriority({
 }
 
 function orchestratorErrorMessage(error: unknown) {
-  const { messages } = (
+  const errors =
     typeof error !== 'string' && error
-      ? (error as { errors?: { messages?: string[] } }).errors ?? {}
-      : {}
-  ) as { messages?: string[] };
-  return messages?.length
+      ? (error as { errors?: Record<string, string[]> }).errors
+      : undefined;
+  // The orchestrator keys each error by the request field it concerns; the keys' brackets would fail
+  // `isLikelySafeMessage`, so only the messages are forwarded.
+  const messages = Object.values(errors ?? {}).flat();
+  return messages.length
     ? messages.join(',\n')
     : handleError(error as Parameters<typeof handleError>[0]);
 }
 
-/** Maps a failed orchestrator write onto the app's errors, so every paid call fails the same way. */
-function throwOrchestratorFailure({
+/**
+ * Maps a failed orchestrator call onto the app's errors. 403 means insufficient funds — a caller
+ * where it does not must handle 403 first.
+ */
+export function throwOrchestratorFailure({
   error,
   response,
   message,
+  unavailableMessage = ORCHESTRATOR_UNAVAILABLE_MESSAGE,
 }: {
   error: unknown;
   response: Response | undefined;
   message: string | undefined;
+  /** The 503's copy for a status-less failure or an upstream 5xx. */
+  unavailableMessage?: string;
 }): never {
   // LOAD-BEARING: `createOrchestratorClient` does NOT set `throwOnError`, so the
-  // @civitai/client RESOLVES (it does NOT reject) when the underlying fetch throws —
+  // @civitai/orchestration-client RESOLVES (it does NOT reject) when the underlying fetch throws —
   // a network failure OR a fired per-attempt `AbortSignal.timeout` both come back as
   // `{ error, response: undefined }`. We must map that to a retry-able 503 — mirroring the
   // read-path (queryWorkflows/getWorkflow) default — BEFORE the `response.status` switch
@@ -767,7 +936,7 @@ function throwOrchestratorFailure({
   // result is NEVER a valid success: treat it as transient → 503 (with the original error
   // preserved as `cause`), never re-throw raw / crash.
   if (!response) {
-    throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+    throw throwServiceUnavailableError(unavailableMessage, error);
   }
   switch (response.status) {
     case 400:
@@ -776,11 +945,25 @@ function throwOrchestratorFailure({
       throw throwAuthorizationError(message);
     case 403:
       throw throwInsufficientFundsError(message);
-    case 429:
+    case 429: {
       // Preserve rate-limit semantics: TOO_MANY_REQUESTS (not a flattened
       // BAD_REQUEST), so the client can back off AND the tRPC onError Axiom-skip
       // for TOO_MANY_REQUESTS keeps a 429 storm off the event loop.
-      throw throwRateLimitError(message);
+      // Not "too many jobs" for every 429: a free-tier quota 429 carries its own detail.
+      const retryAfter = getRetryAfterSeconds(response);
+      const reason = message || 'Too many requests right now.';
+      // A detail that already says when to retry is left as it is.
+      if (!retryAfter || /try again|retry/i.test(reason)) throw throwRateLimitError(reason);
+      const wait =
+        retryAfter === 1
+          ? 'a second'
+          : retryAfter < 120
+          ? `about ${retryAfter} seconds`
+          : `about ${Math.ceil(retryAfter / 60)} minutes`;
+      throw throwRateLimitError(
+        `${reason}${/[.!?]$/.test(reason) ? '' : '.'} Please try again in ${wait}.`
+      );
+    }
     default:
       // An unhandled 4xx from the orchestrator is a client/validation fault
       // (e.g. "<resource> is not enabled for generation. Please contact …"),
@@ -799,7 +982,7 @@ function throwOrchestratorFailure({
           thrown: error,
         })
       )
-        throw throwServiceUnavailableError(ORCHESTRATOR_UNAVAILABLE_MESSAGE, error);
+        throw throwServiceUnavailableError(unavailableMessage, error);
       // Anything else (a non-4xx/5xx anomaly with no `data` — e.g. a malformed
       // "success", a genuine bug) stays a 500 so real problems remain visible, carrying the
       // ORIGINAL error as `cause`. When `error` is nullish here, synthesize a defined Error so
@@ -809,22 +992,6 @@ function throwOrchestratorFailure({
         error ?? new Error('orchestrator returned no data', { cause: error })
       );
   }
-}
-
-export async function updateManyWorkflows({
-  workflows,
-  token,
-}: {
-  workflows: z.infer<typeof workflowUpdateSchema>[];
-  token: string;
-}) {
-  const client = createOrchestratorClient(token);
-
-  await Promise.all(
-    workflows.map(({ workflowId, metadata }) =>
-      clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } })
-    )
-  );
 }
 
 export async function patchWorkflows({
@@ -879,15 +1046,25 @@ export async function refreshBlobUrlsInBody(
 
   await Promise.all(
     [...refsByBlobId].map(async ([blobId, group]) => {
+      // Set only when the orchestrator ANSWERED that the blob is gone — the same
+      // signals `refreshBlobsService` treats as 'gone'. A throw (network, timeout)
+      // or any other answer leaves it unset: that says nothing about the blob.
+      let missing = false;
       try {
-        const { data } = await refreshBlob({ client, path: { blobId } });
-        if (!data?.url) throw new Error('Refresh endpoint returned no URL data');
+        const { data, response } = await refreshBlob({ client, path: { blobId } });
+        if (!data?.url) {
+          missing = response?.status === 404 || !!data?.blockedReason || data?.available === false;
+          throw new Error('Refresh endpoint returned no URL data');
+        }
         for (const ref of group) ref.apply(data.url);
       } catch (error) {
         logToAxiom({ type: 'error', name: 'blob-refresh-failed', blobId, error: safeError(error) });
-        throw throwBadRequestError(
-          `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`
-        );
+        const refusal = new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `Failed to refresh image URL for blob: ${blobId}. Please try uploading the image again.`,
+        });
+        if (missing) annotateOrchestratorMissingBlob(refusal);
+        throw refusal;
       }
     })
   );

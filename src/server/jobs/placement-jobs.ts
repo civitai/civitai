@@ -12,6 +12,12 @@ import {
 } from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
 import { startReadyRemixSubmissionClocks } from '~/server/services/remix-gallery.service';
+import {
+  settleOrphanedContinuations,
+  settleStaleUnfundedContinuations,
+  startReadyStorylineContinuations,
+} from '~/server/services/storyline-placement.service';
+import { promoteReadyPendingChapters } from '~/server/services/storyline-publish.service';
 
 const BATCH = 100;
 
@@ -91,6 +97,88 @@ export const startReadyRemixSubmissionClocksJob = createJob(
       started: sum(runs, (run) => run.started),
       refunded: sum(runs, (run) => run.refunded),
       marked: sum(runs, (run) => run.marked),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+export const startReadyStorylineContinuationsJob = createJob(
+  'storyline-continuation-readiness',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-readiness',
+      jobContext,
+      () => startReadyStorylineContinuations({ limit: BATCH }),
+      // Drains on rows that left the set, not rows selected:
+      // see `startReadyRemixSubmissionClocksJob`.
+      (result) => result.started + result.refunded
+    );
+    // The owner's drafts wait for the same readiness, and are written as chapters here.
+    const owner = await drain(
+      'storyline-pending-chapters',
+      jobContext,
+      () => promoteReadyPendingChapters({ limit: BATCH }),
+      (result) => result.promoted + result.dropped
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      started: sum(runs, (run) => run.started),
+      refunded: sum(runs, (run) => run.refunded),
+      hitCap,
+      ownerChapters: {
+        considered: sum(owner.runs, (run) => run.considered),
+        promoted: sum(owner.runs, (run) => run.promoted),
+        dropped: sum(owner.runs, (run) => run.dropped),
+        hitCap: owner.hitCap,
+      },
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+export const settleStaleUnfundedContinuationsJob = createJob(
+  'storyline-continuation-unfunded',
+  '*/10 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-unfunded',
+      jobContext,
+      () => settleStaleUnfundedContinuations({ limit: BATCH }),
+      // Rows that left the set. A row skipped this pass must not keep the drain going.
+      (result) => result.settled
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      settled: sum(runs, (run) => run.settled),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+/**
+ * A takedown settles these itself; this job finishes what a failed run left, and covers
+ * deleted posts.
+ */
+export const settleOrphanedContinuationsJob = createJob(
+  'storyline-continuation-orphaned',
+  '*/10 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-orphaned',
+      jobContext,
+      () => settleOrphanedContinuations({ limit: BATCH }),
+      // Rows that left the set. A row skipped this pass must not keep the drain going.
+      (result) => result.settled
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      settled: sum(runs, (run) => run.settled),
       hitCap,
     };
   },
@@ -269,6 +357,9 @@ export const sweepUncountedPlacementsJob = createJob(
 export const placementJobs = [
   expirePlacementsJob,
   startReadyRemixSubmissionClocksJob,
+  startReadyStorylineContinuationsJob,
+  settleStaleUnfundedContinuationsJob,
+  settleOrphanedContinuationsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,

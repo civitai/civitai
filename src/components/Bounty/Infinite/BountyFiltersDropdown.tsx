@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Popover, Group, Indicator, Stack, Divider, Chip, Drawer } from '@mantine/core';
+import { Group, Indicator, Stack, Divider, Chip, Drawer } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { BountyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -46,12 +47,21 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
     [setFilters]
   );
 
-  const { opened, toggle, close, mergedFilters, isDirty, patchPending, apply, reset, clearAndClose } =
-    useStagedFilters({
-      committed: committedFilters,
-      onApply: setFilters,
-      onClear: handleClear,
-    });
+  const {
+    opened,
+    toggle,
+    close,
+    mergedFilters,
+    isDirty,
+    patchPending,
+    apply,
+    reset,
+    clearAndClose,
+  } = useStagedFilters({
+    committed: committedFilters,
+    onApply: setFilters,
+    onClear: handleClear,
+  });
 
   const filterLength =
     (mergedFilters.types?.length ?? 0) +
@@ -230,6 +240,9 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
       radius={12}
       opened={opened}
       onClose={close}
+      onChange={(next) => {
+        if (!next) close();
+      }}
       middlewares={{ flip: true, shift: true }}
     >
       <Popover.Target>{target}</Popover.Target>

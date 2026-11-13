@@ -39,10 +39,10 @@ import { NO_ACTION_TAKEN, plural } from '~/server/services/abuse-report-prose';
  *   2. an `identifier=<number>` pair, which is a debug dump however it is spelled.
  *
  * 🔴 SCOPE — TWO PRODUCERS, NAMED, BY IMPORT, AND THAT IS NARROWER THAN "THIS REPO'S PRODUCERS".
- * `src/server/services` holds THREE abuse-report producers — `bot-account-detection`,
- * `new-order-abuse-detection` and `reaction-withdrawal-detection` — and more detectors post to this
- * board from outside the repo entirely. This gate covers the first two. The third is deliberately
- * excluded: its reason carries `day(s)`/`account(s)` and no non-action sentence at all
+ * `src/server/services` holds several abuse-report producers (every directory with a `report.ts`)
+ * and more detectors post to this board from outside the repo entirely. This gate covers
+ * `bot-account-detection` and `new-order-abuse-detection`. `reaction-withdrawal-detection` is
+ * deliberately excluded: its reason carries `day(s)`/`account(s)` and no non-action sentence at all
  * (`reaction-withdrawal-detection/report.ts`), so including it would make this permanently red, and
  * a gate nobody can make green is worse than no gate because it trains everyone to click through.
  * Bringing it in means fixing its prose first, in a change that reviews that detector.
@@ -431,11 +431,9 @@ describe('the gate over REAL detector output, not a hand-copy of it', () => {
         .slice(0, take),
     countPosts: async (ids) => ({
       comments: [],
-      commentsV2: [],
       models: [],
       images: ids.map((userId) => ({ userId, count: imagesEach })),
       allComments: [],
-      allCommentsV2: [],
       allModels: [],
       allImages: ids.map((userId) => ({ userId, count: imagesEach })),
     }),

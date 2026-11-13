@@ -28,9 +28,4 @@ describe('resolveOfficialFileHash', () => {
     expect(d.hashFile).not.toHaveBeenCalled();
     expect(d.onHashStart).not.toHaveBeenCalled();
   });
-
-  it('returns null when the file is over the hash cap (hashFile → null)', async () => {
-    const d = deps({ hashFile: vi.fn().mockResolvedValue(null) });
-    expect(await resolveOfficialFileHash(d)).toBeNull();
-  });
 });

@@ -74,6 +74,7 @@ function setProfile(overrides: Record<string, unknown> = {}) {
     meta: {},
     settings: {},
     publicSettings: {},
+    cosmetics: [],
     profile: {
       userId: USER_ID,
       privacySettings: {},

@@ -1,20 +1,11 @@
 import { negate } from 'lodash-es';
-import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
-import { withRetries } from '~/utils/errorHandling';
-import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
-import {
-  describePartFailure,
-  getPartRetryDelay,
-  isExpiredPartError,
-  isTerminalCompleteStatus,
-  MAX_PART_ATTEMPTS,
-  resolveUploadRowStatus,
-  shouldRetryPartError,
-} from '~/utils/upload-retry';
+import type { MultipartRequestOptions, UploadProgress } from '~/utils/multipart-upload';
+import { startMultipartUpload } from '~/utils/multipart-upload';
+import { describePartFailure, resolveUploadRowStatus } from '~/utils/upload-retry';
 
 import { useCatchNavigationStore } from './catch-navigation.store';
 
@@ -29,36 +20,17 @@ type UploadResult = {
   backend?: string;
 };
 
-type RequestOptions = {
-  body: MixedObject;
-  headers: HeadersInit;
-};
-
-type EndpointOptions = {
-  request: RequestOptions;
-};
-
-type UploadToS3Options = {
-  endpoint?: EndpointOptions;
-};
-
-type UseS3UploadOptions = {
-  endpoint?: string;
-  endpointComplete?: string;
-};
-
-type ApiUploadResponse =
-  | {
-      urls: Array<{ url: string; partNumber: number }>;
-      bucket: string;
-      key: string;
-      uploadId?: string;
-      backend?: string;
-      chunkSize?: number;
-    }
-  | { error: string };
-
 type UploadStatus = 'pending' | 'error' | 'success' | 'aborted';
+
+/**
+ * Uploads that share an `id` (a model version, say) can be made to run one at a time. A
+ * `sequential` upload starts only when nothing else in its group is running; the others in the
+ * group are unaffected, so turning sequential off mid-way just stops queueing new files.
+ */
+type UploadGroup = { id: string; sequential: boolean };
+
+type GroupWaiter = { grant: () => void; cancel: () => void };
+type GroupState = { active: number; waiting: GroupWaiter[] };
 
 type StoreProps = {
   items: TrackedFile[];
@@ -81,7 +53,8 @@ type StoreProps = {
       file: File;
       type: UploadType;
       meta?: Record<string, unknown>;
-      options?: UploadToS3Options;
+      options?: MultipartRequestOptions;
+      uploadGroup?: UploadGroup;
     },
     cb?: ({ url, bucket, key, name, size }: UploadResult) => void
   ) => Promise<UploadResult | undefined>;
@@ -89,11 +62,6 @@ type StoreProps = {
 
 export const useS3UploadStore = create<StoreProps>()(
   immer((set, get) => {
-    const endpoint = '/api/upload';
-    const completeEndpoint = '/api/upload/complete';
-    const abortEndpoint = '/api/upload/abort';
-    const signPartEndpoint = '/api/upload/sign-part';
-
     function preparePayload(
       uuid: string,
       {
@@ -130,6 +98,112 @@ export const useS3UploadStore = create<StoreProps>()(
         if (index === -1) throw new Error('index out of bounds');
         state.items[index] = { ...state.items[index], ...trackedFile };
       });
+    }
+
+    const groups = new Map<string, GroupState>();
+
+    function admitWaiting(groupId: string) {
+      const group = groups.get(groupId);
+      if (!group) return;
+      while (group.active === 0 && group.waiting.length > 0) group.waiting.shift()?.grant();
+      if (group.active === 0) groups.delete(groupId);
+    }
+
+    /**
+     * Resolves with the release to call when the upload is over, or `null` when the file was
+     * cancelled or removed while it waited. A waiting file shows as a 'pending' row, and the
+     * server is not asked for part URLs until its turn, so they cannot expire in the queue.
+     */
+    function enterGroup(
+      { file, meta }: Pick<Parameters<StoreProps['upload']>[0], 'file' | 'meta'>,
+      { id, sequential }: UploadGroup
+    ): Promise<(() => void) | null> {
+      const group = groups.get(id) ?? { active: 0, waiting: [] };
+      groups.set(id, group);
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        group.active--;
+        admitWaiting(id);
+      };
+
+      if (!sequential || (group.active === 0 && group.waiting.length === 0)) {
+        group.active++;
+        return Promise.resolve(release);
+      }
+
+      registerCatchNavigation();
+      return new Promise((resolve) => {
+        let uuid = crypto.randomUUID();
+        const waiter: GroupWaiter = {
+          grant: () => {
+            if (!get().items.some((x) => x.uuid === uuid)) return resolve(null);
+            group.active++;
+            // Past this point the file is on its way; the upload sets its own abort once it
+            // has URLs, so a cancel in between must not pretend to have stopped it.
+            updateFile(uuid, { abort: () => undefined });
+            resolve(release);
+          },
+          cancel: () => {
+            group.waiting = group.waiting.filter((x) => x !== waiter);
+            try {
+              updateFile(uuid, { status: 'aborted' });
+            } catch {
+              // the row was cleared while it waited
+            }
+            resolve(null);
+            admitWaiting(id);
+          },
+        };
+        group.waiting.push(waiter);
+
+        // A retried file already has a row, which the upload merges into when its turn comes.
+        const existing = get().items.find((x) => x.file === file);
+        if (existing) {
+          uuid = existing.uuid;
+          updateFile(uuid, {
+            status: 'pending',
+            progress: 0,
+            uploaded: 0,
+            speed: 0,
+            timeRemaining: 0,
+            abort: waiter.cancel,
+          });
+        } else {
+          set((state) => {
+            state.items.push({
+              ...pendingTrackedFile,
+              file,
+              size: file.size ?? 0,
+              uuid,
+              meta,
+              name: file.name,
+              abort: waiter.cancel,
+            });
+          });
+        }
+      });
+    }
+
+    function withUploadGroup(run: StoreProps['upload']): StoreProps['upload'] {
+      return async (args, cb) => {
+        if (!args.uploadGroup) return run(args, cb);
+        const release = await enterGroup(args, args.uploadGroup);
+        if (!release) return undefined;
+        try {
+          return await run(args, cb);
+        } catch (err) {
+          // A file that never got as far as a row of its own is still sitting as 'pending'.
+          if (args.uploadGroup.sequential) {
+            const row = get().items.find((x) => x.file === args.file);
+            if (row?.status === 'pending') updateFile(row.uuid, { status: 'error' });
+          }
+          throw err;
+        } finally {
+          release();
+        }
+      };
     }
 
     return {
@@ -170,444 +244,137 @@ export const useS3UploadStore = create<StoreProps>()(
         const item = get().items.find((x) => x.uuid === uuid);
         item?.abort();
       },
-      upload: async ({ file, type, options, meta }, cb) => {
+      upload: withUploadGroup(async ({ file, type, options, meta }, cb) => {
         // register catch navigation if beginning upload queue
         if (get().items.filter((item) => item.status === 'uploading').length === 0)
           registerCatchNavigation();
-        const filename = encodeURIComponent(file.name);
 
-        const requestExtras = options?.endpoint?.request ?? {
-          headers: {},
-          body: {},
-        };
-
+        const upload = await startMultipartUpload({ file, type, options });
         const { size } = file;
-        const body = {
-          filename,
-          type,
-          size,
-          ...requestExtras.body,
-        };
+        const uuid = crypto.randomUUID();
 
-        const headers = {
-          ...requestExtras.headers,
-          'Content-Type': 'application/json',
+        let index = -1;
+        const trackedFile = {
+          ...pendingTrackedFile,
+          file,
+          // BYTES, not KB: consumers apply bytesToKB() themselves, so a KB value here is divided
+          // twice and ModelFile.sizeKB is stored ~1024x too small.
+          size: file.size ?? 0,
+          uuid,
+          meta,
+          name: file.name,
         };
+        const existingItem = get().items.find((x, i) => {
+          if (x.file === file) {
+            index = i;
+            return true;
+          }
 
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
+          return false;
+        });
+        const pendingItem = { ...trackedFile, ...existingItem };
+
+        set((state) => {
+          if (index !== -1) state.items[index] = pendingItem;
+          else state.items.push(trackedFile);
         });
 
-        // TODO handle a non-json response (like a 403)
-        const data = (await res.json()) as ApiUploadResponse;
-
-        if ('error' in data) {
-          console.error(data.error);
-          throw data.error;
-        } else {
-          const { bucket, key, uploadId, urls, backend } = data;
-          // The server sizes chunks against the file so the part count stays bounded;
-          // slicing by anything else would send parts that don't match what it signed.
-          const chunkSize = data.chunkSize ?? FILE_CHUNK_SIZE;
-          const uuid = uuidv4();
-
-          // let currentXhr: XMLHttpRequest;
-          // const abort = () => {
-          //   console.log({ currentXhr });
-          //   if (currentXhr) currentXhr.abort();
-          // };
-
-          let index = -1;
-          const trackedFile = {
-            ...pendingTrackedFile,
-            file,
-            // `size` is tracked in BYTES throughout the store: progress math
-            // (uploaded/size) and updateProgress() both use raw bytes, and every
-            // consumer of the upload-result `size` (FilesProvider, MultiFileInputUpload)
-            // applies bytesToKB() itself. Initializing in KB here let a stale KB value
-            // leak into the upload result when progress never overwrote it before
-            // completion, causing the consumer to divide by 1024 a second time and
-            // store ModelFile.sizeKB as MB (~1024x too small). Keep it bytes.
-            size: file.size ?? 0,
-            uuid,
-            meta,
-            name: file.name,
-          };
-          const existingItem = get().items.find((x, i) => {
-            if (x.file === file) {
-              index = i;
-              return true;
-            }
-
-            return false;
+        // One store write per animation frame: concurrent parts fire 'progress' far faster than
+        // the screen refreshes, and each write re-renders every row.
+        let latestProgress: UploadProgress | null = null;
+        let rafId: number | null = null;
+        const scheduleProgress = (progress: UploadProgress) => {
+          latestProgress = progress;
+          if (rafId !== null) return;
+          rafId = requestAnimationFrame(() => {
+            rafId = null;
+            if (latestProgress)
+              updateFile(pendingItem.uuid, { ...latestProgress, status: 'uploading' });
           });
-          const pendingItem = { ...trackedFile, ...existingItem };
+        };
+        const cancelProgress = () => {
+          if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+        };
 
-          set((state) => {
-            if (index !== -1) state.items[index] = pendingItem;
-            else state.items.push(trackedFile);
-          });
-
-          // Upload tracking - track per-part bytes so concurrent uploads aggregate correctly
-          const uploadStart = Date.now();
-          const partProgress = new Map<number, number>();
-          const activeXhrs = new Set<XMLHttpRequest>();
-          const updateProgress = () => {
-            let uploaded = 0;
-            for (const v of partProgress.values()) uploaded += v;
-            if (!uploaded) return;
-            const secondsElapsed = (Date.now() - uploadStart) / 1000;
-            const speed = uploaded / secondsElapsed;
-            const timeRemaining = (size - uploaded) / speed;
-            const progress = size ? (uploaded / size) * 100 : 0;
-            updateFile(pendingItem.uuid, {
-              progress,
-              uploaded,
-              size,
-              speed,
-              timeRemaining,
-              status: 'uploading',
-            });
-          };
-
-          // Coalesce progress writes to one store update per animation frame. Concurrent
-          // parts/files fire 'progress' events far faster than the screen refreshes, so
-          // without this each byte event triggers a zustand set + re-render of every row.
-          let rafId: number | null = null;
-          const scheduleProgress = () => {
-            if (rafId !== null) return;
-            rafId = requestAnimationFrame(() => {
-              rafId = null;
-              updateProgress();
-            });
-          };
-          const cancelProgress = () => {
-            if (rafId !== null) {
-              cancelAnimationFrame(rafId);
-              rafId = null;
-            }
-          };
-
-          // Prepare abort
-          const abortUpload = (failure?: PartFailureReason) =>
-            fetch(abortEndpoint, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                bucket,
-                key,
-                type,
-                uploadId,
-                backend,
-                ...(failure ? { failure } : {}),
-              }),
-            });
-
-          // Best-effort teardown of the server-side multipart session. EVERY failure
-          // path that gives up after the session was created has to run this, or the
-          // upload stays open indefinitely and the parts already transferred keep
-          // accruing storage with nothing left to finalize them.
-          //
-          // The rejection is deliberately swallowed rather than surfaced: this is
-          // cleanup, not part of the caller's outcome. Both callers' contract is to
-          // return undefined with a terminal row already written, so raising here
-          // would replace the real cause (the part error, or the failed completion)
-          // with an incidental teardown error at every call site. The abort endpoint
-          // also treats an already-gone upload as success, so a throw on this path is
-          // genuinely exceptional — it gets logged, not raised.
-          const abortUploadQuietly = async (failure?: PartFailureReason) => {
-            try {
-              await abortUpload(failure);
-            } catch (err) {
-              console.error('Failed to abort upload');
-              console.error(err);
-            }
-          };
-
-          // Write a terminal row state without letting a failure here pre-empt the
-          // teardown above. updateFile() throws 'index out of bounds' when the row has
-          // already been dropped from the store (clear(), or a navigation that reset
-          // the list) — and that is precisely a case where the session still needs
-          // aborting, so the two must not share a try block.
-          const setTerminalStatus = (status: UploadStatus) => {
-            try {
-              updateFile(pendingItem.uuid, {
-                status,
-                progress: 0,
-                speed: 0,
-                timeRemaining: 0,
-                uploaded: 0,
-              });
-            } catch (err) {
-              console.error('Failed to write terminal upload status');
-              console.error(err);
-            }
-          };
-
-          const completeUpload = () =>
-            withRetries(
-              async (remainingAttempts) => {
-                const res = await fetch(completeEndpoint, {
-                  method: 'POST',
-                  headers,
-                  body: JSON.stringify({
-                    bucket,
-                    key,
-                    type,
-                    uploadId,
-                    parts,
-                    backend,
-                  }),
-                });
-
-                // Terminal statuses must not be re-POSTed — see isTerminalCompleteStatus.
-                if (!res.ok && !isTerminalCompleteStatus(res.status) && remainingAttempts > 0)
-                  throw new Error(`Failed to complete upload (${res.status})`);
-
-                return res;
-              },
-              3,
-              1000
-            );
-
-          // Swap an expired part URL for a fresh one. A file big enough to take longer
-          // than the presign lifetime would otherwise die at the point where its
-          // remaining parts all start coming back 403.
-          const resignPart = async (partNumber: number) => {
-            if (!uploadId) return null;
-            try {
-              const res = await fetch(signPartEndpoint, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({ bucket, key, uploadId, partNumber, backend }),
-              });
-              if (!res.ok) return null;
-              const signed = (await res.json()) as { url?: string };
-              return signed.url ?? null;
-            } catch {
-              return null;
-            }
-          };
-
-          // Prepare part upload
-          const partsCount = urls.length;
-          const parts: { ETag: string; PartNumber: number }[] = [];
-          const uploadPart = (url: string, i: number) =>
-            new Promise<void>((resolve, reject) => {
-              let eTag: string;
-              const start = (i - 1) * chunkSize;
-              const end = i * chunkSize;
-              const part = i === partsCount ? file.slice(start) : file.slice(start, end);
-              const xhr = new XMLHttpRequest();
-              activeXhrs.add(xhr);
-              xhr.upload.addEventListener('progress', ({ loaded }) => {
-                partProgress.set(i, loaded);
-                scheduleProgress();
-              });
-              xhr.upload.addEventListener('loadend', ({ loaded }) => {
-                partProgress.set(i, loaded);
-              });
-              xhr.addEventListener('load', () => {
-                eTag = xhr.getResponseHeader('ETag') ?? '';
-              });
-              xhr.addEventListener('loadend', () => {
-                activeXhrs.delete(xhr);
-                if (xhr.readyState !== 4) return;
-                if (xhr.status === 200) {
-                  parts.push({ ETag: eTag, PartNumber: i });
-                  resolve();
-                } else {
-                  // An HTTP failure fires neither 'error' nor 'abort'. Without this the
-                  // promise never settles, the worker parks forever, and the upload sits
-                  // at ~100% with no error and no file record.
-                  reject({
-                    status: xhr.status,
-                    retryAfter: xhr.getResponseHeader('Retry-After'),
-                    partNumber: i,
-                  } as UploadPartError);
-                }
-              });
-              xhr.addEventListener('error', () => {
-                activeXhrs.delete(xhr);
-                reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
-              });
-              xhr.addEventListener('abort', () => {
-                activeXhrs.delete(xhr);
-                reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
-              });
-              xhr.open('PUT', url);
-              xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-              xhr.send(part);
-            });
-
-          // Shared cancellation: trips on user abort or first fatal failure so sleeping
-          // retry workers don't fire zombie PUTs after the upload has been torn down.
-          const cancelController = new AbortController();
-          // 🔴 Whether the PERSON cancelled — not whether `cancelController` has tripped.
-          // Both a user cancel and the worker's own teardown trip that signal and abort
-          // the same in-flight xhrs, so neither it nor the resulting `{ aborted: true }`
-          // part errors can tell the two apart. Set in exactly one place: the `abort`
-          // handed out on the tracked row below.
-          //
-          // The sibling client `useS3Upload` had the same confusion with a worse
-          // consequence — its relay fallback was gated on the shared signal and could
-          // never run. This client has no relay (the relay route writes to the image
-          // bucket; this one serves model/training uploads), so here it is the terminal
-          // status that was wrong: a cancel racing a non-retryable part failure reported
-          // as an upload error.
-          let userAborted = false;
-          const cancellableSleep = (ms: number) =>
-            new Promise<void>((resolve) => {
-              if (cancelController.signal.aborted) return resolve();
-              const onDone = () => {
-                cancelController.signal.removeEventListener('abort', onDone);
-                clearTimeout(t);
-                resolve();
-              };
-              const t = setTimeout(onDone, ms);
-              cancelController.signal.addEventListener('abort', onDone);
-            });
-
-          // Register abort that trips the signal and cancels every in-flight part xhr
+        // updateFile() throws when the row was already dropped (clear(), a navigation), and the
+        // session still needs aborting then, so this must not share a try block with the abort.
+        const setTerminalStatus = (status: UploadStatus) => {
           try {
             updateFile(pendingItem.uuid, {
-              abort: () => {
-                userAborted = true;
-                cancelProgress();
-                cancelController.abort();
-                for (const x of activeXhrs) x.abort();
-              },
+              status,
+              progress: 0,
+              speed: 0,
+              timeRemaining: 0,
+              uploaded: 0,
             });
-          } catch (e) {
-            // ignore - upload will surface the failure
-          }
-
-          // Worker pool over remaining parts
-          const queue = [...(urls as { url: string; partNumber: number }[])];
-          const fatalErrorRef: { value: UploadPartError | null } = { value: null };
-
-          const runWorker = async () => {
-            while (queue.length > 0 && !fatalErrorRef.value) {
-              // ⚠ Returns WITHOUT recording a fatal, where the same guard in `useS3Upload`
-              // records `{ aborted: true }`. Neither is reachable today. This guard runs
-              // on first loop entry — synchronous with pool creation, with no `await`
-              // between registering `abort` on the row and `Promise.all`, so a click
-              // cannot land there — and thereafter only after a part SUCCEEDED, where the
-              // gap before it is a microtask, which a click also cannot land in. The two
-              // real macrotask windows inside the loop, the backoff sleep and the part
-              // re-sign, both re-enter at the `for`-loop top, whose guard DOES record.
-              // If this loop ever grows an `await` before this line, record here too.
-              if (cancelController.signal.aborted) return;
-              const item = queue.shift();
-              if (!item) return;
-
-              let url = item.url;
-              let partError: UploadPartError | null = null;
-              for (let attempt = 0; attempt < MAX_PART_ATTEMPTS; attempt++) {
-                if (cancelController.signal.aborted) {
-                  partError = { status: null, aborted: true };
-                  break;
-                }
-                try {
-                  await uploadPart(url, item.partNumber);
-                  partError = null;
-                  break;
-                } catch (e) {
-                  partError = e as UploadPartError;
-                }
-                if (attempt === MAX_PART_ATTEMPTS - 1) break;
-                if (isExpiredPartError(partError)) {
-                  const fresh = await resignPart(item.partNumber);
-                  if (!fresh) break;
-                  url = fresh;
-                  continue;
-                }
-                if (!shouldRetryPartError(partError)) break;
-                await cancellableSleep(getPartRetryDelay(partError, attempt));
-              }
-
-              if (partError) {
-                // First failure wins so a real error doesn't get masked by a later abort
-                if (!fatalErrorRef.value) fatalErrorRef.value = partError;
-                cancelController.abort();
-                for (const x of activeXhrs) x.abort();
-                return;
-              }
-            }
-          };
-
-          await Promise.all(
-            Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
-          );
-          // Shared with the hook client; the rules and the reason they are shared are on
-          // `resolveUploadRowStatus`.
-          const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? resolveUploadRowStatus(fatalErrorRef.value, { userAborted })
-            : null;
-
-          // No more progress events past this point; drop any queued frame so it can't
-          // clobber the terminal status written below.
-          cancelProgress();
-
-          if (failureStatus) {
-            setTerminalStatus(failureStatus);
-            await abortUploadQuietly(describePartFailure(fatalErrorRef.value));
-            return;
-          }
-
-          // S3 requires parts ordered by PartNumber in CompleteMultipartUpload
-          parts.sort((a, b) => a.PartNumber - b.PartNumber);
-
-          // Complete the multipart upload
-          const completeResult = await completeUpload().catch((err) => {
-            console.error('Failed to complete upload');
+          } catch (err) {
+            console.error('Failed to write terminal upload status');
             console.error(err);
-            return null;
-          });
-          // Every bailout here has to leave a terminal 'error' behind: the bytes are in
-          // the bucket but no file record exists, and a row left mid-progress reads to
-          // the user as a finished upload that silently never got added.
-          //
-          // It also has to tear the multipart session down. A failed completion leaves
-          // the session open with every transferred part still stored and billable, and
-          // nothing else ever closes it — the part-failure branch above has always
-          // aborted, but this sibling path returned without doing so, so each failed
-          // completion leaked one upload permanently. Both terminal outcomes need it:
-          // 422 (invalid/incomplete parts) leaves a live session holding every part,
-          // and 409 (already finalized or aborted) is harmless because the abort
-          // endpoint treats an upload that is already gone as success.
-          if (!completeResult?.ok) {
-            setTerminalStatus('error');
-            await abortUploadQuietly();
-            return;
           }
+        };
 
-          // The final part's bytes land on 'loadend', which doesn't schedule a
-          // progress frame — without this the row would settle on the last
-          // rendered percentage (e.g. 87%) instead of a finished bar.
+        const userAbortController = new AbortController();
+        try {
           updateFile(pendingItem.uuid, {
-            status: 'success',
-            progress: 100,
-            uploaded: size,
-            speed: 0,
-            timeRemaining: 0,
+            abort: () => {
+              cancelProgress();
+              userAbortController.abort();
+            },
           });
-
-          const url = urls[0].url.split('?')[0];
-          const payload = preparePayload(pendingItem.uuid, { url, bucket, key, backend });
-
-          cb?.(payload);
-          return payload;
+        } catch (e) {
+          // ignore - upload will surface the failure
         }
-      },
+
+        const fatal = await upload.transferParts({
+          signal: userAbortController.signal,
+          onProgress: scheduleProgress,
+        });
+
+        // No more progress events past this point; drop any queued frame so it can't
+        // clobber the terminal status written below.
+        cancelProgress();
+
+        if (fatal) {
+          setTerminalStatus(
+            resolveUploadRowStatus(fatal, { userAborted: userAbortController.signal.aborted })
+          );
+          await upload.abort(describePartFailure(fatal));
+          return;
+        }
+
+        const completeResult = await upload.complete();
+        // A failed completion must leave a terminal 'error' (the bytes are stored but no file record
+        // exists) and must tear the session down, or every stored part stays open and billable.
+        if (!completeResult?.ok) {
+          setTerminalStatus('error');
+          await upload.abort();
+          return;
+        }
+
+        // The final part's bytes land on 'loadend', which doesn't report progress —
+        // without this the row would settle on the last rendered percentage (e.g. 87%)
+        // instead of a finished bar.
+        updateFile(pendingItem.uuid, {
+          status: 'success',
+          progress: 100,
+          uploaded: size,
+          speed: 0,
+          timeRemaining: 0,
+        });
+
+        const { url, bucket, key, backend } = upload;
+        const payload = preparePayload(pendingItem.uuid, { url, bucket, key, backend });
+
+        cb?.(payload);
+        return payload;
+      }),
     };
   })
 );
 
-const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
-const CONCURRENT_PARTS = 4;
 const pendingTrackedFile: Omit<TrackedFile, 'uuid' | 'file' | 'name'> = {
   progress: 0,
   uploaded: 0,
@@ -626,7 +393,11 @@ const registerCatchNavigation = () => {
     register({
       name: 'file-upload',
       message: 'Files are still uploading. Upload progress will be lost',
-      predicate: () => useS3UploadStore.getState().getStatus().uploading > 0,
+      // A file waiting its turn in a sequential group is as lost on leave as one mid-transfer.
+      predicate: () => {
+        const { uploading, pending } = useS3UploadStore.getState().getStatus();
+        return uploading + pending > 0;
+      },
       event: 'beforeunload',
     });
 };

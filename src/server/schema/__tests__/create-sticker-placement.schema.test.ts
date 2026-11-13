@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createStickerPlacementSchema } from '~/server/schema/placement.schema';
+import { encodeStickerTrack, STICKER_TRACK_MAX_PAIRS } from '~/shared/utils/sticker-track';
 
 const data = { cosmeticId: 85, x: 0.25, y: 0.75, scale: 0.2, rotation: 15 };
 
@@ -41,6 +42,37 @@ describe('the placer cannot come from the request body', () => {
     // Read off the shape rather than off one parse, so adding the field is
     // caught even if a caller never sends it. If this ever needs relaxing, the
     // reason has to be written down somewhere other than here.
-    expect(Object.keys(createStickerPlacementSchema.shape)).toEqual(['imageId', 'data', 'free']);
+    expect(Object.keys(createStickerPlacementSchema.shape)).toEqual([
+      'imageId',
+      'data',
+      'track',
+      'free',
+    ]);
+  });
+});
+
+describe('a track is refused at the schema, before any service runs', () => {
+  const track = encodeStickerTrack([
+    { x: 0.2, y: 0.5, scale: 0.1, rotation: 0 },
+    { x: 0.3, y: 0.5, scale: 0.1, rotation: 0 },
+  ]);
+  const parse = (candidate: unknown) =>
+    createStickerPlacementSchema.safeParse({ imageId: 74, data, track: candidate });
+
+  it('accepts an encoded track', () => {
+    expect(parse(track).success).toBe(true);
+  });
+
+  it('runs the track rules, not only the shape', () => {
+    const result = parse({ ...track, x: [[0, 1.2]] });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toMatch(/^track: x: out of bounds/);
+  });
+
+  it('refuses an array too long to fit the byte limit by length alone', () => {
+    const x = Array.from({ length: STICKER_TRACK_MAX_PAIRS + 1 }, (_, i) => [i, 0.5]);
+    const result = parse({ ...track, x });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].code).toBe('too_big');
   });
 });

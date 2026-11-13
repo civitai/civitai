@@ -16,6 +16,23 @@ import type { BaseModel } from '~/server/common/constants';
 const AUG_TEXT: BaseModel[] = ['LTXV 2.5'];
 const JAN_TEXT: BaseModel[] = ['LTXV2', 'LTXV 2.3'];
 const OWN_TEXT: BaseModel[] = ['LTXV']; // 0.9.x, a separate Lightricks licence
+// Not LTX: the FLUX Kommunity License applies every restriction to derivatives (2a, 3a).
+const FLUX_KOMMUNITY: BaseModel[] = ['Flux.3 Klein', 'Flux.3 Klein-base'];
+const FLUX_NC: BaseModel[] = ['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base', 'Flux.2 D'];
+// Licences that make derivatives carry them, or carry terms no less restrictive.
+const OTHER_SAME: BaseModel[] = [
+  'Flux.1 D',
+  'Flux.1 Krea',
+  'Flux.1 Kontext',
+  'NoobAI',
+  'Pony V7',
+  'Ideogram 4.0',
+  'MiniMax H3',
+  'MiniMax H3 Image',
+  'Fibo 2.0',
+  'Krea 2',
+  'Krea 2 Turbo',
+];
 
 // Exact permalinks. `baseModelLicenses` cannot audit itself, so the LTX list is derived
 // from `baseModelRecords` — the registry of what actually exists — and matched loosely
@@ -47,10 +64,12 @@ describe('LTX same-license enforcement', () => {
   });
 
   // The whitelist, not a spot-check. Adding `requiresSameLicense` to any other licence —
-  // e.g. flux1D, which six Flux base models share — would silently lock merges on models
-  // whose licence does not require it. Enumerating a couple of unrelated names misses that.
+  // e.g. apache 2.0, which dozens of base models share — would silently lock merges on
+  // models whose licence does not require it. Enumerating a couple of unrelated names misses that.
   it('locks exactly the base models whose licence requires it, and no others', () => {
-    expect([...sameLicenseBaseModels].sort()).toEqual([...AUG_TEXT].sort());
+    expect([...sameLicenseBaseModels].sort()).toEqual(
+      [...AUG_TEXT, ...FLUX_KOMMUNITY, ...FLUX_NC, ...OTHER_SAME].sort()
+    );
   });
 
   it('does not constrain a base model absent from the licence map', () => {
@@ -125,8 +144,8 @@ describe('LTX licence records', () => {
     }
   });
 
-  // Both copies must agree — `civitai-shared` is inert today (`getBaseModelLicense` has no
-  // callers) but it is the copy a future consumer would read. Keyed to the licence id, not
+  // Both copies must agree — creator-studio's licensing-fee check and the generator footer
+  // read `civitai-shared`'s. Keyed to the licence id, not
   // `some()` over the array: presence anywhere would let id 35 hold the 2.5 permalink.
   it.each([
     [16, PERMALINKS['LTXV']],

@@ -61,6 +61,41 @@ export const DEPLOY_PENDING_GRACE_MS = 2 * 60 * 1000;
  */
 export const DEPLOY_STATE_TRACKING_EPOCH_MS = Date.UTC(2026, 5, 15); // 2026-06-15T00:00:00Z
 
+/**
+ * The fixed `deploy_detail` strings the build callback stores when the apply Job, not
+ * the build, fails. The build already succeeded by then, so none of these is the
+ * author's to fix.
+ *
+ * Shared because the WRITER (`build-callback.ts`) and the author-facing READER
+ * (`describeBuildFailure` in `~/components/Apps/buildFailure`) must agree byte for
+ * byte. A reworded literal on one side alone would silently drop the failure into
+ * the reader's `unknown` class.
+ */
+export const DEPLOY_FAILURE_DETAIL = {
+  failed: 'Deploy failed',
+  timedOut: 'Deploy timed out',
+  couldNotStart: 'Deploy could not start',
+} as const;
+
+/**
+ * The EXACT `deploy_detail` an app author sees when the moderator's re-trigger
+ * could not be handed to the build service.
+ *
+ * 🔴 FIXED STRING, never derived from the thrown error. `deploy_detail` is
+ * owner-visible (the listing's History tab, `blocks.listMyPublishRequests` and
+ * `GET /api/v1/blocks/submissions`),
+ * and the errors `triggerBuild` throws carry infrastructure detail. Those go to the
+ * server log instead.
+ *
+ * It says what the author actually needs: this is our failure, not their code, and
+ * they should not resubmit. Lives here, not in the service, so the client-side
+ * classifier can match it without importing server code.
+ */
+export const RETRIGGER_FAILED_AUTHOR_DETAIL =
+  'Build re-trigger failed: Civitai could not reach the build service. ' +
+  'This is a problem on our side, not with your app — a moderator has to retry it. ' +
+  'No new version submission is needed.';
+
 /** Row shape the shared deploy predicates read. Dates or ISO strings both work. */
 export type ApprovedDeployProjection = {
   status: string;

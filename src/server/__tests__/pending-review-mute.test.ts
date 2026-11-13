@@ -1,12 +1,14 @@
 import path from 'node:path';
 import type { NextApiResponse } from 'next';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as PromClient from '~/server/prom/client';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as PromptAuditing from '~/server/services/orchestrator/promptAuditing';
+import type * as ScamCleanup from '~/server/services/scam-cleanup.service';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
 type UserRow = {
   id: number;
@@ -17,6 +19,7 @@ type UserRow = {
   deletedAt: Date | null;
   email: string | null;
   username: string;
+  meta?: unknown;
 };
 type RestrictionRow = {
   id: number;
@@ -42,6 +45,7 @@ const {
   userUpdateCounterInc,
   refreshSession,
   createNotification,
+  restoreScamCase,
 } = vi.hoisted(() => {
   const store = {
     users: new Map<number, UserRow>(),
@@ -84,9 +88,25 @@ const {
         }
       ),
       findFirst: vi.fn(
-        async ({ where }: { where: { userId: number; type: string; status: string } }) => {
+        async ({
+          where,
+        }: {
+          where: {
+            userId: number;
+            type?: string | { not: string };
+            status: string;
+            id?: { not: number };
+          };
+        }) => {
+          const typeMatches = (type: string) =>
+            where.type === undefined ||
+            (typeof where.type === 'string' ? type === where.type : type !== where.type.not);
           const row = findRestriction(
-            (r) => r.userId === where.userId && r.type === where.type && r.status === where.status
+            (r) =>
+              r.userId === where.userId &&
+              typeMatches(r.type) &&
+              r.status === where.status &&
+              r.id !== where.id?.not
           );
           return row ? { id: row.id } : null;
         }
@@ -118,12 +138,32 @@ const {
           return { ...row };
         }
       ),
+      updateMany: vi.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: number; status?: string };
+          data: Record<string, unknown>;
+        }) => {
+          const rows = store.restrictions.filter(
+            (r) => r.id === where.id && (where.status === undefined || r.status === where.status)
+          );
+          for (const row of rows) Object.assign(row, data);
+          return { count: rows.length };
+        }
+      ),
     },
+    // Strike writes; nothing in a ruling should reach them except the overturn's raw void.
+    $executeRaw: vi.fn(async () => 0),
+    userStrike: { update: vi.fn(), updateMany: vi.fn() },
     keyValue: {
       findUnique: vi.fn(async () => ({ value: store.jobDate.getTime() })),
       upsert: vi.fn(async () => undefined),
     },
-    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $transaction: vi.fn(async (ops: Promise<unknown>[] | ((tx: unknown) => unknown)) =>
+      typeof ops === 'function' ? ops(dbWrite) : Promise.all(ops)
+    ),
     // confirm-mutes' only query. Mirrors `WHERE "muted" AND "mutedAt" > $lastRan`;
     // the equality assertion below is what keeps this in step with the real SQL.
     $queryRaw: vi.fn(async (strings: TemplateStringsArray, lastRan: Date) => {
@@ -147,9 +187,21 @@ const {
     userUpdateCounterInc: vi.fn(),
     refreshSession: vi.fn(async () => undefined),
     createNotification: vi.fn(async () => undefined),
+    restoreScamCase: vi.fn(async () => ({ restored: 0 })),
   };
 });
 
+const { revokeTokens } = vi.hoisted(() => ({
+  revokeTokens: vi.fn(async (_: { userId: number | string }) => true),
+}));
+// A mute calls the orchestrator to cancel the account's generations; never from a test.
+vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
+  cancelPendingWorkflows: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: revokeTokens,
+}));
 vi.mock('~/server/db/client', () => ({ dbRead: dbWrite, dbWrite, dbKV: dbWrite }));
 vi.mock('~/server/services/stripe.service', () => ({ cancelSubscription, reinstateSubscription }));
 vi.mock('~/server/services/paddle.service', () => ({ cancelSubscriptionPlan }));
@@ -178,6 +230,10 @@ vi.mock('~/server/services/orchestrator/promptAuditing', async (importOriginal) 
   ...(await importOriginal<typeof PromptAuditing>()),
   resetProhibitedRequestCount,
 }));
+vi.mock('~/server/services/scam-cleanup.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ScamCleanup>()),
+  restoreScamCase,
+}));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     userActivity = trackUserActivity;
@@ -189,6 +245,8 @@ import overturnHandler from '~/pages/api/mod/overturn-user-mute';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/server';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
+import { moderationActionEmail } from '~/server/email/templates';
 import { setUserMuted } from '~/server/services/user.service';
 import {
   applyPendingReviewMute,
@@ -202,6 +260,7 @@ import {
 import {
   overturnPendingReviewMute,
   resolveUserRestriction,
+  RULING_EFFECTS,
 } from '~/server/services/user-restriction-resolve.service';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
@@ -283,6 +342,37 @@ async function call(
 
 const triggers = buildManualMuteTriggers({ reason: REASON, source: 'test' });
 
+/** Runs the next transaction against a client that records which writes went through it. */
+function recordTransactionWrites() {
+  const inside: string[] = [];
+  dbWrite.$transaction.mockImplementationOnce(async (fn: unknown) =>
+    (fn as (tx: unknown) => unknown)({
+      ...dbWrite,
+      user: {
+        ...dbWrite.user,
+        update: (args: never) => (inside.push('user.update'), dbWrite.user.update(args)),
+      },
+      userRestriction: {
+        ...dbWrite.userRestriction,
+        create: (args: never) => (
+          inside.push('userRestriction.create'), dbWrite.userRestriction.create(args)
+        ),
+      },
+    })
+  );
+  return inside;
+}
+
+// `afterAccountStandingChanged` arms a real follow-up timer; held here so one test's cannot fire
+// inside another's assertions.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+});
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+});
+
 describe('pending-review mute', () => {
   beforeEach(seed);
 
@@ -291,6 +381,7 @@ describe('pending-review mute', () => {
 
     const dataArgs = dbWrite.user.update.mock.calls.map(([arg]) => arg.data);
     expect(dataArgs).toEqual([{ muted: true }]);
+    expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER_ID });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
   });
 
@@ -307,10 +398,11 @@ describe('pending-review mute', () => {
   });
 
   it('writes the mute and the restriction in one transaction', async () => {
+    const inside = recordTransactionWrites();
     await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
 
     expect(dbWrite.$transaction).toHaveBeenCalledOnce();
-    expect(dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+    expect(inside).toEqual(['user.update', 'userRestriction.create']);
   });
 
   it('is not picked up by confirm-mutes, so no subscription is cancelled', async () => {
@@ -335,6 +427,7 @@ describe('pending-review mute', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -354,7 +447,12 @@ describe('pending-review mute', () => {
       updateSource: 'test',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -371,6 +469,49 @@ describe('pending-review mute', () => {
     expect(result).toEqual({ muted: false, skipped });
     expect(store.restrictions).toHaveLength(0);
     expect(store.users.get(userId)?.muted ?? false).toBe(false);
+  });
+
+  describe('system accounts', () => {
+    afterEach(() => resetEnv());
+
+    it.each([
+      ['its configured id', 105, { username: 'Renamed' }],
+      ['the reserved name, with no id configured', undefined, { username: 'civitaimoderation' }],
+      [
+        'the system-account marker',
+        undefined,
+        { username: 'svc-bot', meta: { systemAccount: true } },
+      ],
+    ])('refuses to mute one recognized by %s', async (_label, configuredId, over) => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: configuredId });
+      store.users.set(105, makeUser(105, over));
+
+      for (const type of ['generation', 'scam'] as const) {
+        const result = await applyPendingReviewMute({
+          userId: 105,
+          triggers,
+          updateSource: 'test',
+          type,
+        });
+        expect(result).toEqual({ muted: false, skipped: 'system-account' });
+      }
+      // The fake returns the whole row whatever is selected; the real read only returns these.
+      expect(dbWrite.user.findUnique.mock.calls[0][0]).toMatchObject({
+        select: { id: true, username: true, meta: true },
+      });
+      expect(store.restrictions).toHaveLength(0);
+      expect(store.users.get(105)?.muted).toBe(false);
+    });
+
+    it('still mutes another account holding the reserved name once an id is configured', async () => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: 999 });
+      store.users.set(105, makeUser(105, { username: 'CivitaiModeration' }));
+
+      const result = await applyPendingReviewMute({ userId: 105, triggers, updateSource: 'test' });
+
+      expect(result).toMatchObject({ muted: true });
+      expect(store.users.get(105)?.muted).toBe(true);
+    });
   });
 
   it('still reports success when the session refresh fails', async () => {
@@ -496,6 +637,7 @@ describe('pending-review mute — restriction type', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -533,6 +675,7 @@ describe('pending-review mute — restriction type', () => {
   });
 
   it('writes the mute and a typed restriction in one transaction', async () => {
+    const inside = recordTransactionWrites();
     await applyPendingReviewMute({
       userId: USER_ID,
       triggers,
@@ -541,7 +684,7 @@ describe('pending-review mute — restriction type', () => {
     });
 
     expect(dbWrite.$transaction).toHaveBeenCalledOnce();
-    expect(dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+    expect(inside).toEqual(['user.update', 'userRestriction.create']);
   });
 
   it.each(['generation', 'bot-account'] as const)(
@@ -592,7 +735,12 @@ describe('pending-review mute — restriction type', () => {
       type: 'bot-account',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -689,6 +837,7 @@ describe('resolveUserRestriction — ruling scope', () => {
       // Nothing at all happened — checked rather than assumed, because the refusal is only worth
       // anything if it lands BEFORE the first write.
       expect(dbWrite.userRestriction.update).not.toHaveBeenCalled();
+      expect(dbWrite.userRestriction.updateMany).not.toHaveBeenCalled();
       expect(store.restrictions[0].status).toBe('Pending');
       expect(dbWrite.user.update).not.toHaveBeenCalled();
       expect(createNotification).not.toHaveBeenCalled();
@@ -717,6 +866,7 @@ describe('resolveUserRestriction — ruling scope', () => {
     expect(result).toEqual({ userId: USER_ID });
     expect(store.restrictions[0]).toMatchObject({ status: 'Overturned', resolvedBy: MOD_ID });
     expect(reinstateSubscription).toHaveBeenCalledWith({ userId: USER_ID });
+    expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER_ID });
     expect(resetProhibitedRequestCount).toHaveBeenCalledWith(USER_ID);
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'generation-restriction-overturned' })
@@ -734,10 +884,57 @@ describe('resolveUserRestriction — ruling scope', () => {
 
     expect(store.restrictions[0]).toMatchObject({ status: 'Upheld' });
     expect(store.users.get(USER_ID)?.mutedAt).toBeInstanceOf(Date);
+    expect(revokeTokens).toHaveBeenCalledExactlyOnceWith({ userId: USER_ID });
     expect(cancelSubscription).toHaveBeenCalledWith({ userId: USER_ID, atPeriodEnd: true });
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'generation-restriction-upheld' })
     );
+  });
+
+  it('records the ruling reason and the internal note on the row, and tells the user neither', async () => {
+    const id = fileRestriction('generation');
+
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Overturned,
+      resolvedMessage: 'Access restored.',
+      resolvedReason: 'word-match',
+      internalNotes: 'matched inside a character name',
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.restrictions[0]).toMatchObject({
+      resolvedReason: 'word-match',
+      internalNotes: 'matched inside a character name',
+    });
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith({
+      type: 'generation-restriction-overturned',
+      key: `generation-restriction-overturned:${USER_ID}:${id}`,
+      category: 'System',
+      userId: USER_ID,
+      details: { resolvedMessage: 'Access restored.' },
+    });
+  });
+
+  // Without a message the note is the only free text in the call, which is where a fallback would reach for it.
+  it('does not fall back to the internal note when there is no user message', async () => {
+    const id = fileRestriction('generation');
+
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      resolvedReason: 'other',
+      internalNotes: 'second account of a banned user',
+      moderatorId: MOD_ID,
+    });
+
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith({
+      type: 'generation-restriction-upheld',
+      key: `generation-restriction-upheld:${USER_ID}:${id}`,
+      category: 'System',
+      userId: USER_ID,
+      details: { resolvedMessage: '' },
+    });
   });
 
   // The refusal precedes the already-resolved check, so a row this path cannot rule on reports the
@@ -944,11 +1141,370 @@ describe('resolveUserRestriction — ruling scope', () => {
       for (const type of RULINGS_WIRED_FOR) expect(USER_RESTRICTION_TYPES).toContain(type);
     });
 
-    it('names generation and refuses everything else', () => {
-      expect([...RULINGS_WIRED_FOR]).toEqual(['generation']);
-      expect(unwiredRulingReason('generation')).toBeNull();
+    it('names generation and scam and refuses everything else', () => {
+      expect([...RULINGS_WIRED_FOR]).toEqual(['generation', 'scam']);
+      for (const type of RULINGS_WIRED_FOR) expect(unwiredRulingReason(type)).toBeNull();
       for (const type of USER_RESTRICTION_TYPES.filter((t) => !RULINGS_WIRED_FOR.includes(t)))
         expect(unwiredRulingReason(type)).toContain(`"${type}"`);
+    });
+
+    it('defines verdict effects for exactly the wired-for types', () => {
+      expect(Object.keys(RULING_EFFECTS).sort()).toEqual([...RULINGS_WIRED_FOR].sort());
+    });
+
+    it('sends only notification types a processor can render', async () => {
+      const { notificationProcessors } = await import('~/server/notifications/utils.notifications');
+      const sent = [
+        ...Object.values(RULING_EFFECTS).flatMap((e) => [
+          e!.upheldNotification,
+          e!.overturnedNotification,
+        ]),
+        ...Object.values(PENDING_REVIEW_MUTE_NOTIFICATION).filter((t): t is string => !!t),
+      ];
+      expect(sent.length).toBeGreaterThan(0);
+      for (const type of sent) expect(Object.keys(notificationProcessors)).toContain(type);
+    });
+  });
+});
+
+describe('resolveUserRestriction — scam rulings', () => {
+  beforeEach(seed);
+
+  const fileCase = (id: number, type: string) => {
+    store.restrictions.push({
+      id,
+      userId: USER_ID,
+      type,
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(Date.now() - id * 1000),
+    });
+    return id;
+  };
+  const fileScam = () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+    return fileCase(1, 'scam');
+  };
+
+  it('overturning unmutes, restores the cleaned content and sends the scam notice', async () => {
+    const id = fileScam();
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Overturned,
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.restrictions[0]).toMatchObject({ status: 'Overturned', resolvedBy: MOD_ID });
+    expect(store.users.get(USER_ID)?.muted).toBe(false);
+    expect(restoreScamCase).toHaveBeenCalledWith(id);
+    expect(resetProhibitedRequestCount).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'review-restriction-overturned',
+        key: `review-restriction-overturned:${USER_ID}:${id}`,
+      })
+    );
+  });
+
+  it('upholding keeps the strike', async () => {
+    const id = fileScam();
+    dbWrite.$queryRaw.mockClear();
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+    const sql = dbWrite.$queryRaw.mock.calls.map(([strings]) => strings.join('?'));
+    expect(sql.some((q) => q.includes('UPDATE "UserStrike"'))).toBe(false);
+    expect(dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbWrite.userStrike.update).not.toHaveBeenCalled();
+    expect(dbWrite.userStrike.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['scam', 'generation'])(
+    'upholding a %s case clears a leftover mute expiry, so the timed-unmute job cannot lift it',
+    async (type) => {
+      store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+      const id = fileCase(1, type);
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Upheld,
+        moderatorId: MOD_ID,
+      });
+      expect(dbWrite.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ mutedAt: expect.any(Date), muteExpiresAt: null }),
+        })
+      );
+    }
+  );
+
+  it('upholding re-mutes an account whose mute was lifted while the case was Pending', async () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: false }));
+    const id = fileCase(1, 'generation');
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+    expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: expect.any(Date) });
+    expect(dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ muted: true, muteExpiresAt: null }),
+      })
+    );
+  });
+
+  it('a ruling that loses the race to another ruling writes nothing and refuses', async () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: false }));
+    const id = fileCase(1, 'generation');
+    // The read sees Pending; a concurrent overturn lands before this uphold's write.
+    const original = vi.mocked(dbWrite.userRestriction.findUnique).getMockImplementation()!;
+    vi.mocked(dbWrite.userRestriction.findUnique).mockImplementationOnce(async (args) => {
+      const row = await original(args as never);
+      store.restrictions.find((r) => r.id === id)!.status = UserRestrictionStatus.Overturned;
+      return row;
+    });
+
+    await expect(
+      resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Upheld,
+        moderatorId: MOD_ID,
+      })
+    ).rejects.toThrow('Restriction has already been resolved');
+    expect(store.restrictions.find((r) => r.id === id)?.status).toBe(
+      UserRestrictionStatus.Overturned
+    );
+    expect(store.users.get(USER_ID)?.muted).toBe(false);
+    expect(dbWrite.user.update).not.toHaveBeenCalled();
+  });
+
+  it('upholding sets mutedAt and sends the scam notice', async () => {
+    const id = fileScam();
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.users.get(USER_ID)?.mutedAt).toBeInstanceOf(Date);
+    expect(restoreScamCase).not.toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'review-restriction-upheld' })
+    );
+  });
+
+  it('a failed restore does not fail the ruling', async () => {
+    const id = fileScam();
+    restoreScamCase.mockRejectedValueOnce(new Error('db down'));
+    await expect(
+      resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      })
+    ).resolves.toEqual({ userId: USER_ID });
+    expect(store.restrictions[0].status).toBe('Overturned');
+  });
+
+  it('files a scam case with the scam notice', async () => {
+    const result = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers: [],
+      updateSource: 'test',
+      type: 'scam',
+    });
+    expect(result).toMatchObject({ muted: true, deduped: false });
+    expect(PENDING_REVIEW_MUTE_NOTIFICATION.scam).toBe('review-muted');
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'review-muted' })
+    );
+  });
+
+  it('a repeat finding against the open case neither re-notifies nor refreshes the session', async () => {
+    await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers: [],
+      updateSource: 't',
+      type: 'scam',
+    });
+    const again = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers: [],
+      updateSource: 't',
+      type: 'scam',
+    });
+
+    expect(again).toMatchObject({ muted: true, deduped: true });
+    expect(createNotification).toHaveBeenCalledOnce();
+    expect(refreshSession).toHaveBeenCalledOnce();
+  });
+
+  describe('another open case keeps the account muted', () => {
+    it('overturning a scam case leaves the mute while a generation case is open', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(store.restrictions.find((r) => r.id === id)?.status).toBe('Overturned');
+      expect(store.users.get(USER_ID)?.muted).toBe(true);
+      expect(reinstateSubscription).not.toHaveBeenCalled();
+      expect(revokeTokens).not.toHaveBeenCalled();
+      expect(restoreScamCase).toHaveBeenCalledWith(id);
+    });
+
+    // The ruling has committed; a failed session refresh must not surface as a failed ruling.
+    it('still resolves when the session refresh fails and the account stays muted', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      refreshSession.mockRejectedValueOnce(new Error('redis down'));
+
+      await expect(
+        resolveUserRestriction({
+          userRestrictionId: id,
+          status: UserRestrictionStatus.Overturned,
+          moderatorId: MOD_ID,
+        })
+      ).resolves.toBeDefined();
+      expect(refreshSession).toHaveBeenCalledWith(USER_ID, { caller: 'moderation' });
+      expect(store.restrictions.find((r) => r.id === id)?.status).toBe('Overturned');
+    });
+
+    it('tells the user nothing when the account stays muted', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(moderationActionEmail.send).not.toHaveBeenCalled();
+    });
+
+    it('still tells the user when the overturn does lift the mute', async () => {
+      const id = fileScam();
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(createNotification).toHaveBeenCalledOnce();
+      expect(moderationActionEmail.send).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'restriction-overturned' })
+      );
+    });
+
+    it('checks for another open case under the account row lock, in one transaction', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      const order: string[] = [];
+      dbWrite.$transaction.mockImplementationOnce(async (fn: unknown) =>
+        (fn as (tx: unknown) => unknown)({
+          ...dbWrite,
+          $queryRaw: async (strings: TemplateStringsArray) => {
+            const sql = strings.join('?');
+            order.push(
+              sql.includes('FOR UPDATE')
+                ? 'lock'
+                : sql.includes('UPDATE "UserStrike"')
+                ? 'void-strikes'
+                : 'query'
+            );
+            return [];
+          },
+          userRestriction: {
+            ...dbWrite.userRestriction,
+            findFirst: async (args: never) => (
+              order.push('open-case'), dbWrite.userRestriction.findFirst(args)
+            ),
+          },
+        })
+      );
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(order).toEqual(['lock', 'void-strikes', 'open-case']);
+    });
+
+    it('voids the scam strike even when another case keeps the account muted', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      dbWrite.$queryRaw.mockClear();
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      const voidCall = dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+        strings.join('?').includes('UPDATE "UserStrike"')
+      );
+      expect(voidCall?.slice(1, 5)).toEqual(['Voided', MOD_ID, expect.any(String), [id]]);
+    });
+
+    it('overturning a generation case leaves the mute while a scam case is open', async () => {
+      fileScam();
+      const id = fileCase(2, 'generation');
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(store.users.get(USER_ID)?.muted).toBe(true);
+      expect(resetProhibitedRequestCount).toHaveBeenCalledWith(USER_ID);
+    });
+
+    it('an already-ruled case does not count as open', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      store.restrictions[1].status = 'Overturned';
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(store.users.get(USER_ID)?.muted).toBe(false);
+    });
+
+    it('overturnPendingReviewMute skips while a case of another type is open', async () => {
+      fileScam();
+      const generationId = fileCase(2, 'generation');
+
+      const result = await overturnPendingReviewMute({ userId: USER_ID, moderatorId: -1 });
+
+      expect(result).toEqual({ unmuted: false, skipped: 'other-pending-restriction' });
+      expect(store.restrictions.find((r) => r.id === generationId)?.status).toBe('Pending');
+      expect(store.users.get(USER_ID)?.muted).toBe(true);
+    });
+
+    it('overturnPendingReviewMute still overturns when only its own case is open', async () => {
+      store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+      fileCase(2, 'generation');
+
+      const result = await overturnPendingReviewMute({ userId: USER_ID, moderatorId: -1 });
+
+      expect(result).toEqual({ unmuted: true, userRestrictionId: 2 });
+      expect(store.users.get(USER_ID)?.muted).toBe(false);
     });
   });
 });
@@ -1014,6 +1570,36 @@ describe('POST /api/mod/mute-user-pending-review', () => {
     expect(trackUserActivity).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'Muted', targetUserId: USER_ID })
     );
+  });
+
+  it('audits a mute that joins an open case on an unmuted account', async () => {
+    store.restrictions.push({
+      id: 99,
+      userId: USER_ID,
+      type: 'generation',
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(),
+    });
+
+    const { body } = await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+
+    expect(body).toMatchObject({ muted: true, deduped: true, wasMuted: false });
+    expect(trackModActivity).toHaveBeenCalledOnce();
+    expect(trackUserActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Muted', targetUserId: USER_ID })
+    );
+  });
+
+  it('audits nothing when the account is already muted under an open case', async () => {
+    await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+    vi.clearAllMocks();
+
+    const { body } = await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+
+    expect(body).toMatchObject({ muted: true, deduped: true, wasMuted: true });
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(trackUserActivity).not.toHaveBeenCalled();
   });
 
   it('audits the mute even when the session refresh fails', async () => {

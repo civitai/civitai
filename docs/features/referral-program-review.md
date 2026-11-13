@@ -148,6 +148,7 @@ Top-to-bottom tour:
 **`src/pages/api/webhooks/stripe.ts`**:
 - Added `charge.refunded`, `charge.dispute.created` to `relevantEvents`
 - Chargeback handler looks up PI → invoice via Stripe API, calls `revokeForChargeback` with BOTH IDs (membership rewards use invoice.id as sourceEventId, buzz rewards use PI id)
+- Since then: a refund revokes only once the charge is fully refunded, and a dispute revokes when it closes as `lost` (`charge.dispute.closed`), not when it opens
 - `payment_intent.succeeded` / `buzzPurchase` path passes card fingerprint + charge id through to `recordBuzzPurchaseKickback`
 - Rebase preserved upstream's zod parse of PI metadata + Axiom log helper
 

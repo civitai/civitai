@@ -1,9 +1,7 @@
 /**
- * Step-input router for the form-graph lane: `generationHub.parse().data` in,
- * @civitai/client steps out. Mirrors the data-graph dispatcher
- * (`../ecosystems/index.ts`) for the ported families; an unported ecosystem is
- * a loud error rather than a silent fallthrough, because reaching here with
- * one means the caller routed a family this lane cannot serve yet.
+ * Step-input router: `generationHub.parse().data` in, @civitai/orchestration-client steps out.
+ * An unrouted ecosystem is a loud error rather than a silent fallthrough —
+ * reaching here with one means the caller routed a family this has no handler for.
  *
  * `data.ecosystem` is the WIRE value — for wan that is the derived backend
  * key, which is exactly what the version lookup wants.
@@ -11,16 +9,19 @@
 
 import { maxRandomSeed } from '~/server/common/constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
-import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
+import type { GenerationHandlerCtx, StepInput } from '../handlers';
 import { createChromaInput } from './chroma.handler';
 import { createFluxInput } from './flux.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createFlux2Input } from './flux2.handler';
 import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
+import { createFlux3KleinInput } from './flux3-klein.handler';
+import { createMossImageInput } from './moss-image.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
-import { createImagen4Input } from './imagen4.handler';
+import { createKrea3Input } from './krea3.handler';
+import { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
 import { createMingInput } from './ming.handler';
@@ -40,12 +41,12 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createWanImageInput } from './wan-image.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createMochiInput } from './mochi.handler';
-import { createSoraInput } from './sora.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createFlux3VideoInput } from './flux3-video.handler';
 import { createMiniMaxInput } from './minimax.handler';
 import { createHappyHorseInput } from './happy-horse.handler';
 import { createVeo3Input } from './veo3.handler';
+import { createGeminiOmniInput } from './gemini-omni.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
@@ -74,9 +75,12 @@ export { createFluxKontextInput } from './flux-kontext.handler';
 export { createFlux2Input } from './flux2.handler';
 export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
+export { createFlux3KleinInput } from './flux3-klein.handler';
+export { createMossImageInput } from './moss-image.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
-export { createImagen4Input } from './imagen4.handler';
+export { createKrea3Input } from './krea3.handler';
+export { createMinimaxH3ImageInput } from './minimax-h3-image.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
 export { createMingInput } from './ming.handler';
@@ -96,12 +100,12 @@ export { createNanoBananaInput } from './nano-banana.handler';
 export { createWanImageInput } from './wan-image.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createMochiInput } from './mochi.handler';
-export { createSoraInput } from './sora.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createFlux3VideoInput } from './flux3-video.handler';
 export { createMiniMaxInput } from './minimax.handler';
 export { createHappyHorseInput } from './happy-horse.handler';
 export { createVeo3Input } from './veo3.handler';
+export { createGeminiOmniInput } from './gemini-omni.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
@@ -134,7 +138,7 @@ export async function createFormGraphStepInput(
  * Fill the seed preserving the arm type. Constrained to `object`, not
  * `{ seed?: ... }` — that is a weak type, and an arm with no seed field at
  * all (Flux3Video) fails the no-common-properties rule. The extra key on such
- * an arm is inert: v1's dispatcher seeds unconditionally the same way.
+ * an arm is inert.
  */
 function withSeed<T extends object>(data: T): T {
   const seed = (data as { seed?: number }).seed;
@@ -180,14 +184,22 @@ function createStep(
     case 'Flux2Klein_4B_base':
       return createFlux2KleinInput(data, handlerCtx);
 
+    case 'Flux3Klein':
+    case 'Flux3Klein_base':
+      return createFlux3KleinInput(data, handlerCtx);
+
+    case 'MossImage':
+      return createMossImageInput(data, handlerCtx);
+
     case 'Boogu':
       return createBooguInput(data, handlerCtx);
 
     case 'Krea2':
       return createKrea2Input(data, handlerCtx);
-
-    case 'Imagen4':
-      return createImagen4Input(data, handlerCtx);
+    case 'Krea3':
+      return createKrea3Input(data, handlerCtx);
+    case 'MiniMaxH3Image':
+      return createMinimaxH3ImageInput(data, handlerCtx);
 
     case 'PonyV7':
       return createPonyV7Input(data, handlerCtx);
@@ -262,9 +274,6 @@ function createStep(
     case 'Mochi':
       return createMochiInput(data, handlerCtx);
 
-    case 'Sora2':
-      return createSoraInput(data, handlerCtx);
-
     case 'HyV1':
       return createHunyuanInput(data, handlerCtx);
 
@@ -279,6 +288,8 @@ function createStep(
 
     case 'Veo3':
       return createVeo3Input(data, handlerCtx);
+    case 'GeminiOmni':
+      return createGeminiOmniInput(data, handlerCtx);
 
     case 'Vidu':
       return createViduInput(data, handlerCtx);

@@ -8,15 +8,13 @@ import {
   Flex,
   Group,
   Loader,
-  Menu,
-  Popover,
   Select,
   Stack,
   Text,
   TextInput,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import {
   IconCalendarEvent,

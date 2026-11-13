@@ -1,7 +1,11 @@
-import { toggleReactionHandler } from './../controllers/reaction.controller';
+import {
+  toggleReactionHandler,
+  toggleReactionWithPointsHandler,
+} from './../controllers/reaction.controller';
 import {
   getMyImageReactionsSchema,
   toggleReactionSchema,
+  toggleReactionWithPointsSchema,
   reactionRateLimits,
 } from './../schema/reaction.schema';
 import { getUserReactionsForImages } from '~/server/services/image.service';
@@ -10,6 +14,7 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import { router, guardedProcedure, protectedProcedure } from '~/server/trpc';
 import { rateLimit } from '~/server/middleware.trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { SITE_REACTION_RATE_LIMIT_KEY } from '~/shared/constants/block-reaction.constants';
 
 export const reactionRouter = router({
   toggle: guardedProcedure
@@ -20,6 +25,16 @@ export const reactionRouter = router({
     // internally. Detaching the whole handler dropped the toggle write on pod drain and
     // returned a null payload.
     .mutation(toggleReactionHandler),
+  /**
+   * `toggle` for the site's reaction button, also returning the live event points it earned.
+   * `toggle` keeps its plain result for API keys, comments and app blocks.
+   */
+  toggleWithPoints: guardedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(toggleReactionWithPointsSchema)
+    // One reaction quota per user, shared with reaction.toggle.
+    .use(rateLimit(reactionRateLimits, undefined, { sharedKey: SITE_REACTION_RATE_LIMIT_KEY }))
+    .mutation(toggleReactionWithPointsHandler),
   /**
    * The viewer's own reactions for image ids they have already been handed.
    *
@@ -39,8 +54,9 @@ export const reactionRouter = router({
       getUserReactionsForImages({ imageIds: input.imageIds, userId: ctx.user.id })
     ),
   /**
-   * Owner-only: anyone else gets NOT_FOUND, the same as a missing image. No `requiredScope`, so only a full-access
-   * key reaches it: no narrower scope's consent text covers "who reacted to your content".
+   * Owner-only, and not for a removed image: anything else gets NOT_FOUND, the same as a missing image. No
+   * `requiredScope`, so only a full-access key reaches it: no narrower scope's consent text covers "who reacted to
+   * your content".
    */
   getImageReactors: protectedProcedure
     .input(getByIdSchema)

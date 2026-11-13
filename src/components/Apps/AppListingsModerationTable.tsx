@@ -8,6 +8,7 @@ import {
   NumberInput,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
 } from '@mantine/core';
@@ -17,6 +18,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
+import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
@@ -24,6 +26,7 @@ import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   actionOpensOwnerMessage,
+  actionOpensVisibility,
   actionRequiresReason,
   effectiveModerationStatus,
   isDestructiveListingModAction,
@@ -52,6 +55,7 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withLiveNote } from '~/components/Apps/appListingDetailModActions';
 
 /**
  * /apps/review — the unified MODERATOR listings management table (W13 post-approval
@@ -166,6 +170,10 @@ export function AppListingsModerationTable({
   // `MessageAppOwnerModal`), and keeping the two apart means a lifecycle action can
   // never render the message form's gate, or vice versa.
   const [messageRow, setMessageRow] = useState<ModerationListingRow | null>(null);
+  // Kept apart from `pendingAction` for the same reason `messageRow` is: this modal has its
+  // own input shape (a level + a reason), so sharing the lifecycle-action slot would mean
+  // one state holding two unrelated payloads.
+  const [visibilityRow, setVisibilityRow] = useState<ModerationListingRow | null>(null);
 
   // A filter/search change = a NEW result set → reset pagination SYNCHRONOUSLY in the
   // onChange handler (batched with the filter state change in the same React event) so
@@ -308,6 +316,14 @@ export function AppListingsModerationTable({
     // so an action absent from it answers `false` to BOTH and reaches nothing; while
     // `actionRequiresReason` was written as a negation, a new union member defaulted to
     // `true` and landed here regardless of how carefully this branch was written.
+    // 🔴 THE FOURTH ROUTE. It is a separate modal because this act needs a LEVEL as well as
+    // a reason, and the shared reason-gated modal has exactly one free-text field. Placed
+    // before the reason branch for no functional reason — the route table makes the two
+    // mutually exclusive — but reading top-to-bottom in table order.
+    if (actionOpensVisibility(action)) {
+      setVisibilityRow(row);
+      return;
+    }
     if (actionRequiresReason(action)) setPendingAction({ action, row });
   };
 
@@ -387,6 +403,11 @@ export function AppListingsModerationTable({
                         “{row.betaMessage}”
                       </Text>
                     )}
+                    <ModListingOfficialSwitch
+                      appListingId={row.id}
+                      slug={row.slug}
+                      isOfficial={row.isOfficial}
+                    />
                   </Table.Td>
                   <Table.Td>
                     <Text size="xs">
@@ -398,7 +419,24 @@ export function AppListingsModerationTable({
                       // testid so the display-label assertion can select this badge
                       // STRUCTURALLY — a text search for a category word would also
                       // match the app's name or a status chip.
-                      <Badge size="sm" variant="light" data-testid="apps-listing-mod-category">
+                      <Badge
+                        size="sm"
+                        variant="light"
+                        data-testid="apps-listing-mod-category"
+                        title={marketplaceCategoryLabel(row.category)}
+                        // The category column is narrow by design; the label WRAPS onto a
+                        // second line rather than being cut to "GENER…" by the badge's
+                        // ellipsis.
+                        styles={{
+                          root: { height: 'auto', maxWidth: '100%' },
+                          label: {
+                            whiteSpace: 'normal',
+                            overflow: 'visible',
+                            textOverflow: 'clip',
+                            lineHeight: 1.3,
+                          },
+                        }}
+                      >
                         {marketplaceCategoryLabel(row.category)}
                       </Badge>
                     ) : (
@@ -589,7 +627,65 @@ export function AppListingsModerationTable({
         listing={messageRow ? { appListingId: messageRow.id, slug: messageRow.slug } : null}
         onClose={() => setMessageRow(null)}
       />
+
+      {/*
+        The fourth route's modal. `invalidate` rather than a narrower refetch, matching the
+        lifecycle modal: a level change moves which rows a cohort sees, so the table's own
+        paging is reset the same way a hide/relist resets it.
+      */}
+      <ModListingVisibilityModal
+        target={
+          visibilityRow
+            ? { id: visibilityRow.id, slug: visibilityRow.slug, status: visibilityRow.status }
+            : null
+        }
+        onClose={() => setVisibilityRow(null)}
+        onDone={invalidate}
+      />
     </Stack>
+  );
+}
+
+/**
+ * Moderator toggle for the Official flag. Shows the mutation result instead of invalidating the
+ * table, because `invalidate` resets paging.
+ */
+function ModListingOfficialSwitch({
+  appListingId,
+  slug,
+  isOfficial,
+}: {
+  appListingId: string;
+  slug: string;
+  isOfficial: boolean;
+}) {
+  // The value THIS moderator last wrote (the server's confirmed result), or `null` before any
+  // write, when the row prop is authoritative. The table reads from a replica, so a refetch after
+  // a write can deliver a pre-write value — including after an on→off pair, where the prop can
+  // briefly read `false`, then a lagged `true`. So once written, the confirmed value wins for the
+  // life of this row; a reload shows the stored value.
+  const [written, setWritten] = useState<boolean | null>(null);
+  const checked = written ?? isOfficial;
+  const mutation = trpc.appListings.setListingOfficial.useMutation({
+    onSuccess: (result: { isOfficial: boolean }) => {
+      setWritten(result.isOfficial);
+      showSuccessNotification({
+        message: result.isOfficial ? 'Marked as Official.' : 'Official mark removed.',
+      });
+    },
+    onError: (e: { message: string }) =>
+      showErrorNotification({ title: 'Official update failed', error: new Error(e.message) }),
+  });
+  return (
+    <Switch
+      mt={4}
+      size="xs"
+      label="Official"
+      checked={checked}
+      disabled={mutation.isPending}
+      onChange={(e) => mutation.mutate({ appListingId, isOfficial: e.currentTarget.checked })}
+      data-testid={`apps-mod-official-${slug}`}
+    />
   );
 }
 
@@ -638,11 +734,11 @@ function ListingModActionModal({
   });
   // On-site reset routes through the block-review re-queue proc (#3165).
   const resetOnsiteMut = trpc.appListings.resetOnsiteListingToPending.useMutation({
-    onSuccess: () => afterSuccess('Listing reset to pending.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing reset to pending.', result)),
     onError: onError('Reset failed'),
   });
   const delistMut = trpc.appListings.delistListing.useMutation({
-    onSuccess: () => afterSuccess('Listing hidden.'),
+    onSuccess: (result) => afterSuccess(withLiveNote('Listing hidden.', result)),
     onError: onError('Hide failed'),
   });
   const relistMut = trpc.appListings.relistListing.useMutation({

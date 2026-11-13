@@ -1,4 +1,13 @@
-import type { AiToolkitTrainingInput, Workflow, WorkflowStatus } from '@civitai/client';
+import type {
+  AiToolkitTrainingInput,
+  Workflow,
+  WorkflowStatus,
+} from '@civitai/orchestration-client';
+import {
+  TRAINING_REVIEW_COPY,
+  trainingHeldSince,
+  trainingReviewState,
+} from '@civitai/shared/training-review';
 import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
@@ -13,7 +22,7 @@ import {
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
- * *wrapper* prepends `civitai`, but the raw `@civitai/client` call this app uses does not, so the
+ * *wrapper* prepends `civitai`, but the raw `@civitai/orchestration-client` call this app uses does not, so the
  * query must pass both explicitly. */
 export const TRAINING_TAG = 'training';
 export const CIVITAI_TAG = 'civitai';
@@ -24,6 +33,9 @@ export const AUTO_LABEL_TAG = 'auto-label';
 /** Version stamped into `Workflow.metadata` by the write path and read back here. Bump when the
  * `TrainingStudioMeta` shape changes incompatibly; the reader degrades field-by-field regardless. */
 export const META_VERSION = 1;
+
+/** `base` for a run no catalog lookup could place. */
+export const UNKNOWN_BASE = 'Training run';
 
 /** A pick-able generation blob, as returned by `/api/generations`. Declared here (not on the server
  *  helper) so the route, `listGenerations`, and the picker share one contract across the network boundary. */
@@ -37,8 +49,16 @@ export interface GenerationItem {
 }
 
 /** A run's coarse lifecycle as shown on the My-trainings list. `published` is an app-level
- * fact we store in the workflow metadata, not an orchestrator status. */
-export type RunState = 'ready' | 'training' | 'published' | 'failed';
+ * fact we store in the workflow metadata, not an orchestrator status. `review`, `rejected` and
+ * `unreviewed` come from the training step's review state, which the workflow status doesn't show. */
+export type RunState =
+  | 'ready'
+  | 'training'
+  | 'review'
+  | 'published'
+  | 'rejected'
+  | 'unreviewed'
+  | 'failed';
 
 /** Badge presentation per run state, shared by the My-trainings list and the run detail page so the
  * two can't drift when a state is added or recolored. */
@@ -49,13 +69,31 @@ export const RUN_STATE_BADGE: Record<RunState, { label: string; cls: string; dot
     cls: 'text-primary bg-primary/15',
     dot: 'bg-primary animate-pulse',
   },
+  review: {
+    label: TRAINING_REVIEW_COPY.pendingLabel,
+    cls: 'text-buzz bg-buzz/15',
+    dot: 'bg-buzz',
+  },
   published: {
     label: 'Published',
     cls: 'text-emerald-400 bg-emerald-500/15',
     dot: 'bg-emerald-400',
   },
+  rejected: {
+    label: TRAINING_REVIEW_COPY.notApprovedLabel,
+    cls: 'text-red-400 bg-red-500/15',
+    dot: 'bg-red-400',
+  },
+  unreviewed: {
+    label: TRAINING_REVIEW_COPY.unreviewedLabel,
+    cls: 'text-dark-1 bg-dark-4',
+    dot: 'bg-dark-2',
+  },
   failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
 };
+
+/** Runs that ended without training: no weights, nothing to cancel. */
+const ENDED_UNTRAINED: ReadonlySet<RunState> = new Set(['failed', 'rejected', 'unreviewed']);
 
 export interface TrainingRow {
   /** Orchestrator workflow id — the handle for reconnect/open. Absent only for sample rows. */
@@ -87,7 +125,7 @@ export interface TrainingRow {
 /** Whether the list offers Delete. A training run is excluded because deleting it is a cancel, and
  *  the orchestrator only refunds work that hasn't started. */
 export function canDeleteRun(row: Pick<TrainingRow, 'state' | 'hasModel'>): boolean {
-  return (row.state === 'ready' || row.state === 'failed') && !row.hasModel;
+  return (row.state === 'ready' || ENDED_UNTRAINED.has(row.state)) && !row.hasModel;
 }
 
 function workflowHasModel(w: Workflow, meta: TrainingStudioMeta): boolean {
@@ -127,6 +165,9 @@ export interface TrainingStudioMeta {
    *  before lineage shipped. */
   sourceWorkflowId?: string;
   sourceEpoch?: number;
+  /** Dataset images the upload scan rated R or above, stamped at submit. A positive count lets "train
+   *  further" skip re-rating the dataset; 0 or absent is re-checked. */
+  matureCount?: number;
 }
 
 const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
@@ -153,10 +194,19 @@ type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
   /** SD-family only. */
   minSnrGamma?: number | null;
   /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
-  samples?: { prompts?: string[] };
+  samples?: { prompts?: string[]; sourceImages?: string[] };
   /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
    *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
-  trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
+  trainingData?: {
+    type?: string;
+    items?: Array<{ air?: string; caption?: string; path?: string }>;
+  };
+  /** An edit LoRA: `trainingData.items` are before/after pairs placed by `path`. */
+  isEditTraining?: boolean;
+  /** Legacy `imageResourceTraining` runs: the zip dataset's image count. */
+  trainingDataImagesCount?: number;
+  /** Legacy `imageResourceTraining` runs: the sample prompts as submitted. */
+  samplePrompts?: string[];
 };
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
@@ -209,8 +259,25 @@ const epochSamples = (
 
 interface TrainingStepOutput {
   epochs?: TrainingEpochOutput[];
-  /** Legacy `imageResourceTraining` runs carry the sample prompts here, not on the input. */
+  /** The review gate's state; the workflow stays `processing` while it holds the run. */
+  moderationStatus?: string;
+  /** Legacy `imageResourceTraining` runs echo the input's `samplePrompts` here. */
   sampleImagesPrompts?: string[];
+}
+
+/** Overlay the review gate on the status-derived state: a held run reads as pending review rather
+ *  than training, and a run that ended at the gate reads as such rather than as a crash. Mirrors the
+ *  main app's mapping (workflow-state.ts): a rejection on an expired workflow means it timed out. */
+function reviewedState(
+  byStatus: RunState | undefined,
+  status: WorkflowStatus,
+  moderationStatus: unknown
+): RunState | undefined {
+  const review = trainingReviewState(moderationStatus);
+  if (!byStatus || !review) return byStatus;
+  if (status === 'expired') return 'unreviewed';
+  if (review === 'rejected') return 'rejected';
+  return byStatus === 'training' ? 'review' : byStatus;
 }
 
 /**
@@ -223,8 +290,6 @@ function resolveWorkflow(w: Workflow) {
   const meta = (w.metadata ?? {}) as TrainingStudioMeta;
   // `status` is typed non-null but the orchestrator can omit it on a run mid-transition (the main app's
   // read paths guard `!workflow.status`), so an unmapped status yields no state and the caller drops it.
-  const state: RunState | undefined = meta.published ? 'published' : STATE_BY_STATUS[w.status];
-
   const step =
     w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ??
     w.steps?.find((s) => (s as { $type?: string }).$type === 'imageResourceTraining') ??
@@ -233,6 +298,9 @@ function resolveWorkflow(w: Workflow) {
     {}) as TrainingStepInput;
   const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
     {}) as TrainingStepOutput;
+  const state: RunState | undefined = meta.published
+    ? 'published'
+    : reviewedState(STATE_BY_STATUS[w.status], w.status, output.moderationStatus);
   // The orchestrator's 0–1 estimate of overall step progress (refreshed on each job event); the general
   // "how far along" the run is, independent of the per-epoch checkpoints.
   const rate = (step as { estimatedProgressRate?: number | null } | undefined)
@@ -243,7 +311,17 @@ function resolveWorkflow(w: Workflow) {
   // the step's ecosystem. cardType must beat the ecosystem fallback: several cards share an
   // ecosystem (Illustrious/Pony/a custom checkpoint are all `sdxl`), so ecosystem-first showed
   // every one of them as "SDXL" instead of the base the run actually trained on.
-  const byAir = input.model ? findByAir(input.model) : undefined;
+  // A card that shares a checkpoint with another (Flux.2 Klein Edit) is only told apart by the card
+  // the run recorded, so a recorded card that lists this AIR wins over the first catalog match.
+  const metaCard = meta.cardType ? cardByType(meta.cardType) : undefined;
+  const metaVersion = input.model
+    ? metaCard?.versions.find((v) => v.air === input.model)
+    : undefined;
+  const byAir = metaVersion
+    ? { card: metaCard!, version: metaVersion }
+    : input.model
+    ? findByAir(input.model)
+    : undefined;
   const card =
     byAir?.card ??
     (meta.cardType ? cardByType(meta.cardType) : undefined) ??
@@ -268,7 +346,7 @@ function resolveWorkflow(w: Workflow) {
             ? ` · ${versionSuffix(card.name, version?.label)}`
             : ''
         }`
-      : 'Training run',
+      : UNKNOWN_BASE,
     baseFamily: card?.name ?? 'Other',
     code: card?.code ?? '??',
     // TODO(write-path): main-app runs carry no name tag, so we show the trigger word or a fallback. The
@@ -392,35 +470,27 @@ export interface TrainingDetailEpoch {
 export interface DatasetItem {
   air: string;
   caption: string;
+  /** Edit runs only: where the item sat in the pair layout — `control_1/<name>` for a starting image,
+   *  `main/<name>` for its result (see `pairItems`). */
+  path?: string;
 }
 
-/** The training-step input keys the settings export carries. `trainingData` (signed blob URLs) and
- *  anything else on the input stay out. */
-const SETTINGS_INPUT_KEYS = [
-  'engine',
-  'ecosystem',
-  'modelVariant',
-  'version',
-  'model',
-  'steps',
-  'epochs',
-  'batchSize',
-  'lr',
-  'textEncoderLr',
-  'trainTextEncoder',
-  'lrScheduler',
-  'optimizerType',
-  'networkDim',
-  'networkAlpha',
-  'resolution',
-  'shuffleTokens',
-  'keepTokens',
-  'minSnrGamma',
-  'noiseOffset',
-  'flipAugmentation',
-  'triggerWord',
-  'continueFrom',
-] as const satisfies readonly (keyof TrainingStepInput)[];
+/** Training-step input keys the settings export leaves out: the dataset (signed blob URLs), the
+ *  sample block and a legacy run's `samplePrompts` (exported as `samplePrompts` + `training.samples`),
+ *  the trace transport mode and the orchestrator's pricing readouts. Everything else on the input is exported as-is, so engine-specific
+ *  keys (a main-app kohya run's `unetLR`, `maxTrainEpochs`, `clipSkip`, …) aren't dropped. */
+const SETTINGS_EXCLUDED_INPUT_KEYS = new Set([
+  'trainingData',
+  'samples',
+  'samplePrompts',
+  'trace',
+  'storageBuzzPerEpoch',
+  'usesStepPricing',
+]);
+
+/** A URL with a query string is a signed link (a dataset blob, a sample image), not a setting. A
+ *  field the list above doesn't know yet can carry one, so any value holding such a URL stays out. */
+const SIGNED_URL = /https?:\/\/[^\s"]*\?/;
 
 /** A run's effective configuration, read off the workflow's training step — never rebuilt from UI
  *  defaults. */
@@ -428,16 +498,24 @@ export interface TrainingSettingsExport {
   workflowId: string;
   name: string;
   createdAt: string;
+  /** The base model the run trained on, as the Studio labels it: the card name plus any version
+   *  suffix (e.g. `SDXL · Standard`). */
+  base: string;
   media: Media;
   /** Our own Select-step choices, when the run was started here (absent on main-app runs). */
   loraType?: string;
   cardType?: string;
   versionKey?: string;
+  /** "Train further" lineage: the run and checkpoint this one continued from. */
+  sourceWorkflowId?: string;
+  sourceEpoch?: number;
   imageCount: number;
   samplePrompts: string[];
-  /** The training step's input, filtered to the run-describing fields. Keys are the orchestrator's
-   *  own names (`lr`, `optimizerType`, …), not the form's. */
-  training: Partial<Pick<TrainingStepInput, (typeof SETTINGS_INPUT_KEYS)[number]>>;
+  /** The training step's input minus `SETTINGS_EXCLUDED_INPUT_KEYS`, with `samples` reduced to its
+   *  generation settings (`cfgScale`, `strength`, …). Keys are the orchestrator's own names (`lr`,
+   *  `optimizerType`, …), not the form's. `defaultSteps` and `maxBatchSize` are the orchestrator's
+   *  resolved step budget (used when neither `steps` nor `epochs` is set) and batch-size cap. */
+  training: Record<string, unknown>;
 }
 
 /** One epoch's trace stream. `done` once that epoch's weights have landed, i.e. its trace is complete. */
@@ -460,6 +538,8 @@ export interface TrainingDetail {
   code: string;
   state: RunState;
   createdAt: string;
+  /** While held for review: when the hold began, the clock for offering a support ticket. */
+  heldSince?: string;
   /** When the training step started running — with `completedAt` it gives the run's wall-clock
    *  duration. Absent on runs whose step carries no start date. */
   startedAt?: string;
@@ -476,6 +556,9 @@ export interface TrainingDetail {
   isVideo: boolean;
   /** The fixed sample prompts (usually 3). Rows of the compare grid; captions for each epoch's images. */
   prompts: string[];
+  /** The input images an edit run's samples were rendered from, index-aligned to `prompts`. Absent on
+   *  text-only runs. */
+  sourceImages?: string[];
   /** The requested checkpoint count, for a "N of M" progress readout while training. */
   plannedEpochs?: number;
   /** Overall step progress, 0–1 (the orchestrator's estimate) — the general "how far along" the run is. */
@@ -499,6 +582,10 @@ export interface TrainingDetail {
   settings: TrainingSettingsExport;
 }
 
+/** How many pairs an edit run's dataset holds: one result (`main/…`) per pair. */
+export const editPairCount = (dataset: DatasetItem[]): number =>
+  dataset.filter((i) => i.path?.startsWith('main/')).length;
+
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
@@ -506,7 +593,10 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     resolveWorkflow(w);
   if (!state) return null;
 
-  const prompts = input.samples?.prompts ?? output.sampleImagesPrompts ?? [];
+  const prompts =
+    [input.samples?.prompts, output.sampleImagesPrompts, input.samplePrompts].find(
+      (p) => p?.length
+    ) ?? [];
   // Number of image slots per epoch = the prompt count (each prompt yields one image). Fall back to the
   // widest observed sample array when a run carries no prompt list.
   const slots =
@@ -544,26 +634,64 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     );
   const liveTraceUrl = traces[liveTraceIndex(traces)]?.url;
 
-  const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
+  // An edit run's items keep their pair path. Without one on every item the halves can't be paired
+  // up again, and offered as plain images its starting images would be retrained as such — so none.
+  const isEdit = input.isEditTraining === true;
+  const items = input.trainingData?.items ?? [];
+  const pairable = !isEdit || items.every((i) => typeof i.path === 'string' && i.path.length > 0);
+  const dataset: DatasetItem[] = (pairable ? items : [])
     .filter(
-      (i): i is { air: string; caption?: string } => typeof i.air === 'string' && i.air.length > 0
+      (i): i is { air: string; caption?: string; path?: string } =>
+        typeof i.air === 'string' && i.air.length > 0
     )
-    .map((i) => ({ air: i.air, caption: i.caption ?? '' }));
+    .map((i) => ({
+      air: i.air,
+      caption: i.caption ?? '',
+      ...(isEdit && typeof i.path === 'string' ? { path: i.path } : {}),
+    }));
+  const trainedCount = isEdit ? editPairCount(dataset) : dataset.length;
 
+  const sourceWorkflowId =
+    typeof meta.sourceWorkflowId === 'string' && meta.sourceWorkflowId
+      ? meta.sourceWorkflowId
+      : undefined;
+  const sourceEpoch = typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined;
   const training: TrainingSettingsExport['training'] = {};
-  for (const key of SETTINGS_INPUT_KEYS) {
-    const value = input[key];
-    if (value !== undefined && value !== null) (training as Record<string, unknown>)[key] = value;
+  for (const [key, value] of Object.entries(input)) {
+    if (
+      value !== undefined &&
+      value !== null &&
+      !SETTINGS_EXCLUDED_INPUT_KEYS.has(key) &&
+      !SIGNED_URL.test(JSON.stringify(value))
+    )
+      training[key] = value;
   }
+  const samples = Object.fromEntries(
+    Object.entries(input.samples ?? {}).filter(
+      ([key, value]) =>
+        value !== undefined &&
+        value !== null &&
+        key !== 'prompts' &&
+        key !== 'sourceImages' &&
+        !SIGNED_URL.test(JSON.stringify(value))
+    )
+  );
+  if (Object.keys(samples).length) training.samples = samples;
   const settings: TrainingSettingsExport = {
     workflowId: w.id,
     name,
     createdAt: w.createdAt,
+    base,
     media,
     ...(typeof meta.loraType === 'string' ? { loraType: meta.loraType } : {}),
     ...(typeof meta.cardType === 'string' ? { cardType: meta.cardType } : {}),
     ...(typeof meta.versionKey === 'string' ? { versionKey: meta.versionKey } : {}),
-    imageCount: dataset.length || (typeof meta.imageCount === 'number' ? meta.imageCount : 0),
+    ...(sourceWorkflowId ? { sourceWorkflowId } : {}),
+    ...(sourceEpoch !== undefined ? { sourceEpoch } : {}),
+    imageCount:
+      trainedCount ||
+      (typeof meta.imageCount === 'number' ? meta.imageCount : 0) ||
+      (typeof input.trainingDataImagesCount === 'number' ? input.trainingDataImagesCount : 0),
     samplePrompts: prompts,
     training,
   };
@@ -575,23 +703,24 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     code,
     state,
     createdAt: w.createdAt,
+    ...(state === 'review' && {
+      heldSince: trainingHeldSince(startedAt, w.createdAt) ?? undefined,
+    }),
     startedAt,
     completedAt,
     ecosystem: typeof input.ecosystem === 'string' && input.ecosystem ? input.ecosystem : undefined,
     media,
     isVideo: media === 'video',
     prompts,
+    ...(input.samples?.sourceImages?.length ? { sourceImages: input.samples.sourceImages } : {}),
     plannedEpochs: input.epochs ?? undefined,
     progress,
     liveTraceUrl,
     traces,
     epochs,
     dataset,
-    sourceWorkflowId:
-      typeof meta.sourceWorkflowId === 'string' && meta.sourceWorkflowId
-        ? meta.sourceWorkflowId
-        : undefined,
-    sourceEpoch: typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined,
+    sourceWorkflowId,
+    sourceEpoch,
     modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
     settings,
   };
@@ -605,41 +734,123 @@ const blobExt = (id: string, fallback: string): string => {
 /** The orchestrator rejects a blobArchive step with more entries than this. */
 export const MAX_ARCHIVE_ENTRIES = 1000;
 
-/** The blob entries for a run's "download all" archive: every epoch's weights first, then each
- *  epoch's samples, ascending by epoch — the order decides what survives when a run exceeds
- *  `MAX_ARCHIVE_ENTRIES`, and the weights are the part a user can't regenerate. Deduped by blob id.
- *  Legacy runs whose epochs carry only signed URLs (no blob ids) contribute nothing. */
-export function epochArchiveEntries(w: Workflow): {
+/** Filename stem shared by every file a run downloads: `<run>-<base>`, so a folder of LoRAs sorts by
+ *  run and still says what each was trained on. The base is dropped when unknown or already in the
+ *  run name (`style-flux` on Flux would otherwise read `style-flux-flux`). */
+export function runFileStem(name: string, base: string): string {
+  const run = slugify(name, 'training');
+  const baseSlug = base === UNKNOWN_BASE ? '' : slugify(base);
+  return baseSlug && !run.includes(baseSlug) ? `${run}-${baseSlug}` : run;
+}
+
+/** Zero-padded to the run's largest epoch number (min 2 digits) so names sort in epoch order. */
+export function epochTag(epoch: number, maxEpoch: number): string {
+  return String(epoch).padStart(Math.max(2, String(maxEpoch).length), '0');
+}
+
+/** One epoch's weights file name, in the archive and as a single download alike. */
+export function epochWeightsFileName(
+  stem: string,
+  epoch: number,
+  maxEpoch: number,
+  blobKey?: string
+): string {
+  return `${stem}-epoch-${epochTag(epoch, maxEpoch)}${blobExt(blobKey ?? '', '.safetensors')}`;
+}
+
+/** A signed epoch-weights URL that downloads as `fileName` instead of the opaque blob id. The
+ *  orchestrator's signature covers only the path, so the added `filename`/`download` params pass
+ *  through to its Content-Disposition; an orchestrator that ignores them still serves the file. */
+export function namedDownloadUrl(url: string, fileName: string): string {
+  try {
+    new URL(url);
+  } catch {
+    return url;
+  }
+  // Appended, not rebuilt through URLSearchParams, so the signed query keeps its exact encoding.
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}filename=${encodeURIComponent(fileName)}&download=true`;
+}
+
+export type ArchiveKind = 'weights' | 'samples';
+export interface ArchivePart {
   entries: { blobId: string; fileName: string }[];
   archiveName: string;
-} {
-  const { output, name } = resolveWorkflow(w);
-  // Flat names (`<run>-epoch-03.safetensors`, `<run>-epoch-03-sample-2.png`): the orchestrator
+}
+
+/** The orchestrator's archive URL carries the whole manifest in its path (base64 JSON of every blob id
+ *  and entry name, plus a signature), and a request line past ~8 KB is refused with 414. A run's
+ *  archive is split into parts whose estimated token stays under this. */
+export const ARCHIVE_TOKEN_BUDGET = 6000;
+
+/** Upper estimate of the archive token's length: the orchestrator's manifest JSON (`e`: entries as
+ *  `id`/`n`, `a`: archive name, `f`: format, `x`: expiry), base64-encoded, plus its signature. Non-ASCII
+ *  and HTML-sensitive characters are counted as the `\uXXXX` escape its serializer writes. */
+export function estimateArchiveTokenLength(part: ArchivePart): number {
+  const manifest = JSON.stringify({
+    e: part.entries.map((e) => ({ id: e.blobId, n: e.fileName })),
+    a: part.archiveName,
+    f: 0,
+    x: '2026-01-01T00:00:00.0000000Z',
+  }).replace(/[^\x20-\x7e]|[+&<>'`]/g, '\\u0000');
+  return Math.ceil(manifest.length / 3) * 4 + 64;
+}
+
+/** A run's "download all" archives of one kind — `weights` (every epoch's LoRA) or `samples` (every
+ *  epoch's sample images) — ascending by epoch, deduped by blob id, packed into as few parts as
+ *  `ARCHIVE_TOKEN_BUDGET` and `MAX_ARCHIVE_ENTRIES` allow. Weights and samples are separate archives
+ *  so the file a user can't regenerate never shares a URL budget with dozens of images. Legacy runs
+ *  whose epochs carry only signed URLs (no blob ids) yield no parts. */
+export function epochArchiveParts(w: Workflow, kind: ArchiveKind): ArchivePart[] {
+  const { output, name, base } = resolveWorkflow(w);
+  // Flat names (`<run>-<base>-epoch-03.safetensors`, `…-epoch-03-sample-2.png`): the orchestrator
   // strips path components from entry names.
-  const slug = slugify(name, 'training');
+  const stem = runFileStem(name, base);
   const epochs = [...(output.epochs ?? [])].sort(
     (a, b) => (a.epochNumber ?? 0) - (b.epochNumber ?? 0)
   );
-  const width = Math.max(2, String(epochs.at(-1)?.epochNumber ?? 0).length);
-  const tag = (e: TrainingEpochOutput) => String(e.epochNumber ?? 0).padStart(width, '0');
-  const entries: { blobId: string; fileName: string }[] = [];
+  const maxEpoch = epochs.at(-1)?.epochNumber ?? 0;
+  const tag = (e: TrainingEpochOutput) => epochTag(e.epochNumber ?? 0, maxEpoch);
+
+  const entries: ArchivePart['entries'] = [];
   const seen = new Set<string>();
   const add = (blobId: string, fileName: string) => {
-    if (seen.has(blobId) || entries.length >= MAX_ARCHIVE_ENTRIES) return;
+    if (seen.has(blobId)) return;
     seen.add(blobId);
     entries.push({ blobId, fileName });
   };
   for (const e of epochs) {
-    const key = epochModelKey(e.model);
-    if (key) add(key, `${slug}-epoch-${tag(e)}${blobExt(key, '.safetensors')}`);
+    if (kind === 'weights') {
+      const key = epochModelKey(e.model);
+      if (key) add(key, epochWeightsFileName(stem, e.epochNumber ?? 0, maxEpoch, key));
+    } else {
+      epochSamples(e).forEach((sample, i) => {
+        if (!sample.available || typeof sample.id !== 'string' || !sample.id) return;
+        add(sample.id, `${stem}-epoch-${tag(e)}-sample-${i + 1}${blobExt(sample.id, '')}`);
+      });
+    }
   }
-  for (const e of epochs) {
-    epochSamples(e).forEach((sample, i) => {
-      if (!sample.available || typeof sample.id !== 'string' || !sample.id) return;
-      add(sample.id, `${slug}-epoch-${tag(e)}-sample-${i + 1}${blobExt(sample.id, '')}`);
-    });
+
+  const label = kind === 'weights' ? 'checkpoints' : 'samples';
+  // Packed against the longest name a part can get, so renaming parts afterwards can't push one over.
+  const nameFor = (i: number, total: number) =>
+    total === 1 ? `${stem}-${label}.zip` : `${stem}-${label}-${i + 1}-of-${total}.zip`;
+  const worstName = nameFor(998, 999);
+  const groups: ArchivePart['entries'][] = [];
+  let current: ArchivePart['entries'] = [];
+  for (const entry of entries) {
+    const next = [...current, entry];
+    const fits =
+      next.length <= MAX_ARCHIVE_ENTRIES &&
+      estimateArchiveTokenLength({ entries: next, archiveName: worstName }) <= ARCHIVE_TOKEN_BUDGET;
+    if (fits || current.length === 0) current = next;
+    else {
+      groups.push(current);
+      current = [entry];
+    }
   }
-  return { entries, archiveName: `${slug}-checkpoints.zip` };
+  if (current.length) groups.push(current);
+  return groups.map((g, i) => ({ entries: g, archiveName: nameFor(i, groups.length) }));
 }
 
 /** Preview rows for the dev-login user (id 0), who has no real orchestrator token. */
@@ -742,6 +953,7 @@ export const SAMPLE_DETAIL: TrainingDetail = {
     workflowId: 'preview',
     name: 'my_character',
     createdAt: '2026-08-21T16:48:19.000Z',
+    base: 'SDXL · Standard',
     media: 'image',
     loraType: 'character',
     cardType: 'sdxl',

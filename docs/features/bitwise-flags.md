@@ -5,6 +5,7 @@ Utilities for working with bitwise flags throughout the codebase.
 ## Overview
 
 The codebase uses bitwise flags extensively for:
+
 - NSFW levels and content filtering
 - Multi-select options stored efficiently (e.g. `OnboardingSteps`)
 
@@ -12,13 +13,13 @@ Feature flags are **not** bitwise — those are string-keyed and Flipt-backed, s
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/shared/utils/flags.ts` | `Flags` utility class |
-| `src/server/common/enums.ts` | `NsfwLevel` enum (the bit values) |
-| `src/shared/constants/browsingLevel.constants.ts` | Derived browsing-level flags + predicates |
-| `src/shared/constants/cosmetic-flags.constants.ts` | `CosmeticFlag` bits on `Cosmetic.flags` (moderator-set, e.g. `SfwPlacementsOnly`) |
-| `packages/civitai-shared/src/model-version-flags.constants.ts` | `ModelVersionFlag` bits on `ModelVersion.flags` (`GenerationDisabled` and `NotEvictable` via the moderator menu; `NotDerivative` via SQL) |
+| File                                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/shared/utils/flags.ts`                                    | `Flags` utility class                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `src/server/common/enums.ts`                                   | `NsfwLevel` enum (the bit values)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `src/shared/constants/browsingLevel.constants.ts`              | Derived browsing-level flags + predicates                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `src/shared/constants/cosmetic-flags.constants.ts`             | `CosmeticFlag` bits on `Cosmetic.flags` (moderator-set: `SfwPlacementsOnly`, `NsfwPlacementsOnly`, mutually exclusive)                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `packages/civitai-shared/src/model-version-flags.constants.ts` | `ModelVersionFlag` bits on `ModelVersion.flags` (`GenerationDisabled`, `NotEvictable`, `NoAdditionalResourceFee`, `PartnerService` and `PartnerTrains` via the moderator menu; `NotDerivative` via SQL). `PartnerTrains` counts only alongside `PartnerService` (`getPartnerDisclosure`). The generator payload and the models search document carry `partnerService`/`partnerTrains` booleans instead of the raw number; the public `/api/v1/models` `flags` field and `modelVersion.getById` for non-moderators mask the two partner bits (`toPublicApiVersionFlags`) |
 
 ## The Flags Class
 
@@ -111,11 +112,11 @@ WHERE (flags & :specificFlag) = :specificFlag
 // Define flags as powers of 2
 enum MyFlags {
   None = 0,
-  OptionA = 1,    // 0b0001
-  OptionB = 2,    // 0b0010
-  OptionC = 4,    // 0b0100
-  OptionD = 8,    // 0b1000
-  All = 15,       // 0b1111
+  OptionA = 1, // 0b0001
+  OptionB = 2, // 0b0010
+  OptionC = 4, // 0b0100
+  OptionD = 8, // 0b1000
+  All = 15, // 0b1111
 }
 ```
 

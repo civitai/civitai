@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import type * as TrpcModule from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
@@ -17,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   loadingPreferences: false,
   tagsLoading: false,
   getAll: vi.fn(),
+  officialTag: undefined as { id: number; name: string } | undefined,
+  officialTagLoading: false,
 }));
 
 vi.mock('next/router', () => ({
@@ -25,20 +28,21 @@ vi.mock('next/router', () => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    tag: {
-      getAll: {
-        // Records the input so the tests can assert WHICH tags this bar asks for. That is
-        // the whole point of the component: `CategoryTags` next door asks the same
-        // procedure for `TagTarget.Model`, and a copy-paste that kept the model entity
-        // type would still render a plausible-looking row of chips.
-        useQuery: (input: unknown) => {
-          mocks.getAll(input);
-          return { data: { items: mocks.tags }, isLoading: mocks.tagsLoading };
-        },
+  trpc: makeTrpcProxy({
+    'tag.getAll': {
+      // Records the input so the tests can assert WHICH tags this bar asks for. That is
+      // the whole point of the component: `CategoryTags` next door asks the same
+      // procedure for `TagTarget.Model`, and a copy-paste that kept the model entity
+      // type would still render a plausible-looking row of chips.
+      useQuery: (input: unknown) => {
+        mocks.getAll(input);
+        return { data: { items: mocks.tags }, isLoading: mocks.tagsLoading };
       },
     },
-  },
+    'article.getOfficialTag': {
+      useQuery: () => ({ data: mocks.officialTag, isLoading: mocks.officialTagLoading }),
+    },
+  }),
 }));
 
 // Stands in for the real hidden-preferences provider, which needs a session + query
@@ -128,6 +132,8 @@ describe('ArticleCategories', () => {
     mocks.hiddenTagIds = [];
     mocks.loadingPreferences = false;
     mocks.tagsLoading = false;
+    mocks.officialTag = undefined;
+    mocks.officialTagLoading = false;
     // Names and ids as they are in production, in the order the server returns them
     // (`TagSort.MostArticles`).
     mocks.tags = [
@@ -220,6 +226,31 @@ describe('ArticleCategories', () => {
 
     clickButton(container, 'All');
     expect(lastReplacedQuery()).not.toHaveProperty('tags');
+  });
+
+  // The tag is not a category and `tag.getAll` hides it from non-admins, so the bar gets it
+  // from its own query; it is absent until seeded.
+  it('leads with the Civitai Official chip once the server has the tag', () => {
+    mocks.officialTag = { id: 900, name: 'civitai official' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual([
+      'All',
+      'Civitai Official',
+      'announcement',
+      'story',
+      'musing',
+    ]);
+
+    clickButton(container, 'Civitai Official');
+    expect(lastReplacedQuery()).toEqual({ tags: [900] });
+  });
+
+  it('lights the Civitai Official chip when the feed is filtered on its id', () => {
+    mocks.officialTag = { id: 900, name: 'civitai official' };
+    mocks.query = { tags: ['900'] };
+
+    expect(activeLabels(render())).toEqual(['Civitai Official']);
   });
 
   it('does not render a category the viewer has hidden', () => {

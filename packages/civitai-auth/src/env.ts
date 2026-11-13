@@ -3,8 +3,7 @@
 // bare import during `next build` / scripts / tests never throws).
 //
 // Two roles read different slices:
-//  - SPOKE (verify):  AUTH_JWKS_URI, AUTH_JWT_ISSUER, and during the
-//                     HS256->RS256 migration window NEXTAUTH_SECRET (legacy decode).
+//  - SPOKE (verify):  AUTH_JWKS_URI, AUTH_JWT_ISSUER.
 //  - HUB   (sign):    AUTH_JWT_PRIVATE_KEY (PKCS8 PEM), AUTH_JWT_PUBLIC_KEY (SPKI PEM,
 //                     served at the JWKS endpoint), AUTH_JWT_KID, AUTH_SESSION_MAX_AGE.
 import * as z from 'zod';
@@ -21,8 +20,7 @@ const schema = z.object({
   // override can never be used to send a bearer to an untrusted issuer. Deliberately NOT a `NEXT_PUBLIC_*`
   // var: it is read on the server only and must never reach the client bundle.
   AUTH_HUB_INTERNAL_URL: z.url().optional(), // e.g. http://<auth-hub-service>.<namespace>.svc.cluster.local:3000
-  // Legacy symmetric secret — kept ONLY for the migration window so spokes can still
-  // decode pre-cutover next-auth JWE cookies. Drop after the max old-token TTL.
+  // Salt for secret-hash.ts. Not a session key: the verifier reads ES256 tokens only.
   NEXTAUTH_SECRET: z.string().optional(),
   // Shared service secret for trusted server-to-server calls — the session-invalidator presents it to the
   // hub's `POST /api/auth/identity` (cache bust/refresh). Set on the hub AND any app that invalidates.
@@ -33,6 +31,9 @@ const schema = z.object({
   AUTH_JWT_PUBLIC_KEY: z.string().optional(), // SPKI PEM, exported as a JWK at the endpoint
   AUTH_JWT_KID: z.string().optional(),
   AUTH_SESSION_MAX_AGE: z.coerce.number().default(30 * 24 * 60 * 60), // 30d, matches today
+  // Reject session tokens that carry no `iat0` (minted before the 90-day limit existed). Off until every live
+  // session has been re-minted with one.
+  AUTH_REQUIRE_IAT0: z.stringbool().default(false),
 });
 
 function buildEnv() {

@@ -9,7 +9,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: mockIsFlipt,
 }));
 
-const { coverageAudience, coveredForUser, coveredForUserSql } = await import(
+const { boostRequiredFor, coverageAudience, coveredForUser, coveredForUserSql } = await import(
   '~/server/services/generation/coverage-source'
 );
 
@@ -183,6 +183,72 @@ describe('coverageAudience — how the two flags compose', () => {
     flags(true, false);
     await coverageAudience({ id: 7, tier: 'free' });
     expect(mockIsFlipt).toHaveBeenCalledWith('generation-loading-open-to-all', '7');
+  });
+});
+
+describe('boost-to-load — a free account pays to start the download', () => {
+  const BOOST = { member: false, boostAdmits: true, ...CKPT };
+
+  it('admits a cold expansion checkpoint, and marks it as needing the boost', () => {
+    expect(coveredForUser(expansion(), true, BOOST)).toBe(true);
+    expect(boostRequiredFor(expansion(), true, BOOST)).toBe(true);
+  });
+
+  // Each of these is admitted without the boost, so charging for it would sell nothing.
+  it('never requires it for what is already covered', () => {
+    expect(boostRequiredFor(expansion({ generatorLoaded: true }), true, BOOST)).toBe(false);
+    expect(boostRequiredFor(live, true, BOOST)).toBe(false);
+    expect(boostRequiredFor(expansion(), true, { ...BOOST, member: true })).toBe(false);
+    expect(boostRequiredFor(expansion(), true, { ...BOOST, ...LORA })).toBe(false);
+  });
+
+  it('admits nothing outside the expansion', () => {
+    const none = { covered: false, coveredNext: false };
+    expect(coveredForUser(none, true, BOOST)).toBe(false);
+    expect(boostRequiredFor(none, true, BOOST)).toBe(false);
+    expect(coveredForUser(expansion(), false, BOOST)).toBe(false);
+  });
+});
+
+describe('coverageAudience — the boost-for-free flag', () => {
+  const flags = (on: Record<string, boolean>) =>
+    mockIsFlipt.mockClear().mockImplementation(async (flag: string) => !!on[flag]);
+  const ON = { 'generation-coverage-next': true, 'generation-loading-boost-for-free': true };
+
+  it('admits a free account that opted in, keyed on its id', async () => {
+    flags(ON);
+    await expect(
+      coverageAudience({ id: 7, tier: 'free' }, { acceptBoostRequired: true })
+    ).resolves.toEqual({ next: true, member: false, boostAdmits: true });
+    expect(mockIsFlipt).toHaveBeenCalledWith('generation-loading-boost-for-free', '7');
+  });
+
+  // The opt-in is what keeps every surface but the generator on the members gate.
+  it('never reads the flag without the opt-in', async () => {
+    flags(ON);
+    await expect(coverageAudience({ id: 7, tier: 'free' })).resolves.toEqual({
+      next: true,
+      member: false,
+    });
+    expect(mockIsFlipt).not.toHaveBeenCalledWith('generation-loading-boost-for-free', '7');
+  });
+
+  // A signed-out caller has no id to key the flag on, and entity "0" would be one shared bucket.
+  it('admits no caller without a user id, and never reads the flag for one', async () => {
+    flags(ON);
+    await expect(
+      coverageAudience({ tier: 'free' }, { acceptBoostRequired: true })
+    ).resolves.toEqual({ next: true, member: false });
+    expect(mockIsFlipt.mock.calls.map(([flag]) => flag)).not.toContain(
+      'generation-loading-boost-for-free'
+    );
+  });
+
+  it('admits nobody while the flag is off', async () => {
+    flags({ 'generation-coverage-next': true });
+    await expect(
+      coverageAudience({ id: 7, tier: 'free' }, { acceptBoostRequired: true })
+    ).resolves.toMatchObject({ boostAdmits: false });
   });
 });
 

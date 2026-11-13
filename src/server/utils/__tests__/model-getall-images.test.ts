@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGetAllModelImages,
   capGetAllModelImages,
+  filterImagesForViewer,
   GET_ALL_IMAGES_PER_MODEL,
   GET_ALL_IMAGES_PER_MODEL_SLIM,
   GETALL_DROPPED_IMAGE_FIELDS,
@@ -46,14 +47,6 @@ const makeFullImage = (id: number) => ({
 });
 
 describe('model-getall-images — cap', () => {
-  it('pins the default (12) and slim (6) caps', () => {
-    // Default raised 3 → 8 → 12 across the browsing-level feed-drop reviews; slim
-    // is the flag-gated material lever. See the constant docs.
-    expect(GET_ALL_IMAGES_PER_MODEL).toBe(12);
-    expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBe(6);
-    expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBeLessThan(GET_ALL_IMAGES_PER_MODEL);
-  });
-
   it('keeps room for one representative of every browsing level', () => {
     // What makes the slim cap safe is `selectSlimGetAllModelImages` fitting a
     // representative of every distinct nsfwLevel bit, so a viewer who had a visible
@@ -222,9 +215,7 @@ describe('model-getall-images — nsfw-biased slim slice', () => {
   it('(b2) covers all 6 distinct bits when exactly 6 are present', () => {
     const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X, XXX, BLOCKED]);
     const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
-    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(
-      new Set([PG, PG13, R, X, XXX, BLOCKED])
-    );
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(new Set([PG, PG13, R, X, XXX, BLOCKED]));
     expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
   });
 
@@ -240,9 +231,7 @@ describe('model-getall-images — nsfw-biased slim slice', () => {
     ];
     const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
     expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
-    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(
-      new Set([PG, PG13, R, X, XXX, BLOCKED])
-    );
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(new Set([PG, PG13, R, X, XXX, BLOCKED]));
   });
 
   it('(b4) a falsy-level lead IS kept when the real bits leave a free slot', () => {
@@ -360,5 +349,49 @@ describe('model-getall-images — buildGetAllModelImages biased flag', () => {
     // shared cache untouched
     expect(imgs).toHaveLength(10);
     expect(imgs[0]).toHaveProperty('onSite');
+  });
+});
+
+describe('filterImagesForViewer', () => {
+  const OWNER = 7;
+  const img = (id: number, nsfwLevel: number, extra: { poi?: boolean; minor?: boolean } = {}) => ({
+    id,
+    nsfwLevel,
+    userId: OWNER,
+    ...extra,
+  });
+  const ids = (images: { id: number }[]) => images.map((i) => i.id);
+
+  // Level 5 (1|4) has a gap at 2: a plain model drops level 2, an nsfw one keeps it.
+  it('keeps an nsfw model up to the highest level, a plain one only intersecting levels', () => {
+    const images = [img(1, 1), img(2, 2), img(4, 4), img(8, 8)];
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 5, modelNsfw: true }))).toEqual([
+      1, 2, 4,
+    ]);
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 5 }))).toEqual([1, 4]);
+  });
+
+  it('keeps an unrated image only for its owner or a moderator', () => {
+    const images = [img(1, 1), img(0, 0)];
+    const run = (viewer?: { id: number; isModerator?: boolean }) =>
+      ids(filterImagesForViewer(images, { browsingLevel: 31, viewer }));
+    expect(run()).toEqual([1]);
+    expect(run({ id: 99 })).toEqual([1]);
+    expect(run({ id: OWNER })).toEqual([1, 0]);
+    expect(run({ id: 99, isModerator: true })).toEqual([1, 0]);
+    // The nsfw max-level rule would admit level 0; the unrated rule still decides.
+    expect(
+      ids(filterImagesForViewer(images, { browsingLevel: 31, modelNsfw: true, viewer: { id: 99 } }))
+    ).toEqual([1]);
+  });
+
+  it('hides poi and minor entries independently', () => {
+    const images = [img(1, 1), img(2, 1, { poi: true }), img(3, 1, { minor: true })];
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 1, disablePoi: true }))).toEqual([
+      1, 3,
+    ]);
+    expect(ids(filterImagesForViewer(images, { browsingLevel: 1, disableMinor: true }))).toEqual([
+      1, 2,
+    ]);
   });
 });

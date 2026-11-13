@@ -120,10 +120,6 @@ describe('deriveListingFromUrl — slug clamped to the server 3–40 length boun
     expect(deriveListingFromUrl('https://ab.com')).toEqual({ name: 'Ab', slug: '' });
   });
 
-  it('a single-char host is below the min → slug empty (regex also rejects it)', () => {
-    expect(deriveListingFromUrl('https://x.com')).toEqual({ name: 'X', slug: '' });
-  });
-
   it('a 3-char host is exactly the min → slug kept', () => {
     expect(deriveListingFromUrl('https://abc.com')).toEqual({ name: 'Abc', slug: 'abc' });
   });

@@ -9,10 +9,9 @@ import {
   Title,
   Text,
   TextInput,
-  Popover,
   Modal,
-  Tooltip,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconPencilMinus,
   IconInfoSquareRounded,

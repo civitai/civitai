@@ -1,4 +1,5 @@
-import { Button, Loader, Menu, useComputedColorScheme } from '@mantine/core';
+import { Button, Loader, useComputedColorScheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconBan,
   IconDotsVertical,
@@ -12,6 +13,9 @@ import {
   IconShieldHalf,
   IconPlaylistX,
   IconPin,
+  IconCloudComputing,
+  IconCoinOff,
+  IconDatabaseShare,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -29,6 +33,12 @@ import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-help
 import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { getEvictableAction } from '~/components/Model/ModelVersions/evictable-action';
+import {
+  getPartnerServiceAction,
+  getPartnerTrainsAction,
+} from '~/components/Model/ModelVersions/partner-disclosure-action';
+import type { PartnerDisclosure } from '~/shared/constants/model-version-flags.constants';
+import { getAdditionalResourceFeeAction } from '~/components/Model/ModelVersions/additional-resource-fee-action';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -40,6 +50,8 @@ export function ModelVersionMenu({
   canGenerate,
   generationDisabled,
   evictable,
+  additionalResourceFeeWaived,
+  partnerDisclosure,
   showToggleCoverage,
 }: {
   modelVersionId: number;
@@ -51,6 +63,8 @@ export function ModelVersionMenu({
   canGenerate: boolean;
   generationDisabled: boolean;
   evictable: boolean;
+  additionalResourceFeeWaived: boolean;
+  partnerDisclosure: PartnerDisclosure;
   showToggleCoverage: boolean;
 }) {
   const router = useRouter();
@@ -126,6 +140,61 @@ export function ModelVersionMenu({
         onConfirm: () =>
           setEvictableMutation
             .mutateAsync({ id: modelVersionId, evictable: evictableAction.next })
+            .catch(() => null),
+      },
+    });
+  };
+
+  const setFeeWaivedMutation = trpc.generation.setAdditionalResourceFeeWaived.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating additional resource fee',
+        error: new Error(error.message),
+      }),
+  });
+
+  const feeAction = getAdditionalResourceFeeAction(additionalResourceFeeWaived);
+  const handleToggleFeeWaived = () => {
+    dialogStore.trigger({
+      id: 'toggle-additional-resource-fee',
+      component: ConfirmDialog,
+      props: {
+        title: feeAction.label,
+        message: feeAction.message,
+        labels: { cancel: 'Cancel', confirm: feeAction.label },
+        onConfirm: () =>
+          setFeeWaivedMutation
+            .mutateAsync({ id: modelVersionId, waived: feeAction.next })
+            .catch(() => null),
+      },
+    });
+  };
+
+  const setPartnerDisclosureMutation = trpc.generation.setPartnerDisclosure.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating partner disclosure',
+        error: new Error(error.message),
+      }),
+  });
+
+  const partnerActions = [
+    { id: 'partner-service', ...getPartnerServiceAction(partnerDisclosure) },
+    { id: 'partner-trains', ...getPartnerTrainsAction(partnerDisclosure) },
+  ];
+  const handlePartnerAction = (action: (typeof partnerActions)[number]) => {
+    dialogStore.trigger({
+      id: `toggle-${action.id}`,
+      component: ConfirmDialog,
+      props: {
+        title: action.label,
+        message: action.message,
+        labels: { cancel: 'Cancel', confirm: action.label },
+        onConfirm: () =>
+          setPartnerDisclosureMutation
+            .mutateAsync({ id: modelVersionId, ...action.next })
             .catch(() => null),
       },
     });
@@ -467,6 +536,47 @@ export function ModelVersionMenu({
             >
               {evictableAction.label}
             </Menu.Item>
+            <Menu.Item
+              disabled={setFeeWaivedMutation.isPending}
+              leftSection={
+                setFeeWaivedMutation.isPending ? (
+                  <Loader size="xs" />
+                ) : (
+                  <IconCoinOff size={14} stroke={1.5} />
+                )
+              }
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleToggleFeeWaived();
+              }}
+            >
+              {feeAction.label}
+            </Menu.Item>
+            {partnerActions.map((action) => (
+              <Menu.Item
+                key={action.id}
+                disabled={setPartnerDisclosureMutation.isPending}
+                leftSection={
+                  setPartnerDisclosureMutation.isPending ? (
+                    <Loader size="xs" />
+                  ) : action.id === 'partner-service' ? (
+                    <IconCloudComputing size={14} stroke={1.5} />
+                  ) : (
+                    <IconDatabaseShare size={14} stroke={1.5} />
+                  )
+                }
+                color="yellow"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  handlePartnerAction(action);
+                }}
+              >
+                {action.label}
+              </Menu.Item>
+            ))}
           </>
         )}
       </Menu.Dropdown>

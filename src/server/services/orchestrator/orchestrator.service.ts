@@ -6,22 +6,25 @@ import type {
   WorkflowStepTemplate,
   WorkflowTemplate,
   XGuardModerationStepTemplate,
-} from '@civitai/client';
-import { submitWorkflow } from '@civitai/client';
+} from '@civitai/orchestration-client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
+import type { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
 import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
+import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelFileScanAir } from '~/shared/utils/model-file-scan-air';
 import {
   DeliveryWorkerError,
   StorageResolverError,
@@ -43,10 +46,12 @@ import {
 // duration/errors when the run settles, the killed run records nothing and re-loads
 // the same stuck oldest-1000 rows every 5 min, so the backlog never drains. 15s sits
 // well above the ~4.7s submit P99, so it fires only on the genuine hang tail; a fired
-// AbortSignal.timeout throws a TimeoutError that submitWorkflowWithRetry treats as a
-// transient failure → backoff + retry (3 attempts) → surface. Mirrors the whatIf
-// per-attempt backstop. Only applied when NOT `wait`ing (a caller that passes `wait`
-// explicitly wants to block for the workflow, so we must not abort it early).
+// timeout ends that attempt, and submitWorkflowWithRetry does NOT retry a real submit
+// that timed out (it may have been accepted and still be in flight): the request
+// returns no data and the image is recorded as a transient send failure for the next
+// cron run. Mirrors the whatIf per-attempt backstop. Only applied when NOT `wait`ing
+// (a caller that passes `wait` explicitly wants to block for the workflow, so we must
+// not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
 /**
@@ -197,7 +202,7 @@ export async function createImageIngestionRequest({
       mediaUrl: edgeUrl,
     },
     currencies: [],
-    // WorkflowTemplate is @civitai/client's, which predates the imageScanning step.
+    // WorkflowTemplate is @civitai/orchestration-client's, which predates the imageScanning step.
     steps: steps as unknown as WorkflowStepTemplate[],
     callbacks: callbackUrl
       ? [
@@ -246,6 +251,10 @@ export async function createImageIngestionRequest({
 
   const serverTiming = response?.headers.get('Server-Timing') ?? null;
 
+  // Not awaited: the shadow audio scan must not slow or fail the visual submit.
+  if (data && type === 'video' && callbackUrl)
+    void submitVideoAudioScan({ imageId, mediaUrl: edgeUrl, priority });
+
   if (!data) {
     logToAxiom({
       type: 'error',
@@ -267,7 +276,14 @@ export async function createImageIngestionRequest({
     });
   }
 
-  return { data, body, error, status: response?.status, useImageScanning };
+  return {
+    data,
+    body,
+    error,
+    status: response?.status,
+    retryAfter: getRetryAfterSeconds(response),
+    useImageScanning,
+  };
 }
 
 const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
@@ -418,6 +434,8 @@ type XGuardModerationArgs = {
    */
   entityType?: string;
   entityId?: number;
+  /** A shadow-evaluation marker carried on the workflow metadata; the webhook routes on it. */
+  shadow?: Record<string, unknown>;
   /** Optional. When present, the moderator-review UI can link the scanned
    * content to a user for follow-up investigation. Travels on workflow
    * metadata only — not stored in the ClickHouse audit table. */
@@ -451,6 +469,11 @@ type XGuardModerationArgs = {
    * Only meaningful when `entityType` + `entityId` are set.
    */
   forceRescan?: boolean;
+  /**
+   * A fresh submit, not a retry: reset the row's retry budget. Without it a row the retry cron
+   * parked at its cap stays excluded, so a lost callback for this workflow is never retried.
+   */
+  rearmRetries?: boolean;
 } & (
   | { mode: 'text'; content: string }
   | {
@@ -472,6 +495,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
     wait,
     priority = 'normal',
     recordForReview = false,
+    rearmRetries = false,
   } = args;
 
   // Default callback fires the standard text-moderation webhook, which is
@@ -484,6 +508,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       : callbackUrl;
 
   const metadata: Record<string, unknown> = {
+    ...(args.shadow && { shadow: args.shadow }),
     mode: args.mode,
     recordForReview,
     version: '1',
@@ -651,8 +676,13 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           contentHash,
           status,
           ...(submitSucceeded
-            ? { blocked: null, triggeredLabels: [], result: Prisma.JsonNull }
-            : { retryCount: { increment: 1 } }),
+            ? {
+                blocked: null,
+                triggeredLabels: [],
+                result: Prisma.JsonNull,
+                ...(rearmRetries ? { retryCount: 0 } : {}),
+              }
+            : { retryCount: rearmRetries ? 1 : { increment: 1 } }),
         },
       })
       .catch((e) =>
@@ -698,7 +728,9 @@ export class ModelFileScanSubmissionError extends Error {
     message: string,
     public readonly code: 'not-found' | 'transient',
     public readonly status?: number,
-    public readonly orchestratorMessages?: string[]
+    public readonly orchestratorMessages?: string[],
+    /** Seconds from a 429's Retry-After. */
+    public readonly retryAfter?: number
   ) {
     super(message);
     this.name = 'ModelFileScanSubmissionError';
@@ -714,6 +746,7 @@ export async function createModelFileScanRequest({
   url,
   preflight = true,
   priority = 'normal',
+  op,
 }: {
   fileId: number;
   modelVersionId: number;
@@ -729,6 +762,8 @@ export async function createModelFileScanRequest({
    * is missing the 5-min `scanFilesFallbackJob` will catch and tombstone it. */
   preflight?: boolean;
   priority?: Priority;
+  /** Read back from the workflow, never from the callback, so only a submitter can set it. */
+  op?: typeof SCAN_ONLY_RESCAN_OP;
 }) {
   // Dev skip: only when BOTH (a) we're in non-prod AND (b) no token is
   // configured. In prod a missing token MUST surface as a real submitWorkflow
@@ -775,11 +810,17 @@ export async function createModelFileScanRequest({
   // 52% of them) rather than spread out as independent file losses would be.
   if (preflight) {
     try {
-      await resolveDownloadUrl(fileId, url);
+      await resolveDownloadUrl(fileId, url, undefined, {
+        caller: 'orchestrator-preflight',
+        actor: 'internal',
+      });
     } catch (firstError) {
       await new Promise((r) => setTimeout(r, 60_000));
       try {
-        await resolveDownloadUrl(fileId, url);
+        await resolveDownloadUrl(fileId, url, undefined, {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        });
       } catch (retryError) {
         // Classify on the RETRY's failure: it is the most recent evidence, and
         // the first failure may have been the transient one that the retry
@@ -827,15 +868,9 @@ export async function createModelFileScanRequest({
     }
   }
 
-  const air = stringifyAIR({
-    baseModel,
-    type: modelType,
-    modelId,
-    id: modelVersionId,
-    fileId,
-  });
+  const air = modelFileScanAir({ fileId, modelVersionId, modelId, modelType, baseModel });
 
-  const metadata = { fileId, modelVersionId };
+  const metadata = { fileId, modelVersionId, ...(op && { op }) };
   const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
   const { data, error, response } = await submitWorkflow({
@@ -905,7 +940,9 @@ export async function createModelFileScanRequest({
       `Failed to submit model file scan workflow for file ${fileId}` +
         (response?.status ? ` (status ${response.status})` : ''),
       'transient',
-      response?.status
+      response?.status,
+      undefined,
+      getRetryAfterSeconds(response)
     );
   }
 

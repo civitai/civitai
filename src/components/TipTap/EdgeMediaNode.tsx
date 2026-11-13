@@ -13,6 +13,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
+import { parseImageWidth } from '~/shared/tiptap/image-width';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 
 type NodeOptions = {
@@ -25,6 +26,7 @@ interface SetMediaOptions {
   url: string;
   type: MediaType;
   filename?: string;
+  size?: string | null;
 }
 
 declare module '@tiptap/core' {
@@ -136,7 +138,7 @@ function EdgeMediaEditComponent({
   ref,
   updateAttributes,
 }: ReactNodeViewProps<HTMLDivElement>) {
-  const { url, type, filename } = node.attrs as SetMediaOptions;
+  const { url, type, filename, size } = node.attrs as SetMediaOptions;
   const { uploadToCF } = useCFImageUpload();
   const isObjectUrl = url?.startsWith('blob');
   const uploadingRef = useRef(false);
@@ -185,7 +187,7 @@ function EdgeMediaEditComponent({
         {isObjectUrl ? (
           <Loader type="dots" />
         ) : (
-          <EdgeMediaComponent url={url} type={type} filename={filename} />
+          <EdgeMediaComponent url={url} type={type} filename={filename} size={size} />
         )}
       </div>
     </NodeViewWrapper>
@@ -217,11 +219,11 @@ export function EdgeMediaLayoutComponent({ node }: ReactNodeViewProps<HTMLDivEle
   );
 }
 
-export function EdgeMediaComponent({ url, type, filename }: SetMediaOptions) {
+export function EdgeMediaComponent({ url, type, filename, size }: SetMediaOptions) {
   const { url: src } = useEdgeUrl(url, { original: true });
   return type === 'image' ? (
     // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-    <img src={src} alt={filename} />
+    <img src={src} alt={filename} data-width={parseImageWidth(size) ?? undefined} />
   ) : type === 'video' ? (
     <video playsInline disablePictureInPicture controls preload="metadata">
       <source src={src?.replace('.mp4', '.webm')} type="video/webm" />

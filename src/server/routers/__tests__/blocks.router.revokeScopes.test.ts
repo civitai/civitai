@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ApiKeySpend from '~/server/http/orchestrator/api-key-spend';
+import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
 /**
  * `blocks.revokeScopes` — the tRPC half of per-scope consent revocation.
@@ -69,6 +71,15 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   getWorkflow: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptServer: vi.fn() }));
+// The mirror teardown's two orchestrator calls.
+vi.mock('~/server/http/orchestrator/api-key-spend', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiKeySpend>()),
+  deleteAuthSubject: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorCivitai>()),
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
@@ -87,6 +98,9 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE } from '~/server/services/blocks/consent-revocation.service';
+import type { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
+import { errorFormatter } from '~/server/trpc/error-formatter';
 
 const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 const grantMock = dbMock.dbWrite.appUserScopeGrant;
@@ -121,6 +135,17 @@ function consentCtx(userId = USER) {
 
 function caller(userId = USER) {
   return blocksRouter.createCaller(consentCtx(userId) as never);
+}
+
+/** The error as the client receives it: shaped by the app's real `errorFormatter`. */
+function formatted(err: unknown) {
+  const e = err as TRPCError;
+  const shape = {
+    message: e.message,
+    code: -32603,
+    data: { code: e.code, httpStatus: getHTTPStatusCodeFromError(e) },
+  } as Parameters<typeof errorFormatter>[0]['shape'];
+  return errorFormatter({ shape, error: e }) as { data: Record<string, unknown> };
 }
 
 beforeEach(() => {
@@ -293,6 +318,61 @@ describe('blocks.revokeScopes — the happy path writes BOTH halves', () => {
         'lags" from "nothing was recorded" — which is the whole point of the wording'
     ).toBeUndefined();
   });
+
+  /**
+   * 🔴 THE CLIENT READS "Permission removed" OFF `data.consentRevokeRecorded`, NOT OFF THE 503. The
+   * `mapDbUnavailable` middleware answers an unreachable database with a 503 too, so the code alone
+   * cannot say whether the row moved. Read through the REAL `errorFormatter`, since `createCaller`
+   * returns the error before the formatter shapes it and the flag is lifted there.
+   *
+   * MUTATION THAT MUST KILL IT: drop `cause: { consentRevokeRecorded: true }` from the throw.
+   */
+  it('the publish-failure 503 carries data.consentRevokeRecorded through the formatter', async () => {
+    redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+    const err = await caller()
+      .revokeScopes({ appBlockId: APP, scopes: [POSTS] })
+      .then(
+        () => null,
+        (e) => e
+      );
+    expect(grantMock.update).toHaveBeenCalledTimes(1);
+    expect(formatted(err).data).toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      consentRevokeRecorded: true,
+    });
+  });
+
+  /**
+   * 🔴 THE OTHER 503 — nothing written, and it must NOT carry the flag. Each pre-write read rejects
+   * with a Prisma-shaped unreachable-database error; `mapDbUnavailable` turns that into a 503 the
+   * client used to report as a removal while the grant stayed live.
+   */
+  it.each([
+    ['the app lookup (replica)', () => appBlockFindUnique],
+    ['the held-scopes read (primary)', () => grantMock.findUnique],
+  ])(
+    'an unreachable database during %s is a 503 WITHOUT consentRevokeRecorded, and writes nothing',
+    async (_label, target) => {
+      target().mockRejectedValue(
+        Object.assign(new Error("Can't reach database server"), {
+          name: 'PrismaClientInitializationError',
+          errorCode: 'P1001',
+        })
+      );
+      const err = await caller()
+        .revokeScopes({ appBlockId: APP, scopes: [POSTS] })
+        .then(
+          () => null,
+          (e) => e
+        );
+      // A POSITIVE CONTROL: it really is the middleware's 503, so the arm is about that 503.
+      expect(err).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+      expect(grantMock.update).not.toHaveBeenCalled();
+      expect(grantMock.create).not.toHaveBeenCalled();
+      expect(redisMock.redis.set).not.toHaveBeenCalled();
+      expect(formatted(err).data.consentRevokeRecorded).toBeUndefined();
+    }
+  );
 
   it('reports fullyRevoked + budgetCleared when the last spend scope goes', async () => {
     grantMock.findUnique.mockResolvedValue({
@@ -695,7 +775,7 @@ describe('the OAuth mirror', () => {
    * `manifest.auth` (a publisher push replaces it without re-approval), the env flag (can be
    * switched off after rows exist), and position after the publish. Dropping all gates closed
    * those and overcorrected — the callee is NOT a no-op without a row: two primary `deleteMany`s
-   * plus `deleteAuthSubject` plus an AWAITED `invalidateCivitaiUser`, an untimed outbound
+   * plus `deleteAuthSubject` plus an AWAITED `revokeCivitaiUserTokens`, an untimed outbound
    * orchestrator call, on every revoke of every app.
    *
    * MUTATION THAT MUST KILL IT: remove the `oauthConsent.findFirst` gate.
@@ -821,7 +901,7 @@ describe('the OAuth mirror', () => {
   /**
    * 🔴 POSTGRES, THEN REDIS, THEN THE MIRROR — and the middle step moved BACK in front of the
    * teardown deliberately. Putting the teardown first did close the unreachability hole, but
-   * `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator DELETE
+   * `revokeOauthConsentForBlock` awaits `revokeCivitaiUserTokens`, an outbound orchestrator DELETE
    * with NO timeout, so a slow orchestrator delayed the "immediate" half of the revoke for
    * exactly as long as it was slow — and that window is the one the 503 message apologises for.
    * A `finally` gets both properties.

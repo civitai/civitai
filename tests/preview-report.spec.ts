@@ -59,10 +59,9 @@ test.describe('tester self-seeds a post and reports it (mutation flow)', () => {
       details: { violation: token },
     });
 
-    // createReportHandler returns the created report row (truthy) on success; the
-    // tRPC helper already throws on any tRPC-level error, so reaching here means the
-    // report was accepted.
-    expect(report, 'report.create should resolve to a truthy result').toBeTruthy();
+    // report.create returns no data; the tRPC helper already throws on any
+    // tRPC-level error, so reaching here means the report was accepted.
+    expect(report, 'report.create should resolve to null').toBeNull();
   });
 
   // A UI report-affordance check was dropped: the report action lives behind an

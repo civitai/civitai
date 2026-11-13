@@ -1,8 +1,8 @@
-import type { VideoEnhancementInput } from '@civitai/client';
+import type { VideoEnhancementInput } from '@civitai/orchestration-client';
 import {
   invokeVideoEnhancementStepTemplate,
   invokeVideoMetadataStepTemplate,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
   createOrchestratorClient,
   internalOrchestratorClient,

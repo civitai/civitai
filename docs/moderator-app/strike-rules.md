@@ -17,7 +17,7 @@ A row in `UserStrike`, against one account.
 | Field | Meaning |
 | --- | --- |
 | `points` | Severity, 1–3. **Only points drive enforcement.** |
-| `reason` | One of seven categories. Chooses the sanitized wording in the email; does not affect points or expiry. |
+| `reason` | One of eight categories. Chooses the sanitized wording in the email; does not affect points or expiry. |
 | `description` | Free text, **shown to the user** in their notification. Required. |
 | `internalNotes` | Never shown to the user. |
 | `expiresAt` | When it stops counting. |
@@ -25,7 +25,7 @@ A row in `UserStrike`, against one account.
 | `entityType` / `entityId` / `reportId` | What it was about, optional. |
 
 `reason` values: `BlockedContent`, `RealisticMinorContent`, `CSAMContent`, `TOSViolation`,
-`HarassmentContent`, `ProhibitedContent`, `ManualModAction`.
+`HarassmentContent`, `ProhibitedContent`, `ManualModAction`, `Scam`.
 
 ## 2. Points and expiry
 
@@ -54,6 +54,9 @@ to *release*, never to re-apply — so a moderator's manual unmute is not undone
 - their points fall below 2 and the daily job releases them — the backstop, which at a 365-day
   lifetime means up to a year.
 
+An open review case does not hold either back, except a Pending scam case: its mute ends only with
+the ruling or a moderator's unmute.
+
 Voiding takes a strike's points back at once, so a void that drops the total below 2 releases the mute
 on the spot rather than waiting for the job. Nothing re-mutes an account that has accepted:
 `createStrike` is the only caller that may mute, so only a NEW strike can apply one again.
@@ -77,11 +80,17 @@ lifetime over one 1-point strike that mutes nobody.
 ## 5. Who can issue one
 
 - **Any moderator at the API level** — no extra permission, same bar as mute/unmute.
-- **In Mod Studio, every strike button also requires the `/users` page grant.**
+- **In Mod Studio, every strike button also requires the `user.strike` action grant** (was the
+  `/users` page grant until 2026-10-16), which also covers Notify and a removal that strikes its owners.
 - Strikes issued by a person are classified `ManualModAction`.
-- **Automatic strikes are limited to 1 per user per day**; `ManualModAction` is exempt. A rate-limited
+- **Automatic strikes are limited to 1 per user per day**; `ManualModAction` and `Scam` (one per case
+  already) are exempt, and a voided strike does not count. A rate-limited
   strike returns "skipped", which Mod Studio surfaces as *"The strike was rate-limited and NOT
-  issued."* Nothing currently issues automatic strikes.
+  issued."*
+- **The scam auto-mute issues one automatic `Scam` strike per new scam case**: 3 points, no expiry
+  (a far-future `expiresAt`), and no notification or email of its own. The case's "Account
+  restricted" notice is the only one the user gets. Overturning the case, or a moderator unmute that
+  closes it, voids the strike.
 
 ## 6. What the user sees
 
@@ -123,8 +132,9 @@ of strikes come from. Browsing is untouched: the user is asked at the moment the
 than the whole site being gated up front.
 
 Accepting lifts the mute and refreshes the session, so they are unblocked immediately. The mutation
-re-checks eligibility inside its own write transaction and can refuse — a moderator's mute, or a third
-strike landing mid-call — in which case the client says so rather than closing silently.
+re-checks eligibility inside its own write transaction and can refuse — a moderator's mute, a Pending
+scam case on the same account, or a third strike landing mid-call — in which case the client says so
+rather than closing silently.
 
 **Who gets the offer — and who deliberately does not:**
 
@@ -149,7 +159,7 @@ path. REST endpoints refuse on their own and carry no marker.
 
 | Reason | Clause |
 | --- | --- |
-| Depicting Real People · Real person model not marked | 9.6(a) |
+| Depicting Real People · Real person model | 9.6(a) |
 | Minor in mature context · Realistic minor · NSFW minor in school environment | 9.6(b) |
 | Bestiality · Rape/Forced Sex · Graphic Violence/Gore | 9.6(c) |
 | Mind-altered NSFW | 9.6(d) — drugs in a sexual context; drunk, hypnosis and mind control are no longer prohibited |
@@ -187,6 +197,13 @@ nobody was asked to re-accept. `tos-prohibited-content-anchor.test.ts` fails if 
 | 14 | Add "Non AI content" to the ToS | no — point the user at §9.6 without citing a clause |
 | 15 | Ladder measured in strikes or points | points |
 | 16 | Where the mute is applied | when the strike is issued; jobs only release |
+
+2026-10-06:
+
+| # | Question | Answer |
+| --- | --- | --- |
+| 17 | Does a scam auto-mute issue a strike | yes — one `Scam` strike, 3 points, no expiry |
+| 18 | Does an open review case hold back a timed unmute or strike decay | no, except a Pending scam case |
 
 **Open:**
 

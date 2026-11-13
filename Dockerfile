@@ -1,7 +1,50 @@
+##### LIBC VARIANT
+#
+# Which C library the image is built on and runs on. `musl` (the default) is the production
+# image: Alpine, exactly as before this build-arg existed. `glibc` builds the SAME source on
+# Debian bookworm-slim instead, for a measurement of the allocator/memcpy share of the Prisma
+# query engine's CPU (the engine is a native library loaded into the Node process, so it uses
+# whichever libc the image has). Nothing deploys a `glibc` image by default; it has to be built
+# on purpose with `--build-arg LIBC=glibc` (or `--opt build-arg:LIBC=glibc`) and tagged apart.
+#
+# Only the stage selected below is built: BuildKit skips stages nothing references, so a
+# default (musl) build never pulls the Debian base. Its layers are the same instructions on the
+# same base as before, except the deps stage's pnpm store cache, which is now per LIBC (see
+# there).
+#
+# Both variants pin the SAME Node patch (src/__tests__/node-version-consistency.test.ts), but
+# libc is NOT the only difference between them. The Node binary itself is a different build:
+# the Alpine image ships a separate musl build of Node (from Node's unofficial-builds, or
+# compiled from source), the Debian image ships the official glibc release build. Both bases
+# are pinned by digest, but the glibc runtime adds packages from an unpinned `apt-get install`
+# (the musl runtime adds none). And the userland (busybox vs coreutils, the OpenSSL build)
+# differs. So whole-process CPU is not a libc comparison; only the CPU of the Prisma engine's
+# own threads is.
+#
+# Prisma's generator uses its default `native` binary target, and `prisma generate` runs in
+# the deps stage on the selected base, so each variant generates (and ships) the engine for its
+# own libc: linux-musl-openssl-3.0.x or debian-openssl-3.0.x. No `binaryTargets` change is
+# needed, and the musl image does not carry a second engine. Native npm packages with per-libc
+# builds (sharp's @img/sharp-*, Next's swc, esbuild) resolve to the variant for the libc they are
+# installed and traced on, for the same reason: the deps, builder and runner stages always share
+# one libc. Their install-script output is kept apart too (the pnpm store is per LIBC, below).
+ARG LIBC=musl
+
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS base-musl
+RUN apk add --no-cache libc6-compat
+
+# openssl: Prisma detects the OpenSSL version to pick its engine and loads libssl at runtime;
+# the slim image ships neither (no libssl3 package). adduser is already in the slim image; it
+# is listed so the runner stage's `addgroup`/`adduser` lines, shared with Alpine, do not rely
+# on that.
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS base-glibc
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl ca-certificates adduser && \
+    rm -rf /var/lib/apt/lists/*
+
 ##### DEPENDENCIES
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS deps
-RUN apk add --no-cache libc6-compat
+FROM base-${LIBC} AS deps
 WORKDIR /app
 
 # Enable corepack for pnpm
@@ -17,7 +60,21 @@ COPY packages ./packages
 COPY scripts ./scripts
 COPY patches ./patches
 
-RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+# The store cache is per LIBC. pnpm keeps the post-install state of every package whose build
+# script ran (its side-effects cache) in the store, keyed by platform, arch, Node major and the
+# dependency graph, but NOT by libc. With one store for both variants, a variant that misses
+# the cache runs e.g. @prisma/engines' postinstall (which downloads the engine for the libc it
+# runs on) and stores the result, and the other variant then imports that package as already
+# built and skips its script. Separate stores make that impossible. `ARG LIBC` must be declared
+# in this stage: a global ARG is not visible inside a stage, and without it `${LIBC}` expands
+# to "" and both variants would share one id again. (It is also in the install's environment,
+# where node-gyp-build reads `LIBC` to pick a prebuild; the value is the base's real libc.)
+# The musl id is `pnpm-store-musl`, not the old `pnpm-store`: there is no conditional in a
+# Dockerfile that keeps one variant's literal while changing the other's, and a fresh musl id
+# also guarantees production never reuses anything written to the shared store. The cost is
+# one cold store (re-download, re-run of the allowed build scripts) per build root.
+ARG LIBC
+RUN --mount=type=cache,id=pnpm-store-${LIBC},target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 ##### BUILDER
@@ -52,6 +109,16 @@ ARG NODE_BUILD_MEM=8192
 # Defaults empty (commit:null) when built outside CI.
 ARG SOURCE_COMMIT=""
 ENV SOURCE_COMMIT=$SOURCE_COMMIT
+# "1" skips `next build`'s own TypeScript pass (read in next.config.mjs). Empty by default, so
+# every build that does not pass it type-checks. Only the PR-preview build passes it, because
+# that pipeline runs the full `tsc` in a parallel task already. A build ARG is visible to the RUN
+# below as an environment variable; it is deliberately NOT an ENV, so it never reaches the image.
+ARG CIVITAI_SKIP_BUILD_TYPECHECK=""
+# This cache is deliberately shared by both LIBC variants (its id is its target path): it holds
+# Next's JS-level build caches, not native artifacts, and the Turbopack filesystem cache for
+# builds (`turbopackFileSystemCacheForBuild`) is not enabled. If that changes, give it a
+# per-LIBC id like the pnpm store above. The test pins the list of cache mounts and which are
+# per-LIBC, so a new one has to make the same choice.
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
@@ -140,6 +207,20 @@ RUN mkdir -p /app/server-maps && \
     { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
     echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
 
+# Duplicate server chunks -> one-line re-export stubs, in the SHIPPED tree only.
+#
+# Turbopack emits the same server chunk under many file names (the copies differ only in their
+# trailing sourceMappingURL comment), and its Node runtime loads chunks with `require(<path>)`.
+# Node caches by path, so every copy is compiled and its source kept on the heap. The script
+# replaces each duplicate with `module.exports=require("./<canonical>.js")`: every existing
+# reference still names a real file, and the runtime receives the canonical's own module array
+# (it registers factories by module id, so module identity is unchanged). See the script header.
+#
+# Runs after the gates and the map staging above, which read `.next/server`; this touches only
+# `.next/standalone/.next/server`. Exits 1 if a stub does not resolve to a real chunk, 2 if it
+# finds no chunks — both fail the build.
+RUN node scripts/dedupe-server-chunks.mjs /app/.next/standalone/.next/server
+
 ##### MAPS ARTIFACT (fetched on-demand; NOT part of the runtime image)
 #
 # A minimal `FROM scratch` image holding ONLY the staged server source maps,
@@ -155,7 +236,12 @@ COPY --from=builder /app/server-maps/ /server-maps/
 
 ##### RUNNER
 
-FROM node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS runner
+# The runtime bases, one per LIBC (see the top of this file). The musl one is the bare Alpine
+# image, exactly what the runner stage used before (no libc6-compat: only the deps stage has it).
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS runtime-musl
+FROM base-glibc AS runtime-glibc
+
+FROM runtime-${LIBC} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -177,6 +263,13 @@ COPY --from=builder /app/bundle-budget.json ./bundle-budget.json
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# The standalone tRPC server (`node -- trpc-server/server.cjs`): plain CommonJS that serves the
+# tRPC, probe and metrics routes from the compiled route modules above, without the Next router.
+# Only the three runtime files; its tests and parity harness stay out of the image. The default
+# CMD below is unchanged — this is only used where something runs that command instead.
+# `served-pages.cjs` is required by server.cjs at module scope, so the boot-graph gate below
+# fails the build if it is missing here.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/trpc-server/server.cjs /app/scripts/trpc-server/next-compat.cjs /app/scripts/trpc-server/served-pages.cjs ./trpc-server/
 # NOTE: server source maps are intentionally NOT copied into the runtime image.
 # They are published as the separate `maps` target above (fetched on-demand by
 # the cpuprofile resolver), keeping the prod pod lean (~761 MB smaller).
@@ -201,8 +294,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 #
 # Exits 2 (not 0) when it cannot observe its input, same rule as the build-output gates above.
 # The script is removed in the same layer chain so it is not part of the served image.
+#
+# The standalone tRPC server's files are checked the same way: they require Next internals by
+# deep path (`next/dist/server/...`), which nothing else here loads at build time, so a trace
+# that dropped one would otherwise surface as a crash-looping container. `served-pages.cjs` is
+# loaded through server.cjs's own require of it.
 COPY --from=builder /app/scripts/ci/assert-standalone-boot-graph.mjs /tmp/assert-standalone-boot-graph.mjs
-RUN node /tmp/assert-standalone-boot-graph.mjs /app && rm -f /tmp/assert-standalone-boot-graph.mjs
+RUN node /tmp/assert-standalone-boot-graph.mjs /app server.js trpc-server/server.cjs trpc-server/next-compat.cjs && rm -f /tmp/assert-standalone-boot-graph.mjs
 
 USER nextjs
 EXPOSE 3000

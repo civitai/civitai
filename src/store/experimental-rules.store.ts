@@ -14,13 +14,13 @@
  */
 
 import { create } from 'zustand';
-import type { GateRule } from '~/shared/data-graph/generation/gates';
+import type { GateRuleView } from '~/shared/generation/gates';
 
-type ExperimentalRulesState = { rules: GateRule[] };
+type ExperimentalRulesState = { rules: GateRuleView[] };
 
 export const useExperimentalRulesStore = create<ExperimentalRulesState>(() => ({ rules: [] }));
 
-export const setExperimentalRules = (rules: GateRule[]) => {
+export const setExperimentalRules = (rules: GateRuleView[]) => {
   if (useExperimentalRulesStore.getState().rules !== rules)
     useExperimentalRulesStore.setState({ rules });
 };

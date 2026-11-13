@@ -5,7 +5,7 @@ import type {
   TrainingStep,
   Workflow,
   WorkflowStatus,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 
@@ -62,6 +62,7 @@ export class TrainingRecordNotFoundError extends PermanentTrainingWebhookError {
 export type DerivedTrainingWorkflowState = {
   modelFileId: number;
   trainingStatus: TrainingStatus;
+  underReview: boolean;
   epochs: TrainingResultsV2['epochs'];
   sampleImagesPrompts: string[];
   workflowId: string | null;
@@ -149,7 +150,8 @@ export function deriveTrainingWorkflowState(
     throw new PermanentTrainingWebhookError(`Unsupported step type: ${stepType}`);
   }
 
-  if (moderationStatus === 'underReview') trainingStatus = TrainingStatus.Paused;
+  const underReview = moderationStatus === 'underReview';
+  if (underReview) trainingStatus = TrainingStatus.Paused;
   else if (moderationStatus === 'rejected') {
     // If the workflow expired, the rejection was due to timeout, not a moderator decision
     if (trainingStatus !== TrainingStatus.Expired) {
@@ -160,6 +162,7 @@ export function deriveTrainingWorkflowState(
   return {
     modelFileId,
     trainingStatus,
+    underReview,
     epochs: epochs.map((e) => ({
       epochNumber: e.epochNumber ?? -1,
       modelUrl: e.blobUrl ?? '',
@@ -259,6 +262,7 @@ export function applyTrainingWorkflowOverlay<T extends OverlayableVersion>(
       history: appendLiveStatus(history, derived),
       sampleImagesPrompts: derived.sampleImagesPrompts,
       transactionData: derived.transactionData ?? stored.transactionData ?? [],
+      heldForReview: derived.underReview || undefined,
     };
 
     return { ...file, metadata: { ...metadata, trainingResults } };

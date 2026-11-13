@@ -3,7 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo, useRef, useState } from 'react';
-import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
+import { VirtualGrid } from '~/components/VirtualGrid/VirtualGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { getTagDisplayName } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
@@ -76,12 +76,15 @@ export function HiddenTagsSection({
       >
         <div className="flex flex-col gap-3">
           {searchField}
-          <BasicMasonryGrid
+          <VirtualGrid
             items={hiddenTags}
             render={TagBadge}
+            getKey={getId}
             maxHeight={250}
-            columnGutter={4}
+            gap={4}
             columnWidth={140}
+            maxColumnCount={4}
+            estimateRowHeight={20}
           />
         </div>
       </SettingsSection>
@@ -118,12 +121,15 @@ export function HiddenTagsSection({
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack gap={5}>
-          <BasicMasonryGrid
+          <VirtualGrid
             items={hiddenTags}
             render={TagBadge}
+            getKey={getId}
             maxHeight={250}
-            columnGutter={4}
+            gap={4}
             columnWidth={140}
+            maxColumnCount={4}
+            estimateRowHeight={20}
           />
           <Text c="dimmed" size="xs">
             {`We'll hide content with these tags throughout the site.`}
@@ -162,3 +168,5 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
     </Badge>
   );
 }
+
+const getId = ({ id }: { id: number }) => id;

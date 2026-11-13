@@ -8,8 +8,16 @@
 -- the same prompt is groupable without turning this table into a prompt corpus.
 --
 -- Consumers:
---   - the M4 gate: shadow volume >= 1k/day for 7 days (any degraded<1 breakdown)
+--   - the M4 gate: shadow volume >= 1k/day for 7 days, plus p95 latency. ⚠️ It does
+--     NOT filter on `degraded` — see the query below, which counts every row. (This
+--     line read "(any degraded<1 breakdown)", which parses as a filter and is not
+--     one; the gate's definition is in docs/resource-intent-primitive.md.)
 --   - fallback-rate monitoring (degraded + degradedReason)
+--   ⚠️ No column records whether the ResourceInsight ORDERING ran. The response
+--     carries `insightFallback` and the Redis cache replays it, but it is not
+--     written here — adding it needs a new migration plus a ShadowEvent field, and
+--     is named in the doc's closing condition. Until then no query below can
+--     separate a label-ordered response from an unordered one.
 --   - the threshold study (scripts/eval-resource-intent-goldset.ts reads its own
 --     gold-set corpus; this table is the live shadow complement)
 --

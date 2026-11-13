@@ -1,13 +1,6 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
-import {
-  Badge,
-  Box,
-  Group,
-  Text,
-  Tooltip,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Badge, Box, Group, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconUpload,
   IconUsers,
@@ -28,7 +21,6 @@ export function UserStatBadges({
   favorites,
   uploads,
   downloads,
-  answers,
   username,
   colorOverrides,
 }: Props) {
@@ -127,25 +119,6 @@ export function UserStatBadges({
               </Text>
             </IconBadge>
           ) : null}
-          {answers != null && answers > 0 ? (
-            <IconBadge
-              p={0}
-              tooltip={<StatTooltip label="Answers" value={answers} />}
-              icon={<IconChecks size={14} />}
-              style={
-                colorOverrides
-                  ? { color: colorOverrides.textColor ?? theme.colors.gray[0] }
-                  : undefined
-              }
-              // @ts-ignore: transparent variant does work
-              variant="transparent"
-              size="lg"
-            >
-              <Text size="xs" fw={600} inline>
-                <AnimatedCount value={answers} />
-              </Text>
-            </IconBadge>
-          ) : null}
         </Group>
       </Badge>
     </Group>
@@ -167,8 +140,15 @@ const BadgedIcon = ({
 } & Omit<BadgeProps, 'leftSection'>) => (
   <Group gap={0} wrap="nowrap" className="relative">
     <Tooltip label={label}>
-      <Box pos="relative" style={{ zIndex: 2, overflow: 'hidden' }} h={32}>
-        <Image src="/images/base-badge.png" alt={`${label} - ${value}`} width={32} height={32} />
+      <Box
+        pos="relative"
+        style={{ zIndex: 2, overflow: 'hidden' }}
+        h={32}
+        role="img"
+        aria-label={`${label} - ${value}`}
+      >
+        {/* Empty alt: a failed load would otherwise paint the label inside the 32px box. */}
+        <Image src="/images/base-badge.png" alt="" width={32} height={32} />
         <Box
           style={{
             top: '50%',
@@ -201,8 +181,7 @@ export type UserStatKey =
   | 'likes'
   | 'downloads'
   | 'reactions'
-  | 'generations'
-  | 'answers';
+  | 'generations';
 
 export type UserStats = Partial<Record<UserStatKey, number | null | undefined>>;
 
@@ -222,7 +201,6 @@ const userStatBadges: ReadonlyArray<UserStatBadgeConfig> = [
   { key: 'likes', label: 'Likes', icon: <ThumbsUpIcon size={18} color="white" /> },
   { key: 'downloads', label: 'Downloads', icon: <IconDownload size={18} color="white" /> },
   { key: 'generations', label: 'Generations', icon: <IconBrush size={18} color="white" /> },
-  { key: 'answers', label: 'Answers', icon: <IconChecks size={18} color="white" />, minValue: 1 },
 ];
 
 export function UserStatBadgesV2({
@@ -253,7 +231,6 @@ type Props = {
   favorites?: number | null;
   downloads?: number | null;
   generations?: number | null;
-  answers?: number | null;
   reactions?: number | null;
   username?: string | null;
   size?: MantineSize;

@@ -1,4 +1,5 @@
-import { HoverCard, ThemeIcon } from '@mantine/core';
+import { ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import {
   IconMaximize,
   IconMinimize,
@@ -27,6 +28,7 @@ import clsx from 'clsx';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogId } from '~/components/Dialog/dialogId';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
@@ -51,6 +53,8 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
+  /** Never autoplays, whatever the viewport says: mounted for preloading, or another control owns playback. */
+  standby?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -69,6 +73,8 @@ const getFullscreenServerSnapshot = () => false;
 // Safari needs special handling (forced width, eager preload). userAgent is stable, so compute once.
 const IN_SAFARI =
   typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
+
+export const GLOBAL_VOLUME_KEY = 'global-volume';
 
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
@@ -91,6 +97,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       imageId,
       hoverPlay = true,
+      standby = false,
+      autoPlay,
       onLoad,
       onError,
       onLoadedData,
@@ -121,7 +129,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const isSelfFullscreen =
       isFullscreen && !!containerRef.current && document.fullscreenElement === containerRef.current;
     const [volume, setVolume] = useLocalStorage({
-      key: 'global-volume',
+      key: GLOBAL_VOLUME_KEY,
       defaultValue: muted ? 0 : 0.5,
     });
 
@@ -290,15 +298,18 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const node = useScrollAreaRef();
 
     // ensure that video only plays when it is in the current view/dialog
-    const dialogCount = useDialogStore((state) => state.dialogs.length);
-    const stackRef = useRef<number | null>(null);
-    if (stackRef.current === null) stackRef.current = dialogCount;
-    const isCurrentStack = stackRef.current === dialogCount;
+    // Not a depth captured at mount: a player that mounts under an already-open dialog (the page
+    // behind the image detail remounts on a remix click) would take that depth as its own.
+    const dialogId = useDialogId();
+    const isCurrentStack = useDialogStore((state) => {
+      const top = state.dialogs[state.dialogs.length - 1];
+      return dialogId === undefined ? !top : top?.id === dialogId;
+    });
 
     const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
       const videoElem = ref.current;
-      if (!videoElem || !options?.anim || props.autoPlay) return;
+      if (!videoElem || !options?.anim || autoPlay) return;
       const observer = new IntersectionObserver(
         ([{ intersectionRatio }]) => {
           setCanPlay(intersectionRatio >= threshold);
@@ -310,29 +321,30 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         observer.unobserve(videoElem);
         observer.disconnect();
       };
-    }, [threshold, options?.anim, loaded, props.autoPlay]);
+    }, [threshold, options?.anim, loaded, autoPlay]);
 
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (isCurrentStack && (canPlay || props.autoPlay)) {
+      if (!standby && isCurrentStack && (canPlay || autoPlay)) {
         // Coming back from the detail dialog, this element is still paused where it was left;
         // the other player kept the position moving.
         const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
         if (resumeAt !== undefined && Math.abs(resumeAt - videoElem.currentTime) > 0.5) {
           videoElem.currentTime = resumeAt;
         }
-        videoElem.play().catch(() => {
+        // Some iOS Safari versions return undefined from play() instead of a promise.
+        videoElem.play()?.catch(() => {
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
-      } else if (!isSelfFullscreen) {
+      } else if (standby || !isCurrentStack || !isSelfFullscreen) {
         // Fullscreen moves the element to the top layer, so it stops intersecting the
         // observer's scroll-area root and canPlay goes false. Pausing on that would stop
         // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay, isSelfFullscreen, resumeId]);
+    }, [canPlay, isCurrentStack, standby, autoPlay, isSelfFullscreen, resumeId, videoUrl]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -441,7 +453,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           playsInline
           onMouseOver={!options?.anim && hoverPlay ? handleMouseEnter : undefined}
           onMouseLeave={!options?.anim && hoverPlay ? handleMouseLeave : undefined}
-          autoPlay={!!(options?.anim && disablePoster)}
+          // Not the caller's `autoPlay`: React creates this element during render, and the browser
+          // autoplays the element of a discarded render, detached and audible. Only the play effect
+          // (committed players) may start it.
+          autoPlay={autoPlay === undefined && !!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture

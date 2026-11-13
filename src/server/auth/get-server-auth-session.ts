@@ -2,57 +2,34 @@ import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 
 // FINAL-CLEANUP: `Session` is the app-wide session return type; replace it with a first-party type when the
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
 import type { Session } from '~/types/session';
-import {
-  sessionCookieName,
-  deviceCookieName,
-  decodeLegacySessionCookie,
-  legacySessionCookieName,
-} from '@civitai/auth';
+import { legacySessionCookieName, readDeviceId, readSessionToken, rollSlot } from '@civitai/auth';
 import { env } from '~/env/server';
-import { isPreview } from '~/env/other';
+import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
-import { observeLegacyDecode } from './session-metrics';
-import {
-  getHubSession,
-  maybeRollHubCookie,
-  maybeUpgradeLegacySession,
-  sessionClient,
-} from './session-client';
+import { refuseModerationAccountSession } from './moderation-account';
+import { decodePreviewSessionCookie, previewCookieSignInEnabled } from './preview-session-cookie';
+import { getHubSession, maybeRollHubCookie } from './session-client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
 };
 type AuthResponse = GetServerSidePropsContext['res'] | NextApiResponse;
 
-// Legacy next-auth session cookie (`civitai-token` / prod `__Secure-civitai-token`) — READ-ONLY during the
-// cutover, decoded via jose (no next-auth). The cookie name is resolved with the SAME dev/prod secure logic as
-// the hub cookie (`legacySessionCookieName()`), so prod reads the `__Secure-` variant. Resolves the embedded
-// userId to a FRESH session user (cache/DB); sunsets as these cookies age out. New sessions are the hub's ES256.
-async function getLegacySession(req: AuthRequest): Promise<Session | null> {
+// PR previews only: the pipeline's smoke users carry a `civitai-token` cookie (preview-session-cookie.ts). The
+// session is the user embedded in that cookie. A preview runs on a dev DB clone whose smoke users the hub has no
+// rows for, so the hub is never asked.
+async function getPreviewCookieSession(req: AuthRequest): Promise<Session | null> {
   const secret = env.NEXTAUTH_SECRET;
-  if (!secret) return null;
+  if (!secret || !previewCookieSignInEnabled()) return null;
   const token = req.cookies?.[legacySessionCookieName()];
   if (!token) return null;
-  const claims = await decodeLegacySessionCookie(token, secret);
-  const userId = Number(claims?.sub ?? claims?.user?.id);
-  if (!Number.isFinite(userId)) return null;
-  const user = await sessionClient.getSessionUserById(userId);
-  if (user) return { user } as Session;
-  // PREVIEW-ONLY fallback. getSessionUserById resolves a user from the shared
-  // session cache then the centralized hub (auth.civitai.com) — both of which read
-  // the PRODUCTION identity store. A PR preview runs against the dev DB clone, where
-  // the ci-smoke-* smoke users are seeded (datapacket-talos seed-smoke-test-users
-  // CronJob) but the hub has no row for them, so the lookup returns null and every
-  // authenticated smoke request would loop back to /login. On a preview deploy we
-  // therefore trust the rich `user` embedded in the minted legacy cookie — exactly
-  // what the pre-cutover gate did (it read token.user straight from the cookie, no
-  // DB hit). Gated on IS_PREVIEW: production NEVER trusts the embedded user (it must
-  // resolve via the hub), so this has zero production blast radius.
-  if (isPreview && claims?.user && claims.user.id != null) {
-    return { user: claims.user } as unknown as Session;
-  }
-  return null;
+  const user = (await decodePreviewSessionCookie(token, secret))?.user;
+  const id = Number(user?.id);
+  if (!user || !Number.isFinite(id)) return null;
+  const username = (user as { username?: string | null }).username;
+  if (refuseModerationAccountSession({ id, username }, 'legacy-cookie')) return null;
+  return { user } as unknown as Session;
 }
 
 export const getServerAuthSession = async ({
@@ -69,7 +46,7 @@ export const getServerAuthSession = async ({
   if (req.headers.authorization) token = req.headers.authorization.split(' ')[1];
   else if (req.url) {
     const url = new URL(req.url, getBaseUrl());
-    if (url.searchParams.get('token') !== env.WEBHOOK_TOKEN)
+    if (!matchWebhookToken(url.searchParams.get('token')))
       token = url.searchParams.get('token') || undefined;
   }
 
@@ -82,6 +59,7 @@ export const getServerAuthSession = async ({
         req.context.tokenScope = result.tokenScope;
         req.context.buzzLimit = (result as any).buzzLimit ?? null;
         req.context.apiKeyId = (result as any).apiKeyId ?? null;
+        req.context.apiKeyType = (result as any).apiKeyType ?? null;
         req.context.subject = (result as any).subject ?? null;
       }
     }
@@ -92,25 +70,17 @@ export const getServerAuthSession = async ({
   const hub = await getHubSession(req).catch(() => null);
   if (hub) {
     req.context.session = hub;
-    const civ = req.cookies?.[sessionCookieName()];
-    const device = req.cookies?.[deviceCookieName()];
-    if (civ) await maybeRollHubCookie(civ, device, res, req.headers.host);
+    const civ = readSessionToken(req.cookies);
+    const slot = civ && rollSlot(civ);
+    const device = readDeviceId(req.cookies)?.value;
+    if (civ && slot) {
+      await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot, req.cookies);
+    }
     return hub;
   }
 
-  // 2. Legacy next-auth cookie (jose decode → fresh user). Sunsets as the old cookies age out.
-  const legacy = await getLegacySession(req).catch(() => null);
-  req.context.session = legacy;
-  // Upgrade-on-read: migrate this legacy user to a civ-token (+ de-crud the next-auth cookies) for next time.
-  // Best-effort; this request is still served from the legacy decode above.
-  if (legacy) {
-    // Counted BEFORE the upgrade attempt, and separately from it: an empty upgrade counter cannot
-    // distinguish "no legacy cookies remain" from "this code never runs", and that distinction decides
-    // whether the upgrade-on-read path still matters at all.
-    observeLegacyDecode();
-    const legacyToken = req.cookies?.[legacySessionCookieName()];
-    const device = req.cookies?.[deviceCookieName()];
-    await maybeUpgradeLegacySession(legacyToken, device, res, req.headers.host).catch(() => {});
-  }
-  return legacy;
+  // 2. PR previews only: the pipeline's test sign-in cookie.
+  const preview = await getPreviewCookieSession(req).catch(() => null);
+  req.context.session = preview;
+  return preview;
 };

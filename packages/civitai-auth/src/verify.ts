@@ -1,17 +1,23 @@
 // SPOKE verify side (Path C). Verifies a session token LOCALLY — no per-request hop:
 //  1. ES256 JWS  → jose `jwtVerify` against the hub's cached JWKS (refetched only on an
 //                  unknown `kid`, i.e. key rotation). This is the steady state.
-//  2. legacy JWE → decoded with NEXTAUTH_SECRET via a jose reimplementation (legacy-cookie.ts) — NO next-auth
-//                  dependency — ONLY to READ old `civitai-token` cookies until they age out post-cutover.
-//  3. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
+//     Nothing else is a session: any other token is rejected.
+//  2. revocation → an INJECTED `isRevoked(claims)` (the existing redis marker). Injected,
 //                  not imported, so the package keeps zero infra deps (base-package rules).
 //
 // Factory mirrors the createXClients(config) injection convention.
-import { createRemoteJWKSet, decodeProtectedHeader, importSPKI, jwtVerify } from 'jose';
+import { createHash } from 'node:crypto';
+import {
+  createRemoteJWKSet,
+  decodeProtectedHeader,
+  importSPKI,
+  jwtVerify,
+  type JWTPayload,
+} from 'jose';
 import { sessionCookieName } from './cookies';
-import { decodeLegacySessionCookie } from './legacy-cookie';
 import { loadAuthEnv } from './env';
 import { now, elapsed, isTimeoutError, safeInvoke } from './timing';
+import { SESSION_LINEAGE_MAX_AGE_MS } from './family';
 import type { SessionClaims } from './types';
 
 const ALG = 'ES256'; // matches the signer (sign.ts) — EC P-256 keys, smaller signatures than RS256
@@ -32,17 +38,10 @@ export interface AuthVerifierConfig {
    * Single-key only — for key ROTATION across multiple kids, use JWKS (spokes) instead.
    */
   publicKeyPem?: string;
-  /** Migration-window only: secret to decode legacy next-auth JWE cookies. */
-  legacySecret?: string;
-  /**
-   * Explicit kill-switch for the legacy next-auth JWE fallback. The legacy decode is a SECOND trust
-   * root (symmetric, no iss/aud — the old cookies never carried them), so it must be gated by an
-   * explicit decision, not merely inferred from `legacySecret` presence. Defaults to "on when a
-   * legacy secret is configured" to preserve migration-window behavior; set `false` at cutover to
-   * hard-disable legacy acceptance even while NEXTAUTH_SECRET is still in the env, then remove this
-   * whole branch once all legacy cookies have aged out.
-   */
-  legacyEnabled?: boolean;
+  /** Reject tokens without `iat0`. Defaults to env.AUTH_REQUIRE_IAT0 (false). */
+  requireIat0?: boolean;
+  /** Clock injection (tests), epoch ms. */
+  clock?: () => number;
   /** Injected revocation check (e.g. the sysRedis TOKEN_STATE marker). Fail-open inside. */
   isRevoked?: (claims: SessionClaims) => Promise<boolean> | boolean;
   /**
@@ -55,6 +54,16 @@ export interface AuthVerifierConfig {
    * local-public-key (hub) path.
    */
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
+  /**
+   * Opt-in: remember a successful ES256 signature + `iss`/`aud`/`exp` check per token (keyed on a
+   * SHA-256 of it) so a token presented on every request is cryptographically verified once per
+   * `maxTtlMs`, never past its own `exp`. Only that step is cached: failures are not, and the
+   * purpose, lineage and `isRevoked` checks still run on every call. This widens key-removal
+   * staleness: a token verified just before a JWKS refresh stays cached for up to `maxTtlMs`, so a
+   * signing key dropped from the JWKS stays usable for jose's JWKS cache window plus up to
+   * `maxTtlMs`. A cache hit fires no `onJwksLeg`.
+   */
+  verifiedTokenCache?: { maxEntries: number; maxTtlMs: number };
 }
 
 export interface AuthVerifier {
@@ -82,10 +91,8 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     // that base URL (http://localhost → unprefixed, https://auth.civitai.com → __Secure-).
     cookieName: config.cookieName ?? sessionCookieName(issuer?.startsWith('https://') ?? false),
     publicKeyPem: config.publicKeyPem ?? env.AUTH_JWT_PUBLIC_KEY,
-    legacySecret: config.legacySecret ?? env.NEXTAUTH_SECRET,
-    // Explicit gate for the legacy JWE trust root. Default: enabled iff a legacy secret is present
-    // (preserves migration-window behavior); pass `legacyEnabled: false` to force it off at cutover.
-    legacyEnabled: config.legacyEnabled ?? true,
+    requireIat0: config.requireIat0 ?? env.AUTH_REQUIRE_IAT0,
+    clock: config.clock ?? (() => Date.now()),
     isRevoked: config.isRevoked,
     onJwksLeg: config.onJwksLeg,
   };
@@ -127,6 +134,20 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
     }
   }
 
+  const verifiedCache = config.verifiedTokenCache
+    ? createVerifiedTokenCache(config.verifiedTokenCache)
+    : undefined;
+
+  async function verifyAsymmetricPayload(token: string): Promise<JWTPayload> {
+    if (!verifiedCache) return (await verifyAsymmetric(token)).payload;
+    const key = createHash('sha256').update(token).digest('base64url');
+    const cached = verifiedCache.get(key);
+    if (cached) return structuredClone(cached);
+    const { payload } = await verifyAsymmetric(token);
+    verifiedCache.set(key, payload);
+    return structuredClone(payload);
+  }
+
   async function verifyToken(token: string): Promise<SessionClaims | null> {
     let claims: SessionClaims | null = null;
 
@@ -143,25 +164,30 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
           `[@civitai/auth] no AUTH_JWT_PUBLIC_KEY or AUTH_JWKS_URI configured for ${ALG} verification`
         );
       try {
-        const { payload } = await verifyAsymmetric(token);
+        const payload = await verifyAsymmetricPayload(token);
+        // Session tokens carry no `aud`; without a configured audience, tokens with one are not sessions.
+        if (!cfg.audience && payload.aud !== undefined) return null;
         claims = payload as SessionClaims;
       } catch {
         return null; // bad signature / expired / wrong issuer
       }
-    } else if (cfg.legacyEnabled && cfg.legacySecret) {
-      // Legacy next-auth JWE (encrypted, hkdf from NEXTAUTH_SECRET) — decoded with jose, no next-auth dep
-      // (legacy-cookie.ts). Gated behind the explicit `legacyEnabled` switch (a second, symmetric trust
-      // root with no iss/aud), not just secret presence. Returns null on a corrupt/foreign/expired
-      // cookie. Drop this branch post-cutover.
-      claims = await decodeLegacySessionCookie(token, cfg.legacySecret);
     }
 
     if (!claims) return null;
-    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token. The swap bridge
-    // is removed, but this guard cheaply rejects any stray legacy swap-shaped token.
+    // Defense-in-depth: never accept a token carrying `purpose: 'swap'` as a session token.
     if ((claims as { purpose?: unknown }).purpose === 'swap') return null;
+    if (!withinLineageLimits(claims)) return null;
     if (cfg.isRevoked && (await cfg.isRevoked(claims))) return null;
     return claims;
+  }
+
+  function withinLineageLimits(claims: SessionClaims): boolean {
+    const t = cfg.clock();
+    if (claims.impExp != null && t >= claims.impExp) return false;
+    // Every impersonation is minted with an end time; one without it predates that rule.
+    if (claims.impersonatedBy != null && claims.impExp == null) return false;
+    if (claims.iat0 == null) return !cfg.requireIat0;
+    return t < claims.iat0 + SESSION_LINEAGE_MAX_AGE_MS;
   }
 
   async function getSession(
@@ -183,6 +209,44 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
   }
 
   return { verifyToken, getSession, requireAuth };
+}
+
+/**
+ * Bounded LRU of verified payloads. An entry lives `maxTtlMs`, or until the token's `exp` if that is
+ * sooner, on `Date.now()` — the clock jose checks `exp` against.
+ */
+export function createVerifiedTokenCache({
+  maxEntries,
+  maxTtlMs,
+}: {
+  maxEntries: number;
+  maxTtlMs: number;
+}) {
+  const entries = new Map<string, { payload: JWTPayload; expiresAt: number }>();
+  return {
+    get(key: string): JWTPayload | undefined {
+      const entry = entries.get(key);
+      if (!entry) return undefined;
+      entries.delete(key);
+      if (Date.now() >= entry.expiresAt) return undefined;
+      entries.set(key, entry);
+      return entry.payload;
+    },
+    set(key: string, payload: JWTPayload): void {
+      const now = Date.now();
+      const expiresAt =
+        typeof payload.exp === 'number'
+          ? Math.min(now + maxTtlMs, payload.exp * 1000)
+          : now + maxTtlMs;
+      if (expiresAt <= now || maxEntries <= 0) return;
+      entries.delete(key);
+      entries.set(key, { payload, expiresAt });
+      while (entries.size > maxEntries) entries.delete(entries.keys().next().value as string);
+    },
+    get size() {
+      return entries.size;
+    },
+  };
 }
 
 function readCookie(

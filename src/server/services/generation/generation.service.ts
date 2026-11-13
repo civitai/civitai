@@ -1,9 +1,23 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import {
+  GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+  GenerationConfigUnavailableError,
+} from '~/server/services/generation/generation-kill-switch';
+import { asResourceValue } from '~/shared/utils/resource.utils';
+import { stopsCreatorEarnings } from '~/server/common/constants';
+import {
+  LORA_STRENGTH_BOUNDS,
+  fluxKreaAir,
+  fluxUltraAir,
+  getBaseModelFromResources,
+  ponyV7Air,
+} from '~/shared/constants/generation.constants';
+import {
   coverageAudience,
   coverageColumn,
   coveragePair,
   coveredBy,
+  boostRequiredFor,
   coveredForUser,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
@@ -13,9 +27,10 @@ import { uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
+import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { lastKnownGood, type LastKnownRead } from '~/server/services/generation/last-known-good';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
@@ -24,13 +39,23 @@ import type {
   GetGenerationDataSchema,
   ResolveImageMetaInput,
   SetEvictableInput,
+  SetAdditionalResourceFeeWaivedInput,
+  SetPartnerDisclosureInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import {
+  type MediaViewer,
+  viewerCanSeeImageMedia,
+  viewerCanSeeSourceMedia,
+  withoutMediaReferences,
+} from '~/server/utils/image-media-visibility';
 import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
@@ -44,22 +69,18 @@ import {
 import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
-import {
-  fluxKreaAir,
-  fluxUltraAir,
-  getBaseModelFromResources,
-  ponyV7Air,
-} from '~/shared/constants/generation.constants';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import type { GenerationResource } from '~/shared/types/generation.types';
+import type { GenerationResource, GenerationResourceValue } from '~/shared/types/generation.types';
 
 import {
   applicableRulesFor,
+  toGateRuleViews,
   canGenerateBlockedTargets,
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
-} from '~/shared/data-graph/generation/gates';
+  type GateRuleView,
+} from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
   generatorMessageSchema,
@@ -70,19 +91,24 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  getPartnerDisclosure,
+  isAdditionalResourceFeeWaived,
   isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
 import { pickPreviewImage } from '~/shared/utils/resource-preview';
+import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   baseModelByName,
+  isBaseModelGenerationDisabled,
   ecosystemById,
   SELF_HOSTED_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
@@ -142,22 +168,61 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   );
 }
 
-export async function getGenerationStatus() {
-  // Fail open: a sysRedis outage shouldn't crash generation API calls.
-  let raw: string | null | undefined;
-  try {
+export { GENERATION_CONFIG_UNAVAILABLE_MESSAGE };
+
+export function generationConfigUnavailableError() {
+  return new GenerationConfigUnavailableError();
+}
+
+const failOpenExtra = (last: { ageMs: number } | undefined) => ({
+  served: last ? 'last-known-good' : 'fail-closed',
+  lastKnownAgeMs: last?.ageMs,
+});
+
+// The kill switch is a moderation control: a failed read must never turn an operator's
+// "disabled" back into "enabled". The last raw value read is kept (the parse stays outside).
+const generationStatusRead = lastKnownGood<string | null>();
+
+/**
+ * The generation kill switch, with whether it is KNOWN. On a sysRedis failure it answers with the
+ * last value this process read; when there is none, `known: false` and a DISABLED status (global
+ * and self-hosted) with GENERATION_CONFIG_UNAVAILABLE_MESSAGE, never the schema default "enabled".
+ * Callers that ENFORCE refuse on `known: false` (buildGenerationContext); the public status
+ * endpoint must not edge-cache that fallback.
+ */
+export async function getGenerationStatusState(): Promise<{
+  status: GenerationStatus;
+  known: boolean;
+}> {
+  const read = await generationStatusRead.read(
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
-    raw = await withSysReadDeadline(
-      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
-    );
-  } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
-    raw = undefined;
-  }
-  const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
+    () =>
+      withSysReadDeadline(
+        sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+      ),
+    (err, last) =>
+      logSysRedisFailOpen(
+        'defaults-firing',
+        'getGenerationStatus generation.service',
+        err,
+        failOpenExtra(last)
+      )
+  );
+  const status = read.known
+    ? generationStatusSchema.parse(JSON.parse(read.value ?? '{}'))
+    : generationStatusSchema.parse({
+        mode: 'disabled',
+        selfHostedMode: 'disabled',
+        message: GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+      });
 
-  return status as GenerationStatus;
+  return { status: status as GenerationStatus, known: read.known };
+}
+
+/** The kill switch; see getGenerationStatusState (this drops `known`). */
+export async function getGenerationStatus(): Promise<GenerationStatus> {
+  return (await getGenerationStatusState()).status;
 }
 
 export async function setGenerationStatus(input: {
@@ -258,19 +323,32 @@ export type GenerationData = {
   remixOfId?: number;
   remixOf?: RemixOfProps;
   /** Flat array of all resources (checkpoint, LoRAs, VAE, etc.) */
-  resources: GenerationResource[];
+  resources: GenerationResourceValue[];
   /** Generation parameters (prompt, seed, steps, etc.) */
   params: Record<string, unknown>;
 };
+
+/** The image's recorded weight for each resource it used; the version default where it recorded none. */
+export function weightImageResources<T extends GenerationResource>(
+  data: T[],
+  imageResources: { modelVersionId?: number; strength?: number }[]
+) {
+  return data.map((item) =>
+    asResourceValue(item, imageResources.find((x) => x.modelVersionId === item.id)?.strength)
+  );
+}
 
 export const getGenerationData = async ({
   query,
   user,
   browsingLevel,
+  mediaViewer,
 }: {
   query: GetGenerationDataSchema;
   user?: SessionUser;
   browsingLevel?: number;
+  /** Who is asking, for whether a media item's own source media may be returned. */
+  mediaViewer: MediaViewer;
 }): Promise<GenerationData> => {
   switch (query.type) {
     case 'image':
@@ -278,6 +356,7 @@ export const getGenerationData = async ({
       return await getMediaGenerationData({
         id: query.id,
         user,
+        mediaViewer,
         generation: query.generation,
         withPreview: query.withPreview,
         browsingLevel,
@@ -319,15 +398,15 @@ export const getGenerationData = async ({
  * target that no longer resolves is dropped (fail-closed). Results are deduped
  * by id in case the image already referenced the target directly.
  */
-async function swapGenerationAliases(
-  resources: (GenerationResource & { air: string })[],
+export async function swapGenerationAliases(
+  resources: (GenerationResourceValue & { air: string })[],
   opts: {
     user?: { id?: number; isModerator?: boolean };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
   }
-): Promise<(GenerationResource & { air: string })[]> {
+): Promise<(GenerationResourceValue & { air: string })[]> {
   const aliasIds = [...new Set(resources.map((r) => r.aliasId).filter(isDefined))];
   if (!aliasIds.length) return resources;
 
@@ -339,7 +418,7 @@ async function swapGenerationAliases(
       if (r.aliasId == null) return r;
       const target = targetById.get(r.aliasId);
       if (!target) return null;
-      return { ...target, strength: r.strength };
+      return asResourceValue(target, r.strength);
     })
     .filter(isDefined);
 
@@ -369,10 +448,10 @@ function resolveGraphParamsFromImageMeta({
   initialMeta: ImageMetaProps;
   baseModel: string | undefined;
   engine: string | undefined;
-  allResources: GenerationResource[];
+  allResources: GenerationResourceValue[];
   width: number;
   height: number;
-}): { resources: GenerationResource[]; params: Record<string, unknown> } {
+}): { resources: GenerationResourceValue[]; params: Record<string, unknown> } {
   const metaRecord = initialMeta as Record<string, unknown>;
   const cleanedPrompts = cleanPrompt({
     prompt: initialMeta.prompt,
@@ -440,16 +519,25 @@ function stripHiddenPrompt(meta: ImageMetaProps): ImageMetaProps {
 async function getMediaGenerationData({
   id,
   user,
+  mediaViewer,
   generation,
   withPreview = false,
   browsingLevel,
 }: {
   id: number;
   user?: SessionUser;
+  mediaViewer: MediaViewer;
   generation: boolean;
   withPreview?: boolean;
   browsingLevel?: number;
 }): Promise<GenerationData> {
+  const visible = await assertImageVisibleToViewer({
+    id,
+    userId: user?.id,
+    isModerator: user?.isModerator,
+  });
+  const showMedia = await viewerCanSeeImageMedia(mediaViewer, visible);
+
   const media = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -471,12 +559,16 @@ async function getMediaGenerationData({
   const remixOf: RemixOfProps = {
     id: media.id,
     type: media.type,
-    url: media.url,
+    url: showMedia ? media.url : undefined,
     similarity: 1,
     createdAt: media.createdAt,
   };
 
-  const storedMeta = (media.meta ?? {}) as ImageMetaProps;
+  const rawMeta = (media.meta ?? {}) as ImageMetaProps;
+  const showSourceMedia =
+    showMedia &&
+    (await viewerCanSeeSourceMedia(mediaViewer, { id, userId: visible.userId }, rawMeta));
+  const storedMeta = showSourceMedia ? rawMeta : withoutMediaReferences(rawMeta);
   const canSeeHiddenPrompt = !!user && (user.isModerator || user.id === media.userId);
   const initialMeta =
     media.hideMeta && !canSeeHiddenPrompt ? stripHiddenPrompt(storedMeta) : storedMeta;
@@ -504,15 +596,7 @@ async function getMediaGenerationData({
     withPreview,
     browsingLevel,
   })
-    .then((data) =>
-      data.map((item) => {
-        const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
-        return {
-          ...item,
-          strength: imageResource?.strength ?? item.strength,
-        };
-      })
-    )
+    .then((data) => weightImageResources(data, imageResources))
     // Redirect any cover resources to their alias target (carrying the image's
     // recorded strength) before the data is used for the remix.
     .then((data) => swapGenerationAliases(data, { user, generation, withPreview, browsingLevel }));
@@ -653,28 +737,16 @@ const getModelVersionGenerationData = async ({
     return { id: alias.versionId };
   });
 
-  const resources = await getResourceData(resolvedVersionIds, {
-    user,
-    generation,
-    withPreview,
-    browsingLevel,
-  });
-
-  // Apply alias strength overrides to the redirected resources.
-  if (aliasStrengthByTarget.size) {
-    for (const resource of resources) {
-      const strength = aliasStrengthByTarget.get(resource.id);
-      if (strength != null) resource.strength = strength;
-    }
-  }
+  const resources = (
+    await getResourceData(resolvedVersionIds, { user, generation, withPreview, browsingLevel })
+  ).map((resource) => asResourceValue(resource, aliasStrengthByTarget.get(resource.id)));
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
-  // Resolve VAE from linked components instead of vaeId
   if (checkpoint) {
     const vaeMap = await getLinkedVaeIds([checkpoint.id]);
     const vaeVersionId = vaeMap.get(checkpoint.id);
     if (vaeVersionId) {
       const [vae] = await getResourceData([vaeVersionId], { user, generation });
-      if (vae) resources.push({ ...vae, vaeId: undefined });
+      if (vae) resources.push(asResourceValue(vae));
     }
   }
 
@@ -683,7 +755,7 @@ const getModelVersionGenerationData = async ({
   // Build params from checkpoint settings
   const params = mapDataToGraphInput(
     {
-      clipSkip: checkpoint?.clipSkip,
+      clipSkip: checkpoint?.settings.clipSkip,
     },
     deduped
   );
@@ -745,12 +817,7 @@ export async function resolveTestingAccess(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<boolean> {
-  if (user.isModerator) return true;
-  if (!user.id) return false;
-  return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, String(user.id), {
-    userId: String(user.id),
-    isModerator: 'false',
-  });
+  return isFliptOnForTesters(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, user);
 }
 
 type EntrySchema<T> = { safeParse(value: unknown): { success: boolean; data?: T } };
@@ -851,17 +918,34 @@ const generatorMessageStore = perEntryStore<GeneratorMessage>({
   schema: generatorMessageSchema,
 });
 
+// Gate rules hide or disable models and ecosystems — a moderation control, like the kill switch.
+const gateRulesRead = lastKnownGood<GateRule[]>();
+
 /**
- * The operator-authored gate rules. Fail-open to `[]` so a bad or unreachable
- * store never blocks generation.
+ * The operator-authored gate rules, with whether they are known. On a sysRedis failure this is
+ * the last set this process read; `known: false` when there is none — "no rules" would make every
+ * hidden model submittable, so callers that ENFORCE must refuse instead (buildGenerationContext).
  */
-export async function getGateRules(): Promise<GateRule[]> {
+export async function getGateRuleState(): Promise<LastKnownRead<GateRule[]>> {
   // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on every
   // gen submit — a silent sysRedis half-open would park it.
-  return withSysReadDeadline(gateRuleStore.read()).catch((err) => {
-    logSysRedisFailOpen('read-degraded', 'getGateRules', err);
-    return [];
-  });
+  return gateRulesRead.read(
+    () => withSysReadDeadline(gateRuleStore.read()),
+    (err, last) => logSysRedisFailOpen('read-degraded', 'getGateRules', err, failOpenExtra(last))
+  );
+}
+
+/** The gate rules; throws SERVICE_UNAVAILABLE when they cannot be read and were never read. */
+export async function getGateRules(): Promise<GateRule[]> {
+  const state = await getGateRuleState();
+  if (!state.known) throw generationConfigUnavailableError();
+  return state.value;
+}
+
+/** For tests: forget the last-known kill switch and gate rules. */
+export function __resetGenerationConfigLastKnownForTests() {
+  generationStatusRead.reset();
+  gateRulesRead.reset();
 }
 
 export async function saveGateRule(rule: GateRule): Promise<GateRule> {
@@ -903,13 +987,8 @@ export type GenerationConfig = {
    * right badge/alert copy ('memberOnly' → upsell, 'disabled' → unavailable).
    */
   selfHostedMode: GenerationStatusMode;
-  /**
-   * The gate rules that apply to THIS user (already audience-filtered server
-   * side). Ride into `GenerationCtx` so the graph nodes resolve them to per-item
-   * `hidden`/`disabled`/`memberOnly` states — the audience logic never leaves
-   * the server.
-   */
-  gateRules: GateRule[];
+  /** Applicable rules for THIS user, reduced to what the client renders (`toGateRuleViews`). */
+  gateRules: GateRuleView[];
   /**
    * Mod-authored messages for THIS user (audience-filtered server side, so copy
    * aimed at one tier never ships in another's payload). Rendered above the
@@ -951,14 +1030,17 @@ export function getSelfHostedDisabledEcosystems({
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, hasTestingAccess, status, gateRules, generatorMessages] =
+  const [unstableResources, hasTestingAccess, status, gateRuleState, generatorMessages] =
     await Promise.all([
       getUnstableResources(),
       resolveTestingAccess(user),
       getGenerationStatus(),
-      getGateRules(),
+      getGateRuleState(),
       getGeneratorMessages(),
     ]);
+  // Display only: with the rules unknown the picker shows no gates, and a submit is refused by
+  // buildGenerationContext, which enforces them.
+  const gateRules = gateRuleState.known ? gateRuleState.value : [];
   const selfHostedMode = status.selfHostedMode;
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
@@ -969,11 +1051,13 @@ export async function getGenerationConfig(
       isMember,
       isModerator: user.isModerator,
     }),
-    gateRules: applicableRulesFor(gateRules, {
-      isModerator: !!user.isModerator,
-      isMember,
-      hasTestingAccess,
-    }),
+    gateRules: toGateRuleViews(
+      applicableRulesFor(gateRules, {
+        isModerator: !!user.isModerator,
+        isMember,
+        hasTestingAccess,
+      })
+    ),
     generatorMessages: applicableMessagesFor(generatorMessages, {
       isMember,
       tier: user.tier ?? 'free',
@@ -1028,22 +1112,83 @@ export async function setEvictable({
   return { id, evictable: isEvictable(flags) };
 }
 
+export async function setAdditionalResourceFeeWaived({
+  id,
+  waived,
+  isModerator,
+}: SetAdditionalResourceFeeWaivedInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    waived
+      ? Prisma.sql`flags | ${ModelVersionFlag.NoAdditionalResourceFee}`
+      : Prisma.sql`flags & ~(${ModelVersionFlag.NoAdditionalResourceFee}::int)`
+  );
+  return { id, waived: isAdditionalResourceFeeWaived(flags) };
+}
+
+export async function setPartnerDisclosure({
+  id,
+  partnerService,
+  partnerTrains,
+  isModerator,
+}: SetPartnerDisclosureInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  if (partnerTrains && !partnerService)
+    throw throwBadRequestError('Partner trains requires partner service');
+  const mask = ModelVersionFlag.PartnerService | ModelVersionFlag.PartnerTrains;
+  const bits =
+    (partnerService ? ModelVersionFlag.PartnerService : 0) |
+    (partnerTrains ? ModelVersionFlag.PartnerTrains : 0);
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`(flags & ~(${mask}::int)) | ${bits}::int`
+  );
+  return { id, ...getPartnerDisclosure(flags) };
+}
+
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+
+// The one rule both the orchestrator's charge (mini endpoint) and the generator's cost badge read.
+// Callers decide what a missing file size means; they disagree today.
+export function isAdditionalResourceFeeExempt({
+  modelType,
+  featured,
+  versionFlags,
+  fileSizeKB,
+}: {
+  modelType: ModelType;
+  featured: boolean;
+  versionFlags: number;
+  fileSizeKB?: number;
+}) {
+  return (
+    featured ||
+    isAdditionalResourceFeeWaived(versionFlags) ||
+    FREE_RESOURCE_TYPES.includes(modelType) ||
+    (!!fileSizeKB && fileSizeKB <= 10 * 1024)
+  );
+}
+
 export async function getShouldChargeForResources(
   args: {
     modelType: ModelType;
     modelId: number;
     fileSizeKB?: number;
+    versionFlags: number;
   }[]
 ) {
   const featuredModels = await getFeaturedModels();
   return args.reduce<Record<string, boolean>>(
-    (acc, { modelType, modelId, fileSizeKB }) => ({
+    (acc, { modelType, modelId, fileSizeKB, versionFlags }) => ({
       ...acc,
       [modelId]: fileSizeKB
-        ? !FREE_RESOURCE_TYPES.includes(modelType) &&
-          !featuredModels.map((fm) => fm.modelId).includes(modelId) &&
-          fileSizeKB > 10 * 1024
+        ? !isAdditionalResourceFeeExempt({
+            modelType,
+            featured: featuredModels.some((fm) => fm.modelId === modelId),
+            versionFlags,
+            fileSizeKB,
+          })
         : false,
     }),
     {}
@@ -1064,7 +1209,12 @@ export async function getCanGenerateHiddenGates(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<CanGenerateBlockedTargets> {
-  const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
+  const [ruleState, hasTestingAccess] = await Promise.all([
+    getGateRuleState(),
+    resolveTestingAccess(user),
+  ]);
+  // Display only (the model page's canGenerate); a submit is refused while the rules are unknown.
+  const rules = ruleState.known ? ruleState.value : [];
   return canGenerateBlockedTargets(
     applicableRulesFor(rules, {
       isModerator: !!user.isModerator,
@@ -1121,6 +1271,8 @@ export function getResourceCanGenerate({
   if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
     canGenerate = false;
   }
+
+  if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 
   if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);
@@ -1262,19 +1414,24 @@ export async function getResourceData(
     generation = false,
     withPreview = false,
     browsingLevel,
+    acceptBoostRequired = false,
   }: {
     user?: { id?: number; isModerator?: boolean; tier?: string };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
+    /** See `coverageAudience`. Each admitted-by-boost resource comes back `boostRequired`. */
+    acceptBoostRequired?: boolean;
   } = {}
-): Promise<(GenerationResource & { air: string })[]> {
+): Promise<(GenerationResource & { air: string; boostRequired?: boolean })[]> {
   if (!versionIds.length) return [];
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
 
-  const { next, member } = await coverageAudience(user);
+  const { next, member, boostAdmits } = await coverageAudience(user, { acceptBoostRequired });
+
+  const showSfwFace = showsSfwFace(browsingLevel);
 
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
@@ -1284,7 +1441,7 @@ export async function getResourceData(
   );
 
   function transformGenerationData(
-    { settings, ...item }: GenerationResourceDataModel,
+    { settings, clipSkip, vaeId: _vaeId, ...item }: GenerationResourceDataModel,
     epochNumber?: number
   ) {
     const isOwnedByUser = !!user.id && user.id === item.model.userId;
@@ -1292,10 +1449,13 @@ export async function getResourceData(
     const isPrivate =
       item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
-    const covered = coveredForUser(item, next, {
+    const coverageAudienceFor = {
       member,
       isCheckpoint: item.model.type === 'Checkpoint',
-    });
+      boostAdmits,
+    };
+    const covered = coveredForUser(item, next, coverageAudienceFor);
+    const boostRequired = boostRequiredFor(item, next, coverageAudienceFor);
     // 🔴 `getResourceCanGenerate` ALONE, deliberately — not the `isGenerationEligible` pair that
     // `resolveCanGenerateForVersions` uses. This path receives every resource in the request, and the
     // helper's third clause is the ecosystem's flat model-TYPE list, which the generator has never
@@ -1330,9 +1490,11 @@ export async function getResourceData(
     // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
     // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
     // so mutating in place applies this user's gate outcome to a concurrent user's payload.
-    let model = item.model;
+    const { userFlags: ownerFlags, ...ownerModel } = item.model;
+    const ownerlessModel = resolveModelFace(ownerModel, showSfwFace);
+    let model = ownerlessModel;
     if (!canGenerate) {
-      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = item.model;
+      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = ownerlessModel;
       model = rest;
     }
 
@@ -1342,28 +1504,45 @@ export async function getResourceData(
       // Merged in after the cache read (see mergePaidAccess) from PaidAccess — NOT stored in the 1h
       // resourceDataCache, whose TTL would serve stale gating terms after a config change.
       paidAccess: null as { endsAt: Date | null; terms: ModelVersionTerms } | null,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-      strength: settings?.strength ?? 1,
+      settings: {
+        strength: {
+          min: settings?.minStrength ?? LORA_STRENGTH_BOUNDS.min,
+          max: settings?.maxStrength ?? LORA_STRENGTH_BOUNDS.max,
+          default: settings?.strength ?? 1,
+        },
+        ...(clipSkip != null && { clipSkip }),
+        ...(settings?.generation?.turboLora && {
+          turboLora: {
+            id: settings.generation.turboLora.id,
+            strength: settings.generation.turboLora.strength ?? undefined,
+          },
+        }),
+      },
+      ...(settings?.turbo && { turbo: true, recommendedSettings: settings.turbo }),
       hasAccess,
       canGenerate,
       epochNumber,
       isOwnedByUser,
       isPrivate,
+      ...(boostRequired && canGenerate ? { boostRequired: true } : {}),
+      tipsEnabled:
+        !stopsCreatorEarnings(item.baseModel) &&
+        isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
     };
   }
 
   async function getResourceDataSubstitutes(
     resources: ReturnType<typeof transformGenerationData>[]
   ) {
-    const modelIdsThatRequireSubstitutes = resources
-      .filter((x) => !x.covered || !x.hasAccess)
-      .map((x) => x.model.id);
+    const resourcesThatRequireSubstitutes = resources.filter((x) => !x.covered || !x.hasAccess);
+    const modelIdsThatRequireSubstitutes = resourcesThatRequireSubstitutes.map((x) => x.model.id);
 
     const substituteDb = await getDbWithoutLagBatch('model', modelIdsThatRequireSubstitutes);
     const substituteIds = await substituteDb.modelVersion
       .findMany({
         where: {
+          // A version the staged rule covers would otherwise match itself.
+          id: { notIn: resourcesThatRequireSubstitutes.map((x) => x.id) },
           status: 'Published',
           generationCoverage: { [coverageColumn(next)]: true },
           modelId: { in: modelIdsThatRequireSubstitutes },
@@ -1416,15 +1595,12 @@ export async function getResourceData(
   ) {
     const generationFile = getGenerationFile(modelFiles);
     const fileSizeKB = generationFile?.sizeKB;
-    const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
-    let additionalResourceCost = true;
-    if (
-      featured ||
-      FREE_RESOURCE_TYPES.includes(resource.model.type) ||
-      (fileSizeKB && fileSizeKB <= 10 * 1024)
-    ) {
-      additionalResourceCost = false;
-    }
+    const additionalResourceCost = !isAdditionalResourceFeeExempt({
+      modelType: resource.model.type,
+      featured: featuredModels.some((x) => x.modelId === resource.model.id),
+      versionFlags: resource.flags,
+      fileSizeKB,
+    });
 
     const epochDetails = getEpochDetails(resource, modelFiles);
 
@@ -1452,7 +1628,15 @@ export async function getResourceData(
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
-    return { ...resource, fileSizeKB, additionalResourceCost, epochDetails, air };
+    const { flags, ...rest } = resource;
+    return {
+      ...rest,
+      ...getPartnerDisclosure(flags),
+      fileSizeKB,
+      additionalResourceCost,
+      epochDetails,
+      air,
+    };
   }
 
   function getSubstituteData(
@@ -1754,7 +1938,7 @@ export async function resolveImageMeta({
   input: ResolveImageMetaInput;
   user?: SessionUser;
   browsingLevel?: number;
-}): Promise<{ resources: GenerationResource[]; params: Record<string, unknown> }> {
+}): Promise<{ resources: GenerationResourceValue[]; params: Record<string, unknown> }> {
   const metadata = input.metadata;
   const resourceInput = extractResourceInputFromMeta(metadata);
   const resolved = new Map<number, ResolvedCandidate>();
@@ -1831,17 +2015,17 @@ export async function resolveImageMeta({
   }
 
   // --- Enrich via getResourceData() ---
-  let allResources: GenerationResource[] = [];
+  let allResources: GenerationResourceValue[] = [];
   if (resolved.size > 0) {
     const versionIds = [...resolved.keys()];
     allResources = (
       await getResourceData(versionIds, { user, withPreview: true, browsingLevel })
     ).map((resource) => {
       const candidate = resolved.get(resource.id);
-      if (candidate?.strength != null) {
-        return { ...resource, strength: candidate.strength / 100 };
-      }
-      return resource;
+      return asResourceValue(
+        resource,
+        candidate?.strength != null ? candidate.strength / 100 : undefined
+      );
     });
   }
 

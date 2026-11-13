@@ -45,7 +45,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },

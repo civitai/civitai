@@ -1,5 +1,6 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { enhance } from '$app/forms';
   import { FormState } from '$lib/form-state.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -14,7 +15,7 @@
   // whole model lookup and still not refetch them.
   let version = $state(0);
 
-  const notes = $derived(browser ? fetchModelNotes(modelId, version) : null);
+  const notes = $derived(browser ? fetchModelNotes(modelId, version) : SSR_PENDING);
 
   let adding = $state(false);
 

@@ -1,5 +1,5 @@
 import { isDev } from '~/env/other';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
@@ -187,7 +187,7 @@ export default PublicEndpoint(
     // Resolve the session ONCE here so we can derive isAnon, then hand it to the
     // Tracker (3rd ctor arg) so it isn't re-resolved. `isAnon` is SERVER-derived
     // (`!session?.user`) — never from the client body.
-    const session = await getServerAuthSession({ req, res });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
     // 🔴 PRIVATE-RUN MOUNT → NO ClickHouse row, exactly like `secondary` above and for
     // the same reason: this is the OWNER-VISIBLE impression rail, and a private run of a

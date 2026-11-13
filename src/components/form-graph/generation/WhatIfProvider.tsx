@@ -22,9 +22,9 @@ import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/Sou
 import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
-import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
+import { applyWhatIfFingerprints } from '~/shared/generation/whatif-fingerprints';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
@@ -45,17 +45,25 @@ const fieldLabel = (key: string) =>
 export function getMissingFieldMessage(
   errors: Record<string, { message?: string }> | null
 ): string | null {
+  return getMissingField(errors)?.message ?? null;
+}
+
+/** The first field holding back the estimate: its key, so the footer can point at it, and why. */
+export function getMissingField(
+  errors: Record<string, { message?: string }> | null
+): { key: string; message: string } | null {
   if (!errors) return null;
   const entries = Object.entries(errors);
   for (const [key, error] of entries) {
     if (!error.message) continue;
     const label = fieldLabel(key);
-    return error.message.toLowerCase().includes(label.toLowerCase())
+    const message = error.message.toLowerCase().includes(label.toLowerCase())
       ? error.message
       : `${label}: ${error.message}`;
+    return { key, message };
   }
   const first = entries[0];
-  return first ? `${fieldLabel(first[0])} is invalid.` : null;
+  return first ? { key: first[0], message: `${fieldLabel(first[0])} is invalid.` } : null;
 }
 
 /** Fields whose content never affects cost — placeholdered for estimation. */
@@ -135,7 +143,7 @@ export function useWhatIfFromStore({
   // Don't estimate a selection the server will refuse.
   const gateBlocked = useDisabledGates(selectionValues).length > 0;
 
-  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+  const { queryResult, preBoost, setPreBoost, download, boostRequired } = usePreBoostWhatIf({
     revision,
     queryPayload,
     enabled:
@@ -171,6 +179,7 @@ export function useWhatIfFromStore({
     preBoost,
     setPreBoost,
     download,
+    boostRequired,
   };
 }
 

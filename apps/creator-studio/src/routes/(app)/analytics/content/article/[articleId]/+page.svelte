@@ -10,6 +10,7 @@
   import DeltaChip from '$lib/components/DeltaChip.svelte';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
   import ImpressionsNotice from '$lib/components/ImpressionsNotice.svelte';
+  import CollectorsPanel from '$lib/components/CollectorsPanel.svelte';
   import ReactorsPanel from '$lib/components/ReactorsPanel.svelte';
   import { chartType } from '$lib/stores/chart-type';
   import { formatRange, dayDiff, shiftIso } from '$lib/date-range';
@@ -246,3 +247,7 @@
 </div>
 
 <ReactorsPanel endpoint="/analytics/content/article/{article.articleId}/reactors" noun="article" />
+<CollectorsPanel
+  endpoint="/analytics/content/article/{article.articleId}/collectors"
+  noun="article"
+/>

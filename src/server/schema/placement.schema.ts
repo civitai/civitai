@@ -18,7 +18,15 @@ import {
   STICKER_PLACEMENT_MAX_SCALE,
   STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_MIN_SCALE,
+  STICKER_MEDIA_TYPES,
 } from '~/shared/utils/sticker-placement';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
+import {
+  STICKER_TRACK_EASES,
+  STICKER_TRACK_MAX_KEYS,
+  STICKER_TRACK_MAX_PAIRS,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 
 export const placementSurfaceSchema = z.enum(
   placementSurfaces as [string, ...string[]]
@@ -56,9 +64,49 @@ export const stickerPlacementDataSchema = z.object({
     .default(STICKER_PLACEMENT_DEFAULT_OPACITY),
 });
 
+const stickerTrackPairs = z
+  .array(z.tuple([z.number().int().nonnegative(), finite]))
+  .max(STICKER_TRACK_MAX_PAIRS);
+
+/** Shape here, rules in `stickerTrackRefusal`; the creator's size limit is checked by the service. */
+export const stickerTrackSchema = z
+  .discriminatedUnion('v', [
+    z.object({
+      v: z.literal(1),
+      ms: z.number().int(),
+      show: stickerTrackPairs.optional(),
+      x: stickerTrackPairs,
+      y: stickerTrackPairs,
+      s: stickerTrackPairs,
+      r: stickerTrackPairs,
+    }),
+    z.object({
+      v: z.literal(2),
+      keys: z
+        .array(
+          z.object({
+            t: z.number().int(),
+            x: finite,
+            y: finite,
+            s: finite,
+            r: finite,
+            o: finite,
+            ease: z.enum(STICKER_TRACK_EASES),
+          })
+        )
+        .max(STICKER_TRACK_MAX_KEYS),
+    }),
+  ])
+  .superRefine((track, ctx) => {
+    const refusal = stickerTrackRefusal(track as StickerTrack);
+    if (refusal) ctx.addIssue({ code: 'custom', message: `track: ${refusal}` });
+  });
+
 export const createStickerPlacementSchema = z.object({
   imageId: z.number().int().positive(),
   data: stickerPlacementDataSchema,
+  /** Movement over a video. `data` is replaced by its pose at time zero. */
+  track: stickerTrackSchema.optional(),
   /**
    * Take the creator's free capacity rather than paying their price.
    *
@@ -76,6 +124,10 @@ export type CreateStickerPlacementInput = z.infer<typeof createStickerPlacementS
 
 export const getStickerPlacementsSchema = z.object({
   imageIds: z.array(z.number().int().positive()).min(1).max(100),
+});
+
+export const getStickerTracksSchema = z.object({
+  imageId: z.number().int().positive(),
 });
 
 export const actOnStickerPlacementSchema = z.object({
@@ -110,6 +162,9 @@ export const placementSpaceSchema = z
       .object({
         maxScale: z.number().min(STICKER_PLACEMENT_MIN_SCALE).max(STICKER_PLACEMENT_MAX_SCALE),
         contentRule: z.enum(['atOrBelow', 'any']),
+        // At least one: switching every type off is the mode's "No stickers", and
+        // a second way to say it would leave two states that mean the same thing.
+        mediaTypes: z.array(z.enum(STICKER_MEDIA_TYPES)).min(1),
       })
       .partial()
       .optional(),
@@ -278,12 +333,23 @@ export const submitToRemixGallerySchema = z
      * asserts. `placerId` is never taken from here; it comes from the session.
      */
     free: z.boolean().default(false),
+    /**
+     * Ask for an event's team waiver instead of paying: the server decides whether
+     * this remix qualifies (`findTeamRemixWaiver`) and refuses if it does not.
+     */
+    teamWaiver: z.boolean().default(false),
   })
   .superRefine((input, ctx) => {
+    if (input.free && input.teamWaiver)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['teamWaiver'],
+        message: 'A submission is either free or team-waived, not both',
+      });
     // Without this, omitting `expectedPrice` on a paid submission reaches the
     // service as `undefined`, which it reads as "the submitter agreed to
     // whatever it is now" — the exact consent hole the field exists to close.
-    if (!input.free && input.expectedPrice == null)
+    if (!input.free && !input.teamWaiver && input.expectedPrice == null)
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['expectedPrice'],
@@ -378,4 +444,47 @@ export const getPendingStickerPlacementsSchema = z.object({
 /** Same marking rule as the owner queue: the placer's own band, not a filter. */
 export const getMyStickerPlacementsSchema = z.object({
   browsingLevel: z.number().min(0).default(allBrowsingLevelsFlag),
+});
+
+const storylineSpaceModeSchema = z.enum(['off', 'review']);
+
+export const storylineIdSchema = z.object({ storylineId: z.number().int().positive() });
+
+/**
+ * `price`: `undefined` keeps, `null` inherits the creator's default, a number
+ * sets it. Zero is a real price here; the creator's score/tier cap is applied
+ * at read.
+ */
+export const setStorylineSpaceSchema = z.object({
+  storylineId: z.number().int().positive(),
+  mode: storylineSpaceModeSchema,
+  price: z.number().int().min(0).nullable().optional(),
+});
+
+export const storylineContinuePriceSchema = z.object({
+  parentPostId: z.number().int().positive(),
+});
+
+export const storylineContinuationCursorSchema = z.object({
+  cursor: z.string().nullish(),
+});
+
+export const actOnStorylineContinuationSchema = z.object({
+  placementId: z.number().int().positive(),
+  action: z.enum(['approve', 'decline']),
+});
+
+/**
+ * 🔴 `expectedPrice` is required, unlike the remix gallery's. A storyline is
+ * free by default, so without it an owner who starts charging while someone
+ * is deciding would charge a contributor who was shown "free".
+ */
+export const submitStorylineContinuationSchema = z.object({
+  parentPostId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+  expectedPrice: z.number().int().min(0),
+});
+
+export const storylinePlacementIdSchema = z.object({
+  placementId: z.number().int().positive(),
 });

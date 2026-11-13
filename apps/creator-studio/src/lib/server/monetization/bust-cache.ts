@@ -17,6 +17,11 @@ const ENDPOINT = '/api/v1/model-versions/bust-cache';
 // above already accepts.
 const BUST_TIMEOUT_MS = 3000;
 
+// The endpoint's own cap: `src/pages/api/v1/model-versions/bust-cache.ts` (main app) refuses a request with
+// more than 500 ids (`.max(500)`). Since the result is ignored, one oversized request meant nothing was
+// busted at all, silently — so a sale or fee change across more versions than this stayed stale until TTL.
+const MAX_IDS_PER_REQUEST = 500;
+
 export async function bustVersionCache(cookie: string, versionIds: number[]): Promise<void> {
   if (!versionIds.length) return;
   // The result is deliberately ignored — see above. `callMainApp` never throws.
@@ -27,10 +32,20 @@ export async function bustVersionCache(cookie: string, versionIds: number[]): Pr
   // same endpoint returned in under a second. What the creator saw was not "it didn't save"; it was a
   // saved change spinning with nothing to read. The timeout returns that to the stale-read-until-TTL
   // cost the comment above already accepts.
-  await callMainApp(ENDPOINT, cookie, {
-    method: 'POST',
-    body: { versionIds },
-    parse: false,
-    timeoutMs: BUST_TIMEOUT_MS,
-  });
+  //
+  // Chunked to the endpoint's cap, and the chunks sent at once rather than in turn, so the wait stays
+  // about one timeout however many there are.
+  const chunks: number[][] = [];
+  for (let i = 0; i < versionIds.length; i += MAX_IDS_PER_REQUEST)
+    chunks.push(versionIds.slice(i, i + MAX_IDS_PER_REQUEST));
+  await Promise.all(
+    chunks.map((chunk) =>
+      callMainApp(ENDPOINT, cookie, {
+        method: 'POST',
+        body: { versionIds: chunk },
+        parse: false,
+        timeoutMs: BUST_TIMEOUT_MS,
+      })
+    )
+  );
 }

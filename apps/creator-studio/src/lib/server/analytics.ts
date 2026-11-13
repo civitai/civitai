@@ -3,6 +3,7 @@ import { getClickhouse } from '$lib/server/clickhouse';
 import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
 import { dbRead } from '$lib/server/db';
 import { followersAmong } from '$lib/server/followers';
+import { imageAudienceListable } from '$lib/server/reactors';
 import { createCache } from '$lib/server/cache';
 import { getLogger } from '$lib/server/logger';
 import { mapWithConcurrency } from '$lib/server/concurrency';
@@ -30,6 +31,7 @@ export type TopImage = {
   url: string;
   nsfwLevel: number;
   type: 'image' | 'video' | 'audio';
+  createdAt: string | null;
 };
 export type ContentTotals = {
   reactions: number;
@@ -75,6 +77,8 @@ export type ImageViewDetail = {
   /** Feed impressions on this image. Empty series when the entity type carries none. */
   impressionSeries: TimePoint[];
   impressionTotal: number;
+  /** Who reacted / who collected are withheld, so the page shows a note instead of the two lists. */
+  audienceHidden: boolean;
 };
 
 // An article row on the /analytics/content Articles tab. `coverUrl` is null for an article with no cover.
@@ -87,6 +91,7 @@ export type TopArticle = {
   coverUrl: string | null;
   nsfwLevel: number;
   publishedAt: string | null;
+  createdAt: string | null;
 };
 
 // A comic row on the /analytics/content Comics tab. Deliberately `readers`, not `views` — see fetchComics.
@@ -101,6 +106,7 @@ export type ComicSummary = {
   newReaders: number;
   projectViews: number;
   chapterReads: number;
+  createdAt: string;
 };
 
 // `tracking` distinguishes "nothing to show yet" from "zero", which these surfaces need because their tables
@@ -121,8 +127,8 @@ export type Model3dPanel = { models: Model3dSummary[]; tracking: boolean };
 
 // The article equivalent of ImageViewDetail, minus the comment series — which is unbuilt, not impossible.
 // ClickHouse cannot answer it (the `comments` type enum has no Article arm), but ClickHouse is not where the
-// image drilldown reads comments from either: `fetchImageViewDetail` counts `CommentV2` through `Thread`, and
-// `Thread.articleId` exists, so the same query shape works here whenever someone wants the series.
+// image drilldown reads comments from either: `fetchImageViewDetail` counts `CommentV3` rows, and
+// `entityType = 'article'` exists there, so the same query shape works here whenever someone wants the series.
 export type ArticleViewDetail = {
   articleId: number;
   title: string;
@@ -165,15 +171,27 @@ export const getContentTotals = createCache({
 }).get;
 
 // Top reacted media over the range (images + videos, split by `type` on each page).
+// `pool` swaps which items are ranked: the most-reacted (default) or the newest. Cache keys are strings and
+// numbers only, hence a name rather than a flag.
+export type TopPool = 'top' | 'recent';
 export const getTopMedia = createCache({
-  name: 'analytics:top-media:v5',
-  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
-    fetchTopMedia(userId, from, to),
+  name: 'analytics:top-media:v7',
+  fetch: ({
+    userId,
+    from,
+    to,
+    pool,
+  }: {
+    userId: number;
+    from: string;
+    to: string;
+    pool?: TopPool;
+  }) => fetchTopMedia(userId, from, to, pool),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 export const getComics = createCache({
-  name: 'analytics:comics:v4',
+  name: 'analytics:comics:v5',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchComics(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -207,16 +225,25 @@ export const getArticleViewDetail = createCache({
 }).get;
 
 export const getTopArticles = createCache({
-  name: 'analytics:top-articles:v3',
-  fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
-    fetchTopArticles(userId, from, to),
+  name: 'analytics:top-articles:v5',
+  fetch: ({
+    userId,
+    from,
+    to,
+    pool,
+  }: {
+    userId: number;
+    from: string;
+    to: string;
+    pool?: TopPool;
+  }) => fetchTopArticles(userId, from, to, pool),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
 
 // Keyed on userId as well as imageId: the fetch refuses images the caller doesn't own, so a cache entry is
 // only ever valid for the owner it was fetched for.
 export const getImageViewDetail = createCache({
-  name: 'analytics:image-views:v1',
+  name: 'analytics:image-views:v2',
   fetch: ({
     userId,
     imageId,
@@ -244,46 +271,36 @@ export const getReactionAudienceSplit = createCache({
 
 // Comments come from Postgres, not ClickHouse, because no ClickHouse table can answer this correctly:
 //
-//   - `image_metrics_user` (what this read until now) is a dead one-off backfill. Nothing writes it, and its max
-//     userId is 9.66M against current ids past 12.5M — frozen for everyone it covers, **0** for everyone newer.
-//   - `comments` looks like the replacement and is a trap. Its `entityId` is the **CommentV2 id**, not the entity
-//     commented on, for every `type` except `Model`. The tell: 970,679 rows of `type = 'Image'` over 970,422
-//     distinct entityIds, and Image/Post/Comment/Review/Bounty all share one id range (45,825–2,309,025) that
-//     overlaps between them, while real image ids are past 139M. Joining it to `images_created.id` does not error —
-//     ids that low exist — it silently credits each comment to whatever ancient image shares its number.
-//   - `entityMetricTotal_v3` carries two per-image comment metrics — `Comment` (2023-02-15 to 2025-11-06) and
-//     `commentCount` (2025-11-06 on, from the event-engine CDC handler). They are two eras of one measurement,
-//     not a live one and a dead one. Summing both still fails a ground-truth check across four creators:
-//     -11%, +18%, +27%, +30% against Postgres. Consistent with the pipeline's delete path — it resolves an
-//     image's owner by reading `Image`, which is already gone on a cascade delete, so the -1 is dropped and the
-//     total ratchets up. Three of the four errors are positive.
+//   - `image_metrics_user` (what this read until now) is a dead one-off backfill. Nothing writes it: frozen for
+//     every user it covers, **0** for every newer one.
+//   - `comments` looks like the replacement and is a trap. Its `entityId` is the **comment id** (one id
+//     sequence shared by CommentV2 and CommentV3), not the entity commented on, for every `type` except
+//     `Model`. The tell: Image/Post/Comment/Review/Bounty share one low id range that overlaps between them,
+//     while real image ids are far past it. Joining it to `images_created.id` does not error — ids that low
+//     exist — it silently credits each comment to whatever ancient image shares its number.
+//   - `entityMetricTotal_v3` carries two per-image comment metrics — `Comment` (until 2025-11-06) and
+//     `commentCount` (from 2025-11-06, from the event-engine CDC handler). They are two eras of one
+//     measurement, not a live one and a dead one. Summing both still fails a ground-truth check against
+//     Postgres, in both directions. Consistent with the pipeline's delete path — it resolves an image's owner
+//     by reading `Image`, which is already gone on a cascade delete, so the -1 is dropped and the total
+//     ratchets up.
 //
 // Do not generalise that middle point to `reactions`, which sits beside `comments` and looks like it. Its
 // `entityId` **is** the entity reacted to, and each `type` keeps to its own id space rather than sharing one:
-// over 30 days `Image_Create` runs to 139,931,065 across 19,428,878 rows / 6,203,813 distinct ids (3.13 per
-// image) while `CommentV2_Create` tops out at 2,309,122 against `max("CommentV2".id) = 2,309,121`. Sampled 6
-// `Image_Create` rows against Postgres: every `entityId` is a live `Image` whose `userId` is the CH `ownerId`.
-// Only `fetchTopMedia` keys off `reactions.entityId`; the rest of this file uses `reactions.ownerId`, which is
+// `Image_Create` entityIds are live `Image` ids, while `CommentV2_Create` entityIds are comment ids. Only
+// `fetchTopMedia` keys off `reactions.entityId`; the rest of this file uses `reactions.ownerId`, which is
 // what `reactions_owner_scores` aggregates. `comments` is the odd one out, and the reason is worth knowing —
 // `reactions` rows are emitted by the reaction handler, which knows the entity, while `comments` rows are
 // emitted by the comment handler, which knows the comment. There `type` says what was commented **on** and
 // `entityId` says which comment. Nothing in the schema shows that.
 //
-// Three things about the query that are load-bearing, all of them measured rather than reasoned:
+// Two things about the query are load-bearing:
 //
-//   - **It counts `CommentV2` rows, not `Thread.commentCount`.** The counter is exact (its trigger fires on every
-//     insert and delete) but it is a per-thread total with no author in it, and `AND cv."userId" <> uid` is the
-//     whole point: `update_thread_comment_count` increments unconditionally, so a creator who answers their own
-//     commenters inflates their own "comments received". Measured: 71.4% / 60.9% / 57.6% of the raw total was
-//     self-authored for userIds 1421581 / 2895 / 1279061. This tile renders on an **audience** page.
-//   - **The two arms must stay separate.** Collapsing them into
-//     `WHERE t.id IN (roots) OR t."rootThreadId" IN (roots)` makes both indexes unusable and seq-scans all 5.4M
-//     `Thread` rows on **every** cache miss — 683ms / ~350MB of buffers even for a creator with two images and
-//     zero comments. Split + `MATERIALIZED`, it is an index path: 46ms at that floor, 1.6s at the platform's
-//     largest creator (994880, 802,838 images). This runs on the SSR blocking path.
-//   - **`roots` joins `Image`, so a deleted image takes its comments with it.** `Thread.imageId` is
-//     `onDelete: SetNull`, orphaning ~234k root threads holding ~179k comments platform-wide. The number is
-//     therefore "all-time on images that still exist" and can fall month over month.
+//   - **It excludes the creator's own comments (`AND cv."userId" <> uid`), and that is the whole point.** A
+//     per-topic comment count has no author in it, so a creator who answers their own commenters would
+//     inflate their own "comments received". This tile renders on an **audience** page.
+//   - **It joins `Image`, so a deleted image takes its comments with it.** The number is therefore "all-time
+//     on images that still exist" and can fall month over month.
 export const getAllTimeTotals = createCache({
   name: 'analytics:alltime:v3',
   fetch: async ({ userId }: { userId: number }): Promise<AllTimeTotals> => {
@@ -292,17 +309,12 @@ export const getAllTimeTotals = createCache({
       getClickhouse().$query<{ reactions: number | string }>(
         `SELECT sum(score) AS reactions FROM reactions_owner_scores WHERE ownerId = ${uid}`
       ),
+      // Replies count: each carries the image on its own row.
       sql<{ comments: number | string }>`
-        WITH roots AS MATERIALIZED (
-          SELECT t.id FROM "Thread" t JOIN "Image" i ON i.id = t."imageId" WHERE i."userId" = ${uid}
-        ), threads AS MATERIALIZED (
-          SELECT id FROM roots
-          UNION ALL
-          SELECT c.id FROM "Thread" c JOIN roots r ON c."rootThreadId" = r.id
-        )
         SELECT count(*) AS comments
-        FROM "CommentV2" cv JOIN threads th ON th.id = cv."threadId"
-        WHERE cv."userId" <> ${uid}
+        FROM "CommentV3" cv JOIN "Image" i ON i.id = cv."entityId"
+        WHERE cv."entityType" = 'image' AND i."userId" = ${uid}
+          AND cv."userId" <> ${uid} AND cv."deletedAt" IS NULL
       `.execute(dbRead),
     ]);
     return {
@@ -360,10 +372,20 @@ function articleViewsDailySql(ids: number[], from: string, to: string): string {
 }
 
 // The creator's articles ranked by views over the range, enriched from Postgres for title + cover.
-async function fetchTopArticles(userId: number, from: string, to: string): Promise<TopArticle[]> {
+async function fetchTopArticles(
+  userId: number,
+  from: string,
+  to: string,
+  pool: TopPool = 'top'
+): Promise<TopArticle[]> {
   const uid = Number(userId);
   const ids = await articleIdsFor(uid);
   if (!ids.length) return [];
+  // Recent swaps the pool: the creator's newest published articles, whether or not anyone viewed or reacted to
+  // them in the range. Re-sorting the most-viewed pool by date would drop exactly the article the creator
+  // posted today.
+  const newestIds = pool === 'recent' ? await newestArticleIds(uid, from, to) : null;
+  if (newestIds && !newestIds.length) return [];
 
   const ch = getClickhouse();
   // Views and reactions are fetched for the same id set so the client can re-rank between them without a
@@ -371,12 +393,16 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
   // entityId, and the owner predicate is what keeps this off a broad scan.
   const [viewRows, reactionRows] = await Promise.all([
     ch.$query<{ articleId: number | string; views: number | string }>(
-      `SELECT entityId AS articleId, sum(views) AS views FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${ids.join(
+      `SELECT entityId AS articleId, sum(views) AS views FROM daily_views WHERE entityType = '${VIEW_ENTITY.article}' AND entityId IN (${(
+        newestIds ?? ids
+      ).join(
         ','
       )}) AND createdDate >= toDate('${from}') AND createdDate <= toDate('${to}') GROUP BY articleId ORDER BY views DESC LIMIT 100`
     ),
     ch.$query<{ articleId: number | string; reactions: number | string }>(
-      `SELECT entityId AS articleId, sum(if(type = 'Article_Create', 1, -1)) AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Article_Create', 'Article_Delete') AND entityId IN (${ids.join(
+      `SELECT entityId AS articleId, sum(if(type = 'Article_Create', 1, -1)) AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Article_Create', 'Article_Delete') AND entityId IN (${(
+        newestIds ?? ids
+      ).join(
         ','
       )}) AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY articleId`
     ),
@@ -387,7 +413,7 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
   );
   // An article with reactions but no views in the period still belongs in the list — otherwise ranking by
   // reactions would silently omit it.
-  const shownIds = new Set([...viewsById.keys(), ...reactionsById.keys()]);
+  const shownIds = new Set(newestIds ?? [...viewsById.keys(), ...reactionsById.keys()]);
   if (!shownIds.size) return [];
 
   const impressionsById = await fetchImpressionsByEntity(
@@ -405,6 +431,7 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
       'Article.title as title',
       'Article.nsfwLevel as nsfwLevel',
       'Article.publishedAt as publishedAt',
+      'Article.createdAt as createdAt',
       'Image.url as coverUrl',
     ])
     .execute();
@@ -419,8 +446,25 @@ async function fetchTopArticles(userId: number, from: string, to: string): Promi
       coverUrl: a.coverUrl ?? null,
       nsfwLevel: Number(a.nsfwLevel ?? 0),
       publishedAt: a.publishedAt ? new Date(a.publishedAt).toISOString() : null,
+      createdAt: a.createdAt ? new Date(a.createdAt).toISOString() : null,
     }))
     .sort((x, y) => y.views - x.views);
+}
+
+// The creator's newest published articles created within the range, newest first. Bounded to the page's 100-row
+// cap in Postgres, so the ClickHouse lookups that follow take a literal id list of at most 100.
+async function newestArticleIds(uid: number, from: string, to: string): Promise<number[]> {
+  const rows = await dbRead
+    .selectFrom('Article')
+    .where('userId', '=', uid)
+    .where('status', '=', 'Published')
+    .where(sql<boolean>`"createdAt" >= ${from}::date AND "createdAt" < (${to}::date + 1)`)
+    .orderBy(sql`"createdAt" desc nulls last`)
+    .orderBy('id', 'desc')
+    .limit(TOP_MEDIA_PER_TYPE)
+    .select(['id'])
+    .execute();
+  return rows.map((r) => r.id);
 }
 
 // Model views are creator-wide here, not per version. A view is of the *model* page, so hanging it off the
@@ -575,8 +619,15 @@ export const TOP_MEDIA_PG_CONCURRENCY = 4;
 // no media type, and ClickHouse's `images_created` keeps rows for deleted images, so any cut made in ClickHouse
 // lets deleted ids take a live image's slot. Every reacted id up to TOP_MEDIA_READ_CEILING comes back, and
 // `enrichTopImages` cuts.
-async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
+async function fetchTopMedia(
+  userId: number,
+  from: string,
+  to: string,
+  pool: TopPool = 'top'
+): Promise<TopImage[]> {
   const uid = Number(userId);
+  if (pool === 'recent')
+    return enrichTopImages(await newestMediaReactions(uid, from, to), from, to);
   const raw = await getClickhouse().$query<{
     imageId: number | string;
     reactions: number | string;
@@ -595,6 +646,47 @@ async function fetchTopMedia(userId: number, from: string, to: string): Promise<
       .catch(() => undefined);
   }
   return enrichTopImages(raw, from, to);
+}
+
+// Recent's pool: the newest published images and the newest published videos created within the range (N of each,
+// the same per-type cap), each carrying its reactions over the range — zero when nobody reacted, which the
+// reaction pool can never contain. Ordering by `(createdAt, id)` lets `Image_userId_createdAt` serve the window
+// and the cap. Unpublished images (no post, or a post not yet live) are not content
+// the audience can see, so they stay out, matching the reaction pool, which only knows images people reacted to.
+async function newestMediaReactions(
+  uid: number,
+  from: string,
+  to: string
+): Promise<{ imageId: number; reactions: number }[]> {
+  const newest = async (type: 'image' | 'video') =>
+    (
+      await sql<{ id: number }>`
+        SELECT i.id
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i."userId" = ${uid}
+          AND i.type = ${type}::"MediaType"
+          AND i."createdAt" >= ${from}::date AND i."createdAt" < (${to}::date + 1)
+          AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now()
+        ORDER BY i."createdAt" DESC, i.id DESC
+        LIMIT ${TOP_MEDIA_PER_TYPE}
+      `.execute(dbRead)
+    ).rows.map((r) => Number(r.id));
+  const [images, videos] = await Promise.all([newest('image'), newest('video')]);
+  const ids = [...images, ...videos];
+  if (!ids.length) return [];
+  const rows = await getClickhouse().$query<{
+    imageId: number | string;
+    reactions: number | string;
+  }>(
+    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND entityId IN (${ids.join(
+      ','
+    )}) AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId`
+  );
+  const reactionsById = new Map(
+    rows.map((r) => [Number(r.imageId), Math.max(0, Number(r.reactions))])
+  );
+  return ids.map((imageId) => ({ imageId, reactions: reactionsById.get(imageId) ?? 0 }));
 }
 
 // Input is in ranking order, so the first N of each type are its top N.
@@ -660,9 +752,15 @@ async function enrichTopImages(
   for (let i = 0; i < ids.length; i += TOP_MEDIA_PG_BATCH_SIZE) {
     batches.push(ids.slice(i, i + TOP_MEDIA_PG_BATCH_SIZE));
   }
-  type ImageRow = { id: number; url: string | null; nsfwLevel: number | null; type: string };
+  type ImageRow = {
+    id: number;
+    url: string | null;
+    nsfwLevel: number | null;
+    type: string;
+    createdAt: Date | string | null;
+  };
   const results = await mapWithConcurrency(batches, TOP_MEDIA_PG_CONCURRENCY, (batch) =>
-    sql<ImageRow>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${batch})`.execute(
+    sql<ImageRow>`SELECT id, url, "nsfwLevel", type, "createdAt" FROM "Image" WHERE id = ANY(${batch})`.execute(
       dbRead
     )
   );
@@ -680,6 +778,7 @@ async function enrichTopImages(
           url: img.url,
           nsfwLevel: Number(img.nsfwLevel ?? 0),
           type: img.type as TopImage['type'],
+          createdAt: img.createdAt ? new Date(img.createdAt).toISOString() : null,
         },
       ];
     })
@@ -719,7 +818,7 @@ async function fetchImageViewDetail(
     .selectFrom('Image')
     .where('id', '=', id)
     .where('userId', '=', uid)
-    .select(['id', 'url', 'nsfwLevel', 'type', 'createdAt'])
+    .select(['id', 'url', 'nsfwLevel', 'type', 'createdAt', 'ingestion', 'blockedFor'])
     .executeTakeFirst();
   if (!image?.url) return null;
 
@@ -731,11 +830,10 @@ async function fetchImageViewDetail(
   // granules on the `time` prefix. Unbounded, the same query scans every partition: 2.4s against 155ms for a
   // month. That's why there's no all-time reaction figure on this page.
   //
-  // Comments do NOT come from ClickHouse. `comments.entityId` is the **CommentV2 id**, not the entity id, for
-  // every type except Model — 970k image-comment rows over 970,422 distinct entityIds, max 2,309,059 against
-  // image ids past 139M. Joining it on an image id doesn't error, it silently returns whatever ancient image
-  // shares that number. Postgres via `Thread` is the only correct source; `rootThreadId` picks up replies,
-  // which count as comments on the image.
+  // Comments do NOT come from ClickHouse. `comments.entityId` is the **comment id**, not the entity id, for
+  // every type except Model. Joining it on an image id doesn't error, it silently returns whatever ancient
+  // image shares that number. `CommentV3` is the correct source; replies carry the image on their own row,
+  // so they count as comments on it.
   const [seriesRows, prevRows, lifetimeRows, reactionRows, commentRows, impressionRows] =
     await Promise.all([
       ch.$query<{ date: string; value: number | string }>(
@@ -754,9 +852,8 @@ async function fetchImageViewDetail(
       ),
       sql<{ date: string; value: number | string }>`
       SELECT c."createdAt"::date AS date, count(*)::int AS value
-      FROM "CommentV2" c
-      JOIN "Thread" t ON t.id = c."threadId"
-      WHERE (t."imageId" = ${id} OR t."rootThreadId" IN (SELECT id FROM "Thread" WHERE "imageId" = ${id}))
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'image' AND c."entityId" = ${id} AND c."deletedAt" IS NULL
         AND c."createdAt" >= ${from}::date AND c."createdAt" < (${to}::date + 1)
       GROUP BY date ORDER BY date
     `
@@ -799,6 +896,7 @@ async function fetchImageViewDetail(
     commentTotal: sum(commentSeries),
     impressionSeries,
     impressionTotal: sum(impressionSeries),
+    audienceHidden: !imageAudienceListable(image),
   };
 }
 
@@ -892,6 +990,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     coverUrl: string | null;
     nsfwLevel: number;
     published: boolean;
+    createdAt: Date | string;
     chapters: string | number;
     readers: string | number;
     newReaders: string | number;
@@ -901,6 +1000,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
            i.url                                       AS "coverUrl",
            p."nsfwLevel"                               AS "nsfwLevel",
            (p."publishedAt" IS NOT NULL)               AS "published",
+           p."createdAt"                               AS "createdAt",
            count(DISTINCT c.id)                        AS "chapters",
            count(DISTINCT r."userId")                  AS "readers",
            count(DISTINCT r."userId") FILTER (
@@ -915,7 +1015,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
     WHERE p."userId" = ${uid}
       -- Comic deletion is soft and lives in status, not in a deletedAt column like the sibling entities.
       AND p.status <> 'Deleted'
-    GROUP BY p.id, p.name, i.url, p."nsfwLevel", p."publishedAt"
+    GROUP BY p.id, p.name, i.url, p."nsfwLevel", p."publishedAt", p."createdAt"
     ORDER BY count(DISTINCT r."userId") DESC, p.id DESC
   `.execute(dbRead);
 
@@ -972,6 +1072,7 @@ async function fetchComics(userId: number, from: string, to: string): Promise<Co
         newReaders: Number(r.newReaders),
         projectViews: projectViews.get(projectId) ?? 0,
         chapterReads: chapterReads.get(projectId) ?? 0,
+        createdAt: new Date(r.createdAt).toISOString(),
       };
     }),
   };

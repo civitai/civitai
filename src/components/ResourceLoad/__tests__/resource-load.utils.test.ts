@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { toResourceLoadProgress } from '~/components/ResourceLoad/resource-load.utils';
 
 /**
- * The global `@civitai/client` stub has no `Air.parseSafe`, so without a real one every payload here
+ * The global `@civitai/orchestration-client` stub has no `Air.parseSafe`, so without a real one every payload here
  * would be dropped and every assertion below would pass for the wrong reason.
  */
 beforeEach(() => {

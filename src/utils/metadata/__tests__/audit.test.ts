@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  auditPromptEnriched,
   includesInappropriate,
   includesMinor,
   includesMinorAge,
@@ -172,5 +173,68 @@ describe('POI — Diddl character names', () => {
     ]) {
       expect(includesPoi(prompt), prompt).toBe(false);
     }
+  });
+});
+
+describe('auditPromptEnriched — match evidence', () => {
+  it('records the regex, field and gate word behind a young-noun block', () => {
+    const { success, triggers } = auditPromptEnriched('nude, young stepson');
+    expect(success).toBe(false);
+    expect(triggers[0]).toMatchObject({
+      category: 'inappropriate_minor',
+      matchedField: 'prompt',
+      gateWord: 'nude',
+    });
+    expect(triggers[0].matchedRegex).toEqual(expect.any(String));
+    expect(triggers[0].matchedText).toEqual(expect.any(String));
+  });
+
+  it('records the negative prompt as the matched field', () => {
+    const { triggers } = auditPromptEnriched('nude woman', 'mature body');
+    expect(triggers[0]).toMatchObject({
+      category: 'inappropriate_minor',
+      matchedField: 'negativePrompt',
+      gateWord: 'nude',
+    });
+  });
+
+  it('records the literal span of an age expression', () => {
+    const { triggers } = auditPromptEnriched('photo of a 9 year old, nude');
+    expect(triggers[0].category).toBe('minor_age');
+    expect(triggers[0].matchedText?.toLowerCase()).toContain('9');
+    expect(triggers[0].matchedField).toBe('prompt');
+  });
+
+  it('lists every matching rule, the first being the trigger itself', () => {
+    const { triggers } = auditPromptEnriched('9 year old, nude, young stepson');
+    const [first] = triggers;
+    expect(first.matches?.map((m) => m.category)).toEqual([
+      'minor_age',
+      'inappropriate_minor',
+      'inappropriate_minor',
+    ]);
+    expect(first.matches?.[0]).toMatchObject({
+      category: first.category,
+      matchedWord: first.matchedWord,
+    });
+  });
+
+  it('puts the deciding blocklist word first, ahead of an earlier-listed soft one', () => {
+    const { triggers } = auditPromptEnriched('daughter, rape');
+    const [first] = triggers;
+    expect(first.matchedWord).toBe('rape');
+    expect(first.matches?.[0]).toMatchObject({
+      category: first.category,
+      matchedWord: first.matchedWord,
+    });
+    expect(first.matches?.map((m) => m.matchedWord)).toContain('daughter');
+  });
+
+  it('adds no evidence to a prompt that passes', () => {
+    expect(auditPromptEnriched('a quiet landscape')).toEqual({
+      blockedFor: [],
+      triggers: [],
+      success: true,
+    });
   });
 });

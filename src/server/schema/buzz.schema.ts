@@ -10,10 +10,13 @@ import {
 } from '~/shared/constants/buzz.constants';
 import { constants } from '~/server/common/constants';
 import { formatDate } from '~/utils/date-helpers';
+import { coerceUtcDate } from '~/utils/zod-helpers';
 
 const buzzAccountTypeFromApiValueSchema = z
   .enum([...buzzApiAccountTypes, ...buzzApiAccountTypes.map((type) => type.toLowerCase())])
   .transform((type) => BuzzTypes.toClientType(type as BuzzApiAccountType));
+
+export const buzzServiceDate = coerceUtcDate();
 
 export function preprocessAccountType(value: unknown) {
   return typeof value === 'string' ? value?.toLowerCase() : undefined;
@@ -70,7 +73,17 @@ export const exportUserBuzzTransactionsSchema = z.object(userTransactionFilters)
 export const buzzTransactionDetails = z
   .object({
     user: z.string().optional(),
-    entityId: z.number().optional(),
+    // Some ledger rows store entityId as a string; one unreadable value must not fail the whole list.
+    entityId: z
+      .preprocess(
+        (v) =>
+          typeof v === 'string' && /^\d+$/.test(v) && Number.isSafeInteger(Number(v))
+            ? Number(v)
+            : v,
+        z.number()
+      )
+      .optional()
+      .catch(undefined),
     entityType: z.string().optional(),
     url: z.string().optional(),
     toAccountType: z.enum(buzzAccountTypes).optional(),
@@ -81,19 +94,22 @@ export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 
 // export type GetBuzzTransactionResponse = z.infer<typeof getBuzzTransactionResponse>;
 export const getBuzzTransactionResponse = z.object({
-  date: z.coerce.date(),
+  date: buzzServiceDate,
   // The buzz service returns a NAME for the transaction types it knows and the raw enum NUMBER for the
-  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases, and the same numbers
-  // reach ClickHouse (see the `'27'` handling in creator-studio's earnings reads and
-  // `fromClickhouseTransactionType`). Collapsing every numeric value to Tip labelled
-  // each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all a fee-earning creator saw.
-  type: z.any().transform((value): TransactionType => {
-    const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
-    if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
-    // Reverse-mapped name exists => it's a real enum value. Unknown numbers keep the old Tip fallback
-    // rather than rendering blank.
-    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
-  }),
+  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases. ClickHouse spells
+  // its unnamed members differently; see `fromClickhouseTransactionType`. Collapsing every numeric
+  // value to Tip labelled each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all
+  // a fee-earning creator saw.
+  type: z
+    .any()
+    .optional()
+    .transform((value): TransactionType => {
+      const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
+      if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
+      // Reverse-mapped name exists => it's a real enum value. Unknown numbers keep the old Tip fallback
+      // rather than rendering blank.
+      return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
+    }),
   fromAccountId: z.coerce.number(),
   toAccountId: z.coerce.number(),
   fromAccountType: z.preprocess(preprocessAccountType, buzzAccountTypeFromApiValueSchema),
@@ -106,7 +122,7 @@ export const getBuzzTransactionResponse = z.object({
 
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
 export const getUserBuzzTransactionsResponse = z.object({
-  cursor: z.coerce.date().nullish(),
+  cursor: buzzServiceDate.nullish(),
   transactions: getBuzzTransactionResponse.array(),
 });
 
@@ -159,6 +175,12 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .omit({
     type: true,
   })
+  .extend({
+    // Minted by the client once per tip and resent on its retries: the tip's ledger ids derive
+    // from it, so a retry after an unanswered send cannot move the Buzz twice. Optional for
+    // clients from before keys, which get a new id per call as before.
+    idempotencyKey: z.string().uuid().optional(),
+  })
   .check((ctx) => {
     if (
       ctx.value.entityType &&
@@ -205,7 +227,7 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
-export const compensationSources = ['compensation', 'licenseFee'] as const;
+export const compensationSources = ['compensation', 'licenseFee', 'tip'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
@@ -275,9 +297,9 @@ export const getTransactionsReportSchema = z.object({
 export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsReportResultSchema>;
 export const getTransactionsReportResultSchema = z.array(
   z.object({
-    date: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
-    start: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
-    end: z.coerce.date().transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    date: buzzServiceDate.transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    start: buzzServiceDate.transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
+    end: buzzServiceDate.transform((val) => formatDate(val, 'YYYY-MM-DDTHH:mm:ss', true)),
     accounts: z.array(
       z.object({
         accountType: buzzAccountTypeFromApiValueSchema,

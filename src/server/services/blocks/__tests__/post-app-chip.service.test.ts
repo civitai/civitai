@@ -16,8 +16,7 @@
  *
  * The builders being pinned says nothing about what is handed to Prisma, and the
  * gate's input is not part of the decision it gates. Those are relationships
- * between two modules, so only a test that loads both can see them. Precedent:
- * `app-listing-icon.service.test.ts`, the file this module's own split copies.
+ * between two modules, so only a test that loads both can see them.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -219,6 +218,40 @@ describe('both reads use the exact builders, on the right client', () => {
       name: 'Custom Generators',
       iconUrl: null,
     });
+  });
+
+  it('passes the viewer browsing level through to the icon gate', async () => {
+    // Same R icon, same red host, two viewer levels. Dropping the parameter collapses the
+    // opted-in read onto the anonymous one. Level 5 (PG|R) is distinct from every ceiling constant.
+    const withRIcon = {
+      ...approvedAppRow,
+      appBlocks: [
+        {
+          ...approvedAppRow.appBlocks[0],
+          appListing: {
+            ...approvedAppRow.appBlocks[0].appListing,
+            icon: {
+              url: 'svc-r.png',
+              nsfwLevel: 4,
+              ingestion: 'Scanned',
+              needsReview: null,
+              poi: false,
+              minor: false,
+              tosViolation: false,
+              acceptableMinor: false,
+              blockedFor: null,
+            },
+          },
+        },
+      ],
+    };
+    const read = async (viewerBrowsingLevel?: number) => {
+      markerDb({ blockPublishedAppId: MARKER });
+      dbMock.dbRead.oauthClient.findUnique.mockResolvedValue(withRIcon);
+      return readPostAppChip({ postId: POST_ID, user: USER, host: 'civitai.red', viewerBrowsingLevel });
+    };
+    expect((await read(5))?.iconUrl).toEqual(expect.stringContaining('svc-r.png'));
+    expect((await read(undefined))?.iconUrl).toBeNull();
   });
 
   it('does not look up an app for a post with no marker', async () => {

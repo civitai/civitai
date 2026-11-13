@@ -1,8 +1,11 @@
 import { sql, type RawBuilder } from '@civitai/db/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { dbRead } from './db';
 import { issueStrike, removeImages, setImageFlag } from './user-actions.service';
 import type { MediaType } from '$lib/media/edge-url';
+import { approvedAppealOf, type ApprovedAppealBadge, type HeldSummary } from './removal-hold';
+import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal-confirmation';
 
 // Retool's Bulk Image Manager: find a batch of images by one of five sources, then act on the batch.
 //
@@ -37,6 +40,7 @@ export type BulkImage = {
   negativePrompt: string | null;
   isProfilePicture: boolean;
   hasConnection: boolean;
+  approvedAppeal: ApprovedAppealBadge;
 };
 
 const IMAGE_COLUMNS = [
@@ -122,8 +126,13 @@ async function batchFrom(
     base.select((eb) => eb.fn.countAll<string>().as('c')).executeTakeFirst(),
   ]);
 
+  const items = rows.slice(0, limit);
+  const appeals = await getLatestApprovedImageAppeals(
+    dbRead,
+    items.map((r) => r.id)
+  );
   return {
-    items: rows.slice(0, limit),
+    items: items.map((r) => ({ ...r, approvedAppeal: approvedAppealOf(appeals.get(r.id)) })),
     total: Number(total?.c ?? 0),
     truncated: rows.length > limit,
     offset,
@@ -199,6 +208,37 @@ export async function getImagesForCollection(
 }
 
 /**
+ * The images hung off a non-post entity through `ImageConnection`: a bounty's reference images, a bounty
+ * entry's submissions, an article's body images. `extraIds` is for what is a column rather than a
+ * connection — an article's cover — which the site shows with the rest.
+ *
+ * The connected ids are read FIRST and the images by id list. `i.id IN (subquery) OR i.id IN (...)`
+ * cannot become a semi-join — the planner falls back to a per-row subplan over all of `Image`, and an
+ * article took minutes. An entity holds a few hundred images at most, so the list is small.
+ */
+export async function getImagesForConnection(
+  entityType: 'Article' | 'Bounty' | 'BountyEntry',
+  entityId: number,
+  window: BatchWindow = {},
+  extraIds: number[] = []
+): Promise<BulkBatch> {
+  const connected = await dbRead
+    .selectFrom('ImageConnection')
+    .select('imageId')
+    .where('entityType', '=', entityType)
+    .where('entityId', '=', entityId)
+    .limit(MAX_CONNECTED_IMAGES)
+    .execute();
+  const ids = [...new Set([...connected.map((c) => c.imageId), ...extraIds])].filter(
+    (id) => Number.isInteger(id) && id > 0
+  );
+  return getImagesByIds(ids, window);
+}
+
+/** Far above any one article's, bounty's or entry's images; a bound so the id list stays a list. */
+const MAX_CONNECTED_IMAGES = 5000;
+
+/**
  * `nsfwBlockedOnly` is Retool's `UserQuery5000` — `nsfwLevel = 32` is what `handleBlockImages` sets, so it
  * lists what has ALREADY been removed from an account. That is the restore path: confirm a purge
  * landed, or pull back one that went too wide.
@@ -233,16 +273,30 @@ export async function getImagesByIds(
  * The distinct OWNERS of a batch (Retool's GetBulkRemoveImageUserIdsForNotifs). A 300-image removal
  * spanning 40 accounts must send 40 notifications, not 300 — which is the whole reason Retool had a
  * separate query for it rather than notifying per row.
+ *
+ * Feedback page captures are left out and counted: their owner is a system account.
  */
-export async function getBatchOwners(imageIds: number[]): Promise<number[]> {
-  if (!imageIds.length) return [];
+export async function getBatchOwners(
+  imageIds: number[]
+): Promise<{ owners: number[]; capturesSkipped: number }> {
+  if (!imageIds.length) return { owners: [], capturesSkipped: 0 };
   const rows = await dbRead
     .selectFrom('Image')
-    .select('userId')
-    .distinct()
+    .select((eb) => ['userId', eb.fn.countAll<string>().as('images')])
     .where('id', 'in', imageIds)
+    .groupBy('userId')
     .execute();
-  return rows.map((r) => r.userId);
+  return {
+    owners: rows.filter((r) => !isFeedbackCaptureOwner(r.userId)).map((r) => r.userId),
+    capturesSkipped: Number(rows.find((r) => isFeedbackCaptureOwner(r.userId))?.images ?? 0),
+  };
+}
+
+export function capturesSkippedNote(capturesSkipped: number): string {
+  if (!capturesSkipped) return '';
+  return `${capturesSkipped} feedback page capture${
+    capturesSkipped === 1 ? '' : 's'
+  } skipped: their owner is a system account.`;
 }
 
 /**
@@ -283,16 +337,19 @@ export async function countImagesForUser(userId: number): Promise<number> {
 /**
  * Retool's `strikeCheckbox`, on both Bulk Image Manager and User Reports: a TOS removal and the strike
  * for it were one gesture. Owners are resolved SERVER-side from the ids rather than passed in — the
- * grid only holds the page in front of the moderator, and a selection can outlive it.
+ * client is not trusted to name them, and a hand-built POST can carry any ids.
  */
 export async function strikeBatchOwners(input: {
   imageIds: number[];
   /** The user-facing strike description — the same canned message the removal was filed under. */
   description: string;
   moderatorId: number;
-}): Promise<{ struck: number; owners: number; error?: string }> {
-  const owners = await getBatchOwners(input.imageIds);
-  if (!owners.length) return { struck: 0, owners: 0, error: 'no owners could be resolved' };
+}): Promise<{ struck: number; owners: number; capturesSkipped: number; error?: string }> {
+  const { owners, capturesSkipped } = await getBatchOwners(input.imageIds);
+  if (!owners.length)
+    return capturesSkipped
+      ? { struck: 0, owners: 0, capturesSkipped }
+      : { struck: 0, owners: 0, capturesSkipped, error: 'no owners could be resolved' };
 
   const results = await Promise.all(
     owners.map((userId) =>
@@ -308,6 +365,7 @@ export async function strikeBatchOwners(input: {
   return {
     struck: owners.length - failed.length,
     owners: owners.length,
+    capturesSkipped,
     // The first reason, not a count: they share a cause (rate limit, endpoint down) far more often
     // than not, and a bare "3 failed" sends the moderator to the logs to find out why.
     error: failed.length ? failed[0].error : undefined,
@@ -340,7 +398,9 @@ export type RemoveBatchResult =
       alreadyBlocked: number;
       /** `null` when no flag was asked for. `applied: false` carries why. */
       flag: { flag: 'poi' | 'minor' | 'tag'; applied: boolean; error?: string } | null;
-      struck: { struck: number; owners: number; error?: string } | null;
+      struck: { struck: number; owners: number; capturesSkipped: number; error?: string } | null;
+      /** Removals held for a second moderator; neither flagged nor struck. */
+      held: HeldSummary[];
     };
 
 export async function removeImagesWithFollowUps(input: {
@@ -350,6 +410,7 @@ export async function removeImagesWithFollowUps(input: {
   alsoFlag?: 'poi' | 'minor' | 'tag';
   strikeOwners?: boolean;
   moderatorId: number;
+  canConfirmReRemoval?: boolean;
 }): Promise<RemoveBatchResult> {
   if (input.strikeOwners && !input.reason)
     return { ok: false, error: 'A strike needs a reason — it is the message the user is sent.' };
@@ -361,35 +422,41 @@ export async function removeImagesWithFollowUps(input: {
     reason: input.reason || undefined,
     violationType: input.violationType,
     moderatorId: input.moderatorId,
+    canConfirmReRemoval: input.canConfirmReRemoval,
   });
   if (!result.ok) return { ok: false, error: result.error };
 
+  // A held image is still up, so its follow-ups wait for the removal they follow.
+  const heldIds = new Set(result.held.map((h) => h.imageId));
+  const removedIds = input.imageIds.filter((id) => !heldIds.has(id));
+
   // `tag` is offered by the reason list but is not an image flag. Reported rather than dropped: the
   // moderator otherwise believes the images are marked.
-  const flag =
-    input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
-      ? await setImageFlag({
-          imageIds: input.imageIds,
-          flag: input.alsoFlag,
-          value: true,
-          moderatorId: input.moderatorId,
-        }).then((r) =>
-          r.ok
-            ? { flag: input.alsoFlag!, applied: true }
-            : { flag: input.alsoFlag!, applied: false, error: r.error }
-        )
-      : input.alsoFlag === 'tag'
-      ? { flag: 'tag' as const, applied: false, error: 'not an image flag' }
-      : null;
+  const flag = !removedIds.length
+    ? null
+    : input.alsoFlag === 'poi' || input.alsoFlag === 'minor'
+    ? await setImageFlag({
+        imageIds: removedIds,
+        flag: input.alsoFlag,
+        value: true,
+        moderatorId: input.moderatorId,
+      }).then((r) =>
+        r.ok
+          ? { flag: input.alsoFlag!, applied: true }
+          : { flag: input.alsoFlag!, applied: false, error: r.error }
+      )
+    : input.alsoFlag === 'tag'
+    ? { flag: 'tag' as const, applied: false, error: 'not an image flag' }
+    : null;
 
   const struck =
-    input.strikeOwners && input.reason
+    input.strikeOwners && input.reason && removedIds.length
       ? await strikeBatchOwners({
-          imageIds: input.imageIds,
+          imageIds: removedIds,
           description: input.reason,
           moderatorId: input.moderatorId,
         })
       : null;
 
-  return { ok: true, removed: result.count, alreadyBlocked, flag, struck };
+  return { ok: true, removed: result.count, alreadyBlocked, flag, struck, held: result.held };
 }

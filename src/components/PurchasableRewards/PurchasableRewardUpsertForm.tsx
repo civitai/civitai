@@ -10,9 +10,9 @@ import {
   Input,
   Stack,
   Text,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import React from 'react';
 import * as z from 'zod';

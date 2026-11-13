@@ -59,7 +59,9 @@ import { postSelect } from '~/server/selectors/post.selector';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
 import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
 import {
+  listingIdsInChipRow,
   postAppChipQuery,
   postAppMarkerQuery,
   projectPostAppChip,
@@ -118,8 +120,23 @@ type Listing = {
   kind: string;
   contentRating: string | null;
   revisionOfId: string | null;
-  icon: { url: string | null } | null;
+  icon: ReturnType<typeof scannedPgIcon> | null;
 };
+
+/** A listing icon as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgIcon(url: string | null) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
 type Block = { status: string; currentVersionDeployedAt: Date | null; appListing?: Listing | null };
 
 const listing = (over: Partial<Listing> = {}): Listing => ({
@@ -129,7 +146,7 @@ const listing = (over: Partial<Listing> = {}): Listing => ({
   kind: 'onsite',
   contentRating: 'pg',
   revisionOfId: null,
-  icon: { url: ICON_UUID },
+  icon: scannedPgIcon(ICON_UUID),
   ...over,
 });
 
@@ -199,15 +216,6 @@ describe('the marker read is narrow, and its blob never leaves the module', () =
     expect(readBlockPublishedAppId(liveShapedMetadata)).toBe('appblk-custom-generators');
   });
 
-  it('reads the key the WRITER writes, not a re-spelled literal', () => {
-    // The constant is shared with `block-post.service.ts`'s write path, so a
-    // rename there is a compile error here rather than a silently dead chip.
-    // One literal assertion remains so a change to the constant's VALUE — which
-    // would orphan every existing row — still fails something.
-    expect(BLOCK_POST_APP_ID_META_KEY).toBe('blockPublishedAppId');
-    expect(readBlockPublishedAppId({ blockPublishedAppId: 'appblk-x' })).toBe('appblk-x');
-  });
-
   it('reads no marker from metadata that has none, or that is not an object', () => {
     const { [BLOCK_POST_APP_ID_META_KEY]: _dropped, ...withoutMarker } = liveShapedMetadata;
     expect(readBlockPublishedAppId(withoutMarker)).toBeNull();
@@ -234,14 +242,25 @@ describe('the app read is an allowlist', () => {
     // 🔴 The structural half of criterion 6. A behavioural test over the
     // projector cannot see a widened SELECT — the extra column simply arrives
     // and is dropped — so the select tree is pinned here, level by level.
-    expect(Object.keys(q.select).sort()).toEqual(['appBlocks', 'name']);
+    expect(Object.keys(q.select).sort()).toEqual(['appBlocks', 'connectListings', 'name']);
+    expect(q.select.connectListings.where).toEqual({ kind: 'offsite' });
+    expect(q.select.connectListings.select).toEqual(q.select.appBlocks.select.appListing.select);
     expect(Object.keys(q.select.appBlocks.select).sort()).toEqual(
       ['appListing', 'currentVersionDeployedAt', 'status'].sort()
     );
     expect(Object.keys(q.select.appBlocks.select.appListing.select).sort()).toEqual(
-      ['contentRating', 'icon', 'kind', 'name', 'revisionOfId', 'slug', 'status'].sort()
+      // `id` is W14: the per-listing VISIBILITY LEVEL is the FOURTH term of the
+      // destination's predicate, and resolving it needs the listing's id for a batched
+      // read. The column itself is NOT selected here and cannot be — it is `// @no-type`
+      // and absent from the generated client, which is what keeps every unguarded
+      // `appListing` write immune to the manual-apply window.
+      ['contentRating', 'icon', 'id', 'kind', 'name', 'revisionOfId', 'slug', 'status'].sort()
     );
-    expect(Object.keys(q.select.appBlocks.select.appListing.select.icon.select)).toEqual(['url']);
+    // `url` plus the scan/level columns the per-image media gate reads — all `Image` columns,
+    // never an `OauthClient` one.
+    expect(Object.keys(q.select.appBlocks.select.appListing.select.icon.select).sort()).toEqual(
+      Object.keys(listingMediaImageSelect).sort()
+    );
   });
 
   it('names no forbidden OauthClient column anywhere in the select tree', () => {
@@ -547,5 +566,47 @@ describe('projectPostAppChip emits exactly the chip', () => {
     // matches no OauthClient, so `findUnique` returns null by design.
     expect(project(null)).toBeNull();
     expect(project(undefined)).toBeNull();
+  });
+});
+
+describe('an offsite Connect listing with no block', () => {
+  const offsiteRow = (over: Partial<Listing> = {}) => ({
+    name: 'Game Frame',
+    appBlocks: [],
+    connectListings: [
+      listing({ slug: 'civitai-games', name: 'Civitai Games', kind: 'offsite', ...over }),
+    ],
+  });
+
+  it('links the store listing when it is approved', () => {
+    expect(project(offsiteRow())).toEqual({
+      slug: 'civitai-games',
+      name: 'Civitai Games',
+      iconUrl: listingIconUrl({ url: ICON_UUID }),
+    });
+  });
+
+  it('names it unlinked while the listing itself is not approved', () => {
+    expect(project(offsiteRow({ status: 'pending' }))).toEqual({
+      slug: null,
+      name: 'Civitai Games',
+      iconUrl: null,
+    });
+  });
+
+  it('stays silent for a mature listing on a non-red host', () => {
+    expect(project(offsiteRow({ contentRating: 'x' }), SFW_HOST)).toBeNull();
+  });
+
+  it('ignores a connect listing that is not offsite', () => {
+    expect(project(offsiteRow({ kind: 'onsite' }))?.name).toBe('Game Frame');
+  });
+
+  it('feeds the listing id to the visibility-level read', () => {
+    const r = {
+      appBlocks: [],
+      connectListings: [{ ...listing({ kind: 'offsite' }), id: 'apl_g' }],
+    };
+    expect(listingIdsInChipRow(r)).toEqual(['apl_g']);
   });
 });

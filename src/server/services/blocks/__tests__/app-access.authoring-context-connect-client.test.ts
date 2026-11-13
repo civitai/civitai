@@ -49,6 +49,16 @@ const { mockDb, mockWriteDb, table } = vi.hoisted(() => {
   };
 
   const make = () => ({
+    // 🔴 `getAppListingAuthoringContext` NOW READS THE VISIBILITY LEVEL THROUGH RAW SQL, so a
+    // file-local db mock has to carry `$queryRaw` or every case in this file dies with
+    // `db.$queryRaw is not a function` — a collection-shaped failure that says nothing about
+    // the behaviour under test. The column is `// @no-type` and absent from the generated
+    // client, so it CANNOT be a Prisma `select`; raw is the only read there is.
+    //
+    // An empty result is the "no level expressed" answer (`available: true, visibility: null`),
+    // which is the pre-feature behaviour and keeps each case below about what it was about.
+    // The canonical shared mock already provides this; these files predate it.
+    $queryRaw: vi.fn(async (): Promise<unknown[]> => []),
     appBlock: {
       findUnique: vi.fn(async (): Promise<unknown> => null),
       findMany: vi.fn(async (): Promise<unknown[]> => []),

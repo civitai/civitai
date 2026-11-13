@@ -47,6 +47,12 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn(),
 }));
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 // Spread the REAL module and override only `trpc` (per `local-rules/no-wholesale-module-mock`):
 // a hand-written replacement silently drops any export a transitive importer needs, and the
 // whole file then fails to load as "0 tests collected" — green for the worst possible reason.
@@ -82,6 +88,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         updateRevisionDraft: { useMutation: recording(mocks.updateRevision) },
         submitListingRevision: { useMutation: recording(mocks.submitRevision) },
         removeScreenshot: { useMutation: noopMutation },
+        setRedMedia: { useMutation: noopMutation },
         persistAssetImage: { useMutation: noopMutation },
         ingestAssetFromUrl: { useMutation: noopMutation },
         ingestAssetFromDataUri: { useMutation: noopMutation },
@@ -189,7 +196,7 @@ function noticeText(testId: string): string {
 const ALERT_TITLE = 'This app is unpublished';
 const DRIFTED_NOTICE_TEXT =
   ALERT_TITLE +
-  `This app is unpublished, so its name, App URL, source repository and content rating ` +
+  `This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ` +
   `are locked — and your OAuth app's permissions have changed since this listing was last ` +
   `reviewed. That changed permission set rides along on every save, so while the app stays ` +
   `unpublished NOTHING on this screen can be saved — not the tagline, description or ` +
@@ -295,7 +302,7 @@ describe('🔴 an OWNER-UNPUBLISHED listing: material fields are shown, and lock
       ).toHaveLength(0);
       await page.getByRole('button', { name: 'Next' }).click();
       await expect.element(page.getByTestId('apps-offsite-edit-name')).toBeInTheDocument();
-      for (const field of ['name', 'contentRating', 'sourceRepoUrl'] as const) {
+      for (const field of ['name', 'contentRating', 'sourceRepoUrl', 'issueTrackerUrl'] as const) {
         expect(materialControl(field)?.disabled, `${status}/${field}`).toBe(false);
       }
     }

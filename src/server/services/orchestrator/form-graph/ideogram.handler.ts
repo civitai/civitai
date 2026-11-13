@@ -1,12 +1,15 @@
 /** Ideogram family handler for the form-graph lane — comfy (4.0) or fal (4.5) imageGen. */
 
-import type { ComfyIdeogram4CreateImageGenInput, ImageGenStepTemplate } from '@civitai/client';
+import type {
+  ComfyIdeogram4CreateImageGenInput,
+  ImageGenStepTemplate,
+} from '@civitai/orchestration-client';
 import type {
   Ideogram45CreateFalImageGenInput,
   Ideogram45EditFalImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -26,12 +29,12 @@ export const createIdeogramInput = defineHandler<EcosystemData<'Ideogram'>, [Ima
         return [
           {
             $type: 'imageGen',
-            input: removeEmpty({
+            input: removeEmpty<Ideogram45EditFalImageGenInput>({
               ...baseInput,
               operation: 'editImage',
               imageSize: 'auto',
               images: data.images?.map((x) => x.url) ?? [],
-            }) as Ideogram45EditFalImageGenInput,
+            }),
           },
         ];
       }
@@ -39,13 +42,13 @@ export const createIdeogramInput = defineHandler<EcosystemData<'Ideogram'>, [Ima
       return [
         {
           $type: 'imageGen',
-          input: removeEmpty({
+          input: removeEmpty<Ideogram45CreateFalImageGenInput>({
             ...baseInput,
             operation: 'createImage',
             width: data.aspectRatio?.width,
             height: data.aspectRatio?.height,
-            enablePromptExpansion: data.enablePromptExpansion,
-          }) as Ideogram45CreateFalImageGenInput,
+            enhancePrompt: data.enablePromptExpansion,
+          }),
         },
       ];
     }

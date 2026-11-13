@@ -1,15 +1,20 @@
-import type { ChatCompletionInput, ChatCompletionStepTemplate } from '@civitai/client';
+import type {
+  ChatCompletionInput,
+  ChatCompletionStepTemplate,
+} from '@civitai/orchestration-client';
 
 /**
  * Default vision-capable model. `gpt-4o-mini` accepts text + image inputs
- * and is the cheapest option for prompt-from-image style tasks.
+ * and is the cheapest option for prompt-from-image style tasks. The
+ * orchestrator only prices provider-prefixed ids: the bare `gpt-4o-mini` is
+ * rejected at submit with "no price is known for it".
  */
-const DEFAULT_CHAT_COMPLETION_MODEL = 'gpt-4o-mini';
+export const DEFAULT_CHAT_COMPLETION_MODEL = 'openai/gpt-4o-mini';
 
 /**
  * Input shape for {@link createChatCompletionStep}. Same as the SDK's
  * `ChatCompletionInput` but with `model` optional (defaults to
- * `gpt-4o-mini` when omitted).
+ * {@link DEFAULT_CHAT_COMPLETION_MODEL} when omitted).
  *
  * For image input, include a content part with
  * `imageUrl: { url, detail }` (or snake-case `image_url`) inside a user

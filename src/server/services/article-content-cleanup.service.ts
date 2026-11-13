@@ -1,4 +1,4 @@
-import { generateJSON } from '@tiptap/html/server';
+import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { extractCloudflareUuid, type ExtractedMedia } from '~/utils/article-helpers';
 

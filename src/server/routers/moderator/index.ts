@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { getModelsPagedSimpleHandler } from '~/server/controllers/model.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
 import {
+  getCashTransactionsSchema,
   modCashAdjustmentSchema,
   updateCashWithdrawalSchema,
 } from '~/server/schema/creator-program.schema';
@@ -21,14 +22,11 @@ import {
   modAdjustCashBalance,
   updateCashWithdrawal,
 } from '~/server/services/creator-program.service';
+import { getUserBuzzTransactions } from '~/server/services/buzz.service';
 import { getModelChangeHistory } from '~/server/services/entity-change.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
-import {
-  getModelModerationDetail,
-  getModelModRules,
-  transferModelOwnership,
-} from '~/server/services/model.service';
+import { getModelModerationDetail, transferModelOwnership } from '~/server/services/model.service';
 import {
   confirmMinorHashAutoFlag,
   dismissMinorHashMatch,
@@ -84,11 +82,13 @@ export const modRouter = router({
       .mutation(({ input, ctx }) =>
         confirmMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
       ),
-    revertMinorHashAutoFlag: moderatorProcedure
-      .input(getByIdSchema)
-      .mutation(({ input, ctx }) =>
-        revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
-      ),
+    revertMinorHashAutoFlag: moderatorProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
+      revertMinorHashAutoFlag({
+        modelId: input.id,
+        userId: ctx.user.id,
+        recordTextScanRuling: true,
+      })
+    ),
     queryMinorFlagAppeals: moderatorProcedure
       .input(getMinorFlagAppealsSchema)
       .query(({ input }) => getMinorFlagAppealsForReview(input)),
@@ -103,6 +103,24 @@ export const modRouter = router({
     getWithdrawalHistory: cashManagementProcedure
       .input(z.object({ userId: z.number().int().positive() }))
       .query(({ input }) => getWithdrawalHistory(input.userId)),
+    getCashTransactions: cashManagementProcedure
+      .input(getCashTransactionsSchema)
+      .query(async ({ input: { userId, ...query } }) => {
+        const { cursor, transactions } = await getUserBuzzTransactions({
+          ...query,
+          accountId: userId,
+        });
+        // Only what the ledger shows: external ids would name the moderator behind each adjustment.
+        return {
+          cursor,
+          transactions: transactions.map(({ date, type, amount, description }) => ({
+            date,
+            type,
+            amount,
+            description,
+          })),
+        };
+      }),
     adjustBalance: cashManagementProcedure
       .input(modCashAdjustmentSchema)
       .mutation(({ input, ctx }) => modAdjustCashBalance({ ...input, modUserId: ctx.user.id })),

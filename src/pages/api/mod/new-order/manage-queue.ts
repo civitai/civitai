@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { chunk } from 'lodash-es';
-import { poolCounters, getActiveSlot } from '~/server/games/new-order/utils';
+import { clearImageRatings, poolCounters, getActiveSlot } from '~/server/games/new-order/utils';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -41,15 +41,18 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (action === 'insert-in-queue') {
     const { imageIds, rankType, priority } = payload;
 
-    const added = await addImageToQueue({
+    const { added, heldIds } = await addImageToQueue({
       imageIds,
       rankType,
       priority: priority as 1 | 2 | 3,
     });
 
-    return res
-      .status(200)
-      .json({ message: added ? 'Image inserted into queue successfully' : 'bonk' });
+    const message = added
+      ? 'Image inserted into queue successfully'
+      : heldIds.length > 0
+      ? 'Not inserted: held for review'
+      : 'bonk';
+    return res.status(200).json({ message, heldImageIds: heldIds });
   }
 
   if (action === 'show-all-queues') {
@@ -96,6 +99,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         ...poolCounters[rankType as NewOrderRankType].a.map((pool) => pool.reset({ id: imageIds })),
         ...poolCounters[rankType as NewOrderRankType].b.map((pool) => pool.reset({ id: imageIds })),
       ]);
+      await clearImageRatings(imageIds);
 
       return res.status(200).json({
         message: `Removed ${imageIds.length} image(s) from ${rankType} queue`,
@@ -152,6 +156,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           pool.reset({ id: imageIdsToRemove })
         ),
       ]);
+      await clearImageRatings(imageIdsToRemove);
     }
 
     return res.status(200).json({

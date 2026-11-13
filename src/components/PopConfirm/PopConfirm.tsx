@@ -1,5 +1,6 @@
 import type { PopoverProps } from '@mantine/core';
-import { Button, Group, Popover, Stack } from '@mantine/core';
+import { Button, Group, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import React, { useState } from 'react';
 
 export function PopConfirm({

@@ -1,6 +1,7 @@
 import { Text } from '@mantine/core';
-import { IconEyeOff, IconHierarchy, IconX } from '@tabler/icons-react';
+import { IconBook2, IconEyeOff, IconHierarchy, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
@@ -10,10 +11,13 @@ import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-state';
 import { Flags } from '~/shared/utils/flags';
 import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { SparkStorylineTile } from '~/components/RemixGallery/SparkStorylineTile';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import {
   resolveShelfCell,
   useRemixFlyoutLayout,
 } from '~/components/RemixGallery/remix-flyout-layout';
+import type { RemixGalleryCardEntry } from '~/server/services/remix-gallery.service';
 import styles from './RemixedCardFlyout.module.scss';
 
 /** Dwell before the flyout opens, in ms. */
@@ -137,7 +141,10 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   const openId = useRemixPeelStore((state) => state.openId);
   const setOpen = useRemixPeelStore((state) => state.toggle);
   const close = useRemixPeelStore((state) => state.close);
-  const { count, entries: available } = useRemixCardData(imageId);
+  const { count: remixCount, entries: available, storylines } = useRemixCardData(imageId);
+  // Everything the strip lists: remixes and the storylines started from this image. Every gate
+  // below reads this, so a host with only storylines still opens.
+  const count = remixCount + storylines.count;
   const open = openId === imageId;
 
   const anchorRef = useRef<HTMLSpanElement>(null);
@@ -265,6 +272,8 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
     // expressible at all.
     let item: HTMLElement | null = cardRef.current;
     while (item) {
+      // The attribute too: an item whose hat is hovered has its containment lifted.
+      if (item.hasAttribute('data-masonry-item')) break;
       const cs = getComputedStyle(item);
       if (cs.contentVisibility === 'auto' || cs.contain.includes('paint')) break;
       item = item.parentElement;
@@ -438,21 +447,47 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
   if (!count || !fine) return null;
 
   // At most four thumbnails; `+N` carries the rest. More than that and the tiles
-  // shrink to the point of being unreadable at feed card widths.
+  // shrink to the point of being unreadable at feed card widths. Storylines come
+  // first: there are fewer of them, and a remix is one picture where a story is many.
   //
   // Sliced rather than trusted: the query already caps what it returns, and the
   // `+N` is computed from `count`, so a shorter list than `shown` would silently
   // overstate the remainder.
-  const entries = available.slice(0, shown);
+  const stories = storylines.entries.slice(0, shown);
+  const entries = available.slice(0, shown - stories.length);
+  const listed = stories.length + entries.length;
   const side = layout === 'side';
-  const label = count === 1 ? '1 remix' : `${count} remixes`;
+  const remixLabel = remixCount === 1 ? '1 remix' : `${remixCount} remixes`;
+  const label = [
+    remixCount && remixLabel,
+    storylines.count && (storylines.count === 1 ? '1 story' : `${storylines.count} stories`),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  // A side strip has no room for both phrases: at two-digit counts even "13 remixes" plus a book
+  // and a count overflows its 78px. Each becomes its icon and a count; the words are the tooltip.
+  const compact = side && remixCount > 0 && storylines.count > 0;
   const body = (tile: number | undefined) => (
     <>
       <div className={clsx('flex items-center px-2 pb-1 pt-1.5', side ? 'gap-1' : 'gap-1.5')}>
         <IconHierarchy size={13} className="shrink-0 text-yellow-5" />
-        <Text size="xs" fw={600} className="truncate">
-          {label}
-        </Text>
+        {compact ? (
+          <Text
+            size="xs"
+            fw={600}
+            className="flex min-w-0 items-center gap-1 whitespace-nowrap"
+            title={label}
+            aria-label={label}
+          >
+            <span>{remixCount}</span>
+            <IconBook2 size={12} className="ml-1 shrink-0" aria-hidden />
+            <span>{storylines.count}</span>
+          </Text>
+        ) : (
+          <Text size="xs" fw={600} className="truncate" title={label}>
+            {label}
+          </Text>
+        )}
         {/* No close button on a side strip: it costs the width the word needs,
             and pointer-leave and Escape both still close. */}
         {!side && (
@@ -475,38 +510,28 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           at 64px and shrink to fit anything narrower, so the row always fits
           exactly and there is nothing to scroll. */}
       <div className={clsx('flex gap-1 px-2 pb-2', side && 'flex-col')}>
-        {entries.map((entry, index) => (
-          <button
-            key={index}
+        {stories.map((entry) => (
+          <SparkStorylineTile
+            key={`story-${entry.storylineId}`}
+            entry={entry}
+            blurLevels={blurLevels ?? 0}
+            paging={open}
             className={clsx('min-w-0', styles.tile, side ? 'mx-auto' : 'max-w-16 flex-1')}
             style={side ? { width: tile, height: tile } : undefined}
-            aria-label={entry.username ? `Open ${entry.username}'s remix` : 'Open remix'}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              close();
-              triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } });
-            }}
-          >
-            {Flags.hasFlag(blurLevels ?? 0, entry.nsfwLevel) ? (
-              // A placeholder rather than a blurred image: the strip is a hover
-              // preview with no room for a reveal toggle, so there is no gesture
-              // that would un-blur it. The tile still opens the remix, and the
-              // detail view has its own guard.
-              <div className="flex aspect-square w-full items-center justify-center rounded bg-gray-3 ring-1 ring-gray-3 dark:bg-dark-5 dark:ring-dark-4">
-                <IconEyeOff size={16} className="text-gray-6 dark:text-dark-2" />
-              </div>
-            ) : (
-              <EdgeMedia
-                src={entry.url}
-                type={entry.type}
-                width={128}
-                className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
-              />
-            )}
-          </button>
+            onOpen={close}
+          />
         ))}
-        {count > entries.length && (
+        {entries.map((entry, index) => (
+          <RemixFlyoutTile
+            key={index}
+            entry={entry}
+            blurred={Flags.hasFlag(blurLevels ?? 0, entry.nsfwLevel)}
+            className={clsx('min-w-0', styles.tile, side ? 'mx-auto' : 'max-w-16 flex-1')}
+            style={side ? { width: tile, height: tile } : undefined}
+            onOpen={close}
+          />
+        ))}
+        {count > listed && (
           <div
             className={clsx(
               'flex min-w-0 items-center justify-center rounded bg-gray-2 dark:bg-dark-5',
@@ -515,7 +540,7 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
             style={side ? { width: tile, height: tile } : undefined}
           >
             <Text size="xs" fw={600}>
-              +{count - entries.length}
+              +{count - listed}
             </Text>
           </div>
         )}
@@ -571,5 +596,56 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
           host
         )}
     </>
+  );
+}
+
+function RemixFlyoutTile({
+  entry,
+  blurred,
+  className,
+  style,
+  onOpen,
+}: {
+  entry: RemixGalleryCardEntry;
+  blurred: boolean;
+  className: string;
+  style?: CSSProperties;
+  onOpen: () => void;
+}) {
+  // A placeholder shows nothing of the remix, so only a revealed tile is a view.
+  const ref = useTrackImpression<HTMLButtonElement>(
+    blurred ? undefined : [{ entityType: 'Image', entityId: entry.imageId }]
+  );
+
+  return (
+    <button
+      ref={ref}
+      className={className}
+      style={style}
+      aria-label={entry.username ? `Open ${entry.username}'s remix` : 'Open remix'}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen();
+        triggerRoutedDialog({ name: 'imageDetail', state: { imageId: entry.imageId } });
+      }}
+    >
+      {blurred ? (
+        // A placeholder rather than a blurred image: the strip is a hover
+        // preview with no room for a reveal toggle, so there is no gesture
+        // that would un-blur it. The tile still opens the remix, and the
+        // detail view has its own guard.
+        <div className="flex aspect-square w-full items-center justify-center rounded bg-gray-3 ring-1 ring-gray-3 dark:bg-dark-5 dark:ring-dark-4">
+          <IconEyeOff size={16} className="text-gray-6 dark:text-dark-2" />
+        </div>
+      ) : (
+        <EdgeMedia
+          src={entry.url}
+          type={entry.type}
+          width={128}
+          className="aspect-square w-full rounded object-cover ring-1 ring-gray-3 transition hover:opacity-80 dark:ring-dark-4"
+        />
+      )}
+    </button>
   );
 }

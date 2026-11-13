@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getRemixGalleryCardSummaries } from '~/server/services/remix-gallery.service';
@@ -30,7 +30,16 @@ import { REMIX_GALLERY_DEFAULT_CONTENT_RULE } from '~/shared/utils/remix-gallery
  * batched read does not hydrate, so this predicate is the only gate it has.
  */
 
-const queryRaw = dbMock.dbRead.$queryRaw;
+// The card read runs through Kysely, not Prisma's `$queryRaw`. The hosts-with-entries lookup in
+// front of it answers that every host has a placement, so the read is reached; every other
+// statement goes to `queryRaw`, which receives it as a `$queryRaw` fake would.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+const queryRaw = vi.fn();
+const isHostsLookup = (strings: readonly string[]) =>
+  strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"');
 
 /**
  * The full SQL text of a `$queryRaw` tagged-template call.
@@ -74,8 +83,15 @@ function boundValues(call: unknown[]): unknown[] {
 
 describe('remix gallery entry visibility', () => {
   beforeEach(() => {
-    queryRaw.mockClear();
+    queryRaw.mockReset();
     queryRaw.mockResolvedValue([]);
+    kysely.read
+      .mockReset()
+      .mockImplementation(async (strings: readonly string[], ...values: unknown[]) =>
+        isHostsLookup(strings)
+          ? [1, 2, 3].map((hostId) => ({ hostId }))
+          : queryRaw(strings, ...values)
+      );
   });
 
   // PG only. Chosen, not arbitrary: it must not collide with
@@ -87,6 +103,7 @@ describe('remix gallery entry visibility', () => {
   const render = async () => {
     await getRemixGalleryCardSummaries({ imageIds: [1, 2, 3], browsingLevel: BROWSING_LEVEL });
     expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     return renderedSql(queryRaw.mock.calls[0]);
   };
 

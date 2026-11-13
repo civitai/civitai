@@ -1,4 +1,4 @@
-import type { MediaRatingOutput } from '@civitai/client';
+import type { MediaRatingOutput } from '@civitai/orchestration-client';
 import { dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -10,6 +10,7 @@ import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -36,7 +37,7 @@ export async function isExemptFromAiVerification(
     SELECT (
       EXISTS(SELECT 1 FROM "User" WHERE "profilePictureId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
-      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId} OR "bannerId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty', 'Article'))
     ) AS exempt
@@ -232,6 +233,7 @@ export async function processImageScanWorkflow({
         },
         'webhooks'
       ).catch(() => null);
+      await refreshProfilePicturesForImagesLazy([imageId]);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
@@ -314,6 +316,7 @@ export async function processImageScanWorkflow({
     userId: image.userId,
     ingestion: outcome.ingestion,
     blockedFor: outcome.blockedFor,
+    nsfwLevel: outcome.nsfwLevel,
   });
 }
 

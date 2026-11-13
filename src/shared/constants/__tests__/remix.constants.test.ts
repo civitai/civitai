@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ecosystemByKey, getEcosystemSetting } from '~/shared/constants/basemodel.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
-import {
-  isWorkflowAvailable,
-  workflowConfigByKey,
-} from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowAvailable } from '~/shared/generation/config/workflows';
 import {
   minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
-} from '~/shared/data-graph/generation/version-ids';
+} from '~/shared/generation/version-ids';
 
 /**
  * The Remix button sends the user straight into these workflow/ecosystem pairs
@@ -23,14 +20,6 @@ describe('REMIX_ENGINES', () => {
   const entries = Object.entries(REMIX_ENGINES).flatMap(([kind, byTier]) =>
     Object.entries(byTier).map(([tier, engine]) => [`${kind}/${tier}`, engine] as const)
   );
-
-  it.each(entries)('%s names a workflow that exists', (_kind, engine) => {
-    expect(workflowConfigByKey.has(engine.workflow)).toBe(true);
-  });
-
-  it.each(entries)('%s names an ecosystem that exists', (_kind, engine) => {
-    expect(ecosystemByKey.get(engine.ecosystemKey)).toBeDefined();
-  });
 
   it.each(entries)('%s pairs a workflow with an ecosystem that supports it', (_kind, engine) => {
     const ecosystem = ecosystemByKey.get(engine.ecosystemKey);

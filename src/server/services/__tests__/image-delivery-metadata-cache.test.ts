@@ -6,28 +6,40 @@ import { pack, unpack } from 'msgpackr';
 // get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
 // serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a Map),
 // letting us assert exactly when the origin DB query is re-run.
-const { store } = vi.hoisted(() => ({
+// `ttls` records the EX each key was last written with: how long Redis would keep it.
+const { store, ttls } = vi.hoisted(() => ({
   store: new Map<string, Buffer>(),
+  ttls: new Map<string, number | undefined>(),
 }));
+
+// The origin read runs through Kysely over the pg pools, not Prisma's `$queryRaw`. Each client's
+// statements go to a `$queryRaw`-shaped fake (`fakeKysely`), so the fixtures below answer it as
+// they answered Prisma.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 
 import {
   getCachedImageDeliveryMetadata,
   bustImageDeliveryMetadataCache,
 } from '~/server/services/image-delivery.service';
-import { CacheTTL } from '~/server/common/constants';
 // The DB fake narrows each fixture row to the columns the statement actually SELECTs, the way
 // a real database does. Without it, `mockResolvedValue([row])` hands back the whole fixture no
 // matter what was asked for, and every assertion about a NEWLY-selected column passes on code
 // that never selects it — measured: 5 of the media-type assertions below went green against
 // the pre-change service until this was introduced.
-import { respondWithRows } from '~/test-utils/queryRawProjection';
+import { respondWithRows, statementOf } from '~/test-utils/queryRawProjection';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 const redisDel = redisMock.redis.del;
 const redisPackedGet = redisMock.redis.packed.get;
 const redisPackedSet = redisMock.redis.packed.set;
-const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
-const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+// Named for the replica and the primary, as before the port; they are the Kysely clients' fakes.
+const dbReadQueryRaw = kysely.read;
+const dbWriteQueryRaw = kysely.write;
 
 // `:v2` — bumped when the cached value gained `type`/`mimeType`, so a hit on an entry packed
 // by the previous release can never serve a response missing those fields.
@@ -51,7 +63,11 @@ const VIDEO_ROW = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Not reset by the shared db mock's hooks: drop queued once-implementations between tests.
+  kysely.read.mockReset();
+  kysely.write.mockReset();
   store.clear();
+  ttls.clear();
   // Real msgpackr round-trip: set packs to a Buffer, get unpacks — mirrors the production
   // redis.packed codec so serializer fidelity (number id, string url, boolean hideMeta) is
   // actually under test on the hit path.
@@ -59,11 +75,15 @@ beforeEach(() => {
     const buf = store.get(key);
     return buf ? unpack(buf) : null;
   });
-  redisPackedSet.mockImplementation(async (key: string, value: unknown) => {
-    store.set(key, pack(value));
-  });
+  redisPackedSet.mockImplementation(
+    async (key: string, value: unknown, options?: { EX?: number }) => {
+      store.set(key, pack(value));
+      ttls.set(key, options?.EX);
+    }
+  );
   redisDel.mockImplementation(async (key: string) => {
     store.delete(key);
+    ttls.delete(key);
     return 1;
   });
 });
@@ -101,22 +121,6 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     expect(roundTripped.id).toBe(42);
     expect(roundTripped.url).toBe(URL);
     expect(roundTripped.hideMeta).toBe(false);
-  });
-
-  it('serves a msgpackr-codec round-tripped result on the cache HIT path', async () => {
-    dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
-    await getCachedImageDeliveryMetadata(URL); // populate
-
-    const hit = await getCachedImageDeliveryMetadata(URL); // served from unpack(Buffer)
-    expect(dbReadQueryRaw).toHaveBeenCalledTimes(1);
-    expect(hit).toEqual({
-      id: 42,
-      url: URL,
-      hideMeta: false,
-      type: 'image',
-      mimeType: 'image/jpeg',
-    });
-    expect(hit?.hideMeta).toBe(false);
   });
 
   it('preserves hideMeta:true through the codec on the hit path', async () => {
@@ -163,16 +167,37 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
   it('passes the exact url to the DB query as the WHERE value', async () => {
     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
     await getCachedImageDeliveryMetadata(URL);
-    const values = dbReadQueryRaw.mock.calls[0].slice(1);
+    const { values } = statementOf(dbReadQueryRaw.mock.calls[0]);
     expect(values).toContain(URL);
   });
 
-  it('sets the cache entry with the short TTL', async () => {
+  // Literals, not CacheTTL: the numbers are the contract. The TTL depends on the cached hideMeta,
+  // so both values are pinned (IMAGE_ROW is hideMeta false, VIDEO_ROW hideMeta true).
+  it('caches a hideMeta:false entry for 3 minutes', async () => {
     dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
     await getCachedImageDeliveryMetadata(URL);
-    expect(redisPackedSet).toHaveBeenCalledWith(`${KEY_PREFIX}:${URL}`, IMAGE_ROW, {
-      EX: CacheTTL.sm,
-    });
+    expect(redisPackedSet.mock.calls).toEqual([[`${KEY_PREFIX}:${URL}`, IMAGE_ROW, { EX: 180 }]]);
+  });
+
+  it('caches a hideMeta:true entry for an hour', async () => {
+    dbReadQueryRaw.mockImplementation(respondWithRows([VIDEO_ROW]));
+    await getCachedImageDeliveryMetadata(VIDEO_URL);
+    expect(redisPackedSet.mock.calls).toEqual([
+      [`${KEY_PREFIX}:${VIDEO_URL}`, VIDEO_ROW, { EX: 3600 }],
+    ]);
+  });
+
+  it('never reaches the Prisma query engine: replica, primary fallback and miss alike', async () => {
+    dbReadQueryRaw.mockImplementationOnce(respondWithRows([IMAGE_ROW]));
+    expect(await getCachedImageDeliveryMetadata(URL)).toEqual(IMAGE_ROW);
+    dbReadQueryRaw.mockRejectedValueOnce(new Error('replica error'));
+    dbWriteQueryRaw.mockImplementationOnce(respondWithRows([VIDEO_ROW]));
+    expect(await getCachedImageDeliveryMetadata(VIDEO_URL)).toEqual(VIDEO_ROW);
+
+    expect(dbReadQueryRaw).toHaveBeenCalledTimes(2);
+    expect(dbWriteQueryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('does NOT cache a negative result — an unknown url re-hits the DB every call', async () => {
@@ -230,6 +255,25 @@ describe('getCachedImageDeliveryMetadata — read-through cache', () => {
     const result = await getCachedImageDeliveryMetadata(URL);
     expect(result).toEqual(IMAGE_ROW); // primary fallback resolved
     expect(dbWriteQueryRaw).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(dbReadFallbackCounter.inc).mock.calls).toEqual([
+      [{ entity: 'image', caller: 'imageDelivery' }],
+    ]);
+  });
+
+  it('treats an empty replica answer as a not-found: the primary is NOT asked', async () => {
+    dbReadQueryRaw.mockImplementation(respondWithRows([]));
+
+    expect(await getCachedImageDeliveryMetadata(URL)).toBeNull();
+    expect(dbWriteQueryRaw).not.toHaveBeenCalled();
+    expect(dbReadFallbackCounter.inc).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the primary error when replica and primary both fail, caching nothing', async () => {
+    dbReadQueryRaw.mockRejectedValueOnce(new Error('replica down'));
+    dbWriteQueryRaw.mockRejectedValueOnce(new Error('primary down'));
+
+    await expect(getCachedImageDeliveryMetadata(URL)).rejects.toThrow('primary down');
+    expect(redisPackedSet).not.toHaveBeenCalled();
   });
 });
 
@@ -364,7 +408,7 @@ describe('getCachedImageDeliveryMetadata — media type', () => {
     expect(dbReadQueryRaw).toHaveBeenCalledTimes(1); // one query total, not two
     expect(dbWriteQueryRaw).not.toHaveBeenCalled();
     // The columns come from that one statement's SELECT list.
-    const sql = (dbReadQueryRaw.mock.calls[0][0] as string[]).join('?');
+    const sql = statementOf(dbReadQueryRaw.mock.calls[0]).strings.join('?');
     expect(sql).toContain('"mimeType"');
     expect(sql).toMatch(/\btype\b/);
     expect(sql).toContain('"hideMeta"');
@@ -436,8 +480,93 @@ describe('bustImageDeliveryMetadataCache', () => {
     expect(after?.hideMeta).toBe(true); // the flipped value is now served
   });
 
+  // THE RACE the bust cannot prevent. The owner hides the image: the row commits with hideMeta
+  // true and the bust DELs the key. A fill that read the replica before the commit replicated (or
+  // whose SET lands after the DEL) then re-caches hideMeta false, and the image-cacher serves the
+  // original WITH its metadata for as long as that entry lives. Its TTL is the bound, and the
+  // bound must not exceed the 3 minutes every entry had before the TTL was raised to an hour.
+  it('a stale hideMeta:false that a fill writes after the hide bust lives at most 3 minutes', async () => {
+    const key = `${KEY_PREFIX}:${URL}`;
+    dbReadQueryRaw.mockImplementationOnce(respondWithRows([IMAGE_ROW]));
+    await getCachedImageDeliveryMetadata(URL); // cached while still shown
+
+    // The hide commits and busts...
+    await bustImageDeliveryMetadataCache(URL);
+    expect(store.has(key)).toBe(false);
+    // ...and a lagging replica still answers with the pre-hide row.
+    dbReadQueryRaw.mockImplementationOnce(respondWithRows([IMAGE_ROW]));
+    const raced = await getCachedImageDeliveryMetadata(URL);
+
+    expect(raced?.hideMeta).toBe(false);
+    expect(unpack(store.get(key)!)).toMatchObject({ hideMeta: false }); // the stale value is cached
+    const ttl = ttls.get(key);
+    expect(ttl).toBeGreaterThan(0); // it does expire...
+    expect(ttl).toBeLessThanOrEqual(180); // ...within the old bound
+  });
+
+  // The other direction fails closed, so it may keep the long TTL: a stale true only withholds
+  // metadata the owner has just un-hidden.
+  it('a stale hideMeta:true that a fill writes after the un-hide bust keeps the hour', async () => {
+    const key = `${KEY_PREFIX}:${VIDEO_URL}`;
+    dbReadQueryRaw.mockImplementationOnce(respondWithRows([VIDEO_ROW]));
+    await getCachedImageDeliveryMetadata(VIDEO_URL);
+    await bustImageDeliveryMetadataCache(VIDEO_URL);
+    dbReadQueryRaw.mockImplementationOnce(respondWithRows([VIDEO_ROW]));
+    await getCachedImageDeliveryMetadata(VIDEO_URL);
+
+    expect(unpack(store.get(key)!)).toMatchObject({ hideMeta: true });
+    expect(ttls.get(key)).toBe(3600);
+  });
+
   it('swallows a Redis del error (best-effort bust never throws)', async () => {
     redisDel.mockRejectedValueOnce(new Error('redis down'));
     await expect(bustImageDeliveryMetadataCache(URL)).resolves.toBeUndefined();
+  });
+
+  it('retries once, so a single transient Redis error still clears the entry', async () => {
+    dbReadQueryRaw.mockImplementation(respondWithRows([IMAGE_ROW]));
+    await getCachedImageDeliveryMetadata(URL);
+    redisDel.mockRejectedValueOnce(new Error('redis blip'));
+
+    await bustImageDeliveryMetadataCache(URL);
+
+    expect(redisDel).toHaveBeenCalledTimes(2);
+    expect(store.has(`${KEY_PREFIX}:${URL}`)).toBe(false);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+
+  // The bust runs inside the user's save, so a hung Redis must not hold it past the deadline.
+  it('gives up within one second on a hung Redis, across both attempts, and logs', async () => {
+    vi.useFakeTimers();
+    try {
+      redisDel.mockReturnValue(new Promise(() => undefined));
+
+      let settled = false;
+      const done = bustImageDeliveryMetadataCache(URL).then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      // Read the flag rather than awaiting `done`: a regression then fails here instead of hanging.
+      expect(settled).toBe(true);
+      await done;
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'image-delivery-metadata-bust', imageKey: URL })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A failed bust leaves the old hideMeta served for up to the TTL; it must be visible.
+  it('logs when the bust still fails after the retry', async () => {
+    redisDel.mockRejectedValue(new Error('redis down'));
+
+    await expect(bustImageDeliveryMetadataCache(URL)).resolves.toBeUndefined();
+
+    expect(redisDel).toHaveBeenCalledTimes(2);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'image-delivery-metadata-bust', imageKey: URL })
+    );
   });
 });

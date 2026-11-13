@@ -19,8 +19,10 @@ vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, filePreferences: {} }),
 }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
+  useShowEventCosmetics: () => true,
   useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
     selector({ autoplayGifs: false }),
+  useAutoplayGifs: () => false,
 }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {

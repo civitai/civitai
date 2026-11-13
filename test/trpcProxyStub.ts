@@ -111,6 +111,23 @@ function utilsNode(): unknown {
 }
 
 /**
+ * A NESTED sub-router (e.g. `apps.shared`, `apps.storage`) whose every procedure answers
+ * with an inert mutation hook. `makeTrpcProxy` resolves `'<router>.<procedure>'` one level
+ * deep, so a component reading `trpc.apps.shared.append.useMutation()` needs this as the
+ * override for `'apps.shared'`. `has` answers true so an `in` probe sees every procedure.
+ */
+export function makeInertSubRouter(): unknown {
+  return new Proxy(
+    {},
+    {
+      has: () => true,
+      get: (_t, key) =>
+        key === 'then' ? undefined : { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    }
+  );
+}
+
+/**
  * Build the proxy.
  *
  * @param procedures Overrides keyed `'<router>.<procedure>'`, each the HOOK CONTAINER for that

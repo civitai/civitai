@@ -1,5 +1,22 @@
 import type { Prisma } from '@prisma/client';
+import {
+  countPlacements,
+  getChapterPlacementTarget,
+  getImagePlacementTarget,
+  getModelPlacementTarget,
+  listPlacementSpacesFor,
+} from '@civitai/db-queries/placement';
+import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  countFreeTier,
+  reservedFreeSlotsWhere,
+} from '~/server/services/placement-count-predicates';
 import { getPlacementConfig, placementPriceRange } from '~/server/services/placement.service';
 import { throwBadRequestError, throwAuthorizationError } from '~/server/utils/errorHandling';
 import type {
@@ -10,6 +27,9 @@ import type {
   PlacementSurface,
   PlacementTargetType,
 } from '~/shared/utils/placement';
+import type { StickerMediaType } from '~/shared/utils/sticker-placement';
+import { stickerMediaTypeOf, stickerMediaTypes } from '~/shared/utils/sticker-placement';
+import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import {
   effectiveFreeSlots,
   declineFeeAmount,
@@ -18,8 +38,8 @@ import {
   isDeclineFeeHostAdjustable,
   resolveHostDeclineFeePercent,
   effectivePlacementPrice,
-  FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
+  placementSurfaceLabel,
   resolvePlacementSpace,
   surfaceAcceptsTarget,
 } from '~/shared/utils/placement';
@@ -32,39 +52,108 @@ import {
  * would let a placement through against a decision already made.
  */
 async function resolveImageTarget(imageId: number) {
-  const image = await dbWrite.image.findUnique({
-    where: { id: imageId },
-    // The username rides along on the lookup that was already happening. It is
-    // shown to the placer, so the alternative — a second query keyed on the id
-    // this one just returned — would be a round trip for a string this row can
-    // reach in the same hop.
-    select: { id: true, userId: true, postId: true, user: { select: { username: true } } },
-  });
-  if (!image) throw throwBadRequestError('placement: that image no longer exists');
+  // The username rides along on the lookup that was already happening. It is shown to the placer,
+  // so a second query keyed on the id this one returns would be a round trip for a string this row
+  // can reach in the same hop.
+  return imageTargetFrom(
+    await getImagePlacementTarget((await loadKyselyDb()).kyselyWrite, imageId)
+  );
+}
 
+function imageTargetFrom(
+  row: Pick<ImageTargetRow, 'userId' | 'postId' | 'type' | 'username'> | undefined
+) {
+  if (!row) throw throwBadRequestError('placement: that image no longer exists');
   return {
-    ownerId: image.userId,
-    postId: image.postId,
-    ownerUsername: image.user?.username ?? null,
+    ownerId: row.userId,
+    postId: row.postId,
+    mediaType: stickerMediaTypeOf(row.type),
+    ownerUsername: row.username ?? null,
   };
 }
 
+type ImageTargetRow = NonNullable<Awaited<ReturnType<typeof getImagePlacementTarget>>>;
+
 /** A model's space is configured on its owner's account only; there is no model or post level. */
 async function resolveModelTarget(modelId: number) {
-  const model = await dbWrite.model.findUnique({
-    where: { id: modelId },
-    select: { userId: true, user: { select: { username: true } } },
-  });
-  if (!model) throw throwBadRequestError('placement: that model no longer exists');
-
-  return { ownerId: model.userId, postId: null, ownerUsername: model.user?.username ?? null };
+  return modelTargetFrom(
+    await getModelPlacementTarget((await loadKyselyDb()).kyselyWrite, modelId)
+  );
 }
 
-const resolveTarget = (targetType: PlacementTargetType, targetId: number) =>
-  targetType === 'model' ? resolveModelTarget(targetId) : resolveImageTarget(targetId);
+function modelTargetFrom(row: { userId: number; username: string | null } | undefined) {
+  if (!row) throw throwBadRequestError('placement: that model no longer exists');
+  return { ownerId: row.userId, postId: null, ownerUsername: row.username ?? null };
+}
+
+/**
+ * A post target is a storyline chapter: a continuation sits on the chapter post it continues.
+ *
+ * 🔴 **The owner is the storyline's creator, not the chapter post's author.**
+ * Chapters can be written by collaborators, and a continuation of one still
+ * goes to the storyline creator's queue and is priced by their space and
+ * their cap. Taking the post's author would hand a collaborator someone else's
+ * review queue and earnings.
+ *
+ * Its space cascades storyline -> the creator's account -> surface default,
+ * with no post or image level.
+ */
+async function readChapterTarget(postId: number) {
+  const row = await getChapterPlacementTarget((await loadKyselyDb()).kyselyWrite, postId);
+  return row
+    ? {
+        removedAt: row.removedAt,
+        storyline: {
+          id: row.storylineId,
+          userId: row.storylineUserId,
+          status: row.storylineStatus,
+          tosViolation: row.storylineTosViolation,
+          user: { username: row.username },
+        },
+      }
+    : null;
+}
+
+async function resolveChapterTarget(postId: number) {
+  const chapter = await readChapterTarget(postId);
+  // A taken-down storyline or a removed chapter is not a target at all:
+  // refusing here, where the space is resolved, keeps every read of it (the
+  // contributor's price, the submit) from showing it as open.
+  if (!chapter || !isAnswerableParentChapter(chapter))
+    throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
+  return {
+    ownerId: chapter.storyline.userId,
+    postId: null,
+    storylineId: chapter.storyline.id,
+    complete: chapter.storyline.status === 'Complete',
+    ownerUsername: chapter.storyline.user?.username ?? null,
+  };
+}
+
+type ResolvedTarget = {
+  ownerId: number;
+  postId: number | null;
+  storylineId?: number;
+  complete?: boolean;
+  /** Only an image target has one; the account's media-type setting reads it. */
+  mediaType?: StickerMediaType;
+  ownerUsername: string | null;
+};
+
+const resolveTarget = (
+  targetType: PlacementTargetType,
+  targetId: number
+): Promise<ResolvedTarget> => {
+  if (targetType === 'model') return resolveModelTarget(targetId);
+  if (targetType === 'post') return resolveChapterTarget(targetId);
+  return resolveImageTarget(targetId);
+};
 
 export type ResolvedPlacementSpace = {
   ownerId: number;
+  /** The storyline a chapter target belongs to; absent for every other target. */
+  storylineId?: number;
   /**
    * Who the placer is paying, by name.
    *
@@ -75,6 +164,8 @@ export type ResolvedPlacementSpace = {
    * blank.
    */
   ownerUsername: string | null;
+  /** Whether an image target is a still or a video; absent for other targets. */
+  mediaType?: StickerMediaType;
   mode: PlacementSpaceMode;
   /** What the owner asks. `null` when they have never set one. */
   setPrice: number | null;
@@ -141,6 +232,9 @@ export type ResolvedPlacementSpace = {
  *
  * Paid placements are not counted. The two counters are independent, so a
  * fully-booked paid image still shows its free slots as available.
+ *
+ * The predicate is `reservedFreeSlotsWhere`, which the display path's Kysely count
+ * reads too, so the two cannot disagree. Team-waived rows hold no slot.
  */
 export const reservedFreeSlots = (
   /**
@@ -149,21 +243,19 @@ export const reservedFreeSlots = (
    * outside the lock it just took, and the count would be a listing again.
    */
   client: Pick<typeof dbWrite, 'placement'>,
-  {
-    surface,
-    targetType,
-    targetId,
-  }: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
-) =>
-  client.placement.count({
-    where: {
-      surface,
-      targetType,
-      targetId,
-      free: true,
-      status: { in: [...FREE_SLOT_HOLDING_STATUSES] },
-    },
-  });
+  target: SpaceTarget
+) => countFreeTier((where) => client.placement.count({ where }), reservedFreeSlotsWhere(target));
+
+type SpaceTarget = { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number };
+
+/**
+ * `reservedFreeSlots` for display only, off any transaction. The claim's own count stays on
+ * `reservedFreeSlots(tx, …)` under its lock.
+ */
+const displayedReservedFreeSlots = async (target: SpaceTarget) => {
+  const db = (await loadKyselyDb()).kyselyRead;
+  return countFreeTier((where) => countPlacements(db, where), reservedFreeSlotsWhere(target));
+};
 
 /**
  * The space that governs one target, with the cascade already applied.
@@ -172,31 +264,50 @@ export const reservedFreeSlots = (
  * score change must move the cap immediately, and a stored effective price goes
  * stale with nothing failing to say so.
  */
-export async function resolvePlacementSpaceFor({
-  surface,
-  targetType,
-  targetId,
-}: {
-  surface: PlacementSurface;
-  targetType: PlacementTargetType;
-  targetId: number;
-}): Promise<ResolvedPlacementSpace> {
+export function resolvePlacementSpaceFor(input: SpaceTarget): Promise<ResolvedPlacementSpace> {
+  return resolveSpaceWith(input, primaryReads);
+}
+
+type SpaceRow = Awaited<ReturnType<typeof listPlacementSpacesFor>>[number];
+type SpaceLevel = { entityType: string; entityId: number };
+
+/**
+ * The two row reads the cascade is built from. Everything else `resolveSpaceWith` reads — the
+ * price range, the config, the reserved count — is read live on every path, because each is
+ * documented above as computed at read and never persisted.
+ */
+type SpaceReads = {
+  target: (targetType: PlacementTargetType, targetId: number) => Promise<ResolvedTarget>;
+  rows: (surface: PlacementSurface, levels: SpaceLevel[]) => Promise<SpaceRow[]>;
+};
+
+/** From the primary, uncached: what every caller that decides or charges reads. */
+const primaryReads: SpaceReads = {
+  target: resolveTarget,
+  rows: async (surface, levels) =>
+    listPlacementSpacesFor((await loadKyselyDb()).kyselyWrite, { surface, levels }),
+};
+
+async function resolveSpaceWith(
+  { surface, targetType, targetId }: SpaceTarget,
+  reads: SpaceReads
+): Promise<ResolvedPlacementSpace> {
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, ownerUsername } = await resolveTarget(targetType, targetId);
+  const target = { surface, targetType, targetId };
+  const { ownerId, postId, storylineId, complete, mediaType, ownerUsername } = await reads.target(
+    targetType,
+    targetId
+  );
 
-  const rows = await dbWrite.placementSpace.findMany({
-    where: {
-      surface,
-      OR: [
-        ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
-        ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
-        { entityType: 'user', entityId: ownerId },
-      ],
-    },
-    select: { entityType: true, mode: true, price: true, freeSlots: true, settings: true },
-  });
+  const levels = [
+    ...(storylineId ? [{ entityType: 'storyline', entityId: storylineId }] : []),
+    ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
+    ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
+    { entityType: 'user', entityId: ownerId },
+  ];
+  const rows = await reads.rows(surface, levels);
 
   const at = (entityType: PlacementSpaceEntity): PlacementSpaceSetting | undefined => {
     const row = rows.find((candidate) => candidate.entityType === entityType);
@@ -210,14 +321,26 @@ export async function resolvePlacementSpaceFor({
       : undefined;
   };
 
+  // An account that has switched stickers off for this kind of media is closed at
+  // the account level only, so it is the lowest rung of the cascade: a post or an
+  // image the owner switched on by hand still accepts them. Sticker-only — the
+  // setting lives in the sticker row, and no other surface reads it.
+  const account = at('user');
+  const mediaClosed =
+    surface === 'sticker' &&
+    mediaType !== undefined &&
+    !stickerMediaTypes(account?.settings).includes(mediaType);
+
   const resolved = resolvePlacementSpace(surface, {
+    storyline: at('storyline'),
     image: at('image'),
     post: at('post'),
-    user: at('user'),
+    user: mediaClosed && account ? { ...account, mode: 'off' } : account,
   });
 
-  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
+  // One read: the price range needs the same row.
   const config = await getPlacementConfig();
+  const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface, config);
   const shares = config.approvalShares(surface);
   const hostDeclineFeePercent = isDeclineFeeHostAdjustable(surface)
     ? resolveHostDeclineFeePercent(surface, resolved.settings)
@@ -230,7 +353,7 @@ export async function resolvePlacementSpaceFor({
   // directly above.
   const setFreeSlots = resolved.freeSlots;
   const freeSlots = effectiveFreeSlots(setFreeSlots, freeSlotCap);
-  // `dbRead`, unlike everything above it. The rest of this function decides
+  // The replica, unlike everything above it. The rest of this function decides
   // whether a mutation is allowed and what it charges, which a lagging replica
   // must not answer; `freeSlotsRemaining` is display-only by construction — the
   // claim re-counts under its own lock — and this read is on a public query
@@ -239,13 +362,17 @@ export async function resolvePlacementSpaceFor({
   // Skipped when there is no capacity to reserve against. That is rarer than it
   // looks: the default and the bottom band are both 1, so it fires only for a
   // creator who has explicitly closed their slots.
-  const reserved =
-    freeSlots > 0 ? await reservedFreeSlots(dbRead, { surface, targetType, targetId }) : 0;
+  const reserved = freeSlots > 0 ? await displayedReservedFreeSlots(target) : 0;
 
   return {
     ownerId,
+    ...(storylineId ? { storylineId } : {}),
+    ...(mediaType ? { mediaType } : {}),
     ownerUsername,
-    mode: resolved.mode,
+    // A completed storyline takes no continuations, whatever its space says.
+    // Read from the storyline itself rather than trusting Complete to have
+    // written the space too, so the two cannot disagree.
+    mode: complete ? 'off' : resolved.mode,
     setPrice: resolved.price,
     price: effectivePlacementPrice(resolved.price, cap),
     cap,
@@ -271,6 +398,201 @@ export async function resolvePlacementSpaceFor({
   };
 }
 
+// #region [display read]
+
+/**
+ * `resolvePlacementSpaceFor` for SHOWING a space, never for deciding on one. Behind
+ * `placement-space-read-cache`, only the public `placement.getSpace` route reaches it.
+ *
+ * One change from the primary read: the space row at each level is cached in Redis per row, filled
+ * from the primary (see `readSpaceRows`). The target is the primary read's own, uncached; the
+ * reserved free-slot count reads the replica on both paths (`displayedReservedFreeSlots`). The
+ * price range and the reserved free-slot count stay live. The client re-reads this route with
+ * `staleTime: 0` after a refused free claim and still sees a live count.
+ *
+ * 🔴 What this shows is what a sticker placement is charged. The sticker flow sends no expected
+ * price, so the charge is whatever the primary read resolves at that moment: a display that
+ * disagrees with it is not refused, it is a price shown and a different one taken. That is why the
+ * target is neither cached (an image moved to another post would keep the old post's price for the
+ * whole TTL) nor read from the replica (it would keep it for as long as the replica lags), and why a
+ * space write is visible to the very next read (see `readSpaceRows`).
+ *
+ * A storyline chapter (a `post` target) is not served from here: its target row carries the
+ * storyline's status, takedown and removal, which have writers all over the storyline service.
+ */
+export function resolvePlacementSpaceForDisplay(
+  input: SpaceTarget
+): Promise<ResolvedPlacementSpace> {
+  if (input.targetType === 'post') return resolvePlacementSpaceFor(input);
+  return resolveSpaceWith(input, displayReads);
+}
+
+/**
+ * How long a cached space row is kept. A space write invalidates its own row (see
+ * `bustPlacementSpaceRow`), so this bounds only a lost invalidation.
+ */
+const SPACE_ROW_TTL = CacheTTL.sm;
+/**
+ * How long after a write to a row a fill of that row is not cached. A fill that read the row
+ * BEFORE the write can land AFTER it, and a plain SET cannot tell; for this long after a write
+ * the row is read from the primary uncached, and afterwards only an entry whose read STARTED this
+ * long after the write is trusted.
+ */
+const SPACE_ROW_WRITE_WINDOW_MS = 10_000;
+/**
+ * The write mark outlives every entry that could predate it: an entry is written at most
+ * `SPACE_ROW_TTL` before it expires, and a fill that started before the write can land late.
+ */
+const SPACE_ROW_WRITE_MARK_TTL = SPACE_ROW_TTL + 60;
+
+type CachedSpaceRow = {
+  row: SpaceRow | null;
+  /** When the primary read that produced this entry STARTED (ms). */
+  readAt: number;
+};
+
+const spaceRowKey = (surface: PlacementSurface, { entityType, entityId }: SpaceLevel) =>
+  `${REDIS_KEYS.CACHES.PLACEMENT_SPACE}:row:${surface}:${entityType}:${entityId}` as RedisKeyTemplateCache;
+const spaceWriteKey = (surface: PlacementSurface, { entityType, entityId }: SpaceLevel) =>
+  `${REDIS_KEYS.CACHES.PLACEMENT_SPACE}:written:${surface}:${entityType}:${entityId}` as RedisKeyTemplateCache;
+
+/**
+ * Whether a cached entry may be served, given the time of the last write to its row.
+ *
+ * A fill that read the row BEFORE a write can land AFTER it — a plain SET cannot tell — so the
+ * entry carries when its read started, and loses to any write that is not at least the write
+ * window older than that read. Local to this cache rather than in the shared `createCachedObject`,
+ * which has no way to express it.
+ */
+const isTrustedEntry = (entry: CachedSpaceRow, writtenAt: number | null) =>
+  writtenAt === null || entry.readAt >= writtenAt + SPACE_ROW_WRITE_WINDOW_MS;
+
+const SPACE_ROW_CACHE_NAME = `${REDIS_KEYS.CACHES.PLACEMENT_SPACE}:row`;
+
+/**
+ * The space rows at these levels, through the cache. Each level is one row (or the fact that there
+ * is none), so a write invalidates exactly the row it changed.
+ *
+ * - A cached entry is served only if its read started a full write window after the row's last
+ *   write (`isTrustedEntry`).
+ * - Every miss is read from the PRIMARY, never the replica: an entry is trusted for the whole TTL,
+ *   so a fill from a replica lagging past the write window would cache a pre-write price or mode
+ *   that the charge, reading the primary, no longer uses.
+ * - A miss inside the write window of its row is not cached (it could not be trusted anyway).
+ *
+ * A Redis failure falls back to the primary read the flag-off path makes.
+ */
+async function readSpaceRows(surface: PlacementSurface, levels: SpaceLevel[]): Promise<SpaceRow[]> {
+  const { kyselyWrite } = await loadKyselyDb();
+  let cached: (CachedSpaceRow | number | null)[];
+  try {
+    cached = await redis.packed.mGet<CachedSpaceRow | number>([
+      ...levels.map((level) => spaceRowKey(surface, level)),
+      ...levels.map((level) => spaceWriteKey(surface, level)),
+    ]);
+  } catch {
+    return listPlacementSpacesFor(kyselyWrite, { surface, levels });
+  }
+
+  const now = Date.now();
+  const rows: SpaceRow[] = [];
+  const misses: SpaceLevel[] = [];
+  const toCache: SpaceLevel[] = [];
+  levels.forEach((level, i) => {
+    const entry = cached[i] as CachedSpaceRow | null;
+    const writtenAt = (cached[levels.length + i] as number | null) ?? null;
+    if (entry && isTrustedEntry(entry, writtenAt)) {
+      if (entry.row) rows.push(entry.row);
+      return;
+    }
+    misses.push(level);
+    if (writtenAt === null || now >= writtenAt + SPACE_ROW_WRITE_WINDOW_MS) toCache.push(level);
+  });
+
+  const hits = levels.length - misses.length;
+  if (hits)
+    cacheHitCounter.inc({ cache_name: SPACE_ROW_CACHE_NAME, cache_type: 'placementSpace' }, hits);
+  if (!misses.length) return rows;
+  cacheMissCounter.inc(
+    { cache_name: SPACE_ROW_CACHE_NAME, cache_type: 'placementSpace' },
+    misses.length
+  );
+
+  const missRows = await listPlacementSpacesFor(kyselyWrite, { surface, levels: misses });
+  rows.push(...missRows);
+
+  // Every level asked for is a distinct entity type, so a row names its level by `entityType`.
+  await Promise.all(
+    toCache.map((level) =>
+      redis.packed
+        .set(
+          spaceRowKey(surface, level),
+          {
+            row: missRows.find((row) => row.entityType === level.entityType) ?? null,
+            readAt: now,
+          } satisfies CachedSpaceRow,
+          { EX: SPACE_ROW_TTL }
+        )
+        .catch(() => undefined)
+    )
+  );
+  return rows;
+}
+
+/** The target is the primary read's own (`resolveTarget`); only the space rows differ. */
+const displayReads: SpaceReads = {
+  target: resolveTarget,
+  rows: readSpaceRows,
+};
+
+/**
+ * Called after every write to a `PlacementSpace` row. Unconditional — not behind the flag — so a
+ * flag turned off and on again cannot find a row written while it was off.
+ *
+ * Marks the row written (which opens its write window and distrusts every entry read before it),
+ * then drops the entry. The mark goes first: a reader between the two sees the mark and ignores the
+ * entry. The two are attempted independently: a failed mark still drops the entry (so the next read
+ * misses and refills from the primary), and a failed drop still leaves the mark (so the entry is not
+ * trusted).
+ *
+ * Never throws. The write has already committed; a lost mark AND drop is bounded by `SPACE_ROW_TTL`.
+ *
+ * Every writer of the table, so a new one is added here: `setPlacementSpace` and
+ * `clearPlacementSpace` below. The only other is the storyline delete's raw `DELETE` of a
+ * `storyline`-level row, which no display read caches (storylines are not served from here).
+ */
+export async function bustPlacementSpaceRow({
+  surface,
+  entityType,
+  entityId,
+}: { surface: PlacementSurface } & SpaceLevel) {
+  const level = { entityType, entityId };
+  const lost = (step: 'mark' | 'drop', e: unknown) =>
+    logToAxiom({
+      type: 'warning',
+      name: 'placement-space-row-bust',
+      message: `could not ${step} a written placement space row`,
+      surface,
+      entityType,
+      entityId,
+      error: e instanceof Error ? e.message : String(e),
+    }).catch(() => undefined);
+  try {
+    await redis.packed.set(spaceWriteKey(surface, level), Date.now(), {
+      EX: SPACE_ROW_WRITE_MARK_TTL,
+    });
+  } catch (e) {
+    await lost('mark', e);
+  }
+  try {
+    await redis.del(spaceRowKey(surface, level));
+  } catch (e) {
+    await lost('drop', e);
+  }
+}
+
+// #endregion
+
 /**
  * Ownership of the entity whose space is being configured, from the primary.
  *
@@ -289,6 +611,19 @@ async function assertOwnsSpaceEntity({
 }) {
   if (entityType === 'user') {
     if (entityId !== userId) throw throwAuthorizationError('placement: that is not your account');
+    return;
+  }
+
+  // Its own branch, never the post lookup below: a storyline id and a post id
+  // are different tables, and the same number would name someone else's post.
+  if (entityType === 'storyline') {
+    const storyline = await dbWrite.storyline.findUnique({
+      where: { id: entityId },
+      select: { userId: true },
+    });
+    if (!storyline) throw throwBadRequestError('placement: that storyline no longer exists');
+    if (storyline.userId !== userId)
+      throw throwAuthorizationError('placement: that is not your storyline');
     return;
   }
 
@@ -339,6 +674,14 @@ export async function setPlacementSpace({
   settings?: PlacementSpaceSettings;
   userId: number;
 }) {
+  // A storyline is configured on the storyline or the creator's account, and a
+  // storyline row means nothing on any other surface: refused both ways rather
+  // than written somewhere no resolver reads it.
+  if ((entityType === 'storyline') !== (surface === 'storyline') && entityType !== 'user')
+    throw throwBadRequestError(
+      `placement: ${placementSurfaceLabel(surface)} are not configured on a ${entityType}`
+    );
+
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
 
   if (declineFeePercent !== undefined) {
@@ -425,6 +768,7 @@ export async function setPlacementSpace({
       ...(nextSettings === undefined ? {} : { settings: nextSettings as Prisma.InputJsonValue }),
     },
   });
+  await bustPlacementSpaceRow({ surface, entityType, entityId });
 }
 
 /**
@@ -446,6 +790,16 @@ async function inheritedPrice({
   userId: number;
 }) {
   if (entityType === 'user') return null;
+
+  // A storyline inherits from its creator's account only. Read as a post here,
+  // its id would pull some unrelated post's price into the guard.
+  if (entityType === 'storyline') {
+    const row = await dbWrite.placementSpace.findUnique({
+      where: { surface_entityType_entityId: { surface, entityType: 'user', entityId: userId } },
+      select: { price: true },
+    });
+    return row?.price ?? null;
+  }
 
   const postId =
     entityType === 'image'
@@ -540,4 +894,5 @@ export async function clearPlacementSpace({
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
 
   await dbWrite.placementSpace.deleteMany({ where: { surface, entityType, entityId } });
+  await bustPlacementSpaceRow({ surface, entityType, entityId });
 }

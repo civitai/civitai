@@ -11,15 +11,18 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_IMAGE_LOCATION: z.string().default(''),
   NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.url() : z.url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_ADS_ENABLED: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.url().optional(),
-  NEXT_PUBLIC_SEARCH_CLIENT_KEY: z.string().optional(),
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
   // VAPID public key for web push (`applicationServerKey`). Must be the pair of the private key the
   // notifications worker signs with, or every subscription minted here is undeliverable. Unset =
   // push UI never offered.
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional(),
+  // '1' registers the service worker on a non-production build (production always registers).
+  NEXT_PUBLIC_ENABLE_SW_DEV: z.string().optional(),
   NEXT_PUBLIC_MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
   NEXT_PUBLIC_TRAINING_STUDIO_URL: z.url().default('https://training.civitai.com'),
   // 🔴 The BROWSER-facing orchestrator origin, and deliberately NOT the server-side
@@ -101,13 +104,15 @@ export const clientSchema = z.object({
 export const clientEnv = {
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: process.env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED,
+  NEXT_PUBLIC_LOCAL_ADS_ENABLED: process.env.NEXT_PUBLIC_LOCAL_ADS_ENABLED,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: process.env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT,
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
   NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,
-  NEXT_PUBLIC_SEARCH_CLIENT_KEY: process.env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+  NEXT_PUBLIC_ENABLE_SW_DEV: process.env.NEXT_PUBLIC_ENABLE_SW_DEV,
   NEXT_PUBLIC_MODERATOR_APP_URL: process.env.NEXT_PUBLIC_MODERATOR_APP_URL,
   NEXT_PUBLIC_TRAINING_STUDIO_URL: process.env.NEXT_PUBLIC_TRAINING_STUDIO_URL,
   NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: process.env.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT,

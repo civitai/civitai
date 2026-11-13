@@ -1,11 +1,12 @@
 import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsBaseModelList } from '~/server/schema/model-version.schema';
 import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
   ImageResourceTrainingStepTemplate,
-  KohyaImageResourceTrainingInput,
+  ImageResourceTrainingInput,
   MusubiImageResourceTrainingInput,
   TrainingStepTemplate,
   ZipTrainingData,
@@ -13,8 +14,11 @@ import type {
   SdxlAiToolkitTrainingInput,
   Sd1AiToolkitTrainingInput,
   AnimaAiToolkitTrainingInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
+  isBlockedCustomModelId,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -36,12 +40,18 @@ import type {
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { assertTrainingTriggerWordAllowed } from '~/server/services/orchestrator/training/training-trigger-word-check';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
+import {
+  CLASSIC_TRAINER_RETIRED_MESSAGE,
+  isClassicTrainerRetired,
+} from '~/shared/constants/training.constants';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
@@ -50,46 +60,39 @@ import {
   isInvalidRapid,
   isInvalidAiToolkit,
   isAiToolkitEnabled,
-  isAudioTrainingBaseType,
+  trainingRolloutRefusal,
+  isKohyaEnabled,
+  isRetiredTrainingTarget,
   trainingModelInfo,
 } from '~/utils/training';
+import { modelUnavailability, unavailableModelMessage } from '~/utils/training-blocked-models';
 
-async function isSafeTensor(modelVersionId: number) {
+async function getCustomModelVersion(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
-  const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
-    SELECT mf.metadata ->> 'format' as fmt
+  const [data] = await dbWrite.$queryRaw<{ fmt: string | null; modelId: number }[]>`
+    SELECT mf.metadata ->> 'format' as fmt, mv."modelId" as "modelId"
     FROM "ModelVersion" mv
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
-           JOIN "Model" m ON m.id = mv."modelId"
     WHERE mv.id = ${modelVersionId}
     LIMIT 1
   `;
-
-  return isSafeTensorFormat(data?.fmt);
+  return data;
 }
 
 const checkCustomModel = async (
-  model: string,
-  check_st = true
-): Promise<
-  | {
-      ok: true;
-    }
-  | { ok: false; message: string }
-> => {
+  model: string
+): Promise<{ ok: true } | { ok: false; message: string }> => {
   if (model in trainingModelInfo) return { ok: true };
 
   const mMatch = parseAIRSafe(model);
   if (!mMatch) return { ok: false, message: 'Invalid structure for custom model.' };
 
-  if (check_st) {
-    const isST = await isSafeTensor(mMatch.version);
-    if (!isST)
-      return {
-        ok: false,
-        message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
-      };
-  }
+  // The model id is read off the version, not the AIR: a caller can pair any model id with a version.
+  const version = await getCustomModelVersion(mMatch.version);
+  if (isBlockedCustomModel(model) || (version && isBlockedCustomModelId(version.modelId)))
+    return { ok: false, message: BLOCKED_CUSTOM_MODEL_MESSAGE };
+  if (!isSafeTensorFormat(version?.fmt))
+    return { ok: false, message: NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE };
 
   return { ok: true };
 };
@@ -131,7 +134,7 @@ const createTrainingStep_Run = (
   };
 
   if (engine === 'kohya') {
-    const input: KohyaImageResourceTrainingInput = {
+    const input: ImageResourceTrainingInput = {
       ...inputBase,
       ...(params as any),
       engine,
@@ -142,7 +145,7 @@ const createTrainingStep_Run = (
     };
   } else if (engine === 'flux-dev-fast' || engine === 'flux2-dev' || engine === 'flux2-dev-edit') {
     // All rapid/fast training engines use the same input structure
-    // Type assertion needed because flux2 engine types aren't in @civitai/client yet
+    // Type assertion needed because flux2 engine types aren't in @civitai/orchestration-client yet
     const input = {
       ...inputBase,
       engine,
@@ -166,35 +169,55 @@ const createTrainingStep_Run = (
   }
 };
 
-// NEW: Create training step using the new TrainingStep format (for ai-toolkit)
-const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+/**
+ * The dataset an ai-toolkit step trains on: a zip (the training form's upload) or a
+ * list of individually uploaded orchestrator blobs with per-item captions (the
+ * Training Studio's shape, and the App Blocks `kind:'training'` shape).
+ */
+export type AiToolkitTrainingData =
+  | ZipTrainingData
+  | { type: 'blobs'; items: Array<{ air: string; caption: string }> };
+
+export type AiToolkitTrainingStepInput = {
+  model: string;
+  priority: ImageTrainingStepSchema['priority'];
+  triggerWord: string;
+  trainingData: AiToolkitTrainingData;
+  samplePrompts: string[];
+  samplesOverrides?: ImageTrainingStepSchema['samplesOverrides'];
+  params: AiToolkitTrainingParams;
+  /** Step metadata. Omitted from the step entirely when absent. */
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Build the ai-toolkit `training` step. PURE: no I/O, no clock, no randomness, so
+ * a whatif quote and the real submit built from the same input describe the same
+ * work. Shared by the training form (zip dataset, via `createTrainingStep_AiToolkit`)
+ * and the App Blocks `kind:'training'` bridge (blob dataset).
+ *
+ * Stamps no `timeout` and no `name`; callers add them.
+ */
+export const buildAiToolkitTrainingStep = (
+  input: AiToolkitTrainingStepInput
+): TrainingStepTemplate => {
   const {
     model,
     priority,
-    loraName,
     triggerWord,
     trainingData,
-    trainingDataImagesCount,
     samplePrompts,
     samplesOverrides,
-    negativePrompt,
-    modelFileId,
-    params,
+    params: aiToolkitParams,
+    metadata,
   } = input;
-
-  // Params are already in AI Toolkit format from the database
-  const aiToolkitParams = params as AiToolkitTrainingParams;
 
   let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
-    trainingData: {
-      type: 'zip',
-      sourceUrl: trainingData,
-      count: trainingDataImagesCount,
-    } as ZipTrainingData,
+    trainingData,
     samples: {
       prompts:
         aiToolkitParams.ecosystem === 'yue2'
@@ -273,11 +296,42 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   return {
     $type: 'training',
-    metadata: { modelFileId },
+    ...(metadata ? { metadata } : {}),
     priority,
     retries: constants.maxTrainingRetries,
     input: trainingInput,
   };
+};
+
+// The training form's ai-toolkit step: a zip dataset plus the version's ModelFile id.
+const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+  const {
+    model,
+    priority,
+    triggerWord,
+    trainingData,
+    trainingDataImagesCount,
+    samplePrompts,
+    samplesOverrides,
+    modelFileId,
+    params,
+  } = input;
+
+  return buildAiToolkitTrainingStep({
+    model,
+    priority,
+    triggerWord,
+    trainingData: {
+      type: 'zip',
+      sourceUrl: trainingData,
+      count: trainingDataImagesCount,
+    },
+    samplePrompts,
+    samplesOverrides,
+    // Params are already in AI Toolkit format from the database
+    params: params as AiToolkitTrainingParams,
+    metadata: { modelFileId },
+  });
 };
 
 // Dispatcher to route to the correct training step creator
@@ -310,13 +364,20 @@ export const createTrainingWorkflow = async ({
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
   const { id: userId, isModerator } = user;
 
+  // Only the classic trainer submits here; Training Studio has its own submit path.
+  if (isClassicTrainerRetired()) throw throwBadRequestError(CLASSIC_TRAINER_RETIRED_MESSAGE);
+
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)
     throw throwBadRequestError(status.message ?? 'Training is currently disabled');
 
-  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
+  const modelVersions = await dbWrite.$queryRaw<
+    (TrainingRequest & { modelId: number; modelMeta: ModelMeta | null })[]
+  >`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           m.id        "modelId",
+           m.meta      "modelMeta",
            mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
@@ -344,12 +405,28 @@ export const createTrainingWorkflow = async ({
 
   const baseModel = modelVersion.trainingDetails.baseModel;
   if (!baseModel) throw throwBadRequestError('Missing base model');
-  if ((status.blockedModels ?? []).includes(baseModel))
+  const unavailable = modelUnavailability(status, baseModel);
+  if (unavailable) {
+    const info = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
     throw throwBadRequestError(
-      'This model has been blocked from training - please try another one.'
+      info
+        ? unavailableModelMessage(info.pretty, unavailable.reason)
+        : 'This model has been blocked from training - please try another one.'
     );
+  }
+  if (trainingModelInfo[baseModel as TrainingDetailsBaseModelList]?.disabled)
+    throw throwBadRequestError('This base model is not available for training.');
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
+  if (
+    isRetiredTrainingTarget({
+      baseModelType,
+      ecosystem: 'ecosystem' in trainingParams ? trainingParams.ecosystem : undefined,
+    })
+  )
+    throw throwBadRequestError('This base model is not available for training.');
+  const customCheck = await checkCustomModel(baseModel);
+  if (!customCheck.ok) throw throwBadRequestError(customCheck.message);
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
   const samplesOverrides = modelVersion.trainingDetails.samplesOverrides;
   const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
@@ -377,23 +454,53 @@ export const createTrainingWorkflow = async ({
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
 
-  // Audio base types are marked `isAiToolkitMandatory`, so the check above
-  // short-circuits to true regardless of feature flags. Enforce the rollout
-  // flag here so API callers can't submit ACE-Step training when the
-  // `audioTraining` flag is off.
-  if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
-    throw throwBadRequestError('Audio training is not currently enabled.');
+  const catalogEntry = Object.prototype.hasOwnProperty.call(trainingModelInfo, baseModel)
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList]
+    : undefined;
+
+  // The ecosystem/variant in params is what gets trained, so for a catalog base model it must be
+  // the one that base maps to. A missing variant is tolerated: versions saved before the form sent
+  // one still resubmit (the same rule publish-from-workflow.ts uses to match a run to its base).
+  if (trainingParams.engine === 'ai-toolkit' && catalogEntry) {
+    const expected = catalogEntry.aiToolkit;
+    if (
+      !expected ||
+      trainingParams.ecosystem !== expected.ecosystem ||
+      (trainingParams.modelVariant != null && trainingParams.modelVariant !== expected.modelVariant)
+    )
+      throw throwBadRequestError(
+        'The training settings do not match the selected base model. Please reselect the base model and submit again.'
+      );
+  }
+
+  // The form stops offering Kohya when the flag is off, but a version saved earlier or a direct
+  // API caller can still carry it, and no worker would claim the step.
+  if (trainingParams.engine === 'kohya' && !isKohyaEnabled(features))
+    throw throwBadRequestError(
+      'Kohya training is no longer available. Please switch this run to AI Toolkit and submit again.'
+    );
+
+  // AI Toolkit-only types pass isAiToolkitEnabled whatever their rollout flags say. baseModelType
+  // is caller-written, so the gate also reads the catalog's type for the base model and the type of
+  // the AI Toolkit ecosystem in params: what is actually trained.
+  const ecosystemTypes =
+    trainingParams.engine === 'ai-toolkit'
+      ? Object.values(trainingModelInfo)
+          .filter((info) => info.aiToolkit?.ecosystem === trainingParams.ecosystem)
+          .map((info) => info.type)
+      : [];
+  const rolloutRefusal = trainingRolloutRefusal(
+    {
+      types: [baseModelType, ...(catalogEntry ? [catalogEntry.type] : []), ...ecosystemTypes],
+      ecosystem: trainingParams.engine === 'ai-toolkit' ? trainingParams.ecosystem : undefined,
+    },
+    features
+  );
+  if (rolloutRefusal) throw throwBadRequestError(rolloutRefusal);
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
     : await getGetUrl(modelVersion.trainingUrl);
-
-  if (!(baseModel in trainingModelInfo)) {
-    const customCheck = await checkCustomModel(baseModel);
-    if (!customCheck.ok) {
-      throw throwBadRequestError(customCheck.message);
-    }
-  }
 
   const model = getTrainingFields.getModel(baseModel);
   const priority = getTrainingFields.getPriority(isPriority);
@@ -401,6 +508,16 @@ export const createTrainingWorkflow = async ({
   const loraName = modelVersion.modelName;
   const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
+
+  await assertTrainingTriggerWordAllowed({
+    triggerWord,
+    log: { userId, source: 'trainer', modelVersionId },
+    model: {
+      id: modelVersion.modelId,
+      versionId: modelVersion.modelVersionId,
+      meta: modelVersion.modelMeta,
+    },
+  });
 
   // Don't override the engine field in params - it needs to remain as the literal type
   // from the database for the discriminated union to work properly.
@@ -460,6 +577,20 @@ export const createTrainingWorkflow = async ({
     data: { trainingStatus: TrainingStatus.Submitted },
   });
   if (claimed === 0) throw throwBadRequestError('This model was already submitted for training.');
+
+  // A new dataset upload replaces the training-data record (a new id) and is refused once the claim
+  // above lands. One that landed between the read above and the claim would leave this run
+  // reporting to a record that no longer exists, so confirm it is still there before paying.
+  const datasetUnchanged = await dbWrite.modelFile.count({
+    where: { id: modelFileId, url: modelVersion.trainingUrl },
+  });
+  if (!datasetUnchanged) {
+    await dbWrite.modelVersion.updateMany({
+      where: { id: modelVersionId, trainingStatus: TrainingStatus.Submitted },
+      data: { trainingStatus: TrainingStatus.Pending },
+    });
+    throw throwBadRequestError('Your training data changed while submitting. Please try again.');
+  }
 
   let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
   try {

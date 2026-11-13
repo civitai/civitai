@@ -48,6 +48,9 @@ import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
+import { canViewerOpenModel } from '~/server/services/model-visibility.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -565,6 +568,9 @@ export const getVotableTags = async ({
 }) => {
   let results: VotableTagModel[] = [];
   if (type === 'model') {
+    // modelVotableTagsCache is keyed by model id alone, so the viewer check runs first. A model the
+    // viewer may not see answers as an unknown id does: no tags.
+    if (!(await canViewerOpenModel(id, { id: userId, isModerator }))) return results;
     // Static, user-independent read of the ModelTag composite view — cache-backed
     // (mirrors the image path's imageTagsCache). The per-user vote is merged below,
     // uncached, so nothing user-specific is cached here.
@@ -589,6 +595,8 @@ export const getVotableTags = async ({
     }
     results = await stripUnlistedTags(results, isModerator);
   } else if (type === 'image') {
+    // imageTagsCache is keyed by image id alone, so the viewer check runs first.
+    await assertImageVisibleToViewer({ id, userId, isModerator });
     const voteCutoff = new Date(Date.now() + constants.tagVoting.voteDuration);
 
     // Fetch from cache
@@ -922,6 +930,8 @@ export const findOrCreateTagsByName = async (tags: string[]) => {
     .filter(([, id]) => id === undefined)
     .map((t) => t[0]);
   if (newTags.length > 0) {
+    // Only names no Tag row has: attaching an existing tag is not new text.
+    await throwOnBlockedUserContent(newTags, { surface: 'post' });
     // prisma...my dude. you really can't return the created rows?
     await dbWrite.tag.createMany({
       data: newTags.map((x) => ({

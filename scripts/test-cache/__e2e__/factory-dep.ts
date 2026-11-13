@@ -1,0 +1,1 @@
+export const fromFactory = 'factory';

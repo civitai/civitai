@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearRecentlyOpenedApps,
   getRecentlyOpenedApps,
@@ -19,9 +19,9 @@ import { resolveRecentApp } from '~/components/Apps/recentAppsRail';
  * whole v3 validation layer (`coerce`) exists because anybody can hand-edit
  * `localStorage.recentlyOpenedApps` and every previously-shipped entry shape is
  * still in the wild. The existing coverage lived only in
- * `recents-helper.browser.test.tsx` — and the browser (`component`) project runs
- * only in the PR preview pipeline, report-only and behind a preview build that
- * fails intermittently, so on a PR very little was reliably watching that
+ * `recents-helper.browser.test.tsx` — and the browser (`component`) project ran
+ * only in the PR preview pipeline then, report-only and behind a preview build that
+ * failed intermittently, so on a PR very little was reliably watching that
  * validation. The `unit` project at least runs on every PR
  * (`.github/workflows/lint.yml`), which is why behavioural coverage belongs
  * here; the browser suite keeps its real-`window` prepend/dedup/cap coverage.
@@ -161,6 +161,34 @@ describe('coerce — the untrusted-input validation layer', () => {
     const [entry] = getRecentlyOpenedApps(OWNER);
     expect(entry.hasPage).toBeUndefined();
     expect(resolveRecentApp(entry)!.hasPage).toBe(false);
+  });
+});
+
+// 🔴 A listing icon is gated per viewer, per host and at render time on the server; a stored
+// icon url would render later with no gate in front of it (and entries written before that gate
+// hold raw urls). So the store never reads one back and never writes one.
+describe('🔴 a stored icon url is never rendered', () => {
+  it('drops an icon url already sitting in localStorage (written before the media gate)', () => {
+    seedOwned([
+      { id: 'a', blockId: 'gen', slug: 'gen', kind: 'onsite', name: 'Gen', iconUrl: 'raw-r.png' },
+    ]);
+    const [entry] = getRecentlyOpenedApps(OWNER);
+    expect(entry, 'the entry itself must survive — only the icon goes').toEqual({
+      id: 'a',
+      blockId: 'gen',
+      slug: 'gen',
+      kind: 'onsite',
+      name: 'Gen',
+    });
+    expect(resolveRecentApp(entry)).not.toHaveProperty('iconUrl');
+  });
+
+  it('does not persist an icon url handed to the write path', () => {
+    recordRecentlyOpenedApp({ id: 'b', blockId: 'b', name: 'B', iconUrl: 'gated-now.png' }, OWNER);
+    expect(storage.getItem(RECENTLY_OPENED_APPS_KEY)).not.toContain('gated-now.png');
+    expect(getRecentlyOpenedApps(OWNER)).toEqual([
+      { id: 'b', blockId: 'b', name: 'B', openedAt: expect.any(Number) },
+    ]);
   });
 });
 
@@ -476,5 +504,45 @@ describe('🔴 a legacy (pre-owner) blob is dropped, never attributed', () => {
     recordRecentlyOpenedApp({ id: 'theirs', blockId: 'theirs' }, OTHER_OWNER);
     clearRecentlyOpenedApps();
     expect(storage.getItem(RECENTLY_OPENED_APPS_KEY)).toBeNull();
+  });
+});
+
+// The My apps home brings a removed app back once it is opened AFTER the removal
+// (`isHiddenFromHome`), and for a recents-only app this timestamp is the only evidence of
+// that open. So the store — not a caller — stamps it, and a read keeps only a real number.
+describe("`openedAt` — the open time the home's re-appear rule reads", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('is stamped by the store at write time, overriding anything the caller passed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-02T10:15:00.000Z'));
+    recordRecentlyOpenedApp({ id: 'a', blockId: 'a', openedAt: 1 }, OWNER);
+    expect(getRecentlyOpenedApps(OWNER)[0].openedAt).toBe(Date.parse('2026-11-02T10:15:00.000Z'));
+  });
+
+  it('a re-open moves the entry to the front with the NEW time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-02T10:15:00.000Z'));
+    recordRecentlyOpenedApp({ id: 'a', blockId: 'a' }, OWNER);
+    recordRecentlyOpenedApp({ id: 'b', blockId: 'b' }, OWNER);
+    vi.setSystemTime(new Date('2026-11-03T08:40:00.000Z'));
+    recordRecentlyOpenedApp({ id: 'a', blockId: 'a' }, OWNER);
+    const [first, second] = getRecentlyOpenedApps(OWNER);
+    expect([first.id, first.openedAt]).toEqual(['a', Date.parse('2026-11-03T08:40:00.000Z')]);
+    expect([second.id, second.openedAt]).toEqual(['b', Date.parse('2026-11-02T10:15:00.000Z')]);
+  });
+
+  it('a stored non-number / non-finite openedAt is dropped on read; a number survives', () => {
+    seedOwned([
+      { id: 'n', blockId: 'n', openedAt: 1762077600000 },
+      { id: 's', blockId: 's', openedAt: '1762077600000' },
+      { id: 'x', blockId: 'x', openedAt: null },
+    ]);
+    const byId = Object.fromEntries(getRecentlyOpenedApps(OWNER).map((e) => [e.id, e]));
+    expect(byId.n.openedAt).toBe(1762077600000);
+    expect(byId.s).not.toHaveProperty('openedAt');
+    expect(byId.x).not.toHaveProperty('openedAt');
   });
 });

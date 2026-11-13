@@ -3,7 +3,18 @@ import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
+import { usageLimits } from '~/shared/constants/usage-limits';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import {
+  studioAutoLabelPollSchema,
+  studioAutoLabelSubmitSchema,
+} from '~/server/schema/training-studio-auto-label.schema';
+import {
+  pollStudioAutoLabel,
+  STUDIO_AUTO_LABEL_RATE_LIMITS,
+  submitStudioAutoLabel,
+} from '~/server/services/training-studio-auto-label.service';
 import {
   autoCaptionInput,
   autoTagInput,
@@ -17,6 +28,7 @@ import {
   submitAutoLabelWorkflowSchema,
 } from '~/server/schema/training.schema';
 import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
+import { moveAsset } from '~/server/services/orchestrator/training/move-asset';
 import { getTrainingRunState } from '~/server/services/orchestrator/training/training-state';
 import {
   autoCaptionHandler,
@@ -27,7 +39,7 @@ import {
   getAutoLabelWorkflow,
   getJobEstStartsHandler,
   getTrainingServiceStatus,
-  moveAsset,
+  getTrainingServiceStatusState,
   submitAutoLabelWorkflow,
   setTrainingServiceStatus,
 } from '~/server/services/training.service';
@@ -40,6 +52,9 @@ import {
   router,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { setStudioDatasetShare } from '~/server/services/training-data-share.service';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { isBaseModelKey } from '~/utils/training-blocked-models';
 
 const TRAINING_ANNOUNCEMENT_KEY = 'training-announcement';
 // Written by the moderator app's Training Models page; read here for the training form's alert box.
@@ -49,6 +64,23 @@ type TrainingAnnouncement = {
 };
 
 export const trainingRouter = router({
+  // The owner's own click: the publish link alone can only lower a share (setStudioDatasetShare).
+  setStudioDatasetShare: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(
+      z.object({
+        modelVersionId: z.number().int().positive(),
+        ownRights: z.boolean(),
+        shareDataset: z.boolean(),
+      })
+    )
+    .mutation(async ({ input: { modelVersionId, ...choice }, ctx }) => {
+      const found = await setStudioDatasetShare(modelVersionId, choice, {
+        raise: true,
+        ownerId: ctx.user.id,
+      });
+      if (!found) throw throwNotFoundError();
+    }),
   /**
    * @deprecated for orchestrator v2
    */
@@ -70,7 +102,9 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
-    .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      moveAsset({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+    ),
   // One zip of everything a finished run produced (epoch models + sample media).
   // A mutation rather than a query: each call mints a short-lived signed URL from
   // the orchestrator, which must not be served from the tRPC query cache.
@@ -122,47 +156,94 @@ export const trainingRouter = router({
   //   2) submitAutoLabelWorkflow with the resulting blob URLs (≤16 per call)
   //   3) getAutoLabelWorkflow on a poll loop until each step is succeeded/failed
   //
-  // Tagging/captioning is free; the orchestrator work is billed to the system token
-  // and not the user, so each endpoint needs a per-user rate cap to prevent abuse.
+  // Tagging/captioning is free; the workflow is billed to the system token and not
+  // the user, so each endpoint needs a per-user rate cap to prevent abuse. The upload
+  // URL in step 1 is minted with the user's own token, as every consumer upload is.
   getAutoLabelUploadUrl: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(getAutoLabelUploadUrlSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Per-image: ~1000 images/min is the soft ceiling we want to allow for legitimate
-    // use, so the cap matches that 1:1 (each image needs one presign).
-    .use(rateLimit({ limit: 1000, period: 60 }))
-    .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id })),
+    .use(rateLimit(usageLimits('auto-label.upload')))
+    .mutation(({ input, ctx }) =>
+      getAutoLabelUploadUrl({
+        ...input,
+        userId: ctx.user.id,
+        getUserToken: () => getOrchestratorToken(ctx.user.id, ctx),
+      })
+    ),
   submitAutoLabelWorkflow: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(submitAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Per-batch (≤16 images): 100/min covers ~1600 images/min in flight, leaving a
-    // little headroom above the 1000/min upload ceiling.
-    .use(rateLimit({ limit: 100, period: 60 }))
+    .use(rateLimit(usageLimits('auto-label.submit')))
     .mutation(({ input, ctx }) => submitAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
   getAutoLabelWorkflow: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
-    // Polling — at 5s cadence each workflow eats ~12 polls/min. A 1000-image run
-    // chunked at 16 = ~63 workflows; if a third are in flight at peak that's ~250
-    // polls/min. 1500/min keeps polling from being the bottleneck.
-    .use(rateLimit({ limit: 1500, period: 60 }))
+    .use(rateLimit(usageLimits('auto-label.poll')))
     .query(({ input, ctx }) => getAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
+  // Training Studio auto-label (the embedded element's host methods). Free to the user, so it runs
+  // on the system token; the same caps as the wizard above keep it from being free compute.
+  studioAutoLabelSubmit: guardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(studioAutoLabelSubmitSchema)
+    .use(isFlagProtected('trainingStudioUi'))
+    .use(
+      rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.submit.rules, undefined, {
+        sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS.submit.key,
+      })
+    )
+    .mutation(({ input, ctx }) => submitStudioAutoLabel({ ...input, userId: ctx.user.id })),
+  studioAutoLabelPoll: guardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(studioAutoLabelPollSchema)
+    .use(isFlagProtected('trainingStudioUi'))
+    .use(
+      rateLimit(STUDIO_AUTO_LABEL_RATE_LIMITS.poll.rules, undefined, {
+        sharedKey: STUDIO_AUTO_LABEL_RATE_LIMITS.poll.key,
+      })
+    )
+    .query(({ input, ctx }) => pollStudioAutoLabel({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
-    .query(() => getTrainingServiceStatus()),
+    .query(async ({ ctx }) => {
+      const { status, known } = await getTrainingServiceStatusState();
+      // A cold pod's fail-closed fallback (status unreadable, never read) must not be cached at
+      // the edge: it would be served to everyone for the TTL after the pod recovers.
+      if (!known && ctx.cache) ctx.cache.skip = true;
+      return status;
+    }),
+  /**
+   * Training on/off for anyone, signed in or not: only `available`. getStatus stays behind the
+   * imageTraining flag because it also carries the operator message and blocked models. Read by
+   * the public status page (status-next.civitai.com).
+   */
+  getPublicStatus: publicProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
+    .query(async ({ ctx }) => {
+      const {
+        status: { available },
+        known,
+      } = await getTrainingServiceStatusState();
+      // As getStatus: never edge-cache the fail-closed fallback.
+      if (!known && ctx.cache) ctx.cache.skip = true;
+      return { available };
+    }),
   getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),
   setStatus: moderatorProcedure
     .input(
       z.object({
         available: z.boolean(),
         message: z.string().max(2000).nullish(),
+        blockedModels: z.array(z.string().refine(isBaseModelKey, 'Unknown base model')).optional(),
+        blockedModelReasons: z.record(z.string(), z.string().max(300)).nullish(),
       })
     )
     .use(purgeOnSuccess(['training-status']))

@@ -48,34 +48,61 @@
   const FIRST_LINE_TIMEOUT_MS = 15_000;
   const followers = new Map<string, AbortController>();
   let readStates = $state<Record<string, 'reading' | 'complete' | 'unavailable'>>({});
+  // A live tail is whatever this session happened to receive; the finished trace is the record, so
+  // a trace tailed live is re-read once its epoch is done.
+  const tailedLive = new Set<string>();
 
-  function follow(path: string) {
+  // Read all at once, a long run's later traces sat in the browser's connection queue past
+  // FIRST_LINE_TIMEOUT_MS and were marked unavailable unread. Kept under the per-host connection
+  // limit.
+  const CATCH_UP_READS = 4;
+  let freeReads = CATCH_UP_READS;
+  const waitingReads: (() => void)[] = [];
+  const acquireRead = () =>
+    freeReads > 0
+      ? (freeReads--, Promise.resolve())
+      : new Promise<void>((resolve) => waitingReads.push(resolve));
+  const releaseRead = () => {
+    const next = waitingReads.shift();
+    if (next) next();
+    else freeReads++;
+  };
+
+  async function follow(path: string) {
     const trace = () => untrack(() => traces).find((t) => tracePath(t.url) === path);
     const epoch = trace()?.epoch ?? -1;
     const live = () => untrack(() => training) && !trace()?.done;
     const controller = new AbortController();
     followers.set(path, controller);
     readStates[path] = 'reading';
+    const wasLive = live();
+    if (wasLive) tailedLive.add(path);
+    else await acquireRead();
+    if (controller.signal.aborted) {
+      if (!wasLive) releaseRead();
+      return;
+    }
     // The orchestrator holds a trace request open until its first byte, so the trace of an epoch that
     // never started (a canceled run) would otherwise read forever.
-    const stall = live() ? undefined : setTimeout(() => controller.abort(), FIRST_LINE_TIMEOUT_MS);
+    const stall = wasLive ? undefined : setTimeout(() => controller.abort(), FIRST_LINE_TIMEOUT_MS);
     let failures = 0;
-    followTrace(
-      () => trace()?.url ?? path,
-      (line) => {
-        clearTimeout(stall);
-        ingest(epoch, line);
-      },
-      controller.signal,
-      (attempt) => live() || (attempt === 'failed' && ++failures < 3)
-    )
-      .then((attempt) => {
-        readStates[path] = attempt === 'complete' ? 'complete' : 'unavailable';
-      })
-      .catch(() => {
-        readStates[path] = 'unavailable';
-      })
-      .finally(() => clearTimeout(stall));
+    try {
+      const attempt = await followTrace(
+        () => trace()?.url ?? path,
+        (line) => {
+          clearTimeout(stall);
+          ingest(epoch, line);
+        },
+        controller.signal,
+        (attempt) => live() || (attempt === 'failed' && ++failures < 3)
+      );
+      readStates[path] = attempt === 'complete' ? 'complete' : 'unavailable';
+    } catch {
+      readStates[path] = 'unavailable';
+    } finally {
+      clearTimeout(stall);
+      if (!wasLive) releaseRead();
+    }
   }
 
   const liveIndex = $derived(liveTraceIndex(traces));
@@ -94,7 +121,7 @@
       const path = tracePath(t.url);
       if (readStates[path] !== 'unavailable') continue;
       followers.delete(path);
-      follow(path);
+      void follow(path);
     }
   }
 
@@ -102,8 +129,20 @@
 
   $effect(() => {
     if (!browser || !open) return;
-    const paths = readable.map((t) => tracePath(t.url)).filter((p) => !followers.has(p));
-    untrack(() => paths.forEach(follow));
+    const fresh = readable.map((t) => tracePath(t.url)).filter((p) => !followers.has(p));
+    const settled = readable
+      .map((t) => ({ path: tracePath(t.url), done: t.done }))
+      .filter(({ path, done }) => done && tailedLive.has(path) && readStates[path] !== 'reading')
+      .map(({ path }) => path);
+    untrack(() => {
+      fresh.forEach((p) => void follow(p));
+      for (const p of settled) {
+        // Delete first: follow() writes readStates[p], which this effect read, so the re-run must
+        // find the path gone or it reads the trace again.
+        tailedLive.delete(p);
+        void follow(p);
+      }
+    });
   });
 
   let picked = $state<string | null>(null);

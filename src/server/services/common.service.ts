@@ -26,7 +26,7 @@ type UserEntityAccessStatus = EntityAccessRaw & {
 };
 
 const OPEN_ACCESS_AVAILABILITY = [Availability.Public, Availability.Unsearchable] as const;
-const isOpenAvailability = (availability: Availability) =>
+export const isOpenAvailability = (availability: Availability) =>
   OPEN_ACCESS_AVAILABILITY.some((a) => a === availability);
 
 export type EntityAccessDataType = {
@@ -218,6 +218,17 @@ export const hasEntityAccess = async ({
     }
 
     const resource = data.find((d) => d.entityId === entityId);
+    // Owners always have access to their own, whatever else is in the batch.
+    if (resource?.userId === userId) {
+      return {
+        entityId,
+        entityType,
+        hasAccess: true,
+        availability: resource.availability,
+        permissions: EntityAccessPermission.All,
+      };
+    }
+
     const privateEntityAccess = entityAccess.find((entity) => entity.entityId === entityId);
     // If we could not find a privateEntityAccess record, means the user is guaranteed not to have
     // a link between the entity and himself.
@@ -323,11 +334,26 @@ export const entityAvailabilityUpdate = async ({
     return;
   }
 
-  await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
+  const update = `
     UPDATE "${entityType}" t
     SET "availability" = '${availability}'::"Availability",
       "updatedAt" = NOW()
-    WHERE t.id IN (${entityIds.join(', ')})`);
+    WHERE t.id IN (${entityIds.join(', ')})`;
+  if (entityType !== 'Model' || availability === Availability.Private) {
+    await dbWrite.$executeRawUnsafe(update);
+    return;
+  }
+
+  const { applyHeldVerdictLeavingPrivate, finishHeldVerdictApply } = await import(
+    '~/server/services/text-scan/actions/model-nsfw'
+  );
+  const applied = await dbWrite.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(update);
+    const ids: number[] = [];
+    for (const id of entityIds) if (await applyHeldVerdictLeavingPrivate(tx, id)) ids.push(id);
+    return ids;
+  });
+  for (const id of applied) await finishHeldVerdictApply(id);
 };
 
 export type EntityAccessWithKey = {

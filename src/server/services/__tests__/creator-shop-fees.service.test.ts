@@ -67,6 +67,9 @@ describe('getCreatorShopFees', () => {
       { submission: 'all of them' },
       { submission: { Sticker: -1, Badge: 1.5 }, pack: Number.NaN },
       { submission: { Sticker: null }, pack: '1000' },
+      { mysteryPack: 'free' },
+      { mysteryPack: -1 },
+      { mysteryPack: 1.5 },
     ]) {
       stored(value);
       const fees = await getCreatorShopFees();
@@ -77,11 +80,16 @@ describe('getCreatorShopFees', () => {
   // A fat-fingered extra digit is the realistic version of this, and the fee is
   // taken before review and never refunded.
   it('falls back rather than serving an absurd fee', async () => {
-    stored({ submission: { Sticker: 1e15 }, pack: CREATOR_SHOP_FEE_MAX + 1 });
+    stored({
+      submission: { Sticker: 1e15 },
+      pack: CREATOR_SHOP_FEE_MAX + 1,
+      mysteryPack: CREATOR_SHOP_FEE_MAX + 1,
+    });
     const fees = await getCreatorShopFees();
 
     expect(fees.submission.Sticker).toBe(DEFAULT_CREATOR_SHOP_FEES.submission.Sticker);
     expect(fees.pack).toBe(DEFAULT_CREATOR_SHOP_FEES.pack);
+    expect(fees.mysteryPack).toBe(DEFAULT_CREATOR_SHOP_FEES.mysteryPack);
   });
 
   it('serves a fee sitting exactly on the ceiling', async () => {
@@ -89,6 +97,18 @@ describe('getCreatorShopFees', () => {
     await expect(getCreatorShopSubmissionFee(CosmeticType.Sticker)).resolves.toBe(
       CREATOR_SHOP_FEE_MAX
     );
+  });
+
+  // The two non-type fees are separate figures: setting one must not price the other.
+  it('resolves the mystery pack fee independently of the pack fee', async () => {
+    stored({ pack: 2000, mysteryPack: 3000 });
+    const fees = await getCreatorShopFees();
+
+    expect(fees.pack).toBe(2000);
+    expect(fees.mysteryPack).toBe(3000);
+
+    stored({ pack: 2000 });
+    expect((await getCreatorShopFees()).mysteryPack).toBe(DEFAULT_CREATOR_SHOP_FEES.mysteryPack);
   });
 
   it('keeps a usable sibling when one type is junk', async () => {
@@ -126,6 +146,16 @@ describe('setCreatorShopFees', () => {
     expect(next.submission.Badge).toBe(12000);
     expect(next.pack).toBe(2000);
     expect(mocks.executeRawUnsafe).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the mystery pack fee alone when another fee is set, and sets it alone', async () => {
+    stored({ pack: 2000, mysteryPack: 3000 });
+    expect((await setCreatorShopFees({ pack: 2500 })).mysteryPack).toBe(3000);
+
+    stored({ pack: 2000, mysteryPack: 3000 });
+    const next = await setCreatorShopFees({ mysteryPack: 4000 });
+    expect(next.mysteryPack).toBe(4000);
+    expect(next.pack).toBe(2000);
   });
 
   // This write decides how much Buzz every creator is charged before review, so

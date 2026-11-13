@@ -8,7 +8,7 @@
  *   "defaultAccount": "bot",
  *   "accounts": {
  *     "bot": { "apiToken": "pk_...", "teamId": "...", ... },
- *     "justin": { "apiToken": "pk_...", ... }
+ *     "jane": { "apiToken": "pk_...", ... }
  *   }
  * }
  *

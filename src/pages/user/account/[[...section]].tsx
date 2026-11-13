@@ -5,10 +5,12 @@ import { AccountLayout } from '~/components/Account/AccountLayout';
 import { AccountPane, accountPaneCopy } from '~/components/Account/AccountPanes';
 import { LegacyAccountPage } from '~/components/Account/LegacyAccountPage';
 import { resolveAccountSection } from '~/components/Account/account-sections';
+import { useSettingDeepLink } from '~/components/Account/useSettingDeepLink';
 import { Meta } from '~/components/Meta/Meta';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getLoginLink } from '~/utils/login-helpers';
 
 export default function Account() {
   const router = useRouter();
@@ -17,11 +19,13 @@ export default function Account() {
   const segments = router.query.section;
   const slug = Array.isArray(segments) ? segments[0] : segments;
 
+  useSettingDeepLink({ followToPane: !!features.accountSettingsV2 });
+
   // A sub-path only means anything while the shell is on. After a rollback, bookmarks made during
   // the ramp would otherwise render the whole legacy page under a URL promising one section.
   useEffect(() => {
     if (features.accountSettingsV2 || !router.isReady || !slug) return;
-    router.replace('/user/account');
+    router.replace(`/user/account${window.location.search}${window.location.hash}`);
   }, [features.accountSettingsV2, router.isReady, slug, router]);
 
   const content = () => {
@@ -53,8 +57,16 @@ export default function Account() {
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ssg, session }) => {
-    if (!session?.user || session.user.bannedAt)
+  resolver: async ({ ctx, ssg, session }) => {
+    if (!session?.user)
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl }),
+          permanent: false,
+        },
+      };
+
+    if (session.user.bannedAt)
       return {
         redirect: {
           destination: '/',

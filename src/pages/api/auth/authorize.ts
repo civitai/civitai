@@ -6,7 +6,7 @@ import {
   clearBridgeCookie,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
-import { sessionCookieName } from '@civitai/auth';
+import { sessionCookieMode, sessionCookieNameForSlot } from '@civitai/auth';
 import {
   clearAllSessionCookies,
   cookieDomainForHost,
@@ -61,7 +61,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   // hub fetch): a cookie that DID stick is sent back regardless, so a good session is never false-triggered and
   // the add-account flow (re-enters /authorize while logged in, cookie present) is unaffected.
   const cookieOps: string[] = [];
-  if (req.cookies[POST_LOGIN_MARKER] && !req.cookies[sessionCookieName()]) {
+  // The cookie the callback writes in this app's mode; a shared-slot cookie still present in host mode must not
+  // hide a host-only cookie that failed to land.
+  const writtenCookie = sessionCookieNameForSlot(sessionCookieMode());
+  if (req.cookies[POST_LOGIN_MARKER] && !req.cookies[writtenCookie]) {
     const retries = Number.parseInt(req.cookies[LOGIN_RETRY_COOKIE] ?? '', 10) || 0;
     if (retries >= 1) {
       // Second consecutive miss → genuine loop. Wipe the wedged cookies (incl. marker + retry budget) and stop.

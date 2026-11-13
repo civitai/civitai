@@ -245,6 +245,34 @@ describe('homeBlock.getHomeBlock edge-cache chain', () => {
     });
   });
 
+  // A flag-gated block answers per viewer (home-block-access.ts), so the viewer it was served
+  // to must not have it stored under a URL anyone can request.
+  describe('flag-gated block — the resolver opts out', () => {
+    const gated = {
+      id: 7,
+      type: HomeBlockType.Collection,
+      metadata: { featureFlag: 'birthday2026' },
+    };
+
+    it('zeroes the edge TTL for the flagged viewer it was served to', async () => {
+      getHomeBlockById.mockResolvedValue(gated);
+
+      const { root } = await callGetHomeBlock({ user: { id: 1 } });
+
+      expect(root.cache.edgeTTL).toBe(0);
+      expect(willEdgeCache(root.cache)).toBe(false);
+    });
+
+    it('control: the same block without the flag is still edge-cached', async () => {
+      getHomeBlockById.mockResolvedValue({ ...gated, metadata: {} });
+
+      const { root } = await callGetHomeBlock({ user: { id: 1 } });
+
+      expect(root.cache.edgeTTL).toBe(60);
+      expect(willEdgeCache(root.cache)).toBe(true);
+    });
+  });
+
   it('leaves the call succeeding — the opt-out is not an error path', async () => {
     getHomeBlockById.mockResolvedValue(announcement);
 

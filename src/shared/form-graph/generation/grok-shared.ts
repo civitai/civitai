@@ -1,5 +1,5 @@
 import { defineGraph } from 'form-graph';
-import { grokVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { grokVersionIds } from '~/shared/generation/version-ids';
 import { checkpointDef } from './checkpoint';
 import { SEED } from './defs';
 import { makeTextBlock, type FamilyExt } from './shared';
@@ -7,9 +7,8 @@ import { makeTextBlock, type FamilyExt } from './shared';
 /**
  * The pieces shared by Grok's two hub arms — `image/grok.graph.ts` and
  * `video/grok.graph.ts`. Grok is the one family serving BOTH output types
- * from a single ecosystem (v1 splits on the root's `output` computed), so
- * the version-locked head and the always-required text block live here
- * rather than in either hub's folder.
+ * from a single ecosystem, so the version-locked head and the always-required
+ * text block live here rather than in either hub's folder.
  */
 
 export const grokVersionOptions = [

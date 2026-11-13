@@ -24,3 +24,33 @@ export function failureSnapshot(err: unknown): BlockWorkflowSnapshot {
     error: err instanceof Error ? err.message : 'workflow request failed',
   };
 }
+
+/**
+ * tRPC codes that say the poll could not be answered, not that the workflow failed. With no code at
+ * all (a network error, an aborted fetch, a non-JSON gateway page) the server's verdict is equally
+ * unknown. Every other code is the server refusing the request and stays terminal.
+ */
+const POLL_UNANSWERED_CODES: ReadonlySet<string> = new Set([
+  'INTERNAL_SERVER_ERROR',
+  'BAD_GATEWAY',
+  'SERVICE_UNAVAILABLE',
+  'GATEWAY_TIMEOUT',
+  'TIMEOUT',
+  'TOO_MANY_REQUESTS',
+  'CLIENT_CLOSED_REQUEST',
+]);
+
+export function isPollUnanswered(err: unknown): boolean {
+  const code = (err as { data?: { code?: unknown } | null } | null | undefined)?.data?.code;
+  return typeof code !== 'string' || POLL_UNANSWERED_CODES.has(code);
+}
+
+/**
+ * The WORKFLOW_STATUS snapshot for a poll that threw. `failed` is terminal for the block's watch
+ * loop, so a poll the server never answered gets the same "not read this time" placeholder the
+ * server's own poll rate limit returns, and the block polls again.
+ */
+export function pollFailureSnapshot(err: unknown, workflowId: string): BlockWorkflowSnapshot {
+  if (isPollUnanswered(err)) return { workflowId, status: 'processing' };
+  return failureSnapshot(err);
+}

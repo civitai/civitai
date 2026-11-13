@@ -239,21 +239,24 @@ export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 18, 9];
 export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 5, 5, 4, 13];
 
 /**
- * The revenue attributions table (`RevenuePanel`) — Date · [App] · **Scope** · Buzz ·
- * Gross · Your share · Status.
+ * The `/apps/review` SUB-LISTINGS table (`SubListingReviewQueue`). The item cell carries the
+ * before/after diff of a staged edit, so it takes the slack; the action cell holds up to three
+ * buttons.
+ */
+export const APPS_SUB_LISTING_QUEUE_COLUMNS: AppsTableColumns = [null, 12, 10, 22];
+
+/**
+ * The recent author-fee table (`RevenuePanel`) — Date · [**App**] · Fee · Buzz type · Status.
  *
- * TWO SHAPES, and the primary column MOVES between them, which is why they are two
- * ledgers rather than one with a hole:
+ * TWO SHAPES, and the primary column MOVES between them:
  *   · unscoped (`/apps/revenue`) — App is a link to a per-app page and is primary;
- *   · scoped (`/apps/<id>/revenue`) — there IS no App column, because every row is the
- *     same app, so Scope takes the slack.
- * Both are numbers-only decisions about a fixed column set; nothing here is width-aware.
+ *   · scoped (`/apps/<id>/revenue`) — there is no App column, so Status takes the slack.
  */
 export const APPS_REVENUE_COLUMNS = {
-  /** `/apps/revenue`: Date · App · Scope · Buzz · Gross · Your share · Status. */
-  withApp: [5, null, 7, 5, 5, 6, 7] as AppsTableColumns,
-  /** `/apps/<appBlockId>/revenue`: Date · Scope · Buzz · Gross · Your share · Status. */
-  scoped: [6, null, 6, 6, 7, 8] as AppsTableColumns,
+  /** `/apps/revenue`: Date · App · Fee · Buzz type · Status. */
+  withApp: [8, null, 7, 9, 12] as AppsTableColumns,
+  /** `/apps/<appBlockId>/revenue`: Date · Fee · Buzz type · Status. */
+  scoped: [10, 9, 11, null] as AppsTableColumns,
 } as const;
 
 /**
@@ -424,6 +427,15 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  */
 export const APPS_AGENT_REPORT_SCOPE_COLUMNS: AppsTableColumns = [7, 5, 6, 6, 22, null];
 
+/**
+ * The analytics panel's Custom events table (`AppAnalyticsPanel`) — **Event** · Events ·
+ * Signed-in viewers · Signed-out events. Event is primary: the three counts are numbers whose
+ * natural width more space does not improve, so their shares use the shrink-to-content idiom
+ * (too small to bind) and the surplus goes to the event name beside its counts. No geometry arm
+ * measures this table.
+ */
+export const APPS_CUSTOM_EVENTS_COLUMNS: AppsTableColumns = [null, 2, 2, 2];
+
 /** Every ledger in this module, so a guard can sweep them all rather than a sample. */
 export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns>> = {
   'review queue (pending/rejected)': APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy,
@@ -434,6 +446,7 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
   'revenue (scoped)': APPS_REVENUE_COLUMNS.scoped,
   'active previews': APPS_ACTIVE_PREVIEWS_COLUMNS,
   'agent report scopes': APPS_AGENT_REPORT_SCOPE_COLUMNS,
+  'custom events': APPS_CUSTOM_EVENTS_COLUMNS,
 };
 
 /**

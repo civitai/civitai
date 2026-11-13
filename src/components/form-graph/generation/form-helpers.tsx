@@ -1,21 +1,28 @@
-import { Button, Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Button, Input, UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { showNotification } from '@mantine/notifications';
 import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { choiceIdleClass } from '~/libs/form/components/choice-styles';
 import { useCallback, useEffect, useMemo } from 'react';
+import type { ReactNode } from 'react';
+import { GenerationSetupModel } from '~/components/generation_v2/GenerationLayout';
+import type { ResourceSelectInputProps } from '~/components/generation_v2/inputs/ResourceSelectInput';
+import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 
+import { asResourceValue } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { PromptEnhanceImage } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import {
   getAllVersionIds,
   type VersionGroup,
   type VersionOption,
 } from '~/shared/form-graph/generation/checkpoint';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import type { ResourceData } from '~/shared/generation/values';
 import type { SnippetsValue } from '~/shared/form-graph/generation/defs';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { trpc } from '~/utils/trpc';
@@ -112,10 +119,10 @@ function VersionLevelDropdown({
   onChange,
 }: {
   group: VersionGroup;
-  selectedValue: number;
+  selectedValue: number | undefined;
   onChange: (id: number) => void;
 }) {
-  const selected = group.options.find((o) => o.value === selectedValue) ?? group.options[0];
+  const selected = group.options.find((o) => o.value === selectedValue);
   return (
     <Menu position="bottom-start" withinPortal>
       <Tooltip label={group.label} position="top" withArrow disabled={!group.label}>
@@ -123,11 +130,10 @@ function VersionLevelDropdown({
           <UnstyledButton
             className={clsx(
               'flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold',
-              'bg-gray-1 hover:bg-gray-2',
-              'dark:bg-dark-5 dark:hover:bg-dark-4'
+              choiceIdleClass
             )}
           >
-            {selected?.label}
+            {selected?.label ?? group.label ?? 'Version'}
           </UnstyledButton>
         </Menu.Target>
       </Tooltip>
@@ -145,6 +151,8 @@ function VersionLevelDropdown({
     </Menu>
   );
 }
+
+const isVersionNew = (o: VersionOption) => !!o.newUntil && Date.now() < o.newUntil.getTime();
 
 /**
  * Hierarchical version selector — parent levels as compact dropdowns, leaf as
@@ -174,30 +182,34 @@ export function VersionGroupSelector({
   const handleChange = useCallback(
     (id: number) => {
       const resourceData = getResourceData(id);
-      onChange(resourceData ?? { id });
+      onChange(resourceData ? asResourceValue(resourceData) : { id });
     },
     [getResourceData, onChange]
   );
 
-  if (!modelId || !allIds.has(modelId) || allIds.size <= 1) return null;
+  if (!modelId || allIds.size <= 1) return null;
 
+  // A model outside the group (a swapped-in checkpoint) leaves nothing selected but keeps the
+  // selector, so the way back to an official version stays on screen.
   const path = findModelPath(versions, modelId);
 
-  const levels: Array<{ group: VersionGroup; selectedValue: number }> = [];
+  const levels: Array<{ group: VersionGroup; selectedValue: number | undefined }> = [];
   let currentGroup: VersionGroup | undefined = versions;
   let pathIdx = 0;
   while (currentGroup && currentGroup.options.length > 0) {
-    const selected: VersionOption = path?.[pathIdx] ?? currentGroup.options[0];
-    levels.push({ group: currentGroup, selectedValue: selected.value });
-    currentGroup = selected.children;
+    const selected: VersionOption | undefined = path?.[pathIdx];
+    levels.push({ group: currentGroup, selectedValue: selected?.value });
+    currentGroup = selected?.children;
     pathIdx++;
   }
 
-  const leaf = levels[levels.length - 1];
+  const last = levels[levels.length - 1];
+  const leaf = last && !last.group.options.some((o) => o.children) ? last : undefined;
+  const parentLevels = leaf ? levels.slice(0, -1) : levels;
 
   return (
     <div className="flex items-center gap-1">
-      {levels.slice(0, -1).map((level, i) => (
+      {parentLevels.map((level, i) => (
         <VersionLevelDropdown
           key={level.group.label ?? i}
           group={level.group}
@@ -206,11 +218,24 @@ export function VersionGroupSelector({
         />
       ))}
       {leaf && (
-        <ButtonGroupInput
+        <ChoiceGroup
           className="flex-1"
-          value={leaf.selectedValue.toString()}
+          dynamicColumns={6}
+          value={leaf.selectedValue?.toString() ?? ''}
           onChange={(v) => handleChange(Number(v))}
-          data={leaf.group.options.map((o) => ({ label: o.label, value: o.value.toString() }))}
+          data={leaf.group.options.map((o) => ({
+            label: isVersionNew(o) ? (
+              <span className="inline-flex items-center gap-1">
+                {o.label}
+                <Badge size="xs" color="green" variant="filled" radius="sm">
+                  New
+                </Badge>
+              </span>
+            ) : (
+              o.label
+            ),
+            value: o.value.toString(),
+          }))}
         />
       )}
     </div>
@@ -280,4 +305,29 @@ export function useWildcardHandlers(store: GenerationStore) {
   }, [store, loadFromModelVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { removeWildcardSet, addWildcardSet, isAdding: loadFromModelVersion.isPending };
+}
+
+/**
+ * A form's model, with its version fields as `children` under it, drawn into the model card under
+ * the ecosystem.
+ */
+export function ModelCardInput({
+  children,
+  ...props
+}: ResourceSelectInputProps & { children?: ReactNode }) {
+  return (
+    <GenerationSetupModel>
+      <ResourceSelectInput {...props} flush />
+      <div className="flex flex-col gap-2 px-2 pb-2 empty:hidden">{children}</div>
+    </GenerationSetupModel>
+  );
+}
+
+/** A form's version field with no model (3D's engine version), in the model card under the ecosystem. */
+export function ModelCardSection({ children }: { children: ReactNode }) {
+  return (
+    <GenerationSetupModel>
+      <div className="flex flex-col gap-2 p-2 empty:hidden">{children}</div>
+    </GenerationSetupModel>
+  );
 }

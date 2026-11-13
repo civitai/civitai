@@ -10,9 +10,9 @@ const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
 dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  });
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Verifies Task 10: pickWinnersForChallenge skips the LLM winner-pick (generateWinners) when
 // fewer than 2 distinct entrants were judged. generateWinners is asked to pick "exactly 3"
@@ -100,6 +100,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
@@ -116,8 +117,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -130,7 +131,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('user'),
   reportPoolFundingShortfall: vi.fn(),
 }));
@@ -181,7 +182,11 @@ const currentChallenge = {
   title: 'Test',
   invitation: '',
   coverUrl: '',
-  prizes: [{ buzz: 500, points: 10 }, { buzz: 250, points: 5 }, { buzz: 100, points: 2 }],
+  prizes: [
+    { buzz: 500, points: 10 },
+    { buzz: 250, points: 5 },
+    { buzz: 100, points: 2 },
+  ],
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 0, points: 0 },
 } as never;
@@ -192,9 +197,7 @@ function mockChallengeJudgeRow(source: string) {
   ]);
 }
 
-function mockJudgedEntryRows(
-  rows: Array<{ imageId: number; userId: number; username: string }>
-) {
+function mockJudgedEntryRows(rows: Array<{ imageId: number; userId: number; username: string }>) {
   mockDbReadQueryRaw.mockResolvedValueOnce(
     rows.map((row) => ({
       ...row,
@@ -286,6 +289,14 @@ describe('pickWinnersForChallenge degenerate guard', () => {
     expect(mockGenerateWinners).not.toHaveBeenCalled();
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
+    // A field emptied by bans still refunds the banned entrants' waiting paid reviews.
+    const { refundBannedEntrantReviews } = await import(
+      '~/server/games/daily-challenge/challenge-rewards'
+    );
+    expect(refundBannedEntrantReviews).toHaveBeenCalledTimes(1);
+    expect(refundBannedEntrantReviews).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 1, reviewMeTagId: 12 })
+    );
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledWith(
       expect.objectContaining({ challengeId: 1 })
     );

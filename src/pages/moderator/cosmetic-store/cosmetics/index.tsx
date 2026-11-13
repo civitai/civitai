@@ -23,6 +23,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -112,9 +113,15 @@ export default function CosmeticStoreProducts() {
                         </Badge>
                       </Table.Td>
                       <Table.Td>
-                        <LegacyActionIcon component={Link} href="/moderator/rewards/update/test">
-                          <IconEdit />
-                        </LegacyActionIcon>
+                        {isEventDecorationData(cosmetic.data) && cosmetic.data.type === 'hat' && (
+                          <LegacyActionIcon
+                            component={Link}
+                            href={`/moderator/cosmetic-store/cosmetics/${cosmetic.id}`}
+                            aria-label={`Edit ${cosmetic.name}`}
+                          >
+                            <IconEdit />
+                          </LegacyActionIcon>
+                        )}
                       </Table.Td>
                     </Table.Tr>
                   );

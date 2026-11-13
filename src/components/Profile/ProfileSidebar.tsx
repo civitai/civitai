@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import type { MantineSize } from '@mantine/core';
 import {
   Anchor,
@@ -5,13 +6,13 @@ import {
   Button,
   Divider,
   Group,
-  Popover,
   Stack,
   Text,
   Badge,
   UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -42,18 +43,23 @@ import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import {
+  avatarHatOverhang,
+  isShowcaseHatShowing,
+} from '~/components/Cosmetics/EventDecoration/AvatarHat';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
+import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
+import { getBadgeImageUrl, splitProfileBadges } from '~/shared/utils/badge-visibility';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const mapSize: Record<
@@ -103,6 +109,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
@@ -120,20 +127,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         ? []
         : user.cosmetics
             .map((c) => c.cosmetic)
-            .filter((c) => c.type === CosmeticType.Badge && !!c.data)
-            .reverse()
-            .filter((badge, index, self) => {
-              const data = (badge.data ?? {}) as BadgeCosmetic['data'];
-              const url = (data.url ?? '') as string;
-              // Keep only the first occurrence of each unique URL
-              return (
-                url &&
-                self.findIndex((b) => {
-                  const bData = (b.data ?? {}) as BadgeCosmetic['data'];
-                  return (bData.url ?? '') === url;
-                }) === index
-              );
-            }),
+            .filter((c) => c.type === CosmeticType.Badge && !!getBadgeImageUrl(c))
+            .reverse(),
     [user]
   );
 
@@ -145,22 +140,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const shouldDisplayStats = stats && !!Object.values(stats).find((stat) => stat !== 0);
   const equippedCosmetics = user?.cosmetics.filter((c) => !!c.equippedAt);
 
-  // Drop badges the user chose to hide, then split the rest into their
-  // highlighted picks (their own section) and the others. Hidden wins over
-  // highlighted if stale data ever has a badge in both lists.
   const privacy = profile.privacySettings as PrivacySettingsSchema | null | undefined;
-  const hiddenSet = new Set(privacy?.hiddenBadgeIds ?? []);
-  const visibleBadges = badges.filter((b) => !hiddenSet.has(b.id));
-  const highlightedBadgeIds = privacy?.highlightedBadgeIds ?? [];
-  const highlightedSet = new Set(highlightedBadgeIds);
-  const highlightedBadges = highlightedBadgeIds
-    .map((id) => visibleBadges.find((b) => b.id === id))
-    .filter((b): b is (typeof badges)[number] => !!b);
-  const otherBadges = visibleBadges.filter((b) => !highlightedSet.has(b.id));
+  const { highlightedBadges, otherBadges } = splitProfileBadges(badges, privacy, getBadgeImageUrl);
 
   const renderBadge = (award: (typeof badges)[number]) => {
-    const data = (award.data ?? {}) as BadgeCosmetic['data'];
-    const url = (data.url ?? '') as string;
+    const url = getBadgeImageUrl(award);
     if (!url) return null;
     const isEnlarged = enlargedBadge === award.id;
     const style = {
@@ -242,7 +226,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
   const ChatBtn = ({ label }: { label?: string }) => (
     <ChatUserButton
-      user={user}
+      user={{ ...user, cosmetics: equippedCosmetics }}
       label={label}
       size={sizeOpts.button}
       color="success.9"
@@ -287,8 +271,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     </AlertWithIcon>
   );
 
+  // The sidebar scrolls, so it clips a showcase hat reaching above the avatar unless it makes room.
+  const hatRoom =
+    showEventCosmetics && isShowcaseHatShowing(user.showcaseHat)
+      ? avatarHatOverhang(user.showcaseHat, sizeOpts.avatar)
+      : 0;
+
   return (
-    <Stack className={className} gap={sizeOpts.spacing} p="md">
+    <Stack
+      className={className}
+      gap={sizeOpts.spacing}
+      p="md"
+      pt={hatRoom ? `calc(var(--mantine-spacing-md) + ${hatRoom}px)` : undefined}
+    >
       <Group wrap="nowrap" justify="space-between">
         <Group align="flex-start" justify="space-between" w={!isMobile ? '100%' : undefined}>
           <UserAvatar
@@ -297,6 +292,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             size={sizeOpts.username}
             // Oversized radius to make it always a circle
             radius={1000}
+            withShowcaseHat
           />
 
           {!isMobile && (
@@ -327,6 +323,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {features.creatorJourney && <LegendStatusLine userId={user.id} />}
         {currentUser?.isModerator && (
           <CopyButton value={String(user.id)}>
             {({ copied, copy, color }) => (
@@ -386,7 +383,10 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         </Group>
       )}
       {profile?.bio && !muted && (
-        <ContentClamp maxHeight={sizeOpts.bio} style={{ wordWrap: 'break-word' }}>
+        <ContentClamp
+          maxHeight={sizeOpts.bio}
+          style={{ wordWrap: 'break-word', whiteSpace: 'pre-line' }}
+        >
           {profile.bio}
         </ContentClamp>
       )}

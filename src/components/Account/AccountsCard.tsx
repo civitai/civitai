@@ -1,5 +1,6 @@
 import { Alert, Button, Group, LoadingOverlay, Stack, Table, Text, Title } from '@mantine/core';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
+import { accountLinkErrorCopy } from '~/components/Account/account-link-error';
 import { useRouter } from 'next/router';
 import {
   IconBrandDiscord,
@@ -36,7 +37,7 @@ function connectAccount(providerId: string) {
 export function AccountsCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { error } = useRouter().query;
+  const linkError = accountLinkErrorCopy(useRouter().query.error);
   const { availableOAuthProviders } = useAppContext();
   const { data: accounts = [] } = trpc.account.getAll.useQuery();
 
@@ -67,14 +68,14 @@ export function AccountsCard({ flat }: { flat?: boolean } = {}) {
             </Text>
           </Stack>
         )}
-        {error && (
+        {linkError && (
           <Alert color="yellow">
             <Stack gap={4}>
               <Text c="yellow" fw={500}>
-                Account not linked
+                {linkError.title}
               </Text>
               <Text size="sm" lh={1.2}>
-                {`That account is already connected to another Civitai account. If you want to link it to this account, switch accounts and remove it from the other Civitai account.`}
+                {linkError.body}
               </Text>
             </Stack>
           </Alert>

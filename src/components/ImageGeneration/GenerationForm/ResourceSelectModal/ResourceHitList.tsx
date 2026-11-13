@@ -10,6 +10,7 @@ import {
   useApplyHiddenPreferences,
 } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
@@ -24,15 +25,19 @@ import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
 import {
   selectableVersions,
+  needsVersionFilter,
   skipBaseModelForOwnTabs,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
+import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const GRID_GAP = 16;
 /** Below this a column stops being worth showing, so the count drops instead. */
 const MIN_COLUMN_WIDTH = 240;
 const MAX_COLUMN_COUNT = 4;
+/** Fixed: the virtual list needs row height up front, so the compact row's content must fit it. */
+const COMPACT_ROW_HEIGHT = 120;
 
 /**
  * The catalog grid, sized to FILL its pane.
@@ -44,7 +49,13 @@ const MAX_COLUMN_COUNT = 4;
  * derived from the measured pane instead — the count comes from a minimum
  * width, and the columns then divide the space exactly.
  */
-function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
+function FillingMasonryGrid({
+  children,
+  maxColumns = MAX_COLUMN_COUNT,
+}: {
+  children: React.ReactNode;
+  maxColumns?: number;
+}) {
   const [width, setWidth] = useState(0);
   // Debounced to match MasonryProvider's own 100ms observer. `columnWidth`
   // arrives there as a prop and bypasses that debounce, so an undebounced
@@ -70,9 +81,9 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
   const [columnCount, columnWidth] = useMemo(() => {
     if (!width) return [1, MIN_COLUMN_WIDTH];
     const fits = Math.floor((width + GRID_GAP) / (MIN_COLUMN_WIDTH + GRID_GAP));
-    const count = Math.min(Math.max(fits, 1), MAX_COLUMN_COUNT);
+    const count = Math.min(Math.max(fits, 1), maxColumns);
     return [count, Math.floor((width - (count - 1) * GRID_GAP) / count)];
-  }, [width]);
+  }, [width, maxColumns]);
 
   return (
     <div ref={ref}>
@@ -84,9 +95,11 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 }
 
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab, filters } =
+  const { canGenerate, resources, selectSource, excludedIds, tab, filters, excludeTurbo } =
     useResourceSelectContext();
+  const compact = useIsMobile({ type: 'media' });
   const loadedOnly = filters.loadedOnly;
+  const turboOnly = filters.turboOnly;
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -120,9 +133,10 @@ export function ResourceHitList({ query }: { query: string }) {
     (model: TransformedModel) => {
       // Mirror the server query's base-model relaxation so we don't strip every
       // version client-side (e.g. linking a Flux VAE into a Boogu checkpoint).
-      // The featured tab is a cross-ecosystem podium (the server returns winners
-      // from any baseModel), so don't re-apply the ecosystem's base-model filter.
-      const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource) || tab === 'featured';
+      // Featured checkpoints span every ecosystem, as the server returns them.
+      const skipBaseModel =
+        skipBaseModelForOwnTabs(tab, selectSource) ||
+        (tab === 'featured' && model.type === 'Checkpoint');
       const modelBaseModels = resources
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
@@ -133,12 +147,25 @@ export function ResourceHitList({ query }: { query: string }) {
         member,
         isCheckpoint: model.type === 'Checkpoint',
         loadedOnly,
+        turboOnly,
+        excludeTurbo,
         skipBaseModel,
         modelBaseModels,
         excludedIds,
       });
     },
-    [canGenerate, coverageNext, member, loadedOnly, resources, excludedIds, tab, selectSource]
+    [
+      canGenerate,
+      coverageNext,
+      member,
+      loadedOnly,
+      turboOnly,
+      excludeTurbo,
+      resources,
+      excludedIds,
+      tab,
+      selectSource,
+    ]
   );
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -152,10 +179,30 @@ export function ResourceHitList({ query }: { query: string }) {
   // apply, through the same filter as the grid below.
   // Filter by resource types AND baseModels to match the current ecosystem's auction.
   const resourceTypes = useMemo(() => resources.map((r) => r.type), [resources]);
-  const resourceBaseModels = useMemo(
-    () => new Set(resources.flatMap((r) => r.baseModels)),
+  // Per type: an empty list for one type (e.g. Advanced Mode's any-family Checkpoint) must not be
+  // narrowed by another type's base models.
+  const matchesTypeBaseModel = useCallback(
+    (type: string, baseModel: string) =>
+      resources.some(
+        (r) => r.type === type && (r.baseModels.length === 0 || r.baseModels.includes(baseModel))
+      ),
     [resources]
   );
+  // A model can be featured in several ecosystems: the first entry in this ecosystem, else the
+  // first. The list comes best first (position, or newest version in the collection fallback).
+  const featuredVersionIds = useMemo(() => {
+    const ids = new Map<number, number>();
+    if (tab !== 'featured') return ids;
+    const inEcosystem = new Set<number>();
+    for (const fm of featured ?? []) {
+      if (!fm.modelVersionId || inEcosystem.has(fm.modelId)) continue;
+      const matches = matchesTypeBaseModel(fm.type, fm.baseModel);
+      if (matches || !ids.has(fm.modelId)) ids.set(fm.modelId, fm.modelVersionId);
+      if (matches) inEcosystem.add(fm.modelId);
+    }
+    return ids;
+  }, [tab, featured, matchesTypeBaseModel]);
+
   const topItems = useMemo(() => {
     if (tab !== 'featured' || !featured?.length) return [];
 
@@ -165,7 +212,7 @@ export function ResourceHitList({ query }: { query: string }) {
     const relevantFeatured = featured.filter(
       (fm) =>
         resourceTypes.includes(fm.type) &&
-        (isCheckpointOnly || resourceBaseModels.size === 0 || resourceBaseModels.has(fm.baseModel))
+        (isCheckpointOnly || matchesTypeBaseModel(fm.type, fm.baseModel))
     );
     const podiumEntries = relevantFeatured.filter((fm) => fm.position >= 1 && fm.position <= 3);
     const podiumIds = new Set(podiumEntries.map((fm) => fm.modelId));
@@ -206,7 +253,7 @@ export function ResourceHitList({ query }: { query: string }) {
     items,
     filterVersions,
     resourceTypes,
-    resourceBaseModels,
+    matchesTypeBaseModel,
     browsingLevel,
     currentUser,
     canViewNsfw,
@@ -217,7 +264,8 @@ export function ResourceHitList({ query }: { query: string }) {
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resources.length && !loadedOnly) return models;
+    if (!needsVersionFilter({ canGenerate, resources, loadedOnly, turboOnly, excludeTurbo }))
+      return models;
 
     const ret = models
       .map((model) => {
@@ -239,7 +287,17 @@ export function ResourceHitList({ query }: { query: string }) {
     }
 
     return ret;
-  }, [canGenerate, loadedOnly, featured, models, resources, tab, filterVersions]);
+  }, [
+    canGenerate,
+    loadedOnly,
+    turboOnly,
+    excludeTurbo,
+    featured,
+    models,
+    resources,
+    tab,
+    filterVersions,
+  ]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
@@ -248,9 +306,11 @@ export function ResourceHitList({ query }: { query: string }) {
         height={height}
         selectSource={selectSource}
         coverageNext={coverageNext}
+        compact={compact}
+        featuredVersionId={featuredVersionIds.get(data.id)}
       />
     ),
-    [selectSource, coverageNext]
+    [selectSource, coverageNext, compact, featuredVersionIds]
   );
 
   if (loading && !filtered.length)
@@ -305,6 +365,13 @@ export function ResourceHitList({ query }: { query: string }) {
               We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
               query.
             </Text>
+            {resources.length > 0 && (
+              <Text align="center" c="dimmed" size="sm">
+                Only showing {[...new Set(resources.map((r) => getDisplayName(r.type)))].join(', ')}{' '}
+                compatible with your selected resources. Paste a model link to see why a specific
+                model is missing.
+              </Text>
+            )}
           </Stack>
         </Center>
       </div>
@@ -328,27 +395,41 @@ export function ResourceHitList({ query }: { query: string }) {
           )}
         >
           <div className={cardClasses.winnerFirst}>
-            <ResourceSelectCard data={topItems[0]} selectSource={selectSource} />
+            <ResourceSelectCard
+              data={topItems[0]}
+              selectSource={selectSource}
+              featuredVersionId={featuredVersionIds.get(topItems[0].id)}
+            />
           </div>
           {topItems.length > 1 && (
             <div className={cardClasses.winnerSecond}>
-              <ResourceSelectCard data={topItems[1]} selectSource={selectSource} />
+              <ResourceSelectCard
+                data={topItems[1]}
+                selectSource={selectSource}
+                featuredVersionId={featuredVersionIds.get(topItems[1].id)}
+              />
             </div>
           )}
           {topItems.length > 2 && (
             <div className={cardClasses.winnerThird}>
-              <ResourceSelectCard data={topItems[2]} selectSource={selectSource} />
+              <ResourceSelectCard
+                data={topItems[2]}
+                selectSource={selectSource}
+                featuredVersionId={featuredVersionIds.get(topItems[2].id)}
+              />
             </div>
           )}
         </div>
       )}
 
-      <FillingMasonryGrid>
+      <FillingMasonryGrid maxColumns={compact ? 1 : MAX_COLUMN_COUNT}>
         <MasonryColumnsVirtual
           data={restItems}
           render={renderCard}
-          imageDimensions={() => ({ width: 450, height: Math.round(450 * (9 / 7)) })}
-          adjustHeight={({ height }) => height + 82}
+          imageDimensions={() =>
+            compact ? { width: 1, height: 1 } : { width: 450, height: Math.round(450 * (9 / 7)) }
+          }
+          adjustHeight={({ height }) => (compact ? COMPACT_ROW_HEIGHT : height + 82)}
           itemId={(x) => x.id}
         />
       </FillingMasonryGrid>

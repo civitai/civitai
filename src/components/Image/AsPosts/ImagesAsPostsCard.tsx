@@ -1,17 +1,17 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import type { ThemeIconProps } from '@mantine/core';
 import {
   Badge,
   Center,
   getPrimaryShade,
-  HoverCard,
   Loader,
   Paper,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import type { IconProps } from '@tabler/icons-react';
 import {
   IconAutomaticGearbox,
@@ -41,10 +41,17 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import {
+  ImageMediaHat,
+  imageMediaHatClearLeft,
+  useInHatLayer,
+} from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { HatLayerHost } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -56,6 +63,8 @@ import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 type ImagesAsPostsCardProps = {
   data: ImagesAsPostModel;
@@ -67,6 +76,7 @@ const pinnedIconProps = { size: 16, stroke: 1.5 };
 const edgeMediaWrapperProps = { style: { zIndex: 1 } };
 
 function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
+  const showHats = useShowEventCosmetics();
   const { data, height } = props;
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -98,8 +108,13 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         : undefined),
     };
   }, [cosmetic?.data, pinned, theme, colorScheme]);
+  // The cover only: further images are recorded per slide as they are swiped to.
+  const impressionRef = useTrackImpression<HTMLElement>([
+    ...(data.postId ? [{ entityType: 'Post' as const, entityId: data.postId }] : []),
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
-  return (
+  const card = (
     <TwCosmeticWrapper
       className="w-full"
       cosmetic={cosmeticData}
@@ -110,6 +125,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           <PinnedIndicator radius="xl" color="orange" size="md" iconProps={pinnedIconProps} />
         )}
         <TwCard
+          ref={impressionRef}
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
         >
@@ -127,6 +143,18 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         </TwCard>
       </>
     </TwCosmeticWrapper>
+  );
+
+  // imageCount > images.length: the lazily fetched tail may bring a hat the first page lacks.
+  const mayWearHat =
+    showHats &&
+    (data.images.some((i) => i.eventDecoration) || (data.imageCount ?? 0) > data.images.length);
+  return mayWearHat ? (
+    <div className="relative w-full">
+      <HatLayerHost>{card}</HatLayerHost>
+    </div>
+  ) : (
+    card
   );
 }
 export const ImagesAsPostsCard = memo(ImagesAsPostsCardNoMemo);
@@ -186,7 +214,8 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      px="xs"
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
@@ -273,6 +302,8 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
+  const inHatLayer = useInHatLayer();
+  const showEventCosmetics = useShowEventCosmetics();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
   const handleRemixClick = (e: React.MouseEvent) => {
@@ -285,7 +316,14 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
       {(safe) => (
         <>
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={imageMediaHatClearLeft(
+              showEventCosmetics ? image.eventDecoration : null,
+              inHatLayer
+            )}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
@@ -303,6 +341,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   </HoverActionButton>
                 </RemixMenu>
               )}
+              <MoreLikeThisButton image={image} />
             </div>
           )}
           {safe && <RemixedCardFlyout imageId={image.id} />}
@@ -400,6 +439,8 @@ function PostCarouselSlide({
   postTail?: PostTailDescriptor;
 }) {
   const features = useFeatureFlags();
+  const inHatLayer = useInHatLayer();
+  const showEventCosmetics = useShowEventCosmetics();
   const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -409,8 +450,16 @@ function PostCarouselSlide({
     <ImageGuard2 image={image} connectType="post" connectId={postId}>
       {(safe) => (
         <>
+          <ImpressionSentinel impressions={[{ entityType: 'Image', entityId: image.id }]} />
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={imageMediaHatClearLeft(
+              showEventCosmetics ? image.eventDecoration : null,
+              inHatLayer
+            )}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />

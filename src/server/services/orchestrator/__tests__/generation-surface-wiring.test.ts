@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import ts from 'typescript';
 
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
+import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 import { REQUEST_RESOLVED_GENERATION_SURFACES } from '~/server/services/orchestrator/generation-surface';
 
 /**

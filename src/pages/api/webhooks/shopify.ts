@@ -74,6 +74,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({ received: true, ...result });
   } catch (error: any) {
     log({ message: `Webhook error: ${error.message}`, error: error.stack, topic });
-    return res.status(400).send(`Webhook Error: ${error.message}`);
+    return res.status(400).send('Webhook Error');
   }
 }

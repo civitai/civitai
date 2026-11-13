@@ -1,4 +1,5 @@
-import { HoverCard, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import type { ReactNode } from 'react';
 
 type StatHoverCardProps = {

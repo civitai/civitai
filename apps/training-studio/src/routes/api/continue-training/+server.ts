@@ -1,7 +1,15 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
-import { continueTraining, continueTrainingWhatIf, type ContinueOpts } from '$lib/server/train';
+import {
+  continueTraining,
+  continueTrainingWhatIf,
+  MatureAckRequiredError,
+  type ContinueOpts,
+} from '$lib/server/train';
+import { TrainingBatchValidationError } from '$lib/train-core';
+import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
+import { datasetRatingFor } from '$lib/server/dataset-rating';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -14,11 +22,19 @@ export const GET: RequestHandler = async ({ locals, url }) => {
   const fromEpoch = parse(url.searchParams.get('fromEpoch'));
   const addEpochs = parse(url.searchParams.get('addEpochs'));
   if (!workflowId || fromEpoch === null || addEpochs === null) error(400, 'Bad request.');
-  const opts: ContinueOpts = { workflowId, fromEpoch, addEpochs };
+  const opts: ContinueOpts = {
+    workflowId,
+    fromEpoch,
+    addEpochs,
+    currencies: url.searchParams.getAll('currencies'),
+  };
   const token = await requireToken(locals, 'Pricing is unavailable right now.');
   try {
-    return json(await continueTrainingWhatIf(token, locals.user.id, opts));
+    return json(
+      await continueTrainingWhatIf(token, locals.user.id, opts, await datasetRatingFor(locals.user))
+    );
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
     console.warn('[training-studio] continue whatif failed', err);
     error(502, err instanceof Error ? err.message : 'Could not price the continuation.');
   }
@@ -31,6 +47,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     fromEpoch?: number;
     addEpochs?: number;
     currencies?: string[];
+    matureAck?: boolean;
   } | null;
   if (!body?.workflowId || typeof body.fromEpoch !== 'number' || typeof body.addEpochs !== 'number')
     error(400, 'Bad request.');
@@ -40,12 +57,25 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     addEpochs: body.addEpochs,
     // Filtered + defaulted by resolveCurrencies core-side — never trusted from the wire.
     currencies: Array.isArray(body.currencies) ? body.currencies : undefined,
+    matureAck: body.matureAck === true,
   };
 
   const token = await requireToken(locals, 'Training is unavailable right now.');
   try {
-    return json({ workflowId: await continueTraining(token, locals.user.id, opts) });
+    return json({
+      workflowId: await continueTraining(
+        token,
+        locals.user.id,
+        opts,
+        textCheckCookie(locals, request),
+        await datasetRatingFor(locals.user)
+      ),
+    });
   } catch (err) {
+    if (err instanceof TrainingBatchValidationError) error(400, err.message);
+    if (err instanceof MatureAckRequiredError)
+      error(409, { message: err.message, matureCount: err.matureCount });
+    throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');
   }

@@ -15,11 +15,15 @@ describe('redis key wire values', () => {
       CAPS: 'packed:caches:creator-program:caps',
       CASH: 'packed:caches:creator-program:cash',
       BANKED: 'packed:caches:creator-program:banked',
+      BANKABLE: 'packed:caches:creator-program:bankable',
       PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
       POOL_VALUE: 'packed:caches:creator-program:pool-value',
       POOL_SIZE: 'packed:caches:creator-program:pool-size',
       POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
     });
     expect(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES).toBe('creator-program:flip-phases');
+    expect(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT).toBe(
+      'creator-program:bankable-snapshot'
+    );
   });
 });

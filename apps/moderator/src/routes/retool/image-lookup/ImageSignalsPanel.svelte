@@ -2,6 +2,7 @@
   import { userLookupUrl } from '$lib/entity-url';
   import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import { browser } from '$app/environment';
+  import { SSR_PENDING } from '$lib/ssr-pending';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import { fetchImageSignals } from './image-signals';
@@ -14,7 +15,7 @@
   let expandedEvents = $state(false);
 
   // Off the page load: ~200-400ms of ClickHouse work against 825M and 8.2M row tables.
-  const signals = $derived(browser ? fetchImageSignals(imageId) : null);
+  const signals = $derived(browser ? fetchImageSignals(imageId) : SSR_PENDING);
 </script>
 
 {#snippet checking()}

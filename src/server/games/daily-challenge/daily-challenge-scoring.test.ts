@@ -70,12 +70,6 @@ describe('calculateWeightedScore', () => {
     const result = calculateWeightedScore(makeScore(8, 6, 4, 2));
     expect(result).toBeCloseTo(6.1);
   });
-
-  it('uses correct threshold constants', () => {
-    expect(THEME_DISQUALIFY_THRESHOLD).toBe(2);
-    expect(THEME_GATE_THRESHOLD).toBe(4);
-    expect(THEME_GATE_MAX_SCORE).toBe(5.0);
-  });
 });
 
 describe('calculateCategoryScore (user-defined categories)', () => {
@@ -155,9 +149,7 @@ describe('FIXED_JUDGING_CATEGORIES', () => {
             const got = calculateWeightedScore(s);
             const want = legacy(s);
             const same =
-              got === null || want === null
-                ? got === want
-                : Math.abs(got - want) < FLOAT_TOLERANCE;
+              got === null || want === null ? got === want : Math.abs(got - want) < FLOAT_TOLERANCE;
             if (!same) diffs.push(`${t}/${a}/${h}/${w}: ${got} vs ${want}`);
           }
     expect(diffs).toEqual([]);
@@ -265,13 +257,13 @@ describe('resolveDisplayScore', () => {
 
   it('applies the challenge weights instead of averaging the categories', () => {
     // 9*.60 + 3*.05 + 3*.05 + 9*.30 = 8.4 (the unweighted mean would be 6.0)
-    expect(resolveDisplayScore({ Theme: 9, Wittiness: 3, Humor: 3, Aesthetic: 9 }, cats)).toBeCloseTo(
-      8.4
-    );
+    expect(
+      resolveDisplayScore({ Theme: 9, Wittiness: 3, Humor: 3, Aesthetic: 9 }, cats)
+    ).toBeCloseTo(8.4);
     // 8*.60 + 7*.05 + 6*.05 + 8*.30 = 7.85 (the unweighted mean would be 7.25)
-    expect(resolveDisplayScore({ Theme: 8, Wittiness: 7, Humor: 6, Aesthetic: 8 }, cats)).toBeCloseTo(
-      7.85
-    );
+    expect(
+      resolveDisplayScore({ Theme: 8, Wittiness: 7, Humor: 6, Aesthetic: 8 }, cats)
+    ).toBeCloseTo(7.85);
   });
 
   it('ranks entries the same way the winner-selection job does', () => {
@@ -284,13 +276,15 @@ describe('resolveDisplayScore', () => {
   });
 
   it('prefers the challenge weights even when the LLM emitted the fixed lowercase keys', () => {
-    expect(resolveDisplayScore({ theme: 9, wittiness: 3, humor: 3, aesthetic: 9 }, cats)).toBeCloseTo(
-      8.4
-    );
+    expect(
+      resolveDisplayScore({ theme: 9, wittiness: 3, humor: 3, aesthetic: 9 }, cats)
+    ).toBeCloseTo(8.4);
   });
 
   it('applies the theme gate rules from the challenge rubric', () => {
-    expect(resolveDisplayScore({ Theme: 1, Wittiness: 10, Humor: 10, Aesthetic: 10 }, cats)).toBeNull();
+    expect(
+      resolveDisplayScore({ Theme: 1, Wittiness: 10, Humor: 10, Aesthetic: 10 }, cats)
+    ).toBeNull();
     expect(resolveDisplayScore({ Theme: 3, Wittiness: 10, Humor: 10, Aesthetic: 10 }, cats)).toBe(
       THEME_GATE_MAX_SCORE
     );

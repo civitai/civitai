@@ -1,11 +1,83 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONSENT_NOTICE_NOT_DISMISSED,
+  consentNoticeHighlightPlayed,
+  dismissConsentNotice,
+  resolveAdvertisedScopes,
+  resolveConsentNoticeAfterRefusal,
   resolveHostConsentNotice,
   resolveRequestConsent,
   resolveUngrantableConsentNotice,
+  resolveUngrantableConsentPrompt,
   UNGRANTABLE_CONSENT_TOAST,
+  type ConsentNoticeDismissal,
   type HostConsentNoticeInput,
 } from '../requestConsentGate';
+import { BLOCK_HOST_LOCAL_PREVIEW_STORAGE, type BlockHostSurface } from '../blockInitFragmentGate';
+
+// ===========================================================================
+// resolveAdvertisedScopes — what BLOCK_INIT / TOKEN_REFRESH tell the block it
+// holds, and the "granted" set every consent gate below reads.
+// ===========================================================================
+describe('resolveAdvertisedScopes', () => {
+  const DECLARED = ['apps:storage:read', 'apps:storage:publish', 'ai:write:budgeted'];
+
+  describe('the mint reported its signed set', () => {
+    it('anonymous viewer: advertises ONLY the signed scopes, not the gated ones the mint stripped', () => {
+      // The anon mint strips every consent-gated scope yet reports
+      // `missingScopes: []` — the old `declared − missing` derivation advertised
+      // all three here.
+      const signed = ['apps:storage:read'];
+      expect(resolveAdvertisedScopes(DECLARED, [], signed)).toEqual(['apps:storage:read']);
+    });
+
+    it('signed-in viewer: equals declared − missing when the manifest holds only known scopes', () => {
+      const missing = ['ai:write:budgeted'];
+      const signed = ['apps:storage:read', 'apps:storage:publish'];
+      expect(resolveAdvertisedScopes(DECLARED, missing, signed)).toEqual(signed);
+      expect(resolveAdvertisedScopes(DECLARED, missing, undefined)).toEqual(signed);
+    });
+
+    it('signed-in viewer: drops a deprecated declared scope the mint no longer signs', () => {
+      const declared = ['apps:storage:read', 'media:read:owned'];
+      expect(resolveAdvertisedScopes(declared, [], ['apps:storage:read'])).toEqual([
+        'apps:storage:read',
+      ]);
+    });
+
+    it('an empty signed set advertises nothing (does not fall back to the manifest)', () => {
+      expect(resolveAdvertisedScopes(DECLARED, [], [])).toEqual([]);
+    });
+  });
+
+  // Moved from `pageBlockHostLogic.test.ts` (`grantedPageScopes`): the fallback
+  // for a mint response with no `scopes` field. Cases unchanged.
+  describe('fallback: no signed set reported → declared − missing', () => {
+    it('returns the declared scopes when nothing is withheld (NOT the old hardcoded [])', () => {
+      const declared = ['apps:storage:read', 'apps:storage:write'];
+      expect(resolveAdvertisedScopes(declared, [], undefined)).toEqual(declared);
+      expect(resolveAdvertisedScopes(declared, undefined, undefined)).toEqual(declared);
+      expect(resolveAdvertisedScopes(declared, [], undefined)).not.toEqual([]);
+    });
+
+    it('strips the consent-withheld scopes from the granted set', () => {
+      const declared = ['apps:storage:read', 'apps:storage:write', 'social:read'];
+      expect(resolveAdvertisedScopes(declared, ['social:read'], undefined)).toEqual([
+        'apps:storage:read',
+        'apps:storage:write',
+      ]);
+    });
+
+    it('returns [] only when every declared scope is withheld', () => {
+      expect(resolveAdvertisedScopes(['social:read'], ['social:read'], undefined)).toEqual([]);
+    });
+
+    it('is a no-op for a missingScopes entry that was never declared', () => {
+      const declared = ['apps:storage:read'];
+      expect(resolveAdvertisedScopes(declared, ['ai:write:budgeted'], undefined)).toEqual(declared);
+    });
+  });
+});
 
 /**
  * Lazy-consent (REQUEST_CONSENT) — the host's handler must:
@@ -55,8 +127,8 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
     // dev-tunnel preview: the token carries models:read:self; the block asks for
     // a scope the tunnel allowlist withheld → not granted, not addable via consent.
     expect(
-      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], [])
-    ).toEqual({ notify: true, scopes: ['apps:storage:read'] });
+      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], [], 'page-run')
+    ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:read'] });
   });
 
   it('does NOT notify for the BENIGN already-granted case (block re-requests a held scope)', () => {
@@ -64,9 +136,10 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       resolveUngrantableConsentNotice(
         ['buzz:read:self'],
         ['buzz:read:self', 'models:read:self'],
-        []
+        [],
+        'page-run'
       )
-    ).toEqual({ notify: false, scopes: [] });
+    ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
 
   it('does NOT notify when the requested scope is grantable via consent (it is in missingScopes) — modal path owns it', () => {
@@ -74,19 +147,26 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       resolveUngrantableConsentNotice(
         ['ai:write:budgeted'],
         ['models:read:self'],
-        ['ai:write:budgeted']
+        ['ai:write:budgeted'],
+        'page-run'
       )
-    ).toEqual({ notify: false, scopes: [] });
+    ).toEqual({ notify: false, promptViewer: false, scopes: [] });
   });
 
   it('does NOT notify when the block sends no hint / a garbage hint (never a fragile heuristic)', () => {
-    const silent = { notify: false, scopes: [] };
-    expect(resolveUngrantableConsentNotice(undefined, ['models:read:self'], [])).toEqual(silent);
-    expect(resolveUngrantableConsentNotice([], ['models:read:self'], [])).toEqual(silent);
-    expect(resolveUngrantableConsentNotice('nope', ['models:read:self'], [])).toEqual(silent);
-    expect(resolveUngrantableConsentNotice([1, null, ''], ['models:read:self'], [])).toEqual(
+    const silent = { notify: false, promptViewer: false, scopes: [] };
+    expect(
+      resolveUngrantableConsentNotice(undefined, ['models:read:self'], [], 'page-run')
+    ).toEqual(silent);
+    expect(resolveUngrantableConsentNotice([], ['models:read:self'], [], 'page-run')).toEqual(
       silent
     );
+    expect(resolveUngrantableConsentNotice('nope', ['models:read:self'], [], 'page-run')).toEqual(
+      silent
+    );
+    expect(
+      resolveUngrantableConsentNotice([1, null, ''], ['models:read:self'], [], 'page-run')
+    ).toEqual(silent);
   });
 
   it('reports ONLY the un-grantable scopes from a mixed hint (drops granted + missing), sorted+deduped', () => {
@@ -100,15 +180,25 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
           'ai:write:budgeted',
         ],
         ['buzz:read:self'], // already granted
-        ['ai:write:budgeted'] // grantable via consent
+        ['ai:write:budgeted'], // grantable via consent
+        'page-run'
       )
-    ).toEqual({ notify: true, scopes: ['apps:storage:read', 'apps:storage:write'] });
+    ).toEqual({
+      notify: true,
+      promptViewer: true,
+      scopes: ['apps:storage:read', 'apps:storage:write'],
+    });
   });
 
   it('tolerates an undefined missingScopes', () => {
     expect(
-      resolveUngrantableConsentNotice(['apps:storage:read'], ['models:read:self'], undefined)
-    ).toEqual({ notify: true, scopes: ['apps:storage:read'] });
+      resolveUngrantableConsentNotice(
+        ['apps:storage:read'],
+        ['models:read:self'],
+        undefined,
+        'page-run'
+      )
+    ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:read'] });
   });
 
   /**
@@ -123,7 +213,8 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       const out = resolveUngrantableConsentNotice(
         ['<img src=x onerror=alert(1)>', 'not:a:real:scope', 'A'.repeat(5000)],
         ['models:read:self'],
-        []
+        [],
+        'page-run'
       );
       // The refusal survives — this is the toast + bridge-push trigger.
       expect(out.notify).toBe(true);
@@ -135,16 +226,21 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       const out = resolveUngrantableConsentNotice(
         ['apps:storage:write', 'not:a:real:scope', 'apps:storage:read', '<script>x</script>'],
         ['models:read:self'],
-        []
+        [],
+        'page-run'
       );
-      expect(out).toEqual({ notify: true, scopes: ['apps:storage:read', 'apps:storage:write'] });
+      expect(out).toEqual({
+        notify: true,
+        promptViewer: true,
+        scopes: ['apps:storage:read', 'apps:storage:write'],
+      });
     });
 
     it('does not treat inherited Object.prototype keys as known scopes (own-property test)', () => {
       // `isKnownBlockScope` is `Object.prototype.hasOwnProperty.call(...)`, not
       // `in` — `in` walked the prototype chain and let these through as "known".
       const inherited = ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty'];
-      const out = resolveUngrantableConsentNotice(inherited, ['models:read:self'], []);
+      const out = resolveUngrantableConsentNotice(inherited, ['models:read:self'], [], 'page-run');
       expect(out.notify).toBe(true);
       expect(out.scopes).toEqual([]);
     });
@@ -153,10 +249,114 @@ describe('resolveUngrantableConsentNotice (Issue B — un-grantable dev-preview 
       // The regression guard for the obvious-but-wrong fix: filtering the
       // DECISION by `isKnownBlockScope` would make this silent, removing an
       // existing user-visible behaviour.
-      const out = resolveUngrantableConsentNotice(['totally:made:up'], ['models:read:self'], []);
+      const out = resolveUngrantableConsentNotice(
+        ['totally:made:up'],
+        ['models:read:self'],
+        [],
+        'page-run'
+      );
       expect(out.notify).toBe(true);
       expect(out.scopes).toEqual([]);
     });
+  });
+});
+
+// ===========================================================================
+// The dev-tunnel LOCAL-PREVIEW surface: the document store is served by the
+// in-tab local store, so `apps:storage` / `apps:storage:publish` being absent
+// from the token is not something to tell the viewer about. The block still gets
+// its definite answer (an SDK that predates local-preview grants waits on it);
+// only the viewer prompt is withheld, and only when NOTHING else was refused.
+//
+// Every case below uses its own granted set and hint, pairwise distinct.
+// ===========================================================================
+describe('resolveUngrantableConsentNotice — local-preview storage', () => {
+  it('spend + document-store request with spend already granted: answers the block, no viewer prompt', () => {
+    expect(
+      resolveUngrantableConsentNotice(
+        ['ai:write:budgeted', 'apps:storage', 'apps:storage:publish'],
+        ['ai:write:budgeted', 'user:read:self'],
+        [],
+        'dev-tunnel'
+      )
+    ).toEqual({
+      notify: true,
+      promptViewer: false,
+      scopes: ['apps:storage', 'apps:storage:publish'],
+    });
+  });
+
+  it('a document-store-only request: a definite answer for the block, no viewer prompt', () => {
+    expect(
+      resolveUngrantableConsentNotice(['apps:storage'], ['models:read:self'], [], 'dev-tunnel')
+    ).toEqual({ notify: true, promptViewer: false, scopes: ['apps:storage'] });
+  });
+
+  it('a document-store scope next to an UNKNOWN scope still prompts the viewer (for the unknown one)', () => {
+    // The unknown scope is dropped from the NAMES (untrusted echo) but must still
+    // drive the prompt, exactly as the decision is taken on the unfiltered set.
+    expect(
+      resolveUngrantableConsentNotice(
+        ['apps:storage:publish', 'some:unknown:scope'],
+        ['collections:read:self'],
+        [],
+        'dev-tunnel'
+      )
+    ).toEqual({ notify: true, promptViewer: true, scopes: ['apps:storage:publish'] });
+  });
+
+  it('storage the local store does NOT serve (shared, key/value) still prompts the viewer', () => {
+    expect(
+      resolveUngrantableConsentNotice(
+        ['apps:storage:shared:write', 'apps:storage'],
+        ['goods:read:self'],
+        [],
+        'dev-tunnel'
+      )
+    ).toEqual({
+      notify: true,
+      promptViewer: true,
+      scopes: ['apps:storage', 'apps:storage:shared:write'],
+    });
+  });
+
+  it('a document-store scope the consent path CAN grant is left to the consent modal (not ungrantable)', () => {
+    expect(
+      resolveUngrantableConsentNotice(
+        ['apps:storage:publish'],
+        ['social:react:self'],
+        ['apps:storage:publish'],
+        'dev-tunnel'
+      )
+    ).toEqual({ notify: false, promptViewer: false, scopes: [] });
+  });
+
+  it('every OTHER surface prompts for the same document-store request exactly as before', () => {
+    const hint = ['apps:storage', 'apps:storage:publish', 'ai:write:budgeted'];
+    const granted = ['ai:write:budgeted', 'buzz:read:self'];
+    for (const surface of ['page-run', 'model-slot', 'review-preview', 'private-run'] as const) {
+      expect(resolveUngrantableConsentNotice(hint, granted, [], surface)).toEqual({
+        notify: true,
+        promptViewer: true,
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+    }
+  });
+
+  it('LEDGER: the viewer prompt is withheld on exactly one surface, the dev-tunnel preview', () => {
+    // Over EVERY surface the host knows (the record is total), so a surface added
+    // to, or dropped from, the local-preview set fails here by name.
+    const surfaces = Object.keys(BLOCK_HOST_LOCAL_PREVIEW_STORAGE) as BlockHostSurface[];
+    const quiet = surfaces
+      .filter(
+        (surface) =>
+          !resolveUngrantableConsentNotice(['apps:storage'], ['posts:write:self'], [], surface)
+            .promptViewer
+      )
+      .sort();
+    expect(quiet).toEqual(['dev-tunnel']);
+    // Control for the filter: it ran over more than the one surface it kept.
+    expect(surfaces.length).toBeGreaterThan(1);
   });
 });
 
@@ -251,6 +451,160 @@ describe('resolveHostConsentNotice (the host-side missing-permissions backstop)'
           resolveRequestConsent(status, missingScopes)
         );
       }
+    }
+  });
+});
+
+describe('resolveConsentNoticeAfterRefusal (a refusal brings a dismissed notice back)', () => {
+  // Two missing scopes and one that is neither missing nor granted, so "it revived on
+  // the refused scope" is a reading, not an echo of the only value in play.
+  const APP = 'apb_tipper';
+  const OTHER_APP = 'apb_other';
+  const MISSING = ['social:tip:self', 'social:react:self'];
+  const UNGRANTABLE = 'apps:storage:read';
+
+  /** Would the host render the notice for `state` and `app`? Read through the REAL show rule. */
+  const shows = (state: { dismissedFor: string | null }, app = APP) =>
+    resolveHostConsentNotice({
+      status: 'ready',
+      needsConsent: true,
+      missingScopes: MISSING,
+      dismissedFor: state.dismissedFor,
+      appBlockId: app,
+    }) != null;
+
+  const refuse = (
+    state: ConsentNoticeDismissal,
+    app = APP,
+    refusedScopes: string[] = ['social:react:self']
+  ) =>
+    resolveConsentNoticeAfterRefusal(state, {
+      appBlockId: app,
+      refusedScopes,
+      missingScopes: MISSING,
+    });
+
+  it('dismissed, then a refusal for a MISSING scope: the notice shows again, highlighted', () => {
+    const dismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP);
+    expect(shows(dismissed)).toBe(false); // the control: dismissing hides it
+    const next = refuse(dismissed);
+    expect(next.dismissedFor).toBeNull();
+    expect(next.revived).toBe(true);
+    expect(shows(next)).toBe(true);
+  });
+
+  it('one missing scope among others in the refusal is enough', () => {
+    const next = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP), APP, [
+      UNGRANTABLE,
+      'social:tip:self',
+    ]);
+    expect(shows(next)).toBe(true);
+    expect(next.revived).toBe(true);
+  });
+
+  it('🔴 ONE revival per mount: dismissed again after a revival, further refusals do NOT bring it back', () => {
+    // An app can send the refused request whenever it likes, with no user gesture. If
+    // every refusal revived the notice, the viewer could never get rid of it — and it
+    // would become a way to pressure them into a sensitive grant.
+    const revived = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP));
+    expect(shows(revived)).toBe(true); // the control: the first revival happened
+    const dismissedAgain = dismissConsentNotice(revived, APP);
+    expect(shows(dismissedAgain)).toBe(false);
+    let state = dismissedAgain;
+    for (let i = 0; i < 3; i++) {
+      state = refuse(state);
+      expect(state, `refusal #${i + 1} after the second dismissal`).toBe(dismissedAgain);
+    }
+    expect(shows(state)).toBe(false);
+  });
+
+  it("the one-revival cap is per app: one app's spent revival does not block another's", () => {
+    // App A revives and is dismissed again (its revival is spent)…
+    const aSpent = dismissConsentNotice(
+      refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP)),
+      APP
+    );
+    expect(shows(refuse(aSpent))).toBe(false);
+    // …then the same host mount moves to app B, which is dismissed and refused once.
+    const bRevived = refuse(dismissConsentNotice(aSpent, OTHER_APP), OTHER_APP);
+    expect(shows(bRevived, OTHER_APP)).toBe(true);
+    // And back on A, A's spent revival still holds.
+    expect(shows(refuse(dismissConsentNotice(bRevived, APP)))).toBe(false);
+  });
+
+  it('dismissed, then a refusal for an UN-GRANTABLE scope: stays dismissed (the toast path owns it)', () => {
+    const dismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP);
+    const next = refuse(dismissed, APP, [UNGRANTABLE]);
+    expect(next).toBe(dismissed);
+    expect(shows(next)).toBe(false);
+  });
+
+  it('a refusal BEFORE any dismissal changes nothing — and returns the same object', () => {
+    const next = refuse(CONSENT_NOTICE_NOT_DISMISSED, APP, ['social:tip:self']);
+    // Same reference, so a React updater returning it does not re-render, and no
+    // highlight is switched on for a notice that never went away.
+    expect(next).toBe(CONSENT_NOTICE_NOT_DISMISSED);
+    expect(next.revived).toBe(false);
+  });
+
+  it("another app's dismissal is left alone", () => {
+    const otherDismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, OTHER_APP);
+    const next = refuse(otherDismissed, APP, ['social:tip:self']);
+    expect(next).toBe(otherDismissed);
+    expect(next.dismissedFor).toBe(OTHER_APP);
+  });
+
+  it('no missing set (legacy mint) or nothing refused: stays dismissed', () => {
+    const dismissed = dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP);
+    for (const input of [
+      { refusedScopes: ['social:tip:self'], missingScopes: undefined },
+      { refusedScopes: [], missingScopes: MISSING },
+    ]) {
+      expect(resolveConsentNoticeAfterRefusal(dismissed, { appBlockId: APP, ...input })).toBe(
+        dismissed
+      );
+    }
+  });
+
+  it('dismissing clears the highlight', () => {
+    const revived = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP));
+    expect(dismissConsentNotice(revived, APP).revived).toBe(false);
+    expect(CONSENT_NOTICE_NOT_DISMISSED.dismissedFor).toBeNull();
+    expect(CONSENT_NOTICE_NOT_DISMISSED.revived).toBe(false);
+  });
+
+  it('🟢 the flash is one-shot: once it has played the highlight is cleared, and nothing else changes', () => {
+    const revived = refuse(dismissConsentNotice(CONSENT_NOTICE_NOT_DISMISSED, APP));
+    const played = consentNoticeHighlightPlayed(revived);
+    expect(played.revived).toBe(false);
+    expect(played.dismissedFor).toBeNull();
+    expect(shows(played)).toBe(true);
+    // The cap is not reset by it: a later dismissal still sticks.
+    expect(refuse(dismissConsentNotice(played, APP)).dismissedFor).toBe(APP);
+    // With nothing to clear it returns the same object (no re-render).
+    expect(consentNoticeHighlightPlayed(CONSENT_NOTICE_NOT_DISMISSED)).toBe(
+      CONSENT_NOTICE_NOT_DISMISSED
+    );
+  });
+});
+
+describe('resolveUngrantableConsentPrompt (what the HOST shows; the block always gets CONSENT_UNAVAILABLE)', () => {
+  it('signed-in viewer → the "unavailable" toast, at any status', () => {
+    for (const status of ['loading', 'ready', 'timeout', 'fatal', 'no_token'] as const) {
+      expect(resolveUngrantableConsentPrompt(status, true)).toBe('toast');
+    }
+  });
+
+  it('signed-out viewer after BLOCK_READY → sign-in, never the toast', () => {
+    // Signing in is what makes an anon viewer's gated scope grantable, so
+    // "isn't available here" would be false.
+    expect(resolveUngrantableConsentPrompt('ready', false)).toBe('sign-in');
+  });
+
+  it('signed-out viewer before BLOCK_READY → nothing (no pre-handshake login popup)', () => {
+    // Same refusal REQUEST_SIGN_IN applies, via the shared `resolveRequestSignIn`.
+    for (const status of ['loading', 'timeout', 'fatal', 'no_token'] as const) {
+      expect(resolveUngrantableConsentPrompt(status, false)).toBe('none');
     }
   });
 });

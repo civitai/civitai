@@ -29,8 +29,11 @@ function createOpenAiClient() {
 
     const result = parseJsonBlock<T>(completion);
     if (!result) {
-      const content = completion.choices[0]?.message?.content;
-      console.error('Failed to parse JSON block from content', content);
+      // Never the content: a model can be led to repeat the prompts it was sent.
+      console.error('Failed to parse JSON block from completion', {
+        model: params.model ?? defaultCompletionParams.model,
+        length: completion.choices[0]?.message?.content?.length ?? 0,
+      });
       if (retries && retries > 0) {
         return customClient.getJsonCompletion<T>({ ...params, retries: retries - 1 });
       }

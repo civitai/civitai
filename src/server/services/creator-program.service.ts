@@ -28,13 +28,23 @@ import {
   createBuzzTransaction,
   getCounterPartyBuzzTransactions,
   getTopContributors,
+  getTransactionByExternalId,
   getUserBuzzAccount,
-  refundTransaction,
 } from '~/server/services/buzz.service';
+import {
+  getBankableAmount,
+  getBankableLedger,
+  PEAK_EARNING_PREDICATE_SQL,
+  PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+  RECEIVED_FROM_USER_SQL,
+  SENT_TO_USER_SQL,
+  withBankedThisMonth,
+} from '~/server/services/creator-program-bankable';
 import { createNotification } from '~/server/services/notification.service';
 import { getHighestPaidTierSubscription } from '~/server/services/subscriptions.service';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { assertNoPayoutHold } from '~/server/services/creator-program-prepayout-review/hold';
 import {
   bustFetchThroughCache,
   clearCacheByPattern,
@@ -45,13 +55,16 @@ import {
   getCurrentValue,
   getExtractionFee,
   getPhases,
+  generateWithdrawalRefCode,
   getWithdrawalFee,
-  getWithdrawalRefCode,
+  parseRefCodeToWithdrawalId,
 } from '~/server/utils/creator-program.utils';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
+  BANKABLE_CUTOVER,
   CAP_DEFINITIONS,
   EXTRACTION_FEE_DESCRIPTION,
   MIN_CREATOR_SCORE,
@@ -60,6 +73,7 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { getCapForDefinition } from '~/shared/utils/creator-program.utils';
+import { creatorScoreCategorySumSql } from '~/shared/utils/creator-score';
 import { Flags } from '~/shared/utils/flags';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -74,6 +88,7 @@ type UserCapCacheItem = {
   definition: CapDefinition;
   peakEarning: { month: Date; earned: number };
   cap: number;
+  countsCompensation: boolean;
 };
 
 const getBankAccountType = (_buzzType?: BuzzSpendType): BuzzCreatorProgramType => {
@@ -87,7 +102,7 @@ const createUserCapCache = () => {
     dontCacheFn: (data) => !data?.cap,
     cacheNotFound: false,
     staleWhileRevalidate: false,
-    debounceTime: 1, // 10s debounce is too long for this cache.
+    debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
@@ -112,29 +127,50 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
-      // The daily deliver-creator-compensation job mints two bankable earning types: `compensation`
-      // (which also carries generation tips) and a separate `licenseFee` transaction — both are real
-      // creator earnings and both must raise the cap. A system-minted `tip` row, by contrast, is a
-      // manual support credit (remediation, goodwill refund, delivery fix), not an earning, so it must
-      // not raise a cap. Only this cap query counts licenseFee; the pool/earnings estimates that share
-      // this predicate shape (getPoolForecast below; earnedCache and getPoolForecast in buzz.service.ts)
-      // still exclude it, and nothing pins the three together — count it there too if forecasts should
-      // reflect license-fee income.
+      // Pool forecasts and buzz.service's `earnedCache` still count generation compensation.
+      const countsCompensation = new Date() < BANKABLE_CUTOVER;
+      const peakEarningPredicate = countsCompensation
+        ? PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL
+        : PEAK_EARNING_PREDICATE_SQL;
+      // A month counts what a user paid the creator only beyond everything the creator sent that
+      // user in the window up to now, so Buzz passed back and forth cannot raise the peak.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
-        SELECT
-          toAccountId as id,
-          toStartOfMonth(date) as month,
-          SUM(amount) as earned
-        FROM buzzTransactions
-        WHERE (
-          (type IN ('compensation', 'licenseFee')) -- Generation Comp + License Fees
-          OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
-        )
-        AND toAccountType IN (${buzzBankTypesSql})
-        AND toAccountId IN (${ids})
-        AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
-        AND toStartOfMonth(date) < toStartOfMonth(now())
-        GROUP BY month, toAccountId
+        SELECT id, month, gross - returned AS earned
+        FROM (
+          SELECT
+            toAccountId as id,
+            toStartOfMonth(date) as month,
+            SUM(amount) as gross
+          FROM buzzTransactions
+          WHERE ${peakEarningPredicate}
+          AND toAccountType IN (${buzzBankTypesSql})
+          AND toAccountId IN (${ids})
+          AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+          AND toStartOfMonth(date) < toStartOfMonth(now())
+          GROUP BY month, toAccountId
+        ) AS earnings
+        LEFT JOIN (
+          SELECT received.id AS id, received.month AS month, SUM(least(received.amount, sent.amount)) AS returned
+          FROM (
+            SELECT toAccountId AS id, toStartOfMonth(date) AS month, fromAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${peakEarningPredicate} AND ${RECEIVED_FROM_USER_SQL}
+            AND toAccountType IN (${buzzBankTypesSql})
+            AND toAccountId IN (${ids})
+            AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+            AND toStartOfMonth(date) < toStartOfMonth(now())
+            GROUP BY id, month, counterparty
+          ) AS received
+          INNER JOIN (
+            SELECT fromAccountId AS id, toAccountId AS counterparty, SUM(amount) AS amount
+            FROM buzzTransactions
+            WHERE ${SENT_TO_USER_SQL}
+            AND fromAccountId IN (${ids})
+            AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
+            GROUP BY id, counterparty
+          ) AS sent ON sent.id = received.id AND sent.counterparty = received.counterparty
+          GROUP BY id, month
+        ) AS netted USING (id, month)
         ORDER BY earned DESC
         LIMIT 1 BY id;
       `;
@@ -152,7 +188,7 @@ const createUserCapCache = () => {
 
           const cap = getCapForDefinition(definition, peakEarning.earned);
 
-          return [s.userId, { id: s.userId, definition, peakEarning, cap }];
+          return [s.userId, { id: s.userId, definition, peakEarning, cap, countsCompensation }];
         })
       );
     },
@@ -170,7 +206,13 @@ export function getUserCapCache() {
 
 export async function getBankCap(userId: number) {
   const cache = getUserCapCache();
-  return cache.fetch(userId);
+  const caps = await cache.fetch(userId);
+  // A cap cached before the cutover can outlive the rollover job's flush by up to its TTL.
+  if (caps[userId] && caps[userId].countsCompensation !== false && new Date() >= BANKABLE_CUTOVER) {
+    await cache.bust(userId);
+    return cache.fetch(userId);
+  }
+  return caps;
 }
 
 export function getMonthAccount(month?: Date) {
@@ -178,32 +220,39 @@ export function getMonthAccount(month?: Date) {
   return Number(dayjs(month).format('YYYYMM'));
 }
 
-export async function getBanked(userId: number) {
+async function fetchBankedPerType(userId: number) {
   const monthAccount = getMonthAccount();
   const bankAccountType = getBankAccountType();
-
-  const perType = await fetchThroughCache(
-    `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
-    async () => {
-      const results = await Promise.all(
-        buzzBankTypes.map(async (buzzType) => {
-          const result = await getCounterPartyBuzzTransactions({
-            accountId: monthAccount,
-            accountType: bankAccountType,
-            counterPartyAccountId: userId,
-            counterPartyAccountType: buzzType,
-          });
-          return { buzzType, total: result.totalBalance ?? 0 };
-        })
-      );
-
-      return Object.fromEntries(results.map((r) => [r.buzzType, r.total])) as Record<
-        (typeof buzzBankTypes)[number],
-        number
-      >;
-    },
-    { ttl: CacheTTL.day }
+  const results = await Promise.all(
+    buzzBankTypes.map(async (buzzType) => {
+      const result = await getCounterPartyBuzzTransactions({
+        accountId: monthAccount,
+        accountType: bankAccountType,
+        counterPartyAccountId: userId,
+        counterPartyAccountType: buzzType,
+      });
+      return { buzzType, total: result.totalBalance ?? 0 };
+    })
   );
+
+  return Object.fromEntries(results.map((r) => [r.buzzType, r.total])) as Record<
+    (typeof buzzBankTypes)[number],
+    number
+  >;
+}
+
+/**
+ * Pass `fresh` wherever the total decides how much Buzz moves: the cache can serve a total from
+ * before the last deposit while another reader is refreshing it.
+ */
+export async function getBankedBalance(userId: number, { fresh = false } = {}) {
+  const perType = fresh
+    ? await fetchBankedPerType(userId)
+    : await fetchThroughCache(
+        `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
+        () => fetchBankedPerType(userId),
+        { ttl: CacheTTL.day }
+      );
 
   const total = Object.values(perType).reduce((sum, v) => sum + v, 0);
   const capData = (await getBankCap(userId))[userId];
@@ -213,6 +262,24 @@ export async function getBanked(userId: number) {
     total,
     cap: capData,
   };
+}
+
+/** For display. `bankBuzz` reads the bankable amount itself so a ClickHouse failure blocks it. */
+export async function getBanked(userId: number) {
+  const [balance, ledger] = await Promise.all([
+    getBankedBalance(userId),
+    fetchThroughCache(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
+      () => getBankableLedger(userId),
+      { ttl: CacheTTL.sm }
+    ).catch((error: Error) => {
+      handleLogError(error, 'creator-program:bankable-amount');
+      return null;
+    }),
+  ]);
+  const bankable = ledger && withBankedThisMonth(ledger, balance.total);
+
+  return { ...balance, bankable };
 }
 export async function flushBankedCache() {
   await clearCacheByPattern(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:*`);
@@ -226,12 +293,7 @@ export async function getCreatorRequirements(userId: number) {
     -- We are doing greatest in case the meta->'scores'->'total' is not properly computated.
     -- Noticed a few cases where it was different than the total sum (lower). Safeguard here.
     GREATEST(
-      COALESCE((u.meta->'scores'->>'models')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'articles')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'images')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'users')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsActioned')::numeric, 0)
-      + COALESCE((u.meta->'scores'->>'reportsAgainst')::numeric, 0),
+      ${Prisma.raw(creatorScoreCategorySumSql('u.meta'))},
       COALESCE((meta->'scores'->'total')::numeric, 0)
     ) as score,
     (
@@ -492,26 +554,42 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (isBankingClosed(phases)) throw new Error('Banking phase is closed');
 
-  // Adjust to not exceed cap (unified cap across all buzz types)
-  const banked = await getBanked(userId);
-  if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
-  if (amount <= 0) throw new Error('Amount exceeds cap');
+  // The limits are read and spent in one critical section: two deposits racing past the same
+  // check would bank twice the remaining amount.
+  const deposited = await withDistributedLock(
+    { key: `creator-program:bank:${userId}`, ttl: 30, autoRenew: true, maxRetries: 0 },
+    async () => {
+      const banked = await getBankedBalance(userId, { fresh: true });
+      if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
+      const bankable = await getBankableAmount(userId, banked.total);
+      if (bankable) {
+        if (bankable.remaining <= 0)
+          throw throwBadRequestError(
+            'You have no bankable Buzz left. See the bankable Buzz breakdown for what counts.'
+          );
+        amount = Math.min(amount, bankable.remaining);
+      }
+      if (amount <= 0) throw new Error('Amount exceeds cap');
 
-  // Create buzz transaction to bank
-  const monthAccount = getMonthAccount();
-  const bankAccountType = getBankAccountType(buzzType);
-  await createBuzzTransaction({
-    amount,
-    fromAccountId: userId,
-    fromAccountType: buzzType,
-    toAccountId: monthAccount,
-    toAccountType: bankAccountType,
-    type: TransactionType.Bank,
-    description: 'Banked for Creator Program',
-  });
+      const monthAccount = getMonthAccount();
+      const bankAccountType = getBankAccountType(buzzType);
+      await createBuzzTransaction({
+        amount,
+        fromAccountId: userId,
+        fromAccountType: buzzType,
+        toAccountId: monthAccount,
+        toAccountType: bankAccountType,
+        type: TransactionType.Bank,
+        description: 'Banked for Creator Program',
+      });
 
-  // Bust affected caches
-  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+      await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+      return true;
+    }
+  );
+  // Null also means Redis could not take the lock, not only that another deposit holds it.
+  if (!deposited) throw throwBadRequestError("Couldn't start your deposit. Try again in a moment.");
+
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
   const compensationPool = await getCompensationPool();
@@ -538,7 +616,7 @@ export async function extractBuzz(userId: number) {
   else if (new Date() > phases.extraction[1]) throw new Error('Extraction phase is closed');
 
   // Get banked amounts across all types
-  const banked = await getBanked(userId);
+  const banked = await getBankedBalance(userId, { fresh: true });
   if (banked.total <= 0) return;
 
   // Calculate extraction fee on combined total
@@ -622,7 +700,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
   staleWhileRevalidate: false,
-  debounceTime: 1, // 10s debounce is too long for this cache.
+  debounceTime: 1, // Minimum: lookup reads the primary and ClickHouse, not a replica.
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 
@@ -722,6 +800,98 @@ export async function getWithdrawalHistory(userId: number) {
   return transactions;
 }
 
+const MAX_REF_CODE_ATTEMPTS = 5;
+
+/**
+ * The refCode this withdrawal is (or will be) sent to Tipalti under, stored before any send.
+ * Tipalti relies on the refCode to refuse a duplicate payment, so a withdrawal that already has
+ * one must always reuse it: generating a fresh code on a re-send would defeat that guard.
+ */
+export async function ensureWithdrawalRefCode(withdrawalId: string, userId: number) {
+  const stored = async () => {
+    const { metadata } = await dbWrite.cashWithdrawal.findUniqueOrThrow({
+      where: { id: withdrawalId },
+      select: { metadata: true },
+    });
+    return (metadata as CashWithdrawalMetadataSchema | null)?.paymentRefCode || undefined;
+  };
+
+  const existing = await stored();
+  if (existing) return existing;
+
+  for (let attempt = 0; attempt < MAX_REF_CODE_ATTEMPTS; attempt++) {
+    const candidate = generateWithdrawalRefCode(userId);
+    // FailedFee rows carry a copy of their parent's code, so this covers them too.
+    const taken = await dbWrite.cashWithdrawal.count({
+      where: { userId, metadata: { path: ['paymentRefCode'], equals: candidate } },
+    });
+    if (taken) continue;
+
+    // Conditional on no code yet: a concurrent caller that stored one first wins, and we reuse it.
+    // shortcut: two concurrent withdrawals by one user drawing the same candidate between the
+    // count and this write is not locked against (odds ~1 in 36^random-length).
+    const updated = await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('paymentRefCode', ${candidate}::text)
+      WHERE id = ${withdrawalId} AND (metadata->>'paymentRefCode') IS NULL;
+    `;
+    if (updated) return candidate;
+
+    const winner = await stored();
+    if (winner) return winner;
+    throw new Error(`Could not store a refCode for withdrawal ${withdrawalId}`);
+  }
+
+  throw new Error(`Could not generate a unique refCode for withdrawal ${withdrawalId}`);
+}
+
+/**
+ * The cash withdrawal a Tipalti event's refCode belongs to. Matches the exact refCode we stored
+ * when sending; rows from before codes were stored fall back to the cuid prefix the old code
+ * embedded. Refuses (throws) when more than one row matches, rather than guessing.
+ */
+export async function findCashWithdrawalByRefCode(refCode: string) {
+  // Only the userId is needed for the exact match, so legacy codes the strict parser rejects
+  // (e.g. `CW<uid>:<id>`) still match the code stored for them.
+  const userId = Number(/^CW(\d+)/.exec(refCode)?.[1]);
+  if (!userId) throw new Error(`Invalid withdrawal ref code: ${refCode}`);
+  // FailedFee rows copy their parent's metadata, refCode included, and Reclaimed rows are
+  // moderator adjustments; neither was ever sent to Tipalti, and both refund if updated.
+  const scope = {
+    userId,
+    status: { notIn: [CashWithdrawalStatus.FailedFee, CashWithdrawalStatus.Reclaimed] },
+  };
+
+  let candidates = await dbWrite.cashWithdrawal.findMany({
+    where: { ...scope, metadata: { path: ['paymentRefCode'], equals: refCode } },
+  });
+
+  if (!candidates.length) {
+    const { idPart } = parseRefCodeToWithdrawalId(refCode);
+    // A row that stored a different code was sent under that code, so it cannot be this payment.
+    candidates = (
+      await dbWrite.cashWithdrawal.findMany({ where: { ...scope, id: { startsWith: idPart } } })
+    ).filter((row) => !(row.metadata as CashWithdrawalMetadataSchema | null)?.paymentRefCode);
+  }
+
+  if (candidates.length > 1) {
+    await logToAxiom(
+      {
+        type: 'error',
+        name: 'tipalti-refcode-ambiguous',
+        refCode,
+        candidateIds: candidates.map((row) => row.id),
+      },
+      'webhooks'
+    ).catch(() => null);
+    throw new Error(`Ambiguous Tipalti refCode ${refCode}: ${candidates.length} withdrawals match`);
+  }
+
+  if (!candidates.length)
+    throw new Error(`Withdrawal request not found for transferId: ${refCode}`);
+  return candidates[0];
+}
+
 export async function withdrawCash(userId: number, amount: number) {
   // Check setup for withdrawal
   const user = await dbWrite.user.findFirstOrThrow({
@@ -731,6 +901,7 @@ export async function withdrawCash(userId: number, amount: number) {
   if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
     throw throwBadRequestError('User is banned from the Creator Program');
   }
+  await assertNoPayoutHold(userId);
 
   const cash = await getCash(userId);
   if (cash.status === 'pending') throw new Error('Payment setup is pending');
@@ -815,7 +986,7 @@ export async function withdrawCash(userId: number, amount: number) {
     `;
 
     // Create tipalti payment
-    const refCode = getWithdrawalRefCode(id, userId);
+    const refCode = await ensureWithdrawalRefCode(id, userId);
 
     const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
       requestId: refCode,
@@ -877,9 +1048,11 @@ export async function withdrawCash(userId: number, amount: number) {
     }
 
     if (data.transactionId) {
-      // We failed at creating the Tipalti payment. We should refund the user their buzz:
+      // We failed at creating the Tipalti payment. We should refund the user their buzz.
+      // Loaded here so the refund helper stays out of this service's import cycle.
+      const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
       await withRetries(async () => {
-        await refundTransaction(
+        await refundTransactionOnce(
           data.transactionId,
           'Failed to create Tipalti payment. Please contact support.'
         );
@@ -988,6 +1161,57 @@ export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts
     .filter((p) => includeNegativeAmounts || p.amount > 0);
 }
 
+const REFUNDED_WITHDRAWAL_STATUSES: CashWithdrawalStatus[] = [
+  CashWithdrawalStatus.Rejected,
+  CashWithdrawalStatus.Canceled,
+];
+
+/**
+ * The one external id a withdrawal's burn is refunded under. withdrawCash's failure path refunds
+ * through Buzz's refund endpoint, which records `refund-<transactionId>`; using the same id here
+ * makes a second refund of the same burn a duplicate to Buzz as well.
+ */
+const getWithdrawalRefundExternalId = (transactionId: string) => `refund-${transactionId}`;
+
+/**
+ * Whether the burn behind a withdrawal has already been refunded: a refund this path recorded on
+ * the row (it always stores metadata.refundTransactionId, under either key it has used), or one on
+ * the Buzz ledger under `refund-<transactionId>`, which is how withdrawCash's failure path refunds.
+ * The old bare `<transactionId>` key is deliberately not looked up on the ledger: that route may
+ * also resolve the burn itself by its id, which would read every burn as refunded.
+ */
+async function isWithdrawalBurnRefunded(
+  transactionId: string,
+  metadata: CashWithdrawalMetadataSchema
+) {
+  if (metadata.refundTransactionId) return true;
+  return !!(await getTransactionByExternalId(getWithdrawalRefundExternalId(transactionId)));
+}
+
+// A claim older than this belongs to a caller that died mid-refund. Taking it over is safe because
+// the refund's external id is the same for every caller, and Buzz refuses a duplicate.
+const REFUND_CLAIM_TTL = '15 minutes';
+
+/** Takes the right to refund this withdrawal; only one caller at a time gets it. */
+async function claimWithdrawalRefund(withdrawalId: string) {
+  const claimed = await dbWrite.$executeRaw`
+    UPDATE "CashWithdrawal"
+    SET metadata = metadata || jsonb_build_object('refundClaimedAt', now())
+    WHERE id = ${withdrawalId}
+      AND (
+        (metadata->>'refundClaimedAt') IS NULL
+        OR (metadata->>'refundClaimedAt')::timestamptz < now() - ${REFUND_CLAIM_TTL}::interval
+      );
+  `;
+  return claimed > 0;
+}
+
+async function releaseWithdrawalRefundClaim(withdrawalId: string) {
+  await dbWrite.$executeRaw`
+    UPDATE "CashWithdrawal" SET metadata = metadata - 'refundClaimedAt' WHERE id = ${withdrawalId};
+  `;
+}
+
 export const updateCashWithdrawal = async ({
   withdrawalId,
   status,
@@ -995,64 +1219,92 @@ export const updateCashWithdrawal = async ({
   metadata: updatedMetadata,
   fees,
 }: UpdateCashWithdrawalSchema) => {
-  // Check if the user has  a pending withdrawal request:
   const withdrawal = await dbWrite.cashWithdrawal.findUniqueOrThrow({
     where: { id: withdrawalId },
   });
 
   const userId = withdrawal.userId;
 
-  // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
-  let metadata: CashWithdrawalMetadataSchema = (withdrawal.metadata ??
+  // Refund state comes from the stored row only: a caller's refundTransactionId would otherwise
+  // skip the refund.
+  const storedMetadata = (withdrawal.metadata ?? {}) as CashWithdrawalMetadataSchema;
+  const { refundTransactionId: _callerRefund, ...callerMetadata } = (updatedMetadata ??
     {}) as CashWithdrawalMetadataSchema;
-
-  metadata = {
-    ...metadata,
-    ...(updatedMetadata ?? {}),
+  // No claim is carried forward, the caller's or the stored one: writing back a claim its holder
+  // has since released would block every later refund until the claim expires.
+  const { refundClaimedAt: _storedClaim, ...metadata }: CashWithdrawalMetadataSchema = {
+    ...storedMetadata,
+    ...callerMetadata,
   };
 
-  if (status === CashWithdrawalStatus.Rejected || status === CashWithdrawalStatus.Canceled) {
-    if (withdrawal.transactionId) {
-      await withRetries(async () => {
-        const transaction = await createBuzzTransaction({
-          type: TransactionType.Refund,
-          toAccountType: 'cashSettled',
-          toAccountId: userId,
-          fromAccountId: 0, // central bank
-          amount: withdrawal.amount - (fees ?? 0),
-          description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
-          externalTransactionId: withdrawal.transactionId as string,
-        });
+  if (REFUNDED_WITHDRAWAL_STATUSES.includes(status) && withdrawal.transactionId) {
+    const transactionId = withdrawal.transactionId;
+    if (!(await isWithdrawalBurnRefunded(transactionId, storedMetadata))) {
+      // Another caller is refunding it now. Refuse rather than record a terminal status with no
+      // refund behind it: a retry either finds the refund or takes over a claim left by a crash.
+      if (!(await claimWithdrawalRefund(withdrawalId)))
+        throw new Error(
+          `Refund for withdrawal ${withdrawalId} is already in progress; retry later`
+        );
 
-        metadata.refundTransactionId = transaction.transactionId;
-
-        if (fees) {
-          await dbWrite.cashWithdrawal.create({
-            data: {
-              userId,
-              transactionId: transaction.transactionId,
-              amount: fees,
-              status: CashWithdrawalStatus.FailedFee,
-              metadata: metadata as any,
-              fee: 0,
-              method: CashWithdrawalMethod.Custom,
-            },
+      try {
+        await withRetries(async () => {
+          const transaction = await createBuzzTransaction({
+            type: TransactionType.Refund,
+            toAccountType: 'cashSettled',
+            toAccountId: userId,
+            fromAccountId: 0, // central bank
+            amount: withdrawal.amount - (fees ?? 0),
+            description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
+            externalTransactionId: getWithdrawalRefundExternalId(transactionId),
           });
-        }
-      });
+
+          metadata.refundTransactionId = transaction.transactionId;
+
+          if (fees) {
+            await dbWrite.cashWithdrawal.create({
+              data: {
+                userId,
+                transactionId: transaction.transactionId,
+                amount: fees,
+                status: CashWithdrawalStatus.FailedFee,
+                metadata: metadata as any,
+                fee: 0,
+                method: CashWithdrawalMethod.Custom,
+              },
+            });
+          }
+        });
+      } catch (e) {
+        await releaseWithdrawalRefundClaim(withdrawalId);
+        throw e;
+      }
     }
   }
 
+  // No claw-back: the user keeps both, and this is how someone finds out.
+  if (
+    status === CashWithdrawalStatus.Paid &&
+    withdrawal.transactionId &&
+    (await isWithdrawalBurnRefunded(withdrawal.transactionId, storedMetadata).catch(() => false))
+  )
+    await logToAxiom({
+      name: 'cash-withdrawal-paid-after-refund',
+      type: 'error',
+      withdrawalId,
+      userId,
+      previousStatus: withdrawal.status,
+    }).catch(() => null);
+
   try {
-    // Ensure we update the main request details:
-    await dbWrite.cashWithdrawal.update({
-      where: { id: withdrawalId },
-      data: {
-        status,
-        note,
-        metadata: metadata as any,
-      },
-    });
+    // Merged in SQL so a refund claim another caller stored meanwhile is not overwritten.
+    await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET status = ${status}::"CashWithdrawalStatus", note = COALESCE(${note ?? null}, note),
+        "updatedAt" = now(),
+        metadata = metadata || ${JSON.stringify(metadata)}::jsonb
+      WHERE id = ${withdrawalId};
+    `;
 
     switch (status) {
       case CashWithdrawalStatus.Scheduled:

@@ -1,13 +1,15 @@
 import {
-  trackActionSchema,
+  trackActionInputSchema,
   trackSearchSchema,
   trackShareSchema,
   addViewSchema,
   blockRenderSchema,
   blockRenderTrackerPayload,
+  mediaOverlapSchema,
 } from '~/server/schema/track.schema';
+import { logToAxiom } from '~/server/logging/client';
 import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
-import { publicProcedure, router } from '~/server/trpc';
+import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const trackRouter = router({
@@ -77,10 +79,16 @@ export const trackRouter = router({
     .mutation(({ input, ctx }) => ctx.track.share(input)),
   addAction: publicProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
-    .input(trackActionSchema)
+    .input(trackActionInputSchema)
     .mutation(({ input, ctx }) => ctx.track.action(input)),
   trackSearch: publicProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(trackSearchSchema)
     .mutation(({ input, ctx }) => ctx.track.search(input)),
+  // Diagnostic for audio heard twice in the image detail; goes when `media-overlap-detector` does.
+  mediaOverlap: moderatorProcedure
+    .input(mediaOverlapSchema)
+    .mutation(({ input, ctx }) =>
+      logToAxiom({ name: 'media-overlap', type: 'info', userId: ctx.user.id, ...input })
+    ),
 });

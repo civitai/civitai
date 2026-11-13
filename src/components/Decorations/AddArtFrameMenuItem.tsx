@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDeviceTabletStar } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
@@ -20,7 +20,6 @@ export function AddArtFrameMenuItem(props: CardDecorationModalProps) {
         equippedToId: props.entityId,
         equippedToType: props.entityType,
         cosmeticId: currentCosmetic.id,
-        claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
     } else {
       openCardDecorationModal({ props });

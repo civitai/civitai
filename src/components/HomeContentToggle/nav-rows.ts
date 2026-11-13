@@ -34,8 +34,12 @@ export function seedRows(settings: UserContentSettings | null | undefined): NavR
  * fields — ~300 bytes, on a column that is Redis-cached per user and serialised into the HTML of
  * every logged-in SSR render. Writing nothing instead also leaves them tracking future defaults.
  */
-export function matchesDefaults(rows: NavRow[], showLabels: boolean): boolean {
-  if (!showLabels) return false;
+export function matchesDefaults(
+  rows: NavRow[],
+  showLabels: boolean,
+  keepProfileLabels = false
+): boolean {
+  if (!showLabels || keepProfileLabels) return false;
   const defaults = seedRows(undefined);
   return (
     rows.length === defaults.length &&
@@ -47,11 +51,12 @@ export function matchesDefaults(rows: NavRow[], showLabels: boolean): boolean {
 }
 
 /** What the modal saves. Every group, every time — the write replaces the key outright. */
-export function rowsToConfig(rows: NavRow[], showLabels: boolean) {
+export function rowsToConfig(rows: NavRow[], showLabels: boolean, keepProfileLabels = false) {
   return {
     bar: rows.filter((row) => row.group === 'bar').map((row) => row.key),
     more: rows.filter((row) => row.group === 'more').map((row) => row.key),
     hidden: rows.filter((row) => row.hidden).map((row) => row.key),
     showLabels,
+    ...(keepProfileLabels && { keepProfileLabels }),
   };
 }

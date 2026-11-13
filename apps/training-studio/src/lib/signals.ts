@@ -44,7 +44,8 @@ export function connectSignals() {
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
     })
-    .withAutomaticReconnect([0, 2, 10, 18, 30, 45, 60, 90])
+    // Takes milliseconds; every retry re-mints a token, so a sub-second schedule hammers the token route.
+    .withAutomaticReconnect([0, 2, 10, 18, 30, 45, 60, 90].map((seconds) => seconds * 1000))
     .build();
   connection = conn;
 

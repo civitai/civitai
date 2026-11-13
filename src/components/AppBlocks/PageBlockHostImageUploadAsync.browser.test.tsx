@@ -39,7 +39,10 @@ vi.mock('~/utils/trpc', () => ({
       follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blockImageUpload: {
       persist: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       // The host-mounted poller's gate mutation — programmable per test.

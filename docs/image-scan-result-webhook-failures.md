@@ -282,7 +282,7 @@ accident and would have terminalized on the first attempt, which is wrong for a 
 arrives in bursts.
 
 Aggregation over a repeat now requires **every** frame sub-step to have an `output`. `output` is
-optional on every orchestrator step (`@civitai/client` `types.gen.d.ts`), while the local types
+optional on every orchestrator step (`@civitai/orchestration-client` `types.gen.d.ts`), while the local types
 in `image-scan-result.service.ts` declare it required — so TS offers no protection here. Because
 `nsfwLevel` aggregates as a max and `isBlocked` as an OR, skipping a frame can only ever
 *under-rate* a video; a partial set is therefore treated as no result rather than aggregated.

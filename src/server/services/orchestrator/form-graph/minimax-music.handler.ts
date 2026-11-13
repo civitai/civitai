@@ -4,12 +4,12 @@
  * $refs (or carries) them.
  */
 
-import type { MiniMaxMusic3Input, MiniMaxMusic3StepTemplate } from '@civitai/client';
+import type { MiniMaxMusic3Input, MiniMaxMusic3StepTemplate } from '@civitai/orchestration-client';
 import { createMusicConceptStep } from '../music-concept';
 import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import type { StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
 type MiniMaxMusicData = EcosystemData<'MiniMaxMusic3'>;
@@ -31,11 +31,11 @@ export const createMiniMaxMusicInput = defineHandler<MiniMaxMusicData, StepInput
     maxDuration: data.duration,
     ...(data.minimaxMusicMode === 'simple'
       ? {
-          caption: { $ref: chatRef!, path: 'output.parsed.caption' },
+          prompt: { $ref: chatRef!, path: 'output.parsed.caption' },
           lyrics: { $ref: chatRef!, path: 'output.parsed.lyrics' },
         }
       : {
-          caption: custom?.musicDescription,
+          prompt: custom?.musicDescription,
           lyrics: custom?.lyrics,
         }),
   });

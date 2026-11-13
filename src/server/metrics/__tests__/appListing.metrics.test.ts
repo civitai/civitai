@@ -11,10 +11,15 @@ import {
   appOpenUtcDay,
   buildAppOpenCountSql,
   buildAppOpenRecentBlockIdsSql,
+  buildAppOpenAndVisitCountSql,
+  buildAppVisitCountSql,
+  buildAppVisitRecentListingIdsSql,
   computeAppListingMetricUpdates,
   computeAppOpenCounts,
-  escapeClickhouseString,
+  computeAppVisitCounts,
   fetchAppOpenCounts,
+  fetchAppOpenAndVisitCounts,
+  fetchAppVisitCounts,
   fetchRecentlyOpenedBlockIds,
   selectAffectedApprovedListings,
   type AffectedListingsInput,
@@ -22,6 +27,7 @@ import {
   type AppOpenCountRow,
   type AppOpenEvent,
 } from '~/server/metrics/appListing.metrics.sql';
+import { escapeClickhouseString } from '~/server/clickhouse/escape';
 
 /**
  * W13 — AppListingMetric install + open (PLAY) ROLLUP job.
@@ -69,7 +75,7 @@ describe('computeAppListingMetricUpdates — install aggregate spec', () => {
     };
 
     expect(computeAppListingMetricUpdates(input)).toEqual([
-      { appListingId: 'apl_onsite', installCount: 3, openCount: 0 },
+      { appListingId: 'apl_onsite', installCount: 3, openCount: 0, visitCount: 0 },
     ]);
   });
 
@@ -94,7 +100,7 @@ describe('computeAppListingMetricUpdates — install aggregate spec', () => {
     };
 
     expect(computeAppListingMetricUpdates(input)).toEqual([
-      { appListingId: 'apl_noblock', installCount: 0, openCount: 0 },
+      { appListingId: 'apl_noblock', installCount: 0, openCount: 0, visitCount: 0 },
     ]);
   });
 
@@ -350,7 +356,9 @@ describe('computeAppListingMetricUpdates — openCount projection', () => {
       subscriptions: [],
       openEvents: events,
     });
-    expect(out).toEqual([{ appListingId: 'apl_onsite', installCount: 0, openCount: 4 }]);
+    expect(out).toEqual([
+      { appListingId: 'apl_onsite', installCount: 0, openCount: 4, visitCount: 0 },
+    ]);
   });
 
   it('OFF-SITE listing → openCount 0, even with events on a block id it does not own', () => {
@@ -412,9 +420,10 @@ describe('production SQL — ownership contract (regression guard)', () => {
   const upsert = APP_LISTING_METRIC_UPSERT_SQL.replace(/\s+/g, ' ');
   const doUpdate = upsert.slice(upsert.indexOf('ON CONFLICT'));
 
-  it('the ON CONFLICT DO UPDATE writes install_count / open_count / updated_at', () => {
+  it('the ON CONFLICT DO UPDATE writes install_count / open_count / visit_count / updated_at', () => {
     expect(doUpdate).toContain('"install_count" = EXCLUDED."install_count"');
     expect(doUpdate).toContain('"open_count" = EXCLUDED."open_count"');
+    expect(doUpdate).toContain('"visit_count" = EXCLUDED."visit_count"');
     expect(doUpdate).toContain('"updated_at" = NOW()');
   });
 
@@ -426,17 +435,17 @@ describe('production SQL — ownership contract (regression guard)', () => {
     expect(upsert).not.toContain('thumbs_down_count');
   });
 
-  it('does not write connect/visit/tipped counters (no source; feature not live)', () => {
+  it('does not write connect/tipped counters (no source; feature not live)', () => {
     // 🔴 DELIBERATELY NARROWED — and NOT because open_count gained a reader. It has
     // no reader at this ref; its consumer lands in stage 3. What it gained in stage
     // 2 is a trusted server-side SOURCE (the ClickHouse `App_Open` stream) feeding
     // a value that is derived and idempotent, which is what makes writing it ahead
     // of its reader safe. So it moved OUT of this list and INTO the ON CONFLICT
-    // assertion above. The remaining four have no source at all: connect is a
-    // locked-deferred product decision, visit is never recorded server-side, and
-    // AppListing is not a BuzzTip entity. Do not cite open_count to populate them.
+    // assertion above. connect and tipped have no source at all: connect is a
+    // locked-deferred product decision and AppListing is not a BuzzTip entity. Do not
+    // cite open_count to populate them. (visit_count left this list when it gained the
+    // same kind of source open_count has — the `App_Visit` stream — and is asserted below.)
     expect(upsert).not.toContain('connect_count');
-    expect(upsert).not.toContain('visit_count');
     // `tipped` unqualified, so BOTH tipped_count and tipped_amount_count are
     // covered — `tipped_count` is not a substring of `tipped_amount_count`, so the
     // narrower spelling silently asserted nothing about the amount column.
@@ -454,6 +463,15 @@ describe('production SQL — ownership contract (regression guard)', () => {
     expect(upsert).toContain('COALESCE(oc."open_count", 0)');
     expect(upsert).not.toMatch(/"open_count"\s*\+/);
     expect(doUpdate).not.toContain('app_listing_metrics."open_count"');
+  });
+
+  it('visit_count is DERIVED from the supplied map for OFF-SITE listings, never incremented', () => {
+    expect(upsert).toContain(`WHEN al."kind" = 'offsite' THEN COALESCE(vc."visit_count", 0)`);
+    expect(upsert).toContain(
+      `LEFT JOIN unnest($4::text[], $5::int[]) AS vc("app_listing_id", "visit_count") ON vc."app_listing_id" = al.id`
+    );
+    expect(upsert).not.toMatch(/"visit_count"\s*\+/);
+    expect(doUpdate).not.toContain('app_listing_metrics."visit_count"');
   });
 
   it('both counters gate on kind = onsite AND a non-null app_block_id', () => {
@@ -481,6 +499,11 @@ describe('production SQL — affected-set discovery includes new plays', () => {
     // Without this, a listing whose ONLY change is new plays is never recomputed:
     // nothing in Postgres moves when a play happens.
     expect(affected).toContain(`al."kind" = 'onsite' AND al."app_block_id" = ANY($2::text[])`);
+  });
+
+  it('has the visit arm keyed on the ClickHouse-supplied listing id list ($3)', () => {
+    expect(affected).toContain(`al."kind" = 'offsite' AND al.id = ANY($3::text[])`);
+    expect(affected).toContain('al."kind"');
   });
 
   it('returns app_block_id so the caller can query ClickHouse without a second round trip', () => {
@@ -643,7 +666,7 @@ describe('affected-set selection — arms, including the repair arm', () => {
         subscriptions: [{ appBlockId: 'apb_alpha', enabled: true }],
         openEvents: [play({ appBlockId: 'apb_alpha', userId: 71 })],
       })
-    ).toEqual([{ appListingId: 'apl_orphan', installCount: 0, openCount: 0 }]);
+    ).toEqual([{ appListingId: 'apl_orphan', installCount: 0, openCount: 0, visitCount: 0 }]);
   });
 
   it('a NON-APPROVED listing is never selected, by any arm', () => {
@@ -658,6 +681,23 @@ describe('affected-set selection — arms, including the repair arm', () => {
       })
     );
     expect(out).toEqual([]);
+  });
+
+  it('VISIT: an off-site listing visited since the watermark is selected; an on-site one is not', () => {
+    const out = selectAffectedApprovedListings(
+      affectedInput({
+        listings: [
+          base({ id: 'apl_off', kind: 'offsite', appBlockId: null }),
+          base({ id: 'apl_on', kind: 'onsite', appBlockId: 'apb_alpha' }),
+        ],
+        metrics: [
+          { appListingId: 'apl_off', installCount: 0, openCount: 0 },
+          { appListingId: 'apl_on', installCount: 0, openCount: 0 },
+        ],
+        recentlyVisitedListingIds: ['apl_off', 'apl_on'],
+      })
+    );
+    expect(out).toEqual(['apl_off']);
   });
 
   it('a settled approved listing matches NO arm (negative control)', () => {
@@ -809,10 +849,10 @@ describe('spec ⇄ SQL lockstep', () => {
     expect(insertColumns).toEqual(sqlCounters);
   });
 
-  it('and that set is install_count + open_count', () => {
+  it('and that set is install_count + open_count + visit_count', () => {
     // The literal, so the derived comparison above cannot drift silently in both
     // directions at once (two wrongs agreeing is still a pass for the pair test).
-    expect(sqlCounters).toEqual(['install_count', 'open_count']);
+    expect(sqlCounters).toEqual(['install_count', 'open_count', 'visit_count']);
   });
 });
 
@@ -1202,5 +1242,197 @@ describe('fetchRecentlyOpenedBlockIds — discovery degrades, it does not fail t
       )
     ).resolves.toEqual([]);
     expect(degraded).toHaveLength(1);
+  });
+});
+
+/**
+ * 🔴 visit_count is derived from `App_Visit` EXACTLY the way open_count is from `App_Open`.
+ * Asserted as a RELATIONSHIP — the visit query is the play query with only the stream's
+ * type, key and alias swapped — so the two de-dupe rules cannot drift apart.
+ */
+describe('visit_count — derived from App_Visit under the play de-dupe', () => {
+  const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+
+  it('the visit count query IS the play count query with only type/key/alias swapped', () => {
+    const ids = ['apl_one', "ap'l_two"];
+    const visit = norm(buildAppVisitCountSql(ids));
+    // Positive control: the swap below has something to swap.
+    expect(visit).toContain(`toString(type) = 'App_Visit'`);
+    expect(visit).toContain(`JSONExtractString(details, 'listingId')`);
+    const asPlay = visit
+      .replace(/listingId/g, 'appBlockId')
+      .replace(/visitCount/g, 'openCount')
+      .replace(/App_Visit/g, 'App_Open');
+    expect(asPlay).toBe(norm(buildAppOpenCountSql(ids)));
+    // And the de-dupe expression itself is present, verbatim.
+    expect(visit).toContain(
+      `uniqExact(if(userId != 0, concat('u:', toString(userId)), concat('i:', ip))) AS dailyActors`
+    );
+    expect(visit).toContain(`toDate(time, 'UTC') AS day`);
+  });
+
+  it('the visit discovery query is the play discovery query with type/key swapped', () => {
+    const since = '2026-11-07T10:00:00.000Z';
+    expect(
+      norm(buildAppVisitRecentListingIdsSql(since))
+        .replace(/listingId/g, 'appBlockId')
+        .replace(/App_Visit/g, 'App_Open')
+    ).toBe(norm(buildAppOpenRecentBlockIdsSql(since)));
+  });
+
+  it('computeAppVisitCounts de-dupes one actor per listing per UTC day, like plays', () => {
+    const v = (over: Partial<{ listingId: string; userId: number; ip: string; time: string }>) => ({
+      listingId: 'apl_x',
+      userId: 71,
+      ip: '203.0.113.7',
+      time: '2026-11-07T10:00:00.000Z',
+      ...over,
+    });
+    const visits = [
+      v({}),
+      v({ time: '2026-11-07T23:59:59.000Z' }), // same user, same UTC day → 1
+      v({ userId: 82 }), // another user → 2
+      v({ userId: 0, ip: '198.51.100.4' }), // anonymous by ip → 3
+      v({ userId: 0, ip: '198.51.100.4' }), // same ip same day → 3
+      v({ time: '2026-11-08T00:00:01.000Z' }), // next UTC day → 4
+      v({ listingId: 'apl_y' }),
+      v({ listingId: '' }), // no key joins nothing
+    ];
+    const counts = computeAppVisitCounts(visits);
+    expect(counts.get('apl_x')).toBe(4);
+    expect(counts.get('apl_y')).toBe(1);
+    expect(counts.has('')).toBe(false);
+    // Same rows as plays, same numbers: the shared rule.
+    const asPlays = computeAppOpenCounts(
+      visits.map(({ listingId, ...rest }) => ({ ...rest, appBlockId: listingId }))
+    );
+    expect(Object.fromEntries(counts)).toEqual(Object.fromEntries(asPlays));
+  });
+
+  it('only OFF-SITE listings get a visitCount; on-site stays 0 even with visit rows', () => {
+    const out = computeAppListingMetricUpdates({
+      listings: [
+        base({ id: 'apl_off', kind: 'offsite', appBlockId: null }),
+        base({ id: 'apl_on', kind: 'onsite', appBlockId: 'apb_alpha' }),
+      ],
+      subscriptions: [],
+      openEvents: [],
+      visitEvents: [
+        { listingId: 'apl_off', userId: 1, ip: 'x', time: '2026-11-07T10:00:00.000Z' },
+        { listingId: 'apl_off', userId: 2, ip: 'x', time: '2026-11-07T10:00:00.000Z' },
+        { listingId: 'apl_on', userId: 3, ip: 'x', time: '2026-11-07T10:00:00.000Z' },
+      ],
+    });
+    expect(out).toEqual([
+      { appListingId: 'apl_off', installCount: 0, openCount: 0, visitCount: 2 },
+      { appListingId: 'apl_on', installCount: 0, openCount: 0, visitCount: 0 },
+    ]);
+  });
+
+  it('fetchAppVisitCounts chunks, de-dupes ids and merges like fetchAppOpenCounts', async () => {
+    const seen: string[] = [];
+    const counts = await fetchAppVisitCounts(
+      ['apl_a', 'apl_b', 'apl_a', 'apl_c'],
+      async (sql) => {
+        seen.push(sql);
+        return [...sql.matchAll(/'(apl_[a-z])'/g)].map((m) => ({
+          listingId: m[1],
+          visitCount: String(m[1].charCodeAt(4)),
+        }));
+      },
+      2
+    );
+    expect(seen).toHaveLength(2);
+    expect(Object.fromEntries(counts)).toEqual({ apl_a: 97, apl_b: 98, apl_c: 99 });
+    expect(await fetchAppVisitCounts([], async () => [])).toEqual(new Map());
+  });
+});
+
+/**
+ * 🔴 ONE SCAN FOR BOTH STREAMS. Visits must not add a second unbounded `actions` scan: block ids
+ * and off-site listing ids share chunks, and a chunk holding both reads both types at once.
+ */
+describe('plays and visits share the count scan', () => {
+  const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  const combined = norm(buildAppOpenAndVisitCountSql(['apb_one'], ['apl_two']));
+
+  it('the combined query reads BOTH types in one PREWHERE, each on its own key', () => {
+    expect(combined).toContain(`PREWHERE toString(type) IN ('App_Open', 'App_Visit')`);
+    expect(combined).toContain(
+      `(toString(type) = 'App_Open' AND JSONExtractString(details, 'appBlockId') IN ('apb_one'))`
+    );
+    expect(combined).toContain(
+      `(toString(type) = 'App_Visit' AND JSONExtractString(details, 'listingId') IN ('apl_two'))`
+    );
+    // Never an Enum comparison (a query error before the widening is applied).
+    expect(combined).not.toMatch(/PREWHERE type\b/);
+  });
+
+  it('the combined query uses the SAME de-dupe and the runbook marker', () => {
+    expect(combined).toContain(
+      `uniqExact(if(userId != 0, concat('u:', toString(userId)), concat('i:', ip))) AS dailyActors`
+    );
+    expect(combined).toContain(`toDate(time, 'UTC') AS day`);
+    expect(combined).toContain(`GROUP BY actionType, actionKey, day`);
+    expect(combined).toContain(APP_OPEN_COUNT_QUERY_MARKER);
+  });
+
+  it('mixed ids are chunked TOGETHER: ceil((n + m) / chunk) scans, not one series per stream', async () => {
+    const queries: string[] = [];
+    await fetchAppOpenAndVisitCounts(
+      ['apb_1', 'apb_2', 'apb_3'],
+      ['apl_1', 'apl_2'],
+      async (sql) => {
+        queries.push(sql);
+        return [];
+      },
+      2
+    );
+    // 5 ids / 2 per chunk = 3 scans; separate series would be ceil(3/2) + ceil(2/2) = 3 too, so
+    // pin the SHAPES: the middle chunk (apb_3 + apl_1) is a combined one.
+    expect(queries).toHaveLength(3);
+    expect(norm(queries[0])).toBe(norm(buildAppOpenCountSql(['apb_1', 'apb_2'])));
+    expect(norm(queries[1])).toBe(norm(buildAppOpenAndVisitCountSql(['apb_3'], ['apl_1'])));
+    expect(norm(queries[2])).toBe(norm(buildAppVisitCountSql(['apl_2'])));
+  });
+
+  it('one block and one listing cost ONE scan (two separate reads would cost two)', async () => {
+    const queries: string[] = [];
+    await fetchAppOpenAndVisitCounts(['apb_1'], ['apl_1'], async (sql) => {
+      queries.push(sql);
+      return [];
+    });
+    expect(queries).toHaveLength(1);
+  });
+
+  it('routes combined rows to the right map by type, and coerces string counts', async () => {
+    const { opens, visits } = await fetchAppOpenAndVisitCounts(['apb_1'], ['apl_1'], async () => [
+      { type: 'App_Open', key: 'apb_1', dailyActorSum: '7' },
+      { type: 'App_Visit', key: 'apl_1', dailyActorSum: 2 },
+    ]);
+    expect(Object.fromEntries(opens)).toEqual({ apb_1: 7 });
+    expect(Object.fromEntries(visits)).toEqual({ apl_1: 2 });
+  });
+
+  it('an open-only input issues EXACTLY the pre-existing play query (byte model unchanged)', async () => {
+    const queries: string[] = [];
+    await fetchAppOpenCounts(['apb_1', 'apb_2'], async (sql) => {
+      queries.push(sql);
+      return [];
+    });
+    expect(queries).toEqual([buildAppOpenCountSql(['apb_1', 'apb_2'])]);
+  });
+
+  it('a full mixed chunk of realistic ids stays under half of max_query_size', () => {
+    // COMPUTED, not measured against a server (the 238,460 figure is for the play-only
+    // query). A full chunk split evenly between the two lists, at production id length.
+    const ids = (prefix: string, n: number) =>
+      Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(26, '0')}`);
+    const half = APP_OPEN_CH_CHUNK_SIZE / 2;
+    const bytes = Buffer.byteLength(
+      buildAppOpenAndVisitCountSql(ids('apb_', half), ids('apl_', half)),
+      'utf8'
+    );
+    expect(bytes).toBeLessThan(262_144 / 2);
   });
 });

@@ -1,10 +1,16 @@
-import { BuzzClientAccount, TransactionType } from '@civitai/client';
+import { BuzzClientAccount, TransactionType } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { imageSelectTrainingFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { ModelFileVisibility, TrainingStatus } from '~/shared/utils/prisma/enums';
+
+/**
+ * Set while the run is held for review, from the workflow's moderation status. A moderator can
+ * also set Paused by hand, which never sets this, so it is what tells the two apart.
+ */
+const trainingReviewHoldShape = { heldForReview: z.literal(true).optional() };
 
 export type TrainingResultsV1 = z.infer<typeof trainingResultsV1Schema>;
 export const trainingResultsV1Schema = z.object({
@@ -41,6 +47,7 @@ export const trainingResultsV1Schema = z.object({
       })
     )
     .nullish(),
+  ...trainingReviewHoldShape,
 });
 
 export type TrainingResultsV2 = z.infer<typeof trainingResultsV2Schema>;
@@ -83,6 +90,8 @@ export const trainingResultsV2Schema = z.object({
 
   // Added to v2 in case we parse an old file. Might be useful.
   jobId: z.string().optional(),
+
+  ...trainingReviewHoldShape,
 });
 
 // // as usual, this doesn't work. probably because version doesn't exist for v1
@@ -130,7 +139,7 @@ export const modelFileSchema = z.object({
 export type ModelFileCreateInput = z.infer<typeof modelFileCreateSchema>;
 export const modelFileCreateSchema = z.object({
   name: z.string(),
-  overrideName: z.string().optional(),
+  overrideName: z.string().max(1000).optional(),
   url: z.url().min(1, 'You must select a file'),
   sizeKB: z.number(),
   type: z.enum(constants.modelFileTypes),
@@ -145,7 +154,7 @@ export type ModelFileUpdateInput = z.infer<typeof modelFileUpdateSchema>;
 export const modelFileUpdateSchema = z.object({
   id: z.number(),
   name: z.string().optional(),
-  overrideName: z.string().nullish(),
+  overrideName: z.string().max(1000).nullish(),
   url: z.url().min(1, 'You must select a file').optional(),
   sizeKB: z.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
@@ -158,7 +167,7 @@ export const modelFileUpdateSchema = z.object({
 
 export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;
 export const modelFileUpsertSchema = z.union([
-  modelFileCreateSchema.extend({ id: z.undefined() }),
+  modelFileCreateSchema.extend({ id: z.undefined().optional() }),
   modelFileUpdateSchema,
 ]);
 

@@ -17,9 +17,11 @@ const h = vi.hoisted(() => ({
   getAuthorizationCode: vi.fn().mockResolvedValue(undefined), // bail cleanly at the code lookup → 400
   revokeAuthorizationCode: vi.fn().mockResolvedValue(true),
   getOrProduceSessionUser: vi.fn(),
-  mintUserSession: vi.fn(),
+  mintSession: vi.fn(),
+  addDeviceFamily: vi.fn(),
   touchAccount: vi.fn(),
-  consumeOidcContext: vi.fn().mockResolvedValue({ deviceId: undefined }),
+  readOidcContext: vi.fn().mockResolvedValue({ deviceId: undefined }),
+  deleteOidcContext: vi.fn().mockResolvedValue(undefined),
   logOAuthEvent: vi.fn(),
 }));
 
@@ -34,9 +36,16 @@ vi.mock('$lib/server/oauth/model', () => ({
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: h.getOrProduceSessionUser,
 }));
-vi.mock('$lib/server/auth/session', () => ({ mintUserSession: h.mintUserSession }));
+vi.mock('$lib/server/auth/session', () => ({ mintSession: h.mintSession }));
+vi.mock('$lib/server/auth/lineage', () => ({
+  markFamilyLive: async () => undefined,
+  addDeviceFamily: h.addDeviceFamily,
+}));
 vi.mock('$lib/server/auth/device', () => ({ touchAccount: h.touchAccount }));
-vi.mock('$lib/server/oauth/oidc-nonce', () => ({ consumeOidcContext: h.consumeOidcContext }));
+vi.mock('$lib/server/oauth/oidc-nonce', () => ({
+  readOidcContext: h.readOidcContext,
+  deleteOidcContext: h.deleteOidcContext,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }));
 
 import { POST } from '../+server';
@@ -60,7 +69,7 @@ beforeEach(() => {
   h.checkOAuthRateLimit.mockResolvedValue(true);
   h.getAuthorizationCode.mockResolvedValue(undefined);
   h.revokeAuthorizationCode.mockResolvedValue(true);
-  h.consumeOidcContext.mockResolvedValue({ deviceId: undefined });
+  h.readOidcContext.mockResolvedValue({ deviceId: undefined });
 });
 
 // A valid, unexpired, first-party auth code whose PKCE challenge matches the makeEvent() verifier.
@@ -111,16 +120,24 @@ describe('oauth/session +server — client-IP resolution never 500s the exchange
     h.getClientIp.mockReturnValue(null);
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
-    h.mintUserSession.mockResolvedValue('civ.jwt');
+    h.mintSession.mockResolvedValue({ token: 'civ.jwt', family: 'f' });
 
     const res = await POST(makeEvent());
 
     expect(res.status).toBe(200);
-    expect((await res.json()) as { token: string }).toEqual({ token: 'civ.jwt', deviceId: undefined });
+    expect((await res.json()) as { token: string }).toEqual({
+      token: 'civ.jwt',
+      deviceId: undefined,
+    });
     // Audit log records a clear sentinel (not undefined) when the IP couldn't be resolved.
     expect(h.logOAuthEvent).toHaveBeenCalledTimes(1);
     expect(h.logOAuthEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'token.issued', userId: 7, clientId: CLIENT_ID, ip: 'unknown' })
+      expect.objectContaining({
+        type: 'token.issued',
+        userId: 7,
+        clientId: CLIENT_ID,
+        ip: 'unknown',
+      })
     );
   });
 
@@ -128,11 +145,112 @@ describe('oauth/session +server — client-IP resolution never 500s the exchange
     h.getClientIp.mockReturnValue('203.0.113.9');
     h.getAuthorizationCode.mockResolvedValue(validCode());
     h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
-    h.mintUserSession.mockResolvedValue('civ.jwt');
+    h.mintSession.mockResolvedValue({ token: 'civ.jwt', family: 'f' });
 
     const res = await POST(makeEvent());
 
     expect(res.status).toBe(200);
     expect(h.logOAuthEvent).toHaveBeenCalledWith(expect.objectContaining({ ip: '203.0.113.9' }));
+  });
+});
+
+describe('oauth/session +server — family', () => {
+  it('mints nothing for an impersonation code whose context cannot be read, and leaves the code', async () => {
+    h.getAuthorizationCode.mockResolvedValue({
+      ...validCode(),
+      user: { id: 7, impersonation: true },
+    });
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+    h.readOidcContext.mockResolvedValue(null);
+
+    expect((await POST(makeEvent())).status).toBe(503);
+    expect(h.mintSession).not.toHaveBeenCalled();
+    expect(h.revokeAuthorizationCode).not.toHaveBeenCalled();
+  });
+
+  it('mints nothing for an impersonation code whose context lacks the impersonation', async () => {
+    h.getAuthorizationCode.mockResolvedValue({
+      ...validCode(),
+      user: { id: 7, impersonation: true },
+    });
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a' });
+
+    expect((await POST(makeEvent())).status).toBe(503);
+    expect(h.mintSession).not.toHaveBeenCalled();
+  });
+
+  it('signs in an ordinary code whose context cannot be read, as before', async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+    h.readOidcContext.mockResolvedValue(null);
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintSession).toHaveBeenCalledWith({ id: 7 }, { parent: null });
+    expect(h.deleteOidcContext).toHaveBeenCalledWith('auth-code');
+  });
+
+  it("mints the site's session into the family of the hub session that authorized it", async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', family: 'family-a', iat0: 5 });
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintSession).toHaveBeenCalledWith({ id: 7 }, { parent: { sid: 'family-a', iat0: 5 } });
+  });
+
+  it("keeps the hub session's impersonation on the site's session", async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-a' });
+    h.readOidcContext.mockResolvedValue({
+      deviceId: 'd',
+      family: 'family-a',
+      iat0: 5,
+      impersonatedBy: 100,
+      impExp: 999,
+    });
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintSession).toHaveBeenCalledWith(
+      { id: 7 },
+      { parent: { sid: 'family-a', iat0: 5, impersonatedBy: 100, impExp: 999 } }
+    );
+  });
+
+  it("records a new family against the browser on the hub session's proof", async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-b' });
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.addDeviceFamily).toHaveBeenCalledWith('d', 'family-b', { proofFamily: 'family-a' });
+  });
+
+  it("still completes, recording nothing more, when the browser's record refuses the family", async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'family-b' });
+    h.addDeviceFamily.mockResolvedValueOnce('rotate');
+    h.readOidcContext.mockResolvedValue({ deviceId: 'd', proofFamily: 'family-a' });
+
+    const res = await POST(makeEvent());
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ token: 'tok', deviceId: 'd' });
+    expect(h.addDeviceFamily).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a new family when the authorization carried none', async () => {
+    h.getAuthorizationCode.mockResolvedValue(validCode());
+    h.getOrProduceSessionUser.mockResolvedValue({ id: 7 });
+    h.mintSession.mockResolvedValue({ token: 'tok', family: 'f' });
+
+    expect((await POST(makeEvent())).status).toBe(200);
+    expect(h.mintSession).toHaveBeenCalledWith({ id: 7 }, { parent: null });
   });
 });

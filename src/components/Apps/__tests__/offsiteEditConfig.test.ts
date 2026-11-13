@@ -454,7 +454,14 @@ describe('materialEditBlockedReason', () => {
       'name',
       'contentRating',
       'sourceRepoUrl',
+      'issueTrackerUrl',
     ]);
+  });
+
+  it('names the issue tracker among the locked fields, on both kinds', () => {
+    const offsite = materialEditBlockedReason(makeCtx({ status: 'removed' }))!;
+    const onsite = materialEditBlockedReason(makeCtx({ status: 'removed', kind: 'onsite' }))!;
+    for (const copy of [offsite, onsite]) expect(copy).toMatch(/issue tracker/i);
   });
 });
 
@@ -619,11 +626,10 @@ describe('🔴 scope drift — the save dead end, and the copy that denies it', 
     // civitai/civitai#4431. The claim came from enumerating `.github/workflows/`, which is a
     // complete population of GitHub ACTIONS and silent about Tekton.
     //
-    // What is true, and why this duplicate still earns its place: NEITHER tier BLOCKS. The
-    // component check is report-only, the `unit` job is `continue-on-error` on pull
-    // requests, and the preview tier only exists when the preview pipeline runs at all
-    // (opt-in for non-maintainers) and registers ~40 min after the Actions rollup goes
-    // green. Two independent report-only paths to the same fact is the point.
+    // What is true, and why this duplicate still earns its place: NEITHER tier BLOCKS a
+    // merge (`main` requires no status check). The `component` project now also runs in
+    // GitHub Actions as `Component tests`. Two independent paths to the same fact is the
+    // point.
     const form = editContextToForm(driftedCtx());
 
     // The prefill carries the drifted mask…
@@ -703,14 +709,14 @@ describe('🔴 materialEditBlockedReason — role-aware, and pinned as WHOLE str
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
   const OWNER_COPY =
-    'This app is unpublished, so its name, App URL, source repository and content rating ' +
+    'This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ' +
     'are locked. Changing any of them needs moderator review, and an unpublished listing ' +
     'has no way to reach it. Republish the app from the Publishing tab first, then edit ' +
     'those fields — the edit is staged for review. Tagline, description and category can ' +
     'be edited now.';
 
   const EDITOR_COPY =
-    'This app is unpublished, so its name, App URL, source repository and content rating ' +
+    'This app is unpublished, so its name, App URL, source repository, issue tracker and content rating ' +
     'are locked. Changing any of them needs moderator review, and an unpublished listing ' +
     "has no way to reach it. The app's owner has to republish it before those fields can " +
     'be edited — the Publishing tab that does it is theirs, not yours. Tagline, ' +

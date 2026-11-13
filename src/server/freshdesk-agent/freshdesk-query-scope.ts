@@ -27,7 +27,7 @@
  * spells out inline. `query_database` is documented in those prompts as the
  * fallback for the same investigations, so that is its working set.
  *
- * These are physical Postgres relation names. All 26 are plain `model`s in
+ * These are physical Postgres relation names. All 25 are plain `model`s in
  * `prisma/schema.prisma` — none is a view and none carries an `@@map`, so the
  * Prisma name IS the table name. Matching is case-SENSITIVE and requires
  * double quotes, because that is how Postgres itself distinguishes `"User"`
@@ -42,7 +42,6 @@ export const FRESHDESK_QUERY_TABLES = [
   'ChallengeWinner',
   'Changelog',
   'Cosmetic',
-  'CryptoDeposit',
   'CryptoWallet',
   'CustomerSubscription',
   'Image',

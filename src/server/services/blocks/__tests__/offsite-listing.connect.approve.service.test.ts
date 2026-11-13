@@ -1,7 +1,20 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { approveExternalRequest } from '~/server/services/blocks/offsite-listing.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
+
 
 /**
  * App Store Listings (W13) — OAuth-CONNECT APPROVE service tests (PR3).
@@ -21,6 +34,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const { mockRead, mockWrite } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       update: vi.fn(async (args: { data: unknown }) => args.data),
@@ -188,6 +203,19 @@ describe('approveExternalRequest — CONNECT approve→live (validateExternalUrl
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'app-listing-approved', userId: CALLER })
     );
+  });
+
+  it('🔴 refuses while the listing owner has not accepted the App Developer Terms; the listing stays unapproved', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertListingOwnerAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'owner' })
+    );
+    stageConnectApprove();
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_c', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(terms.assertListingOwnerAcceptedAppDeveloperTerms).toHaveBeenCalledWith('apl_c');
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('🔴 REFUSES a connect listing with NO destination — the shape that shipped a dead CTA', async () => {

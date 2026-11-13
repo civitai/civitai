@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { stripComments, stripCommentsAndStrings } from '../../../../../test/strip-comments';
@@ -17,6 +18,18 @@ import { bustCacheTag } from '~/server/utils/cache-helpers';
 // the factory is an `import()` type annotation, which `consistent-type-imports` forbids.
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { APP_LISTING_CATALOG_TAG } from '~/server/services/blocks/app-listing-cache.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+import type * as ListingEditImpersonation from '~/server/services/blocks/app-listing-edit-impersonation.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * W13 — ONSITE listing-media revision CONSOLIDATION service tests.
@@ -48,6 +61,8 @@ import { APP_LISTING_CATALOG_TAG } from '~/server/services/blocks/app-listing-ca
 
 const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -86,6 +101,16 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
 const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 /**
  * 🔴 PARTIAL mock — spread the REAL module and override ONE export.
  *
@@ -100,6 +125,20 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   bustCacheTag: vi.fn(async () => undefined),
 }));
+// The listing-edit impersonation check is its own module (pinned in its own suite); here only
+// its two seams: submit STARTS it, and the queue ATTACHES its summary.
+const { mockStartEditCheck, mockQueueChecks } = vi.hoisted(() => ({
+  mockStartEditCheck: vi.fn(async (_id: string): Promise<string> => 'started'),
+  mockQueueChecks: vi.fn(async (_rows: unknown): Promise<Map<string, unknown>> => new Map()),
+}));
+vi.mock(
+  '~/server/services/blocks/app-listing-edit-impersonation.service',
+  async (importOriginal) => ({
+    ...(await importOriginal<typeof ListingEditImpersonation>()),
+    startListingEditImpersonationCheck: (id: string) => mockStartEditCheck(id),
+    listingEditQueueChecks: (rows: unknown) => mockQueueChecks(rows),
+  })
+);
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
 }));
@@ -153,6 +192,8 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   mockNotify.mockReset().mockResolvedValue(undefined);
+  mockStartEditCheck.mockReset().mockResolvedValue('started');
+  mockQueueChecks.mockReset().mockResolvedValue(new Map());
 });
 
 // ---------------------------------------------------------------------------
@@ -238,6 +279,12 @@ describe('approveExternalRequest — ONSITE media revision is ASSETS-ONLY (cap-a
     expect(copy.data).not.toHaveProperty('description');
     expect(copy.data).not.toHaveProperty('category');
     expect(copy.data).not.toHaveProperty('contentRating');
+  });
+
+  it('an on-site media revision hands the history nothing — it writes no rating', async () => {
+    stageRevisionApprove('onsite');
+    await approveExternalRequest({ publishRequestId: 'alpr_r', reviewerUserId: MOD });
+    expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
   it('does NOT derive/raise contentRating from the shadow assets (resolveApprovalContentRating skipped → no nsfwLevel read)', async () => {
@@ -583,8 +630,9 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     );
     expect(selects).toHaveLength(3);
     for (const select of selects) {
-      expect(select.icon).toEqual({ select: { url: true } });
-      expect(select.cover).toEqual({ select: { url: true } });
+      // `id` + `nsfwLevel` for the review's click-to-reveal (`reviewMedia`) — moderator-only.
+      expect(select.icon).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
+      expect(select.cover).toEqual({ select: { id: true, url: true, nsfwLevel: true } });
       expect(select.metric).toEqual({ select: { openCount: true } });
       // The LISTING's kind — what `cardOpenCount` discriminates on.
       expect(select.kind).toBe(true);
@@ -1020,5 +1068,78 @@ describe('the shape of a kind:onsite AppListingPublishRequest minted by submitLi
     // The public PARENT slug is denormalized so the queue reads the live slug.
     expect(created.slug).toBe('my-app');
     expect(created.status).toBe('pending');
+    // 🔴 …and the listing-edit impersonation check is started for exactly that request.
+    expect(mockStartEditCheck).toHaveBeenCalledTimes(1);
+    expect(mockStartEditCheck).toHaveBeenCalledWith(created.id);
+  });
+
+  it('a failing impersonation-check start never fails the submit', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue({
+      id: 'apl_shadow',
+      kind: 'onsite',
+      status: 'draft',
+      userId: CALLER,
+      revisionOfId: 'apl_parent',
+      externalUrl: null,
+      iconId: 99,
+      coverId: 88,
+      revisionOf: { slug: 'my-app', status: 'approved' },
+    });
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    mockStartEditCheck.mockRejectedValue(new Error('boom'));
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: CALLER })
+    ).resolves.toMatchObject({ shadowId: 'apl_shadow' });
+  });
+});
+
+describe('listPendingOffsiteRequests — the listing-edit impersonation summary', () => {
+  const rows = [
+    {
+      id: 'a',
+      kind: 'onsite',
+      slug: 'x',
+      status: 'pending',
+      appListingId: 'apl_s',
+      appListing: {},
+    },
+    {
+      id: 'b',
+      kind: 'offsite',
+      slug: 'y',
+      status: 'pending',
+      appListingId: 'apl_o',
+      appListing: {},
+    },
+  ];
+
+  it('🔴 attaches each row its summary (null where there is none)', async () => {
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue(rows);
+    const summary = { status: 'complete', flagging: 1, titles: ['t'] };
+    mockQueueChecks.mockResolvedValue(new Map([['a', summary]]));
+    const res = await listPendingOffsiteRequests({});
+    expect(mockQueueChecks).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'a', appListingId: 'apl_s' }),
+      expect.objectContaining({ id: 'b', appListingId: 'apl_o' }),
+    ]);
+    expect(
+      res.items.map((r: { id: string; listingEditCheck?: unknown }) => [r.id, r.listingEditCheck])
+    ).toEqual([
+      ['a', summary],
+      ['b', null],
+    ]);
+  });
+
+  it('🔴 a failed summary read leaves the queue items intact', async () => {
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue(rows);
+    mockQueueChecks.mockRejectedValue(new Error('kv down'));
+    const res = await listPendingOffsiteRequests({});
+    expect(res.items.map((r: { id: string; kind: string }) => [r.id, r.kind])).toEqual([
+      ['a', 'onsite'],
+      ['b', 'offsite'],
+    ]);
+    expect(
+      res.items.every((r: { listingEditCheck?: unknown }) => r.listingEditCheck === null)
+    ).toBe(true);
   });
 });

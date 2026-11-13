@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { noteSiteAlertsVersion } from '~/components/SiteAlerts/site-alerts-version.store';
 import { GENERATION_UPDATE_HEADER } from '~/shared/constants/generation.constants';
+import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 
 const UpdateRequiredModal = dynamic(
   () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal')
@@ -9,10 +11,28 @@ const UpdateRequiredModal = dynamic(
 
 let originalFetch: typeof window.fetch | undefined;
 
+const PROMPTED_AT_KEY = 'update-required-prompted-at';
+const PROMPT_COOLDOWN_MS = 5 * 60_000;
+
+/**
+ * Claims the global update prompt for this tab, unless it was shown in the last few minutes: a
+ * refresh during a rollout can load the old bundle again from a pod not yet replaced.
+ */
+export function claimUpdatePrompt(now = Date.now()): boolean {
+  try {
+    const promptedAt = Number(sessionStorage.getItem(PROMPTED_AT_KEY));
+    if (promptedAt && now - promptedAt < PROMPT_COOLDOWN_MS) return false;
+    sessionStorage.setItem(PROMPTED_AT_KEY, String(now));
+  } catch {
+    // Storage unavailable: always prompt.
+  }
+  return true;
+}
+
 /**
  * True when a request targets our OWN origin.
  *
- * Both update headers are set exclusively by tRPC middleware, so they only ever ride
+ * The update and site-alerts headers are set only by the tRPC route, so they only ever ride
  * same-origin `/api/trpc/…` responses. Everything else on the page — ad, analytics and embed
  * requests — can skip the header inspection entirely.
  *
@@ -103,10 +123,17 @@ export function createUpdateAwareFetch(
       }
 
       // Global update required — skip if the generation-specific header already handled it.
-      if (response.headers.has('x-update-required') && !warned && !generationWarnedVersion) {
+      if (
+        response.headers.has('x-update-required') &&
+        !warned &&
+        !generationWarnedVersion &&
+        claimUpdatePrompt()
+      ) {
         dialogStore.trigger({ id: 'update-required-modal', component: UpdateRequiredModal });
         warned = true;
       }
+
+      noteSiteAlertsVersion(response.headers.get(SITE_ALERTS_VERSION_HEADER));
 
       return response;
     });

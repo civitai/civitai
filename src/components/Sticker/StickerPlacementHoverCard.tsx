@@ -1,4 +1,5 @@
-import { Anchor, Badge, Group, HoverCard, Menu, Skeleton, Text, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Group, Skeleton, Text } from '@mantine/core';
+import { HoverCard, Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconEye, IconEyeOff, IconFlag, IconMessage, IconSticker } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

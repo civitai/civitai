@@ -8,7 +8,6 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
   Accordion,
   Center,
   SimpleGrid,
@@ -21,10 +20,12 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -38,7 +39,9 @@ import { trpc } from '~/utils/trpc';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { BountyEngagementType } from '~/shared/utils/prisma/enums';
-import { Availability, BountyMode } from '~/shared/utils/prisma/enums';
+import { Availability, BountyMode, EntityType } from '~/shared/utils/prisma/enums';
+import { FlagAppealAlert } from '~/components/Moderation/FlagAppealAlert';
+import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
 import type { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
@@ -98,6 +101,7 @@ import { Page } from '~/components/AppLayout/Page';
 import classes from './[[...slug]].module.scss';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { isViewer } from '~/utils/is-viewer';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -157,7 +161,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
   const isDeletingImage = !!useIsMutating({ mutationKey: getQueryKey(trpc.image.delete) });
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const isOwnerOrMod = currentUser?.id === bounty?.user?.id || (currentUser?.isModerator ?? false);
+  const isOwnerOrMod =
+    isViewer(currentUser, bounty?.user?.id) || (currentUser?.isModerator ?? false);
 
   useDidUpdate(() => {
     if (bounty?.id && !isDeletingImage) queryUtils.bounty.getById.invalidate({ id: bounty.id });
@@ -223,6 +228,16 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
     >
       <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
       <Container size="xl" mb={32}>
+        {currentUser?.id === bounty.user?.id && bounty.poiFlagged && (
+          <FlagAppealAlert
+            entityType={EntityType.Bounty}
+            entityId={bounty.id}
+            message={FLAG_ALERT_MESSAGES.bountyPoi}
+            scanReasons={bounty.flagScanReasons}
+            appeal={bounty.poiAppeal}
+            onRequested={() => queryUtils.bounty.getById.invalidate({ id: bounty.id })}
+          />
+        )}
         <Stack gap="xs" mb="xl">
           <Group justify="space-between" className={classes.titleWrapper} wrap="nowrap">
             <Group gap="xs">
@@ -337,6 +352,11 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               </>
             )}
           </Group>
+          <OwnerRatingControls
+            entityType="Bounty"
+            entityId={bounty.id}
+            isOwner={currentUser?.id === bounty.user?.id}
+          />
         </Stack>
         <ContainerGrid2 gutter={{ md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ md: 2 }}>
@@ -361,7 +381,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                 <Stack gap={4}>
                   {bounty.description && (
                     <ContentClamp maxHeight={200}>
-                      <RenderHtml html={bounty.description} />
+                      <RenderHtml html={bounty.description} withMentions />
                     </ContentClamp>
                   )}
                 </Stack>

@@ -24,7 +24,7 @@ vi.mock('~/server/services/orchestrator/assert-workflow-owner', async (importOri
   assertWorkflowOwner: (...args: unknown[]) => assertWorkflowOwner(...args),
 }));
 
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
@@ -54,7 +54,7 @@ const externalVersion = { ...version, usageControl: 'ExternalGeneration' };
 
 const versionAir = 'urn:air:sdxl:lora:civitai:42@501';
 
-/** The global `@civitai/client` stub returns `''` from `Air.stringify`; the lookup needs a real one. */
+/** The global `@civitai/orchestration-client` stub returns `''` from `Air.stringify`; the lookup needs a real one. */
 function installAirCodec() {
   const air = Air as unknown as Record<string, unknown>;
   air.stringify = ({ ecosystem, type, source, id, version }: Record<string, string>) =>

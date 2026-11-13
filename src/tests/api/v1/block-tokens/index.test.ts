@@ -186,7 +186,11 @@ describe('POST /api/v1/block-tokens', () => {
     // before consuming its once-value) doesn't bleed into the next test.
     mockBlockRegistry.resolveBlockInstance.mockReset();
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue(RESOLVED_INSTALL);
-    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    mockDbWrite.user.findUnique.mockResolvedValue({
+      deletedAt: null,
+      bannedAt: null,
+      muted: false,
+    });
     // A6: default to "user has granted everything the app declares" so the
     // pre-A6 tests (which assert sign was called for the manifest scopes) keep
     // passing. The consent-specific tests below override this per-case.
@@ -313,6 +317,20 @@ describe('POST /api/v1/block-tokens', () => {
     expect((res._body as { error: string }).error).toMatch(/not available/i);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
     expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+  });
+
+  it('system account: refused with the same 403 as the flag gate, before any install lookup or mint', async () => {
+    // A moderator passes the appBlocks flag, so only the system-account check can refuse here.
+    mockSession.value = {
+      user: { id: 77, bannedAt: null, isModerator: true, meta: { systemAccount: true } },
+    } as never;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(403);
+    expect((res._body as { error: string }).error).toBe('Apps are not available to this account');
+    expect(mockBlockRegistry.resolveBlockInstance).not.toHaveBeenCalled();
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
   });
 
   it('M1: banned user is rejected at issuance', async () => {
@@ -679,6 +697,67 @@ describe('POST /api/v1/block-tokens', () => {
     expect(signArgs.userId).toBe(42);
   });
 
+  describe('a restricted account keeps its read scopes but is never issued spend', () => {
+    const SPEND_INSTALL = {
+      ...RESOLVED_INSTALL,
+      settings: { buzz_budget_per_gen: 100 },
+      appBlock: {
+        ...RESOLVED_INSTALL.appBlock,
+        manifest: { scopes: ['models:read:self', 'ai:write:budgeted'] },
+        approvedScopes: ['models:read:self', 'ai:write:budgeted'],
+        app: { allowedScopes: 4 | 32768 /* ModelsRead | AIServicesWrite */ },
+      },
+    };
+
+    async function mint({ muted, granted }: { muted: boolean; granted: string[] }) {
+      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      mockBlockRegistry.resolveBlockInstance.mockResolvedValue(SPEND_INSTALL);
+      mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null, muted });
+      mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        grantedScopes: granted,
+        revokedAt: null,
+      });
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+      const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+        scopes: string[];
+        buzzBudget?: number;
+      };
+      return {
+        status: res._status,
+        signArgs,
+        body: res._body as { needsConsent: boolean; missingScopes: string[] },
+      };
+    }
+
+    it('signs the read scope only, with no budget', async () => {
+      const { status, signArgs } = await mint({
+        muted: true,
+        granted: ['models:read:self', 'ai:write:budgeted'],
+      });
+      expect(status).toBe(200);
+      expect(signArgs.scopes).toEqual(['models:read:self']);
+      expect(signArgs.buzzBudget).toBeUndefined();
+    });
+
+    it('does not ask the viewer to consent to a scope it cannot be given', async () => {
+      const { body } = await mint({ muted: true, granted: ['models:read:self'] });
+      expect(body.needsConsent).toBe(false);
+      expect(body.missingScopes).toEqual([]);
+    });
+
+    it('CONTROL: an unrestricted account is issued spend with its budget', async () => {
+      const { status, signArgs } = await mint({
+        muted: false,
+        granted: ['models:read:self', 'ai:write:budgeted'],
+      });
+      expect(status).toBe(200);
+      expect(new Set(signArgs.scopes)).toEqual(new Set(['models:read:self', 'ai:write:budgeted']));
+      expect(signArgs.buzzBudget).toBe(100);
+    });
+  });
+
   // ===========================================================================
   // NSFW-APP-RED-ONLY — host-driven maturity ceiling + mature-app refusal.
   // ===========================================================================
@@ -899,7 +978,7 @@ describe('POST /api/v1/block-tokens', () => {
       expect(mockTokenService.sign).not.toHaveBeenCalled();
     });
 
-    it('a MATURE-rated app MINTS on civitai.red (with the mature ceiling)', async () => {
+    it('a MATURE-rated app MINTS on civitai.red (with the mature ceiling) for a viewer with X', async () => {
       mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
         ...RESOLVED_INSTALL,
         appBlock: {
@@ -907,7 +986,15 @@ describe('POST /api/v1/block-tokens', () => {
           manifest: { scopes: ['models:read:self'], contentRating: 'x' },
         },
       });
-      mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+      // An X app also needs X in the viewer's browsing level (PG|PG13|R|X = 15).
+      const flagMod = await import('~/server/services/feature-flags.service');
+      (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        appBlocks: true,
+        canViewNsfw: true,
+      });
+      mockSession.value = {
+        user: { id: 42, bannedAt: null, isModerator: true, showNsfw: true, browsingLevel: 15 },
+      } as never;
       const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
@@ -922,6 +1009,82 @@ describe('POST /api/v1/block-tokens', () => {
       expect(res._status).toBe(200);
       const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
       expect(signArgs.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+    });
+
+    /**
+     * 🔴 THE MODEL-SLOT MINT FOLLOWS THE VIEWER'S BROWSING LEVEL TOO. On civitai.red an R/X
+     * block needs that rating in the viewer's level, or no token is issued — so a direct mint
+     * cannot bypass `blocks.listForModel` omitting the block. Refused with the same 403 shape
+     * as the host refusal. G/PG/PG-13 are not gated by the level.
+     */
+    describe("model-slot mint — R/X blocks follow the viewer's browsing level", () => {
+      async function mintModelSlot(rating: string, user: Record<string, unknown> | null) {
+        mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+          ...RESOLVED_INSTALL,
+          appBlock: {
+            ...RESOLVED_INSTALL.appBlock,
+            manifest: { scopes: ['models:read:self'], contentRating: rating },
+          },
+        });
+        const flagMod = await import('~/server/services/feature-flags.service');
+        (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+          appBlocks: true,
+          canViewNsfw: true,
+        });
+        mockSession.value = (user ? { user } : null) as never;
+        const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+        const res = makeRes();
+        await handler(
+          makeReq({
+            origin: 'https://civitai.red',
+            headers: { host: 'civitai.red' },
+            body: validBody(),
+          }),
+          res
+        );
+        return res;
+      }
+      const viewer = (browsingLevel: number) => ({
+        id: 42,
+        bannedAt: null,
+        isModerator: true,
+        showNsfw: true,
+        browsingLevel,
+      });
+
+      // Signed-out is not a case here: a model-slot mint by a signed-out (non-moderator) caller is
+      // refused earlier by the page-only launch gate ("This app type isn't available yet"), so it
+      // can never reach this guard. The run-page mint covers signed-out (page-mint.test.ts).
+      it.each([
+        ['a PG-only viewer', viewer(1)],
+        ['a PG+PG-13 viewer', viewer(3)],
+      ])('🔴 refuses an R block for %s on civitai.red — no token', async (_label, user) => {
+        const res = await mintModelSlot('r', user);
+        expect(res._status).toBe(403);
+        // THIS guard's refusal, not an earlier 403 — which would pass vacuously.
+        expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
+        expect(mockTokenService.sign).not.toHaveBeenCalled();
+        expect(JSON.stringify(res._body)).not.toContain('jwt.signed.value');
+        expect(res._body).not.toHaveProperty('token');
+      });
+
+      it('an R-enabled viewer gets a token for the R block', async () => {
+        const res = await mintModelSlot('r', viewer(7));
+        expect(res._status).toBe(200);
+        expect((res._body as { token: string }).token).toBe('jwt.signed.value');
+      });
+
+      it('🔴 X needs X: an R-enabled viewer is refused an X block', async () => {
+        const res = await mintModelSlot('x', viewer(7));
+        expect(res._status).toBe(403);
+        expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
+        expect(mockTokenService.sign).not.toHaveBeenCalled();
+      });
+
+      it('a PG-13 block still mints for a PG-only viewer (not gated by the level)', async () => {
+        const res = await mintModelSlot('pg13', viewer(1));
+        expect(res._status).toBe(200);
+      });
     });
 
     it('an SFW (g) app mints fine on civitai.com (host gate only touches mature)', async () => {

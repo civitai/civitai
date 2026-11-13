@@ -6,7 +6,7 @@ import { dbMock } from '~/__tests__/mocks';
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const groupBy = dbMock.dbRead.crucibleEntry.groupBy;
 
-const { getCrucibleDetail, getPaidEntryCounts, getUserActiveCrucibles, withPaidEntryCount } =
+const { getCrucibleDetail, getPaidEntryCounts, getUserActiveCrucibles, withEntryCounts } =
   await import('~/server/services/crucible.service');
 
 beforeEach(() => {
@@ -36,14 +36,14 @@ describe('getPaidEntryCounts', () => {
     expect(groupBy).not.toHaveBeenCalled();
   });
 
-  it('withPaidEntryCount puts the count on each row', async () => {
+  it('withEntryCounts puts the count on each row', async () => {
     groupBy.mockResolvedValue([{ crucibleId: 2, _count: { _all: 2 } }]);
 
-    const rows = await withPaidEntryCount([{ id: 1 }, { id: 2 }]);
+    const rows = await withEntryCounts([{ id: 1 }, { id: 2 }]);
 
     expect(rows).toEqual([
-      { id: 1, paidEntryCount: 0 },
-      { id: 2, paidEntryCount: 2 },
+      { id: 1, paidEntryCount: 0, entrantCount: 0 },
+      { id: 2, paidEntryCount: 2, entrantCount: 0 },
     ]);
   });
 });
@@ -76,14 +76,18 @@ describe('prize pool surfaces', () => {
           freeEntriesPerUser: 1,
           seededPrizePool: 500,
           endAt: new Date(Date.now() + 60_000),
-          image: null,
+          ingestion: 'Scanned',
+          image: { url: null, ingestion: 'Scanned' },
           _count: { entries: 3 },
         },
       },
     ]);
     groupBy.mockResolvedValue([{ crucibleId: 1, _count: { _all: 2 } }]);
 
-    const [active] = await getUserActiveCrucibles({ userId: 7 });
+    const [active] = await getUserActiveCrucibles({
+      userId: 7,
+      site: { isGreen: false, isModerator: false },
+    });
 
     expect(active.prizePool).toBe(700);
   });

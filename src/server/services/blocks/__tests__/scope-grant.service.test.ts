@@ -1408,10 +1408,16 @@ describe('scope-grant.service', () => {
     it('is exactly the documented exempt set — bump this literal deliberately', async () => {
       const { consentExemptScopeList } = await import('../scope-grant.service');
       expect(consentExemptScopeList()).toEqual([
+        // The document store's base scope: this app's own store, bounded by its reviewed
+        // `storage` declaration. Its `apps:storage:publish` sibling is deliberately NOT here.
+        'apps:storage',
         'apps:storage:read',
         'apps:storage:shared:read',
         'apps:storage:shared:write',
         'apps:storage:write',
+        // App Store items: gated per call (parent switch, trust, authorship, text safety, rate
+        // limits, moderator approval). A consent gate would silently drop it from tokens.
+        'apps:store:items:write',
         'collections:read:self',
         'collections:write:self',
         // Added by the digital-goods rail: the app's own sales ledger, filtered to this viewer and

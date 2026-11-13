@@ -12,6 +12,7 @@ import {
   OAUTH_BRIDGE_COOKIE,
 } from '../first-party-bridge';
 import { firstPartyClientId } from '../first-party';
+import { SAFE_RETURN_PATHS, UNSAFE_RETURN_PATHS } from './return-path-cases';
 
 const HUB = 'https://auth.test';
 const SELF = 'https://moderator.civitai.com';
@@ -67,7 +68,11 @@ describe('buildAuthorizeRedirect', () => {
 
   it('falls back to SameSite=Lax (no Secure) when the cookie is not Secure (dev/http)', () => {
     // None REQUIRES Secure — a None cookie without Secure is rejected by browsers, so http/dev uses Lax.
-    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: '/x', secure: false });
+    const { setCookie } = buildAuthorizeRedirect({
+      selfOrigin: SELF,
+      returnUrl: '/x',
+      secure: false,
+    });
     expect(setCookie).toContain('SameSite=Lax');
     expect(setCookie).not.toContain('SameSite=None');
     expect(setCookie).not.toContain('Secure');
@@ -247,6 +252,27 @@ describe('helpers', () => {
     expect(safePath('https://evil.com')).toBe('/');
     expect(safePath(undefined)).toBe('/');
   });
+  it.each(UNSAFE_RETURN_PATHS)('safePath falls back to / for: %s', (_name, raw) => {
+    expect(safePath(raw)).toBe('/');
+  });
+  it.each(SAFE_RETURN_PATHS)('safePath keeps: %s', (_name, raw, expected) => {
+    expect(safePath(raw)).toBe(expected);
+  });
+  it.each(UNSAFE_RETURN_PATHS)('buildAuthorizeRedirect stashes / for: %s', (_name, raw) => {
+    const { setCookie } = buildAuthorizeRedirect({ selfOrigin: SELF, returnUrl: raw });
+    expect(readStash(setCookie).r).toBe('/');
+  });
+  it.each(UNSAFE_RETURN_PATHS)(
+    'completeFirstPartyCallback returns / for a stashed: %s',
+    async (_name, raw) => {
+      const result = await completeFirstPartyCallback({
+        selfOrigin: SELF,
+        query: { error: 'access_denied' },
+        bridgeCookieValue: JSON.stringify({ v: 'verif', s: 'st8', r: raw }),
+      });
+      expect(result).toEqual({ error: 'access_denied', returnUrl: '/' });
+    }
+  );
   it('generatePkce produces a verifier whose S256 challenge is returned', () => {
     const { verifier, challenge } = generatePkce();
     expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);

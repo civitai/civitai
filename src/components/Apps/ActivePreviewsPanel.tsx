@@ -8,15 +8,15 @@ import { AppsTableColgroup, APPS_ACTIVE_PREVIEWS_COLUMNS } from '~/components/Ap
 import { compactRelativeAgeOf } from '~/components/Apps/reviewRelativeTime';
 
 /**
- * MOD REVIEW SANDBOX — global "Active previews (N / cap)" panel. Extracted from
+ * MOD REVIEW SANDBOX — global "Active previews" panel (with build slots held / cap). Extracted from
  * `src/pages/apps/review.tsx` (mirrors the #3163 `OnsiteReviewModal` extraction)
  * so it can be mounted in a browser (jsdom) test WITHOUT pulling the page's
  * `getServerSideProps`/`createServerSideProps` tRPC-server graph. `review.tsx`
  * imports it back and renders it exactly as before (zero behaviour change).
  *
- * Review previews are capped globally across all mods (each holds a review
- * Deployment + Service + IngressRoute), so this surfaces every active preview +
- * a per-row Tear down so a mod can free a slot, plus (for a LIVE preview) an
+ * Review BUILDS are capped globally across all mods (automatic starts queue past
+ * the cap), so this surfaces every active or queued preview + a per-row Tear down,
+ * plus (for a LIVE preview) an
  * "Open full-page preview" link to the same-origin internal review route the
  * per-request modal uses. Polls every 30s so the count stays fresh. Dark behind
  * the same mod-only review-sandbox flag as the per-request panel: when off,
@@ -60,6 +60,7 @@ export function ActivePreviewsPanel() {
   // UNAUTHORIZED) is that intended silent case; a TRANSIENT error surfaces a retry
   // instead of silently disappearing.
   const cap = query.data?.cap ?? 0;
+  const building = query.data?.building ?? 0;
   const active = query.data?.active ?? [];
   if (!features?.appBlocks) return null;
   if (query.error) {
@@ -75,9 +76,27 @@ export function ActivePreviewsPanel() {
       />
     );
   }
-  if (active.length === 0) return null;
+  /*
+    🔴 "0 active previews", NOT NOTHING. A panel that vanished at zero left a moderator about to
+    start a preview with no way to tell "no slots in use" from "this panel failed to load" —
+    the tour that motivated this looked for it and found nothing. Still one quiet line, so it
+    costs the queue almost no height. (An AUTHZ error — the sandbox flag off — still renders
+    nothing above: there is no preview feature to report on.)
+  */
+  if (active.length === 0) {
+    if (!query.data) return null;
+    return (
+      <Group gap={6} mb="sm" data-testid="apps-active-previews-empty">
+        <IconWindow size={14} color="var(--mantine-color-dimmed)" />
+        <Text size="xs" c="dimmed">
+          0 active previews{cap > 0 ? ` · ${building} / ${cap} building` : ''}
+        </Text>
+      </Group>
+    );
+  }
 
-  const atCap = cap > 0 && active.length >= cap;
+  // The cap bounds concurrent BUILDS, not live previews: past it automatic starts queue.
+  const atCap = cap > 0 && building >= cap;
 
   return (
     <Card withBorder p="md" mb="md">
@@ -86,12 +105,12 @@ export function ActivePreviewsPanel() {
         <Text size="sm" fw={600}>
           Active previews
         </Text>
-        <Badge size="sm" variant="light" color={atCap ? 'red' : 'blue'}>
-          {active.length} / {cap}
+        <Badge size="sm" variant="light" color={atCap ? 'orange' : 'blue'}>
+          {building} / {cap} building
         </Badge>
         {atCap && (
-          <Text size="xs" c="red">
-            Cap reached — tear one down to start another.
+          <Text size="xs" c="dimmed">
+            Build slots full — automatic previews queue until one finishes.
           </Text>
         )}
       </Group>
@@ -169,7 +188,7 @@ export function ActivePreviewsPanel() {
                       rel="noopener"
                       rightSection={<IconExternalLink size={12} />}
                     >
-                      Open full-page preview ↗
+                      Open full-page preview
                     </Button>
                   )}
                   <Button

@@ -66,7 +66,6 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -131,7 +130,9 @@ describe('getDraftModelsByUserId', () => {
         },
         {
           uploadType: ModelUploadType.Trained,
-          status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+          status: {
+            in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation, ModelStatus.Scheduled],
+          },
         },
       ])
     );

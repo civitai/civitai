@@ -1,5 +1,6 @@
 import type { Icon } from '@tabler/icons-react';
 import {
+  IconApps,
   IconBuildingStore,
   IconCode,
   IconCurrencyDollar,
@@ -119,14 +120,16 @@ export type AppsNavContext = {
   isAuthor: boolean;
   /**
    * May load `/apps/build` → show "Build". This is the page's OWN gate turned into a
-   * viewer fact, and it is computed by the SHARED `canAccessAppsBuild` — the
-   * same call `resolveBuildPageAccess` makes in `getServerSideProps`. Not re-derived
-   * here; see that predicate for why one function rather than two spellings.
+   * viewer fact, and it is computed by the SHARED `resolveAppsBuildPageMode` (the build
+   * states or the App Assistant) — the same call `resolveBuildPageAccess` makes in
+   * `getServerSideProps`. Not re-derived here; see that function for why one rule rather
+   * than two spellings.
    */
   canBuild: boolean;
   /**
-   * May load `/apps` → show "Marketplace". `hasAppsStoreAccess`, i.e. the SAME rule
-   * `resolveAppsPageAccess` enforces for that page.
+   * May load `/apps` and `/apps/store` → show "My apps" and "Marketplace".
+   * `hasAppsStoreAccess`, i.e. the SAME rule `resolveAppsPageAccess` enforces for both
+   * pages (`/apps` reaches it through `resolveAppsHomeAccess`).
    *
    * 🔴 THIS ENTRY USED TO BE UNCONDITIONAL (`visible: () => true`), AND THAT WAS A LIVE
    * 404 WAITING ON A FLIPT TOGGLE — documented as a known exposure on both
@@ -138,6 +141,13 @@ export type AppsNavContext = {
    * by leaving an entry pointing at a page that answers `notFound`.
    */
   canSeeStore: boolean;
+  /**
+   * A signed-in viewer → "My apps" may show. The home is a per-user surface: `/apps`
+   * redirects a signed-out viewer to the store, so for them the entry would only ever be a
+   * redirect hop to the Marketplace entry beside it. Session-derived and SSR-seeded, so it
+   * is as hydration-safe as `isAuthor`.
+   */
+  isSignedIn: boolean;
 };
 
 /** No capabilities — the shape a viewer with no flags at all resolves to. */
@@ -145,20 +155,26 @@ export const NO_APPS_NAV_CAPABILITIES: AppsNavContext = {
   isAuthor: false,
   canBuild: false,
   canSeeStore: false,
+  isSignedIn: false,
 };
 
 /**
  * The rail's GROUP HEADINGS, in render order.
  *
- * 🔴 THE GROUPS ARE THE ORIGINAL TAB ORDER, GIVEN NAMES — not a new information
- * architecture. `SUB_NAV_LINKS` carried its ordering rule in prose ("discovery → manage
- * → revenue → build → moderate"); a vertical rail has room to say it out loud, so each
- * phase of that comment became a heading. `Yours` covers "manage" AND "revenue", which
- * are both the viewer's own holdings; nothing else merged and nothing reordered.
+ * The groups began as the original tab order, given names (`SUB_NAV_LINKS` carried its
+ * ordering rule in prose: "discovery → manage → revenue → build → moderate"). `Yours`
+ * covers "manage" AND "revenue", which are both the viewer's own holdings.
+ *
+ * 🔴 `Yours` NOW LEADS, and that is the one reorder. `/apps` became the viewer's app HOME
+ * ("My apps") and the marketplace moved to `/apps/store`, so the destination this nav
+ * asserts you came for is the launcher of apps you already have — which is itself one of
+ * your holdings, so it belongs in `Yours`, not in a heading of its own. A separate
+ * one-row "Home" group was the alternative; it would put a heading over a single entry
+ * that names the same thing. `Discover` (the store) follows.
  */
 export const appsSectionGroups = [
-  { id: 'discover', label: 'Discover' },
   { id: 'yours', label: 'Yours' },
+  { id: 'discover', label: 'Discover' },
   { id: 'build', label: 'Build' },
   { id: 'moderate', label: 'Moderate' },
 ] as const;
@@ -167,7 +183,7 @@ export type AppsSectionGroupId = (typeof appsSectionGroups)[number]['id'];
 
 export type AppsSection = {
   id: string;
-  /** URL segment under `/apps`. Empty string is the marketplace index. */
+  /** URL segment under `/apps`. Empty string is the `/apps` index (the "My apps" home). */
   path: string;
   label: string;
   icon: Icon;
@@ -177,7 +193,8 @@ export type AppsSection = {
 };
 
 /**
- * Section order = discovery → manage → revenue → build → moderate.
+ * Section order = home → manage → revenue → discovery → build → moderate (registry order is
+ * render order within each group; groups render in {@link appsSectionGroups} order).
  *
  * 🔴 `Build` SITS SECOND-TO-LAST (before `Review`), and the order is the claim. This
  * nav's leading entry is the one it asserts you came here for, and for the
@@ -211,8 +228,8 @@ export type AppsSection = {
  *   • `__tests__/appsBuildAccess.test.ts` and `__tests__/appsBuildGateCallSites.test.ts`
  *     cover the Build row behaviourally and structurally.
  * ⚠️ Invites, Revenue and Review are in NEITHER node-tier set. Their only per-row
- * behavioural pin is `AppsRailNav.browser.test.tsx`, which runs in the report-only
- * browser tier — so editing one of those three predicates is not blocked by anything.
+ * behavioural pin is `AppsRailNav.browser.test.tsx`, in the browser tier
+ * (`Component tests`).
  * If one gains a flag term, add it to `appsSectionRowsMatchPageGates.test.ts` rather
  * than relying on review.
  *
@@ -228,16 +245,36 @@ export type AppsSection = {
  * outlier is still submit.tsx's body.
  *
  * The rail still hides itself entirely below two sections — a one-entry "navigation" is
- * chrome that navigates nowhere. 🔴 That floor IS reachable, by a live cohort: a
- * store-visible non-author with no installs and no `appBlocksGetStarted` qualifies for
- * Marketplace ALONE and gets no rail. Unchanged by the rail move — that viewer had
- * exactly the same one tab before it.
+ * chrome that navigates nowhere. ⚠️ Since "My apps" (store access AND signed in) joined
+ * the table, a SIGNED-IN store-visible viewer always has at least two entries. The floor
+ * still bites a SIGNED-OUT store-visible viewer with no build capability (Marketplace
+ * alone), and a viewer with one summary row and no store access.
  */
 export const appsSections: AppsSection[] = [
   /**
+   * The viewer's app HOME (`/apps`). Gated on the SAME store access as Marketplace, because
+   * `/apps` answers `notFound` with exactly the store gate (`resolveAppsHomeAccess` →
+   * `resolveAppsPageAccess`) — AND on a signed-in viewer, because `/apps` redirects a
+   * signed-out one to the store: for them this entry would only be a hop to Marketplace.
+   *
+   * ⚠️ IT LIFTS THE `< 2` COLLAPSE FOR THE SIGNED-IN STORE-ONLY COHORT, deliberately. Such a
+   * viewer used to qualify for Marketplace ALONE and get no rail; they now have two real
+   * destinations (their apps, the store). A SIGNED-OUT store-only viewer is back to
+   * Marketplace alone, and the collapse hides the rail for them again.
+   */
+  {
+    id: 'my-apps',
+    path: '',
+    label: 'My apps',
+    icon: IconApps,
+    group: 'yours',
+    visible: (_s, c) => c.canSeeStore && c.isSignedIn,
+  },
+  /**
    * 🔴 GATED ON STORE ACCESS — it was `() => true`, and that unconditional predicate was
    * a KNOWN, DOCUMENTED 404 exposure (see the note on `AppsNavContext.canSeeStore`):
-   * `/apps` gates on `resolveAppsPageAccess`, so a viewer admitted to this nav by the
+   * the store (then `/apps`, now `/apps/store`) gates on `resolveAppsPageAccess`, so a
+   * viewer admitted to this nav by the
    * get-started term alone was offered an entry the page answers `notFound` for. It was
    * left open because closing it used to drop that viewer to ONE entry, where the `< 2`
    * collapse hides the nav entirely — deleting the only entry that cohort had. "Build"
@@ -246,7 +283,7 @@ export const appsSections: AppsSection[] = [
    */
   {
     id: 'marketplace',
-    path: '',
+    path: 'store',
     label: 'Marketplace',
     icon: IconBuildingStore,
     group: 'discover',
@@ -340,8 +377,8 @@ export const appsSections: AppsSection[] = [
    * stops having a nav entry.
    *
    * 🔴 NOT `c.isAuthor`, AND NOT `!!features.appBlocksGetStarted` — `c.canBuild`, which
-   * is `canAccessAppsBuild` verbatim. `hasSubmissions` / `hasEditableApps` are
-   * deliberately ABSENT from this predicate even though they decide what the page
+   * is `resolveAppsBuildPageMode` verbatim (the build states or the App Assistant).
+   * `hasSubmissions` / `hasEditableApps` are deliberately ABSENT from this predicate even though they decide what the page
    * RENDERS: they come from the client-only `getNavSummary`, and an entry that appeared
    * after mount for an author with apps is the hydration mismatch this surface already
    * survived once. The page's own state machine reads them; the nav does not.
@@ -369,16 +406,19 @@ export const appsSections: AppsSection[] = [
   },
 ];
 
-/** The href a section links to. `/apps` for the index, `/apps/<path>` otherwise. */
+/** The href a section links to. `/apps` for the home, `/apps/<path>` otherwise. */
 export function getAppsSectionHref(section: AppsSection): string {
   return section.path ? `/apps/${section.path}` : '/apps';
 }
 
 /**
- * Returns true when `current` is on the `href` route. `/apps` (the
- * marketplace) must match EXACTLY so it isn't lit on every `/apps/*` child;
- * the sub-routes match on prefix so deep paths (e.g. `/apps/activity/<x>`
- * or `/apps/run/<slug>` under the parent) keep the right section active.
+ * Returns true when `current` is on the `href` route. `/apps` (the home) must match
+ * EXACTLY so it isn't lit on every `/apps/*` child; the sub-routes match on prefix so deep
+ * paths (e.g. `/apps/activity/<x>`) keep the right section active.
+ *
+ * The prefix is `href` PLUS `/`, which is what keeps `/apps/store` (Marketplace) from
+ * lighting on `/apps/store-preview/[slug]`: `'/apps/store-preview/x'.startsWith('/apps/store/')`
+ * is false. `current` is `router.pathname`, so it never carries a query string.
  */
 export function isActiveAppsRoute(href: string, current: string): boolean {
   if (href === '/apps') return current === '/apps';

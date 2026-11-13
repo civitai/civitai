@@ -1,4 +1,5 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
+import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import {
   IconAlertTriangle,
   IconBan,
@@ -7,17 +8,20 @@ import {
   IconFlag,
   IconPencil,
   IconRadar2,
+  IconSparkles,
   IconTrash,
 } from '@tabler/icons-react';
 import Router from 'next/router';
 import React from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
+import { useDeletePost } from '~/components/Post/hooks/useDeletePost';
 import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
 import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
 import { useReportCsamImages } from '~/components/Image/image.utils';
@@ -33,27 +37,33 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 import { useImageContextMenuContext } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import { isMoreLikeThisVisible, moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
 } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { RemixGalleryMenuItems } from '~/components/RemixGallery/RemixGalleryMenuItems';
+import { StartStorylineFromImageMenuItem } from '~/components/Storyline/StartStorylineFromImageMenuItem';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
   noDelete?: boolean;
+  /** Images in the post a `context="post"` card stands for; shown in the delete confirmation. */
+  postImageCount?: number;
   children?: React.ReactElement;
 };
 
 export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: boolean }) {
-  const { image, context = 'image', additionalMenuItems, disableDelete } = props;
+  const { image, context = 'image', additionalMenuItems, disableDelete, postImageCount } = props;
   const { isOwner, isModerator } = useImageContext();
   const features = useFeatureFlags();
   const { id: imageId, postId, user, userId } = image;
   const _userId = user?.id ?? userId;
+  // A feedback page capture's owner is a system account, never a person to report, hide or block.
+  const isCapture = isFeedbackCaptureOwner(_userId);
   const isImage = context === 'image';
 
   const handleSaveClick = () => {
@@ -66,13 +76,19 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
     openReportModal({ entityType: ReportEntity.Image, entityId: imageId });
 
   const deleteImage = useDeleteImage();
+  const deletePost = useDeletePost();
   const rescanImage = useRescanImage();
   const reportTos = useReportTosViolation();
   const reportCsamMutation = useReportCsamImages();
   const handleReportCsam = () => {
     if (!_userId) return;
     if (features.csamReports)
-      window.open(`/moderator/csam/${_userId}?imageId=${imageId}`, '_blank');
+      window.open(
+        isCapture
+          ? `/moderator/csam/capture?imageId=${imageId}`
+          : `/moderator/csam/${_userId}?imageId=${imageId}`,
+        '_blank'
+      );
     else reportCsamMutation.mutate({ imageIds: [imageId] });
   };
   const toggleImageFlag = useToggleImageFlag();
@@ -87,12 +103,24 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
           {isImage && (
-            <AddArtFrameMenuItem
-              entityType={CosmeticEntity.Image}
-              entityId={imageId}
-              image={image}
-              currentCosmetic={image.cosmetic}
-            />
+            <>
+              <AddArtFrameMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={imageId}
+                image={image}
+                currentCosmetic={image.cosmetic}
+              />
+              {/* A hat can't go on an image outside a post (an article cover, say), but one already
+                  there can come off. `undefined` is a feed that didn't select postId, not "none". */}
+              {(postId !== null || image.eventDecoration) && (
+                <AddEventDecorationMenuItem
+                  entityType={CosmeticEntity.Image}
+                  entityId={imageId}
+                  image={image}
+                  currentCosmetic={image.eventDecoration}
+                />
+              )}
+            </>
           )}
         </>
       )}
@@ -115,11 +143,35 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
+      {isImage && isMoreLikeThisVisible(features, image) && (
+        <Menu.Item
+          component={NextLink}
+          href={moreLikeThisHref(imageId)}
+          leftSection={<IconSparkles size={14} stroke={1.5} />}
+        >
+          More like this
+        </Menu.Item>
+      )}
       <RemixGalleryMenuItems
         imageId={imageId}
         isOwner={!!isOwner}
         published={!!image.publishedAt}
       />
+      {isImage && image.type === 'image' && (
+        <StartStorylineFromImageMenuItem
+          image={{
+            id: imageId,
+            url: image.url,
+            type: image.type,
+            nsfwLevel: image.nsfwLevel,
+            hash: image.hash,
+            width: image.width,
+            height: image.height,
+            userId: _userId,
+            username: user?.username ?? null,
+          }}
+        />
+      )}
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">
@@ -131,8 +183,8 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
             </Menu.Item>
           </LoginRedirect>
           <HideImageButton as="menu-item" imageId={imageId} />
-          {_userId && <HideUserButton as="menu-item" userId={_userId} />}
-          {_userId && <BlockUserButton userId={_userId} as="menu-item" />}
+          {_userId && !isCapture && <HideUserButton as="menu-item" userId={_userId} />}
+          {_userId && !isCapture && <BlockUserButton userId={_userId} as="menu-item" />}
         </>
       )}
       {isModerator && (
@@ -177,7 +229,12 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
             <Menu.Item
               color="red"
               leftSection={<IconTrash size={14} stroke={1.5} />}
-              onClick={() => deleteImage({ imageId })}
+              onClick={() =>
+                // A post card's image is only its cover: Delete there means the whole post.
+                context === 'post' && postId
+                  ? deletePost({ postId, imageCount: postImageCount })
+                  : deleteImage({ imageId })
+              }
             >
               Delete
             </Menu.Item>

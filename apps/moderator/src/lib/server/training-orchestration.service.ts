@@ -30,7 +30,7 @@ import { utcMs } from '$lib/format';
 
 /** Step types that are a training run. `model/model*` and `model/comfyNodepackSnapshot` share the
  *  `model/` namespace but are upload-scanning steps, not trainings. */
-const TRAINING_STEP_TYPES = `(
+export const TRAINING_STEP_TYPES = `(
   (startsWith(type, 'model/') AND NOT startsWith(type, 'model/model') AND type != 'model/comfyNodepackSnapshot')
   OR type IN ('training', 'imageResourceTraining')
 )`;
@@ -247,6 +247,54 @@ export function mergeOrchestratorRuns(
   return runs;
 }
 
+export type UserJobRow = JobRow & { userId: number };
+
+/** Training, `Gate` and classification job buckets of these accounts, keyed by the submit second
+ *  (`times`, epoch ms) of each run — see `SECOND_OFFSETS`. */
+export async function queryJobBuckets(userIds: number[], times: number[]): Promise<UserJobRow[]> {
+  const ids = [...new Set(userIds.map(Math.trunc))];
+  if (!ids.length || !times.length) return [];
+  const from = ymdhms(Math.min(...times) - 60_000);
+  const to = ymdhms(Math.max(...times) + 60_000);
+  const inSeconds = [
+    ...new Set(times.flatMap((ms) => SECOND_OFFSETS.map((offset) => ymdhms(ms + offset * 1000)))),
+  ]
+    .map((second) => `toDateTime('${second}')`)
+    .join(',');
+  const rows = await getClickhouse().$query<{
+    userId: string;
+    second: string;
+    jobType: string;
+    jobs: string;
+    cost: number;
+    provider: string;
+    lastCompletedAt: string;
+    resources: number[];
+  }>(`
+    SELECT
+      userId,
+      toString(toStartOfSecond(createdAt)) AS second,
+      jobType,
+      count() AS jobs,
+      sum(cost) AS cost,
+      anyIf(provider, provider != '') AS provider,
+      toString(max(completedAt)) AS lastCompletedAt,
+      arrayDistinct(arrayFlatten(groupArray(resourcesUsed))) AS resources
+    FROM orchestration.jobs
+    WHERE userId IN (${ids.join(',')})
+      AND createdAt BETWEEN '${from}' AND '${to}'
+      AND jobType IN (${BUCKET_JOB_TYPES.map((t) => `'${t}'`).join(',')})
+      AND toStartOfSecond(createdAt) IN (${inSeconds})
+    GROUP BY userId, second, jobType
+  `);
+  return rows.map((r) => ({
+    ...r,
+    userId: Number(r.userId),
+    jobs: Number(r.jobs),
+    cost: Number(r.cost),
+  }));
+}
+
 /**
  * @param withStatus also read `orchestration.workflowSteps`. Off by default: it is 5-9s on a wide
  * window against ~1s for everything else here. It adds the status word, the failure class and the
@@ -286,15 +334,8 @@ export async function getTrainingOrchestration(
     // Jobs are stamped at submit, so a minute of slack covers them; a step row is written when the
     // step ENDS, and a long training runs for days.
     const from = ymdhms(Math.min(...times) - 60_000);
-    const jobsTo = ymdhms(Math.max(...times) + 60_000);
     const stepsTo = ymdhms(Math.max(...times) + 7 * 86_400_000);
     const stepsFrom = ymdhms(Math.max(utcMs(from), Date.now() - STEPS_RETENTION_DAYS * 86_400_000));
-    const inSeconds = times
-      .flatMap((ms) =>
-        SECOND_OFFSETS.map((offset) => `toDateTime('${ymdhms(ms + offset * 1000)}')`)
-      )
-      .join(',');
-
     const [steps, jobs, refunds] = await Promise.all([
       withStatus
         ? getClickhouse().$query<{
@@ -312,30 +353,7 @@ export async function getTrainingOrchestration(
               AND ${TRAINING_STEP_TYPES}
           `)
         : Promise.resolve([]),
-      getClickhouse().$query<{
-        second: string;
-        jobType: string;
-        jobs: string;
-        cost: number;
-        provider: string;
-        lastCompletedAt: string;
-        resources: number[];
-      }>(`
-        SELECT
-          toString(toStartOfSecond(createdAt)) AS second,
-          jobType,
-          count() AS jobs,
-          sum(cost) AS cost,
-          anyIf(provider, provider != '') AS provider,
-          toString(max(completedAt)) AS lastCompletedAt,
-          arrayDistinct(arrayFlatten(groupArray(resourcesUsed))) AS resources
-        FROM orchestration.jobs
-        WHERE userId = ${id}
-          AND createdAt BETWEEN '${from}' AND '${jobsTo}'
-          AND jobType IN (${BUCKET_JOB_TYPES.map((t) => `'${t}'`).join(',')})
-          AND toStartOfSecond(createdAt) IN (${inSeconds})
-        GROUP BY second, jobType
-      `),
+      queryJobBuckets([id], times),
       // Open above: a refund cannot precede its charge but can land long after. A row with no workflow
       // id joins to nothing — the join key IS the workflow id.
       getClickhouse().$query<{ workflowId: string; amount: string }>(`
@@ -348,11 +366,7 @@ export async function getTrainingOrchestration(
       `),
     ]);
 
-    const jobRows: JobRow[] = jobs.map((r) => ({
-      ...r,
-      jobs: Number(r.jobs),
-      cost: Number(r.cost),
-    }));
+    const jobRows: JobRow[] = jobs;
     const stepRows: StepRow[] = steps.map((r) => ({ ...r, jobs: Number(r.jobs) }));
     const refundRows: RefundRow[] = refunds.map((r) => ({
       workflowId: r.workflowId,

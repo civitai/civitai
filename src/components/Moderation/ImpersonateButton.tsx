@@ -1,4 +1,5 @@
-import { Stack, Text, Tooltip } from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { IconCrystalBall, IconX } from '@tabler/icons-react';
 import { useSession } from '~/providers/SessionProvider';

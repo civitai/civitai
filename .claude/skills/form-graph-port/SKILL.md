@@ -9,11 +9,13 @@ The method that took the generation form (~45 family graphs, 4 output types, 7
 standalone workflows, ~12k differential cases) onto form-graph, distilled so the next
 port (e.g. model training) doesn't rediscover it. The worked example is
 `src/shared/form-graph/generation/` + `docs/form-graph-port-plan.md`; read the plan
-doc's phase structure before starting anything sizable.
+doc's phase structure before starting anything sizable. That port is COMPLETE and its
+oracle is deleted, so the tree shows the end state, not the dual-engine window — the
+harness and differential suites are only in git history.
 
 ## 0. Read the lib's own guidance first
 
-`C:\work\form-graph\CLAUDE.md` carries the library's design invariants (one branch
+The form-graph library repo's own `CLAUDE.md` carries the library's design invariants (one branch
 combinator, sync resolution, wire-named computedKeys, the prepack-after-every-edit rule
 for `link:` consumers). Don't design against an imagined API.
 
@@ -32,6 +34,11 @@ Nothing else starts until parity is measurable.
   own (see CLAUDE.md's microtask-loop warning; a hang is unreportable in vitest).
 - Divergences found by the harness are *findings to record*, not always bugs — v1 does
   have dead paths and quirks. Pin the deliberate deltas in a comment or the plan doc.
+- **A mirrored change without a new shape is unverified.** While the oracle still exists,
+  every change to it must be mirrored into the port AND get a differential shape that
+  exercises the changed path. The generation port's krea2 community-checkpoint fix
+  (2026-09-03) passed parity under BOTH the old and new fallback, because no shape used
+  an unknown model id.
 
 ## 2. Structure: declare-then-dispatch
 
@@ -46,8 +53,9 @@ Nothing else starts until parity is measurable.
 
 ## 3. Storage: map the old adapter groups to scopes
 
-Translate the legacy storage-adapter groups (see the v1 `createLocalStorageAdapter`
-config in `GenerationFormProvider.tsx` for the pattern) into graph/field `scope`
+Translate the legacy storage-adapter groups (the deleted v1 `createLocalStorageAdapter`
+config — recoverable from git history at `src/components/generation_v2/GenerationFormProvider.tsx`)
+into graph/field `scope`
 declarations: graph-level `scope` for family buckets, `rootScope()` to opt a field out
 to global memory, `rootScope(workflow)` for per-workflow buckets, relative `[modelId]`
 appends for per-variant refinements. One persisted record per form
@@ -56,7 +64,7 @@ appends for per-variant refinements. One persisted record per form
 ## 4. Types: extract, never re-declare
 
 `InferData` / `InferArm` / `InferLooseData` from the graph type the handlers
-(`EcosystemData<'X'>` pattern in `src/shared/form-graph/generation/types.ts`). Zero
+(`EcosystemData<'X'>` pattern in `src/server/services/orchestrator/form-graph/types.ts`). Zero
 `as never`; a residual cast marks a provably-dead path and says so. After type-level
 work, measure compiler cost against main (`tsc --extendedDiagnostics`, delete
 `tsconfig.tsbuildinfo`, `NODE_OPTIONS=--max_old_space_size=12288` — default heap OOMs).
@@ -85,15 +93,6 @@ Flag off must be byte-identical. The generation port briefly used three flags
 made independent server/client rollback unnecessary — start with one. Deleting the
 old engine is a separate change after the flag is fully widened.
 
-## Keeping parity during the dual-graph window
-
-Until the old graph is deleted, EVERY merge from main needs:
-`git diff HEAD...origin/main --stat -- src/shared/data-graph` — then mirror each
-change into the port AND add a differential shape covering the changed path.
-The suites only catch drift where shapes exercise it: krea2's
-community-checkpoint fix (2026-09-03) passed parity under BOTH the old and new
-fallback because no shape used an unknown model id. A mirrored change without
-a new shape is unverified.
 
 ## Gotchas that cost real time on the generation port
 

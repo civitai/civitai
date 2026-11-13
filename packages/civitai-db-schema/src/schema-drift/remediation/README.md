@@ -39,12 +39,12 @@ The predecessor was written for `CollectionItem`, whose four relations all decla
 `onDelete: Cascade`. It hardcoded `ON DELETE CASCADE` and its cleanup step **deleted**
 orphan rows. That was correct there and is not correct in general.
 
-Of the 37 declared-but-unenforced relations, 15 are `SetNull`. Pointed at those as written,
-the cleanup step deletes roughly **23,500 live rows** — 610 articles, 519 user accounts,
-591 user profiles, 21,815 threads — where the schema asks only for a cover-image reference
-to be cleared. Those are the "broken cover image" relations the remediation backlog
-nominates as the natural starting point, so the most dangerous step is also the recommended
-first one.
+Pointed at the `SetNull` relations as written, the cleanup step would delete live articles,
+user accounts and user profiles where the schema asks only for a cover-image reference to be
+cleared (measured 2026-10 at roughly 1,700 rows across the relations then declared `SetNull`;
+`Thread.imageId`, 21,815 rows at the time, has since moved to `Cascade` and is no longer in
+that set). Those are the "broken cover image" relations the remediation backlog nominates as
+the natural starting point, so the most dangerous step is also the recommended first one.
 
 Here the strategy is **derived from the relation's declared `onDelete`**, in one function
 (`strategyForAction`), with no flag, no override and no default:

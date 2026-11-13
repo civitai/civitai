@@ -70,6 +70,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
@@ -86,8 +87,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -101,7 +102,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   getChallengeBuzzType: vi.fn(async () => 'yellow'),
-  buildWinnerPayoutTransactions: vi.fn(() => []),
+  buildWinnerPrizes: vi.fn(() => []),
   reportPoolFundingShortfall: vi.fn(),
 }));
 

@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // Which roles may reach which page, per app. A row's `roles` is authoritative — an empty array means
@@ -30,6 +30,35 @@ export async function getPageAccessGrants(db: Kysely<DB>, app: string): Promise<
     .selectFrom('AppPageAccess')
     .select(['path', 'roles'])
     .where('app', '=', app)
+    .execute();
+  return Object.fromEntries(rows.map((r) => [r.path, r.roles]));
+}
+
+/**
+ * `getPageAccessGrants` for some paths, read inside `trx` after taking a transaction-scoped lock on the
+ * app's grants, so every writer that takes it is serialised until its transaction ends. One lock per app
+ * because a row lock cannot cover a path that has no row yet, and two writers creating the same row would
+ * both pass a compare-and-set against "absent".
+ *
+ * The rows are read `FOR UPDATE` as well, for a writer that does not take that lock (an UPDATE run by
+ * hand): it waits for this transaction rather than being overwritten by it. In path order, so two
+ * multi-row writers lock in the same order. A hand INSERT of a row that does not exist yet is still not
+ * covered.
+ */
+export async function lockPageAccessGrants(
+  trx: Transaction<DB>,
+  app: string,
+  paths: string[]
+): Promise<PageAccessGrants> {
+  await sql`SELECT pg_advisory_xact_lock(hashtext(${`AppPageAccess:${app}`}::text))`.execute(trx);
+  if (!paths.length) return {};
+  const rows = await trx
+    .selectFrom('AppPageAccess')
+    .select(['path', 'roles'])
+    .where('app', '=', app)
+    .where('path', 'in', paths)
+    .orderBy('path')
+    .forUpdate()
     .execute();
   return Object.fromEntries(rows.map((r) => [r.path, r.roles]));
 }

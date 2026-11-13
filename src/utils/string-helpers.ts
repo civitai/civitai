@@ -1,4 +1,4 @@
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
@@ -141,22 +141,6 @@ export function camelCase(str: string) {
     .join('');
 }
 
-const validModelExtensions = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.gguf', '.onnx'];
-
-export function sanitizeDownloadFilename(
-  value: string,
-  fallbackExtension = '.safetensors'
-): string {
-  let name = value
-    .trim()
-    .replace(/["\\\r\n\t]/g, '') // strip Content-Disposition-breaking chars
-    .replace(/\s+/g, ' '); // collapse internal whitespace
-
-  const hasValidExt = validModelExtensions.some((ext) => name.toLowerCase().endsWith(ext));
-  if (!hasValidExt) name = `${name}${fallbackExtension}`;
-  return name;
-}
-
 export function filenamize(value: string, length = 20) {
   value = value.replace(/[']/gi, '').replace(/[^a-z0-9]/gi, '_');
   // adjust length to be length + number of _ in value
@@ -214,6 +198,15 @@ export function getFileExtension(value: string) {
 
 export function slugit(value: string) {
   return slugify(value, { lower: true, strict: true });
+}
+
+/**
+ * `slugit` strips everything outside ASCII, so a name written only in CJK (or emoji)
+ * comes back empty. In a path that leaves `//` — use this wherever a slug is a path
+ * segment that must not be empty.
+ */
+export function slugitOr(value: string | null | undefined, fallback: string) {
+  return (value ? slugit(value) : '') || fallback;
 }
 
 /**
@@ -386,6 +379,12 @@ export function capitalize(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+/** "the Flux model", but "The Weirdies model" rather than "the The Weirdies model". */
+export function withDefiniteArticle(name: string, article: 'the' | 'The' = 'the') {
+  if (!/^the\s/i.test(name)) return `${article} ${name}`;
+  return article === 'The' ? capitalize(name) : name;
+}
+
 export function toKebabCase(str: string) {
   return str
     .split('')
@@ -395,4 +394,12 @@ export function toKebabCase(str: string) {
         : letter;
     })
     .join('');
+}
+
+/**
+ * Removes NUL and replaces lone surrogates, which Postgres rejects in text and jsonb. It scrubs rather
+ * than rejects, unlike the validators in `platform-feedback.schema.ts` and `apps/doc-store.ts`.
+ */
+export function sanitizeForPostgres(value: string) {
+  return value.replace(/\u0000/g, '').toWellFormed();
 }

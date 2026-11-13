@@ -25,7 +25,14 @@
  * missing), or the scopes to grant when the consent modal should open.
  */
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_IMPORT_FROM_RE,
+  APP_STORAGE_PUBLISH_SCOPE,
+} from '~/shared/constants/block-storage.constants';
+import { BLOCK_HOST_LOCAL_PREVIEW_STORAGE, type BlockHostSurface } from './blockInitFragmentGate';
 import type { HostStatus } from './openBuzzPurchaseGate';
+import { resolveRequestSignIn } from './requestSignInGate';
 
 export function resolveRequestConsent(
   status: HostStatus,
@@ -34,6 +41,65 @@ export function resolveRequestConsent(
   if (status !== 'ready') return null;
   if (!Array.isArray(missingScopes) || missingScopes.length === 0) return null;
   return missingScopes;
+}
+
+/** What a `REQUEST_CONSENT` carrying `from` asks for: see `resolveSourcePublishConsentRequest`. */
+export type SourcePublishConsentRequest = { from: string } | 'invalid' | null;
+
+/**
+ * A block asking for `apps:storage:publish` IN the source app of one of its imports:
+ * `REQUEST_CONSENT { scopes: ['apps:storage:publish'], from: '<source blockId>' }`. Returns
+ * `null` when the payload carries no `from` (the ordinary request above), `{ from }` for that
+ * exact shape, and `'invalid'` for any other payload with a `from`, which the host refuses rather
+ * than reading as a request for this app's own missing scopes. Only the shape is checked here:
+ * the modal names the source from the consumer's approved imports, and the server grants only for
+ * a source the consumer imports with `readwrite`.
+ */
+export function resolveSourcePublishConsentRequest(payload: unknown): SourcePublishConsentRequest {
+  if (typeof payload !== 'object' || payload === null || !('from' in payload)) return null;
+  const { from, scopes } = payload as { from?: unknown; scopes?: unknown };
+  if (
+    typeof from === 'string' &&
+    APP_STORAGE_IMPORT_FROM_RE.test(from) &&
+    Array.isArray(scopes) &&
+    scopes.length === 1 &&
+    scopes[0] === APP_STORAGE_PUBLISH_SCOPE
+  ) {
+    return { from };
+  }
+  return 'invalid';
+}
+
+/**
+ * The scopes a host advertises to the block in BLOCK_INIT / TOKEN_REFRESH /
+ * TOKEN_REFRESH_RESPONSE, and the "already granted" set the consent gates read.
+ * Shared by both host surfaces so they cannot disagree.
+ *
+ * `signedScopes` is the set the mint reports it SIGNED into this token, and wins
+ * whenever present. Re-deriving it as `declared − missingScopes` is wrong for an
+ * anonymous viewer: the mint strips every consent-gated scope but reports
+ * `missingScopes: []` (anon cannot consent), so the derivation advertised gated
+ * scopes the token lacks — and a REQUEST_CONSENT for one was then read as
+ * "already granted" and dropped. On the main mint path it also differs for a
+ * signed-in viewer whose manifest still lists a deprecated scope the mint no
+ * longer signs, and the private-run and owned dev-tunnel mints sign a clamped
+ * set derived from the approved scopes rather than the client's manifest — which
+ * can ADD `user:read:self` the manifest never declared (the dev clamp forces it).
+ *
+ * The derivation stays only as the fallback for a caller that passes no signed
+ * set: a mint response without `scopes` (the ephemeral dev-tunnel mint), or
+ * ReviewBlockPreviewHost, which passes its review mint's signed set as
+ * `declaredScopes` with no `missingScopes`.
+ */
+export function resolveAdvertisedScopes(
+  declaredScopes: string[],
+  missingScopes: string[] | undefined,
+  signedScopes: string[] | undefined
+): string[] {
+  if (Array.isArray(signedScopes)) return signedScopes;
+  if (!missingScopes || missingScopes.length === 0) return declaredScopes;
+  const withheld = new Set(missingScopes);
+  return declaredScopes.filter((s) => !withheld.has(s));
 }
 
 /** Everything a host needs to decide whether to offer the consent notice itself. */
@@ -97,6 +163,102 @@ export function resolveHostConsentNotice(input: HostConsentNoticeInput): string[
   return resolveRequestConsent(input.status, input.missingScopes ?? []);
 }
 
+/**
+ * A host's per-mount memory of the missing-permissions notice: which app the viewer
+ * dismissed it for (read by {@link resolveHostConsentNotice} as `dismissedFor`),
+ * whether the notice now showing was brought back by a refusal and has not yet played
+ * its flash (the host passes it to `BlockConsentNotice` as `highlight`), and the apps
+ * whose one revival this mount has already been used.
+ */
+export type ConsentNoticeDismissal = {
+  dismissedFor: string | null;
+  revived: boolean;
+  revivalSpentFor: readonly string[];
+};
+
+export const CONSENT_NOTICE_NOT_DISMISSED: ConsentNoticeDismissal = {
+  dismissedFor: null,
+  revived: false,
+  revivalSpentFor: [],
+};
+
+/**
+ * The viewer dismissed the notice for `appBlockId`. Clears the highlight. Keeps the
+ * record of spent revivals, so a dismissal made after a revival sticks for the rest of
+ * the mount.
+ */
+export function dismissConsentNotice(
+  current: ConsentNoticeDismissal,
+  appBlockId: string
+): ConsentNoticeDismissal {
+  return { dismissedFor: appBlockId, revived: false, revivalSpentFor: current.revivalSpentFor };
+}
+
+/**
+ * The revived notice's flash has played: clear the highlight so an unrelated remount
+ * does not replay it. Returns the same object when there is nothing to clear.
+ */
+export function consentNoticeHighlightPlayed(
+  current: ConsentNoticeDismissal
+): ConsentNoticeDismissal {
+  return current.revived ? { ...current, revived: false } : current;
+}
+
+/**
+ * 🔴 BRING A DISMISSED NOTICE BACK WHEN A PERMISSION THE VIEWER CAN STILL GRANT
+ * BLOCKS SOMETHING THE APP TRIED TO DO. Shared by both hosts.
+ *
+ * The hosts call it for the refusals that pass through them and produce no other
+ * prompt: today, a reaction refused as `needs-consent` (`entityReactionRefusedScopes`).
+ * NOT for REQUEST_CONSENT: that already opens the consent modal, so a notice revived
+ * behind it would only come back after the viewer declined. A refused call the app
+ * makes to a REST endpoint directly (tipping, for one) never reaches the host, so it
+ * cannot revive the notice.
+ *
+ * A dismissal is "not now". It must not outlive the moment the missing permission
+ * starts to matter: once the app has had a request refused for a scope the viewer has
+ * not granted, the notice is the one host-owned place that explains why, so it is
+ * shown again (and highlighted) instead of leaving the viewer with only the app's own
+ * error message.
+ *
+ * Revives ONLY when all of these hold:
+ *   - the notice is currently dismissed for THIS app (`dismissedFor === appBlockId`).
+ *     A notice that is already showing, or a dismissal recorded for a different app,
+ *     is returned unchanged;
+ *   - at least one refused scope is in `missingScopes`, the set the mint withheld and
+ *     that consent can add. A scope outside that set is un-grantable here and keeps
+ *     its own handling (the CONSENT_UNAVAILABLE push and toast): bringing back a
+ *     notice whose "Allow…" cannot help would be a false offer;
+ *   - 🔴 this app's ONE revival for this mount is unused. The app decides when to send
+ *     the refused request, with no user gesture required, so without a cap it could
+ *     bring the bar back after every dismissal — the viewer could never get rid of it,
+ *     and it would become a way to pressure them into a sensitive grant. Once it has
+ *     been revived and dismissed again, that dismissal sticks until the host remounts.
+ *     Tracked per app, because the page host is not remounted between apps.
+ *
+ * Returns the SAME object when nothing changes, so a React state updater that calls
+ * this does not re-render.
+ */
+export function resolveConsentNoticeAfterRefusal(
+  current: ConsentNoticeDismissal,
+  input: {
+    appBlockId: string;
+    refusedScopes: readonly string[];
+    missingScopes: string[] | undefined;
+  }
+): ConsentNoticeDismissal {
+  if (current.dismissedFor !== input.appBlockId) return current;
+  if (current.revivalSpentFor.includes(input.appBlockId)) return current;
+  const missing = new Set(input.missingScopes ?? []);
+  const blocksAGrantableScope = input.refusedScopes.some((s) => missing.has(s));
+  if (!blocksAGrantableScope) return current;
+  return {
+    dismissedFor: null,
+    revived: true,
+    revivalSpentFor: [...current.revivalSpentFor, input.appBlockId],
+  };
+}
+
 /** What an un-grantable (prod-path) REQUEST_CONSENT should produce. */
 export type UngrantableConsentNotice = {
   /**
@@ -113,7 +275,29 @@ export type UngrantableConsentNotice = {
    * refusal is the signal, the names are advisory.
    */
   scopes: string[];
+  /**
+   * Whether the VIEWER is prompted (the toast, or sign-in when signed out). Equal
+   * to `notify` on every surface except one whose document store is served
+   * locally (`BLOCK_HOST_LOCAL_PREVIEW_STORAGE`), where it is false when every
+   * refused scope is in {@link LOCAL_PREVIEW_STORAGE_SCOPES}. The block's
+   * `CONSENT_UNAVAILABLE` push still follows `notify`.
+   */
+  promptViewer: boolean;
 };
+
+/**
+ * The document-store scopes the SDK's in-tab local store serves on a surface
+ * whose BLOCK_INIT carries `storageMode: 'local-preview'`. The tunnel mint never
+ * signs them, so on that surface they always arrive here as un-grantable, which is
+ * expected and not something to tell the viewer about. The same pair `@civitai/sdk`
+ * treats as held in a local preview. Shared storage (`apps:storage:shared:*`) and
+ * the key/value scopes are NOT here: the local store does not serve them, so a
+ * refusal of one is still worth showing.
+ */
+export const LOCAL_PREVIEW_STORAGE_SCOPES: ReadonlySet<string> = new Set([
+  APP_STORAGE_BASE_SCOPE,
+  APP_STORAGE_PUBLISH_SCOPE,
+]);
 
 /**
  * Issue B (defensive UX): decide whether a REQUEST_CONSENT whose grantable set is
@@ -162,23 +346,65 @@ export type UngrantableConsentNotice = {
  * that could never resolve `false`. `IframeHost` deliberately does not import
  * `pageBlockHostLogic` (the page host is a sibling surface, not a dependency), so
  * the shared gate is the only honest home for this.
+ *
+ * 🔴 `surface` — the host's own mounted surface, REQUIRED so no caller can forget
+ * it. It is read ONLY through `BLOCK_HOST_LOCAL_PREVIEW_STORAGE`, the record that
+ * already decides BLOCK_INIT's `storageMode`: one predicate for "storage is local
+ * here". Where it is, a refusal made only of document-store scopes does not prompt
+ * the viewer. `notify` and the `CONSENT_UNAVAILABLE` push are unchanged, because an
+ * SDK that predates local-preview grants waits on that push, and the host cannot
+ * put a storage scope on the token to settle it any other way. Nothing is granted,
+ * advertised or minted differently.
  */
 export function resolveUngrantableConsentNotice(
   rawScopesHint: unknown,
   grantedScopes: string[],
-  missingScopes: string[] | undefined
+  missingScopes: string[] | undefined,
+  surface: BlockHostSurface
 ): UngrantableConsentNotice {
-  if (!Array.isArray(rawScopesHint)) return { notify: false, scopes: [] };
+  if (!Array.isArray(rawScopesHint)) return { notify: false, promptViewer: false, scopes: [] };
   const requested = rawScopesHint.filter((s): s is string => typeof s === 'string' && s.length > 0);
-  if (requested.length === 0) return { notify: false, scopes: [] };
+  if (requested.length === 0) return { notify: false, promptViewer: false, scopes: [] };
   const granted = new Set<string>(grantedScopes);
   const missing = new Set<string>(missingScopes ?? []);
   const ungrantable = Array.from(
     new Set(requested.filter((s: string) => !granted.has(s) && !missing.has(s)))
   ).sort();
   // Decision on the UNFILTERED set — see above.
-  if (ungrantable.length === 0) return { notify: false, scopes: [] };
-  return { notify: true, scopes: ungrantable.filter((s) => isKnownBlockScope(s)) };
+  if (ungrantable.length === 0) return { notify: false, promptViewer: false, scopes: [] };
+  // Also on the unfiltered set: an unknown scope beside a document-store one must
+  // still prompt, for the unknown one.
+  const promptViewer = BLOCK_HOST_LOCAL_PREVIEW_STORAGE[surface]
+    ? ungrantable.some((s) => !LOCAL_PREVIEW_STORAGE_SCOPES.has(s))
+    : true;
+  return {
+    notify: true,
+    promptViewer,
+    scopes: ungrantable.filter((s) => isKnownBlockScope(s)),
+  };
+}
+
+/**
+ * What the HOST shows the viewer for an un-grantable REQUEST_CONSENT (the block
+ * always gets CONSENT_UNAVAILABLE regardless — this is only the host-frame half).
+ *
+ * A signed-out viewer's scopes are un-grantable only because they are signed out:
+ * the anon mint strips every consent-gated scope, and signing in makes them
+ * grantable. "This permission isn't available here" is false for them, and the
+ * SDK's `withConsentRetry` sends REQUEST_CONSENT automatically on the first failed
+ * gated call per missing scope set (it then remembers the refusal until the token
+ * rotates), so a viewer who never asked for a permission would see it. Offer sign-in instead, through the same
+ * `resolveRequestSignIn` gate REQUEST_SIGN_IN uses (it refuses before BLOCK_READY,
+ * so nothing pops pre-handshake). Signed-in viewers keep the toast.
+ */
+export type UngrantableConsentPrompt = 'sign-in' | 'toast' | 'none';
+
+export function resolveUngrantableConsentPrompt(
+  status: HostStatus,
+  signedIn: boolean
+): UngrantableConsentPrompt {
+  if (signedIn) return 'toast';
+  return resolveRequestSignIn(status, undefined) != null ? 'sign-in' : 'none';
 }
 
 /**

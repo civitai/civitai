@@ -1,4 +1,5 @@
 import { CIVITAI_OWNED_DOMAINS, SYNC_PARAM } from './constants';
+import { safeReturnPath } from './return-path';
 
 // The login redirect contract — returnUrl handling + cross-domain sync — shared by the hub, the
 // main app, and every spoke so they can't drift. Pure functions, framework-agnostic. `buildPostLoginRedirect`
@@ -74,22 +75,31 @@ export interface ReturnTargetOptions {
   isAllowedOrigin?: (origin: string) => boolean;
 }
 
-/** True for same-origin paths or absolute URLs whose origin is allowed. Rejects `//host` AND `/\host`
- * (some agents normalize `\`→`/`, making the latter a protocol-relative external redirect). */
-export function isSafeReturnTarget(target: string, opts: ReturnTargetOptions = {}): boolean {
-  if (target.startsWith('/') && !/^\/[/\\]/.test(target)) return true;
+/**
+ * The target to actually redirect to, or null when unsafe. A path is accepted only if `safeReturnPath`
+ * accepts it, and is returned in that normalised form; an absolute URL only if it is http(s) and its
+ * origin is allowed (`allowAllOrigins` widens the origin, never the scheme).
+ */
+function resolveReturnTarget(target: string, opts: ReturnTargetOptions): string | null {
+  if (target.startsWith('/')) return safeReturnPath(target);
   try {
-    const { origin } = new URL(target);
-    return !!opts.allowAllOrigins || !!opts.isAllowedOrigin?.(origin);
+    const { origin, protocol } = new URL(target);
+    if (protocol !== 'https:' && protocol !== 'http:') return null;
+    return opts.allowAllOrigins || opts.isAllowedOrigin?.(origin) ? target : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** True for a same-origin path that passes `safeReturnPath`, or an absolute URL whose origin is allowed. */
+export function isSafeReturnTarget(target: string, opts: ReturnTargetOptions = {}): boolean {
+  return resolveReturnTarget(target, opts) !== null;
 }
 
 /**
  * Where to send the user after login: the validated returnUrl with the `sync-account` marker re-attached
  * (what the destination's useDomainSync reads). Unsafe targets collapse to '/'.
- * Relative targets stay relative; absolute allowed targets stay absolute.
+ * Relative targets stay relative (in their normalised form); absolute allowed targets stay absolute.
  */
 export function buildPostLoginRedirect(
   returnUrl: string,
@@ -97,7 +107,7 @@ export function buildPostLoginRedirect(
   baseOrigin: string,
   opts: ReturnTargetOptions = {}
 ): string {
-  const target = isSafeReturnTarget(returnUrl, opts) ? returnUrl : '/';
+  const target = resolveReturnTarget(returnUrl, opts) ?? '/';
   if (!sync) return target;
   try {
     const u = new URL(target, baseOrigin);

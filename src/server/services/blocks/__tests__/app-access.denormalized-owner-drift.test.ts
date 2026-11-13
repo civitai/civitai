@@ -1,4 +1,16 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * 🔴 THE DRIFTED ON-SITE LISTING — one fixture, five gates, both directions.
@@ -62,6 +74,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   const make = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
@@ -82,6 +95,7 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     image: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
     oauthClient: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    appListingModerationEvent: { create: vi.fn(async (args: { data: unknown }) => args.data) },
     $transaction: vi.fn(async (arg: unknown) =>
       typeof arg === 'function'
         ? (arg as (tx: unknown) => Promise<unknown>)(null)
@@ -94,6 +108,12 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead: make(), mockWrite: make(), seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => `edge:${url}` }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -101,6 +121,7 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
   newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
   newUlid: () => `ULID${++seq.n}`,
+  newAppListingModerationEventId: () => `alme_new_${++seq.n}`,
 }));
 
 const { getMyListingForApp, submitListingRevision, updateListing } = await import(
@@ -304,24 +325,13 @@ describe('offsite-listing::loadOwnedEditableListing (via updateListing)', () => 
   });
 });
 
-describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, not as a string', () => {
+describe('🔴 D1 (resolved): offsite-listing admits a moderator, and audits the edit', () => {
   /**
-   * D1 is the decision that `offsite-listing.service`'s author gates admit ONLY the
-   * owner and an accepted editor, while its sibling `app-listing-assets.service` also
-   * lets a moderator through. Until now that decision existed as prose in
-   * `app-access.call-site-ledger.test.ts` and as a comment on `loadOwnedEditableListing`
-   * — and a LEDGER STRING IS NOT A GUARD. A mutant that threads `isModerator` into
-   * `loadOwnedEditableListing` and short-circuits on it leaves the entire blocks suite
-   * green, and the comments there explicitly anticipate a future "make the mod bypass
-   * consistent" edit — which would silently widen an AUTHOR edit path to every moderator.
-   *
-   * `updateListing` already accepts `isModerator` (it is threaded into `deriveScopePatch`
-   * so a mod editing a listing that links a foreign OAuth client is not blocked by the
-   * client re-assertion), so the flag reaching the function is not hypothetical: it is
-   * already in the signature, one line away from the gate. These cases pin that it does
-   * NOT reach the gate.
+   * The two sibling gates used to disagree: `app-listing-assets` let a moderator through,
+   * `offsite-listing` did not. Moderators may now edit any listing's content, so both
+   * admit one; offsite-listing records a `moderator-edit` event before the write.
    */
-  it('a moderator who is not the owner is REFUSED on an ON-SITE listing', async () => {
+  it('a moderator who is not the owner edits an ON-SITE listing, recorded as actor', async () => {
     await expect(
       updateListing({
         listingId: LIVE,
@@ -329,13 +339,14 @@ describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, no
         userId: STRANGER,
         isModerator: true,
       })
-    ).rejects.toMatchObject({ code: 'NOT_OWNED', message: 'you can only edit your own listings' });
-    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ listingId: LIVE });
+    expect(mockWrite.appListing.update).toHaveBeenCalledOnce();
+    expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ action: 'moderator-edit', actorUserId: STRANGER }),
+    });
   });
 
-  it('a moderator who is not the owner is REFUSED on an OFF-SITE listing', async () => {
-    // The kind D1 is named for. Same refusal, so the decision is not an artefact of the
-    // drifted onsite fixture.
+  it('a non-owner who is NOT a moderator is still REFUSED on an OFF-SITE listing', async () => {
     wireListings({
       [LIVE]: liveRow({
         kind: 'offsite',
@@ -350,7 +361,7 @@ describe('🔴 D1: offsite-listing has NO moderator bypass — behaviourally, no
         listingId: LIVE,
         patch: { name: 'Renamed' },
         userId: STRANGER,
-        isModerator: true,
+        isModerator: false,
       })
     ).rejects.toMatchObject({ code: 'NOT_OWNED' });
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();
@@ -398,6 +409,30 @@ describe('offsite-listing::submitListingRevision', () => {
       code: 'NOT_OWNED',
       message: 'you can only submit your own revision',
     });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("an editor's revision is refused while the listing's owner has not accepted the App Developer Terms", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const ownerGate = vi.mocked(terms.assertListingOwnerAcceptedAppDeveloperTerms);
+    ownerGate.mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN', message: 'owner' }));
+    seatFor(EDITOR);
+    await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' }
+    );
+    expect(ownerGate).toHaveBeenCalledWith(SHADOW, EDITOR);
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("an editor's revision is refused while the editor has not accepted the App Developer Terms", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const actorGate = vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc);
+    actorGate.mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN', message: 'actor' }));
+    seatFor(EDITOR);
+    await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
+      { code: 'FORBIDDEN', message: 'actor' }
+    );
+    expect(actorGate).toHaveBeenCalledWith(EDITOR);
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 

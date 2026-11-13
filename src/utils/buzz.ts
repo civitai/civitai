@@ -9,7 +9,12 @@ import {
 import { Currency } from '~/shared/utils/prisma/enums';
 import { EXTRACTION_FEE_DESCRIPTION } from '~/shared/constants/creator-program.constants';
 import { PLACEMENT_LEDGER_DESCRIPTIONS } from '~/shared/utils/placement';
-import { capitalize, getDisplayName, getModelUrl } from '~/utils/string-helpers';
+import {
+  GENERATION_TIP_LABEL,
+  getTransactionTypeLabel,
+  isGenerationTip,
+} from '~/utils/buzz-transaction-display';
+import { capitalize, getModelUrl } from '~/utils/string-helpers';
 import { getCurrencyThemeConfig } from '~/shared/constants/currency-theme.constants';
 
 export const parseBuzzTransactionDetails = (
@@ -334,12 +339,16 @@ const DESCRIPTION_ALLOWLIST: ReadonlySet<string> = new Set([
 export const buzzTransactionLabel = ({
   type,
   description,
+  externalTransactionId,
 }: {
   type: TransactionType;
   description?: string | null;
+  externalTransactionId?: string | null;
 }) =>
-  description &&
-  (INCLUDE_DESCRIPTION.includes(type) ||
-    (type === TransactionType.Fee && DESCRIPTION_ALLOWLIST.has(description)))
+  isGenerationTip({ type, externalTransactionId })
+    ? GENERATION_TIP_LABEL
+    : description &&
+      (INCLUDE_DESCRIPTION.includes(type) ||
+        (type === TransactionType.Fee && DESCRIPTION_ALLOWLIST.has(description)))
     ? description
-    : getDisplayName(TransactionType[type]);
+    : getTransactionTypeLabel(type);

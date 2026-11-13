@@ -35,7 +35,7 @@ import {
 requireApiKey();
 
 const REPORT_ENTITIES = [
-  'model', 'comment', 'commentV2', 'image', 'resourceReview', 'article',
+  'model', 'comment', 'commentV2', 'commentV3', 'image', 'resourceReview', 'article',
   'post', 'reportedUser', 'collection', 'bounty', 'bountyEntry', 'chat', 'comicProject',
 ];
 
@@ -266,8 +266,12 @@ async function main() {
     }
 
     case 'appeals': {
+      // Counts the signed-in account's own appeals; there is no per-user lookup.
+      if (flags['user-id']) {
+        console.error('appeals counts only the signed-in account; --user-id is not supported.');
+        process.exit(1);
+      }
       const input = {};
-      if (flags['user-id']) input.userId = intOrUndef(flags['user-id']);
       if (flags['start-date']) input.startDate = flags['start-date'];
 
       const result = await trpcCall('report.getRecentAppeals', input, 'GET');

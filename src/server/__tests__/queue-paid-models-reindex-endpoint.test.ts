@@ -5,9 +5,8 @@ import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
 /**
  * The endpoint exists because `addToQueue` FAILS OPEN: on a degraded sysRedis it parks the ids in
- * Postgres and returns false, and neither `SearchIndexUpdate.queueUpdate` nor
- * `modelsSearchIndex.queueUpdate` propagates that boolean. So "the call resolved" is not evidence
- * the ids are queued.
+ * Postgres and returns false, and `modelsSearchIndex.queueUpdate` does not propagate that
+ * boolean. So "the call resolved" is not evidence the ids are queued.
  *
  * What is pinned here is that `landed` comes from READING THE QUEUE BACK. The two fixtures below
  * deliberately make queue depth and our-ids-landed DIFFERENT numbers — when they were equal, a

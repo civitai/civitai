@@ -2,6 +2,7 @@ import { Alert, Collapse, Group, Stack, Text, Textarea, UnstyledButton } from '@
 import { useDisclosure, useReducedMotion } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
+import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
@@ -36,7 +37,7 @@ import {
  * degrades to a static render under `prefers-reduced-motion`.
  *
  * The SERVER is authoritative: it re-snapshots `requestedScopes` from the client's
- * CURRENT `allowedScopes` at submit time, so this display is disclosure/UX only.
+ * CURRENT consentable scopes at submit time, so this display is disclosure/UX only.
  */
 export function DerivedScopesDisclosure({
   requestedScopes,
@@ -95,12 +96,12 @@ export function DerivedScopesDisclosure({
                 <Group gap={6} wrap="nowrap">
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitive.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitive.length})
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  These are elevated-risk — tell us why your app needs each one. A moderator
-                  can only approve the listing once every sensitive permission is justified.
+                  These are elevated-risk — tell us why your app needs each one. A moderator can
+                  only approve the listing once every sensitive permission is justified.
                 </Text>
                 {sensitive.map(({ bit, key, label }) => {
                   const justificationKey = tokenScopeKeyByBit(bit) ?? String(bit);
@@ -110,11 +111,7 @@ export function DerivedScopesDisclosure({
                   return (
                     <div key={bit}>
                       <Group gap={8} wrap="nowrap" align="center" mb={4}>
-                        <Text
-                          size="sm"
-                          fw={600}
-                          style={{ fontFamily: 'ui-monospace, monospace' }}
-                        >
+                        <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                           {key}
                         </Text>
                         <SensitiveScopeBadge />
@@ -136,12 +133,12 @@ export function DerivedScopesDisclosure({
                         onChange={(e) =>
                           onJustificationChange(justificationKey, e.currentTarget.value)
                         }
-                        onBlur={() =>
-                          setTouched((prev) => ({ ...prev, [justificationKey]: true }))
-                        }
+                        onBlur={() => setTouched((prev) => ({ ...prev, [justificationKey]: true }))}
                         maxLength={SCOPE_JUSTIFICATION_MAX_LENGTH}
                         disabled={disabled}
-                        error={showError ? 'A justification is required for this permission.' : undefined}
+                        error={
+                          showError ? 'A justification is required for this permission.' : undefined
+                        }
                         description={
                           showError ? undefined : `${text.length}/${SCOPE_JUSTIFICATION_MAX_LENGTH}`
                         }
@@ -172,7 +169,7 @@ export function DerivedScopesDisclosure({
                     }}
                   />
                   <Text size="sm" fw={500}>
-                    Other permissions ({nonSensitive.length})
+                    {PERMISSION_GROUP_LABELS.other} ({nonSensitive.length})
                   </Text>
                   <Text size="xs" c="dimmed">
                     {otherOpened ? 'Hide' : 'Show'}
@@ -191,11 +188,7 @@ export function DerivedScopesDisclosure({
                   </Text>
                   {nonSensitive.map(({ bit, key, label }) => (
                     <Group key={bit} gap={8} wrap="nowrap" align="center">
-                      <Text
-                        size="sm"
-                        fw={600}
-                        style={{ fontFamily: 'ui-monospace, monospace' }}
-                      >
+                      <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                         {key}
                       </Text>
                       {(label || tokenScopeLabels[bit]) && (

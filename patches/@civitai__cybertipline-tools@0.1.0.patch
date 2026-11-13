@@ -1,0 +1,310 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 234d5a44ec643c8fe95983b15884a80afcdcd48e..6edd05a163930d5031b34803b826ef97fe8ac7d0 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -782,7 +782,8 @@ var buildPhone = (phone, keyName = "phone") => builder6.build({
+ var parser = new import_fast_xml_parser7.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder7 = new import_fast_xml_parser7.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -860,7 +861,8 @@ var import_fast_xml_parser10 = require("fast-xml-parser");
+ var parser2 = new import_fast_xml_parser10.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder10 = new import_fast_xml_parser10.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -897,7 +899,8 @@ var import_fast_xml_parser12 = require("fast-xml-parser");
+ var parser3 = new import_fast_xml_parser12.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder12 = new import_fast_xml_parser12.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -919,7 +922,8 @@ var import_fast_xml_parser13 = require("fast-xml-parser");
+ var parser4 = new import_fast_xml_parser13.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder13 = new import_fast_xml_parser13.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -942,7 +946,8 @@ var import_fast_xml_parser14 = require("fast-xml-parser");
+ var parser5 = new import_fast_xml_parser14.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder14 = new import_fast_xml_parser14.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -980,7 +985,8 @@ var import_fast_xml_parser16 = require("fast-xml-parser");
+ var parser6 = new import_fast_xml_parser16.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder16 = new import_fast_xml_parser16.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1037,7 +1043,8 @@ var import_fast_xml_parser19 = require("fast-xml-parser");
+ var parser7 = new import_fast_xml_parser19.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder19 = new import_fast_xml_parser19.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1093,7 +1100,8 @@ var import_fast_xml_parser20 = require("fast-xml-parser");
+ var parser8 = new import_fast_xml_parser20.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder20 = new import_fast_xml_parser20.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1123,7 +1131,8 @@ var import_fast_xml_parser21 = require("fast-xml-parser");
+ var parser9 = new import_fast_xml_parser21.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder21 = new import_fast_xml_parser21.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1170,7 +1179,8 @@ var import_fast_xml_parser22 = require("fast-xml-parser");
+ var parser10 = new import_fast_xml_parser22.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder22 = new import_fast_xml_parser22.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1197,7 +1207,8 @@ var import_fast_xml_parser23 = require("fast-xml-parser");
+ var parser11 = new import_fast_xml_parser23.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder23 = new import_fast_xml_parser23.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1237,7 +1248,8 @@ var import_fast_xml_parser24 = require("fast-xml-parser");
+ var parser12 = new import_fast_xml_parser24.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder24 = new import_fast_xml_parser24.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1311,7 +1323,8 @@ var import_fast_xml_parser25 = require("fast-xml-parser");
+ var parser13 = new import_fast_xml_parser25.XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder25 = new import_fast_xml_parser25.XMLBuilder({
+   attributeNamePrefix: "@_",
+@@ -1361,7 +1374,7 @@ var buildSubmitFileDetails = (fileDetails, keyName = "fileDetails") => {
+ 
+ // src/utils/xmlResponseParser.ts
+ var import_fast_xml_parser26 = require("fast-xml-parser");
+-var parser14 = new import_fast_xml_parser26.XMLParser();
++var parser14 = new import_fast_xml_parser26.XMLParser({ parseTagValue: false });
+ var isExpectedType = (value, expectedType) => {
+   switch (expectedType) {
+     case "string":
+@@ -1389,6 +1402,11 @@ function parseXmlResponse(xmlData, config) {
+     );
+   }
+   const response = rootValue;
++  for (const { key, type } of config.rules) {
++    const value = response[String(key)];
++    if (type === "number" && typeof value === "string" && /^-?\d+$/.test(value.trim()))
++      response[String(key)] = Number(value);
++  }
+   for (const rule of config.rules) {
+     const { key, type, required } = rule;
+     const stringKey = String(key);
+diff --git a/dist/index.js b/dist/index.js
+index 3b3f2d0debb24bd15b064679468a985902ca75dc..b6666749c47864ddac7746e1a6967f1e79c1d911 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -700,7 +700,8 @@ var buildPhone = (phone, keyName = "phone") => builder6.build({
+ var parser = new XMLParser({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder7 = new XMLBuilder7({
+   attributeNamePrefix: "@_",
+@@ -778,7 +779,8 @@ import { XMLBuilder as XMLBuilder10, XMLParser as XMLParser2 } from "fast-xml-pa
+ var parser2 = new XMLParser2({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder10 = new XMLBuilder10({
+   attributeNamePrefix: "@_",
+@@ -815,7 +817,8 @@ import { XMLBuilder as XMLBuilder12, XMLParser as XMLParser3 } from "fast-xml-pa
+ var parser3 = new XMLParser3({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder12 = new XMLBuilder12({
+   attributeNamePrefix: "@_",
+@@ -837,7 +840,8 @@ import { XMLBuilder as XMLBuilder13, XMLParser as XMLParser4 } from "fast-xml-pa
+ var parser4 = new XMLParser4({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder13 = new XMLBuilder13({
+   attributeNamePrefix: "@_",
+@@ -860,7 +864,8 @@ import { XMLBuilder as XMLBuilder14, XMLParser as XMLParser5 } from "fast-xml-pa
+ var parser5 = new XMLParser5({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder14 = new XMLBuilder14({
+   attributeNamePrefix: "@_",
+@@ -898,7 +903,8 @@ import { XMLBuilder as XMLBuilder16, XMLParser as XMLParser6 } from "fast-xml-pa
+ var parser6 = new XMLParser6({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder16 = new XMLBuilder16({
+   attributeNamePrefix: "@_",
+@@ -955,7 +961,8 @@ import { XMLBuilder as XMLBuilder19, XMLParser as XMLParser7 } from "fast-xml-pa
+ var parser7 = new XMLParser7({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder19 = new XMLBuilder19({
+   attributeNamePrefix: "@_",
+@@ -1011,7 +1018,8 @@ import { XMLBuilder as XMLBuilder20, XMLParser as XMLParser8 } from "fast-xml-pa
+ var parser8 = new XMLParser8({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder20 = new XMLBuilder20({
+   attributeNamePrefix: "@_",
+@@ -1041,7 +1049,8 @@ import { XMLBuilder as XMLBuilder21, XMLParser as XMLParser9 } from "fast-xml-pa
+ var parser9 = new XMLParser9({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder21 = new XMLBuilder21({
+   attributeNamePrefix: "@_",
+@@ -1088,7 +1097,8 @@ import { XMLBuilder as XMLBuilder22, XMLParser as XMLParser10 } from "fast-xml-p
+ var parser10 = new XMLParser10({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder22 = new XMLBuilder22({
+   attributeNamePrefix: "@_",
+@@ -1115,7 +1125,8 @@ import { XMLBuilder as XMLBuilder23, XMLParser as XMLParser11 } from "fast-xml-p
+ var parser11 = new XMLParser11({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder23 = new XMLBuilder23({
+   attributeNamePrefix: "@_",
+@@ -1155,7 +1166,8 @@ import { XMLBuilder as XMLBuilder24, XMLParser as XMLParser12 } from "fast-xml-p
+ var parser12 = new XMLParser12({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder24 = new XMLBuilder24({
+   attributeNamePrefix: "@_",
+@@ -1229,7 +1241,8 @@ import { XMLBuilder as XMLBuilder25, XMLParser as XMLParser13 } from "fast-xml-p
+ var parser13 = new XMLParser13({
+   attributeNamePrefix: "@_",
+   ignoreAttributes: false,
+-  allowBooleanAttributes: true
++  allowBooleanAttributes: true,
++  parseTagValue: false
+ });
+ var builder25 = new XMLBuilder25({
+   attributeNamePrefix: "@_",
+@@ -1279,7 +1292,7 @@ var buildSubmitFileDetails = (fileDetails, keyName = "fileDetails") => {
+ 
+ // src/utils/xmlResponseParser.ts
+ import { XMLParser as XMLParser14 } from "fast-xml-parser";
+-var parser14 = new XMLParser14();
++var parser14 = new XMLParser14({ parseTagValue: false });
+ var isExpectedType = (value, expectedType) => {
+   switch (expectedType) {
+     case "string":
+@@ -1307,6 +1320,11 @@ function parseXmlResponse(xmlData, config) {
+     );
+   }
+   const response = rootValue;
++  for (const { key, type } of config.rules) {
++    const value = response[String(key)];
++    if (type === "number" && typeof value === "string" && /^-?\d+$/.test(value.trim()))
++      response[String(key)] = Number(value);
++  }
+   for (const rule of config.rules) {
+     const { key, type, required } = rule;
+     const stringKey = String(key);

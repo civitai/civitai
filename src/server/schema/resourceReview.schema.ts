@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { santizeHtmlOptions } from '~/utils/html-sanitize-helpers';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import { numericString } from '~/utils/zod-helpers';
@@ -54,6 +55,8 @@ export const getResourceReviewsInfiniteSchema = z.object({
 export type UpsertResourceReviewInput = z.infer<typeof upsertResourceReviewSchema>;
 export const upsertResourceReviewSchema = z.object({
   id: z.number().optional(),
+  /** The post the review is written from. Read on create only. */
+  postId: z.number().optional(),
   modelId: z.number(),
   modelVersionId: z.number(),
   rating: z.number(),
@@ -87,9 +90,54 @@ export const updateResourceReviewSchema = z.object({
   }),
 });
 
+const REVIEW_PAGE_SIZE_MAX = 50;
+
 export type GetResourceReviewPagedInput = z.infer<typeof getResourceReviewPagedSchema>;
-export const getResourceReviewPagedSchema = paginationSchema.extend({
-  modelId: numericString(),
-  modelVersionId: numericString().optional(),
-  username: z.string().optional(),
+export const getResourceReviewPagedSchema = paginationSchema
+  .extend({
+    limit: z.coerce
+      .number()
+      .min(1)
+      .default(20)
+      .transform((limit) => Math.min(limit, REVIEW_PAGE_SIZE_MAX)),
+    modelId: numericString(),
+    modelVersionId: numericString().optional(),
+    username: z.string().optional(),
+    writtenOnly: z.boolean().optional(),
+    hasImages: z.boolean().optional(),
+    recommended: z.boolean().optional(),
+    // The image feed's level: images above it are not counted and do not satisfy `hasImages`.
+    browsingLevel: z
+      .number()
+      .int()
+      .min(0)
+      .max(allBrowsingLevelsFlag)
+      .default(allBrowsingLevelsFlag),
+  })
+  // Without a version, writtenOnly regex-filters every review of the model before the first match.
+  .refine((input) => !input.writtenOnly || input.modelVersionId, {
+    message: 'writtenOnly requires modelVersionId',
+    path: ['writtenOnly'],
+  })
+  // Without a version, hasImages probes the images of every reviewer of the model.
+  .refine((input) => !input.hasImages || input.modelVersionId, {
+    message: 'hasImages requires modelVersionId',
+    path: ['hasImages'],
+  });
+
+/** A review's image count stops at this; the list returns one more to mean "more than this". */
+export const REVIEW_IMAGE_COUNT_CAP = 100;
+
+export const REVIEW_IMAGES_LIMIT_MAX = 12;
+
+export type GetResourceReviewImagesInput = z.infer<typeof getResourceReviewImagesSchema>;
+export const getResourceReviewImagesSchema = z.object({
+  reviewId: z.number().int().positive(),
+  limit: z.number().int().min(1).max(REVIEW_IMAGES_LIMIT_MAX).default(4),
+  // Narrowed to the viewer's own level on the server.
+  browsingLevel: z.number().int().min(0).max(allBrowsingLevelsFlag).default(allBrowsingLevelsFlag),
+  // The viewer's browsing-settings addons, as every image listing sends them.
+  excludedTagIds: z.number().int().array().max(200).optional(),
+  disablePoi: z.boolean().optional(),
+  disableMinor: z.boolean().optional(),
 });

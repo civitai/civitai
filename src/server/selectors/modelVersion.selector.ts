@@ -38,8 +38,21 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
 
 export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   ...getModelVersionDetailsSelect,
+  availability: true,
   model: {
-    select: { name: true, type: true, nsfw: true, poi: true, mode: true },
+    select: {
+      name: true,
+      sfwName: true,
+      type: true,
+      nsfw: true,
+      poi: true,
+      mode: true,
+      availability: true,
+      userId: true,
+      // Decide the showcase hold only; not part of the response.
+      minor: true,
+      sfwOnly: true,
+    },
   },
 });
 const modelVersionApi = Prisma.validator<Prisma.ModelVersionDefaultArgs>()({

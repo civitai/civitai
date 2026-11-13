@@ -9,8 +9,11 @@ import {
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForUsersLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { PRIOR_BLOCKED_FOR_KEY, PRIOR_INGESTION_KEY } from '~/server/utils/image-removal-mode';
+import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { createJob, getJobDate } from './job';
 
 /**
@@ -30,7 +33,7 @@ export const DEFAULT_IMAGES_PER_RUN = 0;
 
 /**
  * Two cursors because the populations move in opposite directions and one cursor cannot serve
- * both: a fresh self-deletion has to be purged within a tick or two, while the 74,828-account
+ * both: a fresh self-deletion has to be purged within a tick or two, while the account
  * backlog takes months. FRESH is an ascending high-water mark over accounts deleted after the
  * mark; BACKLOG is a descending cursor over everything below it. Collapsing them back into a
  * single cursor strands every new deletion behind the whole backlog — in *either* direction,
@@ -95,13 +98,19 @@ async function isStillMarkedForDeletion(userId: number) {
   return row.stillDeleted;
 }
 
+/** Every hold on the account, plus the placeholder owner. */
+const accountHeldSql = (id: Prisma.Sql, markerView: boolean) =>
+  Prisma.sql`(${id} = ${PLACEHOLDER_OWNER_ID} OR ${accountHoldSql(id, markerView)})`;
+
 async function drainUser(
   userId: number,
   budget: number,
-  isCanceled: () => boolean
+  isCanceled: () => boolean,
+  markerView: boolean
 ): Promise<UserDrain> {
   let deletedImages = 0;
   let budgetUsed = 0;
+  const held = accountHeldSql(Prisma.sql`${userId}::int`, markerView);
 
   try {
     // Joined rather than trusted from the worklist: that was read off a replica, so a
@@ -113,11 +122,7 @@ async function drainUser(
         AND u."deletedAt" IS NOT NULL
         AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
       WHERE i."userId" = ${userId}
-        AND NOT EXISTS (
-          SELECT 1 FROM "CsamReport" c
-          WHERE c."userId" = ${userId}
-            AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-        )
+        AND NOT ${held}
       LIMIT ${budget}
     `;
 
@@ -132,7 +137,8 @@ async function drainUser(
       if (!(await isStillMarkedForDeletion(userId)))
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: false };
 
-      const deleted = await deleteImages(batch);
+      // Re-checked on the delete itself, so a hold placed mid-drain still stops it.
+      const deleted = await deleteImages(batch, undefined, { onlyWhere: Prisma.sql`NOT ${held}` });
       deletedImages += deleted.length;
       budgetUsed += batch.length;
     }
@@ -156,20 +162,19 @@ async function drainUser(
       if (isCanceled())
         return { deletedImages, blockedImages: 0, budgetUsed, drained: false, canceled: true };
       deletedPosts += await dbWrite.$executeRaw`
-        DELETE FROM "Post"
-        WHERE id IN (${Prisma.join(batch)})
-          AND "userId" = ${userId}
-          AND EXISTS (
-            SELECT 1 FROM "User" u
-            WHERE u.id = ${userId}
-              AND u."deletedAt" IS NOT NULL
-              AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM "CsamReport" c
-            WHERE c."userId" = ${userId}
-              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-          )
+        WITH doomed AS (
+          SELECT p.id FROM "Post" p
+          WHERE p.id IN (${Prisma.join(batch)})
+            AND p."userId" = ${userId}
+            AND EXISTS (
+              SELECT 1 FROM "User" u
+              WHERE u.id = ${userId}
+                AND u."deletedAt" IS NOT NULL
+                AND (u.meta->>'imageRemoval' IS NULL OR u.meta->>'imageRemoval' = 'immediate')
+            )
+            AND NOT ${held}
+        )
+        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
       `;
     }
 
@@ -224,7 +229,9 @@ async function queueBlockedImagesForDelete(userId: number) {
 
 /**
  * No statement-level CSAM gate here, unlike `drainUser`: blocking never touches S3, and the NCMEC
- * archive re-fetches from the CDN, which still serves a blocked image.
+ * archive re-fetches from the CDN, which still serves a blocked image. The block does keep the
+ * moderator-only review flag: `remove-blocked-images` holds a blocked image on it, so clearing it
+ * here would queue the image for purge.
  */
 async function blockUserImages(
   userId: number,
@@ -269,7 +276,7 @@ async function blockUserImages(
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
                 "blockedFor" = ${BlockedReason.Moderated},
-                "needsReview" = NULL,
+                "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
                 "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
@@ -327,13 +334,17 @@ async function blockUserImages(
     };
   } catch (error) {
     return { deletedImages: 0, blockedImages, budgetUsed, drained: false, canceled: false, error };
+  } finally {
+    // Every exit: a later run skips the rows this one already blocked.
+    if (blockedImages) await refreshProfilePicturesForUsersLazy([userId]);
   }
 }
 
 async function drainPage(
   users: Candidate[],
   budget: number,
-  isCanceled: () => boolean
+  isCanceled: () => boolean,
+  markerView: boolean
 ): Promise<{
   deletedImages: number;
   blockedImages: number;
@@ -364,7 +375,7 @@ async function drainPage(
     // resolve — a mode it did not select, a value it did not normalize — blocks instead of deletes.
     const result =
       user.mode === 'immediate'
-        ? await drainUser(user.id, remaining, isCanceled)
+        ? await drainUser(user.id, remaining, isCanceled, markerView)
         : await blockUserImages(user.id, remaining, isCanceled);
     remaining -= result.budgetUsed;
     deletedImages += result.deletedImages;
@@ -411,6 +422,22 @@ export const removeDeletedUserImages = createJob(
       }
     };
 
+    const markerView = await holdMarkerViewExists();
+    // Without the marker view (a restore or a copy from before its migration) the drain does nothing:
+    // the delete path reads the marker's other objects too, after its DELETE has committed.
+    if (!markerView) {
+      await logToAxiom({
+        type: 'warning',
+        name: 'remove-deleted-user-images',
+        message: 'hold marker view missing: nothing drained this run',
+      }).catch(() => undefined);
+      return {
+        skipped: 'hold-marker-view-missing',
+        deletedImages: 0,
+        blockedImages: 0,
+        deletedUsers: 0,
+      };
+    }
     const [freshMark, setFreshMark] = await getJobDate(FRESH_CURSOR_KEY, new Date());
     const [backlogCursor, setBacklogCursor] = await getJobDate(BACKLOG_CURSOR_KEY, CURSOR_START);
 
@@ -424,9 +451,10 @@ export const removeDeletedUserImages = createJob(
     // CleanIfEmpty — while an immediate user still matches on any image, or an account left
     // holding only blocked ones would drop out of the worklist with nothing else to sweep it.
 
-    // An account with an unfinished CSAM report is left out entirely: archive-csam-reports runs
-    // five minutes after this job and rebuilds the NCMEC evidence by re-fetching each image from
-    // the CDN, silently skipping — and then stamping the report archived — for anything gone.
+    // An account under any legal hold (`accountHoldSql`) is left out entirely. While its report is
+    // unfinished this also matters to archive-csam-reports, which runs five minutes after this job
+    // and rebuilds the NCMEC evidence by re-fetching each image from the CDN, silently skipping —
+    // and then stamping the report archived — for anything gone.
     const fresh = await dbRead.$queryRaw<Candidate[]>`
       SELECT u.id, u."deletedAt", m.mode
       FROM "User" u
@@ -438,11 +466,7 @@ export const removeDeletedUserImages = createJob(
       ) m
       WHERE u."deletedAt" IS NOT NULL
         AND u."deletedAt" >= ${freshMark}
-        AND NOT EXISTS (
-          SELECT 1 FROM "CsamReport" c
-          WHERE c."userId" = u.id
-            AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-        )
+        AND NOT ${accountHeldSql(Prisma.raw('u.id'), markerView)}
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -459,7 +483,7 @@ export const removeDeletedUserImages = createJob(
       LIMIT ${USERS_PER_RUN}
     `;
 
-    const freshRun = await drainPage(fresh, budget, isCanceled);
+    const freshRun = await drainPage(fresh, budget, isCanceled, markerView);
     // Written on every run, drained or not: an unstored key falls back to the default, so a
     // first run that never persists its seed re-seeds to a later `now` on the next tick and
     // everything deleted in between lands above the mark and below the backlog cursor.
@@ -484,11 +508,7 @@ export const removeDeletedUserImages = createJob(
         WHERE u."deletedAt" IS NOT NULL
           AND u."deletedAt" <= ${backlogCursor}
           AND u."deletedAt" < ${freshMark}
-          AND NOT EXISTS (
-            SELECT 1 FROM "CsamReport" c
-            WHERE c."userId" = u.id
-              AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
-          )
+          AND NOT ${accountHeldSql(Prisma.raw('u.id'), markerView)}
           AND (
             EXISTS (
               SELECT 1 FROM "Image" i
@@ -509,7 +529,7 @@ export const removeDeletedUserImages = createJob(
         wrapped = true;
         await setBacklogCursor(CURSOR_START);
       } else {
-        const backlogRun = await drainPage(backlog, freshRun.remaining, isCanceled);
+        const backlogRun = await drainPage(backlog, freshRun.remaining, isCanceled, markerView);
         deletedImages += backlogRun.deletedImages;
         blockedImages += backlogRun.blockedImages;
         deletedUsers += backlogRun.deletedUsers;

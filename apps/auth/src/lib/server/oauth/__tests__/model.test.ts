@@ -1,3 +1,4 @@
+import { unpack } from 'msgpackr';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OriginNotAllowedError } from '../errors';
 
@@ -51,7 +52,8 @@ function makeDb() {
         h.calls.deletes.push(args);
         return qb;
       };
-      qb.executeTakeFirst = () => Promise.resolve(h.deleteResults.shift() ?? { numDeletedRows: 0n });
+      qb.executeTakeFirst = () =>
+        Promise.resolve(h.deleteResults.shift() ?? { numDeletedRows: 0n });
       qb.execute = () => Promise.resolve([]);
       return qb;
     },
@@ -113,7 +115,10 @@ const authorizeBody = { response_type: 'code', code_challenge: 'x' };
 describe('oauthModel.getClient — origin enforcement (parity)', () => {
   it('returns enriched Client and stashes record on Request when origin matches', async () => {
     h.selectResults.push(baseClient);
-    const request: any = { headers: { origin: 'https://app.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://app.example.com' },
+      body: tokenExchangeBody,
+    };
 
     const client = await oauthModel.getClient('pub-1', null, request);
 
@@ -126,7 +131,10 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 
   it('throws OriginNotAllowedError when public client Origin is not allowlisted', async () => {
     h.selectResults.push(baseClient);
-    const request: any = { headers: { origin: 'https://evil.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://evil.example.com' },
+      body: tokenExchangeBody,
+    };
     await expect(oauthModel.getClient('pub-1', null, request)).rejects.toBeInstanceOf(
       OriginNotAllowedError
     );
@@ -141,7 +149,10 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
 
   it('throws OriginNotAllowedError when a browser sends an Origin not on the allowlist (empty allowlist)', async () => {
     h.selectResults.push({ ...baseClient, allowedOrigins: [] });
-    const request: any = { headers: { origin: 'https://random.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://random.example.com' },
+      body: tokenExchangeBody,
+    };
     await expect(oauthModel.getClient('pub-1', null, request)).rejects.toBeInstanceOf(
       OriginNotAllowedError
     );
@@ -154,7 +165,10 @@ describe('oauthModel.getClient — origin enforcement (parity)', () => {
       secret: 'hash:s3cret',
       allowedOrigins: [],
     });
-    const request: any = { headers: { origin: 'https://random.example.com' }, body: tokenExchangeBody };
+    const request: any = {
+      headers: { origin: 'https://random.example.com' },
+      body: tokenExchangeBody,
+    };
     const client = await oauthModel.getClient('conf-1', 's3cret', request);
     expect(client).toMatchObject({ isConfidential: true });
   });
@@ -227,6 +241,71 @@ describe('oauthModel.validateScope — UserRead baseline + allowed-scope gate (p
   });
 });
 
+describe('oauthModel — client_credentials (the client acting as itself)', () => {
+  const UserRead = 1;
+  const AIServicesWrite = 1 << 15;
+  const Catalog = 1 << 28;
+  const ceiling = { allowedScopes: UserRead | AIServicesWrite | Catalog } as any;
+  const ccClient = {
+    userId: 9,
+    grants: ['authorization_code', 'client_credentials'],
+    isConfidential: true,
+    secret: 'hash:s',
+  };
+
+  it('resolves the owner of a confidential client holding a secret, marked as client_credentials', async () => {
+    h.selectResults.push(ccClient);
+    expect(await oauthModel.getUserFromClient({ id: 'c' } as any)).toEqual({
+      id: 9,
+      viaClientCredentials: true,
+    });
+  });
+
+  it('refuses a public client and a confidential client without a stored secret', async () => {
+    h.selectResults.push({ ...ccClient, isConfidential: false, secret: null });
+    expect(await oauthModel.getUserFromClient({ id: 'c' } as any)).toBe(false);
+    h.selectResults.push({ ...ccClient, secret: null });
+    expect(await oauthModel.getUserFromClient({ id: 'c' } as any)).toBe(false);
+  });
+
+  it('validateScope: the marked user gets only the client_credentials cap', async () => {
+    const cc = { id: 9, viaClientCredentials: true } as any;
+    expect(await oauthModel.validateScope(cc, ceiling, [String(Catalog)])).toEqual([
+      String(Catalog | UserRead),
+    ]);
+    expect(await oauthModel.validateScope(cc, ceiling, [String(AIServicesWrite)])).toBe(false);
+  });
+
+  it('validateScope: any other user never gets the catalog bit', async () => {
+    expect(await oauthModel.validateScope({ id: 9 } as any, ceiling, [String(Catalog)])).toBe(
+      false
+    );
+    expect(
+      await oauthModel.validateScope({ id: 9 } as any, ceiling, [String(AIServicesWrite)])
+    ).toEqual([String(AIServicesWrite | UserRead)]);
+  });
+
+  it('saveToken: a client_credentials token is access-only; any other grant gets a pair', async () => {
+    const cc = await oauthModel.saveToken(
+      { scope: [String(Catalog)] } as any,
+      { id: 'c' } as any,
+      { id: 9, viaClientCredentials: true } as any
+    );
+    expect(cc.refreshToken).toBeUndefined();
+    expect(h.calls.inserts).toHaveLength(1);
+    expect(h.calls.inserts[0]).toMatchObject({ type: 'Access', userId: 9 });
+
+    h.calls.inserts.length = 0;
+    const pair = await oauthModel.saveToken(
+      { scope: ['1'] } as any,
+      { id: 'c' } as any,
+      { id: 9 } as any
+    );
+    expect(pair.refreshToken).toEqual(expect.any(String));
+    expect(h.calls.inserts.map((i: any) => i.type)).toEqual(['Access', 'Refresh']);
+  });
+});
+
 describe('oauthModel.verifyScope (parity)', () => {
   it('passes when the token carries the required bit', async () => {
     expect(await oauthModel.verifyScope({ scope: ['3'] } as any, '1')).toBe(true);
@@ -271,7 +350,7 @@ describe('oauthModel.saveAuthorizationCode — fail-closed + hashed atomic store
       codeChallenge: 'chal',
       codeChallengeMethod: 'S256',
       expiresAt: new Date(Date.now() + 600_000),
-    }) as any;
+    } as any);
 
   it('throws when redis is unavailable — an un-storable code must NOT be issued', async () => {
     h.state.redis = null;
@@ -287,6 +366,42 @@ describe('oauthModel.saveAuthorizationCode — fail-closed + hashed atomic store
     // arguments[0] is the hash field — must be a sha256 hex, not the raw code.
     expect(opts.arguments[0]).not.toBe('raw-code-value');
     expect(opts.arguments[0]).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('records an impersonation on the code, and nothing for an ordinary one', async () => {
+    const stored = async (user: Record<string, unknown>) => {
+      h.evalCalls.length = 0;
+      await oauthModel.saveAuthorizationCode(mkCode(), { id: 'c1' } as any, user as any);
+      const [, opts] = h.evalCalls[0] as [unknown, { arguments: unknown[] }];
+      return unpack(opts.arguments[1] as Buffer) as Record<string, unknown>;
+    };
+    expect(await stored({ id: 1, impersonation: true })).toMatchObject({ impersonation: true });
+    expect(await stored({ id: 1 })).not.toHaveProperty('impersonation');
+  });
+});
+
+describe('oauthModel.getAuthorizationCode — impersonation marker', () => {
+  it('returns the marker with the code user, and none for an ordinary code', async () => {
+    const read = async (extra: Record<string, unknown>) => {
+      h.selectResults.push({
+        id: 'pub-1',
+        grants: ['authorization_code'],
+        redirectUris: ['https://a.example/cb'],
+      });
+      (h.state.redis as { packed: { hGet: () => Promise<unknown> } }).packed.hGet = () =>
+        Promise.resolve({
+          clientId: 'pub-1',
+          userId: 7,
+          scope: '1',
+          redirectUri: 'https://a.example/cb',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          ...extra,
+        });
+      const code = await oauthModel.getAuthorizationCode('c');
+      return code ? code.user : null;
+    };
+    expect(await read({ impersonation: true })).toEqual({ id: 7, impersonation: true });
+    expect(await read({})).toEqual({ id: 7 });
   });
 });
 
@@ -337,5 +452,100 @@ describe('resolveClientLite — first-party is client IDENTITY, not redirect ori
     h.selectResults.push({ domain: 'civitai.red', includeSubdomains: false }); // TrustedSpokeDomain registry
     const client = await resolveClientLite('firstparty-civitai_red', TRUSTED_REDIRECT);
     expect(client?.isFirstParty).toBe(true);
+    expect(client?.skipConsent).toBe(true);
+  });
+
+  it('a registered client skips consent only as a confidential system app staff marked', async () => {
+    const row = { id: 'sys-1', grants: ['authorization_code'], redirectUris: [TRUSTED_REDIRECT] };
+    for (const [flags, skips] of [
+      [{ skipConsent: true, isConfidential: true, userId: -1 }, true],
+      [{ skipConsent: true, isConfidential: false, userId: -1 }, false], // public: any program could start its sign-in
+      [{ skipConsent: false, isConfidential: true, userId: -1 }, false],
+      [{ skipConsent: true, isConfidential: true, userId: 7 }, false], // flag left on an app no longer system
+    ] as const) {
+      h.selectResults.push({ ...row, ...flags });
+      const client = await resolveClientLite('sys-1', TRUSTED_REDIRECT);
+      expect(client?.skipConsent).toBe(skips);
+    }
+  });
+});
+
+describe('first-party resolution requires an https redirect_uri', () => {
+  const MOD_ID = 'firstparty-moderator_civitai_com';
+  const trustModerator = () => {
+    invalidateDomainCache();
+    h.selectResults.push(undefined); // no OauthClient row
+    h.selectResults.push({ domain: 'moderator.civitai.com', includeSubdomains: false });
+  };
+
+  it('resolves https://moderator.civitai.com as first-party', async () => {
+    trustModerator();
+    const client = await resolveClientLite(
+      MOD_ID,
+      'https://moderator.civitai.com/api/auth/callback'
+    );
+    expect(client?.isFirstParty).toBe(true);
+  });
+
+  it('refuses http:// on the same trusted host', async () => {
+    trustModerator();
+    expect(
+      await resolveClientLite(MOD_ID, 'http://moderator.civitai.com/api/auth/callback')
+    ).toBeUndefined();
+  });
+
+  it('getClient refuses an /authorize with an http:// redirect_uri, so no code is issued', async () => {
+    trustModerator();
+    const request: any = {
+      headers: {},
+      query: {
+        response_type: 'code',
+        redirect_uri: 'http://moderator.civitai.com/api/auth/callback',
+      },
+    };
+    expect(await oauthModel.getClient(MOD_ID, null, request)).toBe(false);
+  });
+
+  it('getClient resolves the https:// redirect_uri with its exact callback', async () => {
+    trustModerator();
+    const request: any = {
+      headers: {},
+      query: {
+        response_type: 'code',
+        redirect_uri: 'https://moderator.civitai.com/api/auth/callback',
+      },
+    };
+    expect(await oauthModel.getClient(MOD_ID, null, request)).toMatchObject({
+      id: MOD_ID,
+      redirectUris: ['https://moderator.civitai.com/api/auth/callback'],
+    });
+  });
+});
+
+describe('the remix apps client (civitai-remix-apps)', () => {
+  /** As the seed migration inserts it: it owns the remix app rows and must never authenticate. */
+  const remixClient = {
+    ...baseClient,
+    id: 'civitai-remix-apps',
+    isConfidential: true,
+    secret: null,
+    grants: [],
+    redirectUris: [],
+    allowedOrigins: [],
+    allowedScopes: 0,
+    accessMode: 'disabled',
+  };
+
+  it('authenticates at the token endpoint with no secret it could match', async () => {
+    const request: any = { headers: {}, body: tokenExchangeBody };
+    for (const secret of ['', 'guess', 'null']) {
+      h.selectResults.push(remixClient);
+      expect(await oauthModel.getClient('civitai-remix-apps', secret, request)).toBe(false);
+    }
+    // POSITIVE CONTROL: the same client with a stored secret authenticates on it.
+    h.selectResults.push({ ...remixClient, secret: 'hash:guess' });
+    expect(await oauthModel.getClient('civitai-remix-apps', 'guess', request)).toMatchObject({
+      id: 'civitai-remix-apps',
+    });
   });
 });

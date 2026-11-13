@@ -51,7 +51,7 @@ export function BuzzMembershipCallout({ tier, expiresAt }: Props) {
             </Text>
             <Text size="sm" lh={1.4}>
               {tier ? `Every ${capitalize(tier)} perk` : 'Every perk of the tier you pick'} —
-              generation limits, priority, Vault, private models and support —{' '}
+              generation limits, priority, Vault, private models, support and the monthly badge —{' '}
               {expiresAt ? (
                 <>
                   through{' '}
@@ -70,8 +70,7 @@ export function BuzzMembershipCallout({ tier, expiresAt }: Props) {
               What it does not include
             </Text>
             <Text size="sm" lh={1.4}>
-              Monthly Buzz, bonus Buzz on purchases or rewards, the monthly badge, and the Creator
-              Program.
+              Monthly Buzz, bonus Buzz on purchases or rewards, and the Creator Program.
             </Text>
           </Stack>
         </Group>

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts (and the sibling run-page-maturity test, which this
 // harness is cloned from).
@@ -44,10 +45,16 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
   recordAppListingOpen: mockRecordOpen,
 }));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: vi.fn(async () => false),
+}));
 
 // Real-ish host gate: mature (r/x) requires civitai.red. Same stub as the maturity test,
 // because the maturity 404 is one of the exits this file asserts records nothing.
-vi.mock('~/server/utils/server-domain', () => ({
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
   ratingAllowedOnHost: (rating: unknown, host: string) => {
     const mature = typeof rating === 'string' && ['r', 'x'].includes(rating.toLowerCase());
     if (!mature) return true;
@@ -74,7 +81,10 @@ const PAGE = {
   contentRating: 'g',
 };
 
-function makeCtx(host: string, opts: { slug?: string; features?: any; session?: any } = {}) {
+function makeCtx(
+  host: string,
+  opts: { slug?: string; features?: any; session?: any; query?: Record<string, unknown> } = {}
+) {
   const { slug = 'cool-app', features = { appBlocks: true, appBlocksPages: true } } = opts;
   // 🔴 `'session' in opts`, NOT a default parameter. A default fires on an explicit
   // `undefined`, so `{ session: undefined }` would silently get the authed default back —
@@ -84,7 +94,7 @@ function makeCtx(host: string, opts: { slug?: string; features?: any; session?: 
   return {
     features,
     session,
-    ctx: { params: { slug }, req: { headers: { host } }, res: {} },
+    ctx: { params: { slug }, query: opts.query ?? {}, req: { headers: { host } }, res: {} },
   };
 }
 
@@ -112,6 +122,56 @@ describe('run-page SSR — play recording', () => {
     // The id is the RESOLVED block's, not the request's slug — the two differ whenever a
     // slug is re-pointed, and the rollup joins on `app_listings.app_block_id`.
     expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({ appBlockId: 'ab_1' });
+  });
+
+  it('attributes the play to the store sub-listing card it came from (`?sl=`)', async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    const sl = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A';
+    await resolver(makeCtx('civitai.com', { query: { slug: 'cool-app', sl } }));
+    expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({ appBlockId: 'ab_1', subListingId: sl });
+  });
+
+  it('attributes the play to the surface that built the link (`?src=`) and the launch origin', async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    await resolver(makeCtx('civitai.com', { query: { src: 'store_card', from: 'home' } }));
+    expect(mockRecordOpen.mock.calls[0][0]).toMatchObject({
+      surface: 'store_card',
+      launchOrigin: 'home',
+    });
+  });
+
+  it.each([
+    ['nothing', {}, 'direct'],
+    ['an unknown surface', { src: '<script>' }, 'direct'],
+    ['a repeated surface', { src: ['detail', 'store_card'] }, 'direct'],
+    ['a sub-listing id and no surface', { sl: 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A' }, 'sub_listing'],
+    ['an invalid sub-listing id', { sl: '<script>' }, 'direct'],
+    [
+      'an explicit surface beside a sub-listing id',
+      { sl: 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A', src: 'made_with' },
+      'made_with',
+    ],
+  ])('records surface for %s', async (_label, query, surface) => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    await resolver(makeCtx('civitai.com', { query }));
+    expect(mockRecordOpen.mock.calls[0][0].surface).toBe(surface);
+    expect(mockRecordOpen.mock.calls[0][0].launchOrigin).toBe('store');
+  });
+
+  it.each([
+    ['a listing id', 'apl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A'],
+    ['free text', '<script>'],
+    ['a repeated param', ['asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A', 'x']],
+    ['nothing', undefined],
+  ])('records no sub-listing id for %s, and still records the play', async (_label, sl) => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'g' });
+    const resolver = await loadResolver();
+    await resolver(makeCtx('civitai.com', { query: { sl } }));
+    expect(mockRecordOpen).toHaveBeenCalledTimes(1);
+    expect(mockRecordOpen.mock.calls[0][0].subListingId).toBeNull();
   });
 
   it('passes the resolved session through, so an authed play is attributable', async () => {
@@ -166,6 +226,14 @@ describe('run-page SSR — play recording', () => {
     const result = await resolver(makeCtx('civitai.com'));
 
     expect(result).toEqual({ notFound: true });
+    expect(mockRecordOpen).not.toHaveBeenCalled();
+  });
+
+  it("🔴 records NOTHING when an R app is hidden by the viewer's browsing level on .red", async () => {
+    mockResolvePageBlockBySlug.mockResolvedValue({ ...PAGE, contentRating: 'r' });
+    const resolver = await loadResolver();
+    const result = await resolver(makeCtx('civitai.red'));
+    expect(result.props).toHaveProperty('hiddenByBrowsingLevel');
     expect(mockRecordOpen).not.toHaveBeenCalled();
   });
 

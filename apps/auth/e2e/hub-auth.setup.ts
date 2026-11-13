@@ -1,7 +1,6 @@
 import { test as setup } from '@playwright/test';
 import fs from 'fs';
 import { SignJWT, importPKCS8, generateKeyPair, exportPKCS8 } from 'jose';
-import { v4 as uuid } from 'uuid';
 import {
   HUB_USERS,
   type HubRole,
@@ -63,7 +62,7 @@ async function mintSessionToken(userId: number, key: { pkcs8: string; kid: strin
     .setSubject(String(userId))
     .setIssuedAt()
     .setExpirationTime(Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_S)
-    .setJti(uuid())
+    .setJti(crypto.randomUUID())
     .setIssuer(key.issuer)
     .sign(pk);
 }

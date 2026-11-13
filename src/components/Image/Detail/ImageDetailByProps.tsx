@@ -85,11 +85,12 @@ export function ImageDetailByProps({
   image?: ImageProps | null;
 } & Partial<ImageGuardConnect>) {
   const { data = null, isLoading } = trpc.image.get.useQuery(
-    { id: imageId, withoutPost: true },
+    { id: imageId },
     { enabled: !!imageId }
   );
 
-  const image = data || defaultImageItem || null;
+  // `url` is null when this viewer may not receive the media; keep what the caller passed in.
+  const image = data?.url ? { ...data, url: data.url } : defaultImageItem || null;
   const reactions = data?.reactions ?? [];
   const stats: ImageDetailStats | null = data?.stats ?? null;
 

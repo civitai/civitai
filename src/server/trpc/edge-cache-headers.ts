@@ -30,14 +30,14 @@
  * proves nothing about either. Isolate them, and expect a widening mutation to be caught
  * by `tsc`, not by vitest.
  *
- * KNOWN LIMIT, stated rather than papered over: extracting this makes the predicate
- * single-sourced, but nothing asserts that `responseMeta` still CALLS it. Measured —
- * re-inline the condition at the call site in `src/pages/api/trpc/[trpc].ts` and the
- * suite stays fully green. Closing that seam properly means moving the header-building
- * out of `responseMeta` so a test can drive the real thing; a test that greps the route
- * for this import would be a spelled guard, i.e. the exact shape this file exists to
- * replace, so it is deliberately not done here.
+ * The header-building itself now lives here too (`buildTrpcCacheHeaders` below), and
+ * `src/server/__tests__/trpc-handler-wiring.test.ts` drives the route's REAL `responseMeta`
+ * through the options object it hands the adapter — so a route that stopped using this
+ * module, or re-inlined a different condition, is asserted on by behaviour rather than by a
+ * grep of the route's source.
  */
+import { isBlockTokenQueryPath } from '~/shared/constants/block-token-transport.constants';
+
 export type EdgeCacheReadable = {
   edgeTTL?: number | null;
 };
@@ -46,4 +46,54 @@ export function willEdgeCache<T extends EdgeCacheReadable>(
   cache: T | null | undefined
 ): cache is T {
   return !!cache && !!cache.edgeTTL && cache.edgeTTL > 0;
+}
+
+export type TrpcResponseCache = EdgeCacheReadable & {
+  browserTTL?: number | null;
+  staleWhileRevalidate?: number | null;
+  tags?: string[] | null;
+};
+
+/**
+ * The response headers `responseMeta` in `src/pages/api/trpc/[trpc].ts` returns. Built here,
+ * not inline in the route, so a test can drive the real header logic.
+ *
+ * 🔴 BLOCK-TOKEN QUERIES ARE NEVER CACHEABLE. If ANY call in the request is in
+ * `BLOCK_TOKEN_QUERY_PROCEDURES`, the response is `no-store` and this returns before the public
+ * branch is consulted. Keyed on the procedure PATH, deliberately not on `ctx.cache`:
+ *   - `ctx.cache` is seeded per SESSION (`createContext` gives a sessionless caller a positive
+ *     edge TTL, and these procedures are callable sessionless — the bearer is in the input), and
+ *     any middleware can rewrite it, so an opt-out written there is one middleware away from being
+ *     overwritten (see the `edgeCacheIt` notes in `src/utils/trpc.ts`);
+ *   - the path is fixed by the request itself, and covers a GET from an old SDK as well as the
+ *     POST the current client sends — and errors, which otherwise carry no header at all.
+ * A batched request mixing one of these with a cacheable query is `no-store` as a whole: one
+ * response carries both results, so it may only be cached if every part may.
+ */
+export function buildTrpcCacheHeaders({
+  cache,
+  type,
+  errorCount,
+  paths,
+}: {
+  cache: TrpcResponseCache | null | undefined;
+  type: string;
+  errorCount: number;
+  paths: readonly string[] | undefined;
+}): { headers: Record<string, string>; edgeCached: boolean } {
+  if (paths?.some(isBlockTokenQueryPath)) {
+    return { headers: { 'Cache-Control': 'no-store' }, edgeCached: false };
+  }
+  const headers: Record<string, string> = {};
+  if (willEdgeCache(cache) && type === 'query' && errorCount === 0) {
+    headers['Cache-Control'] = [
+      'public',
+      `max-age=${cache.browserTTL ?? 0}`,
+      `s-maxage=${cache.edgeTTL ?? 0}`,
+      `stale-while-revalidate=${cache.staleWhileRevalidate ?? 0}`,
+    ].join(', ');
+    if (cache.tags) headers['Cache-Tag'] = cache.tags.join(', ');
+    return { headers, edgeCached: true };
+  }
+  return { headers, edgeCached: false };
 }

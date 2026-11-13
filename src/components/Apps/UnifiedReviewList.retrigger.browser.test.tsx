@@ -50,10 +50,9 @@ function onsiteRow(over: Partial<Record<string, unknown>> = {}): OnsiteReviewReq
     fileSummary: {},
     manifestDiffSummary: {},
     reviewRepoUrl: 'https://example.invalid/repo',
-    submittedBy: { id: 7, username: 'onsite-dev', image: null },
+    submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     // The lifecycle projection `listApprovedRequests` now selects.
     deployState: null,
-    deployDetail: null,
     deployUpdatedAt: null,
     ...over,
   } as unknown as OnsiteReviewRequest;
@@ -119,6 +118,32 @@ describe('Approved tab — the Deploy column exposes a stranded approval', () =>
   });
 });
 
+describe('Approved tab — a failed build names its step and class (structured, no excerpt)', () => {
+  test('the chip reads "failed · security scan · unknown"', async () => {
+    renderApproved({
+      row: onsiteRow({
+        deployState: 'failed',
+        deployUpdatedAt: JUST_NOW,
+        buildSignals: { failedStep: 'scan', failureClass: 'unknown' },
+      }),
+      onRetrigger: vi.fn(),
+    });
+    await expect
+      .element(page.getByTestId(DEPLOY_CHIP))
+      .toHaveTextContent('failed · security scan · unknown');
+  });
+
+  test('without signals the chip is the bare state, as before', async () => {
+    renderApproved({
+      row: onsiteRow({ deployState: 'failed', deployUpdatedAt: JUST_NOW, buildSignals: null }),
+      onRetrigger: vi.fn(),
+    });
+    const chip = page.getByTestId(DEPLOY_CHIP);
+    await expect.element(chip).toBeInTheDocument();
+    expect(chip.element().textContent).toBe('failed');
+  });
+});
+
 describe('Approved tab — the Retrigger control follows the server gate', () => {
   test('ENABLED for a stranded (null-state) approval', async () => {
     renderApproved({ row: onsiteRow(), onRetrigger: vi.fn() });
@@ -147,14 +172,14 @@ describe('Approved tab — the Retrigger control follows the server gate', () =>
     expect((btn.element() as HTMLButtonElement).disabled).toBe(false);
   });
 
-  test('DISABLED for a live deploy — nothing to recover', async () => {
+  test('ABSENT for a live deploy — nothing to recover, so no greyed control either', async () => {
     renderApproved({
       row: onsiteRow({ deployState: 'live', deployUpdatedAt: LONG_AGO }),
       onRetrigger: vi.fn(),
     });
-    const btn = page.getByTestId(RETRIGGER);
-    await expect.element(btn).toBeInTheDocument();
-    expect((btn.element() as HTMLButtonElement).disabled).toBe(true);
+    // Positive control: the row and its deploy chip rendered, so the absence is real.
+    await expect.element(page.getByTestId(DEPLOY_CHIP)).toHaveTextContent('live');
+    expect(page.getByTestId(RETRIGGER).elements()).toHaveLength(0);
   });
 
   test('DISABLED for a build that is still genuinely in flight', async () => {

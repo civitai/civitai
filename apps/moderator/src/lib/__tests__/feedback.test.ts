@@ -1,8 +1,11 @@
+import type { FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 import { describe, expect, it } from 'vitest';
 import {
   FARO_LOKI_RETENTION_HOURS,
+  FEEDBACK_ANY_AREA_LABEL,
   FEEDBACK_ATTACHMENT_CAPTIONS,
   faroSessionLink,
+  feedbackAreaLabel,
   feedbackAreaOptions,
   feedbackAttachmentCount,
   feedbackAttachmentItems,
@@ -117,10 +120,38 @@ describe('feedbackAreaOptions', () => {
    */
   it('defaults its known areas to the shared registry the producer writes', () => {
     expect(feedbackAreaOptions([])).toEqual([
+      'app-block',
       'apps-marketplace',
+      'apps-platform',
       'bitdex-image-feed',
+      'orchestration',
+      'semantic-image-search',
       'site-bug-report',
     ]);
+  });
+});
+
+describe('feedbackAreaLabel', () => {
+  it('names app-block rows', () => {
+    expect(feedbackAreaLabel('app-block')).toBe('App feedback');
+  });
+
+  it('names apps-platform rows', () => {
+    expect(feedbackAreaLabel('apps-platform')).toBe('Apps platform (developers)');
+  });
+
+  it('renders an unlabelled slug as itself, including one shaped like an Object.prototype key', () => {
+    expect(['site-bug-report', 'constructor', 'toString'].map(feedbackAreaLabel)).toEqual([
+      'site-bug-report',
+      'constructor',
+      'toString',
+    ]);
+  });
+
+  it('says which areas the no-area view leaves out', () => {
+    expect(FEEDBACK_ANY_AREA_LABEL).toBe(
+      'Area — any except App feedback, Apps platform (developers), Generation & training errors'
+    );
   });
 });
 
@@ -146,6 +177,11 @@ describe('splitContext', () => {
       sessionId: 'v913JNcgDs',
       consoleErrors,
       networkErrors,
+      errorRef: '0123456789ab',
+      workflowId: 'wf_1-a',
+      jobId: 'job-2',
+      toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
+      hq: { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' },
     });
 
     // 🔴 A WHOLE-OBJECT `toEqual`, which makes this the LEDGER: a key added to `FeedbackContext`
@@ -156,12 +192,118 @@ describe('splitContext', () => {
       filters: { kind: 'onsite' },
       images,
       screenshotId,
+      screenshotImageId: null,
+      screenshotCheck: null,
       sessionId: 'v913JNcgDs',
       consoleErrors: [{ message: 'TypeError: x is not a function', count: 3 }],
       networkErrors: [
         { url: 'https://civitai.com/api/trpc/x', status: 500, initiatorType: 'fetch' },
       ],
+      errorRef: '0123456789ab',
+      workflowId: 'wf_1-a',
+      jobId: 'job-2',
+      toast: { title: 'Failed to submit', message: 'Something broke (ref: 0123456789ab)' },
+      trpcErrors: [],
+      environment: [],
+      hqTask: { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' },
       other: null,
+    });
+  });
+
+  it('reads the environment, the server stamp and failed tRPC calls of a bug report', () => {
+    const ctx = splitContext({
+      build: '5.1.444+a8f29fe',
+      route: '/models/[id]',
+      clientAt: '2026-11-08T23:40:00.000Z',
+      device: {
+        viewport: { width: 390, height: 844 },
+        screen: { width: 390, height: 844 },
+        pixelRatio: 3,
+        touch: true,
+        colorScheme: 'dark',
+        language: 'en-US',
+      },
+      server: {
+        userAgent: 'Mozilla/5.0 (iPhone)',
+        tier: 'gold',
+        site: 'red',
+        host: 'civitai.red',
+        build: '5.1.444',
+        flags: { assistant: true, shellMaster: false },
+      },
+      trpcErrors: [{ path: 'image.create', code: 'BAD_REQUEST', at: '2026-11-08T23:39:00.000Z' }],
+    });
+
+    expect(ctx.environment).toEqual([
+      { label: 'App version', value: '5.1.444+a8f29fe' },
+      { label: 'Route', value: '/models/[id]' },
+      { label: 'Screen', value: '390×844 at 3x · screen 390×844 · touch · dark · en-US' },
+      { label: 'Sent at (their clock)', value: '2026-11-08T23:40:00.000Z' },
+      { label: 'Browser', value: 'Mozilla/5.0 (iPhone)' },
+      { label: 'Site', value: 'civitai.red (red)' },
+      { label: 'Tier', value: 'gold' },
+      { label: 'Server build', value: '5.1.444' },
+      { label: 'Flags on', value: 'assistant' },
+    ]);
+    expect(ctx.trpcErrors).toEqual([
+      {
+        path: 'image.create',
+        code: 'BAD_REQUEST',
+        httpStatus: null,
+        at: '2026-11-08T23:39:00.000Z',
+      },
+    ]);
+    expect(ctx.other).toBeNull();
+  });
+
+  it('leaves a malformed trpcErrors array under other', () => {
+    const bad = [{ code: 'BAD_REQUEST', at: '2026-11-08T23:39:00.000Z' }];
+    const ctx = splitContext({ trpcErrors: bad });
+    expect(ctx.trpcErrors).toEqual([]);
+    expect(ctx.other).toEqual({ trpcErrors: bad });
+  });
+
+  it('leaves a `server` object of another shape, and a malformed device, under other', () => {
+    const ctx = splitContext({ server: { fingerprint: 'abc' }, device: { viewport: 'big' } });
+    expect(ctx.environment).toEqual([]);
+    expect(ctx.other).toEqual({ server: { fingerprint: 'abc' }, device: { viewport: 'big' } });
+  });
+
+  /**
+   * The "Report this" fields. The producer validates them at write time only; the column has no
+   * schema at rest, so a value that fails the producer's own pattern is shown under "other" as text,
+   * never claimed and drawn as if it were an id the orchestrator issued.
+   */
+  describe('the toast report fields', () => {
+    it('sends ids that fail the producer pattern to "other", not to the copy buttons', () => {
+      const bad = {
+        errorRef: '0123456789AB',
+        workflowId: 'a b',
+        jobId: 'https://x.example/j',
+      };
+      const ctx = splitContext(bad);
+      expect([ctx.errorRef, ctx.workflowId, ctx.jobId]).toEqual([null, null, null]);
+      expect(ctx.other).toEqual(bad);
+    });
+
+    it('reads a toast with no title as title null', () => {
+      expect(splitContext({ toast: { message: 'boom' } }).toast).toEqual({
+        title: null,
+        message: 'boom',
+      });
+    });
+
+    it('sends a toast with an unknown key or over-long text to "other" whole', () => {
+      for (const toast of [
+        { message: 'boom', href: 'https://x.example' },
+        { message: 'x'.repeat(301) },
+        { title: 7, message: 'boom' },
+        { title: 'no message' },
+      ]) {
+        const ctx = splitContext({ toast });
+        expect(ctx.toast, JSON.stringify(toast)).toBeNull();
+        expect(ctx.other).toEqual({ toast });
+      }
     });
   });
 
@@ -187,9 +329,18 @@ describe('splitContext', () => {
         filters: null,
         images: [],
         screenshotId: null,
+        screenshotImageId: null,
+        screenshotCheck: null,
         sessionId: null,
         consoleErrors: [],
         networkErrors: [],
+        trpcErrors: [],
+        environment: [],
+        hqTask: null,
+        errorRef: null,
+        workflowId: null,
+        jobId: null,
+        toast: null,
         other: null,
       });
     }
@@ -619,16 +770,20 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    * something is "the clean id survived AND the hostile one did not", in the same call.
    */
   const SECOND_UUID = '99999999-8888-4777-8666-555555555555';
+  const SHOWN = { view: 'show', revealed: false } as const;
 
   it.each(hostile)('cannot route %s into a lightbox frame', (_label, value) => {
-    const items = feedbackAttachmentItems(splitContext({ images: [UUID, value] }));
+    const items = feedbackAttachmentItems(splitContext({ images: [UUID, value] }), SHOWN);
 
     expect(items.map((i) => i.id)).toEqual([UUID]);
     expect(items).toHaveLength(1);
   });
 
   it.each(hostile)('cannot route %s into a lightbox frame as the screenshot', (_label, value) => {
-    const items = feedbackAttachmentItems(splitContext({ images: [UUID], screenshotId: value }));
+    const items = feedbackAttachmentItems(
+      splitContext({ images: [UUID], screenshotId: value }),
+      SHOWN
+    );
 
     expect(items.map((i) => i.id)).toEqual([UUID]);
     expect(items.some((i) => i.caption === FEEDBACK_ATTACHMENT_CAPTIONS.screenshot)).toBe(false);
@@ -639,7 +794,7 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
       images: ['https://attacker.example/x.png'],
       screenshotId: 'blob:https://civitai.com/abcd',
     });
-    expect(feedbackAttachmentItems(context)).toEqual([]);
+    expect(feedbackAttachmentItems(context, SHOWN)).toEqual([]);
   });
 
   /**
@@ -652,7 +807,10 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    * same file, and the captions are what say so.
    */
   it('keeps both frames when the capture repeats an attached id — ids here are NOT unique', () => {
-    const items = feedbackAttachmentItems(splitContext({ images: [UUID], screenshotId: UUID }));
+    const items = feedbackAttachmentItems(
+      splitContext({ images: [UUID], screenshotId: UUID }),
+      SHOWN
+    );
 
     expect(items).toHaveLength(2);
     expect(items.map((i) => i.id)).toEqual([UUID, UUID]);
@@ -673,7 +831,8 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
       splitContext({
         images: [UUID, SECOND_UUID],
         screenshotId: '11112222-3333-4444-8555-666677778888',
-      })
+      }),
+      SHOWN
     );
 
     expect(items).toEqual([
@@ -698,14 +857,80 @@ describe('🔴 splitContext filters hostile image ids on BOTH fields', () => {
    */
   it('counts exactly the frames the lightbox will show, refusals included', () => {
     const clean = splitContext({ images: [UUID, SECOND_UUID], screenshotId: UUID });
-    expect(feedbackAttachmentCount(clean)).toBe(feedbackAttachmentItems(clean).length);
+    expect(feedbackAttachmentCount(clean)).toBe(feedbackAttachmentItems(clean, SHOWN).length);
     expect(feedbackAttachmentCount(clean)).toBe(3);
 
     const refused = splitContext({
       images: [UUID],
       screenshotId: 'https://attacker.example/x.png',
     });
-    expect(feedbackAttachmentCount(refused)).toBe(feedbackAttachmentItems(refused).length);
+    expect(feedbackAttachmentCount(refused)).toBe(feedbackAttachmentItems(refused, SHOWN).length);
     expect(feedbackAttachmentCount(refused)).toBe(1);
+  });
+});
+
+describe('the page capture by its scan state', () => {
+  const UUID_A = '11112222-3333-4444-8555-666677778888';
+  const OTHER = '99999999-8888-4777-8666-555555555555';
+  const context = splitContext({ images: [], screenshotId: UUID_A });
+  const ids = (view: FeedbackCaptureView, revealed = false) =>
+    feedbackAttachmentItems(context, { view, revealed }).map((i) => i.id);
+
+  it('shows a capture the scan cleared', () => expect(ids('show')).toEqual([UUID_A]));
+  it('keeps a blurred capture out of the lightbox until revealed', () => {
+    expect(ids('blur')).toEqual([]);
+    expect(ids('blur', true)).toEqual([UUID_A]);
+  });
+  it.each(['hide', 'hide-locked', 'expired', 'none'] as const)(
+    'never shows a %s capture, revealed or not',
+    (view) => expect(ids(view, true)).toEqual([])
+  );
+  it.each(['blur', 'hide', 'hide-locked', 'expired'] as const)(
+    'holds back a hand-attached copy of a %s capture',
+    (view) => {
+      const both = splitContext({ images: [UUID_A, OTHER], screenshotId: UUID_A });
+      expect(feedbackAttachmentItems(both, { view, revealed: false }).map((i) => i.id)).toEqual([
+        OTHER,
+      ]);
+    }
+  );
+  it('shows both copies once the capture is shown (control)', () => {
+    const both = splitContext({ images: [UUID_A], screenshotId: UUID_A });
+    expect(feedbackAttachmentItems(both, { view: 'show', revealed: false })).toHaveLength(2);
+  });
+
+  it('still counts the capture in the list column', () =>
+    expect(feedbackAttachmentCount(context)).toBe(1));
+
+  it('reads only server-shaped capture fields', () => {
+    const parsed = splitContext({
+      screenshotId: UUID_A,
+      screenshotImageId: 42,
+      screenshotCheck: 'not-owner',
+    });
+    expect(parsed.screenshotImageId).toBe(42);
+    expect(parsed.screenshotCheck).toBe('not-owner');
+    const junk = splitContext({ screenshotImageId: '42', screenshotCheck: 'owner' });
+    expect(junk.screenshotImageId).toBeNull();
+    expect(junk.screenshotCheck).toBeNull();
+  });
+});
+
+describe('splitContext — the HQ task link', () => {
+  const TASK = { id: 'task_1', url: 'https://hq.civitai.com/tasks/task_1' };
+
+  it('carries the task the server recorded', () => {
+    expect(splitContext({ hq: TASK }).hqTask).toEqual(TASK);
+  });
+
+  it.each([
+    ['another origin', { ...TASK, url: 'https://hq.civitai.com.evil.example/tasks/task_1' }],
+    ['a script URL', { ...TASK, url: 'javascript:alert(1)' }],
+    ['plain http', { ...TASK, url: 'http://hq.civitai.com/tasks/task_1' }],
+    ['an id with markup', { ...TASK, id: '<img src=x>' }],
+  ])('builds no link from %s, and shows the value as text instead', (_, hq) => {
+    const ctx = splitContext({ hq });
+    expect(ctx.hqTask).toBeNull();
+    expect(ctx.other).toEqual({ hq });
   });
 });

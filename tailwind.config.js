@@ -16,7 +16,7 @@ const fontFamilies = [
   '"sans-serif"',
   '"Apple Color Emoji"',
   '"Segoe UI Emoji"',
-]
+];
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {
@@ -27,7 +27,7 @@ module.exports = {
   },
   theme: {
     fontFamily: {
-      body: fontFamilies
+      body: fontFamilies,
     },
     screens: breakpoints,
     extend: {
@@ -189,6 +189,12 @@ module.exports = {
             transform: 'scale3d(1, 1, 1)',
           },
         },
+        // The missing-permissions notice coming back after a refusal
+        // (`BlockConsentNotice`): two short yellow pulses, then nothing.
+        'attention-flash': {
+          '0%, 100%': { boxShadow: 'inset 0 0 0 0 var(--mantine-color-yellow-filled)' },
+          '50%': { boxShadow: 'inset 0 0 0 2px var(--mantine-color-yellow-filled)' },
+        },
         glowPulse: {
           '0%': {
             boxShadow: '0 0 0px rgba(0,255,0,0)',
@@ -208,6 +214,11 @@ module.exports = {
         shimmer: {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
+        },
+        // One tile of NamePlateText's 200%-wide gradient: 200% of (box - image) is -2x the box width.
+        'nameplate-sweep': {
+          '0%': { backgroundPosition: '0% 50%' },
+          '100%': { backgroundPosition: '200% 50%' },
         },
         'buzz-glow': {
           '0%, 100%': { boxShadow: '0 0 4px 1px rgba(var(--buzz-color), 0.3)' },
@@ -230,9 +241,11 @@ module.exports = {
         wiggle: 'wiggle 1s ease-in-out infinite',
         jello: 'jello 2s 1s ease-in-out',
         glowPulse: 'glowPulse 1.2s ease-in-out 3',
+        'attention-flash': 'attention-flash 0.6s ease-in-out 2',
         'border-chase': 'border-chase 3s linear infinite',
         'gradient-shift': 'gradient-shift 8s ease infinite',
         shimmer: 'shimmer 6s ease-in-out infinite',
+        'nameplate-sweep': 'nameplate-sweep 3s linear infinite',
         'buzz-glow': 'buzz-glow 2s ease-in-out infinite',
         'icon-glow': 'icon-glow 2s ease-in-out infinite',
       },
@@ -265,8 +278,20 @@ module.exports = {
             scrollbarWidth: 'thin',
           },
           '.transform-3d': {
-            transform: 'translate3d(0, 0, 0)'
+            transform: 'translate3d(0, 0, 0)',
           },
+          // Safe-area padding by role, over the variables globals.css derives (see its notes on
+          // which bottom inset a bar pays versus page content). Use these rather than the raw
+          // `var(--safe-area-inset-*)` so a change to how the inset is resolved lands once.
+          '.pt-safe': { paddingTop: 'var(--safe-area-inset-top)' },
+          '.px-safe': {
+            paddingLeft: 'var(--safe-area-inset-left)',
+            paddingRight: 'var(--safe-area-inset-right)',
+          },
+          // A bar that is the viewport's bottom edge: pays unless the ad bar below it does.
+          '.pb-safe-bar': { paddingBottom: 'var(--safe-area-inset-bottom-unpaid)' },
+          // Page content on a route with no footer or ad bar under it.
+          '.pb-safe-page': { paddingBottom: 'var(--safe-area-inset-bottom-page)' },
         }),
         addVariant('not-first', ({ modifySelectors, separator }) => {
           modifySelectors(({ className }) => {

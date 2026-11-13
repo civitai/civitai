@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
+import type * as UserHubService from '~/server/services/user-hub.service';
+import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
@@ -30,6 +33,28 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+
+// Hydration queries here. It returns no rows unless a test makes it fail.
+const { pg, emptyPool } = vi.hoisted(() => {
+  const pg = { fail: false };
+  const query = async () => {
+    if (pg.fail) throw new Error('hydrate query failed');
+    return { rows: [] };
+  };
+  const client = { query, release: () => undefined };
+  return { pg, emptyPool: { connect: async () => client, query } };
+});
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: emptyPool,
+  pgDbReadLong: emptyPool,
+  pgDbWrite: emptyPool,
+}));
+// The replica's user-id-by-username read (a Kysely statement).
+const { getUserIdByUsername } = vi.hoisted(() => ({ getUserIdByUsername: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getUserIdByUsername,
+}));
 vi.mock('~/server/services/new-creators.service', () => ({
   getNewCreatorUserIds: vi.fn(async () => newCreatorIds()),
 }));
@@ -37,16 +62,28 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-const primaryOn = vi.fn(() => false);
 const newCreatorIds = vi.fn((): number[] => []);
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
-    getFliptBoolean: vi.fn(async (flag: string) =>
-      flag === actual.FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY ? primaryOn() : false
-    ),
+    getFliptBoolean: vi.fn(async () => false),
   };
+});
+const resolveHubSources = vi.fn();
+vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserHubService>()),
+  resolveHubSources: (...args: unknown[]) => resolveHubSources(...args),
+}));
+const hubSources = (over: Partial<ResolvedHubSources> = {}): ResolvedHubSources => ({
+  userIds: [],
+  modelVersionIds: [],
+  collectionIds: [],
+  tagGroups: [],
+  truncated: false,
+  forcedBrowsingLevel: 0,
+  excluded: { userIds: [], modelVersionIds: [], tagGroups: [] },
+  ...over,
 });
 const fetchFeedPrimary = vi.fn();
 vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
@@ -55,7 +92,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 });
 
 import { getAllImagesIndex } from '../image.service';
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 
 const request = () =>
   ({
@@ -67,37 +104,22 @@ const request = () =>
     user: { id: 42, isModerator: false },
   } as unknown as Parameters<typeof getAllImagesIndex>[0]);
 
-describe('getAllImagesIndex with feed-service-primary', () => {
+describe('getAllImagesIndex on the feed service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    pg.fail = false;
   });
 
-  it('does not ask the feed when the flag is off', async () => {
-    primaryOn.mockReturnValue(false);
-    await getAllImagesIndex(request());
-    expect(fetchFeedPrimary).not.toHaveBeenCalled();
-  });
-
-  it('asks the feed once and falls through to the search path when hydration yields nothing', async () => {
-    primaryOn.mockReturnValue(true);
-    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
-    const r = await getAllImagesIndex(request());
-    expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
-    expect(r.source).not.toBe('feed');
-    expect(r.nextCursor).toBeUndefined();
-  });
-
-  it('asks the feed once and falls through when the feed itself fails', async () => {
-    primaryOn.mockReturnValue(true);
+  it('answers a feed timeout with a retryable SERVICE_UNAVAILABLE', async () => {
     fetchFeedPrimary.mockRejectedValue(Object.assign(new Error('t'), { name: 'TimeoutError' }));
-    const r = await getAllImagesIndex(request());
+    await expect(getAllImagesIndex(request())).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
     expect(fetchFeedPrimary).toHaveBeenCalledTimes(1);
-    expect(r.items).toEqual([]);
   });
 
   it('scopes the feed to the creator a profile page names by username', async () => {
-    primaryOn.mockReturnValue(true);
-    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+    getUserIdByUsername.mockResolvedValue({ id: 7 });
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({
       ...request(),
@@ -112,7 +134,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('refuses a page past the offset cap instead of answering it from the search index', async () => {
-    primaryOn.mockReturnValue(true);
     await expect(
       getAllImagesIndex({ ...request(), sort: 'Newest', cursor: '30000|1788000000000' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
@@ -120,7 +141,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('hides challenge entries in the feed by excluding the challenge tag', async () => {
-    primaryOn.mockReturnValue(true);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), hideChallenges: true });
     const query = new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
@@ -128,7 +148,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('refuses a cursor it cannot read instead of restarting the page from the search index', async () => {
-    primaryOn.mockReturnValue(true);
     for (const cursor of ['feed', -1]) {
       await expect(getAllImagesIndex({ ...request(), cursor })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
@@ -138,7 +157,6 @@ describe('getAllImagesIndex with feed-service-primary', () => {
   });
 
   it('scopes the feed to the new-creator board', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([11, 12]);
     fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
     await getAllImagesIndex({ ...request(), newCreators: true });
@@ -148,11 +166,99 @@ describe('getAllImagesIndex with feed-service-primary', () => {
     );
   });
 
+  // The home block's follower cap rides on the input. If a route drops it, that route serves the
+  // uncapped board and the 1k+ creators come back to the homepage shelf.
+  it('resolves the follower-capped board when the caller asks for one', async () => {
+    newCreatorIds.mockReturnValue([11, 12]);
+    fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [], nextCursor: undefined });
+    await getAllImagesIndex({ ...request(), newCreators: true, newCreatorsMaxFollowers: 500 });
+    expect(vi.mocked(getNewCreatorUserIds)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getNewCreatorUserIds)).toHaveBeenCalledWith(
+      expect.objectContaining({ entity: 'images', maxFollowers: 500 })
+    );
+  });
+
   it('serves an unpopulated new-creator board as an empty feed', async () => {
-    primaryOn.mockReturnValue(true);
     newCreatorIds.mockReturnValue([]);
     const r = await getAllImagesIndex({ ...request(), newCreators: true });
     expect(r).toMatchObject({ items: [], source: 'feed' });
     expect(fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
+  describe('hubs', () => {
+    const hub = () => ({ ...request(), sort: 'Newest', period: 'AllTime', hubId: 12 });
+    const sentQuery = () => new URLSearchParams(fetchFeedPrimary.mock.calls[0][0] as string);
+
+    beforeEach(() => {
+      fetchFeedPrimary.mockResolvedValue({
+        status: 200,
+        ms: 3,
+        ids: [],
+        nextCursor: undefined,
+        route: 'union-walk',
+      });
+    });
+
+    it('asks the feed for the hub as resolved for this viewer', async () => {
+      resolveHubSources.mockResolvedValue(
+        hubSources({
+          userIds: [7],
+          modelVersionIds: [290640],
+          tagGroups: [[5132, 4855]],
+          excluded: { userIds: [3], modelVersionIds: [298112], tagGroups: [[66]] },
+        })
+      );
+      const r = await getAllImagesIndex({
+        ...hub(),
+        hubExcludedSources: [{ type: 'User', targetId: 9 }],
+      } as Parameters<typeof getAllImagesIndex>[0]);
+
+      expect(r.source).toBe('feed');
+      expect(resolveHubSources).toHaveBeenCalledWith({
+        hubId: 12,
+        userId: 42,
+        isModerator: false,
+        excludedSources: [{ type: 'User', targetId: 9 }],
+      });
+      const q = sentQuery();
+      expect(q.get('anyUserIds')).toBe('7');
+      expect(q.get('anyVersionIds')).toBe('290640');
+      expect(q.get('anyTagGroups')).toBe('5132,4855');
+      expect(q.get('excludedUserIds')).toBe('3');
+      expect(q.get('excludedVersionIds')).toBe('298112');
+      expect(q.get('excludedTagGroups')).toBe('66');
+    });
+
+    it('asks only for the held level of a held model the hub serves', async () => {
+      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7], heldBrowsingLevel: 1 }));
+      await getAllImagesIndex({ ...hub(), browsingLevel: 31 });
+      expect(sentQuery().get('levels')).toBe('1');
+    });
+
+    it('asks only for the levels the hub allows', async () => {
+      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7], forcedBrowsingLevel: 3 }));
+      await getAllImagesIndex({ ...hub(), browsingLevel: 31 });
+      expect(sentQuery().get('levels')).toBe('1,2');
+    });
+
+    it.each([
+      ['the viewer may not open', null],
+      ['has no source left', hubSources()],
+      // Collection sources are served by neither path yet, so they are not a source.
+      ['holds only collections', hubSources({ collectionIds: [5] })],
+      [
+        'caps below everything the viewer browses',
+        hubSources({ userIds: [7], forcedBrowsingLevel: 16 }),
+      ],
+      [
+        'holds models that allow no level in common',
+        hubSources({ userIds: [7], heldBrowsingLevel: 0 }),
+      ],
+    ])('serves a hub that %s as an empty feed, never the open one', async (_, sources) => {
+      resolveHubSources.mockResolvedValue(sources);
+      const r = await getAllImagesIndex(hub());
+      expect(r).toMatchObject({ items: [], source: 'feed' });
+      expect(fetchFeedPrimary).not.toHaveBeenCalled();
+    });
   });
 });

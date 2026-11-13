@@ -4,13 +4,15 @@ import {
   Group,
   List,
   Paper,
-  Popover,
   ScrollArea,
   SegmentedControl,
   Skeleton,
   Stack,
+  Switch,
   Text,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
   CategoryScale,
@@ -22,7 +24,11 @@ import {
 } from 'chart.js';
 import React, { useMemo } from 'react';
 import { Bar } from 'react-chartjs-2';
-import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/useBuzz';
+import {
+  useBuzzTransactions,
+  useQueryBuzz,
+  useTransactionsReport,
+} from '~/components/Buzz/useBuzz';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzTopUpCard } from '~/components/Buzz/BuzzTopUpCard';
@@ -37,7 +43,10 @@ import type { GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateValue } from '~/components/Buzz/chart-defaults';
+import { getReportSeries, getStackPartner } from '~/components/Buzz/Dashboard/report-series';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -99,11 +108,32 @@ export const BuzzDashboardOverview = ({
     }));
   }, [currentAccountType]);
 
+  const stackPartner = getStackPartner(currentAccountType);
+  // One remembered choice per account type, so Yellow and Green each keep their own.
+  const [stackOther, setStackOther] = useLocalStorage<boolean>({
+    key: `buzz-dashboard-stack-${currentAccountType}`,
+    defaultValue: false,
+  });
+  const partnerLabel = stackPartner ? getAccountTypeLabel(stackPartner) : '';
+  const partnerConfig = useBuzzCurrencyConfig(stackPartner);
+  const stacking = stackOther && !!stackPartner;
+  const { data: partnerBuzz, isLoading: isLoadingBuzz } = useQueryBuzz(
+    stackPartner ? [currentAccountType, stackPartner] : [currentAccountType]
+  );
+  const formatBalance = (type: BuzzSpendType) => {
+    const balance = partnerBuzz.accounts.find((a) => a.type === type)?.balance;
+    return isLoadingBuzz || balance === undefined ? '…' : balance.toLocaleString();
+  };
+
   const { report, isLoading } = useTransactionsReport(reportFilters, {
     enabled: true,
   });
+  const { report: partnerReport, isLoading: isLoadingPartner } = useTransactionsReport(
+    { window: reportFilters.window, accountType: stackPartner ?? currentAccountType },
+    { enabled: stacking }
+  );
 
-  const isLoadingReport = isLoading;
+  const isLoadingReport = isLoading || isLoadingPartner;
   const viewingHourly = reportFilters.window === 'hour';
 
   const options = React.useMemo(() => {
@@ -123,7 +153,7 @@ export const BuzzDashboardOverview = ({
       },
       scales: {
         x: {
-          stacked: false,
+          stacked: stacking,
           grid: { display: false },
           ticks: {
             color: buzzConfig.color,
@@ -132,7 +162,7 @@ export const BuzzDashboardOverview = ({
           },
         },
         y: {
-          stacked: false,
+          stacked: stacking,
           beginAtZero: true,
           ticks: {
             color: buzzConfig.color,
@@ -145,7 +175,7 @@ export const BuzzDashboardOverview = ({
         bar: { borderRadius: 4 },
       },
     };
-  }, [buzzConfig.color, mobile]);
+  }, [buzzConfig.color, mobile, stacking]);
 
   const labels = useMemo(() => {
     return report.map((d) => formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD'), true);
@@ -162,35 +192,64 @@ export const BuzzDashboardOverview = ({
     const buzzColor = buzzConfig.color;
     const buzzColorRgb = hexToRgbOpenEnded(buzzColor);
 
-    return [
+    const labelFormat = viewingHourly ? 'HH:mm' : 'MMM-DD';
+    // Stack ids keep Gained and Spent as separate columns when stacking is on.
+    const stack = (id: string) => (stacking ? { stack: id } : {});
+
+    const current = [
       {
         label: `${accountTypeLabel} Gained`,
-        data: report.reduce((acc, d) => {
-          return {
-            ...acc,
-            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === currentAccountType)?.gained ?? 0,
-          };
-        }, {}),
+        data: getReportSeries(report, currentAccountType, 'gained', labelFormat),
         borderColor: buzzColor,
         backgroundColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for gains - more prominent
         borderWidth: 2,
+        ...stack('gained'),
       },
       {
         label: `${accountTypeLabel} Spent`,
-        data: report.reduce((acc, d) => {
-          return {
-            ...acc,
-            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
-              d.accounts.find((a) => a.accountType === currentAccountType)?.spent ?? 0,
-          };
-        }, {}),
+        data: getReportSeries(report, currentAccountType, 'spent', labelFormat),
         borderColor: `rgba(${buzzColorRgb}, 0.5)`, // 50% opacity for border
         backgroundColor: `rgba(${buzzColorRgb}, 0.2)`, // 20% opacity for background - less prominent
         borderWidth: 1,
+        ...stack('spent'),
       },
     ];
-  }, [report, viewingHourly, currentAccountType, currentAccountTypeLabel, buzzConfig]);
+    if (!stacking || !stackPartner) return current;
+
+    const partnerColor = partnerConfig.color;
+    const partnerRgb = partnerConfig.colorRgb;
+    return [
+      ...current,
+      {
+        label: `${partnerLabel} Gained`,
+        data: getReportSeries(partnerReport, stackPartner, 'gained', labelFormat, labels),
+        borderColor: partnerColor,
+        backgroundColor: `rgba(${partnerRgb}, 0.5)`,
+        borderWidth: 2,
+        stack: 'gained',
+      },
+      {
+        label: `${partnerLabel} Spent`,
+        data: getReportSeries(partnerReport, stackPartner, 'spent', labelFormat, labels),
+        borderColor: `rgba(${partnerRgb}, 0.5)`,
+        backgroundColor: `rgba(${partnerRgb}, 0.2)`,
+        borderWidth: 1,
+        stack: 'spent',
+      },
+    ];
+  }, [
+    report,
+    partnerReport,
+    labels,
+    viewingHourly,
+    currentAccountType,
+    currentAccountTypeLabel,
+    buzzConfig,
+    stacking,
+    stackPartner,
+    partnerLabel,
+    partnerConfig,
+  ]);
 
   return (
     <div
@@ -205,19 +264,27 @@ export const BuzzDashboardOverview = ({
                 <Group justify="space-between" align="flex-start" wrap="wrap" mb="sm">
                   <Stack gap={4}>
                     <h3 className="text-xl font-bold" style={{ margin: 0 }}>
-                      Current {currentAccountTypeLabel} Buzz
+                      {stacking
+                        ? `Current ${currentAccountTypeLabel} + ${partnerLabel} Buzz`
+                        : `Current ${currentAccountTypeLabel} Buzz`}
                     </h3>
                     <Group gap="sm" align="center" wrap="nowrap">
                       <UserBuzz
-                        key={currentAccountType}
+                        key={`${currentAccountType}-${stacking}`}
                         accountId={accountId}
                         textSize="xl"
                         withAbbreviation={false}
-                        accountTypes={[currentAccountType]}
+                        accountTypes={
+                          stacking ? [currentAccountType, stackPartner] : [currentAccountType]
+                        }
                       />
                       <Popover width={350} withArrow withinPortal shadow="sm">
                         <Popover.Target>
-                          <IconInfoCircle size={20} style={{ cursor: 'pointer' }} />
+                          <IconInfoCircle
+                            size={20}
+                            aria-label="Buzz info"
+                            style={{ cursor: 'pointer' }}
+                          />
                         </Popover.Target>
                         <Popover.Dropdown>
                           <Stack>
@@ -237,6 +304,24 @@ export const BuzzDashboardOverview = ({
                                 {getAccountTypeDescription(currentAccountType)}
                               </Text>
                             </Group>
+                            {stacking && stackPartner && (
+                              <Stack gap={4} data-testid="stacked-balances">
+                                {[currentAccountType, stackPartner].map((type) => {
+                                  const config = getCurrencyConfig({
+                                    currency: Currency.BUZZ,
+                                    type,
+                                  });
+                                  return (
+                                    <Text key={type} size="sm">
+                                      <Text component="span" fw="bold" c={config.color}>
+                                        {getAccountTypeLabel(type)} Buzz:
+                                      </Text>{' '}
+                                      {formatBalance(type)}
+                                    </Text>
+                                  );
+                                })}
+                              </Stack>
+                            )}
                             {getAccountTypeUsages(currentAccountType).length > 0 && (
                               <List>
                                 {getAccountTypeUsages(currentAccountType).map((usage, index) => (
@@ -289,6 +374,16 @@ export const BuzzDashboardOverview = ({
                   mt="xs"
                   mb={-8}
                 />
+                {stackPartner && (
+                  <Switch
+                    mt="md"
+                    size="xs"
+                    checked={stackOther}
+                    onChange={(e) => setStackOther(e.currentTarget.checked)}
+                    label={`Stack ${partnerLabel} Buzz`}
+                    aria-label={`Stack ${partnerLabel} Buzz on this graph`}
+                  />
+                )}
               </Stack>
               {isLoadingReport ? (
                 <Skeleton height={413} mt="sm" radius="sm" />

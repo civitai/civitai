@@ -45,7 +45,7 @@ type ActivePreset = { id: number; name: string; userId: number; values: PresetVa
 
 /**
  * Bridge that exposes graph state from inside `GenerationFormProvider` to
- * consumers that live outside the DataGraphProvider (e.g. the preset button
+ * consumers that live outside the form provider (e.g. the preset button
  * in the generation tabs header). Populated by a hook inside the form.
  */
 type GraphBridge = {
@@ -94,8 +94,7 @@ export const useGenerationPresetStore = create<State>((set) => ({
       activePresetValues: values,
       activePresetName: nextName ?? state.activePresetName,
     })),
-  setBridge: (bridge) =>
-    set((state) => ({ bridge: { ...state.bridge, ...bridge } })),
+  setBridge: (bridge) => set((state) => ({ bridge: { ...state.bridge, ...bridge } })),
   clearBridge: () => set({ bridge: EMPTY_BRIDGE }),
 }));
 

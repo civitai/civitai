@@ -57,9 +57,13 @@
         imageLocation: h.config.imageLocation ?? null,
         // No live signals inside the embedded element yet — it runs on polling/reload alone.
         signalsEndpoint: null,
+        // A host without the auto-label hooks would only ever get a failing button.
+        canAutoLabel: !!h.autoLabelSubmit && !!h.autoLabelPoll,
         canGenerateUnpublished: h.config.canGenerateUnpublished,
         isPaidMember: h.config.isPaidMember,
         pricingUrl: h.config.pricingUrl,
+        supportUrl: h.config.supportUrl,
+        dataPolicyUrl: h.config.dataPolicyUrl,
       },
       hrefFor: (loc) => h.hrefFor(loc),
       navigate: (loc, opts) => h.navigate(loc, opts),
@@ -80,5 +84,9 @@
 {#if !ready}
   <p class="p-6 font-mono text-sm text-dark-2">Waiting for a host context…</p>
 {:else}
-  <StudioApp {location} {reloadTick} />
+  <StudioApp
+    {location}
+    {reloadTick}
+    enabledModelFlags={studioHost?.config.enabledModelFlags}
+  />
 {/if}

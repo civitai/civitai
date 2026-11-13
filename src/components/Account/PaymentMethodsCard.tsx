@@ -9,8 +9,8 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 
 import React from 'react';
 import { formatDate } from '~/utils/date-helpers';

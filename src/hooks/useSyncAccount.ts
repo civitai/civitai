@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useAppContext } from '~/providers/AppProvider';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { syncAccountFor } from '~/utils/sync-account';
@@ -10,9 +11,10 @@ import { syncAccountFor } from '~/utils/sync-account';
  */
 export function useSyncAccount() {
   const { domain, serverDomains } = useAppContext();
+  const signedIn = !!useCurrentUser();
   const currentColor = (Object.keys(domain) as ColorDomain[]).find((color) => domain[color]);
   return useCallback(
-    (url: string) => syncAccountFor(url, currentColor, serverDomains),
-    [currentColor, serverDomains]
+    (url: string) => syncAccountFor(url, currentColor, serverDomains, signedIn),
+    [currentColor, serverDomains, signedIn]
   );
 }

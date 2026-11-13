@@ -1,0 +1,22 @@
+// A setup card (the workflow and its modes; the ecosystem, model and versions): a neutral
+// outline (blue reads as selected) and the model card's own surface, so its rows read as one.
+.setupCard {
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-body);
+}
+
+.modes {
+  padding: 0 8px 8px;
+}
+
+// The model and its versions; a workflow with nothing to show here (Upscale, or 3D with one engine
+// version) leaves it empty, and it hides.
+.model {
+  border-top: 1px solid var(--mantine-color-default-border);
+
+  &:empty {
+    display: none;
+  }
+}

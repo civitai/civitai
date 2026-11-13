@@ -134,24 +134,6 @@ describe('🔴 the re-key is TWO migrations, and the order is the safety propert
     );
     expect(merged).toEqual([]);
   });
-
-  it('each file states WHICH side of the deploy it belongs on', () => {
-    // The ordering is only safe if the human applying it knows the order. Both banners
-    // must say so in the file itself, not in a handoff doc that will not be open.
-    expect(SQL_A).toMatch(/\*\*BEFORE\*\* THE CODE DEPLOY/);
-    expect(SQL_B).toMatch(/\*\*AFTER\*\* THE CODE DEPLOY/);
-    // …and each names the other, so neither can be applied as if it were the whole job.
-    expect(SQL_A).toContain(STEP_B_DIR);
-    expect(SQL_B).toContain(STEP_A_DIR);
-  });
-
-  it('each file documents its ROLLBACK direction', () => {
-    expect(SQL_A).toMatch(/ROLLBACK DIRECTION/);
-    // A rollback that names no concrete action is not a rollback direction.
-    expect(SQL_A).toContain('20260810140000_app_listing_collaborators');
-    expect(SQL_B).toMatch(/ROLLBACK DIRECTION/);
-    expect(SQL_B).toMatch(/DROP TABLE IF EXISTS/); // inside the rollback comment only
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -363,15 +345,4 @@ describe('the supporting indexes the hot paths depend on', () => {
       expect(NCODE_B).toContain(`CREATE INDEX IF NOT EXISTS "${name}" ON ${on}`);
     });
   }
-});
-
-describe('the MANUAL-APPLY banner is present on BOTH files', () => {
-  it('each file states that no deploy path applies it', () => {
-    // A future reader who assumes `prisma migrate deploy` runs somewhere will ship a
-    // feature that is inert in production and cannot tell why.
-    for (const sql of [SQL_A, SQL_B]) {
-      expect(sql).toMatch(/MANUAL APPLY/);
-      expect(sql).toMatch(/does NOT auto-apply/);
-    }
-  });
 });

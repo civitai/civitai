@@ -1,6 +1,6 @@
 # dev-server, in one page
 
-The dev server runs the main Next.js app and the **moderator** and **creator-studio** apps, each from
+The dev server runs the main Next.js app and the **moderator**, **creator-studio** and **training-studio** apps, each from
 whatever worktree you are standing in. This is the short version for people who have to use it —
 `SKILL.md` is the reference.
 
@@ -22,13 +22,13 @@ node .claude/skills/dev-server/cli.mjs status                   # full JSON: ses
 - `--app <name>` works on `start`, `logs`, `tail`, `stop`, `restart`.
 - `app <name> <subcmd>` is the same thing spelled the other way.
 - Both default to the current directory's worktree. `app <name> <subcmd> <worktree>` names another.
-- Two apps are registered: `moderator` and `creator-studio`. The auth hub keeps its own `auth` verb.
+- Three apps are registered: `moderator`, `creator-studio` and `training-studio`. The auth hub keeps its own `auth` verb.
 
 ## Five things worth knowing
 
-**Ports are preferred, not fixed.** moderator 5174, creator-studio 5175. A second worktree starting
+**Ports are preferred, not fixed.** moderator 5174, creator-studio 5175, training-studio 5176. A second worktree starting
 the same app drifts to the next free port instead of dying on EADDRINUSE, so you can run two
-branches of one app side by side. Nothing needs rewriting to follow the drift — neither app's `.env`
+branches of one app side by side. Nothing needs rewriting to follow the drift — no app's `.env`
 carries its own port or base URL.
 
 **🔴 Read the `path` field, not just that it started.** An app serving the wrong checkout answers
@@ -86,6 +86,9 @@ Standalone scripts, no vitest. Run any of them directly:
 node .claude/skills/dev-server/scripts/env-chain.selftest.mjs      # .env layering + which object is read
 node .claude/skills/dev-server/scripts/app-registry.selftest.mjs   # registry, ports, path identity, the lock
 node .claude/skills/dev-server/scripts/db-host.selftest.mjs        # the DB host line never emits a credential
+node .claude/skills/dev-server/scripts/local-mail.selftest.mjs     # every spawned env sends mail to the local catcher
+node .claude/skills/dev-server/scripts/blank-keys.selftest.mjs     # worktree envs carry CSAM_* keys empty
+node .claude/skills/dev-server/scripts/dev-db.selftest.mjs         # worktree app envs use the primary root .env's database
 node .claude/skills/dev-server/scripts/cli-verbs.selftest.mjs      # every dispatch target in cli.mjs exists
 node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs
 node .claude/skills/dev-server/scripts/probe.selftest.mjs

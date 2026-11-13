@@ -1,117 +1,167 @@
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
+import type { RemovedUserCosmetic } from '~/server/redis/caches';
+import { refreshUserCosmeticCacheForRemoved, wornUserIds } from '~/server/redis/caches';
+import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
+
+// Civitai memberships (bought with Buzz, redeemed from a code) never get a cancelAt; they revoke
+// once their period ends, but only for periods ending on or after this date. Product decision
+// (2026-10-23): don't strip the older backlog. Moving this earlier revokes that backlog in one run.
+export const NO_CANCEL_AT_REVOKE_FROM = new Date('2026-10-24T00:00:00Z');
+
+export async function deliverMembershipCosmetics({
+  now,
+  lastDelivered,
+}: {
+  now: Date;
+  lastDelivered: Date;
+}) {
+  await dbWrite.$executeRaw`
+    -- Deliver subscription cosmetics
+    WITH active_subscriptions AS (
+      SELECT
+        cs."userId",
+        cs."productId",
+        cs."currentPeriodStart",
+        cs."currentPeriodEnd",
+        cs."createdAt"
+      FROM "CustomerSubscription" cs
+      JOIN "Product" pd ON pd.id = cs."productId"
+      WHERE cs.status = 'active'
+        AND cs."currentPeriodStart" <= ${now}::timestamp
+        AND cs."currentPeriodEnd" >= ${now}::timestamp
+    ),
+    subscription_tiers AS (
+      SELECT
+        s."userId",
+        COALESCE(pdl.id, s."productId") as "productId",
+        pd.provider,
+        s."currentPeriodStart",
+        s."currentPeriodEnd",
+        s."createdAt"
+      FROM active_subscriptions s
+      JOIN "Product" pd ON pd.id = s."productId"
+      LEFT JOIN "Product" pdl
+        ON pdl.active
+          AND jsonb_typeof(pd.metadata->'level') != 'undefined'
+          AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
+          AND (pdl.metadata->>'level')::int <= (pd.metadata->>'level')::int
+          AND pdl.provider = pd.provider
+    )
+    INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
+    SELECT DISTINCT
+      s."userId",
+      c.id "cosmeticId",
+      ${now}::timestamp,
+      'claimed'
+    FROM subscription_tiers s
+    JOIN "Cosmetic" c ON
+      c."productId" = s."productId"
+      AND (
+        -- Undated (the Supporter Nameplate): held for as long as the membership is. Civitai
+        -- members get these from deliverMonthlyCosmetics, which gives Buzz-purchased
+        -- memberships dated badges only; the level join here would map those onto
+        -- civitai-bronze.
+        (c."availableStart" IS NULL AND c.source = 'Membership' AND s.provider <> 'Civitai')
+        OR (
+          -- Compare the period start, not job time: a late-paid September period is still owed
+          -- September's badge. Civitai keeps the current-month limit because prepaid periods
+          -- can start long before the month being delivered.
+          (s.provider <> 'Civitai' OR c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp))
+          -- Date granularity: availableStart carries a time of day, so a timestamp compare
+          -- misses a renewal earlier that day (e.g. 00:30 on the 1st).
+          AND s."currentPeriodStart"::date >= c."availableStart"::date
+        )
+      )
+      AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
+    ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
+  `;
+
+  await dbWrite.$executeRaw`
+    -- Deliver supporter upgrade cosmetic
+    INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
+    SELECT
+      cs."userId",
+      c.id as "cosmeticId",
+      'claimed'
+    FROM "CustomerSubscription" cs
+    JOIN "Product" pd ON pd.id = cs."productId"
+    JOIN "Cosmetic" c ON c.name = 'Grandfather Badge'
+    WHERE cs.status = 'active'
+      AND cs."currentPeriodStart" <= ${now}::timestamp
+      AND cs."currentPeriodEnd" >= ${now}::timestamp
+      AND jsonb_typeof(pd.metadata->'level') != 'undefined'
+      AND EXISTS (
+        SELECT 1
+        FROM "CustomerSubscription" ocs
+        JOIN "Product" opd ON opd.id = ocs."productId"
+        WHERE opd.metadata->>'tier' = 'founder'
+          AND ocs."userId" = cs."userId"
+          AND ocs.status = 'active'
+      )
+    ON CONFLICT DO NOTHING;
+  `;
+
+  const revoked = await dbWrite.$queryRaw<RemovedUserCosmetic[]>`
+    -- Revoke member limited cosmetics
+    WITH to_revoke AS (
+      SELECT
+      "userId"
+      FROM "CustomerSubscription" cs
+      LEFT JOIN "Product" pd ON pd.id = cs."productId"
+      WHERE (
+        cs."cancelAt" <= ${lastDelivered}
+        -- Not endedAt: jobs stamp it whenever they close a row, long after the period may have ended.
+        OR (
+          cs."cancelAt" IS NULL
+          AND pd.provider = 'Civitai'
+          AND cs."currentPeriodEnd" BETWEEN ${NO_CANCEL_AT_REVOKE_FROM} AND ${lastDelivered}
+          -- An immediate cancel or a supersede leaves the period end in the future; one before the
+          -- cutoff is backlog.
+          AND (cs."canceledAt" IS NULL OR cs."canceledAt" >= ${NO_CANCEL_AT_REVOKE_FROM})
+          -- A day of grace for a live membership whose next period isn't written yet: referral
+          -- chunks advance at :05, a renewal webhook can land after this job. By the clock, not
+          -- lastDelivered, so a manual rerun doesn't shrink it.
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "CustomerSubscription" gcs
+            WHERE gcs."userId" = cs."userId"
+              AND gcs.status IN ('active', 'trialing', 'past_due')
+              AND gcs."currentPeriodEnd" > ${now}::timestamp - interval '1 day'
+          )
+        )
+      )
+        -- An old canceled subscription must not strip a member who is subscribed today,
+        -- including one whose renewal payment is still being retried.
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "CustomerSubscription" acs
+          WHERE acs."userId" = cs."userId"
+            AND acs.status IN ('active', 'trialing', 'past_due')
+            AND acs."currentPeriodEnd" >= ${now}::timestamp
+        )
+    )
+    DELETE FROM "UserCosmetic" uc
+    WHERE EXISTS (
+      SELECT 1
+      FROM to_revoke r
+      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      WHERE r."userId" = uc."userId"
+      AND c."permanentUnlock" = false
+      AND c.source = 'Membership'
+    )
+    RETURNING uc."userId", uc."equippedAt", uc."equippedToId";
+  `;
+  await refreshUserCosmeticCacheForRemoved(revoked);
+  await queueWornCosmeticsUpdate(wornUserIds(revoked));
+}
 
 export const deliverPurchasedCosmetics = createJob(
   'deliver-purchased-cosmetics',
   '0 23 * * *',
   async () => {
     const [lastDelivered, setLastDelivered] = await getJobDate('last-cosmetic-delivery');
-
-    const deliverSubscriptionCosmetics = async () =>
-      dbWrite.$executeRaw`
-        -- Deliver subscription cosmetics
-        WITH active_subscriptions AS (
-          SELECT
-            cs."userId",
-            cs."productId",
-            cs."currentPeriodStart",
-            cs."currentPeriodEnd",
-            cs."createdAt"
-          FROM "CustomerSubscription" cs
-          JOIN "Product" pd ON pd.id = cs."productId"
-          WHERE cs.status = 'active'
-            AND cs."currentPeriodStart" <= now()
-            AND cs."currentPeriodEnd" >= now()
-        ),
-        subscription_tiers AS (
-          SELECT
-            s."userId",
-            COALESCE(pdl.id, s."productId") as "productId",
-            s."currentPeriodStart",
-            s."currentPeriodEnd",
-            s."createdAt"
-          FROM active_subscriptions s
-          JOIN "Product" pd ON pd.id = s."productId"
-          LEFT JOIN "Product" pdl
-            ON pdl.active
-              AND jsonb_typeof(pd.metadata->'level') != 'undefined'
-              AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
-              AND (pdl.metadata->>'level')::int <= (pd.metadata->>'level')::int
-              AND pdl.provider = pd.provider
-        )
-        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
-        SELECT DISTINCT
-          s."userId",
-          c.id "cosmeticId",
-          now(),
-          'claimed'
-        FROM subscription_tiers s
-        JOIN "Cosmetic" c ON
-          c."productId" = s."productId"
-          AND c."availableStart" >= date_trunc('month', ${lastDelivered}::timestamp)
-          -- Compare at date granularity: membership badges are authored with an 11:00 UTC
-          -- availableStart, so a period that started earlier that same day (e.g. a Stripe
-          -- renewal at 00:30 on the 1st) failed a timestamp comparison forever — this join
-          -- re-runs daily but currentPeriodStart never moves within the period.
-          AND (c."availableStart" IS NULL OR s."currentPeriodStart"::date >= c."availableStart"::date)
-          AND (c."availableEnd" IS NULL OR s."currentPeriodStart"::date <= c."availableEnd"::date)
-        ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING;
-    `;
-
-    const deliverSupporterUpgradeCosmetic = async () =>
-      dbWrite.$executeRaw`
-        -- Deliver supporter upgrade cosmetic
-        INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
-        SELECT
-          cs."userId",
-          c.id as "cosmeticId",
-          'claimed'
-        FROM "CustomerSubscription" cs
-        JOIN "Product" pd ON pd.id = cs."productId"
-        JOIN "Cosmetic" c ON c.name = 'Grandfather Badge'
-        WHERE cs.status = 'active'
-          AND cs."currentPeriodStart" <= now()
-          AND cs."currentPeriodEnd" >= now()
-          AND jsonb_typeof(pd.metadata->'level') != 'undefined'
-          AND EXISTS (
-            SELECT 1
-            FROM "CustomerSubscription" ocs
-            JOIN "Product" opd ON opd.id = ocs."productId"
-            WHERE opd.metadata->>'tier' = 'founder'
-              AND ocs."userId" = cs."userId"
-              AND ocs.status = 'active'
-          )
-        ON CONFLICT DO NOTHING;
-      `;
-
-    const revokeMembershipLimitedCosmetics = async () =>
-      dbWrite.$executeRaw`
-        -- Revoke member limited cosmetics
-        WITH to_revoke AS (
-          SELECT
-          "userId"
-          FROM "CustomerSubscription" cs
-          WHERE "cancelAt" <= ${lastDelivered}
-        )
-        DELETE FROM "UserCosmetic" uc
-        WHERE EXISTS (
-          SELECT 1
-          FROM to_revoke r
-          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-          WHERE r."userId" = uc."userId"
-          AND c."permanentUnlock" = false
-          AND c.source = 'Membership'
-        );
-      `;
-
-    // Deliver cosmetics
-    // --------------------------------------------
-    await deliverSubscriptionCosmetics();
-    await deliverSupporterUpgradeCosmetic();
-    await revokeMembershipLimitedCosmetics();
-
-    // Update the last time this ran in the KeyValue store
-    // --------------------------------------------
+    await deliverMembershipCosmetics({ now: new Date(), lastDelivered });
     await setLastDelivered();
   }
 );

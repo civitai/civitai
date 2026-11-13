@@ -1,4 +1,6 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import type { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';
@@ -16,6 +18,7 @@ export const bountyWebhooks = createWebhookProcessor({
             gt: lastSent,
             lte: now,
           },
+          availability: { not: 'Private' },
         },
         select: getBountyDetailsSelect,
       });
@@ -39,6 +42,9 @@ export const bountyWebhooks = createWebhookProcessor({
 
           return {
             ...bounty,
+            details:
+              bounty.details &&
+              filterSensitiveProfanityData(bounty.details as BountyDetailsSchema, false),
             tags,
             cover: cover ? getEdgeUrl(cover, { width: 450 }) : null,
             creator: {

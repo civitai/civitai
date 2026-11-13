@@ -1,6 +1,10 @@
 import { Button, Group, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconEye, IconEyeOff, IconSettings, IconShoppingBag } from '@tabler/icons-react';
 import Link from 'next/link';
+import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
+
+const ServicesIcon = sectionIcons.services;
 
 export function ShopHeader({
   displayName,
@@ -11,6 +15,7 @@ export function ShopHeader({
   isModerator,
   preview,
   onTogglePreview,
+  showServicesLink = false,
 }: {
   displayName: string;
   description?: string | null;
@@ -22,6 +27,8 @@ export function ShopHeader({
   isModerator: boolean;
   preview: boolean;
   onTogglePreview: () => void;
+  /** Only when the Services section is on the page: the link jumps to it. */
+  showServicesLink?: boolean;
 }) {
   const trimmed = description?.trim();
 
@@ -36,14 +43,35 @@ export function ShopHeader({
             {displayName}&apos;s Shop
           </Title>
           {trimmed ? (
-            <Text size="sm" c="dimmed" lineClamp={2} className="max-w-2xl">
+            <LineClamp
+              variant="block"
+              lineClamp={2}
+              size="sm"
+              c="dimmed"
+              className="max-w-2xl whitespace-pre-line"
+            >
               {trimmed}
-            </Text>
+            </LineClamp>
           ) : isOwner ? (
             <Text size="xs" c="dimmed" fs="italic">
               Add a shop description in Shop settings.
             </Text>
           ) : null}
+          {showServicesLink && (
+            <Group gap="xs" mt={4}>
+              <Button
+                component="a"
+                href={`#${storefrontSectionId('services')}`}
+                size="compact-sm"
+                radius="xl"
+                variant="light"
+                color="yellow"
+                leftSection={<ServicesIcon size={14} />}
+              >
+                Services
+              </Button>
+            </Group>
+          )}
         </Stack>
       </Group>
       <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>

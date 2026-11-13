@@ -1,4 +1,5 @@
-import { Group, Menu, SegmentedControl, Text } from '@mantine/core';
+import { Group, SegmentedControl, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconCheck, IconLayoutList, IconList, IconArrowsSort } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { SORT_OPTIONS } from './collection-list.utils';

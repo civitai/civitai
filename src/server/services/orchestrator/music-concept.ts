@@ -1,6 +1,6 @@
-import type { ChatCompletionStepTemplate } from '@civitai/client';
+import type { ChatCompletionStepTemplate } from '@civitai/orchestration-client';
+import { DEFAULT_CHAT_COMPLETION_MODEL } from './chatCompletion';
 
-const SIMPLE_CHAT_MODEL = 'gpt-4o-mini';
 const SIMPLE_CHAT_TEMPERATURE = 0.9;
 
 /**
@@ -43,7 +43,7 @@ export function createMusicConceptStep(
   return {
     $type: 'chatCompletion',
     input: {
-      model: SIMPLE_CHAT_MODEL,
+      model: DEFAULT_CHAT_COMPLETION_MODEL,
       messages,
       temperature: SIMPLE_CHAT_TEMPERATURE,
       responseFormat: SIMPLE_RESPONSE_FORMAT,

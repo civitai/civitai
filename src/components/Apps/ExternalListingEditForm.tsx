@@ -53,8 +53,13 @@ import {
 } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * /apps/submit?edit=<listingId> — the EDIT wizard (W13). Reuses the create wizard's
@@ -142,7 +147,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   // left a window where the FIRST edit of an approved listing seeded parent row ids
   // and a screenshot removal deleted from the live served listing.
   const shadowId = edit.shadowId;
-  const effectiveId = approved ? shadowId : edit.parentId;
+  // A moderator with no revision yet edits the live listing; the server opens a revision
+  // on their first material change.
+  const moderatorLiveEdit = approved && !shadowId && edit.role === 'moderator';
+  const effectiveId = approved && !moderatorLiveEdit ? shadowId : edit.parentId;
 
   // OG metadata auto-pull via the shared `useListingAutofill` hook (same SSRF-safe path
   // as create) — auto-fires on a URL CHANGE (blur/Enter/advance + a debounced pause);
@@ -165,6 +173,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
   const submitRevisionMutation = trpc.appListings.submitListingRevision.useMutation();
+  const termsAccepted = useAppDeveloperTermsAccepted();
 
   const saving =
     updateListingMutation.isPending ||
@@ -232,7 +241,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         ? 'Sent for review — your current version stays live until a moderator re-approves.'
         : 'Your changes are saved.',
     });
-    void router.push('/apps/build');
+    void router.push(MY_APPS_HREF);
   }
 
   async function handleSave() {
@@ -264,7 +273,14 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
     const scalarChanged = hasScalarChanges(patch);
 
     try {
-      if (approved) {
+      if (moderatorLiveEdit) {
+        if (scalarChanged) {
+          const res = await updateListingMutation.mutateAsync({ listingId: edit.parentId, patch });
+          if (res.requiresReview && res.shadowId) {
+            await submitRevisionMutation.mutateAsync({ shadowId: res.shadowId });
+          }
+        }
+      } else if (approved) {
         if (!shadowId) {
           setServerError('Preparing the revision — try again in a moment.');
           return;
@@ -275,7 +291,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
             title: 'No changes',
             message: 'Nothing to submit for review.',
           });
-          void router.push('/apps/build');
+          void router.push(MY_APPS_HREF);
           return;
         }
         if (scalarChanged) {
@@ -549,6 +565,21 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 disabled={materialBlocked}
               />
 
+              {/* Public issue-tracker / support link. MATERIAL like the source link, and the
+                copy says so for the same reason. */}
+              <TextInput
+                label="Issue tracker"
+                description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link. Changing this needs moderator re-review before it goes live."
+                placeholder="https://github.com/your-org/your-app/issues"
+                value={values.issueTrackerUrl}
+                onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                error={errors.issueTrackerUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                data-testid="apps-offsite-edit-issue-tracker"
+                data-material-field="issueTrackerUrl"
+                disabled={materialBlocked}
+              />
+
               {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
                 🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.
                 Both omissions are decisions, not oversights. That attribute is walked by a
@@ -709,6 +740,9 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 onRepull={autofill.repull}
                 repullLoading={autofill.loading}
                 initial={edit.assets}
+                // Set through `setRedMedia` against the same effective target as every other
+                // asset here (the revision for an approved listing), so Save submits it too.
+                redMedia={edit.redMedia}
                 allowRemove
                 onAssetMutated={() => setAssetsDirty(true)}
               />
@@ -724,14 +758,19 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         </Stepper.Step>
       </Stepper>
 
+      {(approved || moderatorLiveEdit) && <AppDeveloperTermsCheckbox />}
+
       <Group justify="space-between">
-        <Button variant="default" component={Link} href="/apps/build" disabled={saving}>
+        <Button variant="default" component={Link} href={MY_APPS_HREF} disabled={saving}>
           Cancel
         </Button>
         <Button
           onClick={() => void handleSave()}
           loading={saving}
-          disabled={approved && !shadowId}
+          disabled={
+            (approved && !shadowId && !moderatorLiveEdit) ||
+            ((approved || moderatorLiveEdit) && !termsAccepted)
+          }
           leftSection={<IconDeviceFloppy size={16} />}
           data-testid="apps-offsite-edit-save"
         >

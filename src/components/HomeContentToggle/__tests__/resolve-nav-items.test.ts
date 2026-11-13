@@ -192,19 +192,19 @@ describe('resolveNavItems — defaultHidden', () => {
   const registry = [
     entry('home'),
     entry('posts', { defaultHidden: true }),
-    entry('events', { defaultHidden: true }),
+    entry('vault', { defaultHidden: true }),
   ];
 
   it('switches a defaultHidden item off without removing it from its group', () => {
     expect(keys(resolveNavItems(registry, ctx()).bar)).toEqual(['home']);
-    expect(resolveNavLayout(registry).groups.bar).toEqual(['home', 'posts', 'events']);
+    expect(resolveNavLayout(registry).groups.bar).toEqual(['home', 'posts', 'vault']);
   });
 
   it('honours a user who switched one back on', () => {
     const resolved = resolveNavItems(
       registry,
       ctx(),
-      config({ bar: ['home', 'posts', 'events'], hidden: ['events'] })
+      config({ bar: ['home', 'posts', 'vault'], hidden: ['vault'] })
     );
     expect(keys(resolved.bar)).toEqual(['home', 'posts']);
   });

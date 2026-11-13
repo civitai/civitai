@@ -27,7 +27,13 @@ vi.mock('$lib/server/db/db', () => {
         get(_target, prop) {
           if (prop === 'then') return undefined;
           if (prop === 'execute') return async () => [];
-          if (prop === 'executeTakeFirst') return async () => ({ id: 1 });
+          if (prop === 'executeTakeFirst')
+            return async () => ({
+              id: 1,
+              redirectUris: [],
+              allowedOrigins: [],
+              skipConsent: false,
+            });
           return () => chain;
         },
       }
@@ -105,6 +111,7 @@ const ACTION_MODULES: Record<string, () => Promise<{ actions: Record<string, unk
   '/admin/spoke-domains': () => import('../spoke-domains/+page.server'),
   '/admin/membership': () => import('../membership/+page.server'),
   '/admin/access': () => import('../access/+page.server'),
+  '/admin/access/[id]': () => import('../access/[id]/+page.server'),
   '/admin/roles': () => import('../roles/+page.server'),
   '/admin/roles/[role]': () => import('../roles/[role]/+page.server'),
 };
@@ -171,6 +178,48 @@ const ADMIN_ACTIONS: Scenario[] = [
     path: '/admin/access',
     action: 'setMode',
     form: { id: 'some-client', accessMode: 'open' },
+    write: 'updateTable:OauthClient',
+  },
+  {
+    name: 'access setSkipConsent',
+    routeId: '/admin/access',
+    path: '/admin/access',
+    action: 'setSkipConsent',
+    form: { id: 'some-client', skipConsent: 'true' },
+    write: 'updateTable:OauthClient',
+  },
+  {
+    name: 'access setTokenRateLimit',
+    routeId: '/admin/access',
+    path: '/admin/access',
+    action: 'setTokenRateLimit',
+    form: { id: 'some-client', tokenRateLimit: '1000' },
+    write: 'updateTable:OauthClient',
+  },
+  {
+    name: 'access moveToSystem',
+    routeId: '/admin/access',
+    path: '/admin/access',
+    action: 'moveToSystem',
+    form: { id: 'some-client' },
+    write: 'updateTable:OauthClient',
+  },
+  {
+    name: 'access createSystemApp',
+    routeId: '/admin/access',
+    path: '/admin/access',
+    action: 'createSystemApp',
+    // A public app: no secret to hash, so the write is the only side effect.
+    form: { name: 'Ads', redirectUris: 'https://ads.example.test/auth/callback' },
+    write: 'insertInto:OauthClient',
+  },
+  {
+    name: 'access/[id] edit',
+    routeId: '/admin/access/[id]',
+    path: '/admin/access/some-client',
+    action: 'default',
+    form: { name: 'Ads', redirectUris: 'https://ads.example.test/auth/callback' },
+    params: { id: 'some-client' },
     write: 'updateTable:OauthClient',
   },
   {

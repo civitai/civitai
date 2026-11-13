@@ -41,6 +41,9 @@ import {
 
 const version = (id: number, overrides: Partial<LabelableVersion> = {}): LabelableVersion => ({
   id,
+  // Deliberately a DIFFERENT id space from the version id: a fixture where
+  // the two coincide cannot tell a model-id enqueue from a version-id one.
+  modelId: 9000 + id,
   name: `Version ${id}`,
   baseModel: 'SDXL 1.0',
   trainedWords: ['trigger'],

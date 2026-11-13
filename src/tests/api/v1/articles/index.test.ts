@@ -6,14 +6,19 @@ import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.const
 import { NsfwLevel } from '~/server/common/enums';
 
 // Hoisted mocks for the wrapped service + the rate limiter + the region helpers.
-const { mockGetArticles, mockGetArticleById, mockRateLimit, mockGetRegion, mockIsRegionRestricted } =
-  vi.hoisted(() => ({
-    mockGetArticles: vi.fn(),
-    mockGetArticleById: vi.fn(),
-    mockRateLimit: vi.fn(),
-    mockGetRegion: vi.fn(),
-    mockIsRegionRestricted: vi.fn(),
-  }));
+const {
+  mockGetArticles,
+  mockGetArticleById,
+  mockRateLimit,
+  mockGetRegion,
+  mockIsRegionRestricted,
+} = vi.hoisted(() => ({
+  mockGetArticles: vi.fn(),
+  mockGetArticleById: vi.fn(),
+  mockRateLimit: vi.fn(),
+  mockGetRegion: vi.fn(),
+  mockIsRegionRestricted: vi.fn(),
+}));
 
 vi.mock('~/server/services/article.service', () => ({
   getArticles: mockGetArticles,
@@ -28,10 +33,7 @@ vi.mock('~/server/utils/public-api-rate-limit', () => ({
 // handleEndpointError → faithful minimal reimplementation (TRPCError → mapped
 // HTTP status), so a NOT_FOUND from the service becomes a 404.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  MixedAuthEndpoint:
-    (handler: any) =>
-    (req: any, res: any) =>
-      handler(req, res, req.user),
+  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.user),
   handleEndpointError: (res: any, e: any) => {
     if (e instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(e);
@@ -139,7 +141,10 @@ describe('GET /api/v1/articles (list)', () => {
     const anon = createMocks({ query: { limit: '5' } });
     await listHandler(anon.req, anon.res);
 
-    const authed = createMocks({ query: { limit: '5' }, user: { id: 42, username: 'me', isModerator: true } });
+    const authed = createMocks({
+      query: { limit: '5' },
+      user: { id: 42, username: 'me', isModerator: true },
+    });
     await listHandler(authed.req, authed.res);
 
     // Same URL → byte-identical response body regardless of caller identity.
@@ -161,7 +166,13 @@ describe('GET /api/v1/articles (list)', () => {
     // A client tries to inject per-user / owner-widening params — the endpoint
     // schema doesn't expose any of them, so they can't reach the service.
     const { req, res } = createMocks({
-      query: { userId: '5', userIds: '5,6', favorites: 'true', hidden: 'true', username: 'someUser' },
+      query: {
+        userId: '5',
+        userIds: '5,6',
+        favorites: 'true',
+        hidden: 'true',
+        username: 'someUser',
+      },
       user: { id: 5, username: 'someUser' },
     });
 
@@ -235,6 +246,31 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     expect(args.isModerator).toBeUndefined();
   });
 
+  it('keeps contentImages to the documented id, url and ingestion', async () => {
+    mockGetArticleById.mockResolvedValue({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      contentImages: [
+        {
+          id: 5,
+          url: 'u',
+          ingestion: 'Scanned',
+          nsfwLevel: 16,
+          userId: 7,
+          hash: 'h',
+          width: 1,
+          height: 1,
+        },
+      ],
+    });
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData().contentImages).toEqual([{ id: 5, url: 'u', ingestion: 'Scanned' }]);
+  });
+
   it('SECURITY: a private/unpublished article (service throws NOT_FOUND) 404s for an anonymous caller', async () => {
     mockGetArticleById.mockRejectedValue(
       new TRPCError({ code: 'NOT_FOUND', message: 'No article with id 99' })
@@ -285,7 +321,11 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     });
     const within = createMocks({ query: { id: '3' } });
     await detailHandler(within.req, within.res);
-    expect(within.res._getJSONData().coverImage).toEqual({ id: 1, url: 'k', nsfwLevel: NsfwLevel.PG });
+    expect(within.res._getJSONData().coverImage).toEqual({
+      id: 1,
+      url: 'k',
+      nsfwLevel: NsfwLevel.PG,
+    });
 
     mockGetArticleById.mockResolvedValueOnce({
       id: 4,
@@ -296,6 +336,36 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     const unrated = createMocks({ query: { id: '4' } });
     await detailHandler(unrated.req, unrated.res);
     expect(unrated.res._getJSONData().coverImage).toEqual({ id: 2, url: 'k2', nsfwLevel: 0 });
+  });
+
+  // A banner stands in for a missing cover on cards, so it is held to the same ceiling.
+  it('MATURITY: drops a banner image above the public ceiling, and keeps one within it', async () => {
+    mockGetArticleById.mockResolvedValueOnce({
+      id: 5,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: null,
+      bannerImage: { id: 6, url: 'b', nsfwLevel: NsfwLevel.R },
+    });
+    const mature = createMocks({ query: { id: '5' } });
+    await detailHandler(mature.req, mature.res);
+    expect(mature.res._getStatusCode()).toBe(200);
+    expect(mature.res._getJSONData().bannerImage).toBeUndefined();
+
+    mockGetArticleById.mockResolvedValueOnce({
+      id: 7,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      coverImage: null,
+      bannerImage: { id: 8, url: 'b2', nsfwLevel: NsfwLevel.PG },
+    });
+    const within = createMocks({ query: { id: '7' } });
+    await detailHandler(within.req, within.res);
+    expect(within.res._getJSONData().bannerImage).toEqual({
+      id: 8,
+      url: 'b2',
+      nsfwLevel: NsfwLevel.PG,
+    });
   });
 
   it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller, and the service receives only { id } (no browsingLevel / userId)', async () => {

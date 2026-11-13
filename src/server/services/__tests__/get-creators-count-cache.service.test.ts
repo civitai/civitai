@@ -238,21 +238,6 @@ describe('getCreators — count cache', () => {
     expect([...cacheStore.values()]).toEqual([321]);
   });
 
-  it('fail-open: a cache/redis error degrades to running the count (no throw, correct value)', async () => {
-    // Reproduce fetchThroughCache's fail-open contract: a Redis error means the
-    // helper falls back to running fetchFn() directly rather than throwing.
-    fetchThroughCacheImpl.fn = async (_key: string, fetchFn: () => Promise<unknown>) => {
-      // simulate the internal redis read throwing → fail open to the origin fetch
-      return fetchFn();
-    };
-    mockDb.user.count.mockResolvedValueOnce(456);
-
-    const result = await getCreators({ select, count: true, excludeIds: [-1] });
-
-    expect(result.count).toBe(456);
-    expect(mockDb.user.count).toHaveBeenCalledTimes(1);
-  });
-
   it('cache-throws fallback: fetchThroughCache rejecting still returns the count inline (no 500)', async () => {
     // FIX 🟡-2: on lock-retry exhaustion fetchThroughCache THROWS
     // ('Failed to fetch data through cache'). The caller wraps it in

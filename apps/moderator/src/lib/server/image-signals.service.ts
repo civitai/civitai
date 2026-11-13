@@ -1,5 +1,5 @@
 import { getClickhouse } from './clickhouse';
-import { clickhouseDate } from './clickhouse-date';
+import { clickhouseDate, isClickhouseDateTime } from './clickhouse-date';
 import { usersByIds } from './users.service';
 import { INTERNAL_IP_RANGE } from './clickhouse-filters';
 
@@ -12,7 +12,7 @@ import { INTERNAL_IP_RANGE } from './clickhouse-filters';
 // 2.0s to 203ms. (`default.images` is deliberately UNBOUNDED; see `getImageEvents`.)
 //
 // The ClickHouse helper interpolates values with NO escaping, so only numbers we control and a bound
-// matched against CH_DATETIME are ever put into a query.
+// matched by isClickhouseDateTime are ever put into a query.
 //
 // The bound arrives as a STRING the database formatted, never as a JS Date. `Image.createdAt` is
 // `timestamp without time zone` and no pg type parser is registered for it, so node-pg reads it as local
@@ -20,11 +20,9 @@ import { INTERNAL_IP_RANGE } from './clickhouse-filters';
 // that pushed the bound SIX HOURS into the image's life and hid 60% of a real ring (25 accounts and 37
 // reactions became 13 and 16 on a live image) — while printing "nothing suggesting a ring" for any ring
 // that fired in the hour after upload, which is the normal shape. Callers read it with `to_char`.
-const CH_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-
 const bounded = (createdAt: string | null, column: string) => {
   if (!createdAt) return '';
-  if (!CH_DATETIME.test(createdAt)) throw new Error('[image-signals] malformed time bound');
+  if (!isClickhouseDateTime(createdAt)) throw new Error('[image-signals] malformed time bound');
   return `AND ${column} >= toDateTime('${createdAt}')`;
 };
 

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as z from 'zod';
 import { redisMock } from '~/__tests__/mocks';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Minimal NextApiRequest/Response stand-in (avoids a node-mocks-http dependency).
 function createMocks({
@@ -180,7 +182,13 @@ describe('defineModeratorEndpoint', () => {
   });
 
   it('accepts a moderator API key', async () => {
-    mockGetSession.mockResolvedValue({ user: { ...MOD, id: 9 } });
+    mockGetSession.mockResolvedValue({
+      user: { ...MOD, id: 9 },
+      apiKeyId: 1,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 1 },
+      tokenScope: TokenScope.Full,
+    });
     const { handler, handlerSpy } = build();
     const { req, res } = createMocks({
       headers: { authorization: 'Bearer good' },
@@ -387,5 +395,22 @@ describe('moderatorBoolean', () => {
 
   it.each(['yes', 'no', '', 'TRUE', 2, null])('refuses %o rather than guessing', (input) => {
     expect(moderatorBoolean.safeParse(input).success).toBe(false);
+  });
+});
+
+describe('the shared Civitai Moderation account', () => {
+  it('is refused as an actor even though it is a moderator', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: 900 });
+    const { handler, handlerSpy } = build();
+    signedInAs({ id: 900 });
+    const { req, res } = createMocks({ body: { value: 1 } });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect(handlerSpy).not.toHaveBeenCalled();
+
+    signedInAs({ id: 901 });
+    const second = createMocks({ body: { value: 1 } });
+    await handler(second.req as never, second.res as never);
+    expect(second.res._getStatusCode()).toBe(200);
   });
 });

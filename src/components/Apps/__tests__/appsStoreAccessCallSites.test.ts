@@ -55,16 +55,13 @@ import { describe, it, expect } from 'vitest';
  * other object — a source scan cannot see that, and no render-level test mounts this
  * hook.
  *
- * 🔴 AND THE SCOPE THAT MATTERS IN CI: the component suites above are REPORT-ONLY
- * (`preview / component-tests`) and do not block a merge. This unit-project ledger
- * does. So in CI five of the eight sites are pinned STRUCTURALLY ONLY, by this file
- * — which is precisely why a hole in its masker (see below) is worth more than it
- * looks. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the
- * exceptions: their behavioural tests are unit tests, so they block too — the
- * resolver's cover is the two `resolveAppsPageAccess` describe blocks inside
- * `hasAppsStoreAccess.test.ts`. Two more are browser-covered (`AppsRailNav`,
- * `AppListingsMarketplaceBody`) and therefore blocking-covered NOWHERE: enumerated,
- * 3 + 2 + 3 = 8.)
+ * 🔴 AND THE SCOPE THAT MATTERS IN THE NODE TIER: five of the eight sites are pinned
+ * STRUCTURALLY ONLY there, by this file — which is why a hole in its masker (see below) still
+ * matters. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the exceptions:
+ * their behavioural tests are unit tests too — the resolver's cover is the two
+ * `resolveAppsPageAccess` describe blocks inside `hasAppsStoreAccess.test.ts`. Two more are
+ * browser-covered (`AppsRailNav`, `AppListingsMarketplaceBody`) and have no node-tier pin:
+ * enumerated, 3 + 2 + 3 = 8.)
  *
  * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
  * before treating a green run as "no site re-inlines the gate":
@@ -146,12 +143,23 @@ const STORE_GATE_SITES = [
   'components/Apps/AppListingsMarketplaceBody.tsx',
   'components/Apps/useAppsNavSections.ts',
   'components/Apps/RelatedListings.tsx',
+  // The track-record line under the creator card on a listing page: its query (a store read)
+  // fires only with store access. Pinned structurally only, like `RelatedListings.tsx`.
+  'components/Apps/DeveloperTrackRecord.tsx',
+  // The profile Apps tab's grid (`/user/<name>/apps`): its store read fires only with store
+  // access. The tab and the page gate on `canShowProfileAppsTab` (outside these roots), which
+  // `components/Profile/__tests__/profile-apps-tab.test.ts` covers behaviourally.
+  'components/Apps/UserAppsGrid.tsx',
   'components/Apps/resolveAppsPageAccess.ts',
   // 🔴 THE EMPTY-STATE `/apps` ANCHOR ON `/apps/activity` — the sibling of the panel
   // entry above, and the reason note 1 in this header carries an explicit carve-out. The
   // page itself is runtime-gated; this ONE anchor points at a store-gated route.
   'pages/apps/activity.tsx',
+  // `/apps` is the viewer's "My apps" home now; its body keeps the same store gate as its
+  // SSR resolver (`resolveAppsHomeAccess` → `resolveAppsPageAccess`).
   'pages/apps/index.tsx',
+  // 🔴 THE STORE, MOVED HERE FROM `/apps`. Same page, same gate, new address.
+  'pages/apps/store.tsx',
   'pages/apps/store-preview/[slug].tsx',
 ] as const;
 

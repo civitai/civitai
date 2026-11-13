@@ -1,12 +1,16 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
-import { getHomeBlockData, resolveHomeBlockMetadata } from '~/server/services/home-block.service';
+import { isCollectionReadShared } from '~/server/services/collection-item-access';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const homeBlockService = () => import('~/server/services/home-block.service');
 
 const CACHE_EXPIRY = {
   [HomeBlockType.Collection]: 60 * 3, // 3 min
@@ -32,6 +36,9 @@ type HomeBlockForCache = {
 
 const log = createLogger('home-block-cache', 'green');
 
+// Not 'default': entries under that key predate the PG cap and must never be read again.
+const FEATURED_MODELS_HOME_BLOCK_KEY = 'pg';
+
 /**
  * Takes RESOLVED metadata — the source block's, for a clone — never the row's own column. A
  * clone's column is empty now that it is a pointer, so keying off it would produce `undefined`
@@ -52,7 +59,7 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
       // their own. Was keyed on the clone's own id back when the snapshot could disagree.
       return metadata.cosmeticShopSection?.id;
     case HomeBlockType.FeaturedModelVersion:
-      return 'default';
+      return FEATURED_MODELS_HOME_BLOCK_KEY;
     case HomeBlockType.FeaturedCollections:
     case HomeBlockType.Feed:
       // Source-keyed, so one entry serves every clone. It also makes the existing busts land:
@@ -67,8 +74,13 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
 // a red-scoped board rendered onto civitai.com.
 const domainSegment = (domain?: DomainColor) => domain ?? 'unscoped';
 
-export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: DomainColor) {
-  const metadata = await resolveHomeBlockMetadata(homeBlock);
+export async function getHomeBlockCached(
+  homeBlock: HomeBlockForCache,
+  domain?: DomainColor,
+  resolvedMetadata?: HomeBlockMetaSchema
+) {
+  const metadata =
+    resolvedMetadata ?? (await (await homeBlockService()).resolveHomeBlockMetadata(homeBlock));
   const identifier = getHomeBlockIdentifier(homeBlock, metadata);
 
   if (!identifier) return null;
@@ -76,7 +88,12 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: 
   const cacheKey = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${homeBlock.type}:${identifier}:${domainSegment(
     domain
   )}` as const;
-  const cachedHomeBlock = await redis.packed.get<HomeBlockWithData>(cacheKey);
+  // An unreadable cache (error, timeout, open breaker) is a miss: the block is built from source.
+  const cachedHomeBlock = await clusterCacheGuard.readOr(
+    'home-block-cache.getHomeBlockCached',
+    () => redis.packed.get<HomeBlockWithData>(cacheKey),
+    null
+  );
 
   // One entry serves every clone of a source, so the stored copy carries the identity of whichever
   // row filled it first. The content is shared; the identity is not — the caller asked about THIS
@@ -85,7 +102,9 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: 
 
   log(`getHomeBlockCached :: getting home block with identifier ${identifier}`);
 
-  const homeBlockWithData = await getHomeBlockData({
+  const homeBlockWithData = await (
+    await homeBlockService()
+  ).getHomeBlockData({
     homeBlock,
     input: { limit: 14 * 4, domain },
   });
@@ -98,10 +117,18 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: 
     metadata,
   };
 
-  if (homeBlockWithData) {
-    await redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
-      EX: CACHE_EXPIRY[homeBlock.type],
-    });
+  // Only a collection everyone may read goes in this entry, which every viewer reads.
+  const shareable =
+    homeBlock.type !== HomeBlockType.Collection ||
+    isCollectionReadShared(
+      (homeBlockWithData as { collection?: { read?: string } } | null)?.collection?.read
+    );
+  if (homeBlockWithData && shareable) {
+    await clusterCacheGuard.writeBestEffort('home-block-cache.getHomeBlockCached set', () =>
+      redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
+        EX: CACHE_EXPIRY[homeBlock.type],
+      })
+    );
 
     log('getHomeBlockCached :: done getting system home blocks');
   }
@@ -145,4 +172,8 @@ export async function homeBlockCacheBust(type: HomeBlockType, entityId: number |
   ];
   log(`Cache busted: ${base} (${keys.length} keys)`);
   await Promise.all(keys.map((key) => redis.del(key as typeof base)));
+}
+
+export async function bustFeaturedModelsHomeBlockCache() {
+  await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, FEATURED_MODELS_HOME_BLOCK_KEY);
 }

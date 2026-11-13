@@ -20,6 +20,7 @@ const filters = {
   types: ['LORA'],
   baseModels: ['SDXL 1.0'],
   hidePaid: true,
+  turboOnly: true,
 };
 
 vi.mock('~/utils/trpc', () => ({
@@ -76,6 +77,7 @@ describe('useResourceSelectInfinite — the tRPC input', () => {
     expect(renderHook()).toMatchObject({
       filterTypes: ['LORA'],
       filterBaseModels: ['SDXL 1.0'],
+      filterTurbo: true,
     });
   });
 });

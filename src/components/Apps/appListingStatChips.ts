@@ -3,10 +3,9 @@
  *
  * Sibling of `appListingDetailRows.ts`, and here for the same reason: the chips and
  * their hover-card copy are the only place the listing still renders the recommend
- * PERCENTAGE and the NOT-recommended count, and the browser `component` project that
- * renders them is **not run by CI**. A guard that lives only there is invisible to
- * everyone, so the decision itself is extracted and pinned in the blocking node `unit`
- * project. The component becomes a renderer of this list and decides nothing.
+ * PERCENTAGE and the NOT-recommended count, so the decision itself is extracted and
+ * pinned in the node `unit` project as well as the browser `component` project that
+ * renders them. The component becomes a renderer of this list and decides nothing.
  *
  * 🔴 WHY THIS MODULE EXISTS AT ALL — two defects it was extracted to fix, both of which
  * were live on the branch and both of which a browser-only test would still not gate:
@@ -31,7 +30,7 @@
  *      aggregate in the rail and half in the header.
  *
  * 🔴 `preview` POSTURE. The moderator listing-media review renders this body over an
- * UNAPPROVED shadow listing, which structurally has no reviews and no installs — its
+ * UNAPPROVED shadow listing, which structurally has no reviews and no metric rollup — its
  * rollup is 0/0 because nobody could have reviewed it, not because nobody did. Both
  * chips are therefore omitted, and that omission is decided HERE (the component just
  * renders the list, and renders nothing for an empty one) so the RULE is covered by
@@ -43,13 +42,13 @@
  * here does not cover the hand-off to it.
  */
 
-import { getRecommendLabel } from '~/components/Apps/appListingCardView';
+import { getRecommendLabel, listingUsageStat } from '~/components/Apps/appListingCardView';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /** One header stat chip: an `IconBadge` face wrapped in a `StatHoverCard`. */
 export type ListingStatChip = {
   /** Stable key — also the chip's `data-listing-stat` attribute in the DOM. */
-  key: 'recommend' | 'installs';
+  key: 'recommend' | 'plays' | 'installs';
   /** Hover-card TITLE. */
   label: string;
   /** The number printed on the chip face, and the hover card's `value` fallback. */
@@ -59,41 +58,44 @@ export type ListingStatChip = {
   /**
    * Hover-card body copy. When set, `StatHoverCard` renders THIS INSTEAD of the
    * numeric value — so a chip whose dropdown should just repeat its own number (the
-   * installs chip) must leave it undefined rather than spell the number again.
+   * usage chip) must leave it undefined rather than spell the number again.
    */
   message?: string;
 };
 
-type StatInput = Pick<ListingDetail, 'recommend' | 'reviewCount' | 'installCount'>;
+type StatInput = Pick<
+  ListingDetail,
+  'recommend' | 'reviewCount' | 'kindData' | 'openCount' | 'installCount'
+>;
 
-/** True when the rollup carries no reviews at all — no percentage, no negative half. */
-function hasNoReviews(detail: Pick<ListingDetail, 'recommend' | 'reviewCount'>): boolean {
-  // Both conditions, matching `buildListingDetailRows`' reviews row: the two fields are
-  // separate scalars off one rollup, and a `0/0` metric row can produce a pct without a
-  // count.
-  return detail.recommend.recommendPct == null || detail.reviewCount === 0;
+/**
+ * True when the rollup carries no reviews at all — no percentage, no negative half.
+ *
+ * 🔴 COUNT-ONLY. `recommendPct == null` no longer means "no reviews": the server also
+ * withholds it below a minimum review count, and those reviews must still be shown.
+ */
+function hasNoReviews(detail: Pick<ListingDetail, 'reviewCount'>): boolean {
+  return detail.reviewCount === 0;
 }
 
 /**
  * The recommend chip's hover copy — the ONLY surface that still renders the recommend
  * percentage and the not-recommended count.
  *
- * With reviews:  `87% recommend (340) · 44 don't`
- * Without:       `No reviews yet`
+ * With a pct:         `87% recommend (340) · 44 don't`
+ * Reviews, no pct:    `4 reviews · 3 recommend · 1 doesn't`
+ * No reviews:         `No reviews yet`
  *
- * The percentage half is delegated to `getRecommendLabel`, the same function the store
- * grid cards render, rather than re-rounded here — a second rounding is exactly the
- * shape that drifts by one at one call site.
+ * The positive half (percentage or counts) is delegated to `getRecommendLabel`, the same
+ * function the store grid cards render, rather than re-derived here — a second rounding
+ * is exactly the shape that drifts by one at one call site.
  */
 export function buildRecommendHoverMessage(
   detail: Pick<ListingDetail, 'recommend' | 'reviewCount'>
 ): string {
-  // The zero copy is `getRecommendLabel`'s own (`recommendPct == null` → "No reviews
-  // yet"), taken from it rather than restated as a second literal that can drift from
-  // the store cards'. The `null` is forced because the OTHER zero shape — a non-null
-  // pct with a zero count — must reach the same branch.
-  if (hasNoReviews(detail))
-    return getRecommendLabel({ ...detail.recommend, recommendPct: null }, detail.reviewCount);
+  // The zero copy is `getRecommendLabel`'s own ("No reviews yet" on a zero count), taken
+  // from it rather than restated as a second literal that can drift from the store cards'.
+  if (hasNoReviews(detail)) return getRecommendLabel(detail.recommend, detail.reviewCount);
 
   const positive = getRecommendLabel(detail.recommend, detail.reviewCount);
   const { notRecommendedCount } = detail.recommend;
@@ -103,7 +105,8 @@ export function buildRecommendHoverMessage(
   // `undefined.toLocaleString()` inside a header chip would unmount the whole page.
   // An absent negative half degrades to the positive half alone; it never throws.
   if (typeof notRecommendedCount !== 'number') return positive;
-  return `${positive} · ${notRecommendedCount.toLocaleString()} don't`;
+  const verb = notRecommendedCount === 1 ? "doesn't" : "don't";
+  return `${positive} · ${notRecommendedCount.toLocaleString()} ${verb}`;
 }
 
 /**
@@ -130,13 +133,18 @@ export function buildListingStatChips(
     message: buildRecommendHoverMessage(detail),
   });
 
-  chips.push({
-    key: 'installs',
-    label: 'Installs',
-    value: detail.installCount,
-    ariaLabel: `${detail.installCount.toLocaleString()} installs`,
-    // No message: the dropdown showing the full, un-abbreviated count IS the content.
-  });
+  // USAGE — "Plays" on-site, "Installs" off-site, by the same `listingUsageStat` rule as
+  // the Details row, so the chip and the row never disagree.
+  const usage = listingUsageStat(detail);
+  if (usage) {
+    chips.push({
+      key: usage.key,
+      label: usage.label,
+      value: usage.count,
+      ariaLabel: `${usage.count.toLocaleString()} ${usage.label.toLowerCase()}`,
+      // No message: the dropdown showing the full, un-abbreviated count IS the content.
+    });
+  }
 
   return chips;
 }

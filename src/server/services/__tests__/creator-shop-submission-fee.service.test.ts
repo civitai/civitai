@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { takenImageKeyFake } from './image-url-ownership.fake';
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
 );
@@ -28,6 +32,12 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+const { assertUsableSpy } = vi.hoisted(() => ({ assertUsableSpy: vi.fn() }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  assertUsableSpy.mockImplementation(actual.assertClientImageUrlsUsable);
+  return { ...actual, assertClientImageUrlsUsable: assertUsableSpy };
+});
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
@@ -38,10 +48,16 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 const { submitCreatorShopItem } = await import('../creator-shop.service');
 const { submitCreatorShopPack } = await import('../creator-shop-pack.service');
 
+// Shop artwork is a bare upload key; this one's issue record names the caller.
+const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
+beforeEach(() => {
+  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+});
+
 const submitInput = {
   name: 'Golden Laurel',
   description: null,
-  imageUrl: 'cf-image-id',
+  imageUrl: ART_KEY,
   price: 500,
   availableQuantity: null,
   buzzType: 'yellow',
@@ -226,6 +242,49 @@ describe('pack submission fee charged', () => {
     await expect(
       submitCreatorShopPack({ ...packInput, memberCosmeticIds: members, quotedFee: 1000 })
     ).rejects.toThrow(/fee changed/i);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+  it('refuses a cover whose key was issued to someone else, before charging', async () => {
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
+    redisMock.sysRedis.mGet.mockResolvedValueOnce(['55'] as never);
+    try {
+      await expect(
+        submitCreatorShopPack({
+          ...packInput,
+          memberCosmeticIds: members,
+          quotedFee: 1000,
+          imageUrl: '0a0b0c0d-0000-4000-8000-0000000000aa',
+          rightsAffirmed: true,
+        })
+      ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+  it('refuses a cover whose key is already in use, before charging', async () => {
+    const probes: unknown[][] = [];
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(takenImageKeyFake(probes));
+    try {
+      await expect(
+        submitCreatorShopPack({
+          ...packInput,
+          memberCosmeticIds: members,
+          quotedFee: 1000,
+          imageUrl: '0a0b0c0d-0000-4000-8000-0000000000aa',
+          rightsAffirmed: true,
+        })
+      ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(probes).toHaveLength(1);
+    // Checked as a shop write: no image row may hold the key, the creator's own included.
+    expect(assertUsableSpy).toHaveBeenCalledWith(expect.objectContaining({ shopRow: {} }));
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
   });

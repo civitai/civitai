@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetCapabilityCacheForTests,
+  canDecodeDevalueResponse,
   isPhase1CapableClientVersion,
-  PHASE1_CLIENT_VERSION,
-  phase1CapableLabel,
 } from '~/server/utils/client-version-saturation';
 
 /**
@@ -18,10 +17,6 @@ import {
 
 describe('isPhase1CapableClientVersion', () => {
   beforeEach(() => __resetCapabilityCacheForTests());
-
-  it('threshold constant is the first unambiguously-Phase-1 version', () => {
-    expect(PHASE1_CLIENT_VERSION).toBe('5.0.2080');
-  });
 
   it('the exact threshold version is capable', () => {
     expect(isPhase1CapableClientVersion('5.0.2080')).toBe(true);
@@ -53,12 +48,30 @@ describe('isPhase1CapableClientVersion', () => {
   });
 });
 
-describe('phase1CapableLabel', () => {
+describe('canDecodeDevalueResponse', () => {
   beforeEach(() => __resetCapabilityCacheForTests());
 
-  it('maps to a bounded string label', () => {
-    expect(phase1CapableLabel('5.0.2081')).toBe('true');
-    expect(phase1CapableLabel('5.0.2079')).toBe('false');
-    expect(phase1CapableLabel(undefined)).toBe('false');
+  it('accepts a web-bundle request at or above the threshold', () => {
+    expect(canDecodeDevalueResponse({ 'x-client': 'web', 'x-client-version': '5.0.2080' })).toBe(
+      true
+    );
+  });
+
+  it('rejects a web bundle below the threshold', () => {
+    expect(canDecodeDevalueResponse({ 'x-client': 'web', 'x-client-version': '5.0.2079' })).toBe(
+      false
+    );
+  });
+
+  it('rejects a capable version that does not come from the web client', () => {
+    expect(canDecodeDevalueResponse({ 'x-client-version': '5.0.2081' })).toBe(false);
+    expect(canDecodeDevalueResponse({ 'x-client': 'cli', 'x-client-version': '5.0.2081' })).toBe(
+      false
+    );
+  });
+
+  it('rejects a request with no headers', () => {
+    expect(canDecodeDevalueResponse(undefined)).toBe(false);
+    expect(canDecodeDevalueResponse({})).toBe(false);
   });
 });

@@ -31,8 +31,16 @@
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// The row's icon is a live `appListings.getAppDetail` read (`ChromeRecentAppIcon`). This file
+// measures row height only, so the shared inert proxy answers it (no data ⇒ the generic glyph).
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(),
+}));
 
 // eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
@@ -148,9 +156,13 @@ describe('the desktop "Recently run" row does not wrap', () => {
       dropdown,
       'the platform-nav dropdown must be in the document once opened'
     ).not.toBeNull();
+    // The bound was 215 for the original item set. The platform nav has since gained ONE
+    // host-authored row ("My apps" → `/apps`, the viewer's launcher home), so it grows by
+    // exactly one one-line row — measured here as the sibling reference row, not retyped.
+    // A wrapped publisher name still adds ~23px on top and fails this.
     expect(
       Math.round(rect(dropdown as HTMLElement).height),
       'the dropdown must not be taller than the sum of one-line rows plus its two labels'
-    ).toBeLessThan(215);
+    ).toBeLessThan(215 + referenceHeight);
   });
 });

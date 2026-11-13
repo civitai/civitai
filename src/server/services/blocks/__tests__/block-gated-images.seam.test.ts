@@ -47,6 +47,14 @@ const EXPECTED_CALL_SITES = [
   'server/services/blocks/block-gated-images.service.ts',
   // The public-Post adoption gate — must REFUSE anything not `visible`.
   'server/services/blocks/block-post.service.ts',
+  // The App Store listing-media gate (`isListingImageVisible`) — every public render of a
+  // listing's icon, cover and screenshots, and a sub-listing card's own image and parent
+  // fallback, decides through it. Anything not `visible` is not shown, so `pending` never
+  // yields a url.
+  'server/services/blocks/listing-media-audience.ts',
+  // Block collection covers and items — anything not `visible` is not served (a cover
+  // falls back to the newest servable item), so `pending` never yields a url.
+  'server/services/blocks/block-collections.service.ts',
 ].sort();
 
 /** Files that may gate on `=== 'hidden'` (i.e. the projection, which handles
@@ -316,7 +324,11 @@ describe(`${SYMBOL} seam`, () => {
     const targets = EXPECTED_CALL_SITES.filter((rel) => !MAY_BRANCH_ON_HIDDEN.has(rel));
     // Named rather than counted: allow-listing the last consumer, or emptying the ledger, would
     // otherwise leave this case iterating nothing and reporting green.
-    expect(targets).toEqual(['server/services/blocks/block-post.service.ts']);
+    expect(targets).toEqual([
+      'server/services/blocks/block-collections.service.ts',
+      'server/services/blocks/block-post.service.ts',
+      'server/services/blocks/listing-media-audience.ts',
+    ]);
 
     for (const rel of targets) {
       // Comments are already stripped, so the prose ABOVE the gate (which names

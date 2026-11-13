@@ -1,5 +1,6 @@
-import type { NsfwLevel } from '@civitai/client';
+import type { NsfwLevel } from '@civitai/orchestration-client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export async function getBlobData({ token, blobId }: { token: string; blobId: string }) {
   const client = createOrchestratorClient(token);
@@ -7,7 +8,8 @@ export async function getBlobData({ token, blobId }: { token: string; blobId: st
 
   if (!baseUrl) throw new Error('invalid orchestrator client');
 
-  const response = await fetch(`${baseUrl}/v2/consumer/blobs/${blobId}`, {
+  const response = await outboundFetch(`${baseUrl}/v2/consumer/blobs/${blobId}`, {
+    timeoutMs: 30_000,
     headers: {
       Authorization: `Bearer ${token}`,
     },

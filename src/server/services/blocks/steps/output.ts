@@ -46,13 +46,14 @@ export type OrchestratorBlobLike = {
   width?: number | null;
   height?: number | null;
   nsfwLevel?: string | null;
+  blockedReason?: string | null;
 };
 
 /**
- * Blobs → `StepOutputMedia[]`, applying the availability + non-empty-url filter.
+ * Blobs → `StepOutputMedia[]`, applying the availability, block and non-empty-url filter.
  *
  * 🔴 EXPORTED SO EVERY ENTRY USES ONE COPY OF THE FILTER. The rule — "only blobs
- * that are `available` with a non-null url are surfaced; pending/blocked ones
+ * that are `available`, not blocked, with a non-null url are surfaced; pending/blocked ones
  * are dropped rather than handing the block dead links" — is the same rule the
  * two `workflow.service` extractors already applied inline. A per-entry
  * reimplementation is how one copy gets a fix and the others don't.
@@ -71,8 +72,7 @@ export function mediaFromBlobs(
     blobs == null ? [] : Array.isArray(blobs) ? blobs : [blobs as OrchestratorBlobLike];
   const media: StepOutputMedia[] = [];
   for (const blob of list) {
-    if (!blob) continue;
-    if (!blob.available || typeof blob.url !== 'string' || blob.url.length === 0) continue;
+    if (!isSurfaceableBlob(blob) || isBlockedBlob(blob)) continue;
     media.push({
       url: blob.url,
       width: typeof blob.width === 'number' ? blob.width : null,
@@ -81,6 +81,64 @@ export function mediaFromBlobs(
     });
   }
   return media;
+}
+
+/**
+ * THE availability + non-empty-url predicate `mediaFromBlobs` applies — the one
+ * place it is spelled. A blob failing it is pending, withheld or blocked by the
+ * orchestrator (`available: false`, often with no url), never surfaced.
+ */
+function isSurfaceableBlob(
+  blob: OrchestratorBlobLike | null | undefined
+): blob is OrchestratorBlobLike & { url: string } {
+  return !!blob && !!blob.available && typeof blob.url === 'string' && blob.url.length > 0;
+}
+
+/**
+ * 🔴 Checked apart from `available`: a videoGen output reports `available: true`
+ * even when the orchestrator has blocked it.
+ */
+function isBlockedBlob(blob: OrchestratorBlobLike) {
+  const reason = blob.blockedReason;
+  return typeof reason === 'string' && reason.length > 0 && reason.toLowerCase() !== 'none';
+}
+
+/** Deep enough for every native, registered and pass-through output shape. */
+const SURFACEABLE_PROBE_DEPTH = 8;
+
+/**
+ * A copy of a step `output` in which every blob-SHAPED object
+ * (`isOrchestratorBlobLike`) is made to pass `isSurfaceableBlob` — `available`,
+ * with a url (a placeholder when it had none). Nothing else changes.
+ *
+ * It exists to ask ONE question with the step's own extractor and no second
+ * copy of its key logic: "did this step's EXPECTED output location hold blobs
+ * that were all withheld, or no blobs at all?" Run the extractor on this copy:
+ * media found means the blobs were there but not surfaceable; none found means
+ * the location the extractor reads was empty — the #8132 shape, where a `comfy`
+ * step's blobs sat under a key the extractor did not read.
+ *
+ * 🔴 PROBE ONLY. The placeholder url is not a real url; nothing derived from
+ * this copy may ever reach a snapshot, a projection or a log.
+ */
+export function withEveryBlobSurfaceable(output: unknown, depth = 0): unknown {
+  if (output === null || typeof output !== 'object') return output;
+  if (isOrchestratorBlobLike(output)) {
+    const blob = output as OrchestratorBlobLike;
+    return {
+      ...blob,
+      available: true,
+      blockedReason: null,
+      url: typeof blob.url === 'string' && blob.url.length > 0 ? blob.url : 'probe:withheld',
+    };
+  }
+  if (depth >= SURFACEABLE_PROBE_DEPTH) return output;
+  if (Array.isArray(output)) return output.map((v) => withEveryBlobSurfaceable(v, depth + 1));
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
+    copy[key] = withEveryBlobSurfaceable(value, depth + 1);
+  }
+  return copy;
 }
 
 /**
@@ -173,14 +231,16 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
  *
  * 🔴 THE RESIDUE IS A SHAPE RESIDUE AS WELL AS A DEPTH ONE, AND THE SECOND HALF
  * IS EASY TO MISS BECAUSE THE MEASUREMENT ABOVE ENUMERATED BLOB-*TYPED* FIELDS,
- * NOT URL-*CARRYING* ONES. Two ALLOWED types carry a url as a PLAIN STRING and
- * are therefore invisible to a shape test: `blobArchive`, whose entire output is
- * `{ url, entryCount, format, expiresAt }`, and
- * `imageResourceTraining.epochs[].blobUrl`. Those urls reach the app through
- * `stepOutputs` and are never seen by the publish path or the per-viewer gated
- * read. Sniffing every string for something url-shaped is NOT the fix — it would
- * strip prose that merely contains a link. Lifting a named string field, or
- * refusing those `$type`s, is; both are decisions, not cleanups.
+ * NOT URL-*CARRYING* ONES. `blobArchive`, whose entire output is
+ * `{ url, entryCount, format, expiresAt }`, carries its url as a PLAIN STRING, is
+ * invisible to a shape test, and reaches the app through `stepOutputs` unseen by
+ * the publish path or the per-viewer gated read. Sniffing every string for
+ * something url-shaped is NOT the fix — it would strip prose that merely contains
+ * a link. Handling a named field by position is; `splitPassThroughStep` does
+ * that for the training `$type`s (incl. the plain-string
+ * `imageResourceTraining.epochs[].blobUrl` and `sampleImages`). `blobArchive`
+ * remains open, as does `imageResourceTraining.sampleInputImages` (images the
+ * run selected from the app's own training input).
  *
  * 🔴 IT REBUILDS RATHER THAN FORWARDS. Every object and array it descends into
  * is reconstructed, so "forward verbatim" is true of VALUES and not of identity:
@@ -192,16 +252,168 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
 export function splitPassThroughStepOutput(output: unknown): {
   media: StepOutputMedia[];
   rest: unknown;
+  model3d: Model3dOutputLabel[];
 } {
   const media: StepOutputMedia[] = [];
-  const rest = walkPassThroughOutput(output, media, 0);
-  return { media, rest };
+  const model3d: Model3dOutputLabel[] = [];
+  const rest = walkPassThroughOutput(output, { media, model3d }, 0, []);
+  return { media, rest, model3d };
 }
 
-function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: number): unknown {
+/**
+ * What a 3D model in a pass-through output IS, beside its url in `media`.
+ *
+ * `mediaFromBlobs` flattens every blob to a bare url, so a `polyGen` job's GLB, FBX,
+ * rigged and animated variants arrive as an undifferentiated list. This keeps the two
+ * facts the flattening drops, ADDITIVELY — `media` and its order are untouched:
+ *   - `format` — the orchestrator `Model3dBlob.format` (`'glb'`, `'fbx'`, …), read off
+ *     the blob itself. The blob is recognised by its own discriminator,
+ *     `type: 'model3d'` (`@civitai/orchestration-client` `Model3dBlob`), never by sniffing a url or
+ *     guessing from a key name.
+ *   - `variant` — the output key path the blob sat at, dot-joined (`'model'`,
+ *     `'riggedFbxModel'`, `'basicAnimations.walkingModel'`; an array index is a
+ *     segment). `''` when the whole output is the blob.
+ *
+ * Only blobs that `mediaFromBlobs` KEPT are labelled, so every label's `url` is one of
+ * the urls in `media` — a dropped (unavailable / blocked) blob gains no label.
+ */
+export type Model3dOutputLabel = { url: string; format: string; variant: string };
+
+/** The `Model3dBlob` discriminator, from `@civitai/orchestration-client`'s generated types. */
+const MODEL3D_BLOB_TYPE = 'model3d';
+
+type PassThroughOutputSink = { media: StepOutputMedia[]; model3d: Model3dOutputLabel[] };
+
+/** Lift one blob-shaped value into the sink: its media, and its 3D label if it is one. */
+function liftBlob(value: OrchestratorBlobLike, sink: PassThroughOutputSink, path: string[]) {
+  const lifted = mediaFromBlobs(value);
+  sink.media.push(...lifted);
+  const blob = value as OrchestratorBlobLike & { type?: unknown; format?: unknown };
+  if (
+    lifted.length === 1 &&
+    blob.type === MODEL3D_BLOB_TYPE &&
+    typeof blob.format === 'string' &&
+    blob.format.length > 0
+  ) {
+    sink.model3d.push({ url: lifted[0].url, format: blob.format, variant: path.join('.') });
+  }
+}
+
+/** The orchestrator training `$type`s, which put a trained CHECKPOINT on every epoch. */
+export const TRAINING_STEP_TYPES = ['training', 'imageResourceTraining'] as const;
+export type TrainingStepType = (typeof TRAINING_STEP_TYPES)[number];
+
+export function isTrainingStepType(stepType: unknown): stepType is TrainingStepType {
+  return (TRAINING_STEP_TYPES as readonly unknown[]).includes(stepType);
+}
+
+/** An epoch whose checkpoint is ready — what the training publish wizard can be handed. */
+export type TrainedEpoch = { $type: TrainingStepType; epochNumber: number };
+
+/**
+ * A pass-through STEP's output split three ways: media, the forwarded remainder,
+ * and — for a training `$type` — which epochs carry a ready checkpoint.
+ *
+ * 🔴 THE CHECKPOINT IS DROPPED, NOT LIFTED. `training.epochs[].model` is a real
+ * orchestrator `Blob`, so the shape walk alone would put the safetensors url in
+ * `imageUrls` beside the sample images, indistinguishable from them; and
+ * `imageResourceTraining.epochs[].blobUrl` is a plain string the shape walk
+ * cannot see, so it would ride `stepOutputs`. Both are removed here BY POSITION,
+ * keyed on the two `$type`s, before the walk runs — never by sniffing a url for
+ * a file extension.
+ *
+ * 🔴 SAMPLES GO TO `imageUrls` FOR BOTH TYPES. `training` samples are `Blob`s and
+ * the walk lifts them; `imageResourceTraining.epochs[].sampleImages` are plain
+ * strings the main app renders as image urls, so they are lifted here by
+ * position — otherwise they would ride `stepOutputs`, around the gated read.
+ *
+ * 🔴 `trainedEpochs` IS EMPTY UNLESS THE RUN'S `moderationStatus` IS `approved`.
+ * It is what a block offers to the publish wizard; a run still evaluating, under
+ * review or rejected has nothing to offer.
+ *
+ * Both workflow extractors call this rather than `splitPassThroughStepOutput`
+ * directly, so neither can forget the training rule.
+ */
+export function splitPassThroughStep(
+  stepType: string,
+  output: unknown
+): {
+  media: StepOutputMedia[];
+  rest: unknown;
+  trainedEpochs: TrainedEpoch[];
+  model3d: Model3dOutputLabel[];
+} {
+  if (!isTrainingStepType(stepType)) {
+    return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
+  }
+  const trainedEpochs: TrainedEpoch[] = [];
+  const sampleUrls: string[] = [];
+  const stripped = stripTrainingEpochs(stepType, output, trainedEpochs, sampleUrls);
+  const { media, rest, model3d } = splitPassThroughStepOutput(stripped);
+  for (const url of sampleUrls) media.push({ url, width: null, height: null, nsfwLevel: null });
+  const approved =
+    output !== null &&
+    typeof output === 'object' &&
+    (output as Record<string, unknown>).moderationStatus === 'approved';
+  return { media, rest, trainedEpochs: approved ? trainedEpochs : [], model3d };
+}
+
+/**
+ * Per `$type`, the epoch keys removed before the walk: the checkpoint
+ * (`TrainingOutputEpochResult.model`, `EpochResult.blobUrl` + `blobName`) and,
+ * for the legacy type, the plain-string samples lifted to media instead.
+ */
+const STRIPPED_EPOCH_KEYS: Record<TrainingStepType, readonly string[]> = {
+  training: ['model'],
+  imageResourceTraining: ['blobUrl', 'blobName', 'sampleImages'],
+};
+
+function hasReadyCheckpoint(stepType: TrainingStepType, epoch: Record<string, unknown>): boolean {
+  if (stepType === 'imageResourceTraining') {
+    return typeof epoch.blobUrl === 'string' && epoch.blobUrl.length > 0;
+  }
+  return mediaFromBlobs(epoch.model as OrchestratorBlobLike | null | undefined).length > 0;
+}
+
+function stripTrainingEpochs(
+  stepType: TrainingStepType,
+  output: unknown,
+  trainedEpochs: TrainedEpoch[],
+  sampleUrls: string[]
+): unknown {
+  if (output === null || typeof output !== 'object' || Array.isArray(output)) return output;
+  const epochs = (output as Record<string, unknown>).epochs;
+  if (!Array.isArray(epochs)) return output;
+  const strippedKeys = STRIPPED_EPOCH_KEYS[stepType];
+  const stripped = epochs.map((epoch) => {
+    if (epoch === null || typeof epoch !== 'object' || Array.isArray(epoch)) return epoch;
+    const e = epoch as Record<string, unknown>;
+    if (Number.isInteger(e.epochNumber) && hasReadyCheckpoint(stepType, e)) {
+      trainedEpochs.push({ $type: stepType, epochNumber: e.epochNumber as number });
+    }
+    if (stepType === 'imageResourceTraining' && Array.isArray(e.sampleImages)) {
+      for (const sample of e.sampleImages) {
+        if (typeof sample === 'string' && sample.length > 0) sampleUrls.push(sample);
+      }
+    }
+    const kept: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(e)) {
+      if (!strippedKeys.includes(key)) kept[key] = value;
+    }
+    return kept;
+  });
+  return { ...(output as Record<string, unknown>), epochs: stripped };
+}
+
+function walkPassThroughOutput(
+  value: unknown,
+  sink: PassThroughOutputSink,
+  depth: number,
+  path: string[]
+): unknown {
   if (value === null || typeof value !== 'object') return value;
   if (isOrchestratorBlobLike(value)) {
-    media.push(...mediaFromBlobs(value as OrchestratorBlobLike));
+    liftBlob(value as OrchestratorBlobLike, sink, path);
     return {};
   }
   // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
@@ -213,23 +425,32 @@ function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: 
     // NESTED inside a non-blob sibling: `[blob, { nested: blob }]` lifted the
     // first and discarded the second from BOTH sides — never published, never
     // forwarded. Lifting per element and walking the rest keeps both.
+    // The key path is extended only for a value that is lifted or descended into, so
+    // a large array of primitives allocates no path per element.
     const out: unknown[] = [];
-    for (const entry of value) {
+    value.forEach((entry, index) => {
       if (isOrchestratorBlobLike(entry)) {
-        media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
-        continue;
+        liftBlob(entry as OrchestratorBlobLike, sink, [...path, String(index)]);
+        return;
       }
-      out.push(walkPassThroughOutput(entry, media, depth + 1));
-    }
+      out.push(
+        entry !== null && typeof entry === 'object'
+          ? walkPassThroughOutput(entry, sink, depth + 1, [...path, String(index)])
+          : entry
+      );
+    });
     return out;
   }
   const rest: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (isOrchestratorBlobLike(entry)) {
-      media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
+      liftBlob(entry as OrchestratorBlobLike, sink, [...path, key]);
       continue;
     }
-    rest[key] = walkPassThroughOutput(entry, media, depth + 1);
+    rest[key] =
+      entry !== null && typeof entry === 'object'
+        ? walkPassThroughOutput(entry, sink, depth + 1, [...path, key])
+        : entry;
   }
   return rest;
 }

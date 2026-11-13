@@ -139,8 +139,11 @@ export type EcosystemSeoConfig = {
     /** One line shown in the banner, e.g. who is shutting it down and what to use instead. */
     note: string;
   };
-  /** Local-run honesty box. Omit for API-only ecosystems (renders an "API only" note instead). */
-  localRun?: { vram: string; weightsSize: string; tool: string };
+  /**
+   * Local-run honesty box. Omit for API-only ecosystems (renders an "API only" note instead).
+   * `vram` only when the publisher states a figure; without one the GPU line is skipped.
+   */
+  localRun?: { vram?: string; weightsSize: string; tool: string };
   /** Attribution line in the footer. */
   attribution: string;
   /**
@@ -1747,6 +1750,322 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     attribution: 'an image model by Krea',
   },
 
+  Krea3: {
+    key: 'Krea3',
+    updatedAt: '2026-11-06',
+    name: 'Krea 3',
+    seoTitle: 'Krea 3 (Krea3) AI Image Generator & Editor Online | Civitai',
+    metaDescription:
+      'Generate and edit images with Krea 3 online on Civitai: restage products, swap materials and combine reference images while the subject stays intact.',
+    modality: 'image',
+    isNew: true,
+    hero: {
+      intro:
+        "Krea 3 is Krea's image model for reference-driven generation and editing. Start from a product, a person, a room or a set of visual references, describe the change, keep what matters, and try the next idea. It runs on Krea's own API right here on Civitai, so there is nothing to download and no GPU to set up.",
+      badges: ['Text-to-Image', 'Reference-Driven Editing', 'By Krea', 'API (hosted)'],
+    },
+    overview: [
+      "Krea 3 is Krea's new image model, built around references rather than a prompt alone. You hand it one or more images, say what should change and what must stay, and it produces the edited result. On Civitai it runs on Krea's own API, so there are no files to download and it does not take LoRAs; it is ready in the generator with no setup, at 1K or 2K, with up to six references per edit.",
+      'It is at its best on four kinds of job. Restaging a product: put a real item into a new setting, light or composition while its label, shape and material carry through. Changing materials: try a new fabric, surface or colour in the same room from the same viewpoint. Combining references: bring a person, wardrobe, accessories and a backdrop from separate images into one shot. Building a sequence: keep editing from a result you like to make a series of consistent stills.',
+      'Choose Krea 3 when the work starts from something real that has to survive the edit, such as a product shot, a portrait or an interior. For open-weight text-to-image, a LoRA library or a local workflow, Krea 2 is the sibling to reach for; it ships Raw and Turbo checkpoints and trains LoRAs, while Krea 3 is the hosted editing model.',
+    ],
+    promptTips: [
+      'Write in plain, direct sentences. Krea 3 follows instructions about what to change and what to keep, so say both: "Keep the sofa shape, room and camera angle; change the fabric to green velvet."',
+      'With several references, say which image is which and give each one job: "the person from the first image, wearing the jacket from the second, in front of the backdrop from the third." Do not ask one image to set both the subject and a conflicting style.',
+      'For product and identity edits, name the details that identify the subject, such as the label, colour, material, shape or facial features, so they carry through unchanged.',
+      'When small details matter, such as a logo, fabric, small text or a face in a wide shot, upload the highest-resolution version of the reference you have.',
+      'Skip weight syntax and negatives. (word:1.5), [word] and ((word)) are read as literal text, and the Civitai generator has no negative prompt for Krea 3, so describe the wanted result instead of what to avoid. If too much changed, narrow the edit; if a sequence drifts, restart from the strongest earlier image.',
+    ],
+    generatorVersionId: 3405360,
+    featuredModels: [
+      {
+        modelId: 3001916,
+        versionId: 3405360,
+        imageId: 146130046,
+        displayName: 'Krea 3',
+        note: "Civitai-hosted · Krea's API",
+      },
+    ],
+    featuredExamples: [
+      {
+        imageId: 148106619,
+        prompt:
+          'A misty monochrome photograph of a stone bridge with marble statues in a ruined city',
+        settings: 'Krea 3 · 1184×880',
+      },
+      {
+        imageId: 148103410,
+        prompt:
+          'A tall pirate ship skimming down a skyscraper as fireworks shoot starlight from its cannons',
+        settings: 'Krea 3 · 1184×880',
+      },
+      {
+        imageId: 147845730,
+        prompt: 'A redesigned King of Hearts playing card in the Paris portrait tradition',
+        settings: 'Krea 3 · 880×1184',
+      },
+      {
+        imageId: 147803348,
+        prompt:
+          'A close-up cinematic composition of a melancholy scarecrow with a patched burlap face',
+        settings: 'Krea 3 · 1792×2368',
+      },
+      {
+        imageId: 148025909,
+        prompt: 'A high-energy full-body character portrait in techno Y2K cyberpunk paint strokes',
+        settings: 'Krea 3 · 1024×1024',
+      },
+      {
+        imageId: 147721583,
+        prompt: 'Black and white cinematic three-quarter portrait of a relaxed man in his mid-30s',
+        settings: 'Krea 3 · 2368×1776',
+      },
+    ],
+    comparison: {
+      peers: ['Krea 2', 'Nano Banana', 'FLUX.2'],
+      rows: [
+        {
+          label: 'Best for',
+          values: [
+            'Reference-driven editing & restaging',
+            'Photorealism & aesthetics',
+            'Likeness-preserving photo editing',
+            'Photorealism, text, versatility',
+          ],
+        },
+        {
+          label: 'Image editing',
+          values: [
+            'Native, multi-reference',
+            'Native (Raw/Turbo edit)',
+            'Native, multi-turn',
+            'Native',
+          ],
+        },
+        {
+          label: 'LoRA ecosystem',
+          values: ['None (hosted)', '{loras:Krea2}', 'None (hosted)', '{loras:Flux2}'],
+        },
+        {
+          label: 'Access',
+          values: ['API (hosted)', 'Open weights + API', 'API (hosted)', 'Open weights + API'],
+        },
+        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
+      ],
+    },
+    faq: [
+      {
+        q: 'What is Krea 3?',
+        a: "Krea 3 is Krea's image model for reference-driven generation and editing: give it a product, a person, a room or several references, describe the change, and it keeps what matters. You can use it on Civitai straight from the browser.",
+      },
+      {
+        q: "What's the difference between Krea 2 and Krea 3?",
+        a: "Krea 2 is a text-to-image model with open-weight Raw and Turbo checkpoints, a LoRA library and hosted Large and Medium tiers. Krea 3 is the reference-driven editing model that runs on Krea's API: it starts from your images and keeps the subject intact through the edit. Pick Krea 2 to generate from a prompt or train a LoRA, and Krea 3 to restage, re-material or combine real references.",
+      },
+      {
+        q: 'Can I combine several reference images?',
+        a: 'Yes, up to six per edit on Civitai. Upload the references, say which image is which in the prompt, and give each one job: the person from the first image, the jacket from the second, the backdrop from the third. Krea 3 composes them into one shot.',
+      },
+      {
+        q: 'Can I use LoRAs with Krea 3?',
+        a: "Not on Civitai. Krea 3 runs on Krea's API here without LoRAs; you steer it with references and plain-language instructions. For a LoRA ecosystem, Krea 2 and its Raw and Turbo checkpoints are in the Civitai generator too.",
+      },
+      {
+        q: 'Do I need a GPU to run Krea 3?',
+        a: 'No local setup is possible or needed. Krea 3 is API-only, with no open weights to download; Krea runs the model and Civitai handles the generation for you.',
+      },
+    ],
+    attribution: 'a hosted image generation and editing model by Krea (Krea 3)',
+    factCheck: [
+      {
+        field: 'comparison',
+        claim: 'Krea 3 "Native, multi-reference" editing; Nano Banana "Native, multi-turn"',
+        note: "The Krea 3 cell comes from Krea's docs (up to eight references in the API; the Civitai generator takes six). The Nano Banana cell is copied from that page and was not re-verified here.",
+      },
+    ],
+  },
+
+  MossImage: {
+    key: 'MossImage',
+    updatedAt: '2026-11-06',
+    slug: 'moss-image',
+    name: 'MOSS Image',
+    seoTitle: 'MOSS Image Models & {loras:MossImage} LoRAs, Online Generator | Civitai',
+    metaDescription:
+      "Download MOSS Image SFT and Base with {loras:MossImage} LoRAs, or generate online. OpenMOSS's open 5B model for accurate in-image text, layouts and 4K-token prompts.",
+    modality: 'image',
+    isNew: true,
+    hero: {
+      intro:
+        'MOSS Image is a 5B-parameter text-to-image model from the OpenMOSS team, built for accurate in-image text, layout control and long prompts. It reads natural language, booru-style tags or a JSON layout, renders from 512px up to 2K at any aspect ratio, and ships under Apache-2.0. Generate with it right here on Civitai, no GPU, no install, or download the weights and train your own LoRA.',
+      badges: ['Text-to-Image', 'Text Rendering', 'By OpenMOSS', 'Open weights (Apache-2.0)'],
+    },
+    overview: [
+      'MOSS Image is a 5B-parameter diffusion transformer from OpenMOSS, the open-source lab at Fudan University. It pairs a Qwen3.5 9B text encoder with the FLUX.2 VAE, which is where its two headline abilities come from: the large language encoder reads prompts of up to 4K tokens in natural language, booru-style tags or a JSON layout, and the model was trained to place text and elements where the prompt says. It renders from 512px up to 2K at any aspect ratio and is text-to-image only; image editing and reference images are not part of this release.',
+      'Two versions are published. SFT is the supervised fine-tune of Base on curated data and the one to generate with: OpenMOSS’s own comparison shows cleaner text grouping and more organised layouts. Base is the undistilled base model with no post-training, the one to fine-tune and train LoRAs on. On Civitai the two share one ecosystem, so a LoRA trained on either loads on both. OpenMOSS recommends 50 steps with CFG 3 (raise it for short prompts), flow-matching Euler and shift 5; Civitai’s generator starts at 25 steps and goes up to 60. The weights and inference code are Apache-2.0: commercial use, derivatives and LoRAs are allowed, with the licence notice kept on redistribution.',
+      'Choose MOSS Image when the picture has to carry words, such as a poster, a label, a sign or a comic panel, or when a long, specific caption is easier to write than a tag soup. For anime with a deep tag vocabulary, Anima and Illustrious are the better-trodden paths; for photoreal editing, Krea 2 or FLUX.2. On Civitai both MOSS versions sit in the generator with steps, CFG and a negative prompt exposed, and a growing LoRA library trained on Base.',
+    ],
+    promptTips: [
+      'Write a full scene caption in plain sentences, or booru-style tags, or both; mixing is fine. The Qwen3.5 encoder reads whole sentences and the model was trained on long captions, so a detailed prompt of several hundred words is normal.',
+      'Put text that should appear in the image in quotation marks, as OpenMOSS’s examples do, and describe its style and placement. Line breaks inside the quoted text set the line breaks in the rendered text.',
+      'Tag prompts follow the order quality, score, meta, year, character, series, artist, general, with artists written as @name, as in the official examples: "best quality, highres, 1girl, blue hair, @artist".',
+      'OpenMOSS’s prompting guide uses no weight syntax such as (word:1.5) or ((word)); put the emphasis in words instead.',
+      'Use the negative prompt; the model runs with CFG. OpenMOSS’s recommended negative is "nsfw, worst quality, bad anatomy, watermark, jpeg artifact". English has the most training data, and Chinese and other languages are supported, including for rendered text.',
+    ],
+    generatorVersionId: 3409867,
+    featuredModels: [
+      {
+        modelId: 3005406,
+        versionId: 3409867,
+        imageId: 145881759,
+        displayName: 'MOSS Image SFT',
+        note: 'Civitai-hosted · default for generation',
+      },
+      {
+        modelId: 3005406,
+        versionId: 3409868,
+        imageId: 145881841,
+        displayName: 'MOSS Image Base',
+        note: 'Open weights · for LoRA training',
+      },
+      {
+        modelId: 3007815,
+        versionId: 3429070,
+        imageId: 146791334,
+        displayName: 'Moss detail tweaker',
+      },
+      {
+        modelId: 507459,
+        versionId: 3434694,
+        imageId: 147086573,
+        displayName: 'The Weirdies',
+      },
+      {
+        modelId: 2952303,
+        versionId: 3412942,
+        imageId: 146016641,
+        displayName: 'SumiInk — Sumi-e and ink wash style',
+      },
+      {
+        modelId: 1970260,
+        versionId: 3435609,
+        imageId: 147130375,
+        displayName: 'Retro Anime Style',
+      },
+    ],
+    featuredExamples: [
+      {
+        imageId: 147910721,
+        prompt: 'A green electric bulb glowing softly on a wooden table in warm ambient light',
+        settings: 'Steps 8 · CFG 1 · MOSS Image SFT + 8-step LoRA · 768×1024',
+      },
+      {
+        imageId: 148121247,
+        prompt: 'A young anime character in a school uniform laughing with his eyes closed',
+        settings: 'Steps 35 · CFG 4 · MOSS Image SFT + LoRA · 1664×2496',
+      },
+      {
+        imageId: 147276347,
+        prompt:
+          'Painterly concept art blending atmospheric grandeur with gritty industrial realism',
+        settings: 'Steps 20 · CFG 3 · MOSS Image SFT · 832×1216',
+      },
+      {
+        imageId: 147725376,
+        prompt: 'A sunlit woodland clearing with a fairytale castle glimpsed between the trees',
+        settings: 'Steps 20 · CFG 2.5 · MOSS Image SFT + LoRAs · 1536×2048',
+      },
+      {
+        imageId: 147163682,
+        prompt:
+          'Candid 1960s flash photograph of a scientist examining a towering obelisk in an old laboratory',
+        settings: 'Steps 25 · CFG 2.5 · MOSS Image SFT · 1024×1536',
+      },
+      {
+        imageId: 147681135,
+        prompt: 'A cinematic anime hillside at golden hour, seen from beneath a large tree',
+        settings: 'Steps 20 · CFG 3 · MOSS Image SFT · 1024×1024',
+      },
+    ],
+    comparison: {
+      peers: ['Qwen', 'FLUX.2', 'Anima'],
+      rows: [
+        {
+          label: 'Best for',
+          values: [
+            'Text in images, layouts & long prompts',
+            'Prompt adherence & text',
+            'Photorealism, text, versatility',
+            'Anime & illustration',
+          ],
+        },
+        {
+          label: 'Prompt style',
+          values: [
+            'Sentences, tags or JSON layout',
+            'Natural language',
+            'Natural language',
+            'Tags + natural language',
+          ],
+        },
+        {
+          label: 'Text in images',
+          values: ['Strong', 'Strong', 'Strong', 'Basic'],
+        },
+        {
+          label: 'LoRA ecosystem',
+          values: ['{loras:MossImage}', '{loras:Qwen}', '{loras:Flux2}', '{loras:Anima}'],
+        },
+        {
+          label: 'Access',
+          values: [
+            'Open weights (Apache-2.0)',
+            'Open weights + API',
+            'Open weights + API',
+            'Open weights',
+          ],
+        },
+        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
+      ],
+    },
+    faq: [
+      {
+        q: 'What is MOSS Image?',
+        a: "MOSS Image is OpenMOSS's open 5B text-to-image model, built for accurate in-image text, layout control and long prompts, with a Qwen3.5 text encoder and the FLUX.2 VAE. Generate with it on Civitai, or download the weights.",
+      },
+      {
+        q: "What's the difference between MOSS Image SFT and Base?",
+        a: 'SFT is the supervised fine-tune on curated data and the one to generate with: OpenMOSS’s own comparison shows cleaner text grouping and more organised layouts. Base is the undistilled model with no post-training, the one to fine-tune and train LoRAs on. Both are in the Civitai generator, and a LoRA trained on either loads on both.',
+      },
+      {
+        q: 'How do I get readable text in the image?',
+        a: 'Put the text in quotation marks and describe its style and placement; line breaks inside the quotes become line breaks in the render. English has the most training data, and Chinese and other languages are supported. Try it by remixing one of the examples above.',
+      },
+      {
+        q: 'Can I train a LoRA for MOSS Image?',
+        a: "Yes. Base is the version to train on, and a LoRA trained on it also loads on SFT in the Civitai generator. MOSS Image LoRA training is rolling out in Civitai's Training Studio, and a LoRA you publish earns Buzz when others generate with it.",
+      },
+      {
+        q: 'Do I need a GPU to use MOSS Image?',
+        a: 'Not on Civitai, where the compute runs for you. Locally, each version ships the diffusion model in bf16 and int8, with the Qwen3.5 text encoder and FLUX.2 VAE alongside, for ComfyUI.',
+      },
+    ],
+    localRun: {
+      weightsSize: '~5GB int8 or ~9.5GB bf16, plus a ~7–9GB text encoder',
+      tool: 'ComfyUI',
+    },
+    attribution: 'an open text-to-image model by OpenMOSS (Apache-2.0)',
+    factCheck: [
+      {
+        field: 'faq',
+        claim:
+          "MOSS Image LoRA training is rolling out in Civitai's Training Studio, and a LoRA you publish earns Buzz when others generate with it",
+        note: 'Training Studio lists MOSS behind the moss-image-training flag (moderators until rolled out); confirm the rollout state before publishing. The Buzz claim holds: MOSS Image is Apache-2.0, so generation compensation is not stopped for it.',
+        highlight: "rolling out in Civitai's Training Studio",
+      },
+    ],
+  },
+
   Anima: {
     key: 'Anima',
     updatedAt: '2026-09-16',
@@ -3076,25 +3395,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Imagen 4', 'Seedream', 'FLUX.1'],
+      peers: ['GPT Image', 'Seedream', 'FLUX.1'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Likeness-preserving photo editing',
-            'Photoreal text-to-image',
+            'Natural-language prompts, text in image',
             'High-res text-to-image',
             'Photorealism, text, versatility',
           ],
         },
         {
           label: 'Image editing',
-          values: ['Native, multi-turn', 'Limited', 'Via edit variant', 'In-context (Kontext)'],
+          values: [
+            'Native, multi-turn',
+            'Native, reference-driven',
+            'Via edit variant',
+            'In-context (Kontext)',
+          ],
           winner: 0,
         },
         {
           label: 'Character consistency',
-          values: ['Excellent', 'Fair', 'Good', 'Fair'],
+          values: ['Excellent', 'Good', 'Good', 'Fair'],
           winner: 0,
         },
         {
@@ -3144,134 +3468,6 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     ],
   },
 
-  Imagen4: {
-    key: 'Imagen4',
-    updatedAt: '2026-07-23',
-    slug: 'imagen-4',
-    name: 'Imagen 4',
-    metaDescription:
-      "Generate with Imagen 4 on Civitai — Google DeepMind's text-to-image model for photorealism, fine detail, and legible in-image text. Browse examples & prompts.",
-    modality: 'image',
-    hero: {
-      intro:
-        "Imagen 4 is Google DeepMind's latest text-to-image model, built to turn natural-language prompts into ultra-high-quality, photorealistic images with a focus on visual fidelity, fine detail, and compositional accuracy. It also renders legible in-image text. Generate with it right here on Civitai — no GPU, no install.",
-      badges: ['Text-to-Image', 'Photorealism', 'By Google DeepMind'],
-    },
-    overview: [
-      "Imagen 4 is the latest iteration of Google DeepMind's Imagen text-to-image line, designed to generate ultra-high-quality, photorealistic images from natural-language prompts. Its emphasis is on visual fidelity, fine detail, and compositional accuracy — reading a plain description of a scene and rendering it with convincing lighting, materials, and structure rather than relying on tag-style keywords. It responds strongly to cinematic, descriptive prompting that specifies perspective, lighting, environment, and action.",
-      'Unlike open-weight families such as FLUX.1 or SDXL, Imagen 4 is a closed, hosted model — there are no downloadable weights and no local checkpoints or LoRAs. It is served exclusively through an API, which Civitai runs for you: you write a prompt, pick an aspect ratio, and the image comes back without any local setup. That makes it a fast way to reach Google-grade photorealism directly in the browser.',
-      'Choose Imagen 4 when photorealism, fine detail, accurate composition, or legible in-image text matter most, and when you want a polished result from a natural-language description without tuning samplers or stacking LoRAs. For deep style customization, community fine-tunes, and huge LoRA libraries — especially for anime and character art — the open SDXL-based ecosystems (Pony, Illustrious) or FLUX.1 remain the better fit, since Imagen 4 trades that openness for a hosted, ready-to-run pipeline.',
-    ],
-    promptTips: [
-      'Write in natural, cinematic language and follow the template [Subject] + [Context/Background] + [Style] + [Lighting and technical details]. Descriptive full sentences beat comma-separated tags on Imagen 4.',
-      'Be explicit about lighting — Imagen 4 responds strongly to lighting cues. "Warm late-afternoon sun raking across the wall from the left" gives far more than "nice lighting."',
-      'Skip weight syntax like (word:1.5) — it is not supported. Emphasize an element by describing it in more vivid detail instead of using numeric weights.',
-      'State everything positively — Imagen 4 has no negative-prompt field. Instead of listing what to avoid, describe the clean scene you do want (an empty plaza rather than "no people").',
-      'For text in the image, spell out the exact words in quotes and describe the type: e.g. "a bold sans-serif title at the top reading \'HELLO\'," specifying font style, size, and placement. Then refine iteratively, changing one variable at a time.',
-    ],
-    generatorVersionId: 1889632,
-    featuredModels: [
-      {
-        modelId: 1669468,
-        versionId: 1889632,
-        imageId: 134163949,
-        displayName: 'Imagen 4',
-        note: 'Civitai-hosted · by Google DeepMind',
-      },
-    ],
-    featuredExamples: [
-      {
-        imageId: 135412138,
-        prompt: 'A frigate-sized futuristic spaceship with dark grey armor drifting in deep space',
-        settings: 'Imagen 4 · 1280×896',
-      },
-      {
-        imageId: 134505718,
-        prompt:
-          'A traditional black-and-yellow taxi rolling through a Mumbai street in the afternoon',
-        settings: 'Imagen 4 · 1280×896',
-      },
-      {
-        imageId: 134257673,
-        prompt: 'A Disney-themed supermarket with food aisles based on Disney films',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134215036,
-        prompt:
-          'A red-crowned crane in shallow water, Japanese ukiyo-e woodblock and watercolor style',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134163951,
-        prompt:
-          'A tranquil sunset over a mirror-like lake reflecting a lone tree and flitting birds',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-      {
-        imageId: 134163946,
-        prompt: 'Itsukushima Shrine at high tide, golden hour, telephoto compression',
-        settings: 'Imagen 4 · 1024×1024',
-      },
-    ],
-    comparison: {
-      peers: ['Nano Banana', 'Seedream', 'FLUX.1'],
-      rows: [
-        {
-          label: 'Best for',
-          values: [
-            'Photorealism & fine detail',
-            'Conversational image editing',
-            'High-res photoreal generation',
-            'Prompt adherence & text',
-          ],
-        },
-        { label: 'Prompt adherence', values: ['Excellent', 'Very good', 'Very good', 'Excellent'] },
-        { label: 'Text in images', values: ['Strong', 'Fair', 'Fair', 'Strong'], winner: 0 },
-        {
-          label: 'Prompt style',
-          values: ['Natural language', 'Conversational', 'Natural language', 'Natural language'],
-        },
-        {
-          label: 'Access',
-          values: ['API only', 'API only', 'API only', 'Open weights + API'],
-        },
-        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
-      ],
-    },
-    faq: [
-      {
-        q: 'How much does it cost to generate with Imagen 4?',
-        a: 'Generation on Civitai runs on Buzz, and Imagen 4 is a premium, Google-hosted model, so it sits toward the higher end of the range — each image costs more Buzz than a lightweight open checkpoint like SDXL. Every account still earns free Blue Buzz daily by reacting to images and staying active on the site, so you can try Imagen 4 without spending real money; you will just work through your daily Blue Buzz faster than on cheaper models. For heavier use, let your Buzz accumulate or add a membership for higher limits.',
-      },
-      {
-        q: 'What is Imagen 4?',
-        a: "Imagen 4 is Google DeepMind's latest text-to-image model, built for ultra-high-quality, photorealistic images with strong visual fidelity, fine detail, and compositional accuracy. Try it directly in the Civitai generator.",
-      },
-      {
-        q: 'Can I run Imagen 4 locally?',
-        a: "No — Imagen 4 is a closed, hosted model with no public weights, so there is nothing to download or run on your own GPU. Civitai runs it through Google's API for you, so you can generate in the browser with no setup.",
-      },
-      {
-        q: 'Is Imagen 4 good at rendering text in images?',
-        a: 'Yes — it supports typography and can render legible in-image text. Spell out the exact words in quotes and describe the font style, size, and placement. Remix an example above to see how the prompt carries over.',
-      },
-      {
-        q: 'Can I use LoRAs or custom checkpoints with Imagen 4?',
-        a: 'No — because Imagen 4 is API-only with no open weights, it does not support community LoRAs or fine-tuned checkpoints. If you want to stack LoRAs and custom styles, an open ecosystem like FLUX.1, SDXL, Pony, or Illustrious is the better choice, and all of them run on Civitai too.',
-      },
-      {
-        q: 'How should I prompt Imagen 4?',
-        a: 'Use natural, cinematic language following [Subject] + [Context] + [Style] + [Lighting], be specific about lighting, and phrase everything positively — Imagen 4 has no negative-prompt field. Remix any example above to start from a working prompt.',
-      },
-    ],
-    sunset: {
-      date: '2026-08-17',
-      note: 'Google is shutting down the Imagen 4 endpoints, after which it will no longer be generatable on Civitai. Nano Banana and Seedream are the closest hosted alternatives.',
-    },
-    attribution: 'a hosted text-to-image model by Google DeepMind (Imagen 4)',
-  },
-
   Seedream: {
     key: 'Seedream',
     updatedAt: '2026-07-27',
@@ -3286,7 +3482,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Seedream is ByteDance's text-to-image model, developed by the company's Seed research team. It is designed around high-resolution output, strong prompt adherence, and fine-grained typography — rendering legible text inside the image, including Chinese characters, rather than overlaying it. According to ByteDance's technical write-ups, Seedream 3.0 introduced native 2K output, and Seedream 4.0 raised that to native 4K resolution. It is a distinct model from Seedance, ByteDance's video generator.",
-      'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers — with v5.0 Pro as the current flagship. A 2K/4K switch appears on v4.5 and v5.0 Lite; the remaining versions, v5.0 Pro included, render at 2K, so pick v4.5 or v5.0 Lite when you specifically need 4K. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
+      'The family has iterated quickly. Compared with Seedream 2.0, later releases roughly doubled the training data and improved image resolution, complex-attribute adherence, fine-grained text rendering, and overall aesthetics and fidelity. On Civitai you can run several generations — v3.0, v4.0, v4.5, and the v5.0 Lite and v5.0 Pro tiers. A 2K/4K switch appears on v4.5 and v5.0 Lite; the remaining versions, v5.0 Pro included, render at 2K, so pick v4.5 or v5.0 Lite when you specifically need 4K. Because Seedream is API-only, there are no open weights to download and no LoRAs to stack; every version is hosted and ready to generate directly in the browser.',
       'Choose Seedream when legible in-image text and typography, high-resolution output, or careful adherence to complex prompts matter — it is a strong fit for posters, signage, packaging, and text-heavy design work, and ByteDance publishes an official prompting guide for it. For the deepest library of community styles and characters via LoRAs, the SDXL-based Pony and Illustrious ecosystems still lead; Qwen-Image is the closest open-weight alternative for text-in-image work. As a premium hosted model, Seedream costs more Buzz per image than lighter open checkpoints — a fair trade when resolution and prompt precision are the priority.',
     ],
     promptTips: [
@@ -3303,7 +3499,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         versionId: 3110984,
         imageId: 136836725,
         displayName: 'Seedream v5.0 Pro',
-        note: 'Civitai-hosted · default',
+        note: 'Civitai-hosted',
       },
       {
         modelId: 1951069,
@@ -3365,14 +3561,14 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Nano Banana', 'Imagen 4', 'Qwen'],
+      peers: ['Nano Banana', 'GPT Image', 'Qwen'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Typography & high-res realism',
             'Image editing & consistency',
-            'Photoreal & in-image text',
+            'Natural-language prompts & text',
             'Prompt accuracy & text',
           ],
         },
@@ -3421,7 +3617,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Which Seedream version should I use?',
-        a: 'v5.0 Pro is the current flagship and the default, and it renders at 2K. If you need 4K, choose v4.5 or v5.0 Lite — they are the two versions with a 2K/4K switch. Remix an example above to compare versions on the same prompt.',
+        a: 'If you need 4K, choose v4.5 or v5.0 Lite — they are the two versions with a 2K/4K switch; the others render at 2K. Remix an example above to compare versions on the same prompt.',
       },
     ],
     attribution: 'a hosted text-to-image model by ByteDance (Seedream)',
@@ -3434,7 +3630,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         field: 'overview',
         claim: '4K availability per version',
-        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in seedream-graph.ts); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
+        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in `image/seedream.graph.ts`); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
       },
       {
         field: 'faq',
@@ -3706,24 +3902,29 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
     ],
     comparison: {
-      peers: ['Sora 2', 'Kling', 'Seedance'],
+      peers: ['Kling', 'Seedance', 'Wan'],
       rows: [
         {
           label: 'Best for',
           values: [
             'Cinematic clips with native audio',
-            'Cinematic video with synced audio',
             'Polished realistic motion',
             'One-pass video + audio',
+            'Open T2V/I2V with a huge LoRA ecosystem',
           ],
         },
         {
           label: 'Provider',
-          values: ['Google DeepMind', 'OpenAI', 'Kuaishou', 'ByteDance'],
+          values: ['Google DeepMind', 'Kuaishou', 'ByteDance', 'Alibaba'],
         },
         {
           label: 'Native audio',
-          values: ['Yes (dialogue, SFX, music)', 'Yes', 'No', 'Yes (dialogue + lip-sync)'],
+          values: [
+            'Yes (dialogue, SFX, music)',
+            'No',
+            'Yes (dialogue + lip-sync)',
+            'No (video only)',
+          ],
           winner: 0,
         },
         {
@@ -3732,12 +3933,12 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
             'API-only (hosted)',
             'API-only (hosted)',
             'API-only (hosted)',
-            'API-only (hosted)',
+            'Open weights + LoRAs',
           ],
         },
         {
           label: 'Image-to-video',
-          values: ['Yes', 'Yes', 'Yes, first-frame anchored', 'Yes'],
+          values: ['Yes', 'Yes, first-frame anchored', 'Yes', 'Native, strong'],
         },
         { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
       ],
@@ -3772,160 +3973,8 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     factCheck: [
       {
         field: 'comparison',
-        claim: 'peer native-audio cells (Sora 2 = Yes, Kling = No, …)',
-        note: 'Cross-checked against the Sora 2 config (consistent), but peer cells are general knowledge, not re-verified against each provider.',
-      },
-    ],
-  },
-
-  Sora2: {
-    key: 'Sora2',
-    updatedAt: '2026-07-23',
-    slug: 'sora-2',
-    name: 'Sora 2',
-    metaDescription:
-      "Generate Sora 2 video on Civitai — OpenAI's hosted text-to-video model known for physical realism and synchronized audio. Browse example clips & prompts.",
-    modality: 'video',
-    hero: {
-      intro:
-        "Sora 2 is OpenAI's text-to-video generation model, built for physically plausible motion, coherent multi-shot scenes, and synchronized audio generated alongside the video. It reads long, natural-language descriptions and holds character and world state steady across a clip. On Civitai it's fully hosted, so you can turn a prompt into a video right in the browser — no GPU, no install.",
-      badges: ['Text-to-Video', 'Physical Realism', 'By OpenAI'],
-    },
-    overview: [
-      'Sora 2 is OpenAI\'s text-to-video generation model and the successor to the original Sora, unveiled in February 2024. OpenAI frames that first Sora as a "GPT-1 moment" for video — the point at which simple behaviors like object permanence first emerged from scaling up pre-training compute. Sora 2 is the team\'s next major step, focused less on raw novelty and more on world simulation: modeling how objects, people, and physics actually behave over time rather than deforming reality to satisfy a prompt.',
-      'The headline improvement is physical plausibility. OpenAI notes that where earlier video models will bend reality to complete a prompt — teleporting a missed basketball into the hoop — Sora 2 is more likely to let the shot rebound off the backboard, modeling failure as well as success. It also improves controllability, following intricate multi-shot instructions while keeping world state consistent, and it works across realistic, cinematic, and anime styles. As a general-purpose video-and-audio system it can generate synchronized speech, sound effects, and background soundscapes in the same pass rather than as a separate step.',
-      "Sora 2 is a closed, hosted model: there are no downloadable weights and no Sora LoRAs, so control comes from prompting, reference material, and the generator's settings rather than community fine-tunes. On Civitai it runs entirely in the browser — no GPU, no install. Choose it when you want realistic motion, coherent physics, and cinematic multi-shot direction out of the box. For open weights, stackable LoRAs, and deep community control the Wan ecosystem is the natural alternative, while Veo 3 and Kling are the closest hosted peers to compare against.",
-    ],
-    promptTips: [
-      "Write in natural language — vivid, descriptive paragraphs, not comma-separated tags. Sora 2's strong language understanding handles complex multi-element scenes, so describe the subject, action, setting, and mood as full prose.",
-      'Skip weight syntax and negative prompts — neither is supported. Rephrase anything negative as a positive description: say "sharp, crystal clear" instead of "no blur."',
-      'Direct the camera explicitly. Sora 2 responds to real cinematography language — "the camera follows behind a woman walking," "drone aerial shot rising over the city," "low-angle tracking shot," or "slow push-in on the character\'s face."',
-      "Describe characters thoroughly. Sora's world-model approach maintains appearance across a clip, but sparse descriptions lead to drift — spell out who or what is on screen in detail.",
-      'Add temporal and stylistic cues to shape the shot: "as the sun sets" or "transitioning from day to night" for motion over time, and references like "in the style of a Wes Anderson film," "noir aesthetic," or "documentary footage" for a consistent look. A reliable order is subject → action and scene → camera work → visual style and mood.',
-    ],
-    generatorVersionId: 2320065,
-    featuredModels: [
-      {
-        modelId: 2049999,
-        versionId: 2320065,
-        imageId: 136011852,
-        displayName: 'Sora 2',
-        note: 'Civitai-hosted · by OpenAI',
-      },
-    ],
-    featuredExamples: [
-      {
-        imageId: 136011852,
-        prompt: 'Anthropomorphic dog and cat having a party, saying "magnificent"',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 132779682,
-        prompt:
-          'A cozy cinematic animated scene filled with warmth and nostalgia. Early autumn evening in a small countryside town. A fluffy orange cat wearing a tiny hat',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 134305014,
-        prompt: "Cat walking on two legs. It's on the beach. It strikes a pose",
-        settings: 'Sora 2 · 1280×720',
-      },
-      {
-        imageId: 134601390,
-        prompt: 'Cartoon kangaroo, twirling around, rainbow park',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 126602082,
-        prompt:
-          'In the style of a Studio Ghibli action movie with gritty 24fps cinematic flair, a pack of sleek anthropomorphic robots crafted from rusted brass gears and glowing blue eyes',
-        settings: 'Sora 2 · 720×1280',
-      },
-      {
-        imageId: 126981587,
-        prompt: 'Anthropomorphic badger, victory dance',
-        settings: 'Sora 2 · 720×1280',
-      },
-    ],
-    comparison: {
-      peers: ['Veo 3', 'Kling', 'Wan'],
-      rows: [
-        {
-          label: 'Best for',
-          values: [
-            'Physical realism & cinematic multi-shot video',
-            'Cinematic clips with native audio',
-            'Polished cinematic motion & camera control',
-            'Open T2V/I2V + huge LoRA ecosystem',
-          ],
-        },
-        {
-          label: 'Provider',
-          values: ['OpenAI', 'Google DeepMind', 'Kuaishou', 'Alibaba'],
-        },
-        {
-          label: 'Access',
-          values: ['API-only (hosted)', 'API-only (hosted)', 'API-only (hosted)', 'Open weights'],
-        },
-        {
-          label: 'Native audio',
-          values: [
-            'Synchronized speech + sound',
-            'Synchronized speech + sound',
-            'No native audio',
-            'No native audio',
-          ],
-        },
-        {
-          label: 'LoRA support',
-          values: ['None (closed)', 'None (closed)', 'None (closed)', '2,500+ (largest for video)'],
-          winner: 3,
-        },
-        { label: 'Available on Civitai', values: ['✓ Yes', '✓ Yes', '✓ Yes', '✓ Yes'] },
-      ],
-    },
-    faq: [
-      {
-        q: 'How much does it cost to generate Sora 2 video on Civitai?',
-        a: "Generation on Civitai runs on Buzz, and every account earns free Blue Buzz daily through on-site actions like reacting to images. Sora 2 is a premium hosted video model — producing a clip is far heavier than rendering a single image, so a Sora 2 generation costs more Buzz per clip than most models, and longer clips cost more than shorter ones. You can put your daily free Blue Buzz toward it, but for regular Sora 2 use you'll want to let Buzz accumulate or add a membership for higher limits.",
-      },
-      {
-        q: 'Does Sora 2 generate audio?',
-        a: 'Yes. Sora 2 is a general-purpose video-and-audio system: OpenAI describes it as able to create synchronized speech, sound effects, and background soundscapes along with the video in a single pass. Remix an example above to try it yourself.',
-      },
-      {
-        q: 'Can I use LoRAs with Sora 2?',
-        a: 'No — Sora 2 is a closed, hosted model with no downloadable weights or LoRAs. You steer results through prompting, reference material, and the generator settings instead. If you want stackable video LoRAs and motion effects, the open Wan ecosystem is the place to look.',
-      },
-      {
-        q: 'How is Sora 2 different from the original Sora?',
-        a: 'OpenAI positions the first Sora (February 2024) as an early breakthrough where basic behaviors like object permanence emerged, and Sora 2 as a larger step toward genuine world simulation — better physics, stronger controllability across multiple shots, and synchronized audio. Try a prompt in the Civitai generator to see the difference.',
-      },
-      {
-        q: 'What is Sora 2 best at?',
-        a: 'Sora 2 leans toward realistic, physically coherent motion and cinematic, multi-shot direction — OpenAI highlights its ability to model real-world dynamics rather than deforming a scene to hit a prompt, and it also handles cinematic and anime styles. Describe a single clear scene and remix an example to see how it performs.',
-      },
-      {
-        q: 'Do I need a GPU to run Sora 2?',
-        a: 'No. Sora 2 is API-only, and Civitai runs the generation for you in the cloud — there are no weights to download and nothing to install. Just enter a prompt and generate in the browser.',
-      },
-    ],
-    sunset: {
-      date: '2026-09-24',
-      note: 'OpenAI is permanently shutting down the Sora and Sora 2 endpoints, after which they will no longer be generatable on Civitai. Veo 3, Kling, and the open Wan ecosystem are the closest alternatives.',
-    },
-    attribution: 'a hosted text-to-video model by OpenAI (Sora 2)',
-    factCheck: [
-      {
-        field: 'overview',
-        claim: 'synchronized audio (speech, SFX, soundscapes)',
-        highlight: 'synchronized speech, sound effects, and background soundscapes',
-        note: 'Claimed from the model card only; the sora2 prompt guide does not mention audio. Verify the capability.',
-      },
-      {
-        field: 'comparison',
-        claim: 'peer native-audio / provider cells',
-        note: 'From general knowledge / sibling configs, not independently re-verified.',
+        claim: 'peer native-audio cells (Kling = No, Seedance = Yes, Wan = No)',
+        note: 'Peer cells are general knowledge, not re-verified against each provider.',
       },
     ],
   },
@@ -4153,18 +4202,18 @@ export const ECOSYSTEM_SEO_PAGES: EcosystemSeoPage[] = [
   { slug: 'grok', label: 'Grok Imagine', ecosystemKeys: ['Grok'] },
   { slug: 'happyhorse', label: 'HappyHorse', ecosystemKeys: ['HappyHorse'] },
   { slug: 'nano-banana', label: 'Nano Banana', ecosystemKeys: ['NanoBanana'] },
-  { slug: 'imagen-4', label: 'Imagen 4', ecosystemKeys: ['Imagen4'] },
   { slug: 'seedream', label: 'Seedream', ecosystemKeys: ['Seedream'] },
   { slug: 'veo-3', label: 'Veo 3', ecosystemKeys: ['Veo3'] },
-  { slug: 'sora-2', label: 'Sora 2', ecosystemKeys: ['Sora2'] },
   { slug: 'chroma', label: 'Chroma', ecosystemKeys: ['Chroma'] },
   { slug: 'qwen', label: 'Qwen', ecosystemKeys: ['Qwen'] },
   { slug: 'stable-diffusion', label: 'Stable Diffusion', ecosystemKeys: ['SD1'] },
   { slug: 'hidream', label: 'HiDream', ecosystemKeys: ['HiDream'] },
   { slug: 'krea2', label: 'Krea 2', ecosystemKeys: ['Krea2'] },
+  { slug: 'krea3', label: 'Krea 3', ecosystemKeys: ['Krea3'] },
   { slug: 'anima', label: 'Anima', ecosystemKeys: ['Anima'] },
   { slug: 'gpt-image', label: 'GPT Image', ecosystemKeys: ['OpenAI'] },
   { slug: 'z-image', label: 'Z-Image', ecosystemKeys: ['ZImageTurbo', 'ZImageBase'] },
+  { slug: 'moss-image', label: 'MOSS Image', ecosystemKeys: ['MossImage'] },
 ];
 
 /** True once an announced sunset date has arrived — the ecosystem's endpoints are gone. */

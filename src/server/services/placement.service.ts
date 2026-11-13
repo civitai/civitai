@@ -1,6 +1,12 @@
 import { z } from 'zod';
+import {
+  countPendingPlacementsBySurface,
+  getUserPlacementScore,
+} from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
-import { getCapTier } from '~/server/services/subscriptions.service';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { readKeyValueViaKysely } from '~/server/services/hot-reads-5.reads';
+import { getCapTiers, getCapTierViaKysely } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
@@ -75,7 +81,8 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   let stored: z.infer<typeof placementConfigSchema> = {};
 
   try {
-    const row = await dbRead.keyValue.findUnique({ where: { key: PLACEMENT_CONFIG_KEY } });
+    const { kyselyRead } = await loadKyselyDb();
+    const row = await readKeyValueViaKysely(kyselyRead, PLACEMENT_CONFIG_KEY);
     const parsed = placementConfigSchema.safeParse(row?.value ?? {});
     if (parsed.success) stored = parsed.data;
   } catch {
@@ -132,29 +139,37 @@ export type PlacementPriceRange = {
  * capacity they may offer. D and E must not each reimplement the score-and-tier
  * scaling, and nothing may persist the result — the caps move the moment a
  * membership lapses or a score is recomputed.
+ *
+ * Pass `config` only when it was read for this same call. One held across
+ * requests would price placements against a stale row.
  */
 export async function placementPriceRange(
   userId: number,
-  surface: PlacementSurface
+  surface: PlacementSurface,
+  config?: PlacementConfig
 ): Promise<PlacementPriceRange> {
-  const [scoreRow, capTier, config] = await Promise.all([
-    // Cast through `numeric`: `::int` raises on a fractional stored total rather
-    // than truncating it. Text that isn't a number at all still raises.
-    dbRead.$queryRaw<{ score: number | null }[]>`
-      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
-      FROM "User" WHERE id = ${userId}
-    `,
+  const [scoreRow, capTier, resolvedConfig] = await Promise.all([
+    getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId),
     // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
-    getCapTier(userId),
-    getPlacementConfig(),
+    getCapTierViaKysely(userId),
+    config ?? getPlacementConfig(),
   ]);
 
+  return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
+}
+
+function toPlacementPriceRange(
+  rawScore: number | null | undefined,
+  capTier: string | null,
+  surface: PlacementSurface,
+  config: PlacementConfig
+): PlacementPriceRange {
   // `total` already nets penalties — `reportsAgainst` is stored negative — so a
   // heavily-reported creator can land below zero and gets the bottom band.
-  const score = scoreRow[0]?.score ?? 0;
+  const score = rawScore ?? 0;
   const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
@@ -164,6 +179,34 @@ export async function placementPriceRange(
     score,
     tier,
   };
+}
+
+/**
+ * `placementPriceRange` for many creators at once, keyed by user id, so a page of cards does not
+ * price each owner on its own round trips.
+ */
+export async function placementPriceRanges(
+  userIds: number[],
+  surface: PlacementSurface,
+  config?: PlacementConfig
+): Promise<Map<number, PlacementPriceRange>> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return new Map();
+  const [scoreRows, capTiers, resolvedConfig] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; score: number | null }[]>`
+      SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+      FROM "User" WHERE id = ANY(${ids}::int[])
+    `,
+    getCapTiers(ids),
+    config ?? getPlacementConfig(),
+  ]);
+  const scoreById = new Map(scoreRows.map((row) => [row.id, row.score]));
+  return new Map(
+    ids.map((id) => [
+      id,
+      toPlacementPriceRange(scoreById.get(id), capTiers.get(id) ?? null, surface, resolvedConfig),
+    ])
+  );
 }
 
 /**
@@ -220,16 +263,16 @@ const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
  * slot and still expires, so counting it is the honest answer.
  */
 export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
-  const rows = await dbRead.placement.groupBy({
-    by: ['surface'],
-    where: { ownerId, status: 'pending' },
-    _count: { _all: true },
-  });
-
-  const bySurface = new Map(rows.map((row) => [row.surface, row._count._all]));
+  const bySurface = new Map(await readPendingCounts(ownerId));
 
   return {
     sticker: bySurface.get('sticker') ?? 0,
     remix: bySurface.get('remixGallery') ?? 0,
   };
+}
+
+async function readPendingCounts(ownerId: number): Promise<[surface: string, count: number][]> {
+  return (await countPendingPlacementsBySurface((await loadKyselyDb()).kyselyRead, ownerId)).map(
+    (row) => [row.surface, row.count]
+  );
 }

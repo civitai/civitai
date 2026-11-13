@@ -24,6 +24,23 @@ describe('crucible-won notification message', () => {
     expect(msg!.message).toContain('1,500 Buzz');
   });
 
+  // A creator holds one prize, so 4th place can take 2nd prize; naming the position confuses it.
+  it('names the prize won, not the position, when the prize place is known', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 4,
+        prizePlace: 2,
+        prizeAmount: 1000,
+      },
+    });
+
+    expect(msg!.message).toBe(
+      'Congrats! You took 2nd prize in the crucible "Neon" and won 1,000 Buzz.'
+    );
+  });
+
   it('says why an entry without enough votes was not placed, instead of "position null"', () => {
     const msg = def.prepareMessage({
       details: { crucibleId: 7, crucibleName: 'Neon', position: null, prizeAmount: 0 },
@@ -33,12 +50,58 @@ describe('crucible-won notification message', () => {
     expect(msg!.message).toContain('enough votes');
     expect(msg!.url).toBe('/crucibles/7');
   });
+
+  it('sends a winner to the claim screen for their prize', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 4,
+        prizePlace: 2,
+        prizeAmount: 1500,
+        prizeId: 42,
+        prizeCount: 1,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes/42');
+    expect(msg!.message).toBe(
+      'Congrats! You took 2nd prize in the crucible "Neon" and won 1,500 Buzz. Claim your prize!'
+    );
+  });
+
+  it('sends a winner of several prizes to their prize list', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 1,
+        prizeAmount: 1500,
+        prizeCount: 2,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes');
+  });
+
+  it('keeps an already-paid winner, notified before prizes were claimable, on the crucible', () => {
+    const msg = def.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', position: 1, prizeAmount: 1500 },
+    });
+
+    expect(msg!.url).toBe('/crucibles/7');
+    expect(msg!.message).not.toContain('Claim');
+  });
 });
 
 describe('crucible notifications without a name', () => {
   it.each([
     ['crucible-ended', { crucibleId: 7, crucibleName: null, totalEntries: 3, prizePool: 900 }],
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: 1, prizeAmount: 1500 }],
+    [
+      'crucible-won',
+      { crucibleId: 7, crucibleName: null, position: 4, prizePlace: 2, prizeAmount: 1500 },
+    ],
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: 2, prizeAmount: 0 }],
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: null, prizeAmount: 0 }],
     ['crucible-entry-submitted', { crucibleId: 7, crucibleName: null, entrantUsername: 'kai' }],
@@ -125,5 +188,61 @@ describe('crucible-entry-removed copy', () => {
     expect(removed({ refundedAmount: 0 })).toBe(
       'A moderator removed your entry from the crucible "Neon".'
     );
+  });
+});
+
+describe('crucible takedown notification messages', () => {
+  const removed = crucibleNotifications['crucible-removed'];
+  const takenDown = crucibleNotifications['crucible-taken-down'];
+
+  it('promises entrants a refund only when one was made', () => {
+    const message = (details: Record<string, unknown>) =>
+      removed.prepareMessage({ details: { crucibleId: 7, crucibleName: 'Neon', ...details } })!
+        .message;
+
+    expect(message({ refunded: true, refundPending: false })).toContain('have been refunded');
+    expect(message({ refunded: true, refundPending: true })).toContain('being processed');
+    expect(message({ refunded: false, refundPending: false })).not.toMatch(/refund/i);
+  });
+
+  it('links entrants to the crucible list, since the page is gone for them', () => {
+    expect(
+      removed.prepareMessage({ details: { crucibleId: 7, crucibleName: 'Neon', refunded: true } })!
+        .url
+    ).toBe('/crucibles');
+  });
+
+  it('tells the creator the reason and what happened to their Buzz', () => {
+    const message = takenDown.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        reason: 'Off-topic',
+        creatorFunds: 'forfeited',
+      },
+    })!.message;
+
+    expect(message).toContain('Neon');
+    expect(message).toContain('Reason: Off-topic');
+    expect(message).toContain('was not refunded');
+  });
+
+  it.each([
+    ['refunded', 'was refunded'],
+    ['pending', 'is being refunded'],
+    ['held', 'held pending review'],
+    ['forfeited', 'was not refunded'],
+  ])('says the creator Buzz %s', (creatorFunds, text) => {
+    const message = takenDown.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', reason: 'Off-topic', creatorFunds },
+    })!.message;
+    expect(message).toContain(text);
+  });
+
+  it('says nothing about creator Buzz when there was none', () => {
+    const message = takenDown.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', reason: 'Off-topic', creatorFunds: 'none' },
+    })!.message;
+    expect(message).not.toMatch(/Buzz/);
   });
 });

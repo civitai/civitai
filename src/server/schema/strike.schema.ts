@@ -38,6 +38,7 @@ export const strikeReasonPublicLabel: Record<StrikeReason, string> = {
   [StrikeReason.HarassmentContent]: 'Community Abuse',
   [StrikeReason.ProhibitedContent]: 'Content violated our Terms of Service',
   [StrikeReason.ManualModAction]: 'Content violated our Terms of Service',
+  [StrikeReason.Scam]: 'Impersonating Civitai staff',
 };
 
 export const createStrikeSchema = z.object({

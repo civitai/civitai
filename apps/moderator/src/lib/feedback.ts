@@ -1,4 +1,18 @@
-import { FEEDBACK_AREAS } from '@civitai/shared/feedback.constants';
+import {
+  APP_BLOCK_FEEDBACK_AREA,
+  APPS_PLATFORM_FEEDBACK_AREA,
+  FEEDBACK_AREAS,
+  FEEDBACK_ERROR_REF_PATTERN,
+  FEEDBACK_ORCHESTRATOR_ID_PATTERN,
+  FEEDBACK_TOAST_TEXT_MAX_LENGTH,
+  ORCHESTRATION_FEEDBACK_AREA,
+} from '@civitai/shared/feedback.constants';
+import {
+  FEEDBACK_CAPTURE_RETENTION_DAYS,
+  FEEDBACK_SCREENSHOT_CHECKS,
+  type FeedbackCaptureView,
+  type FeedbackScreenshotCheck,
+} from '@civitai/shared/feedback-capture';
 import type { LightboxItem } from './lightbox';
 
 export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
@@ -50,6 +64,33 @@ export function feedbackAreaOptions(
 ): string[] {
   return [...new Set([...distinctAreas, ...knownAreas])].filter(Boolean).sort();
 }
+
+/**
+ * Areas the queue and the general sidebar badge leave out unless the area is picked explicitly. App
+ * feedback is monitored on the main app's App review page; developer-platform and orchestration
+ * feedback each have their own badge and nav link (orchestration is the orchestrator owner's
+ * queue). All still open at `/feedback/<id>`.
+ */
+export const FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT: readonly string[] = [
+  APP_BLOCK_FEEDBACK_AREA,
+  APPS_PLATFORM_FEEDBACK_AREA,
+  ORCHESTRATION_FEEDBACK_AREA,
+];
+
+// A Map, not an object literal: `area` is a stored string, and `{}['constructor']` is not undefined.
+const FEEDBACK_AREA_LABELS = new Map<string, string>([
+  [APP_BLOCK_FEEDBACK_AREA, 'App feedback'],
+  [APPS_PLATFORM_FEEDBACK_AREA, 'Apps platform (developers)'],
+  [ORCHESTRATION_FEEDBACK_AREA, 'Generation & training errors'],
+]);
+
+/** The display name for an area slug; unlabelled slugs render as themselves. */
+export const feedbackAreaLabel = (area: string): string => FEEDBACK_AREA_LABELS.get(area) ?? area;
+
+/** The area filter's "no area selected" option, which names what that view leaves out. */
+export const FEEDBACK_ANY_AREA_LABEL = `Area — any except ${FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT.map(
+  feedbackAreaLabel
+).join(', ')}`;
 
 export type FeedbackFilters = Record<string, string | number | boolean>;
 
@@ -119,28 +160,59 @@ export type FeedbackConsoleError = {
   count: number;
 };
 
+export type FeedbackToast = { title: string | null; message: string };
+
+/** A failed tRPC call: procedure path, tRPC code, HTTP status when known, and when it failed. */
+export type FeedbackTrpcError = {
+  path: string;
+  code: string;
+  httpStatus: number | null;
+  at: string;
+};
+
+/** One line of the reporter's environment, already formatted for display as text. */
+export type FeedbackEnvironmentRow = { label: string; value: string };
+
 export type FeedbackContext = {
   path: string | null;
   filters: FeedbackFilters | null;
   images: string[];
   screenshotId: string | null;
+  /** The capture's `Image` row, written by the submit, never by the client. */
+  screenshotImageId: number | null;
+  /** Why the submit stored no capture row (`FEEDBACK_SCREENSHOT_CHECKS`). */
+  screenshotCheck: FeedbackScreenshotCheck | null;
   sessionId: string | null;
   /** Console errors the reporter's browser recorded. Empty when absent, empty, OR malformed —
    *  a malformed array is routed to `other` and shown there, not silently dropped. */
   consoleErrors: FeedbackConsoleError[];
   /** Requests that came back 4xx/5xx. Empty on the same three cases as `consoleErrors`. */
   networkErrors: FeedbackNetworkError[];
+  /** Failed tRPC calls. Empty on the same three cases as `consoleErrors`. */
+  trpcErrors: FeedbackTrpcError[];
+  /** Build, route, device, and what the server stamped (browser, tier, site, flags), in display
+   *  order. Client rows are claims; the `server` rows were written by the submit procedure. */
+  environment: FeedbackEnvironmentRow[];
+  /** The HQ task filed for this report. A link off `HQ_ORIGIN` falls through to `other` as text.
+   *  No link does not mean no task: filing is best-effort and may still be in flight. */
+  hqTask: { id: string; url: string } | null;
+  /** From a toast's "Report this": the server-fault ref and orchestrator ids it carried, and the
+   *  text the reporter was shown. Rendered as text only — reporter-supplied claims. */
+  errorRef: string | null;
+  workflowId: string | null;
+  jobId: string | null;
+  toast: FeedbackToast | null;
   /** Everything the named keys did not claim. `null` when there is nothing left over. */
   other: Record<string, unknown> | null;
 };
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isFilterValue = (value: unknown): value is string | number | boolean =>
   typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 
-const isString = (value: unknown): value is string => typeof value === 'string';
+export const isString = (value: unknown): value is string => typeof value === 'string';
 
 /** The fields the renderer draws. An entry carrying anything else is not one of these. */
 const NETWORK_ERROR_FIELDS = ['url', 'status', 'initiatorType'] as const;
@@ -190,6 +262,70 @@ const isConsoleError = (value: unknown): value is FeedbackConsoleError =>
   Number.isFinite(value.count) &&
   Object.keys(value).length === CONSOLE_ERROR_FIELDS.length;
 
+const isTrpcError = (
+  value: unknown
+): value is Omit<FeedbackTrpcError, 'httpStatus'> & {
+  httpStatus?: number;
+} =>
+  isPlainObject(value) &&
+  isString(value.path) &&
+  isString(value.code) &&
+  isString(value.at) &&
+  (value.httpStatus === undefined || typeof value.httpStatus === 'number');
+
+const isNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+/** `390×844 at 3x · screen 390×844 · touch · dark · en-US · America/Denver`, or null if malformed. */
+function describeDevice(device: Record<string, unknown>): string | null {
+  const { viewport, screen, pixelRatio } = device;
+  if (!isPlainObject(viewport) || !isNumber(viewport.width) || !isNumber(viewport.height))
+    return null;
+  const parts = [
+    `${viewport.width}×${viewport.height}${isNumber(pixelRatio) ? ` at ${pixelRatio}x` : ''}`,
+  ];
+  if (isPlainObject(screen) && isNumber(screen.width) && isNumber(screen.height))
+    parts.push(`screen ${screen.width}×${screen.height}`);
+  if (device.touch === true) parts.push('touch');
+  for (const key of ['colorScheme', 'language', 'timeZone'] as const)
+    if (isString(device[key])) parts.push(device[key] as string);
+  if (device.online === false) parts.push('offline');
+  return parts.join(' · ');
+}
+
+const SERVER_STAMP_KEYS = ['userAgent', 'tier', 'site', 'host', 'build', 'flags'];
+
+/** The submit procedure's stamp as rows, or null when `server` is not that shape. */
+function describeServerStamp(server: Record<string, unknown>): FeedbackEnvironmentRow[] | null {
+  if (Object.keys(server).some((key) => !SERVER_STAMP_KEYS.includes(key))) return null;
+  const rows: FeedbackEnvironmentRow[] = [];
+  if (isString(server.userAgent)) rows.push({ label: 'Browser', value: server.userAgent });
+  if (isString(server.site))
+    rows.push({
+      label: 'Site',
+      value: isString(server.host) ? `${server.host} (${server.site})` : server.site,
+    });
+  rows.push({ label: 'Tier', value: isString(server.tier) ? server.tier : 'none' });
+  if (isString(server.build)) rows.push({ label: 'Server build', value: server.build });
+  if (isPlainObject(server.flags)) {
+    const on = Object.entries(server.flags)
+      .filter(([, value]) => value === true)
+      .map(([key]) => key);
+    rows.push({ label: 'Flags on', value: on.length ? on.join(', ') : 'none of the stamped ones' });
+  }
+  return rows;
+}
+
+const isToastText = (value: unknown): value is string =>
+  typeof value === 'string' && value.length <= FEEDBACK_TOAST_TEXT_MAX_LENGTH;
+
+/** Exact keys, for the reason `isNetworkError` gives: a key this app does not draw must not be claimed. */
+const isToast = (value: unknown): value is { title?: string; message: string } =>
+  isPlainObject(value) &&
+  isToastText(value.message) &&
+  (value.title === undefined || isToastText(value.title)) &&
+  Object.keys(value).every((k) => k === 'message' || k === 'title');
+
 /**
  * A Cloudflare-images key, as the delivery URL builder requires one.
  *
@@ -224,6 +360,19 @@ const isConsoleError = (value: unknown): value is FeedbackConsoleError =>
  */
 const IMAGE_KEY = /^(?!https?|blob)[A-Za-z0-9][A-Za-z0-9_-]{7,99}$/;
 
+const HQ_ORIGIN = 'https://hq.civitai.com';
+const HQ_TASK_ID = /^[\w-]{1,100}$/;
+
+function isHqTask(value: unknown): value is { id: string; url: string } {
+  if (!isPlainObject(value) || !isString(value.id) || !isString(value.url)) return false;
+  if (!HQ_TASK_ID.test(value.id)) return false;
+  try {
+    return new URL(value.url).origin === HQ_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 🔴 THE "OTHER" BUCKET IS NOT A NICETY. `feedbackContextSchema` already accepts keys no current
  * producer emits, so a panel rendering only the ones it knows about discards the payload of every
@@ -243,14 +392,25 @@ export function splitContext(context: unknown): FeedbackContext {
     filters: null,
     images: [],
     screenshotId: null,
+    screenshotImageId: null,
+    screenshotCheck: null,
     sessionId: null,
     consoleErrors: [],
     networkErrors: [],
+    trpcErrors: [],
+    environment: [],
+    hqTask: null,
+    errorRef: null,
+    workflowId: null,
+    jobId: null,
+    toast: null,
     other: null,
   };
   if (!isPlainObject(context)) return out;
 
   const other: Record<string, unknown> = {};
+  const client: Partial<Record<'build' | 'route' | 'clientAt' | 'device', string>> = {};
+  let serverRows: FeedbackEnvironmentRow[] = [];
   for (const [key, value] of Object.entries(context)) {
     if (value === undefined) continue;
     if (key === 'path' && typeof value === 'string') {
@@ -259,6 +419,18 @@ export function splitContext(context: unknown): FeedbackContext {
       out.sessionId = value;
     } else if (key === 'screenshotId' && typeof value === 'string' && IMAGE_KEY.test(value)) {
       out.screenshotId = value;
+    } else if (
+      key === 'screenshotImageId' &&
+      typeof value === 'number' &&
+      Number.isSafeInteger(value)
+    ) {
+      out.screenshotImageId = value;
+    } else if (
+      key === 'screenshotCheck' &&
+      typeof value === 'string' &&
+      (FEEDBACK_SCREENSHOT_CHECKS as readonly string[]).includes(value)
+    ) {
+      out.screenshotCheck = value as FeedbackScreenshotCheck;
     } else if (key === 'images' && Array.isArray(value) && value.every(isString)) {
       // Deduplicated as well as filtered: `{#each … (id)}` THROWS on a duplicate key in production
       // as well as in dev, and the array is client-supplied with no uniqueness constraint anywhere
@@ -279,10 +451,40 @@ export function splitContext(context: unknown): FeedbackContext {
       out.consoleErrors = value;
     } else if (key === 'networkErrors' && Array.isArray(value) && value.every(isNetworkError)) {
       out.networkErrors = value;
+    } else if (key === 'trpcErrors' && Array.isArray(value) && value.every(isTrpcError)) {
+      out.trpcErrors = value.map((entry) => ({ ...entry, httpStatus: entry.httpStatus ?? null }));
+    } else if ((key === 'build' || key === 'route' || key === 'clientAt') && isString(value)) {
+      client[key] = value;
+    } else if (key === 'device' && isPlainObject(value) && describeDevice(value)) {
+      client.device = describeDevice(value)!;
+    } else if (key === 'server' && isPlainObject(value) && describeServerStamp(value)) {
+      serverRows = describeServerStamp(value)!;
+    } else if (key === 'errorRef' && isString(value) && FEEDBACK_ERROR_REF_PATTERN.test(value)) {
+      out.errorRef = value;
+    } else if (
+      (key === 'workflowId' || key === 'jobId') &&
+      isString(value) &&
+      FEEDBACK_ORCHESTRATOR_ID_PATTERN.test(value)
+    ) {
+      out[key] = value;
+    } else if (key === 'hq' && isHqTask(value)) {
+      out.hqTask = { id: value.id, url: value.url };
+    } else if (key === 'toast' && isToast(value)) {
+      out.toast = { title: value.title ?? null, message: value.message };
     } else {
       other[key] = value;
     }
   }
+
+  const clientLabels = {
+    build: 'App version',
+    route: 'Route',
+    device: 'Screen',
+    clientAt: 'Sent at (their clock)',
+  } as const;
+  for (const key of ['build', 'route', 'device', 'clientAt'] as const)
+    if (client[key]) out.environment.push({ label: clientLabels[key], value: client[key]! });
+  out.environment.push(...serverRows);
 
   if (Object.keys(other).length) out.other = other;
   return out;
@@ -330,12 +532,17 @@ export const FEEDBACK_ATTACHMENT_CAPTIONS = {
  * opened their report and when. The type is the structural half of that guard; the behavioural half
  * is pinned in `src/lib/__tests__/feedback.test.ts`.
  */
-export function feedbackAttachmentItems(context: FeedbackContext): LightboxItem[] {
-  const items: LightboxItem[] = context.images.map((id) => ({
-    id,
-    caption: FEEDBACK_ATTACHMENT_CAPTIONS.image,
-  }));
-  if (context.screenshotId) {
+export function feedbackAttachmentItems(
+  context: FeedbackContext,
+  capture: { view: FeedbackCaptureView; revealed: boolean }
+): LightboxItem[] {
+  const shown = capture.view === 'show' || (capture.view === 'blur' && capture.revealed);
+  // The same file attached by hand is the capture too, and is held back with it.
+  const heldBack = shown ? null : context.screenshotId;
+  const items: LightboxItem[] = context.images
+    .filter((id) => id !== heldBack)
+    .map((id) => ({ id, caption: FEEDBACK_ATTACHMENT_CAPTIONS.image }));
+  if (context.screenshotId && shown) {
     items.push({
       id: context.screenshotId,
       caption: FEEDBACK_ATTACHMENT_CAPTIONS.screenshot,
@@ -352,7 +559,16 @@ export function feedbackAttachmentItems(context: FeedbackContext): LightboxItem[
  * is exactly how they would.
  */
 export const feedbackAttachmentCount = (context: FeedbackContext): number =>
-  feedbackAttachmentItems(context).length;
+  // Counts the capture whatever its scan says: the column says what the reporter sent.
+  feedbackAttachmentItems(context, { view: 'show', revealed: true }).length;
+
+/** What the panel says in place of a page capture it does not show. */
+export const FEEDBACK_CAPTURE_NOTES: Partial<Record<FeedbackCaptureView, string>> = {
+  blur: 'Page capture not checked or flagged by the scan.',
+  hide: "Page capture hidden: not the reporter's upload, or blocked by the scan.",
+  'hide-locked': 'Page capture hidden.',
+  expired: `Page capture expired (${FEEDBACK_CAPTURE_RETENTION_DAYS}-day retention)`,
+};
 
 /**
  * Loki's global `retention_period`, which `{source="faro-rum"}` sits on — it declares no

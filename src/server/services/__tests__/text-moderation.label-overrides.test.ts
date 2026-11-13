@@ -43,3 +43,20 @@ describe('submitTextModeration label overrides', () => {
     );
   });
 });
+
+describe('submitTextModeration retry re-arm', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('forwards rearmRetries to the orchestrator request', async () => {
+    await submitTextModeration({
+      entityType: 'Article',
+      entityId: 7,
+      content: 'a body',
+      rearmRetries: true,
+    });
+
+    expect(createXGuardModerationRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ rearmRetries: true })
+    );
+  });
+});

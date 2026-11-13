@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  CREATOR_ANNOUNCEMENTS_URL,
-  creatorAnnouncementsEntryVariant,
-} from '~/components/Announcements/creator-announcements-entry';
-import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants';
+import { creatorAnnouncementsEntryVariant } from '~/components/Announcements/creator-announcements-entry';
 
 const OWNER = 42;
 
@@ -78,11 +74,5 @@ describe('creatorAnnouncementsEntryVariant', () => {
     expect(
       creatorAnnouncementsEntryVariant({ ...base, profileUserMuted: true, announcementCount: 2 })
     ).toBeNull();
-  });
-
-  // Built from CREATOR_STUDIO_URL rather than spelled out, so a spoke rename does not redden an
-  // announcements test — but still exact, so an interposed path segment fails here.
-  it('deep-links to the announcements page, not the Creator Studio root', () => {
-    expect(CREATOR_ANNOUNCEMENTS_URL).toBe(`${CREATOR_STUDIO_URL}/announcements`);
   });
 });

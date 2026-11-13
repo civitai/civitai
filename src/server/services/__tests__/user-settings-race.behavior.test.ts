@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import promClient from 'prom-client';
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
@@ -307,6 +308,25 @@ describe('User.settings — concurrent writers must not discard each other', () 
     const settings = await readSettings(holder.db, USER_ID);
     expect(alerts(settings).sort()).toEqual(['already-dismissed', 'notice-w']);
     expect((settings.features as Record<string, boolean>)[feature]).toBe(true);
+  });
+
+  it('counts a Training Studio opt-back once, not the repeat that changes nothing', async () => {
+    const optBacks = async () => {
+      const metric = promClient.register.getSingleMetric('civitai_app_user_feature_toggle_total');
+      const values = (await metric?.get())?.values ?? [];
+      return (
+        values.find((v) => v.labels.feature === 'trainingStudioUi' && v.labels.value === 'false')
+          ?.value ?? 0
+      );
+    };
+    await seedUser(holder.db, USER_ID, {});
+    const before = await optBacks();
+    const input = { feature: 'trainingStudioUi', value: false } as const;
+
+    await toggleUserFeatureFlagHandler({ input, ctx });
+    await toggleUserFeatureFlagHandler({ input, ctx });
+
+    expect(await optBacks()).toBe(before + 1);
   });
 
   it('keeps a feature toggle that lands while another feature toggle is in flight', async () => {

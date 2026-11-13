@@ -67,6 +67,7 @@ describe('ResourceSelectProvider persistence', () => {
       types: ['LORA'],
       baseModels: ['SDXL 1.0'],
       loadedOnly: false,
+      turboOnly: false,
       hidePaid: false,
     });
     first.unmount();
@@ -79,6 +80,7 @@ describe('ResourceSelectProvider persistence', () => {
       types: ['LORA'],
       baseModels: [],
       loadedOnly: false,
+      turboOnly: false,
       hidePaid: false,
     });
     second.unmount();
@@ -129,6 +131,24 @@ describe('ResourceSelectProvider persistence', () => {
     act(() => view.ctx().setSort('popularity'));
     expect(view.ctx().sort).toBe('popularity');
     expect(localStorage.getItem('resource-select-sort')).toBe(JSON.stringify('newest'));
+    view.unmount();
+  });
+
+  it('a picker pinned to turbo variants cannot be unpinned through the chip', () => {
+    const view = mount({ options: { turboOnly: true } });
+    expect(view.ctx().turboPinned).toBe(true);
+    expect(view.ctx().filters.turboOnly).toBe(true);
+    act(() => view.ctx().setFilters((f) => ({ ...f, turboOnly: false })));
+    expect(view.ctx().filters.turboOnly).toBe(true);
+    view.unmount();
+  });
+
+  it('an unpinned picker starts with the turbo chip off and lets it toggle', () => {
+    const view = mount();
+    expect(view.ctx().turboPinned).toBe(false);
+    expect(view.ctx().filters.turboOnly).toBe(false);
+    act(() => view.ctx().setFilters((f) => ({ ...f, turboOnly: true })));
+    expect(view.ctx().filters.turboOnly).toBe(true);
     view.unmount();
   });
 });

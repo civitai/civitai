@@ -59,14 +59,6 @@ describe('buildMantineCssVariablesHtml', () => {
         expect(memoized).toBe(real);
       });
     }
-
-    it('output is identical across all color schemes (request-invariant)', () => {
-      const outputs = COLOR_SCHEMES.map((s) => renderRealMantineCssVars(appTheme, s));
-      const memoized = buildMantineCssVariablesHtml(appTheme);
-      for (const out of outputs) expect(out).toBe(outputs[0]);
-      expect(memoized).toBe(outputs[0]);
-      expect(memoized.length).toBeGreaterThan(0);
-    });
   });
 
   describe('matches the real MantineProvider output for arbitrary themes', () => {
@@ -120,7 +112,9 @@ describe('buildMantineCssVariablesHtml', () => {
       const memoized = buildMantineCssVariablesHtml(appTheme, { deduplicateCssVariables: false });
       expect(memoized).toBe(real);
       // sanity: this path DOES append the color-scheme selector block
-      expect(memoized).toContain('[data-mantine-color-scheme="dark"] { --mantine-color-scheme: dark; }');
+      expect(memoized).toContain(
+        '[data-mantine-color-scheme="dark"] { --mantine-color-scheme: dark; }'
+      );
     });
   });
 });

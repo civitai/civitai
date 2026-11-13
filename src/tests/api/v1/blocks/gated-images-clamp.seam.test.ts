@@ -191,6 +191,9 @@ function createMocks({
 }
 
 beforeEach(() => {
+  // @prisma/client dotenv-loads `<repo>/.env` at import, so on a dev desk NEXTAUTH_SECRET is set
+  // and every visible entry gains a `reactTicket`. These cases pin the clamp: run them unsigned.
+  vi.stubEnv('NEXTAUTH_SECRET', '');
   vi.clearAllMocks();
   queryRaw.mockReset();
   claimsBox.claims = claimsWith();
@@ -202,6 +205,7 @@ beforeEach(() => {
     blockedByUsers: [],
     hiddenTags: [],
   });
+  return () => vi.unstubAllEnvs();
 });
 
 describe('GET /api/v1/blocks/gated-images — the maturity clamp reaches the wire', () => {

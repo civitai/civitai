@@ -9,7 +9,8 @@ import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { modelsSearchIndex } from '~/server/search-index';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
+import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
@@ -29,6 +30,7 @@ const versionMetricKeys = [
 ] as const;
 
 const modelMetricKeys = [
+  'uniqueGeneratorCount',
   'thumbsUpCount',
   'thumbsDownCount',
   'commentCount',
@@ -91,6 +93,7 @@ export const modelMetrics = createMetricProcessor({
       getCommentTasks(ctx),
       getBuzzTasks(ctx),
       getVersionAggregationTasks(ctx),
+      getUniqueGeneratorTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
     for (const tasks of modelTasks) await limitConcurrency(tasks, 2);
@@ -150,9 +153,7 @@ export const modelMetrics = createMetricProcessor({
     // window); genuine mutations still reindex immediately via the untouched
     // service-layer queueUpdate path.
     const FLUSH_INTERVAL_MS = env.SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS;
-    const lastFlushStr = await sysRedis.get(
-      REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
-    );
+    const lastFlushStr = await sysRedis.get(REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH);
     const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
     const shouldFlush = shouldFlushMetricSearchIndex(Date.now(), lastFlush, FLUSH_INTERVAL_MS);
 
@@ -479,6 +480,52 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
 //   return tasks;
 // }
 
+// Distinct generators per model, merged across versions in ClickHouse (uniqMerge), which
+// caps the hot score's generation term (migration 20261011120000). NOT routed through
+// ModelVersionMetric like generationCount: getVersionAggregationTasks SUMs version rows,
+// and summing per-version distinct counts double-counts anyone who used two versions.
+async function getUniqueGeneratorTasks(ctx: ModelMetricContext) {
+  const affected = await getAffected(ctx, 'Model')`
+    SELECT DISTINCT mv."modelId" as id
+    FROM "ModelVersionMetric" mvm
+    JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+    WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getUniqueGeneratorTasks', i + 1, 'of', tasks.length);
+
+    const versions = await ctx.db.$queryRaw<{ id: number; modelId: number }[]>`
+      SELECT id, "modelId" FROM "ModelVersion" WHERE "modelId" = ANY(${ids}::int[])
+    `;
+    const usable = versions.filter((v) => !injectedVersionIds.includes(v.id));
+    if (!usable.length) return;
+
+    const versionIds = usable.map((v) => v.id);
+    const modelIds = usable.map((v) => v.modelId);
+    const generators = await ctx.ch.$query<{ modelId: number; uniqueGenerators: number }>`
+      SELECT
+        transform(modelVersionId, [${versionIds}], [${modelIds}], 0) AS modelId,
+        uniqMerge(users_state) AS uniqueGenerators
+      FROM daily_resource_generation_user_counts
+      WHERE modelVersionId IN (${versionIds})
+      GROUP BY modelId
+    `;
+
+    ctx.jobContext.checkIfCanceled();
+    for (const row of generators) {
+      if (!row.modelId) continue;
+      ctx.updates[row.modelId] ??= { [ctx.idKey]: row.modelId };
+      ctx.updates[row.modelId].uniqueGeneratorCount = Number(row.uniqueGenerators);
+    }
+
+    log('getUniqueGeneratorTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
 async function getVersionRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version reviews
@@ -500,6 +547,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelVersionId" = ANY($1::int[])
         AND r."modelVersionId" BETWEEN $2 AND $3
       GROUP BY r."modelVersionId"`,
@@ -601,6 +649,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
       FROM "ResourceReview" r
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
+        AND ${visibleReviewSql('r')}
         AND r."modelId" = ANY($1::int[])
       GROUP BY r."modelId"`,
       [ids]
@@ -611,7 +660,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-async function getCommentTasks(ctx: ModelMetricContext) {
+export async function getCommentTasks(ctx: ModelMetricContext) {
   const commentEvents = await ctx.ch.$query<{ modelId: number }>`
     SELECT DISTINCT entityId AS modelId
     FROM comments
@@ -619,7 +668,10 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       AND type = 'Model'
       AND entityId IS NOT NULL
   `;
-  const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
+  // Must stay sorted (numerically): each batch queries entityId BETWEEN ids[0] AND ids[last].
+  const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])].sort(
+    (a, b) => a - b
+  );
   ctx.addAffected(affected);
 
   // Seed commentCount to 0 for all affected models so that models with zero
@@ -637,13 +689,14 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       ctx,
       `-- get model comment metrics
       SELECT
-          c."modelId",
+          c."entityId" AS "modelId",
           COUNT(DISTINCT c."userId") AS "commentCount"
-      FROM "Comment" c
-      WHERE c."tosViolation" = false
-        AND c."modelId" = ANY($1::int[])
-        AND c."modelId" BETWEEN $2 AND $3
-      GROUP BY c."modelId"`,
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'model' AND c."deletedAt" IS NULL
+        AND c."tosViolation" = false
+        AND c."entityId" = ANY($1::int[])
+        AND c."entityId" BETWEEN $2 AND $3
+      GROUP BY c."entityId"`,
       [ids, ids[0], ids[ids.length - 1]]
     );
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');

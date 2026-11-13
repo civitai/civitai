@@ -1,9 +1,19 @@
 <script lang="ts">
   import EdgeImage from '$lib/components/EdgeImage.svelte';
   import Lightbox from '$lib/components/Lightbox.svelte';
-  import { feedbackAttachmentItems, type FeedbackContext } from '$lib/feedback';
+  import {
+    FEEDBACK_ATTACHMENT_CAPTIONS,
+    FEEDBACK_CAPTURE_NOTES,
+    feedbackAttachmentItems,
+    type FeedbackContext,
+  } from '$lib/feedback';
+  import type { FeedbackCaptureView } from '@civitai/shared/feedback-capture';
 
-  let { context }: { context: FeedbackContext } = $props();
+  let { context, captureView }: { context: FeedbackContext; captureView: FeedbackCaptureView } =
+    $props();
+
+  /** A blurred capture stays out of the lightbox until a moderator chooses to see it. */
+  let revealed = $state(false);
 
   /**
    * 🔴 BUILT FROM THE SPLIT CONTEXT, NEVER FROM `row.context`. `FeedbackContext` is what
@@ -20,13 +30,39 @@
    * which is handed the `context` that `+page.svelte` built with `splitContext`. The FILTER itself is
    * pinned behaviourally in `src/lib/__tests__/feedback.test.ts`, not by any type.
    */
-  const items = $derived(feedbackAttachmentItems(context));
+  const items = $derived(feedbackAttachmentItems(context, { view: captureView, revealed }));
+  const blurredCapture = $derived(
+    captureView === 'blur' && !revealed ? context.screenshotId : null
+  );
+  const captureNote = $derived(
+    captureView === 'blur' && revealed ? null : FEEDBACK_CAPTURE_NOTES[captureView] ?? null
+  );
 
   let openIndex = $state<number | null>(null);
 </script>
 
 <section class="flex min-w-0 flex-col gap-2">
   <h3 class="text-xs tracking-wide text-dark-2 uppercase">Attachments</h3>
+
+  {#if blurredCapture}
+    <figure class="flex flex-col gap-1">
+      <EdgeImage
+        src={blurredCapture}
+        width={320}
+        blur={250}
+        class="max-h-64 w-auto max-w-full rounded-lg border border-dark-4"
+      />
+      <figcaption class="flex items-center gap-2 text-xs text-dark-2">
+        <span>{FEEDBACK_ATTACHMENT_CAPTIONS.screenshot}</span>
+        <button type="button" class="underline" onclick={() => (revealed = true)}>
+          Show anyway
+        </button>
+      </figcaption>
+    </figure>
+  {/if}
+  {#if captureNote}
+    <p class="text-sm text-dark-2">{captureNote}</p>
+  {/if}
 
   {#if items.length}
     <!-- 🔴 Unverified, client-supplied ids: a page capture can carry NSFW content or another user's
@@ -64,7 +100,7 @@
         </figure>
       {/each}
     </div>
-  {:else}
+  {:else if !blurredCapture && !captureNote}
     <p class="text-sm text-dark-2">(none)</p>
   {/if}
 </section>

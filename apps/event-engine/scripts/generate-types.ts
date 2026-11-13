@@ -179,6 +179,7 @@ async function fuzzHandler(
           current: operation === 'delete' ? null : sampleRecord,
           record: sampleRecord,
           operation,
+          eventTimestamp: new Date(),
           actions,
           ...databases
         })

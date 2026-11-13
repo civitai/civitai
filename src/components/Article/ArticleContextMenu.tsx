@@ -1,11 +1,13 @@
 import type { ActionIconProps } from '@mantine/core';
-import { ActionIcon, Loader, Menu } from '@mantine/core';
+import { ActionIcon, Loader } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconBan,
   IconDotsVertical,
   IconFlag,
+  IconLink,
   IconPencil,
   IconRadar2,
   IconTrash,
@@ -13,6 +15,7 @@ import {
 import { useRouter } from 'next/router';
 import dynamic from 'next/dynamic';
 
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -23,10 +26,11 @@ import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionM
 import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { IconLock, IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { useRescanArticle } from '~/hooks/useRescanArticle';
 import type { ArticleGetById } from '~/types/router';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -184,6 +188,16 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 currentCosmetic={article.cosmetic}
               />
             )}
+            {/* On the article's own page too: otherwise its cover image is the nearest thing to hat. */}
+            {isOwner && article.coverImage && (
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Article}
+                entityId={article.id}
+                image={article.coverImage}
+                currentCosmetic={article.eventDecoration}
+                findWornHat={atDetailsPage}
+              />
+            )}
             <Menu.Item
               color="red"
               leftSection={<IconTrash size={14} stroke={1.5} />}
@@ -241,6 +255,19 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             >
               Edit
             </Menu.Item>
+            {(article.status === ArticleStatus.Draft ||
+              article.status === ArticleStatus.Unpublished) && (
+              <Menu.Item
+                leftSection={<IconLink size={14} stroke={1.5} />}
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openArticleShareDraftModal(article.id, { canCreate: isOwner });
+                }}
+              >
+                {isOwner ? 'Share draft' : 'Draft share links'}
+              </Menu.Item>
+            )}
             {atDetailsPage && features.articleImageScanning && (
               <Menu.Item
                 leftSection={

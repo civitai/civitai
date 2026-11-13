@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrucibleSort } from '~/server/common/enums';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -19,13 +20,33 @@ const anonymous = {} as never;
  */
 const PAGE_CAP = 50;
 
-const fakeTable = (total: number) => {
-  const rows = Array.from({ length: total }, (_, i) => ({ id: total - i }));
+const fakeTable = (total: number, pendingIds: number[] = []) => {
+  const rows = Array.from({ length: total }, (_, i) => ({
+    id: total - i,
+    status: pendingIds.includes(total - i) ? CrucibleStatus.Pending : CrucibleStatus.Active,
+  }));
   dbMock.dbRead.crucible.findMany.mockImplementation(
-    async ({ take, cursor, skip }: { take: number; cursor?: { id: number }; skip?: number }) => {
-      const start = cursor ? rows.findIndex((r) => r.id === cursor.id) + (skip ?? 0) : 0;
-      return rows.slice(start, start + take);
+    async ({
+      take,
+      cursor,
+      skip,
+      where,
+    }: {
+      take: number;
+      cursor?: { id: number };
+      skip?: number;
+      where: { status: { in: CrucibleStatus[] } };
+    }) => {
+      const matching = rows.filter((r) => where.status.in.includes(r.status));
+      // Like Prisma, a cursor is a position in the sort, whether or not its row passes the filter.
+      const at = cursor ? matching.findIndex((r) => r.id <= cursor.id) : 0;
+      if (at < 0) return [];
+      const start = at + (skip ?? 0);
+      return matching.slice(start, start + take).map(({ id }) => ({ id }));
     }
+  );
+  dbMock.dbRead.crucible.findUnique.mockImplementation(
+    async ({ where }: { where: { id: number } }) => rows.find((r) => r.id === where.id) ?? null
   );
   return rows;
 };
@@ -99,6 +120,16 @@ describe('crucible feed paging', () => {
 
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeUndefined();
+  });
+
+  it('pages from running crucibles into upcoming ones without a repeat or a gap', async () => {
+    // The two newest are upcoming, so they come after every running one.
+    fakeTable(5, [5, 4]);
+
+    const { seen, terminated } = await drain();
+
+    expect(terminated).toBe(true);
+    expect(seen).toEqual([3, 2, 1, 5, 4]);
   });
 
   it('never serves the same crucible twice', async () => {

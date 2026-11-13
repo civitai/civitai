@@ -55,8 +55,8 @@ const authed = (ctx: NavGateContext) => ctx.isAuthed;
  * queries that used to decide placement by viewport width; `defaultHidden` replaces the two
  * account-settings switches.
  *
- * `posts` and `events` are `hidden` because that is what every user sees today: their flags are
- * `default: false`, so a user who never opened account settings has never seen those tabs.
+ * `posts` is `hidden` because that is what every user sees today: its flag was `default: false`, so
+ * a user who never opened account settings has never seen that tab.
  */
 export const navRegistry: NavRegistryEntry[] = [
   { key: 'home', url: '/', defaultGroup: 'bar', locked: true },
@@ -72,10 +72,8 @@ export const navRegistry: NavRegistryEntry[] = [
   },
   { key: 'hubs', url: '/hubs', defaultGroup: 'bar', visible: (ctx) => ctx.features.userHubs },
   /**
-   * `posts` and `events` carry NO gate. Their flags still exist and still seed a placement for
-   * users who had them on, but placement is the config's job now — gating the rows would filter
-   * them out of the customization modal for the default-off majority, leaving no way to turn them
-   * on at all once the account switches retire.
+   * `posts` carries NO gate: gating it would filter it out of the customization modal for the
+   * default-off majority, leaving no way to turn it on.
    */
   { key: 'posts', url: '/posts', defaultGroup: 'bar', defaultHidden: true },
   {
@@ -90,6 +88,12 @@ export const navRegistry: NavRegistryEntry[] = [
     defaultGroup: 'bar',
     visible: (ctx) => ctx.features.comicCreator,
     new: new Date('2026-03-01'),
+  },
+  {
+    key: 'storylines',
+    url: '/storylines',
+    defaultGroup: 'more',
+    visible: (ctx) => ctx.features.storylines,
   },
   {
     key: 'bounties',
@@ -120,7 +124,6 @@ export const navRegistry: NavRegistryEntry[] = [
     visible: (ctx) => hasAppsStoreAccess(ctx.features),
     new: new Date('2026-10-01'),
   },
-  { key: 'events', url: '/events', defaultGroup: 'bar', defaultHidden: true },
   { key: 'updates', url: '/changelog', defaultGroup: 'bar' },
   {
     key: 'shop',

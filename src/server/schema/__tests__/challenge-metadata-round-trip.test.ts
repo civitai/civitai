@@ -38,6 +38,7 @@ describe('parseChallengeMetadata round-trip', () => {
       challengeType: 'daily',
       articleId: 42,
       reviewedAt: 1753920000000,
+      pendingReview: { '7': 0, '8': 2 },
       completingClaimedAt: '2026-07-30T00:03:00.000Z',
       migratedAt: '2026-05-01T00:00:00.000Z',
     };

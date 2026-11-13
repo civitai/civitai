@@ -2,7 +2,12 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import { stripImpersonationRecord } from '~/server/services/blocks/app-impersonation.logic';
 import { verifyAgentCallbackToken } from '~/server/services/blocks/review-session';
+import {
+  AGENT_REVIEW_SECTIONS,
+  type AgentReviewSection,
+} from '~/shared/constants/agent-review-section.constants';
 import { checkCallbackTimestamp } from './review-build-callback';
 
 /**
@@ -59,13 +64,15 @@ const PUBREQ_RE = /^pubreq_[0-9A-HJKMNP-TV-Z]{26}$/;
 const RUNNER_STATUSES = ['complete', 'failed', 'cost-capped'] as const;
 type RunnerStatus = (typeof RUNNER_STATUSES)[number];
 
-type CallbackBody = {
+/**
+ * 🔴 THE SECTION KEYS COME FROM THE SHARED LEDGER, so this type cannot list a different three
+ * from the loop that reads it. `Partial<Record<AgentReviewSection, unknown>>` is the whole
+ * section surface; everything else is spelled out.
+ */
+type CallbackBody = Partial<Record<AgentReviewSection, unknown>> & {
   publishRequestId?: string;
   status?: string;
   model?: unknown;
-  codeReview?: unknown;
-  securityAudit?: unknown;
-  scopeVerdicts?: unknown;
   summaryMd?: unknown;
   tokenUsage?: unknown;
   costUsd?: unknown;
@@ -83,9 +90,7 @@ function bearerFrom(header: unknown): string | null {
  *  `cost-capped` is stored verbatim (no longer collapsed onto `failed`). Kept as
  *  a named seam for the unit test + a single place to intercept if the persisted
  *  set ever diverges from the runner set again. */
-export function persistedStatusFor(
-  runner: RunnerStatus
-): 'complete' | 'failed' | 'cost-capped' {
+export function persistedStatusFor(runner: RunnerStatus): 'complete' | 'failed' | 'cost-capped' {
   return runner;
 }
 
@@ -99,11 +104,23 @@ export function buildReportUpdate(body: CallbackBody): Record<string, unknown> {
     completedAt: new Date(),
   };
   if (typeof body.model === 'string') data.model = body.model.slice(0, 200);
-  if (body.codeReview !== undefined && body.codeReview !== null) data.codeReview = body.codeReview;
-  if (body.securityAudit !== undefined && body.securityAudit !== null)
-    data.securityAudit = body.securityAudit;
-  if (body.scopeVerdicts !== undefined && body.scopeVerdicts !== null)
-    data.scopeVerdicts = body.scopeVerdicts;
+  // 🔴 LOOPED OVER THE SHARED LEDGER, NOT THREE HAND-SPELLED `if`s. This was the fourth copy
+  // of the section set, and the one whose divergence is silent ON WRITE: a fourth analysis
+  // added to the schema, the service and the renderer but missed here would have its results
+  // dropped by the callback with nothing to show for it. The ledger lives in
+  // `~/shared/constants/agent-review-section.constants` and now genuinely has every consumer.
+  //
+  // Semantics are unchanged and deliberately so: only a PRESENT, NON-NULL field is written,
+  // which is what lets a targeted re-run's carry-forward survive a callback that reports on
+  // one section (`startAgentReview` step (d') depends on exactly this).
+  for (const section of AGENT_REVIEW_SECTIONS) {
+    const value = body[section];
+    if (value !== undefined && value !== null) data[section] = value;
+  }
+  // The impersonation record is written by civitai's own check after this callback, never by
+  // the runner: a bundle that got the agent to emit one must not fake a completed check.
+  if (data.securityAudit !== undefined)
+    data.securityAudit = stripImpersonationRecord(data.securityAudit);
   if (body.tokenUsage !== undefined && body.tokenUsage !== null) data.tokenUsage = body.tokenUsage;
   if (typeof body.costUsd === 'number' && Number.isFinite(body.costUsd) && body.costUsd >= 0)
     data.costUsd = body.costUsd;
@@ -200,4 +217,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   res.status(200).json({ ok: true, applied: true });
+
+  // The IMPERSONATION check (name, branding, listing art) runs here, once the agent's report
+  // has landed, and writes into that report's security audit. After the response, so the agent
+  // pod is not held open by a second model call; it never throws.
+  const { runImpersonationCheckForRequest } = await import(
+    '~/server/services/blocks/app-impersonation-check.service'
+  );
+  await runImpersonationCheckForRequest(body.publishRequestId);
 });

@@ -49,13 +49,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const rawPayload = buf.toString('utf8');
 
   // Track to ClickHouse (fire and forget, never throws)
-  trackWebhookEvent('coinbase', rawPayload).catch(() => {});
+  trackWebhookEvent('coinbase', rawPayload).catch(() => null);
 
   try {
     if (!sig || !webhookSecret) {
       return res.status(400).send({
         error: 'Invalid Request. Signature or Secret not found',
-        sig,
       });
     }
 
@@ -64,7 +63,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!isValid) {
       return res.status(400).send({
         error: 'Invalid signature',
-        sig,
       });
     }
 
@@ -93,7 +91,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   } catch (error: any) {
     console.log(`❌ Error message: ${error.message}`);
-    return res.status(400).send(`Webhook Error: ${error.message}`);
+    return res.status(400).send('Webhook Error');
   }
 
   return res.status(200).json({ received: true });

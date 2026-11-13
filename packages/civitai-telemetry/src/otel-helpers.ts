@@ -1,6 +1,101 @@
-import { trace, context, propagation, ROOT_CONTEXT, SpanStatusCode } from '@opentelemetry/api';
+import {
+  trace,
+  context,
+  propagation,
+  isSpanContextValid,
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  TraceFlags,
+} from '@opentelemetry/api';
 
 const tracer = trace.getTracer('civitai-app');
+
+// The gate behind `withSpan`'s unsampled-parent shortcut (see `withSpan`). Kept on `globalThis`
+// because this module can be emitted into more than one bundled server chunk, and the app sets
+// the gate ONCE at boot: a module-scope variable would arm only the copy that boot imported and
+// leave every other copy's call sites on the old path, with no error. Enrolled as SHARED_STATE
+// in scripts/server-graph-watchlist.mjs. Unset (the default, and always in tests that do not
+// set it) means withSpan behaves exactly as before the gate existed.
+type WithSpanGateState = { gate: (() => boolean) | undefined };
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiWithSpanSkipUnsampledGate: WithSpanGateState | undefined;
+}
+const withSpanGateState = (globalThis.__civitaiWithSpanSkipUnsampledGate ??= { gate: undefined });
+
+/**
+ * Install (or, with `undefined`, remove) the switch that lets `withSpan` skip opening a span
+ * under an unsampled local parent. The function is called on the hot path, once per `withSpan`
+ * call that has such a parent, so it must be cheap — the app passes a cached flag read.
+ */
+export function setWithSpanSkipUnsampledGate(gate: (() => boolean) | undefined): void {
+  withSpanGateState.gate = gate;
+}
+
+/**
+ * The context key `@opentelemetry/core`'s `suppressTracing` sets: `createContextKey(description)` is
+ * `Symbol.for(description)`, so this is the same key without a runtime dependency on core (a
+ * devDependency here). `with-span-suppressed.test.ts` pins it against core's own `suppressTracing`,
+ * so a core release that renames the key fails that test instead of silently disabling the checks
+ * below.
+ */
+const SUPPRESS_TRACING_KEY = Symbol.for('OpenTelemetry SDK Context Key SUPPRESS_TRACING');
+
+/**
+ * Whether tracing is suppressed in `ctx` — the state the app's root pre-sampler leaves an
+ * unsampled request in (src/server/otel-root-presample.ts). Under it the SDK tracer hands out a
+ * non-recording span with an invalid context for EVERY span, whatever the sampler says.
+ */
+export function isTracingSuppressedIn(ctx = context.active()): boolean {
+  return ctx.getValue(SUPPRESS_TRACING_KEY) === true;
+}
+
+/**
+ * True only when a span opened here could NOT be recorded or exported, so not opening it is
+ * unobservable in trace output: the active span is a valid, LOCAL, non-recording parent whose
+ * sampled flag is clear. Under the app's sampler (ParentBased, default
+ * `localParentNotSampled` = AlwaysOff, see src/instrumentation.node.ts) every child of such a
+ * parent is a NonRecordingSpan.
+ *
+ * Deliberately NOT skipped:
+ *   - no active span: the child would be a new ROOT, ratio-sampled, so some of those spans
+ *     are exported today;
+ *   - a REMOTE parent: conservative. Today an unsampled remote parent's children are AlwaysOff
+ *     too (only `remoteParentSampled` is configured), but excluding remote parents means a
+ *     future `remoteParentNotSampled` change cannot make this drop exportable spans;
+ *   - a parent with the sampled flag set but not recording (e.g. one that has already ENDED,
+ *     as in work that outlives its request): its children ARE recorded today.
+ */
+function shouldSkipUnsampledSpan(): boolean {
+  const gate = withSpanGateState.gate;
+  if (gate === undefined) return false;
+  // Tracing suppressed: the SDK would open a non-recording span with an invalid context whatever
+  // the parent, so not opening it is unobservable too. Checked first, because under suppression
+  // there is usually no valid parent at all, which the checks below treat as "a new root".
+  if (isTracingSuppressedIn()) {
+    try {
+      return gate() === true;
+    } catch {
+      return false;
+    }
+  }
+  const parent = trace.getActiveSpan();
+  if (parent === undefined || parent.isRecording()) return false;
+  const parentContext = parent.spanContext();
+  if (
+    parentContext.isRemote ||
+    (parentContext.traceFlags & TraceFlags.SAMPLED) !== 0 ||
+    !isSpanContextValid(parentContext)
+  ) {
+    return false;
+  }
+  try {
+    return gate() === true;
+  } catch {
+    // A failing gate falls back to opening the span, i.e. the behaviour before the gate.
+    return false;
+  }
+}
 
 /**
  * Set attributes on the CURRENTLY ACTIVE span, if there is one. For values only known after the
@@ -22,9 +117,10 @@ export function setActiveSpanAttributes(attrs: Record<string, string | number | 
  * CURRENTLY ACTIVE span, ready to merge into an outbound request's headers.
  *
  * WHY this exists as a manual helper rather than an auto-instrumentation: this app runs
- * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (instrumentation.node.ts)
- * — outbound client spans, and with them traceparent injection, are deliberately suppressed
- * on Node core http/https for their per-request `async_hooks` cost. The orchestrator and
+ * `HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })` (or none at all, with
+ * `OTEL_HTTP_INSTRUMENTATION=off`; see src/server/otel-instrumentations.ts) — outbound client
+ * spans, and with them traceparent injection, are deliberately suppressed on Node core
+ * http/https for their per-request `async_hooks` cost. The orchestrator and
  * meilisearch clients use fetch/undici and were NEVER auto-instrumented at all, so no
  * outbound call anywhere in the app currently carries a traceparent and no trace crosses a
  * service boundary. Injecting per-call — only at the boundaries we care about — buys the
@@ -37,11 +133,32 @@ export function setActiveSpanAttributes(attrs: Record<string, string | number | 
 export function traceContextHeaders(): Record<string, string> {
   try {
     const carrier: Record<string, string> = {};
-    propagation.inject(context.active(), carrier);
+    const active = context.active();
+    propagation.inject(active, carrier);
+    // Under suppressed tracing the W3C propagator injects nothing. Without a `traceparent` a callee
+    // makes its OWN root sampling decision, so it would start sampling requests it drops today (it
+    // used to receive an unsampled parent). Send an unsampled parent instead: same decision
+    // downstream as before. Fresh random ids, since no span exists here to name.
+    if (!carrier.traceparent && isTracingSuppressedIn(active)) {
+      carrier.traceparent = unsampledTraceparent();
+    }
     return carrier;
   } catch {
     return {};
   }
+}
+
+function randomHex(bytes: number): string {
+  const buf = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(buf);
+  let out = '';
+  for (const b of buf) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+/** A valid W3C `traceparent` with the sampled flag clear. */
+export function unsampledTraceparent(): string {
+  return `00-${randomHex(16)}-${randomHex(8)}-00`;
 }
 
 export function withSpan<T>(name: string, fn: () => T): T;
@@ -55,6 +172,15 @@ export function withSpan<T>(
   attrsOrFn: Record<string, string | number | boolean> | (() => T),
   maybeFn?: () => T
 ): T {
+  // Under an unsampled local parent the span below would be a NonRecordingSpan that is never
+  // exported, yet opening it still pays for span allocation, attribute handling and an extra
+  // context switch. When the gate is on, run the work directly instead: same return value, same
+  // throw, and the active span inside the work is the parent, which shares the trace id. See
+  // `shouldSkipUnsampledSpan` for exactly which parents qualify.
+  if (shouldSkipUnsampledSpan()) {
+    return typeof attrsOrFn === 'function' ? attrsOrFn() : maybeFn!();
+  }
+
   const [attrs, fn] = typeof attrsOrFn === 'function' ? [{}, attrsOrFn] : [attrsOrFn, maybeFn!];
 
   return tracer.startActiveSpan(name, (span) => {

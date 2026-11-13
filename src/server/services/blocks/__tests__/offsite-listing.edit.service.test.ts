@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
 import {
@@ -21,7 +22,19 @@ import {
 } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { BETA_MESSAGE_MAX } from '~/server/schema/blocks/offsite-listing.schema';
 import { BETA_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-beta.service';
+import { OWNER_REVISION_IN_PROGRESS_MESSAGE } from '~/server/services/blocks/app-listing-moderator-edit';
 import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13) — EDIT-without-withdraw (shadow-draft revision) tests.
@@ -87,6 +100,9 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
     },
     // Fix B4: listMySubmissions' last-event batch is now a raw `DISTINCT ON` query.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    // The no-type `issue_tracker_url` column is written by raw SQL (the revision apply copies
+    // the shadow's link onto the parent), so the interactive tx needs the raw write surface.
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -96,12 +112,29 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
   return { mockRead, mockWrite, seq: { n: 0 } };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
   newAppListingScreenshotId: () => `apls_new_${++seq.n}`,
   newUlid: () => `ULID${++seq.n}`,
+  newAppListingModerationEventId: () => `alme_new_${++seq.n}`,
 }));
 
 const OWNER = 42;
@@ -684,6 +717,7 @@ describe('approveExternalRequest (revision apply)', () => {
           slug: 'cool-app',
           status: 'approved',
           kind: 'offsite',
+          contentRating: 'pg13',
         } as Row,
       })
     );
@@ -791,6 +825,15 @@ describe('approveExternalRequest (revision apply)', () => {
     // The shadow is retired (guarded to a revision row).
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', revisionOfId: { not: null } },
+    });
+    // The live PARENT's rating is the "before", not the shadow's declared 'pg'.
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_parent',
+      slug: 'cool-app',
+      before: 'pg13',
+      after: 'r',
+      actorUserId: MOD,
     });
   });
 
@@ -1020,6 +1063,18 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     },
   };
 
+  /**
+   * The raw statements against the moderation-event table only. `listMySubmissions` also reads
+   * the listings' trust links by raw SQL (`readListingProblemLinkMaps`), so a bare `$queryRaw`
+   * call count no longer means "the last-event query".
+   */
+  const modEventCalls = () =>
+    mockRead.$queryRaw.mock.calls.filter((c: unknown[]) =>
+      ((c[0] as { strings?: string[] })?.strings ?? [])
+        .join('?')
+        .includes('app_listing_moderation_events')
+    );
+
   it('attaches the latest moderation-event action for a REMOVED listing (owner-unpublish → eligible)', async () => {
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([removedRequestRow])
@@ -1032,7 +1087,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
     const res = await listMySubmissions({ userId: OWNER });
 
     // The raw last-event query is issued exactly once for the removed listing set.
-    expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(modEventCalls()).toHaveLength(1);
     expect(res.items[0]).toMatchObject({ lastModerationAction: 'owner-unpublish' });
   });
 
@@ -1050,7 +1105,7 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
       .mockResolvedValueOnce([liveRequestRow])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
-    expect(mockRead.$queryRaw).not.toHaveBeenCalled();
+    expect(modEventCalls()).toHaveLength(0);
     expect(res.items[0]).toMatchObject({ lastModerationAction: null });
   });
 
@@ -1087,10 +1142,10 @@ describe('listMySubmissions (lastModerationAction for removed listings)', () => 
         { appListingId: 'apl_removed', action: 'owner-unpublish' },
       ]);
       await listMySubmissions({ userId: OWNER });
-      expect(mockRead.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(modEventCalls()).toHaveLength(1);
       // `Prisma.sql` builds a `Sql` object: `.strings` is the static text, `.values` the
-      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as calls[0][0].
-      const arg = mockRead.$queryRaw.mock.calls[0][0] as {
+      // bound parameters. `$queryRaw(Prisma.sql`…`)` passes that object as the first argument.
+      const arg = modEventCalls()[0][0] as {
         strings: string[];
         values: unknown[];
       };
@@ -2138,5 +2193,398 @@ describe('🔴 NEW-2 — updateRevisionDraft evaluates the note/flag rule agains
       .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
       .find((a) => a?.select && 'isBeta' in a.select);
     expect(betaRead?.where).toEqual({ id: 'apl_parent' });
+  });
+});
+
+describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
+  /** Complete in every other dimension, so the rating problem is the only one that can fire. */
+  const requestRow = (
+    id: string,
+    status: string,
+    contentRating: string | null,
+    kind = 'offsite'
+  ) => ({
+    id,
+    appListingId: `apl_${id}`,
+    slug: `app-${id}`,
+    kind,
+    status: 'approved',
+    appListing: {
+      name: `App ${id}`,
+      revisionOfId: null,
+      status,
+      kind,
+      // Every row carries an app row declaring G; only an on-site listing may read it.
+      appBlock: { contentRating: 'g' },
+      contentRating,
+      iconId: 41,
+      coverId: 53,
+      description: 'A description.',
+      tagline: 'A tagline',
+      category: 'utility',
+      screenshots: [],
+      _count: { screenshots: 7 },
+    },
+  });
+
+  it('an approved on-site listing raised to R is reported; a PG-13 one and a draft R one on the same page are not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_hidden', 'approved', 'r', 'onsite'),
+        requestRow('r_sfw', 'approved', 'pg13', 'onsite'),
+        requestRow('r_draft', 'draft', 'r', 'onsite'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems)).toEqual([
+      [
+        {
+          code: 'hidden-mature-rating',
+          severity: 'advisory',
+          label:
+            'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+        },
+      ],
+      [],
+      [],
+    ]);
+  });
+
+  it('🔴 each asset carries its own level into the civitai.com media problems', async () => {
+    const levels: Record<number, number> = { 41: 4, 53: 1, 61: 8, 62: 2 };
+    mockRead.image.findMany.mockImplementation((async (args: {
+      where?: { id?: { in?: number[] } };
+    }) =>
+      (args?.where?.id?.in ?? []).map((id) => ({
+        id,
+        ingestion: 'Scanned',
+        nsfwLevel: levels[id],
+      }))) as never);
+    const row = requestRow('r_media', 'approved', 'pg13');
+    row.appListing.screenshots = [{ imageId: 61 }, { imageId: 62 }] as never;
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([row])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    // Icon R → the icon problem (not the PG cover's); the X and PG-13 screenshots raise none.
+    expect(res.items[0].problems.map((p) => [p.code, p.label.slice(0, 20)])).toEqual([
+      ['sfw-slot-mature', 'Your icon is rated R'],
+    ]);
+  });
+
+  it('an ON-SITE row is compared against its app’s declared rating; the off-site row beside it is not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'approved', 'r', 'onsite'),
+        requestRow('r_off', 'approved', 'r'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems.map((p) => p.label))).toEqual([
+      [
+        'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+      ],
+      [],
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Moderator edits of a listing the moderator holds no seat on
+// ---------------------------------------------------------------------------
+
+describe('moderator edits', () => {
+  // The shadow's content; anything other than the parent's means someone else edited it.
+  let shadowTagline = 'the tagline';
+  function auditEvents() {
+    return mockWrite.appListingModerationEvent.create.mock.calls.map(
+      (c) => (c[0] as { data: Record<string, unknown> }).data
+    );
+  }
+  beforeEach(() => {
+    shadowTagline = 'the tagline';
+    mockWrite.appListing.findUnique.mockImplementation(async (...a: unknown[]) => {
+      const args = a[0] as { where: { id: string } };
+      return args.where.id === 'apl_parent'
+        ? {
+            id: 'apl_parent',
+            slug: 'cool-app',
+            revisionOfId: null,
+            status: 'approved',
+            revisionOf: null,
+            tagline: 'the tagline',
+          }
+        : {
+            id: args.where.id,
+            slug: 'rev-x',
+            revisionOfId: 'apl_parent',
+            status: 'draft',
+            revisionOf: { id: 'apl_parent', slug: 'cool-app' },
+            tagline: shadowTagline,
+          };
+    });
+  });
+
+  it('a moderator edits a draft they do not own, and the edit is recorded with them as actor', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Mod rename' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res.listingId).toBe('apl_parent');
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { name: 'Mod rename' },
+    });
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({
+        appListingId: 'apl_parent',
+        action: 'moderator-edit',
+        actorUserId: MOD,
+        detail: 'details',
+      }),
+    ]);
+  });
+
+  it('a material moderator edit on a live listing goes through a shadow revision, not the live row', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+    const res = await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Material rename' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res).toMatchObject({ requiresReview: true, shadowId: 'apl_new_1' });
+    // The revision still belongs to the listing's owner, not the moderator.
+    expect(mockWrite.appListing.create.mock.calls[0][0].data).toMatchObject({
+      userId: OWNER,
+      revisionOfId: 'apl_parent',
+    });
+    const updateCalls = mockWrite.appListing.update.mock.calls.map((c) => c[0]);
+    expect(
+      updateCalls.every(
+        (c) => (c as unknown as { where: { id: string } }).where.id !== 'apl_parent'
+      )
+    ).toBe(true);
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD }),
+    ]);
+  });
+
+  it('the audit row is written in the same transaction as the edit, so a failed insert rolls it back', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    let inTx = false;
+    const writesInTx: boolean[] = [];
+    mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      inTx = true;
+      try {
+        return await cb(mockWrite);
+      } finally {
+        inTx = false;
+      }
+    });
+    mockWrite.appListing.update.mockImplementation(async (a: { data: unknown }) => {
+      writesInTx.push(inTx);
+      return a.data;
+    });
+    mockWrite.appListingModerationEvent.create.mockImplementation(async () => {
+      expect(inTx).toBe(true);
+      throw new Error('violates check constraint "app_listing_mod_events_action_check"');
+    });
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'x' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toThrow(/check constraint/);
+    expect(writesInTx).toEqual([true]);
+  });
+
+  it('a refused moderator save leaves no audit row', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'removed' }));
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'delist' });
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'x' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a non-owner who is not a moderator is still refused, with nothing written', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'x' },
+        userId: OTHER,
+        isModerator: false,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it("the owner's own edit writes no moderator-edit event, even when the owner is a moderator", async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent({ status: 'draft' }));
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Owner rename' },
+      userId: OWNER,
+      isModerator: true,
+    });
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a moderator submits a revision draft on a listing they do not own; a stranger cannot', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow());
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: OTHER, isModerator: false })
+    ).rejects.toMatchObject({ code: 'NOT_OWNED' });
+    const res = await submitListingRevision({
+      shadowId: 'apl_shadow',
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(res).toBeTruthy();
+    expect(mockWrite.appListingPublishRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ submittedByUserId: MOD }),
+      })
+    );
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD, detail: 'revision' }),
+    ]);
+  });
+
+  it("a moderator's revision-draft edit is written to the shadow and recorded on the parent", async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { tagline: 'mod tagline' },
+      userId: MOD,
+      isModerator: true,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'mod tagline' },
+    });
+    expect(auditEvents()).toEqual([
+      expect.objectContaining({ appListingId: 'apl_parent', actorUserId: MOD, detail: 'details' }),
+    ]);
+  });
+
+  it("a moderator is refused the owner's unsubmitted revision draft, and nothing is written", async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { tagline: 'mod tagline' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: OWNER_REVISION_IN_PROGRESS_MESSAGE });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it("a moderator cannot submit the owner's revision", async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(shadowRow());
+    mockWrite.appListingScreenshot.count.mockResolvedValue(1);
+    await expect(
+      submitListingRevision({ shadowId: 'apl_shadow', userId: MOD, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it("a moderator's material edit is refused while the owner has a revision in progress", async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { name: 'Material rename' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('an owner save that lands between the check and the write is still refused (the re-check runs in the transaction)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
+      shadowTagline = 'owner saved meanwhile';
+      return cb(mockWrite);
+    });
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { tagline: 'mod tagline' },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+    expect(auditEvents()).toEqual([]);
+  });
+
+  it('a moderator cannot open a revision on its own; only a save opens one', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    await expect(
+      beginListingRevision({ listingId: 'apl_parent', userId: MOD, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+  });
+
+  it('the owner is not held back by the same in-progress revision', async () => {
+    shadowTagline = 'owner draft';
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    mockRead.appListing.findFirst.mockResolvedValue({ id: 'apl_shadow' });
+    await expect(
+      updateListing({ listingId: 'apl_parent', patch: { name: 'Owner rename' }, userId: OWNER })
+    ).resolves.toMatchObject({ requiresReview: true, shadowId: 'apl_shadow' });
+  });
+
+  it('a moderator cannot change whether the app can be forked', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ kind: 'onsite', status: 'draft' })
+    );
+    await expect(
+      updateListing({
+        listingId: 'apl_parent',
+        patch: { forkable: true },
+        userId: MOD,
+        isModerator: true,
+      })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only the app’s owner or a collaborator can change whether it can be forked.',
+    });
+    expect(auditEvents()).toEqual([]);
   });
 });

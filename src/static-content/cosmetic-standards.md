@@ -1,7 +1,7 @@
 ---
 title: Creator Cosmetic Quality Standards
 description: Quality and content standards for cosmetics submitted to the Cosmetic Shop.
-lastmod: 2026-07-22
+lastmod: 2026-10-16
 ---
 
 Standards for cosmetics submitted to the Cosmetic Shop. There are three types: Badges, Profile Backgrounds, and Avatar Decorations.
@@ -10,7 +10,7 @@ Standards for cosmetics submitted to the Cosmetic Shop. There are three types: B
 
 - Cosmetics must be **safe-for-work**, matching the “SFW only” notice at the top of the submission modal. They show across the whole site (profiles, badges, avatar frames), so they need to stay SFW everywhere, including on civitai.red.
 - Keep imagery at a **PG / PG-13** level. No mature, sexual, gory, or otherwise NSFW content.
-- No **copyrighted or trademarked** material you don’t own.
+- Cosmetics must be **your own original design**. No characters, logos or symbols from brands or franchises you don’t own, even if you redrew them yourself. Fan art of existing IP is not allowed.
 
 ## Badges
 

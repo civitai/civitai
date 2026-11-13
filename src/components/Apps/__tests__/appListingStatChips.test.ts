@@ -13,10 +13,9 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  *
  * 🔴 WHY HERE AND NOT IN THE BROWSER SUITE. The chips render inside a Mantine
  * `HoverCard`, so the obvious home for this is `AppListingDetailBody.browser.test.tsx`
- * — and that project is **not run by CI**, and may not run locally at all (the pinned
- * Chromium and the Playwright provider disagree on version). A guard there is invisible
- * to everyone. So the DECISION was extracted into a pure module and is pinned here; the
- * component is a renderer with no branch of its own left to get wrong.
+ * — and that project may not run on every workstation (the pinned Chromium and the
+ * Playwright provider disagree on version). So the DECISION was extracted into a pure module and is
+ * pinned here; the component is a renderer with no branch of its own left to get wrong.
  *
  * 🔴 REGRESSION COVERAGE, not an invariant guard — every `describe` below except the
  * two explicitly labelled otherwise was RED at `617f09c204` and is green at HEAD. The
@@ -36,6 +35,7 @@ const UP = 431;
 const DOWN = 68;
 const REVIEWS = UP + DOWN; // 499
 const INSTALLS = 4213;
+const PLAYS = 2718;
 
 type Input = Parameters<typeof buildListingStatChips>[0];
 
@@ -43,7 +43,9 @@ function detail(over: Partial<ListingDetail> = {}): Input {
   return {
     recommend: { recommendedCount: UP, notRecommendedCount: DOWN, recommendPct: UP / REVIEWS },
     reviewCount: REVIEWS,
+    kindData: { kind: 'onsite', appBlockId: 'ab_1', hasPage: true, liveUrl: 'https://a.civit.ai' },
     installCount: INSTALLS,
+    openCount: PLAYS,
     ...over,
   } as Input;
 }
@@ -94,6 +96,23 @@ describe('🔴 buildRecommendHoverMessage — the percentage is REACHABLE (F1)',
         })
       )
     ).toBe('No reviews yet');
+  });
+
+  it('reviews present but no percentage (below the threshold) → counts, NOT "No reviews yet"', () => {
+    // `recommendPct: null` no longer means "no reviews": the server withholds it below
+    // LISTING_RECOMMEND_PCT_MIN_REVIEWS. Only `reviewCount === 0` is the empty case.
+    expect(
+      buildRecommendHoverMessage({
+        recommend: { recommendedCount: 3, notRecommendedCount: 1, recommendPct: null },
+        reviewCount: 4,
+      })
+    ).toBe("4 reviews · 3 recommend · 1 doesn't");
+    expect(
+      buildRecommendHoverMessage({
+        recommend: { recommendedCount: 1, notRecommendedCount: 0, recommendPct: null },
+        reviewCount: 1,
+      })
+    ).toBe("1 review · 1 recommends · 0 don't");
   });
 
   it('the percentage tracks the rollup rather than a constant', () => {
@@ -150,7 +169,7 @@ describe('🔴 buildRecommendHoverMessage — the negative half is rendered (F2)
 
 describe('buildListingStatChips — the chip list', () => {
   it('the live posture yields both chips, in order', () => {
-    expect(byKey(buildListingStatChips(detail()))).toEqual(['recommend', 'installs']);
+    expect(byKey(buildListingStatChips(detail()))).toEqual(['recommend', 'plays']);
   });
 
   it('each chip carries its face value, accessible name, and hover title', () => {
@@ -162,33 +181,35 @@ describe('buildListingStatChips — the chip list', () => {
       ariaLabel: '431 recommendations',
       message: "86% recommend (499) · 68 don't",
     });
-    expect(by.installs).toMatchObject({
-      label: 'Installs',
-      value: INSTALLS,
-      ariaLabel: '4,213 installs',
+    // 🔴 PLAYS — the card's number (`openCount`), not installs.
+    expect(by.plays).toMatchObject({
+      label: 'Plays',
+      value: PLAYS,
+      ariaLabel: '2,718 plays',
     });
+    expect(chips.map((c) => c.value)).not.toContain(INSTALLS);
   });
 
-  it('🔴 the recommend chip ALWAYS carries a message; the installs chip never does', () => {
+  it('🔴 the recommend chip ALWAYS carries a message; the plays chip never does', () => {
     // The seam this whole module exists for, stated as a property rather than as one
     // literal — `StatHoverCard` renders `message` INSTEAD of `value`, so:
     //   - recommend: the number is already on the face, so a missing message = a
     //     dropdown that repeats the face. That was the bug.
-    //   - installs: the full count IS the content, so a message would replace it with
+    //   - plays: the full count IS the content, so a message would replace it with
     //     prose. Spelling the number twice is the mirror-image mistake.
     for (const over of [{}, NO_REVIEWS as Partial<ListingDetail>]) {
       const by = Object.fromEntries(buildListingStatChips(detail(over)).map((c) => [c.key, c]));
       expect(by.recommend.message, JSON.stringify(over)).toBeTruthy();
-      expect(by.installs.message, JSON.stringify(over)).toBeUndefined();
+      expect(by.plays.message, JSON.stringify(over)).toBeUndefined();
     }
   });
 
-  it('a zero installCount still yields the chip — 0 installs is a fact, not an absent field', () => {
-    const by = Object.fromEntries(
-      buildListingStatChips(detail({ installCount: 0 })).map((c) => [c.key, c])
-    );
-    expect(by.installs).toBeDefined();
-    expect(by.installs.value).toBe(0);
+  it('🔴 no plays chip where the card shows no play count: 0, or an off-site null', () => {
+    for (const openCount of [0, null]) {
+      expect(byKey(buildListingStatChips(detail({ openCount }))), String(openCount)).toEqual([
+        'recommend',
+      ]);
+    }
   });
 });
 
@@ -282,5 +303,41 @@ describe('🔴 AppListingDetailBody delegates the chip decision (invariant guard
         'renders `message` INSTEAD of `value`, so a ternary here is what made the ' +
         'recommend percentage unreachable. The decision belongs in appListingStatChips.'
     ).not.toMatch(/message=\{[^}]*\?/);
+  });
+});
+
+describe('🔴 buildListingStatChips — the usage chip is Plays on-site, Installs off-site', () => {
+  const OFFSITE = {
+    kind: 'offsite',
+    externalUrl: 'https://x.example',
+    connectClientId: null,
+  } as const;
+  const usage = (chips: ReturnType<typeof buildListingStatChips>) =>
+    chips.filter((c) => c.key !== 'recommend');
+
+  it('on-site: "Plays" from openCount, never installs', () => {
+    expect(usage(buildListingStatChips(detail()))).toEqual([
+      { key: 'plays', label: 'Plays', value: PLAYS, ariaLabel: '2,718 plays' },
+    ]);
+  });
+
+  it('🔴 off-site: "Installs" from installCount, never plays', () => {
+    // An off-site listing has no play count; its usage is installs, as in the popular sort.
+    const chips = buildListingStatChips(detail({ kindData: OFFSITE, openCount: null }));
+    expect(usage(chips)).toEqual([
+      { key: 'installs', label: 'Installs', value: INSTALLS, ariaLabel: '4,213 installs' },
+    ]);
+  });
+
+  it('off-site with an openCount still shows installs (the kind decides, not the field)', () => {
+    const chips = buildListingStatChips(detail({ kindData: OFFSITE, openCount: PLAYS }));
+    expect(usage(chips).map((c) => [c.key, c.value])).toEqual([['installs', INSTALLS]]);
+  });
+
+  it('off-site with zero installs shows no usage chip', () => {
+    const chips = buildListingStatChips(
+      detail({ kindData: OFFSITE, openCount: null, installCount: 0 })
+    );
+    expect(chips.map((c) => c.key)).toEqual(['recommend']);
   });
 });

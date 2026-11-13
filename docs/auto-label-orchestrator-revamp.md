@@ -23,9 +23,9 @@ End-to-end target flow:
 
 ## Existing scaffolding to reuse
 
-- `src/server/services/orchestrator/consumerBlobUpload.ts` — already wraps `getConsumerBlobUploadUrl` from `@civitai/client`. Currently uses the **user** token and is exposed via a legacy `/api/orchestrator/getConsumerBlobUploadUrl` endpoint, **not** tRPC. We need a new tRPC entry that uses the system token.
+- `src/server/services/orchestrator/consumerBlobUpload.ts` — already wraps `getConsumerBlobUploadUrl` from `@civitai/orchestration-client`. Currently uses the **user** token and is exposed via a legacy `/api/orchestrator/getConsumerBlobUploadUrl` endpoint, **not** tRPC. We need a new tRPC entry that uses the system token.
 - `src/server/services/orchestrator/client.ts` — `internalOrchestratorClient` is built with `env.ORCHESTRATOR_ACCESS_TOKEN`. Use this for everything in this revamp.
-- `@civitai/client` exports we'll lean on: `getConsumerBlobUploadUrl`, `submitWorkflow`, `getWorkflow`, plus the step types `MediaCaptioningStepTemplate` and `WdTaggingStepTemplate`.
+- `@civitai/orchestration-client` exports we'll lean on: `getConsumerBlobUploadUrl`, `submitWorkflow`, `getWorkflow`, plus the step types `MediaCaptioningStepTemplate` and `WdTaggingStepTemplate`.
 - `applyTagPostProcess` / `applyCaptionPostProcess` — these don't exist yet; we'll extract the existing post-processing logic out of the `useOrchestratorUpdateSignal` callback in `TrainingCommon.ts` so it's reusable from the new helper.
 
 ## Phase 1 — Server: three new tRPC procedures (under `training`)
@@ -132,7 +132,7 @@ Once flipped on for everyone:
 - Delete `autoTag` / `autoCaption` tRPC procedures and their service handlers in `training.service.ts`.
 - Delete the legacy orchestrator types (`Orchestrator.Training.ImageAutoTagJobPayload` etc.) if unused elsewhere.
 - Delete the auto-label branch of the `useOrchestratorUpdateSignal` handler in `TrainingCommon.ts`.
-- Delete the `TrainingImagesTemp` S3 upload code path if it's only used for auto-label zips.
+- With the procedures above gone, delete `UploadType.TrainingImagesTemp`; the legacy auto-label zip is its only writer. That removes its branch in `/api/upload`, `assertOwnTrainingTempUpload` in `training.service.ts` and their tests. Remove the B2 lifecycle rule on the `training-images-temp/` prefix (a bucket console change, not code) only once the prefix is empty — the rule only deletes files while it exists, so dropping it at deploy strands the last zips. Then delete every doc or comment that mentions the prefix (`grep -rn training-images-temp`).
 
 ## Open questions
 

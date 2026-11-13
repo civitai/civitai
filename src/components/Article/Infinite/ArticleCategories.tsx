@@ -3,10 +3,14 @@ import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import type { TagChipRowItem } from '~/components/Tags/TagChipRow';
 import { TagChipRow } from '~/components/Tags/TagChipRow';
 import { useCategoryTags } from '~/components/Tags/tag.utils';
+import { OFFICIAL_ARTICLE_TAG } from '~/shared/constants/article.constants';
 import { TagTarget } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 
 /**
- * Category row for `/articles`, writing `?tags=<id>`.
+ * Category row for `/articles`, writing `?tags=<id>`. The Civitai Official chip leads it; that
+ * tag is not a category and `tag.getAll` hides adminOnly tags from non-admins, so it comes from
+ * `article.getOfficialTag`.
  *
  * This bar is NOT the `/images` and `/videos` one. Those carry a hand-curated chip set
  * (`feed-tag-bar.constants`) that exists to be measured and can be switched off on the
@@ -51,6 +55,15 @@ export function ArticleCategories() {
   const tagIds = query.tags ?? [];
 
   const { data: categories, isLoading } = useCategoryTags({ entityType: TagTarget.Article });
+  const { data: officialTag, isLoading: officialTagLoading } = trpc.article.getOfficialTag.useQuery(
+    undefined,
+    { trpc: { context: { skipBatch: true } } }
+  );
+
+  const items: TagChipRowItem[] = [
+    ...(officialTag ? [{ id: officialTag.id, label: OFFICIAL_ARTICLE_TAG.label }] : []),
+    ...categories.map((tag) => ({ id: tag.id, label: tag.name })),
+  ];
 
   // A chip is active only when it is the sole filter — anything else came from a deep
   // link this bar cannot represent, and lighting one chip of several would misdescribe it.
@@ -69,7 +82,7 @@ export function ArticleCategories() {
   const activeId =
     tagIds.length === 0
       ? undefined
-      : tagIds.length === 1 && categories.some((tag) => tag.id === tagIds[0])
+      : tagIds.length === 1 && items.some((item) => item.id === tagIds[0])
       ? tagIds[0]
       : unrepresentable;
 
@@ -84,7 +97,7 @@ export function ArticleCategories() {
   // category the viewer has personally hidden cannot flash as a chip before that
   // resolves. Holding on `!categories.length` as well covers the gap where the tag query
   // has settled and preferences have not.
-  const chipsHeld = isLoading || !categories.length;
+  const chipsHeld = isLoading || officialTagLoading || !categories.length;
 
   // SETTLED and still empty — a failed or empty category fetch, which is permanent, not
   // the in-flight state. `chipsHeld` alone would put the clear control on screen for
@@ -93,7 +106,7 @@ export function ArticleCategories() {
 
   return (
     <TagChipRow
-      items={categories.map((tag) => ({ id: tag.id, label: tag.name }))}
+      items={items}
       activeId={activeId}
       onSelect={handleSelect}
       onClear={handleClear}

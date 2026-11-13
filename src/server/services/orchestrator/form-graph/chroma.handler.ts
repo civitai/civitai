@@ -2,13 +2,13 @@
  * Chroma handler for the form-graph lane — emits an imageGen step.
  */
 
-import type { ImageGenStepTemplate } from '@civitai/client';
+import type { ImageGenStepTemplate } from '@civitai/orchestration-client';
 import type { ComfyChromaCreateImageGenInput } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras, type EcosystemData } from './types';
 
 export const createChromaInput = defineHandler<EcosystemData<'Chroma'>, [ImageGenStepTemplate]>(

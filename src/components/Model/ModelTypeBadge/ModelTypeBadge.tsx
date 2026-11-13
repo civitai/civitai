@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, Divider, Popover, Stack, Text } from '@mantine/core';
+import { Badge, Divider, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useState } from 'react';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
@@ -48,6 +49,9 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   Qwen: 'QW',
   Anima: 'ANI',
   'Krea 2': 'KR2',
+  'Krea 2 Turbo': 'KR2',
+  'MiniMax H3': 'MH3',
+  'MOSS Image': 'MOS',
 };
 
 export function ModelTypeBadge({ type, baseModel, baseModels, ...badgeProps }: Props) {

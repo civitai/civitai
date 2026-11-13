@@ -6,11 +6,11 @@ import {
   Drawer,
   Group,
   Indicator,
-  Popover,
   ScrollArea,
   Stack,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
@@ -29,8 +29,10 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
+import { mobileMenuSheetZIndex, remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -48,9 +50,16 @@ export function ResourceSelectFiltersDropdown() {
     selectSource,
     filters: selectFilters,
     setFilters: setSelectFilters,
+    turboPinned,
+    excludeTurbo,
   } = useResourceSelectContext();
   const features = useFeatureFlags();
   const canFilterLoaded = features.imageGeneration && selectSource === 'generation';
+  const canFilterTurbo =
+    !turboPinned &&
+    !excludeTurbo &&
+    (resources.length === 0 ||
+      resources.some((r) => TURBO_VARIANT_MODEL_TYPES.includes(r.type as ModelType)));
   // `selectSource` is caller-supplied and defaults to 'generation', so this reads wider than "the
   // generator" — several non-generator callers pass it deliberately, and the generate-price question
   // is still the right one for them.
@@ -89,6 +98,7 @@ export function ResourceSelectFiltersDropdown() {
     (selectFilters.types.length > 0 ? 1 : 0) +
     (selectFilters.baseModels.length > 0 ? 1 : 0) +
     (selectFilters.loadedOnly ? 1 : 0) +
+    (canFilterTurbo && selectFilters.turboOnly ? 1 : 0) +
     (showPaidFilter && selectFilters.hidePaid ? 1 : 0);
 
   const clearFilters = () => {
@@ -96,6 +106,7 @@ export function ResourceSelectFiltersDropdown() {
       types: [],
       baseModels: [],
       loadedOnly: false,
+      turboOnly: false,
       hidePaid: false,
     };
     setSelectFilters(reset);
@@ -119,21 +130,34 @@ export function ResourceSelectFiltersDropdown() {
       disabled={!filterLength}
       inline
     >
-      <Button
-        // className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={colorScheme === 'dark' ? 'filled' : 'light'}
-        rightSection={<IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-        size="compact-sm"
-      >
-        <Group gap={4} wrap="nowrap">
-          <IconFilter size={16} />
+      {mobile ? (
+        <FilterButton
+          icon={IconFilter}
+          iconOnly
+          variant="default"
+          onClick={() => setOpened((o) => !o)}
+          data-expanded={opened}
+        >
           Filters
-        </Group>
-      </Button>
+        </FilterButton>
+      ) : (
+        <Button
+          color="gray"
+          radius="xl"
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          rightSection={
+            <IconChevronDown className={clsx({ [classes.opened]: opened })} size={16} />
+          }
+          onClick={() => setOpened((o) => !o)}
+          data-expanded={opened}
+          size="compact-sm"
+        >
+          <Group gap={4} wrap="nowrap">
+            <IconFilter size={16} />
+            Filters
+          </Group>
+        </Button>
+      )}
     </Indicator>
   );
 
@@ -198,16 +222,29 @@ export function ResourceSelectFiltersDropdown() {
         )}
       </Stack>
 
-      {canFilterLoaded && (
+      {(canFilterLoaded || canFilterTurbo) && (
         <Stack gap="md">
           <Divider label="Generator" className="text-sm font-bold" />
-          <Chip
-            {...chipProps}
-            checked={selectFilters.loadedOnly}
-            onChange={(checked) => setSelectFilters((f) => ({ ...f, loadedOnly: checked }))}
-          >
-            <span>Loaded only</span>
-          </Chip>
+          <Group gap="xs">
+            {canFilterLoaded && (
+              <Chip
+                {...chipProps}
+                checked={selectFilters.loadedOnly}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, loadedOnly: checked }))}
+              >
+                <span>Loaded only</span>
+              </Chip>
+            )}
+            {canFilterTurbo && (
+              <Chip
+                {...chipProps}
+                checked={selectFilters.turboOnly}
+                onChange={(checked) => setSelectFilters((f) => ({ ...f, turboOnly: checked }))}
+              >
+                <span>Turbo only</span>
+              </Chip>
+            )}
+          </Group>
         </Stack>
       )}
 
@@ -252,13 +289,15 @@ export function ResourceSelectFiltersDropdown() {
 
   return (
     <Popover
-      zIndex={200}
+      // Portaled: the toolbar sits inside the picker's scrolling results, which would clip this
+      // tall dropdown. Portaled, it has to clear the dialog stack, as the remix menu does.
+      withinPortal
+      zIndex={remixMenuZIndex}
       position="bottom-end"
       shadow="md"
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
-      // withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">
@@ -271,6 +310,7 @@ export function ResourceSelectFiltersDropdown() {
 }
 
 export function ResourceSelectSort() {
+  const mobile = useIsMobile();
   const availability = useSortAvailability();
   const { sort, setSort } = useResourceSelectContext();
 
@@ -286,6 +326,8 @@ export function ResourceSelectSort() {
       value={sort}
       onClick={(value) => setSort(value as ResourceSort)}
       options={options}
+      iconOnly={mobile}
+      aria-label={mobile ? `Sort: ${resourceSort[sort]}` : undefined}
     />
   );
 }

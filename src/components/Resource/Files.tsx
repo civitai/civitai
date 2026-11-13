@@ -5,19 +5,18 @@ import {
   getPrimaryShade,
   Group,
   Loader,
-  Popover,
   Progress,
   Select,
   Stack,
   Text,
   TextInput,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
   Badge,
   Switch,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { Dropzone, type FileRejection } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -51,7 +50,8 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
-import { getFileExtension, sanitizeDownloadFilename } from '~/utils/string-helpers';
+import { getFileExtension } from '~/utils/string-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import { trpc } from '~/utils/trpc';
 import { getModelFileTypeOptions, UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
@@ -133,12 +133,14 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
   }
 }
 
-export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean } = {}) {
+export function Files() {
   const {
     files,
     linkedComponents,
     onDrop,
     dropzoneConfig,
+    sequentialUploads,
+    setSequentialUploads,
     baseModel,
     modelVersionId,
     addLinkedComponent,
@@ -322,6 +324,16 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
             The main model files users will download. We&apos;ll show the best match based on their
             preferences.
           </Text>
+          {primary.maxFiles > 1 && (
+            <Switch
+              mt="sm"
+              size="xs"
+              label="Upload files one at a time"
+              description="Each file finishes and is saved before the next one starts. Slower, but if an upload fails the files already finished are kept."
+              checked={sequentialUploads}
+              onChange={(e) => setSequentialUploads(e.currentTarget.checked)}
+            />
+          )}
         </Card.Section>
         <Stack gap="sm" pt="md">
           {modelFiles.length > 0 ? (
@@ -332,11 +344,12 @@ export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean }
                   data={file}
                   index={files.indexOf(file)}
                   fileTypes={primaryTypes}
-                  showRename={showRenameOnPrimary}
+                  showRename
                 />
               ))}
               <InlineDropzone
                 label="Add another model file variant"
+                description={`Supports ${primary.extensions.join(', ')} files`}
                 onDrop={withExtensionGuard('primary', (dropped) =>
                   handleInlineDrop(
                     dropped,
@@ -643,10 +656,8 @@ function FileCard({
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
       removeFile(versionFile.uuid);
     },
-    onError() {
-      showErrorNotification({
-        error: new Error('Could not delete file, please try again'),
-      });
+    onError(error) {
+      showErrorNotification({ title: 'Could not delete file', error: new Error(error.message) });
     },
   });
 
@@ -692,8 +703,7 @@ function FileCard({
 
   const handleRenameSave = () => {
     if (!versionFile.id) return;
-    const originalExt = `.${getFileExtension(versionFile.name)}`;
-    const next = renameValue.trim() ? sanitizeDownloadFilename(renameValue, originalExt) : null;
+    const next = sanitizeOverrideName(renameValue, versionFile.name);
     renameFileMutation.mutate({ id: versionFile.id, overrideName: next });
   };
 
@@ -1084,7 +1094,11 @@ function FileEditForm({
           placeholder="Type"
           error={error?.type?._errors[0]}
           data={getModelFileTypeOptions(versionFile.name, {
-            types: fileTypes,
+            // A saved file can't become training data; only an upload can (assertFileTypeChangeAllowed).
+            types:
+              versionFile.id && initialFile.type !== 'Training Data'
+                ? fileTypes.filter((type) => type !== 'Training Data')
+                : fileTypes,
             currentType: versionFile.type,
             modelType: versionFile.modelType,
           })}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 // gold: vidQuantity equals maxQuantity, so clamping alone can't separate them
 const EXT: GenerationCtx = {

@@ -55,6 +55,14 @@ export default defineConfig({
     name: 'app:moderator',
     environment: 'node',
     include: ['src/**/*.{test,spec}.ts'],
-    env: dbEnvFromRootDotenv(),
+    // The notifications pair stands in for a shell exporting real credentials, so the guard on
+    // src/test/env.mock.ts deleting them (notifications-env-scrub.test.ts) can fail in CI too.
+    env: {
+      ...dbEnvFromRootDotenv(),
+      NOTIFICATIONS_ENDPOINT: 'http://127.0.0.1:9',
+      NOTIFICATIONS_TOKEN: 'moderator-test-sentinel',
+    },
+    // Builds the empty cluster `freshPglite()` starts every pglite test from.
+    globalSetup: ['./src/test/pglite-template.setup.ts'],
   },
 });

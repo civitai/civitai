@@ -24,13 +24,16 @@ import {
  * `withBlockScope` (REST) and `authorizeBlockBridgeToken` (tRPC) — which then STRIP the revoked
  * scopes from the verified claims.
  *
- * ⚠️ "BOTH token seams" WAS WRONG AS A COUNT: there are FOUR `verifyBlockToken` call sites, and
- * this repo ledgers them as four (`src/shared/constants/block-scope.constants.ts`). The other
- * two — `resolveSharedContext` (`apps-shared.router.ts`) and `resolveStorageContext`
- * (`apps/app-storage.service.ts`) — re-verify the raw bearer themselves and do NOT apply
- * revocations. That is harmless because each authorizes only `apps:storage:*` /
- * `apps:storage:shared:*`, every one of which is consent-exempt, so no marker can ever name a
- * scope they check. It is harmless by a PROPERTY, not by construction, so it is asserted:
+ * ⚠️ "BOTH token seams" WAS WRONG AS A COUNT: FOUR seams verify a block token. `withBlockScope`
+ * calls `verifyBlockToken` itself; the other three go through `resolveBlockToken`
+ * (`block-bridge-auth.service.ts`), which calls it once for all of them. Of those three, the
+ * bridge asks for the strip (`consent: 'strip'`); the other two — `resolveSharedContext`
+ * (`apps-shared.router.ts`) and `resolveStorageContext` (`apps/app-storage.service.ts`) —
+ * re-verify the raw bearer with `consent: 'exempt-only'` and do NOT apply revocations. That is harmless because each authorizes only the four LEGACY storage
+ * scopes (`apps:storage:read|write`, `apps:storage:shared:read|write`), every one of which is
+ * consent-exempt, so no marker can ever name a scope they check. ⚠️ NOT the whole
+ * `apps:storage:` family: `apps:storage:publish` is consent-GATED, so a route authorizing it
+ * must apply revocations and must not reuse either of these two resolvers as they stand. It is harmless by a PROPERTY, not by construction, so it is asserted:
  * `src/server/services/__tests__/no-unguarded-block-rest-token.test.ts` ledgers which seams
  * apply revocations and why the other two need not, and fails if either set moves.
  *
@@ -84,8 +87,10 @@ import {
  *
  * It is narrowed by reading at all ONLY when a read could change the outcome — see
  * {@link shouldConsultMarker}: an anon token has no (user, app) pair, and a token carrying
- * no consent-gated scope cannot be affected by any marker. That keeps every
- * `apps:storage:*` and `collections:read:self`/`write:self` app out of the coupling
+ * no consent-gated scope cannot be affected by any marker. That keeps every app whose
+ * scopes are all exempt — the four legacy `apps:storage:*` scopes, `apps:storage`,
+ * `collections:read:self`/`write:self` — out of the coupling (an app declaring the
+ * consent-gated `apps:storage:publish` is IN it for any viewer who granted it)
  * entirely, which is keyed on the app's MANIFEST, not on the route.
  *
  * ⚠️ DO NOT QUOTE "20 of the 29 scope-bound routes" FOR THIS PREDICATE — that figure belongs to
@@ -244,7 +249,9 @@ export type ConsentRevocationVerdict =
  *     `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it consults the grant,
  *     and `blocks.revokeScopes` refuses to record a suppression for one — so a marker can
  *     never name a scope such a token carries. An app whose whole manifest is exempt
- *     (`apps:storage:*`, shared storage, `collections:read:self`) never reads the marker.
+ *     (the four legacy `apps:storage:*` scopes, `apps:storage`, `collections:read:self`) never
+ *     reads the marker. `apps:storage:publish` is consent-gated, so a token carrying a
+ *     granted one does; an ungranted one is withheld at mint and never reaches this check.
  *
  *     ⚠️ NO ROUTE FIGURE HERE. "20 of the 29 scope-bound REST routes" was retracted in this
  *     file's header and again in the middleware, and survived in THIS docblock — the one both
@@ -270,7 +277,8 @@ export function shouldConsultMarker(opts: {
  *
  * 🔴 `unavailable` FAILS CLOSED BY NAMING EVERY REVOKABLE SCOPE THE TOKEN CARRIES, not by
  * naming all of them. Stripping a consent-EXEMPT scope during a Redis incident would refuse
- * `apps:storage:*` and `collections:read:self` traffic that no revoke could ever have
+ * exempt-storage (the four legacy `apps:storage:*` scopes, `apps:storage`) and
+ * `collections:read:self` traffic that no revoke could ever have
  * touched — a self-inflicted outage on a population the feature does not apply to. Exempt
  * scopes are signed without a grant, so there is nothing about them for a marker to be
  * unknown about.

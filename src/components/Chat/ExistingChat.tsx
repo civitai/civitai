@@ -13,10 +13,10 @@ import {
   Stack,
   Text,
   Textarea,
-  Tooltip,
   UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -46,26 +46,28 @@ import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useChatLayout } from '~/components/Chat/useChatTheme';
 import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
-import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
+import {
+  chatLinkifyOptions,
+  getLinkHref,
+  isExternalChatLink,
+  loadMotion,
+  showsChatModeratorMark,
+} from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { ChatSystemNoteText } from '~/components/Chat/ChatSystemNoteText';
+import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
 import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
-import {
-  activeMemberStatuses,
-  filterBlockedChatMessages,
-  formatChatSystemMessage,
-} from '~/shared/utils/chat';
+import { activeMemberStatuses, filterBlockedChatMessages } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -470,7 +472,7 @@ export function ExistingChat() {
                       linkToProfile
                       badge={
                         <Group gap={6} ml={4} align="center">
-                          {cm.user.isModerator ? (
+                          {showsChatModeratorMark(cm.user) ? (
                             <Image
                               src="/images/civ-c.png"
                               title="Moderator"
@@ -900,6 +902,7 @@ function ChatInputBox({
           thisChat.messages = [
             {
               content: data.content,
+              userId: data.userId,
               contentType: data.contentType,
               createdAt: new Date(data.createdAt),
             },
@@ -1155,9 +1158,10 @@ function ChatInputBox({
 }
 
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
+  const { ownHosts } = useCurrentDomainHosts();
   if (!href) return <span className={classes.embedTitle}>{title}</span>;
 
-  if (constants.chat.externalRegex.test(href)) {
+  if (isExternalChatLink(href, ownHosts)) {
     return (
       <Anchor
         className={classes.embedTitle}
@@ -1179,6 +1183,7 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
+  const { ownHosts } = useCurrentDomainHosts();
   let contentObj: {
     title: string | null;
     description: string | null;
@@ -1195,7 +1200,7 @@ const EmbedMessage = ({ content }: { content: string }) => {
 
   if (!title && !description && !image) return <></>;
 
-  const modHref = getLinkHref(href);
+  const modHref = getLinkHref(href, ownHosts);
   // A link to an image unfurls to the image alone. Shown at thumbnail size it is
   // an icon of itself, so the card becomes the frame and the preview fills it.
   const isMediaOnly = !title && !description;
@@ -1327,12 +1332,7 @@ function DisplayMessages({
                   <EmbedMessage content={c.content} />
                 ) : isSystemChat ? (
                   <Text className={classes.systemNote} component="div" size="xs">
-                    <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                      {formatChatSystemMessage({
-                        content: c.content,
-                        username: currentUser?.username,
-                      })}
-                    </CustomMarkdown>
+                    <ChatSystemNoteText content={c.content} username={currentUser?.username} />
                   </Text>
                 ) : (
                   <div
@@ -1489,6 +1489,7 @@ function ChatMessageContent({
 }) {
   const scannable = stripStickerTokens(content);
   const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+  const { ownHosts } = useCurrentDomainHosts();
 
   if (!content.length) return <>{fallback ?? null}</>;
 
@@ -1497,7 +1498,7 @@ function ChatMessageContent({
   if (cleaned !== scannable)
     return (
       <Text component="span">
-        <Linkify options={linkifyOptions}>{cleaned}</Linkify>
+        <Linkify options={chatLinkifyOptions(ownHosts)}>{cleaned}</Linkify>
       </Text>
     );
 
@@ -1524,7 +1525,7 @@ function ChatMessageContent({
                     : undefined
                 }
               >
-                <Linkify options={linkifyOptions}>{part.value}</Linkify>
+                <Linkify options={chatLinkifyOptions(ownHosts)}>{part.value}</Linkify>
               </Text>
             )
           )}

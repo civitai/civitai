@@ -3,10 +3,10 @@
  * `seedance` videoGen engine; the model version comes from the checkpoint id.
  */
 
-import type { SeedanceVideoGenInput, VideoGenStepTemplate } from '@civitai/client';
+import type { SeedanceVideoGenInput, VideoGenStepTemplate } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { seedanceVersionIds } from '~/shared/form-graph/generation/video/seedance.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const versionIdToModel = new Map<number, SeedanceVideoGenInput['model']>(
@@ -24,7 +24,7 @@ export const createSeedanceInput = defineHandler<EcosystemData<'Seedance'>, [Vid
     return [
       {
         $type: 'videoGen',
-        input: removeEmpty({
+        input: removeEmpty<SeedanceVideoGenInput>({
           engine: 'seedance',
           model,
           prompt: data.prompt,
@@ -34,7 +34,7 @@ export const createSeedanceInput = defineHandler<EcosystemData<'Seedance'>, [Vid
           generateAudio: data.generateAudio,
           seed: data.seed,
           images,
-        }) as SeedanceVideoGenInput,
+        }),
       },
     ];
   }

@@ -39,6 +39,13 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+const { onStorySparkLost } = vi.hoisted(() => ({
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkLost,
+}));
 
 const { mockQueueImageSearchIndexUpdate, mockInvalidateManyImageExistence, mockDeleteImageFromS3 } =
   vi.hoisted(() => ({
@@ -52,6 +59,14 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
   invalidateManyImageExistence: mockInvalidateManyImageExistence,
   deleteImageFromS3: mockDeleteImageFromS3,
+}));
+
+const { announceReviewsInBackground } = vi.hoisted(() => ({
+  announceReviewsInBackground: vi.fn(),
+}));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  announceReviewsInBackground,
 }));
 
 import { deletePost } from '../post.service';
@@ -69,13 +84,34 @@ const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', userId: FOREIGN_USER_ID, dele
 // delete is not stable.
 const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
 
-function primeQueries(images: (typeof OWNER_IMAGE)[]) {
-  const deletable = images.filter((i) => i.deletable);
+/** The moderation state the DELETE returns for every deleted image. */
+const SCANNED = { ingestion: 'Scanned', needsReview: null, nsfwLevel: 1, blockedFor: null };
+const deletedState: {
+  ingestion: string;
+  needsReview: string | null;
+  nsfwLevel: number;
+  blockedFor: string | null;
+} = { ...SCANNED };
+
+/** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
+function primeQueries(
+  images: (typeof OWNER_IMAGE)[],
+  kept: number[] = [],
+  reported: number[] = []
+) {
+  const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = sqlTextOf(strings);
     if (sql.includes('pg_class')) return [{ present: false }];
+    if (sql.includes('"ImageReport"')) return reported.map((imageId) => ({ imageId }));
     if (sql.includes('"collectionId"')) return [];
-    if (sql.includes('DELETE FROM "Image"')) return deletable.map(({ id, url }) => ({ id, url }));
+    if (sql.includes('DELETE FROM "Image"'))
+      return deletable.map(({ id, url, userId }) => ({
+        id,
+        url,
+        userId,
+        ...deletedState,
+      }));
     if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
     if (sql.includes('AS deletable')) return images;
     return [];
@@ -105,6 +141,44 @@ describe('deletePost orphan de-indexing', () => {
     vi.clearAllMocks();
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: any) => fn(dbMock.dbWrite));
     vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
+  });
+
+  it('takes back the event points of a story started from an image, when the post was its chapter 1', async () => {
+    primeQueries([OWNER_IMAGE]);
+    dbMock.dbWrite.storylineChapter.findFirst.mockResolvedValueOnce({ storylineId: 9 } as never);
+    await deletePost({ id: POST_ID });
+    expect(dbMock.dbWrite.storylineChapter.findFirst).toHaveBeenCalledWith({
+      where: { postId: POST_ID, depth: 0, storyline: { sparkImageId: { not: null } } },
+      select: { storylineId: true },
+    });
+    expect(onStorySparkLost).toHaveBeenCalledWith(9);
+  });
+
+  it('announces the unreleased reviews written from the post, read before the post goes', async () => {
+    primeQueries([OWNER_IMAGE]);
+    const base = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      sqlTextOf(strings).includes('"releasedAt" IS NULL')
+        ? Promise.resolve([{ id: 77 }])
+        : base(strings)) as never);
+
+    await deletePost({ id: POST_ID });
+
+    expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reviewIds: [77] })
+    );
+    const { calls, invocationCallOrder } = dbMock.dbWrite.$queryRaw.mock;
+    const order = (needle: string) =>
+      invocationCallOrder[
+        calls.findIndex((call) => sqlTextOf(call[0] as string[]).includes(needle))
+      ];
+    expect(order('"releasedAt" IS NULL')).toBeLessThan(order('DELETE FROM "Post"'));
+  });
+
+  it('touches no event points for a post that starts no story', async () => {
+    primeQueries([OWNER_IMAGE]);
+    await deletePost({ id: POST_ID });
+    expect(onStorySparkLost).not.toHaveBeenCalled();
   });
 
   it('scopes the delete to poster-owned images in SQL', async () => {
@@ -146,6 +220,27 @@ describe('deletePost orphan de-indexing', () => {
     });
   });
 
+  it('drops a deletable image the delete kept from search, and never deletes its file', async () => {
+    primeQueries([OWNER_IMAGE, { ...FOREIGN_IMAGE, deletable: true }], [FOREIGN_IMAGE.id]);
+
+    await deletePost({ id: POST_ID, isModerator: true });
+
+    expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [OWNER_IMAGE.id, FOREIGN_IMAGE.id],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(1);
+    expect(mockInvalidateManyImageExistence).toHaveBeenCalledWith([OWNER_IMAGE.id]);
+  });
+
+  it('returns the ids of the images it deleted, and only those', async () => {
+    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+
+    const result = await deletePost({ id: POST_ID });
+
+    expect(result?.deletedImageIds).toEqual([OWNER_IMAGE.id]);
+  });
+
   it('deletes only the poster-owned image, and never the foreign one', async () => {
     primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
 
@@ -163,7 +258,83 @@ describe('deletePost orphan de-indexing', () => {
     expect(mockDeleteImageFromS3).toHaveBeenCalledWith({
       id: OWNER_IMAGE.id,
       url: OWNER_IMAGE.url,
+      keepShopArtwork: false,
     });
+  });
+
+  // Only then may the storage delete keep an object that shop artwork still uses.
+  it.each([
+    ['the poster deletes it', POSTER_ID, {}, true],
+    ['someone else deletes it', 99, {}, false],
+    ['it is blocked', POSTER_ID, { ingestion: 'Blocked' }, false],
+    ['it keeps a block reason', POSTER_ID, { ingestion: 'Error', blockedFor: 'tos' }, false],
+    ['it is not scanned yet', POSTER_ID, { ingestion: 'Pending' }, false],
+    ['it is held for review', POSTER_ID, { needsReview: 'csam' }, false],
+  ] as const)(
+    'asks to keep shop artwork only for a plain owner delete: %s',
+    async (_case, deletedById, state, keep) => {
+      Object.assign(deletedState, SCANNED, state);
+      primeQueries([OWNER_IMAGE]);
+
+      await deletePost({ id: POST_ID, deletedById });
+
+      expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+        expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: keep })
+      );
+      Object.assign(deletedState, SCANNED);
+    }
+  );
+
+  // The report links cascade with the rows, so the lookup must see every deletable image before the delete.
+  it('looks up reports for the deletable images before deleting them, and keeps per image', async () => {
+    const SECOND = { id: 9, url: 'second-url', userId: POSTER_ID, deletable: true };
+    primeQueries([OWNER_IMAGE, SECOND, FOREIGN_IMAGE], [], [SECOND.id]);
+
+    await deletePost({ id: POST_ID, deletedById: POSTER_ID });
+
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls as [string[], ...unknown[]][];
+    const order = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder;
+    const at = (needle: string) =>
+      calls.findIndex(([strings]) => sqlTextOf(strings).includes(needle));
+    const reportCall = at('"ImageReport"');
+    expect(reportCall).toBeGreaterThanOrEqual(0);
+    expect(calls[reportCall].slice(1)).toContainEqual([OWNER_IMAGE.id, SECOND.id]);
+    expect(order[reportCall]).toBeLessThan(order[at('DELETE FROM "Image"')]);
+    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+      expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: true })
+    );
+    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+      expect.objectContaining({ id: SECOND.id, keepShopArtwork: false })
+    );
+  });
+
+  // The report links cascade with the rows: a lookup that fails must not let the delete go ahead.
+  it('deletes nothing when the report lookup fails', async () => {
+    primeQueries([OWNER_IMAGE]);
+    const prime = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => {
+      if (sqlTextOf(strings).includes('"ImageReport"')) throw new Error('lookup failed');
+      return prime?.(strings, ...v);
+    }) as never);
+
+    await expect(deletePost({ id: POST_ID, deletedById: POSTER_ID })).rejects.toThrow(
+      'lookup failed'
+    );
+    expect(callContaining('DELETE FROM "Image"')).toBeUndefined();
+    expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
+  });
+
+  it('does not ask to keep shop artwork for an image under an open report', async () => {
+    primeQueries([OWNER_IMAGE], [], [OWNER_IMAGE.id]);
+
+    await deletePost({ id: POST_ID, deletedById: POSTER_ID });
+
+    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+      expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: false })
+    );
   });
 
   it('de-indexes without deleting when every image is someone else’s', async () => {

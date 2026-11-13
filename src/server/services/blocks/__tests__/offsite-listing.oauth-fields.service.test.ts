@@ -9,6 +9,17 @@ import {
 } from '~/server/services/blocks/offsite-listing.service';
 import type { SubmitExternalListingInput } from '~/server/schema/blocks/offsite-listing.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13) — external-app submission SERVICE tests: the OAuth-client (connect) aspects of the MERGED submitExternalListing (re-homed from the standalone connect path).
@@ -42,6 +53,10 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     oauthClient: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The no-type `issue_tracker_url` column is probed, read and written by raw SQL (opening a
+    // revision clones the parent's link onto the shadow). Column present, no link.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {
@@ -50,6 +65,12 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   mockWrite.$transaction = vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   return { mockRead, mockWrite, ids: { n: 0 } };
 });
+
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -75,7 +96,9 @@ const baseInput: SubmitExternalListingInput = {
   contentRating: 'g',
 };
 
-function ownedClient(overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}) {
+function ownedClient(
+  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }
 
@@ -110,7 +133,10 @@ describe('submitExternalListing', () => {
     expect(res.listingId).toMatch(/^apl_test_/);
     expect(res.publishRequestId).toMatch(/^alpr_test_/);
 
-    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<string, unknown>;
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(listingData).toMatchObject({
       kind: 'offsite',
       status: 'draft',
@@ -125,8 +151,10 @@ describe('submitExternalListing', () => {
       userId: CALLER,
     });
 
-    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
-      .data as Record<string, unknown>;
+    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(reqData).toMatchObject({
       kind: 'offsite',
       status: 'pending',
@@ -142,25 +170,30 @@ describe('submitExternalListing', () => {
     // caller OTHER owns the client → allowed; rows carry OTHER.
     await submitExternalListing({ input: baseInput, userId: OTHER });
     const listingData = mockWrite.appListing.create.mock.calls[0][0].data as { userId: number };
-    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
-      .data as { submittedByUserId: number };
+    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as {
+      submittedByUserId: number;
+    };
     expect(listingData.userId).toBe(OTHER);
     expect(reqData.submittedByUserId).toBe(OTHER);
   });
 
   it('ownership failure: a client owned by someone else → FORBIDDEN, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'FORBIDDEN',
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('client not found → NOT_FOUND, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(null);
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'NOT_FOUND',
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'NOT_FOUND',
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -182,7 +215,25 @@ describe('submitExternalListing', () => {
       input: { ...baseInput, requestedScopes: TokenScope.MediaWrite, scopeJustifications: {} },
       userId: CALLER,
     });
-    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<string, unknown>;
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(listingData.connectRequestedScopes).toBe(CEILING);
+  });
+
+  it('never snapshots a client_credentials-only bit into the disclosed connect scopes', async () => {
+    mockRead.oauthClient.findUnique.mockResolvedValue(
+      ownedClient({ allowedScopes: CEILING | TokenScope.AppStoreCatalogWrite })
+    );
+    await submitExternalListing({
+      input: { ...baseInput, scopeJustifications: {} },
+      userId: CALLER,
+    });
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(listingData.connectRequestedScopes).toBe(CEILING);
   });
 
@@ -199,7 +250,10 @@ describe('submitExternalListing', () => {
   });
 
   it.each([
-    ['unknown-scope key', { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { NotAScope: 'x' } }],
+    [
+      'unknown-scope key',
+      { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { NotAScope: 'x' } },
+    ],
     [
       'value > max length',
       {
@@ -237,18 +291,22 @@ describe('submitExternalListing', () => {
 
   it('slug already taken → friendly BAD_REQUEST, no tx', async () => {
     mockRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: expect.stringContaining('already taken'),
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('already taken'),
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('per-user pending cap → TOO_MANY_REQUESTS, no tx', async () => {
     mockRead.appListingPublishRequest.count.mockResolvedValue(10);
-    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject({
-      code: 'TOO_MANY_REQUESTS',
-    });
+    await expect(submitExternalListing({ input: baseInput, userId: CALLER })).rejects.toMatchObject(
+      {
+        code: 'TOO_MANY_REQUESTS',
+      }
+    );
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 });
@@ -339,7 +397,27 @@ describe('updateListing (connect scope edit re-validation)', () => {
       listingId: 'apl_live',
       userId: CALLER,
       // A bogus form mask is supplied; the service must ignore it and snapshot CEILING.
-      patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: { ModelsRead: 'reason' } },
+      patch: {
+        requestedScopes: TokenScope.ModelsRead,
+        scopeJustifications: { ModelsRead: 'reason' },
+      },
+    });
+    const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.connectRequestedScopes).toBe(CEILING);
+  });
+
+  it('never re-snapshots a client_credentials-only bit on a scope edit', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue({
+      ...approvedConnectListing,
+      status: 'pending',
+    });
+    mockRead.oauthClient.findUnique.mockResolvedValue(
+      ownedClient({ allowedScopes: CEILING | TokenScope.AppStoreCatalogWrite })
+    );
+    await updateListing({
+      listingId: 'apl_live',
+      userId: CALLER,
+      patch: { requestedScopes: TokenScope.ModelsRead, scopeJustifications: {} },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.connectRequestedScopes).toBe(CEILING);
@@ -413,9 +491,10 @@ describe('loadConnectClientForListing (moderator ownership relaxation)', () => {
   });
 
   it('mod + App-Block client → still BAD_REQUEST (exclusion holds for mods, no DB lookup)', async () => {
-    await expect(
-      loadConnectClientForListing('appblk-abc123', CALLER, true)
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('App Block') });
+    await expect(loadConnectClientForListing('appblk-abc123', CALLER, true)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('App Block'),
+    });
     expect(mockRead.oauthClient.findUnique).not.toHaveBeenCalled();
   });
 

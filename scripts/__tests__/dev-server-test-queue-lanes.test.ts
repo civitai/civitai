@@ -201,6 +201,13 @@ describe('the --max-workers operand', () => {
     expect(() => parseMaxWorkersFlag(undefined)).toThrow(/integer >= 1 or 'none'/);
   });
 
+  it('clamps workers to 4 by default, and a configured value wins', () => {
+    expect(QueueModule.DEFAULT_MAX_WORKERS).toBe(4);
+    expect(new TestQueue({ concurrency: 1 }).maxWorkers).toBe(4);
+    expect(new TestQueue({ concurrency: 1, maxWorkers: 6 }).maxWorkers).toBe(6);
+    expect(new TestQueue({ concurrency: 1, maxWorkers: null }).maxWorkers).toBeNull();
+  });
+
   // Why the parser has to refuse rather than coerce: null IS the uncap, on the queue that the CLI
   // is posting to. Nothing downstream can tell an accidental null from a deliberate one.
   it('treats null as the uncap it is, so nothing may produce one by accident', () => {

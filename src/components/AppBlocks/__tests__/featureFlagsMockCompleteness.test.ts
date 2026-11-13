@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
  * A WHOLESALE `vi.mock('~/providers/FeatureFlagsProvider', …)` factory must name
  * BOTH flag hooks. Node `unit` project — the tier that EXECUTES this assertion,
  * which matters here because the failure this prevents is invisible in the browser
- * tier. Both tiers are report-only on a pull request (the node one via
- * `continue-on-error`, the browser one always, as `preview / component-tests`);
+ * tier. The node tier is report-only on a pull request (`continue-on-error`) and
+ * the browser tier runs as the `Component tests` check;
  * the node tier renders an honest verdict on a push to `main`. NEITHER TIER BLOCKS
  * A MERGE: `main` requires no status check at all in this repo, so this is a signal
  * a reviewer must read, not a door that stays shut.

@@ -28,13 +28,13 @@ import { describe, expect, it } from 'vitest';
  *     `BlurText` and `RenderHtml`'s profanity filter, neither of which passes
  *     through the domain-forced level — so it still has effects where the picker
  *     has none.
- * Both work on a capped domain, and the desktop header, the account page and
- * onboarding are all already gated, so this menu is their only entry point there.
+ * Both work on a capped domain, where the account page and onboarding are gated, so this
+ * menu (the header's eye icon, shown to every signed-in viewer) is their only entry point.
  * Gating the whole component, or the whole `Stack`, silently removes them.
  *
  * 🔴 Structural, not behavioural: it proves the gate is in the tree and the two
- * controls are outside it. `test:component` runs in no CI job, so a browser test
- * would pin this for whoever runs it by hand and nothing on `main`.
+ * controls are outside it. A browser test (`test:component`, `Component tests` in CI)
+ * could pin the behaviour; this pins the structure in the unit suite.
  */
 
 const FILE = path.resolve(__dirname, '../BrowsingMode.tsx');

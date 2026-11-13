@@ -42,3 +42,81 @@ export function hubFetch(path: string, init?: RequestInit): Promise<Response> {
   const signal = init?.signal ?? AbortSignal.timeout(HUB_FETCH_TIMEOUT_MS);
   return fetch(`${base}${path}`, { ...init, signal });
 }
+
+/** The user session a hub call acts on: the session token and, when the browser has one, its device id. */
+export interface SessionRef {
+  token?: string;
+  deviceId?: string;
+}
+
+const PARITY_TTL_MS = 10 * 60_000;
+let parity: 0 | 1 | null = null;
+let parityAt = -Infinity;
+let parityInflight: Promise<void> | null = null;
+
+/** Re-probe the hub now. Exported for tests; callers use `internalShapeReady`. */
+export function refreshInternalParity(): Promise<void> {
+  return (parityInflight ??= probeInternalParity()
+    .then(
+      (v) => {
+        parity = v;
+      },
+      () => undefined
+    )
+    .finally(() => {
+      parityAt = Date.now();
+      parityInflight = null;
+    }));
+}
+
+/**
+ * Whether the hub has confirmed this app's `AUTH_INTERNAL_TOKEN` within the last ten minutes. Never waits:
+ * a stale answer starts a background probe and the call goes out in the legacy shape until it lands, so a
+ * credential that does not match the hub's leaves the app working as before.
+ */
+export function internalShapeReady(): boolean {
+  if (Date.now() - parityAt >= PARITY_TTL_MS) void refreshInternalParity();
+  return parity === 1;
+}
+
+/**
+ * Headers and body for a hub call made on a user's behalf. Once `internalShapeReady`, the caller's own
+ * credential is the Bearer and the session travels in the JSON body beside `fields`; until then the session
+ * goes in `legacyHeaders` as it always has.
+ */
+export function sessionCall(
+  session: SessionRef,
+  legacyHeaders: Record<string, string>,
+  fields?: Record<string, unknown>
+): { headers: Record<string, string>; body?: string; internal: boolean } {
+  const internal = internalShapeReady() && loadAuthEnv().AUTH_INTERNAL_TOKEN;
+  if (internal) {
+    return {
+      headers: { authorization: `Bearer ${internal}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...fields, token: session.token, deviceId: session.deviceId }),
+      internal: true,
+    };
+  }
+  if (!fields) return { headers: legacyHeaders, internal: false };
+  return {
+    headers: { ...legacyHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify(fields),
+    internal: false,
+  };
+}
+
+/**
+ * 1 when the hub accepts this app's `AUTH_INTERNAL_TOKEN`, 0 when it refuses it or none is set. Throws when the
+ * hub gives no answer either way (unreachable, or a build without `/api/auth/internal-ping`), since that says
+ * nothing about the credential.
+ */
+export async function probeInternalParity(): Promise<0 | 1> {
+  const internal = loadAuthEnv().AUTH_INTERNAL_TOKEN;
+  if (!internal) return 0;
+  const res = await hubFetch('/api/auth/internal-ping', {
+    headers: { authorization: `Bearer ${internal}` },
+  });
+  if (res.status === 204) return 1;
+  if (res.status === 401) return 0;
+  throw new Error(`[@civitai/auth] internal-ping answered ${res.status}`);
+}

@@ -120,8 +120,9 @@ export type BlockHostSurface =
  * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
  * production: its THREE production mount sites pass FOUR surfaces between them —
  * `src/pages/apps/run/[slug]/[[...path]].tsx` passes `hostSurfaceFor(audience)`, which
- * is `page-run` OR `private-run`; `src/pages/apps/dev/[blockId].tsx` passes
- * `dev-tunnel`; and `~/components/Apps/ReviewBlockPreviewHost` passes `review-preview`
+ * is `page-run` OR `private-run`; `src/components/AppBlocks/DevTunnelBlockHost.tsx`
+ * (mounted by `src/pages/apps/dev/[blockId].tsx`) passes `dev-tunnel`; and
+ * `~/components/Apps/ReviewBlockPreviewHost` passes `review-preview`
  * — the moderator's live preview, which the paragraph above names and which this
  * enumeration used to omit.
  * ⚠️ IT SAID "FOUR PRODUCTION MOUNTS … the private run route (`private-run`)" AND BOTH
@@ -222,6 +223,46 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
   // surfaces that the navigate handler can still see.
   'private-run': false,
 };
+
+/**
+ * Does BLOCK_INIT on this surface carry `storageMode: 'local-preview'`?
+ *
+ * ADVISORY: it tells the SDK to serve the block's document store from a local,
+ * in-memory store instead of the real storage routes. It grants nothing and
+ * gates nothing server-side; an SDK that predates it ignores it.
+ *
+ * Decided by the SURFACE the host mounted, never by the token's scopes or by
+ * anything the block sends: a published app whose token lacks `apps:storage`
+ * must keep reaching the real routes and seeing `insufficient_scope`, and a
+ * scope-derived signal would silently move it onto a local store.
+ *
+ * `dev-tunnel` covers every frame on that surface, App Assistant's live preview
+ * included. `IframeHost` does not read this record, so `model-slot` never emits
+ * the field. Total, like the records above, so a new surface must decide.
+ *
+ * Read in ONE other place: `resolveUngrantableConsentNotice` (`requestConsentGate`),
+ * so that where storage is local a refused document-store scope does not prompt
+ * the viewer. The block still gets `CONSENT_UNAVAILABLE`, and nothing is granted.
+ */
+export const BLOCK_HOST_LOCAL_PREVIEW_STORAGE: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': false,
+  'dev-tunnel': true,
+  'review-preview': false,
+  'private-run': false,
+};
+
+/**
+ * The `storageMode` fragment of a BLOCK_INIT payload for this surface: the key is
+ * present only where {@link BLOCK_HOST_LOCAL_PREVIEW_STORAGE} says so, and
+ * ABSENT (not `undefined`, which postMessage would still deliver as a key)
+ * everywhere else.
+ */
+export function blockInitStorageMode(surface: BlockHostSurface): {
+  storageMode?: 'local-preview';
+} {
+  return BLOCK_HOST_LOCAL_PREVIEW_STORAGE[surface] ? { storageMode: 'local-preview' } : {};
+}
 
 /**
  * Blocks permitted the fragment fast path, keyed by `blockId` OR `slug`

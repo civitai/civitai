@@ -1,4 +1,4 @@
-import type { _Object } from '@aws-sdk/client-s3';
+import type { _Object, S3Client as AwsS3Client } from '@aws-sdk/client-s3';
 import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
@@ -8,11 +8,12 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
-  S3Client as AwsS3Client,
   UploadPartCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { attachmentContentDisposition } from '~/utils/content-disposition';
+import { newS3Client } from '~/utils/s3-client-factory';
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
@@ -51,7 +52,7 @@ function createS3Client({
   if (!uploadEndpoint) keys.push('uploadEndpoint');
   if (keys.length) throw new Error(`${name} S3Client: missing vars ${keys.join(', ')}`);
 
-  return new AwsS3Client({
+  return newS3Client({
     credentials: {
       accessKeyId: uploadKey as string,
       secretAccessKey: uploadSecret as string,
@@ -150,7 +151,7 @@ export class S3Client {
       new GetObjectCommand({
         Bucket: bucket,
         Key: key,
-        ResponseContentDisposition: filename ? `attachment; filename="${filename}"` : undefined,
+        ResponseContentDisposition: filename ? attachmentContentDisposition(filename) : undefined,
       }),
       { expiresIn }
     );

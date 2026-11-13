@@ -114,7 +114,7 @@ It usually is, but the alternatives have real trade-offs:
 | Instead | Worth it when | Costs |
 | --- | --- | --- |
 | **Link it from the PR** | Reviewers live there, and it outlives the chat | Screenshots can't be embedded from the CLI, so this is a link *to* the artifact, not a replacement |
-| **Chat with attachments** | One person, one nudge, no sharing step — the `discord-bridge` skill uploads files directly | Images arrive as a pile with no order or captions; useless as a durable reference |
+| **Chat with attachments** | One person, one nudge, no sharing step | Images arrive as a pile with no order or captions; useless as a durable reference |
 | **A tracker doc** | It has to be findable months later next to the ticket | Another surface to keep current, and image support varies |
 
 The strongest combination is the artifact as the canonical page, **linked from the PR**, with a
@@ -192,11 +192,9 @@ What makes these read well:
 A link with no framing gets opened last. Say what it is in one line, then what you want back —
 "three things I'd like your call on, last section" beats "let me know your thoughts".
 
-If it goes out over chat, use the **`discord-bridge`** skill and read its `voice.md` first, so the
-message sounds like the person sending it rather than like a release note. A walkthrough written in
-memo voice under someone's own name is worse than one they wrote in a hurry. If no `voice.md`
-exists, read a few of their own messages in that thread before drafting — and weight organic
-messages over any an agent already sent, which otherwise trains the profile on itself.
+If it goes out over chat under someone's own name, write it in their voice, not a release note's: a
+walkthrough in memo voice is worse than one they wrote in a hurry. Before drafting, read messages they
+wrote themselves in that thread, not ones an agent sent for them.
 
 Sending on someone's behalf is outward-facing: confirm the recipient before sending, and report
 exactly who received it.

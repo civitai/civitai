@@ -120,3 +120,22 @@ describe.each(routes)(
     });
   }
 );
+
+describe('/api/generation/data media viewer', () => {
+  it('passes the caller and flags, and never a crawler header the client sent', async () => {
+    const flags = { canViewNsfw: true };
+    mockSession.mockResolvedValue({ user: nsfwUser });
+    mockFeatureFlagsLazy.mockReturnValue(flags);
+    const req = {
+      ...makeReq({ type: 'image', id: '1' }),
+      headers: { 'x-civitai-verified-bot': 'googlebot' },
+    } as unknown as NextApiRequest;
+
+    await (generationDataHandler as unknown as Handler)(req, makeRes());
+
+    const { mediaViewer } = mockGetGenerationData.mock.calls[0][0];
+    expect(mediaViewer.user).toBe(nsfwUser);
+    expect(mediaViewer.features).toBe(flags);
+    expect(mediaViewer.req.headers).toEqual({});
+  });
+});

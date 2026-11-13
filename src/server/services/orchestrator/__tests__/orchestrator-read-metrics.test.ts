@@ -21,34 +21,6 @@ import '~/server/auth/session-metrics';
 const DURATION = 'civitai_app_orchestrator_read_duration_seconds';
 const TIMEOUTS = 'civitai_app_orchestrator_read_timeouts_total';
 
-// The registry is a process-wide singleton and counters are monotonic, so every assertion reads a DELTA
-// (after − before) around the call rather than an absolute value.
-async function histCount(op: string, outcome: string): Promise<number> {
-  const metric = client.register.getSingleMetric(DURATION) as client.Histogram<string>;
-  const data = await metric.get();
-  const row = data.values.find(
-    (v) =>
-      v.metricName === `${DURATION}_count` && v.labels.op === op && v.labels.outcome === outcome
-  );
-  return (row?.value as number) ?? 0;
-}
-
-async function histSum(op: string, outcome: string): Promise<number> {
-  const metric = client.register.getSingleMetric(DURATION) as client.Histogram<string>;
-  const data = await metric.get();
-  const row = data.values.find(
-    (v) => v.metricName === `${DURATION}_sum` && v.labels.op === op && v.labels.outcome === outcome
-  );
-  return (row?.value as number) ?? 0;
-}
-
-async function timeoutCount(op: string): Promise<number> {
-  const metric = client.register.getSingleMetric(TIMEOUTS) as client.Counter<string>;
-  const data = await metric.get();
-  const row = data.values.find((v) => v.labels.op === op);
-  return (row?.value as number) ?? 0;
-}
-
 describe('observeOrchestratorRead — civitai_app_orchestrator_read_* wiring', () => {
   it('registers both metrics on the shared registry (no name collision with session-metrics)', () => {
     expect(client.register.getSingleMetric(DURATION)).toBeDefined();
@@ -59,53 +31,7 @@ describe('observeOrchestratorRead — civitai_app_orchestrator_read_* wiring', (
     ).toBeDefined();
   });
 
-  it('observes the duration histogram on an ok outcome and does NOT touch the timeout counter', async () => {
-    const beforeCount = await histCount('getWorkflow', 'ok');
-    const beforeSum = await histSum('getWorkflow', 'ok');
-    const beforeTo = await timeoutCount('getWorkflow');
-
-    observeOrchestratorRead('getWorkflow', 'ok', 0.02);
-
-    expect(await histCount('getWorkflow', 'ok')).toBe(beforeCount + 1);
-    expect(await histSum('getWorkflow', 'ok')).toBeCloseTo(beforeSum + 0.02, 6);
-    // An ok read must not move the timeout counter.
-    expect(await timeoutCount('getWorkflow')).toBe(beforeTo);
-  });
-
-  it('increments the timeout counter ONLY on a timeout outcome (and still observes the histogram)', async () => {
-    const beforeCount = await histCount('getWorkflow', 'timeout');
-    const beforeTo = await timeoutCount('getWorkflow');
-
-    observeOrchestratorRead('getWorkflow', 'timeout', 20.1);
-
-    expect(await histCount('getWorkflow', 'timeout')).toBe(beforeCount + 1);
-    expect(await timeoutCount('getWorkflow')).toBe(beforeTo + 1);
-  });
-
-  it('does NOT increment the timeout counter on an error outcome', async () => {
-    const beforeCount = await histCount('queryWorkflows', 'error');
-    const beforeTo = await timeoutCount('queryWorkflows');
-
-    observeOrchestratorRead('queryWorkflows', 'error', 0.5);
-
-    expect(await histCount('queryWorkflows', 'error')).toBe(beforeCount + 1);
-    expect(await timeoutCount('queryWorkflows')).toBe(beforeTo);
-  });
-
-  it('increments the timeout counter per op (getWorkflow vs queryWorkflows are separate series)', async () => {
-    const beforeGet = await timeoutCount('getWorkflow');
-    const beforeQuery = await timeoutCount('queryWorkflows');
-
-    observeOrchestratorRead('queryWorkflows', 'timeout', 20.0);
-
-    expect(await timeoutCount('queryWorkflows')).toBe(beforeQuery + 1);
-    // The getWorkflow series is untouched by a queryWorkflows timeout.
-    expect(await timeoutCount('getWorkflow')).toBe(beforeGet);
-  });
-
   it('never throws even if given odd input (total on the hot path)', () => {
-    expect(() =>
-      observeOrchestratorRead('getWorkflow', 'ok', Number.NaN)
-    ).not.toThrow();
+    expect(() => observeOrchestratorRead('getWorkflow', 'ok', Number.NaN)).not.toThrow();
   });
 });

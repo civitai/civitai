@@ -13,11 +13,15 @@
  * switching between model versions (e.g., Flux Dev/Schnell, Wan 2.1/2.2).
  */
 
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import React, { useEffect, useMemo } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
 import { Button, Input } from '@mantine/core';
-import { IconPlus, IconRotate, IconX } from '@tabler/icons-react';
+import { IconPlus, IconRotate, IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { clampStrength } from '~/shared/constants/generation.constants';
+import { asResourceValue, defaultStrength } from '~/shared/utils/resource.utils';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type {
   ResourceSelectOptions,
@@ -25,7 +29,6 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useResourceDataContext, useResourceData } from './ResourceDataProvider';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import {
   ResourceItemContent,
   getResourceStatus,
@@ -33,6 +36,10 @@ import {
   isResourceDisabled,
 } from './ResourceItemContent';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
+
+/** Past this many versions the buttons get too narrow to read on a phone, so they become a select. */
+const MAX_VERSION_BUTTONS = 3;
 import {
   needsHydration,
   resolveResourceOptions,
@@ -71,6 +78,8 @@ export interface ResourceSelectInputProps extends Omit<InputWrapperProps, 'child
   allowRemove?: boolean;
   /** Whether to allow swapping the selected resource (set to false to lock the resource) */
   allowSwap?: boolean;
+  /** No border or radius on the card: it fills a container that draws its own. */
+  flush?: boolean;
   /** Source context for resource selection */
   selectSource?: ResourceSelectSource;
   /** Whether the input is disabled */
@@ -101,6 +110,7 @@ interface ResourceCardProps {
   disabled?: boolean;
   allowSwap?: boolean;
   options?: ResourceSelectOptions;
+  flush?: boolean;
 }
 
 function ResourceCard({
@@ -113,24 +123,26 @@ function ResourceCard({
   disabled,
   allowSwap = true,
   options,
+  flush,
 }: ResourceCardProps) {
   const status = getResourceStatus(resource, options);
   const statusClasses = getStatusClasses(status);
   const resourceIsDisabled = isResourceDisabled(status);
+  // Flush in the model card, its buttons sit on the card without a fill of their own.
+  const buttonVariant = flush ? 'subtle' : 'light';
 
   return (
     <div
       className={clsx(
-        'rounded-lg border border-solid border-gray-3 dark:border-dark-4',
-        'bg-gray-0 dark:bg-dark-6',
-        'p-2',
-        statusClasses.border,
-        statusClasses.background
+        !flush && 'rounded-lg border border-solid',
+        !flush && (statusClasses.border ?? 'border-[var(--mantine-color-default-border)]'),
+        statusClasses.background ?? 'bg-[var(--mantine-color-body)]',
+        'p-2'
       )}
     >
       <ResourceItemContent
         resource={resource}
-        strengthValue={value.strength ?? resource.strength}
+        strengthValue={value.strength ?? defaultStrength(resource)}
         onStrengthChange={
           // Don't allow strength changes for disabled resources
           onChange && !resourceIsDisabled
@@ -144,11 +156,18 @@ function ResourceCard({
             {/* Show Use Substitute button when resource has an available substitute */}
             {resourceIsDisabled && resource.substitute?.canGenerate && onChange && (
               <Button
-                variant="light"
+                variant={buttonVariant}
                 color="blue"
                 radius="xl"
                 size="compact-xs"
-                onClick={() => onChange({ ...value, ...resource.substitute! })}
+                onClick={() => {
+                  const substitute = resource.substitute!;
+                  onChange({
+                    ...value,
+                    ...substitute,
+                    strength: clampStrength(value.strength, substitute.settings.strength),
+                  });
+                }}
                 leftSection={<IconRotate size={14} />}
               >
                 Use Substitute
@@ -157,7 +176,7 @@ function ResourceCard({
             {/* Show Revert to Default button when resource is disabled and no substitute */}
             {resourceIsDisabled && !resource.substitute?.canGenerate && onRevertToDefault && (
               <Button
-                variant="light"
+                variant={buttonVariant}
                 radius="xl"
                 size="compact-xs"
                 onClick={onRevertToDefault}
@@ -169,7 +188,7 @@ function ResourceCard({
             {/* Show Swap button (even for disabled resources so user can swap to compatible one) */}
             {allowSwap && (
               <Button
-                variant="light"
+                variant={buttonVariant}
                 radius="xl"
                 size="compact-xs"
                 onClick={onSwap}
@@ -183,10 +202,11 @@ function ResourceCard({
                 aria-label="Remove resource"
                 size="sm"
                 variant="subtle"
+                color="red"
                 onClick={onRemove}
                 disabled={disabled}
               >
-                <IconX size={16} />
+                <IconTrash size={16} />
               </LegacyActionIcon>
             )}
           </>
@@ -208,6 +228,7 @@ export function ResourceSelectInput({
   options = {},
   allowRemove = true,
   allowSwap = true,
+  flush,
   selectSource = 'generation',
   disabled,
   resourceType,
@@ -215,6 +236,8 @@ export function ResourceSelectInput({
   versions,
   ...inputWrapperProps
 }: ResourceSelectInputProps) {
+  // On a phone the version is always a dropdown, one row instead of a row of chips.
+  const mobile = useGeneratorLayout() === 'mobile';
   const { registerResourceId, unregisterResourceId, getResourceData } = useResourceDataContext();
 
   // Fetch resource data for display (registration handled by form provider)
@@ -245,7 +268,7 @@ export function ResourceSelectInput({
   const handleVersionChange = (stringId: string) => {
     const numericId = Number(stringId);
     const versionResourceData = getResourceData(numericId);
-    onChange?.(versionResourceData);
+    onChange?.(versionResourceData && asResourceValue(versionResourceData));
   };
 
   const handleOpenResourceSearch = () => {
@@ -269,7 +292,7 @@ export function ResourceSelectInput({
     return (
       <Input.Wrapper {...inputWrapperProps}>
         <Button
-          variant="light"
+          variant={flush ? 'subtle' : 'light'}
           leftSection={<IconPlus size={18} />}
           fullWidth
           onClick={handleOpenResourceSearch}
@@ -292,10 +315,7 @@ export function ResourceSelectInput({
 
   // Render selected resource
   // Use resourceData as the canonical value, with strength from form state
-  const displayValue: ResourceSelectValue = {
-    ...resourceData,
-    strength: value.strength ?? resourceData.strength,
-  };
+  const displayValue: ResourceSelectValue = asResourceValue(resourceData, value.strength);
 
   return (
     <Input.Wrapper {...inputWrapperProps}>
@@ -309,28 +329,52 @@ export function ResourceSelectInput({
         disabled={disabled}
         allowSwap={allowSwap}
         options={options}
+        flush={flush}
       />
       {/* Version selector for models with multiple versions */}
       {showVersionSelector && versions && (
         <div className="mt-1">
-          <ButtonGroupInput
-            value={value?.id?.toString() ?? ''}
-            onChange={handleVersionChange}
-            data={versions.map(({ label, value: versionValue }) => ({
-              // Marked per option, so which version is experimental is legible
-              // before switching to it — not only once it's selected.
-              label: (
+          {versions.length > MAX_VERSION_BUTTONS || mobile ? (
+            <SheetSelect
+              aria-label="Version"
+              sheetTitle="Version"
+              value={value?.id?.toString() ?? null}
+              onChange={(next) => next && handleVersionChange(next)}
+              allowDeselect={false}
+              data={versions.map(({ label, value: versionValue }) => ({
+                label,
+                value: versionValue.toString(),
+              }))}
+              renderOption={({ option }) => (
                 <span className="inline-flex items-center gap-1">
-                  {label}
+                  {option.label}
                   <ExperimentalFlask
-                    target={{ kind: 'modelVersion', key: versionValue }}
+                    target={{ kind: 'modelVersion', key: Number(option.value) }}
                     size={14}
                   />
                 </span>
-              ),
-              value: versionValue.toString(),
-            }))}
-          />
+              )}
+            />
+          ) : (
+            <ChoiceGroup
+              value={value?.id?.toString() ?? ''}
+              onChange={handleVersionChange}
+              data={versions.map(({ label, value: versionValue }) => ({
+                // Marked per option, so which version is experimental is legible
+                // before switching to it — not only once it's selected.
+                label: (
+                  <span className="inline-flex items-center gap-1">
+                    {label}
+                    <ExperimentalFlask
+                      target={{ kind: 'modelVersion', key: versionValue }}
+                      size={14}
+                    />
+                  </span>
+                ),
+                value: versionValue.toString(),
+              }))}
+            />
+          )}
         </div>
       )}
     </Input.Wrapper>

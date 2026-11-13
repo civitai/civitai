@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CHAT_COMPLETION_ASSUMED_CHARS_PER_TOKEN,
   CHAT_COMPLETION_MAX_OUTPUT_TOKENS,
@@ -15,6 +15,7 @@ import {
   estimateStepBuzz,
   getStep,
   getStepByOrchestratorType,
+  listRegisteredSteps,
   planStepSpend,
   REGISTERED_STEP_IDS,
   resolveStepVariant,
@@ -982,6 +983,77 @@ describe('chat-completion — tools / toolChoice param surface', () => {
     expect(JSON.stringify(result.error?.issues)).toContain('serialized characters');
   });
 
+  describe('parameters size cap', () => {
+    const withParameters = (parameters: unknown) =>
+      parse({
+        ...VALID_PARAMS,
+        tools: [{ ...VALID_TOOL, function: { ...VALID_TOOL.function, parameters } }],
+      });
+    /** A parameters object whose JSON is exactly `length` characters. */
+    const ofLength = (length: number) => ({
+      type: 'object',
+      pad: 'x'.repeat(length - '{"type":"object","pad":""}'.length),
+    });
+
+    it('accepts parameters at 4,096 serialized characters and refuses 4,097', () => {
+      expect(JSON.stringify(ofLength(4_096)).length).toBe(4_096);
+      expect(withParameters(ofLength(4_096)).success).toBe(true);
+      const over = withParameters(ofLength(4_097));
+      expect(over.success).toBe(false);
+      expect(over.error?.issues.map((i) => i.message)).toContain(
+        'tool parameters exceed 4096 serialized characters'
+      );
+    });
+
+    it('refuses parameters far over the cap without serializing them', () => {
+      const node = { type: 'string', description: 'x'.repeat(1_000) };
+      const parameters = {
+        type: 'object',
+        properties: Object.fromEntries(Array.from({ length: 5_000 }, (_, i) => [`p${i}`, node])),
+      };
+      const stringify = JSON.stringify;
+      // Every character JSON.stringify writes during the call, whatever it is called on.
+      let stringified = 0;
+      const spy = vi
+        .spyOn(JSON, 'stringify')
+        .mockImplementation((...args: Parameters<typeof stringify>) => {
+          const out = stringify(...args);
+          stringified += out?.length ?? 0;
+          return out;
+        });
+      let result;
+      try {
+        result = withParameters(parameters);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'tool parameters exceed 4096 serialized characters'
+      );
+      expect(stringified).toBeLessThan(10_000);
+    });
+
+    it('refuses parameters with more entries than fit in the cap, even ones left out of the JSON', () => {
+      const parameters = {
+        type: 'object',
+        ...Object.fromEntries(Array.from({ length: 3_000 }, (_, i) => [`k${i}`, undefined])),
+      };
+      expect(JSON.stringify(parameters).length).toBeLessThan(100);
+      const result = withParameters(parameters);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((i) => i.message)).toContain(
+        'tool parameters exceed 4096 serialized characters'
+      );
+    });
+
+    it('keeps the serialize message for a value JSON.stringify cannot write', () => {
+      const result = withParameters({ type: 'object', n: BigInt(1) });
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain('must be JSON-serializable');
+    });
+  });
+
   it('REJECTS a parameters object nested deeper than the cap', () => {
     // 🔴 THE DEPTH CAP EXISTS SO THIS FAILS HERE RATHER THAN IN THE AIR SCAN.
     // `containsAirReference` recurses fail-CLOSED past its own cap, so without
@@ -1532,5 +1604,199 @@ describe('chat-completion — extractToolCalls', () => {
         expect(texts).toContain(call.function.arguments);
       }
     }
+  });
+});
+
+/**
+ * 🔴 The soundness pin for `freeTextParamPaths`; the claim is stated once, at its
+ * declaration in `steps/index.ts`. Widen a declared field and these go red.
+ */
+describe('free-text param paths', () => {
+  /** Replace every value at `path` (`a.b`, `a[]` = each item) in a copy of `params`. */
+  function replaceAt(params: unknown, path: string, value: unknown) {
+    let hits = 0;
+    const copy = structuredClone(params);
+    /** Set `slot` (read with `get`, written with `put`) or descend into it. */
+    const visit = (get: () => unknown, put: (v: unknown) => void, rest: string[]) => {
+      if (rest.length) return descend(get(), rest);
+      if (get() === undefined) return;
+      put(structuredClone(value));
+      hits++;
+    };
+    const descend = (node: unknown, segments: string[]): void => {
+      const [head, ...rest] = segments;
+      if (head === '[]') {
+        if (!Array.isArray(node)) return;
+        const list: unknown[] = node;
+        list.forEach((_, i) =>
+          visit(
+            () => list[i],
+            (v) => (list[i] = v),
+            rest
+          )
+        );
+      } else if (node && typeof node === 'object' && !Array.isArray(node)) {
+        const record = node as Record<string, unknown>;
+        visit(
+          () => record[head],
+          (v) => (record[head] = v),
+          rest
+        );
+      }
+    };
+    descend(copy, path.replace(/\[\]/g, '.[]').split('.'));
+    return { params: copy, hits };
+  }
+
+  const NOT_A_STRING: [string, unknown][] = [
+    [
+      'an image_url content part',
+      [{ type: 'image_url', image_url: { url: 'https://example.com/a.png' } }],
+    ],
+    ['a text content part', [{ type: 'text', text: 'hello' }]],
+    ['an array of strings', ['hello']],
+    ['a $ref object', { $ref: '$arguments', path: 'image' }],
+    ['a plain object', { url: 'https://example.com/a.png' }],
+  ];
+
+  it('the entries that declare free-text paths, and the paths they declare (a ledger)', () => {
+    const declared = Object.fromEntries(
+      listRegisteredSteps()
+        .filter(([, step]) => step.freeTextParamPaths !== undefined)
+        .map(([id, step]): [string, unknown] => [id, step.freeTextParamPaths])
+    );
+    expect(declared).toEqual({
+      'chat-completion': ['messages[].content', 'tools[].function.**'],
+    });
+  });
+
+  for (const [id, step] of listRegisteredSteps()) {
+    // A `.**` path declares a whole subtree, not a string; each has its own pin below (the
+    // ledger above names every one).
+    for (const path of (step.freeTextParamPaths ?? []).filter((p) => !p.endsWith('.**'))) {
+      it.each(NOT_A_STRING)(`${id}: its schema refuses %s at '${path}'`, (_, value) => {
+        for (const variant of step.variants) {
+          const canonical = step.canonicalParamsFor(variant);
+          // Positive control: the canonical params parse, and the path reaches a string.
+          expect(step.paramSchema.safeParse(canonical).success).toBe(true);
+          const asText = replaceAt(canonical, path, 'see https://civitai.com/models/1');
+          expect(asText.hits).toBeGreaterThan(0);
+          expect(step.paramSchema.safeParse(asText.params).success).toBe(true);
+
+          const widened = replaceAt(canonical, path, value);
+          expect(widened.hits).toBe(asText.hits);
+          expect(step.paramSchema.safeParse(widened.params).success).toBe(false);
+        }
+      });
+    }
+  }
+
+  it.each(['system', 'user', 'assistant', 'tool'] as const)(
+    'chat-completion: a %s message refuses any content but a string',
+    (role) => {
+      const messages = [
+        { role: 'system', content: 'be brief' },
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: 'calling',
+          tool_calls: [
+            { id: 'call_1', type: 'function', function: { name: 'f', arguments: '{}' } },
+          ],
+        },
+        { role: 'tool', content: 'result', tool_call_id: 'call_1' },
+      ];
+      const at = messages.findIndex((m) => m.role === role);
+      const withContent = (content: unknown) => ({
+        ...VALID_PARAMS,
+        messages: messages.map((m, i) => (i === at ? { ...m, content } : m)),
+      });
+      // Positive control: the same conversation parses with a link as the content.
+      expect(parse(withContent('https://example.com/a.png')).success).toBe(true);
+      for (const [, value] of NOT_A_STRING) expect(parse(withContent(value)).success).toBe(false);
+    }
+  );
+
+  /**
+   * 🔴 `tools[].function.**` (INVARIANT GUARDS — green before the path was declared too; they
+   * pin the assumption that makes it sound). Everything under a tool's `function` is text the
+   * model is shown, never fetched: that holds only while a tool's `type` is the literal
+   * 'function' (a server-side tool type, such as a web fetch, would make the orchestrator fetch)
+   * and neither the tool nor its `function` accepts a field beyond name/description/parameters.
+   */
+  describe("chat-completion: 'tools[].function.**'", () => {
+    const SCHEMA_URL = 'https://json-schema.org/draft/2020-12/schema';
+    const tool = (over: Record<string, unknown> = {}, fn: Record<string, unknown> = {}) => ({
+      type: 'function',
+      function: {
+        name: 'search_models',
+        description: 'Search models',
+        parameters: { $schema: SCHEMA_URL, type: 'object', properties: {} },
+        ...fn,
+      },
+      ...over,
+    });
+    const withTools = (...tools: unknown[]) => ({ ...VALID_PARAMS, tools });
+
+    it('POSITIVE CONTROL: a tool whose parameters carry a $schema url parses', () => {
+      expect(parse(withTools(tool())).success).toBe(true);
+    });
+
+    it.each(['civitai:web_search', 'web_search', 'web_search_preview', 'file_search', 'url'])(
+      "refuses a tool whose type is '%s', not 'function'",
+      (type) => {
+        expect(parse(withTools(tool({ type }))).success).toBe(false);
+      }
+    );
+
+    it('refuses a tool with no type', () => {
+      const untyped: Record<string, unknown> = tool();
+      delete untyped.type;
+      expect(parse(withTools(untyped)).success).toBe(false);
+    });
+
+    it.each([
+      ['parameters', { url: 'https://example.com/a.png' }],
+      ['url', 'https://example.com/a.png'],
+      ['image_url', { url: 'https://example.com/a.png' }],
+      ['$ref', '$arguments'],
+    ])("refuses a tool-level '%s' field", (key, value) => {
+      expect(parse(withTools(tool({ [key]: value }))).success).toBe(false);
+    });
+
+    it.each([
+      ['url', 'https://example.com/a.png'],
+      ['image_url', { url: 'https://example.com/a.png' }],
+      ['$ref', '$arguments'],
+      ['path', 'image'],
+    ])("refuses a '%s' field inside a tool's function", (key, value) => {
+      expect(parse(withTools(tool({}, { [key]: value }))).success).toBe(false);
+    });
+
+    it('refuses a tool whose function is a $ref object or a string', () => {
+      for (const fn of [{ $ref: '$arguments', path: 'image' }, 'https://example.com/a.png'])
+        expect(parse(withTools({ type: 'function', function: fn })).success).toBe(false);
+    });
+
+    it('refuses an image_url anywhere outside a tool function: a message part, a top-level field', () => {
+      const part = { type: 'image_url', image_url: { url: 'https://example.com/a.png' } };
+      expect(
+        parse({ ...VALID_PARAMS, messages: [{ role: 'user', content: [part] }] }).success
+      ).toBe(false);
+      expect(parse({ ...VALID_PARAMS, image_url: part.image_url }).success).toBe(false);
+      expect(parse({ ...withTools(tool()), image: 'https://example.com/a.png' }).success).toBe(
+        false
+      );
+    });
+
+    it('INVARIANT GUARD: the built step input carries no other step, no arguments, and the tools as given', () => {
+      const params = parse(withTools(tool()));
+      expect(params.success).toBe(true);
+      const built = chatCompletionStep.buildStep(params.data as ChatCompletionStepParams);
+      expect(built.$type).toBe('chatCompletion');
+      const input = built.input as Record<string, unknown>;
+      expect(Object.keys(input)).not.toContain('arguments');
+      expect(input.tools).toEqual([tool()]);
+    });
   });
 });

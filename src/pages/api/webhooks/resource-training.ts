@@ -240,6 +240,8 @@ export async function updateRecords(
         trainingResults.start_time ||
         (start_time ? new Date(start_time * 1000).toISOString() : null),
       end_time: end_time ? new Date(end_time * 1000).toISOString() : null,
+      // This path sets Paused only for a review hold (see the handler).
+      heldForReview: status === TrainingStatus.Paused || undefined,
     },
   };
 

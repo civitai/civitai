@@ -20,6 +20,11 @@
  *   - log SEVERITY becomes `type:'error'`, so the failure lands in the normal
  *     `detected_level="error"` stream that people actually watch
  *
+ * 🔴 It has one more effect: on the App Blocks shared write path, an escalated failure is the
+ * ONLY kind whose write-budget token is refunded free (`withSharedWriteBudget` in
+ * `src/server/routers/apps-shared.router.ts`); any other failure that did not land is charged to
+ * the rejection bucket. Never escalate a failure a caller can cause on that path.
+ *
  * WHY A SEPARATE MODULE (and not `logging/client.ts`)
  * --------------------------------------------------
  * One reason, load-bearing:
@@ -37,9 +42,9 @@
  * 🔴 WHY globalThis, and not a module-scope WeakSet
  * ---------------------------------------------------------------------------
  * The registry has to be ONE object shared by the code that MARKS an error
- * (`~/server/recaptcha/client`) and the code that CLASSIFIES it
- * (`~/server/logging/client` → `classifyErrorFault`). A module-scope `const` does
- * not give you that here.
+ * (e.g. `~/server/recaptcha/client`) and the code that READS it
+ * (`~/server/logging/client` → `classifyErrorFault`, and the App Blocks shared write
+ * budget). A module-scope `const` does not give you that here.
  *
  * Turbopack merges source modules into larger runtime modules, so one `.ts` file is
  * routinely inlined into many of them. Each emitted copy carries its own top-level

@@ -1,4 +1,5 @@
-import { Anchor, Group, Loader, Modal, Text, Tooltip } from '@mantine/core';
+import { Anchor, Group, Loader, Modal, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconChartBar, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
@@ -15,8 +16,8 @@ type InlineAnalytics = {
 };
 
 /**
- * Compact, per-approved-app analytics affordance for the /apps/my-submissions
- * list. Shows a small inline runs / unique-users (last 30d) stat and an
+ * Compact, per-approved-app analytics affordance, built for the /apps/my-submissions
+ * list. ⚠ It has no importer since that list (`MySubmissionsList`) was deleted. Shows a small inline runs / unique-users (last 30d) stat and an
  * "Analytics" button that opens the existing AppAnalyticsPanel — scoped to THIS
  * app — in a modal. Reuses `blocks.getMyAppAnalytics` (the same query the
  * /apps/revenue dashboard panel runs) with a 30-day `from`; no new analytics

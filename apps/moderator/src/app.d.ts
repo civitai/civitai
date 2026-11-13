@@ -24,11 +24,19 @@ declare global {
        */
       grants: PermissionSet;
       tokenClient?: 'webhook';
+      /** Set to 'sheet' by `hooks.server.ts` only when the held-media sheet cookie authenticated this
+       *  request in place of the web session. */
+      heldCredential?: 'sheet';
     }
     // interface PageData {}
     // interface PageState {}
     // interface Platform {}
   }
+}
+
+/** The `version` in this app's package.json, inlined by vite.config.ts. */
+declare global {
+  const __APP_VERSION__: string;
 }
 
 export {};

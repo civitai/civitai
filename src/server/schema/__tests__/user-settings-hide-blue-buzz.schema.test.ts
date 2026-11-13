@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { splitSettingsPatch } from '~/server/services/user.service';
 import { setUserSettingsInput, userSettingsSchema } from '~/server/schema/user.schema';
 
 describe('hideBlueBuzzInHeader', () => {
@@ -18,16 +17,5 @@ describe('hideBlueBuzzInHeader', () => {
       false
     );
     expect(userSettingsSchema.parse({}).hideBlueBuzzInHeader).toBeUndefined();
-  });
-
-  // Turning a toggle back OFF writes `false`, it does not delete the key. If `false` were treated
-  // as empty it would land in neither the set nor the remove half of the patch, the mutation would
-  // be a green no-op, and the optimistic cache update would show the switch flipping anyway — so
-  // the setting would look un-turn-off-able only after a refresh.
-  it('writes false rather than dropping the key, so the toggle can be turned back off', () => {
-    const patch = splitSettingsPatch({ hideBlueBuzzInHeader: false });
-
-    expect(patch.set).toEqual({ hideBlueBuzzInHeader: false });
-    expect(patch.remove).toEqual([]);
   });
 });

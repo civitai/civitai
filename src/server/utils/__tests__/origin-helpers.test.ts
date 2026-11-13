@@ -20,7 +20,7 @@ vi.mock('~/server/utils/server-domain', () => ({
   getAllServerHosts: () => mockHosts,
 }));
 
-import { hostFromUrl, isAllowedOriginRequest } from '../origin-helpers';
+import { hostFromUrl, isAllowedOriginRequest, isJsonRequest } from '../origin-helpers';
 
 function req(headers: { origin?: string; referer?: string }) {
   return { headers };
@@ -73,5 +73,26 @@ describe('isAllowedOriginRequest', () => {
     // Allowlist entry "Civitai.RED" is lowercased at build time; a mixed-case
     // request host must still match.
     expect(isAllowedOriginRequest(req({ origin: 'https://CIVITAI.red' }))).toBe(true);
+  });
+});
+
+describe('isJsonRequest', () => {
+  it('accepts JSON with or without parameters', () => {
+    expect(isJsonRequest({ headers: { 'content-type': 'application/json' } })).toBe(true);
+    expect(isJsonRequest({ headers: { 'content-type': 'Application/JSON; charset=utf-8' } })).toBe(
+      true
+    );
+  });
+
+  it('refuses form, text and lookalike types', () => {
+    for (const type of [
+      'application/x-www-form-urlencoded',
+      'text/plain',
+      'multipart/form-data; boundary=x',
+      'application/jsonp',
+      undefined,
+    ]) {
+      expect(isJsonRequest({ headers: { 'content-type': type } })).toBe(false);
+    }
   });
 });

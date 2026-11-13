@@ -1,11 +1,10 @@
-import { Priority } from '@civitai/client';
+import { Priority } from '@civitai/orchestration-client';
 import * as z from 'zod';
 
 import type { Sampler } from '~/server/common/constants';
-import { generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { generationSamplers } from '~/shared/constants/generation.constants';
+import { MAX_SEED, generationSamplers } from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { defaultCatch } from '~/utils/zod-helpers';
@@ -42,7 +41,7 @@ export const textToImageParamsSchema = z.object({
       ['simple', 'discrete', 'karras', 'exponential', 'ays'].includes(val) ? val : 'simple'
     )
     .optional(),
-  seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
+  seed: z.coerce.number().min(1).max(MAX_SEED).nullish().catch(null),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
   resolution: z.string().optional(),

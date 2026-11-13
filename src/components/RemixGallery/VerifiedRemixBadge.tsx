@@ -1,4 +1,5 @@
-import { Badge, Group, HoverCard, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconShieldCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 

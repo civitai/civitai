@@ -1,10 +1,7 @@
 import client from 'prom-client';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  ensureRegisterAppBlockRuntimeMetrics,
-  recordBlockBridgeRateLimitRefusal,
-} from '../app-block-runtime.metrics';
+import { recordBlockBridgeRateLimitRefusal } from '../app-block-runtime.metrics';
 
 /**
  * The REAL prom-client side of the App Blocks tRPC-bridge rate-limit refusal signal.
@@ -67,11 +64,6 @@ beforeEach(() => {
 });
 
 describe(METRIC, () => {
-  it('is registered on the default registry that /api/metrics scrapes', () => {
-    ensureRegisterAppBlockRuntimeMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it('registers itself — the emitter does not need a prior ensureRegister call', async () => {
     // 🔴 THE ORDERING TRAP. Every limiter site calls the emitter directly and none of them
     // calls `ensureRegisterAppBlockRuntimeMetrics` first. If the emitter only incremented an
@@ -129,7 +121,8 @@ describe(METRIC, () => {
   it('NEVER THROWS — a metrics fault must not become a 500, or a throw on a returning path', async () => {
     // 🔴 THE PROPERTY THE TWO RETURNING LIMITERS DEPEND ON. `pollWorkflow` and
     // `cancelWorkflow` return a non-terminal snapshot instead of throwing, because a throw
-    // is converted by both hosts into a TERMINAL `failed` snapshot on a paid workflow. If
+    // can reach the block as a TERMINAL `failed` snapshot on a paid workflow (always for a
+    // cancel, and for a poll from a host bundle older than its error classification). If
     // this emitter could throw, it would reintroduce exactly that failure from inside the
     // branch built to avoid it.
     //

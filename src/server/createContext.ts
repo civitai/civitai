@@ -5,8 +5,10 @@ import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import { isProd } from '~/env/other';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestCredential } from '~/server/auth/request-credential';
+import { trpcViewer } from '~/server/auth/api-auth-session';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -46,11 +48,19 @@ export const createContext = async ({
   // getServerAuthSession call. Matters for ANONYMOUS requests: a null session
   // isn't memoized by req.context.session, so the lazy path re-decrypted the
   // JWE on every track() call (authenticated requests already cache-hit).
+  // The full session, banned or not: a banned account's activity is still attributed to it.
   const track = new Tracker(req, res, session);
+  // Keyed on the full session: a banned session still reaches its own appeal state, which a shared
+  // cache must never keep.
+  // A streamed batch's headers are written before any procedure runs, so a resolver cannot
+  // take its answer back out of the edge cache. Browsers batch only when signed in.
+  // A verified crawler's answers can differ from a signed-out visitor's at the same URL, and the
+  // edge keys only on the URL.
+  const cacheable = !session?.user && !req.query?.batch && requestVerifiedCrawler(req) === null;
   const cache: CacheSettings | null = {
-    browserTTL: session?.user ? 0 : 60,
-    edgeTTL: session?.user ? 0 : 60,
-    staleWhileRevalidate: session?.user ? 0 : 30,
+    browserTTL: cacheable ? 60 : 0,
+    edgeTTL: cacheable ? 60 : 0,
+    staleWhileRevalidate: cacheable ? 30 : 0,
     canCache: true,
     skip: false,
   };
@@ -73,26 +83,21 @@ export const createContext = async ({
   };
   res.once('close', onDisconnect);
 
-  // tokenScope: from bearer token auth (stored on req.context by getServerAuthSession).
-  // Session auth (cookies) gets Full scope â€” no restrictions for browser users.
-  const tokenScope = ((req as any).context?.tokenScope as number) ?? TokenScope.Full;
   // apiKeyId / subject are only present when auth came from a Bearer token.
   // Modeled as optional (undefined when absent) so DeepNonNullable<Context> in
   // controller signatures can collapse them to required fields when the caller
   // already knows the request is token-auth'd.
-  const apiKeyId = (req as any).context?.apiKeyId as number | undefined;
-  const subject = (req as any).context?.subject as
-    | { type: 'apiKey'; id: number }
-    | { type: 'oauth'; id: string }
-    | undefined;
+  const { tokenScope, apiKeyId, apiKeyType, subject } = getRequestCredential(req);
 
   // Tag content-creation tracking with how the request was authenticated (web vs.
   // personal API key vs. OAuth app) so moderators can trace agent/API activity.
   track.setProvenance({ subject, apiKeyId });
 
   return {
-    user: session?.user,
+    ...trpcViewer(session?.user),
     acceptableOrigin,
+    // The full session's flags: the site appeal form's procedures are flag-gated, and a banned
+    // account must still reach them.
     features: getFeatureFlagsLazy({ user: session?.user, req }),
     track,
     ip,
@@ -103,6 +108,7 @@ export const createContext = async ({
     signal: abortController.signal,
     tokenScope,
     apiKeyId,
+    apiKeyType,
     subject,
   };
 };
@@ -131,9 +137,12 @@ export type Context = AsyncReturnType<typeof createContext>;
 
 /**
  * Context shape for protected procedures, where `user` (and other base fields)
- * are guaranteed non-null but `apiKeyId`/`subject` legitimately remain nullable
- * (session auth has no apiKeyId). Replaces `DeepNonNullable<Context>` for
+ * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject` legitimately remain
+ * nullable (session auth has no apiKeyId). Replaces `DeepNonNullable<Context>` for
  * controllers, which would otherwise strip the nullability of these fields.
  */
-export type ProtectedContext = Omit<DeepNonNullable<Context>, 'apiKeyId' | 'subject'> &
-  Pick<Context, 'apiKeyId' | 'subject'>;
+export type ProtectedContext = Omit<
+  DeepNonNullable<Context>,
+  'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'
+> &
+  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'bannedUser'>;

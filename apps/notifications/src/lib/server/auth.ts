@@ -6,7 +6,7 @@
 // Constant-time compare so a timing side-channel can't leak the token byte-by-byte.
 
 import { timingSafeEqual } from 'node:crypto';
-import { notificationsToken } from '../../env';
+import { noticesToken, notificationsToken } from '../../env';
 
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
@@ -15,7 +15,9 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-function presentedToken(headers: Record<string, string | string[] | undefined>): string | undefined {
+function presentedToken(
+  headers: Record<string, string | string[] | undefined>
+): string | undefined {
   const auth = headers['authorization'];
   const authStr = Array.isArray(auth) ? auth[0] : auth;
   if (authStr) {
@@ -31,4 +33,13 @@ export function isAuthorized(headers: Record<string, string | string[] | undefin
   if (!notificationsToken) return true;
   const token = presentedToken(headers);
   return token !== undefined && safeEqual(token, notificationsToken);
+}
+
+/** True only for the notices secret; unlike the producer gate, unset means closed. */
+export function isNoticesAuthorized(
+  headers: Record<string, string | string[] | undefined>
+): boolean {
+  if (!noticesToken) return false;
+  const token = presentedToken(headers);
+  return token !== undefined && safeEqual(token, noticesToken);
 }

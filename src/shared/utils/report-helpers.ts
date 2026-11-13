@@ -1,7 +1,6 @@
 export enum ReportEntity {
   Model = 'model',
-  Comment = 'comment',
-  CommentV2 = 'commentV2',
+  CommentV3 = 'commentV3',
   Image = 'image',
   ResourceReview = 'resourceReview',
   Article = 'article',
@@ -17,6 +16,9 @@ export enum ReportEntity {
   Model3DReview = 'model3dReview',
   Announcement = 'announcement',
   Crucible = 'crucible',
+  GameFrameGame = 'gameFrameGame',
+  Storyline = 'storyline',
+  ServiceOffering = 'serviceOffering',
 }
 
 /**
@@ -31,8 +33,7 @@ export enum ReportEntity {
  */
 export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Model]: 'Model',
-  [ReportEntity.Comment]: 'Comment',
-  [ReportEntity.CommentV2]: 'Comment',
+  [ReportEntity.CommentV3]: 'Comment',
   [ReportEntity.Image]: 'Image',
   [ReportEntity.ResourceReview]: 'Review',
   [ReportEntity.Article]: 'Article',
@@ -48,4 +49,7 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   [ReportEntity.Model3DReview]: '3D review',
   [ReportEntity.Announcement]: 'Announcement',
   [ReportEntity.Crucible]: 'Crucible',
+  [ReportEntity.GameFrameGame]: 'Game',
+  [ReportEntity.Storyline]: 'Storyline',
+  [ReportEntity.ServiceOffering]: 'Service',
 };

@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Button, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Button, Group, Paper, Progress, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconLock, IconPlus, IconX } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';

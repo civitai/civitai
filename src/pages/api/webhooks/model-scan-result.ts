@@ -1,17 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelScanResultSchema } from '~/server/schema/model-flag.schema';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { upsertModelFlag } from '~/server/services/model-flag.service';
-import { getModelModRules, unpublishModelById } from '~/server/services/model.service';
-import { createNotification } from '~/server/services/notification.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { evaluateRules } from '~/server/utils/mod-rules';
-import { ModelStatus, ModerationRuleAction } from '~/shared/utils/prisma/enums';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom({ name: 'model-scan-result', type: 'error', ...data }, 'webhooks').catch(() => null);
@@ -44,17 +40,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
   try {
     const model = await dbRead.model.findUnique({
       where: { id: data.user_declared.content.id },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        meta: true,
-        userId: true,
-        modelVersions: {
-          where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-          select: { id: true, baseModel: true, name: true, description: true },
-        },
-      },
+      select: { id: true },
     });
     if (!model) {
       logWebhook({
@@ -64,86 +50,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       return res.status(404).json({ error: 'Model not found' });
     }
 
-    // Check against moderation rules
-    const modelModRules = await getModelModRules();
-    if (modelModRules.length) {
-      const appliedRule = evaluateRules(modelModRules, model);
-
-      switch (appliedRule?.action) {
-        case ModerationRuleAction.Hold:
-          await unpublishModelById({
-            id: model.id,
-            userId: -1,
-            reason: 'other',
-            customMessage: `Model put on hold by moderation rule: ${appliedRule.reason}`,
-            meta: { ...(model.meta as ModelMeta), needsReview: true },
-            isModerator: true,
-          });
-          await createNotification({
-            category: NotificationCategory.System,
-            key: `model-hold:${model.id}`,
-            type: 'system-message',
-            userId: model.userId,
-            details: {
-              message: `Your model "${
-                model.name
-              }" has been put on hold due to a moderation rule violation${
-                appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
-              }. It's being reviewed by one of our moderators and it will be available once it has been approved.`,
-              url: `/models/${model.id}`,
-            },
-          }).catch((error) =>
-            logWebhook({
-              message: 'Could not create notification when marking model as hold',
-              data: {
-                modelId: model.id,
-                error: error.message,
-                cause: error.cause,
-                stack: error.stack,
-              },
-            })
-          );
-          break;
-        case ModerationRuleAction.Block:
-          await unpublishModelById({
-            id: model.id,
-            userId: -1,
-            reason: 'other',
-            customMessage: `Model blocked by moderation rule: ${appliedRule.reason}`,
-            meta: model.meta as ModelMeta,
-            isModerator: true,
-          });
-          await createNotification({
-            category: NotificationCategory.System,
-            key: `model-blocked:${model.id}`,
-            type: 'system-message',
-            userId: model.userId,
-            details: {
-              message: `Your model "${
-                model.name
-              }" has been blocked due to a moderation rule violation${
-                appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
-              }. It's being reviewed by one of our moderators and it will be available once it has been approved.`,
-              url: `/models/${model.id}`,
-            },
-          }).catch((error) =>
-            logWebhook({
-              message: 'Could not create notification when marking model as blocked',
-              data: {
-                modelId: model.id,
-                error: error.message,
-                cause: error.cause,
-                stack: error.stack,
-              },
-            })
-          );
-          break;
-        default:
-          break;
-      }
-    }
-
-    // Check scan results and handle accordingly
+    // Model moderation rules run on the ModelRules text scan, not here.
     const updatedModel = await dbWrite.model.update({
       where: { id: model.id },
       data: { scannedAt: new Date() },
@@ -182,6 +89,6 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       data: { error, input: req.body },
     });
 
-    return res.status(500).json({ error: 'Internal Server Error', details: error });
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });

@@ -3,6 +3,7 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -11,7 +12,7 @@ import type * as TrpcModule from '~/utils/trpc';
  * submit through the shared {@link ReasonGatedActionModal} (B3), so delist / relist /
  * claim / purge get the SAME live counter + inline error + disabled-with-Tooltip gate
  * the reject paths have (finding A). resolve / dismiss keep the OPTIONAL note (no gate).
- * Browser-mode (report-only in Tekton): the gate + the fired mutations.
+ * Browser-mode (`Component tests` in CI): the gate + the fired mutations.
  */
 
 const REPORT = {
@@ -31,6 +32,8 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   mutate: vi.fn(),
   errorMode: false,
+  // Per-test overrides on the one report row (status, listing status).
+  reportOver: {} as Record<string, unknown>,
 }));
 
 // 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
@@ -48,7 +51,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
 // requested module '/src/utils/notifications.tsx' does not provide an export named
 // 'showWarningNotification'`. #5102
@@ -79,31 +82,34 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     });
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appListings: { listListingReports: { invalidate: mocks.invalidate } },
-      }),
-      appListings: {
-        listListingReports: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.listListingReports': {
           useQuery: () => ({
-            data: { items: [REPORT], nextCursor: null },
+            data: { items: [{ ...REPORT, ...mocks.reportOver }], nextCursor: null },
             isLoading: false,
             isFetching: false,
             error: null,
             refetch: vi.fn(),
           }),
         },
-        listModerationEvents: {
+        'appListings.listModerationEvents': {
           useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
         },
-        delistListing: { useMutation: mutation('delist') },
-        relistListing: { useMutation: mutation('relist') },
-        claimListing: { useMutation: mutation('claim') },
-        purgeListing: { useMutation: mutation('purge') },
-        resolveReport: { useMutation: mutation('resolve') },
-        dismissReport: { useMutation: mutation('dismiss') },
+        'appListings.delistListing': { useMutation: mutation('delist') },
+        'appListings.relistListing': { useMutation: mutation('relist') },
+        'appListings.claimListing': { useMutation: mutation('claim') },
+        'appListings.purgeListing': { useMutation: mutation('purge') },
+        'appListings.resolveReport': { useMutation: mutation('resolve') },
+        'appListings.dismissReport': { useMutation: mutation('dismiss') },
       },
-    },
+      // Stable, so assertions on `mocks.invalidate` read the spy the component called.
+      {
+        useUtils: () => ({
+          appListings: { listListingReports: { invalidate: mocks.invalidate } },
+        }),
+      }
+    ),
   };
 });
 
@@ -113,6 +119,7 @@ beforeEach(() => {
   mocks.invalidate.mockClear();
   mocks.mutate.mockClear();
   mocks.errorMode = false;
+  mocks.reportOver = {};
 });
 
 describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () => {
@@ -120,12 +127,12 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
     renderWithProviders(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-relist-bad-app').click();
     // The gate UX now matches the reject paths.
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toBeDisabled();
 
     await page.getByTestId('apps-report-action-reason').fill('ab');
-    await expect.element(page.getByText('2/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText('Enter at least 3 characters.')).toBeInTheDocument();
     await expect.element(confirm).toBeDisabled();
     expect(mocks.mutate).not.toHaveBeenCalled();
@@ -142,7 +149,7 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
   test('Purge is destructive (red "Purge permanently"), counter-gated, then fires', async () => {
     renderWithProviders(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-purge-bad-app').click();
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+    await expect.element(page.getByText('3+ characters', { exact: true })).toBeInTheDocument();
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toHaveTextContent('Purge permanently');
     await expect.element(confirm).toBeDisabled();
@@ -179,10 +186,45 @@ describe('OffsiteReportsQueue — reason-gated report actions (finding A)', () =
     renderWithProviders(<OffsiteReportsQueue />);
     await page.getByTestId('apps-report-resolve-bad-app').click();
     // No reason floor for a note → no counter, and the confirm is immediately enabled.
-    expect(page.getByText('0/3 characters minimum').elements()).toHaveLength(0);
+    expect(page.getByText('3+ characters', { exact: true }).elements()).toHaveLength(0);
     const confirm = page.getByTestId('apps-report-action-confirm');
     await expect.element(confirm).toBeEnabled();
     await confirm.click();
     expect(mocks.mutate).toHaveBeenCalledWith('resolve', { reportId: 'rep-1', note: undefined });
+  });
+});
+
+describe('🔴 a DISMISSED report offers no actions, and its count is not an alarm', () => {
+  test('dismissed + a LIVE listing: no Delist / Claim / Resolve / Dismiss — History only', async () => {
+    mocks.reportOver = {
+      status: 'dismissed',
+      appListing: { slug: 'bad-app', name: 'Bad App', kind: 'offsite', status: 'approved' },
+    };
+    renderWithProviders(<OffsiteReportsQueue />);
+    await expect.element(page.getByRole('button', { name: 'History' })).toBeInTheDocument();
+    for (const action of ['delist', 'claim', 'relist', 'purge', 'resolve', 'dismiss']) {
+      expect(page.getByTestId(`apps-report-${action}-bad-app`).elements()).toHaveLength(0);
+    }
+  });
+
+  test('POSITIVE CONTROL: the same listing with a PENDING report does offer Delist', async () => {
+    mocks.reportOver = {
+      status: 'pending',
+      appListing: { slug: 'bad-app', name: 'Bad App', kind: 'offsite', status: 'approved' },
+    };
+    renderWithProviders(<OffsiteReportsQueue />);
+    await expect.element(page.getByTestId('apps-report-delist-bad-app')).toBeInTheDocument();
+  });
+
+  test('the heading count is red only on the Pending view', async () => {
+    renderWithProviders(<OffsiteReportsQueue />);
+    const count = page.getByTestId('apps-reports-count');
+    await expect.element(count).toBeInTheDocument();
+    // Pending (the default view) with one report: the alarm colour.
+    expect(count.element().getAttribute('style') ?? '').toContain('red');
+    await page.getByText('Dismissed', { exact: true }).click();
+    await vi.waitFor(() =>
+      expect(count.element().getAttribute('style') ?? '').not.toContain('red')
+    );
   });
 });

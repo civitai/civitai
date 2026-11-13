@@ -7,6 +7,7 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { resolveGatedImagesForBlockClaims } from '~/server/services/blocks/block-gated-images-read.service';
+import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
@@ -14,7 +15,8 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 /**
  * GET /api/v1/blocks/gated-images?ids=1,2,3 → `{ images: BlockGatedImage[] }`
- * Any valid block token; no required scope.
+ * Any valid block token; no required scope. A `visible` entry also carries a `reactTicket`
+ * (`react-ticket.service.ts`), which `blocks.setReactionFromApp` requires.
  *
  * The per-viewer GATED image read — the REST twin of the `GET_IMAGES_BY_IDS` →
  * `IMAGES_RESULT` bridge message, for apps porting off the postMessage bridge
@@ -37,9 +39,7 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  * 🔴 THE DECISIVE FACT IS THAT THE TWO CORPORA ARE DISJOINT — not that the two
  * routes DISCLOSE differently. `blocks/images` serves `runImageSearch`
  * (`src/pages/api/v1/blocks/images.ts:218`) over the Meilisearch images index,
- * whose source query hard-filters `i."postId" IS NOT NULL`
- * (`src/server/search-index/images.search-index.ts:134`, and again at `:282` for
- * the incremental update pass). THIS route's corpus is exactly the complement —
+ * whose source query hard-filters `i."postId" IS NOT NULL`. THIS route's corpus is exactly the complement —
  * `AND i."postId" IS NULL` (`block-gated-images.service.ts:184`), further scoped
  * to `blockPublishedAppId = claims.appId`. Complementary predicates: an image
  * cannot satisfy both. So `blocks/images?ids=` returns an EMPTY ARRAY for every
@@ -205,7 +205,16 @@ export const baseHandler = withAxiom(async function handler(
       claims,
       imageIds: parsed.data.ids,
     });
-    res.status(200).json(result);
+    // Tickets on VISIBLE entries only: a hidden entry carries no pixels the viewer could have
+    // reacted to. The read itself already refuses an anonymous viewer.
+    res.status(200).json({
+      ...result,
+      images: result.images.map((image) => {
+        if (image.status !== 'visible') return image;
+        const reactTicket = reactTicketForImage(claims, image.imageId);
+        return reactTicket ? { ...image, reactTicket } : image;
+      }),
+    });
     return;
   } catch (error) {
     // `handleEndpointError`, so failures answer `{ message }` and this route

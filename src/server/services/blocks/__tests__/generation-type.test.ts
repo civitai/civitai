@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   blockPassThroughStepBodySchema,
+  blockWorkflowBodySchema,
   PASS_THROUGH_TYPE_MAX_CHARS,
 } from '~/server/schema/blocks/workflow.schema';
+import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 import {
   BLOCK_AUTHOR_FEE_PLATFORM_CONFIG,
   resolveBlockAuthorFeeParams,
@@ -15,6 +17,7 @@ import {
   BLOCK_IMAGE_GENERATION_SUBTYPES,
   BLOCK_PASS_THROUGH_COARSE_TYPE,
   BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS,
+  BLOCK_TRAINING_ECOSYSTEMS,
   BLOCK_WORKFLOW_KIND_GENERATION_TYPES,
   blockGenerationCoarseType,
   composeBlockGenerationType,
@@ -87,7 +90,7 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
   // parameters through `blockGenerationCoarseType` and labels its counters with the
   // result.
 
-  it('the coarse key is exactly these five', () => {
+  it('the coarse key is exactly these seven', () => {
     // Literal, not derived. Widening this set is a wire-contract decision and a
     // fee-table decision; it must not happen by accident.
     //
@@ -96,8 +99,23 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
     // hand: every `kind:'step'` submit carrying a bare `$type` rather than a
     // registry id groups under it, and it exists so that such a submit can never
     // group under `textToImage` (which is also a real orchestrator `$type`).
+    //
+    // `training` IS THE SIXTH, ADDED WITH `kind:'training'`: its own fee group, so a
+    // training run is priced by the zero-fee `training` override and never as a
+    // pass-through `step`.
+    //
+    // `workflow` IS THE SEVENTH, ADDED WITH `kind:'workflow'`: one multi-step
+    // workflow is one generation and one fee, grouped apart from a single `step`.
     expect([...BLOCK_GENERATION_COARSE_TYPES].sort()).toEqual(
-      ['chat-completion', 'convert-image', 'customComfy', 'step', 'textToImage'].sort()
+      [
+        'chat-completion',
+        'convert-image',
+        'customComfy',
+        'step',
+        'textToImage',
+        'training',
+        'workflow',
+      ].sort()
     );
   });
 
@@ -512,10 +530,8 @@ describe('resolveBlockGenerationType — the pass-through arm records step:<$typ
   });
 
   it('DEGRADES to the bare "step" for a $type the SHAPE bound refuses — never a raw value', () => {
-    // 🔴 EVERY ONE OF THESE IS WIRE-LEGAL. `$type` is `z.string().min(1).max(64)`
-    // with no character class, so a colon, a space, a newline and a 64-char
-    // string all parse — which is what makes this degrade path REACHABLE rather
-    // than defensive (pinned against the real schema in the SEAM test below).
+    // The wire refuses all of these (ASCII letters and digits only, pinned in the SEAM
+    // test below); the resolver still degrades them, as defence in depth.
     // A shallower TRUE value beats a wrong one: the row still records that a
     // pass-through submit happened, and the fee still finds its coarse key.
     for (const hostile of [
@@ -885,32 +901,17 @@ describe('the pass-through SHAPE bound is the only bound on that axis', () => {
     expect(BLOCK_PASS_THROUGH_COARSE_TYPE).toBe('step');
   });
 
-  it('SEAM: the degrade path is REACHABLE FROM THE WIRE, not merely defensive', () => {
-    // 🔴 MEASURED AGAINST THE REAL SCHEMA, because the whole "caller-influenced"
-    // claim rests on it: `$type` is `z.string().min(1).max(64)` with NO character
-    // class, so a body naming `a:b` — or a `$type` that would forge a value under
-    // another fee group — PARSES, reaches the submit, and is bounded only here.
-    // If this ever stops parsing, the shape bound becomes unreachable defence and
-    // the tests above become invariant guards; that is worth knowing either way.
-    // 🔴 THE RESOLVER IS RUN ON `parsed.data`, NOT ON A HAND-BUILT TWIN. The claim
-    // is about what a PARSED body resolves to, and zod REBUILDS the object — a
-    // hand-built literal would assert that claim about a different value that
-    // merely looks the same.
+  it('SEAM: the wire refuses every $type the shape bound would degrade', () => {
+    // The wire allows ASCII letters and digits only, so the degrade path is defence in
+    // depth. The resolver is run on `parsed.data`, since zod rebuilds the object.
     const parse = ($type: string) =>
       blockPassThroughStepBodySchema.safeParse({ kind: 'step', $type, input: {}, maxBuzz: 1 });
 
-    // Wire-legal AND shape-refused: these are the ones the degrade path exists for.
-    // `textToImage:txt2img` is the sharp one — it would forge a value under
-    // another fee group if the subtype were taken raw.
     for (const hostile of ['a:b', 'textToImage:txt2img', 'foo bar', `imageGen${SP}`]) {
-      const parsed = parse(hostile);
-      expect(parsed.success).toBe(true);
-      if (parsed.success) expect(resolveBlockGenerationType(parsed.data)).toBe('step');
+      expect(parse(hostile).success).toBe(false);
     }
 
-    // Wire-legal AND shape-accepted at the boundary: the same parse path keeps its
-    // subtype, so the assertions above are about the SHAPE bound and not about the
-    // parse merely failing.
+    // At the length cap a legal $type keeps its subtype on the same parse path.
     const atCap = 'a'.repeat(64);
     const parsedAtCap = parse(atCap);
     expect(parsedAtCap.success).toBe(true);
@@ -1158,6 +1159,12 @@ describe('the accepted sets stay DERIVED from the registries', () => {
         // The pass-through COARSE key. Its `step:<$type>` values are NOT here —
         // see the next test, which pins that exclusion as a decision.
         'step',
+        // The training coarse key and one value per ai-toolkit ecosystem, read off
+        // the TRAINING FORM'S schema — not off the literal under test.
+        'training',
+        ...schemaTrainingEcosystems().map((e) => `training:${e}`),
+        // The multi-step coarse key. It has no subtype.
+        'workflow',
       ].sort()
     );
     for (const value of BLOCK_GENERATION_TYPES) {
@@ -1316,5 +1323,72 @@ describe('the author fee groups a pass-through row under `step`, never under a k
       expect(resolved.coarseType).toBeNull();
       expect(resolved.source).toBe('default');
     }
+  });
+});
+
+/** The `ecosystem` discriminator values of the training form's ai-toolkit schema. */
+function schemaTrainingEcosystems(): string[] {
+  const options = (
+    aiToolkitTrainingParamsSchema as unknown as {
+      options: Array<{ shape: { ecosystem: { value: string } } }>;
+    }
+  ).options;
+  return options.map((o) => o.shape.ecosystem.value);
+}
+
+describe("resolveBlockGenerationType — kind:'workflow' records the bare coarse key", () => {
+  it("resolves kind:'workflow' to the bare `workflow`, whatever its steps are", () => {
+    const body = {
+      kind: 'workflow',
+      steps: [
+        { $type: 'imageGen', input: {} },
+        { $type: 'textToImage', input: {} },
+      ],
+    };
+    expect(resolveBlockGenerationType(body)).toBe('workflow');
+    // The value is real, parsed input: the wire schema accepts this body.
+    expect(blockWorkflowBodySchema.safeParse(body).success).toBe(true);
+    expect(blockGenerationCoarseType('workflow')).toBe('workflow');
+    // No subtype axis: a step `$type` can never ride this key.
+    expect(isBlockGenerationType('workflow:imageGen')).toBe(false);
+    expect(isBlockGenerationType('workflow:')).toBe(false);
+  });
+});
+
+describe("resolveBlockGenerationType — kind:'training' records training:<ecosystem>", () => {
+  it('the instrument reads the schema (positive control)', () => {
+    // A reader that silently returned [] would make the seam test below compare
+    // an empty set to an empty set.
+    expect(schemaTrainingEcosystems().length).toBeGreaterThan(20);
+    expect(schemaTrainingEcosystems()).toContain('sdxl');
+  });
+
+  it('BLOCK_TRAINING_ECOSYSTEMS equals the training schema ecosystem set, in BOTH directions', () => {
+    // SEAM: the literal exists to keep this module import-light; a new ecosystem on
+    // the training form must not silently record a bare `training`.
+    expect([...BLOCK_TRAINING_ECOSYSTEMS].sort()).toEqual(schemaTrainingEcosystems().sort());
+  });
+
+  it('records the ecosystem the body trains', () => {
+    expect(resolveBlockGenerationType({ kind: 'training', params: { ecosystem: 'sdxl' } })).toBe(
+      'training:sdxl'
+    );
+    expect(
+      resolveBlockGenerationType({ kind: 'training', params: { ecosystem: 'ace_step_15_xl' } })
+    ).toBe('training:ace_step_15_xl');
+  });
+
+  it('an unknown, missing or non-string ecosystem degrades to the bare coarse key', () => {
+    for (const params of [{ ecosystem: 'not-an-ecosystem' }, {}, { ecosystem: 7 }, undefined]) {
+      expect(resolveBlockGenerationType({ kind: 'training', params })).toBe('training');
+    }
+  });
+
+  it('the bound refuses a training subtype outside the closed set', () => {
+    expect(isBlockGenerationType('training:sdxl')).toBe(true);
+    expect(isBlockGenerationType('training')).toBe(true);
+    expect(isBlockGenerationType('training:imageGen')).toBe(false);
+    expect(isBlockGenerationType('training:sdxl:x')).toBe(false);
+    expect(blockGenerationCoarseType('training:flux1')).toBe('training');
   });
 });

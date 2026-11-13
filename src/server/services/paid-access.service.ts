@@ -37,6 +37,7 @@ import {
   type TierInput,
 } from '~/server/services/pricing-slot.service';
 import { increaseDate } from '~/utils/date-helpers';
+import { isViewerOrModerator } from '~/utils/is-viewer';
 
 // A gated version must actually charge for something: `download` always carries a price, and a
 // `generation` grant only "charges" when it's the paid tier (not `{ free: true }`). Structural rules
@@ -253,6 +254,9 @@ function createModelSaleCache() {
     key: `${REDIS_KEYS.CACHES.PAID_ACCESS}:ModelSales:v2`,
     idKey: 'modelId',
     ttl: CacheTTL.xs,
+    // Most entries are "no sale" markers. A new sale reaches the card through a bust, not this expiry,
+    // so this bounds only how late a badge shows when a bust is lost.
+    notFoundTtl: CacheTTL.md,
     staleWhileRevalidate: false,
     lookupFn: async (ids) => {
       const modelIds = (Array.isArray(ids) ? ids : [ids]).filter((id) => id != null);
@@ -437,9 +441,6 @@ export async function getPaidAccess(
 
 export type PaidAccessViewer = { id?: number | null; isModerator?: boolean | null };
 
-const isOwnerOrModView = (viewer: PaidAccessViewer, ownerId: number) =>
-  (!!viewer.id && viewer.id === ownerId) || !!viewer.isModerator;
-
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
   /**
@@ -507,7 +508,7 @@ export async function getViewerMonetization({
         : null;
 
     const ownerId = ownerOf(v);
-    const isOwnerOrMod = ownerId != null && isOwnerOrModView(viewer, ownerId);
+    const isOwnerOrMod = ownerId != null && isViewerOrModerator(viewer, ownerId);
     out[v.id] = {
       // The owner keeps the stored terms — their editors resubmit them, and a discounted price written
       // back would make the sale permanent.
@@ -609,14 +610,24 @@ export async function assertMonetizationWrite({
     licensingFee: storedLicensingFee,
     hasPermanentGate: hadPermanentGate,
   });
+  const willHavePermanentGate =
+    paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent;
   const willBePriced = isAlreadyPriced({
     // Collapsing absent and null reads a gate removal as a version that still charges.
     licensingFee: licensingFee !== undefined ? licensingFee : storedLicensingFee,
-    hasPermanentGate:
-      paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent,
+    hasPermanentGate: willHavePermanentGate,
   });
 
-  return assertPricingAllowed({ userId: ownerId, wasPriced, willBePriced, tier, userMeta });
+  return assertPricingAllowed({
+    userId: ownerId,
+    wasPriced,
+    willBePriced,
+    addsGate: willHavePermanentGate,
+    hadGate: hadPermanentGate,
+    entity: versionId ? { entityType: 'ModelVersion', entityId: versionId } : undefined,
+    tier,
+    userMeta,
+  });
 }
 
 /**
@@ -681,7 +692,11 @@ export async function bustModelSaleCache(modelVersionIds: number[]) {
     where: { id: { in: modelVersionIds } },
     select: { modelId: true },
   });
-  const modelIds = [...new Set(rows.map((r) => r.modelId))];
+  await bustModelSaleCacheForModels([...new Set(rows.map((r) => r.modelId))]);
+}
+
+/** The same bust for a caller that already holds MODEL ids — no lookup. */
+export async function bustModelSaleCacheForModels(modelIds: number[]) {
   if (modelIds.length) await modelSaleCache().bust(modelIds);
 }
 
@@ -766,17 +781,21 @@ export async function writePaidAccessForModelVersion(
 /**
  * At publish: materialize a pending timed gate's `endsAt` from the freshly-set `publishedAt`.
  * No-op when there's no row or it's permanent (timeframeDays NULL). Idempotent.
+ * `pendingOnly`: fill an endsAt that is NULL, never move one that is set. For a publish that wrote no
+ * publishedAt — creators and buyers have already seen the end date.
  */
 export async function materializePaidAccessEndsAt(
   versionId: number,
   publishedAt: Date,
-  tx: PrismaClient | Prisma.TransactionClient = dbWrite
+  tx: PrismaClient | Prisma.TransactionClient = dbWrite,
+  { pendingOnly = false }: { pendingOnly?: boolean } = {}
 ) {
   const row = await tx.paidAccess.findUnique({
     where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
     select: { timeframeDays: true, endsAt: true },
   });
   if (!row || row.timeframeDays == null) return;
+  if (pendingOnly && row.endsAt != null) return;
   // Skip tombstones (a gate that already ended): republishing an ended version must NOT re-gate it.
   // Only a pending (endsAt NULL) or still-active (endsAt future) timed gate re-materializes.
   if (row.endsAt != null && row.endsAt <= new Date()) return;

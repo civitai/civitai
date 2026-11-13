@@ -16,9 +16,21 @@ export const PLACEMENT_SURFACE_TABS = [
   { value: 'sticker', label: 'Stickers' },
   { value: 'remix', label: 'Remixes' },
   { value: 'promotion', label: 'Promotions' },
+  { value: 'storyline', label: 'Storylines' },
 ] as const;
 
 export type PlacementSurfaceTab = (typeof PLACEMENT_SURFACE_TABS)[number]['value'];
+
+export function visiblePlacementSurfaceTabs(flags: {
+  creatorPromotions?: boolean;
+  storylines?: boolean;
+}) {
+  return PLACEMENT_SURFACE_TABS.filter(
+    (option) =>
+      (option.value !== 'promotion' || !!flags.creatorPromotions) &&
+      (option.value !== 'storyline' || !!flags.storylines)
+  );
+}
 
 export function isPlacementSurfaceTab(value: unknown): value is PlacementSurfaceTab {
   return PLACEMENT_SURFACE_TABS.some((option) => option.value === value);
@@ -45,6 +57,12 @@ export const REMIX_QUEUE_RECEIVED_URL = '/user/placements?type=remix&tab=receive
 
 /** The viewer's own outgoing remix submissions. */
 export const REMIX_QUEUE_SENT_URL = '/user/placements?type=remix&tab=sent';
+
+/** Continuations waiting on the viewer's storylines. */
+export const STORYLINE_QUEUE_RECEIVED_URL = '/user/placements?type=storyline&tab=received';
+
+/** The viewer's own continuations of other people's storylines, and where each stands. */
+export const STORYLINE_QUEUE_SENT_URL = '/user/placements?type=storyline&tab=sent';
 
 /**
  * Turns the reveal on for whoever follows the link.

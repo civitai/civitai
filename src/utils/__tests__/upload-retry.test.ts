@@ -3,9 +3,10 @@ import {
   describePartFailure,
   getPartRetryDelay,
   isTerminalCompleteStatus,
+  CHUNKED_RELAY_FALLBACK_MAX_BYTES,
   RELAY_FALLBACK_MAX_BYTES,
   resolveUploadRowStatus,
-  shouldRelayOnPartFailure,
+  selectRelayFallback,
 } from '~/utils/upload-retry';
 
 /**
@@ -20,6 +21,8 @@ import {
  */
 describe('isTerminalCompleteStatus', () => {
   it.each([
+    // The completion body itself is malformed (e.g. no uploadId).
+    [400, true],
     // The multipart session is already finalized or aborted.
     [409, true],
     // The upload STATE is bad: an unacceptable parts manifest, or a completion whose
@@ -38,7 +41,6 @@ describe('isTerminalCompleteStatus', () => {
     [429, false],
     [408, false],
     [401, false],
-    [400, false],
     // Success is not "terminal failure"; the callers gate on !res.ok first, but the
     // predicate must not claim a 2xx is terminal if that order ever changes.
     [200, false],
@@ -49,11 +51,11 @@ describe('isTerminalCompleteStatus', () => {
   // 🔴 An enumerated ledger, not a spot check: if a status is ADDED to or REMOVED from
   // the terminal set, this fails and forces both clients' behaviour to be reconsidered
   // together — which is the whole point of the predicate living in one module.
-  it('the terminal set is exactly {409, 422}', () => {
+  it('the terminal set is exactly {400, 409, 422}', () => {
     const terminal = Array.from({ length: 600 }, (_, i) => i)
       .filter((s) => s >= 100)
       .filter(isTerminalCompleteStatus);
-    expect(terminal).toEqual([409, 422]);
+    expect(terminal).toEqual([400, 409, 422]);
   });
 });
 
@@ -151,6 +153,52 @@ describe('describePartFailure', () => {
     });
   });
 
+  it('maps a stalled part to stalled, ahead of the networkError it also carries', () => {
+    // 🔴 THE ORDER IS THE TEST. A stall sets `networkError` as well — that is what gets it past
+    // `selectRelayFallback` — so a `networkError` check placed first swallows it and the
+    // two populations share one row. Checked after `aborted`, which a cancel must still win.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        partNumber: 4,
+      })
+    ).toEqual({ kind: 'stalled', partNumber: 4 });
+  });
+
+  it('omits the part number on a stall the caller could not attribute', () => {
+    expect(describePartFailure({ status: null, networkError: true, stalled: true })).toEqual({
+      kind: 'stalled',
+    });
+  });
+
+  it.each([
+    ['stalled', 'the transfer went quiet mid-body', false],
+    ['response-stalled', 'the host took every byte and never answered', true],
+  ])('maps a stall to %s when %s', (kind, _why, responsePhase) => {
+    // 🔴 ONE PRODUCER EACH, ASSERTED AS A PAIR. The two go quiet in different places and call for
+    // different fixes, and the only thing separating them is this flag — so a single-arm case
+    // would pass against a mapping hardwired to either kind.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        responsePhase,
+        partNumber: 7,
+      })
+    ).toEqual({ kind, partNumber: 7 });
+  });
+
+  it('maps an unattributed response-phase stall to response-stalled without a part number', () => {
+    expect(
+      describePartFailure({ status: null, networkError: true, stalled: true, responsePhase: true })
+    ).toEqual({ kind: 'response-stalled' });
+  });
+
   it('maps an HTTP status to part-status with its part number', () => {
     expect(describePartFailure({ status: 400, partNumber: 2 })).toEqual({
       kind: 'part-status',
@@ -171,7 +219,7 @@ describe('describePartFailure', () => {
 });
 
 /**
- * `shouldRelayOnPartFailure` gates the multipart upload's relay fallback: a client that
+ * `selectRelayFallback` gates the multipart upload's relay fallback: a client that
  * cannot reach the storage host at the network layer may re-send the whole file through
  * our own origin — the same rescue `useCFImageUpload` got in #4573, extended to the
  * multipart path that `useMediaUpload` (the post-image flow) drives.
@@ -188,7 +236,7 @@ describe('describePartFailure', () => {
  * while the feature was inert. What proves the gate is REACHED at all lives at the seam,
  * in `src/hooks/__tests__/useS3Upload.test.ts`; these pin the rules once it is.
  */
-describe('shouldRelayOnPartFailure', () => {
+describe('selectRelayFallback', () => {
   const base = {
     type: 'image',
     backend: 'backblaze',
@@ -197,7 +245,49 @@ describe('shouldRelayOnPartFailure', () => {
   };
 
   it('relays a network-layer failure on the image backend', () => {
-    expect(shouldRelayOnPartFailure({ status: null, networkError: true }, base)).toBe(true);
+    expect(selectRelayFallback({ status: null, networkError: true }, base)).toBe('single_shot');
+  });
+
+  it('relays the stall watchdog’s own error object, verbatim', () => {
+    // 🔴 THE EXACT OBJECT `useS3Upload` rejects with when the watchdog aborts a part — copied,
+    // not paraphrased. `aborted: false` is the load-bearing field: the watchdog calls
+    // `xhr.abort()`, so the abort handler could trivially record the user-cancel shape, and
+    // this predicate refuses on `err.aborted`. That one flag is the difference between a
+    // watchdog that rescues the upload and one that fires into a gate it cannot pass.
+    expect(
+      selectRelayFallback(
+        { status: null, networkError: true, aborted: false, stalled: true, partNumber: 1 },
+        base
+      )
+    ).toBe('single_shot');
+  });
+
+  it('relays a response-phase stall too, for all that it is a distinct kind', () => {
+    // 🔴 THE KIND IS A DIAGNOSTIC, NOT A GATE. Splitting the abort stream must not narrow who
+    // gets rescued: a host that swallowed the bytes and never answered is as unreachable as one
+    // that went quiet mid-body, and both are exactly what the relay exists for.
+    expect(
+      selectRelayFallback(
+        {
+          status: null,
+          networkError: true,
+          aborted: false,
+          stalled: true,
+          responsePhase: true,
+          partNumber: 1,
+        },
+        base
+      )
+    ).toBe('single_shot');
+  });
+
+  it('does not relay a stall the person cancelled during', () => {
+    expect(
+      selectRelayFallback(
+        { status: null, networkError: true, aborted: false, stalled: true },
+        { ...base, userAborted: true }
+      )
+    ).toBeNull();
   });
 
   it.each([
@@ -206,7 +296,7 @@ describe('shouldRelayOnPartFailure', () => {
     ['', { status: 503 }],
     ['', { status: null }],
   ])('does not relay $1', (_n, err) => {
-    expect(shouldRelayOnPartFailure(err as never, base)).toBe(false);
+    expect(selectRelayFallback(err as never, base)).toBeNull();
   });
 
   it('does not relay when the user already cancelled', () => {
@@ -220,50 +310,65 @@ describe('shouldRelayOnPartFailure', () => {
     // `useCFImageUpload` may adopt this predicate, and because the multi-worker shape
     // reopens the window — NOT because the production cancel path runs through them.
     expect(
-      shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, userAborted: true })
-    ).toBe(false);
+      selectRelayFallback({ status: null, networkError: true }, { ...base, userAborted: true })
+    ).toBeNull();
   });
 
   it.each(['model', 'training-images', 'default'] as const)(
     'does not relay for type %s — the relay writes to the image bucket',
     (type) => {
       expect(
-        shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, type })
-      ).toBe(false);
+        selectRelayFallback({ status: null, networkError: true }, { ...base, type })
+      ).toBeNull();
     }
   );
 
   it('does not relay for a backend the relay does not write to', () => {
     expect(
-      shouldRelayOnPartFailure({ status: null, networkError: true }, { ...base, backend: 'b2' })
-    ).toBe(false);
+      selectRelayFallback({ status: null, networkError: true }, { ...base, backend: 'b2' })
+    ).toBeNull();
     expect(
-      shouldRelayOnPartFailure(
-        { status: null, networkError: true },
-        { ...base, backend: undefined }
-      )
-    ).toBe(false);
+      selectRelayFallback({ status: null, networkError: true }, { ...base, backend: undefined })
+    ).toBeNull();
   });
 
-  it('relays a file exactly at the relay cap, and nothing above it', () => {
+  /**
+   * The size axis, at both boundaries and between them. Fixtures are pairwise distinct and none
+   * is a multiple of the 8 MiB relay piece size, so no case can pass by landing on a piece edge.
+   *
+   * 🔴 Regression: before the chunked relay this gate returned false for everything above the
+   * single-shot cap, so a user who cannot reach the storage host could not upload a large image
+   * at all. The `chunked` rows below were `false` then.
+   */
+  it.each([
+    ['1 byte', 1, 'single_shot'],
+    ['exactly the single-shot cap', RELAY_FALLBACK_MAX_BYTES, 'single_shot'],
+    ['one byte over the single-shot cap', RELAY_FALLBACK_MAX_BYTES + 1, 'chunked'],
+    ['between the caps', 23_456_789, 'chunked'],
+    ['exactly the image size cap', CHUNKED_RELAY_FALLBACK_MAX_BYTES, 'chunked'],
+    ['one byte over the image size cap', CHUNKED_RELAY_FALLBACK_MAX_BYTES + 1, null],
+    ['far over the image size cap', 61_234_567, null],
+  ] as const)('routes a file of %s to %s', (_label, fileSize, route) => {
+    expect(selectRelayFallback({ status: null, networkError: true }, { ...base, fileSize })).toBe(
+      route
+    );
+  });
+
+  it('keeps every non-size clause for files that would go through the chunked relay', () => {
+    // The widening must not have widened anything but size: a large file on the wrong backend,
+    // of the wrong type, refused by the host or cancelled by the person still gets no relay.
+    const large = { ...base, fileSize: 23_456_789 };
+    expect(selectRelayFallback({ status: null, networkError: true }, large)).toBe('chunked');
     expect(
-      shouldRelayOnPartFailure(
-        { status: null, networkError: true },
-        {
-          ...base,
-          fileSize: RELAY_FALLBACK_MAX_BYTES,
-        }
-      )
-    ).toBe(true);
+      selectRelayFallback({ status: null, networkError: true }, { ...large, backend: 'b2' })
+    ).toBeNull();
     expect(
-      shouldRelayOnPartFailure(
-        { status: null, networkError: true },
-        {
-          ...base,
-          fileSize: RELAY_FALLBACK_MAX_BYTES + 1,
-        }
-      )
-    ).toBe(false);
+      selectRelayFallback({ status: null, networkError: true }, { ...large, type: 'model' })
+    ).toBeNull();
+    expect(selectRelayFallback({ status: 503 }, large)).toBeNull();
+    expect(
+      selectRelayFallback({ status: null, networkError: true }, { ...large, userAborted: true })
+    ).toBeNull();
   });
 
   it('the relay cap matches the route it posts to (10 MB, the Next body-truncation point)', () => {
@@ -287,7 +392,7 @@ describe('resolveUploadRowStatus', () => {
   //
   // ⚠ "No fourth case is needed" is a claim about the SUITE, not this file. The realistic
   // copy-paste mutation for this module — `!fatal.networkError || opts.userAborted`,
-  // which is the clause spelled out in `shouldRelayOnPartFailure` above — survives all
+  // which is the clause spelled out in `selectRelayFallback` above — survives all
   // three cases here and dies at the seam, in `useS3Upload.test.ts`'s
   // "does not relay when the storage host answered with an HTTP status". Do not restore a
   // fourth case for it: the seam owns that outcome, and duplicating it here is what this

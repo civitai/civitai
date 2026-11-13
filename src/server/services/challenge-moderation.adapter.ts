@@ -3,6 +3,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  applyChallengeTextScan,
+  settleSkippedChallengeScan,
+} from '~/server/services/text-scan/actions/challenge';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { buildChallengeModerationText } from '~/server/games/daily-challenge/challenge-helpers';
 import {
   CHALLENGE_MODERATION_LABELS,
@@ -30,7 +35,14 @@ export const challengeModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.challenge.findMany({
       where: { id: { in: ids } },
-      select: { id: true, title: true, theme: true, description: true, invitation: true, metadata: true },
+      select: {
+        id: true,
+        title: true,
+        theme: true,
+        description: true,
+        invitation: true,
+        metadata: true,
+      },
     });
     return new Map(
       rows.map((r) => [
@@ -43,13 +55,21 @@ export const challengeModerationAdapter: ModerationAdapter = {
     );
   },
 
+  // Only the retry cron calls submit.
   submit: ({ entityId, content }) =>
-    submitTextModeration({
+    submitTextModerationOrScan({
       entityType: 'Challenge',
       entityId,
-      content,
-      labels: [...CHALLENGE_MODERATION_LABELS],
-      priority: 'low',
+      fromRetry: true,
+      onActiveSkip: (reason) => settleSkippedChallengeScan(entityId, reason),
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Challenge',
+          entityId,
+          content,
+          labels: [...CHALLENGE_MODERATION_LABELS],
+          priority: 'low',
+        }),
     }),
 
   applyResult: async ({ entityId, blocked, triggeredLabels, output }) => {
@@ -136,4 +156,6 @@ export const challengeModerationAdapter: ModerationAdapter = {
       recordChallengeScanResult({ source: challenge?.source, result: 'error' });
     }
   },
+
+  applyTextScan: applyChallengeTextScan,
 };

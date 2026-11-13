@@ -1,6 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
+import {
+  listApprovedPlacementRows,
+  listPlacementTrackRows,
+  listStickerPlacementRows,
+} from '@civitai/db-queries/placement';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { logToAxiom } from '~/server/logging/client';
 import { cosmeticCache } from '~/server/redis/caches';
 import {
@@ -10,6 +16,8 @@ import {
 } from '~/server/services/placement-escrow.service';
 import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
 import {
@@ -24,9 +32,9 @@ import {
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
-  CosmeticFlag,
   isStickerKeptOffImage,
-  STICKER_SFW_ONLY_REFUSAL,
+  STICKER_PLACEMENT_RATING_MASK,
+  stickerPlacementRefusal,
 } from '~/shared/constants/cosmetic-flags.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
@@ -51,8 +59,16 @@ import {
   stickerMaxScale,
   stickerRemovableAt,
   STICKER_AUTO_SPACE_KEY,
+  STICKER_PLACEMENT_MIN_OPACITY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
+import type { StickerTrack } from '~/shared/utils/sticker-track';
+import {
+  sampleStickerTrack,
+  stickerTrackFaintestShown,
+  stickerTrackMaxScale,
+  stickerTrackRefusal,
+} from '~/shared/utils/sticker-track';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
@@ -159,13 +175,13 @@ async function loadPlaceableSticker({
 
   if (!cosmetic) throw throwBadRequestError('placement: that sticker no longer exists');
   if (!cosmetic.owned) throw throwAuthorizationError('placement: you do not own that sticker');
-  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
+  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(stickerPlacementRefusal(cosmetic.flags));
 
   return cosmetic;
 }
 
 /**
- * The two columns every primary-side SFW check reads, selected against
+ * The two columns every primary-side rating check reads, selected against
  * `"Cosmetic" c`. One fragment so the placement and the approval cannot drift
  * apart on what a missing image means (unrated, so refused).
  */
@@ -176,6 +192,11 @@ const stickerImageEligibilityColumns = (imageId: number) => Prisma.sql`
 
 const isKeptOffRow = (row: { flags: number; imageNsfwLevel: number }) =>
   isStickerKeptOffImage({ cosmeticFlags: row.flags, imageNsfwLevel: row.imageNsfwLevel });
+
+function trackStartPose(track: StickerTrack) {
+  const { x, y, scale, rotation } = sampleStickerTrack(track, 0);
+  return { x, y, scale, rotation };
+}
 
 export type CreateStickerPlacement = {
   /**
@@ -188,6 +209,8 @@ export type CreateStickerPlacement = {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  /** Movement over a video. Its pose at time zero replaces the one in `data`. */
+  track?: StickerTrack;
   /**
    * Which of the two offers the placer took. A choice, not a claim: it selects
    * the path, and the path re-decides every rule for itself under a lock. The
@@ -206,7 +229,7 @@ export type CreateStickerPlacement = {
 /**
  * A placer's optional note travels with the placement it belongs to.
  *
- * Not a `CommentV2` thread: this is one immutable line bought with the
+ * Not a comment: this is one immutable line bought with the
  * placement, and giving it the comment system's identity would give it that
  * system's edit, reply and notification behaviour — none of which anyone asked
  * for, all of which would then need their own answer to "the owner accepted the
@@ -244,10 +267,14 @@ const commentFrom = (data: { comment?: string | null }) => normalizeStickerComme
 export async function createStickerPlacement({
   placerId,
   imageId,
-  data,
+  data: requested,
+  track,
   free = false,
   spendType,
 }: CreateStickerPlacement) {
+  // `data` stays the pose every reader draws, so a moving sticker is drawn where it starts by
+  // anything that does not know about tracks, and the size check below sees the real start.
+  const data = track ? { ...requested, ...trackStartPose(track) } : requested;
   const space = await resolvePlacementSpaceFor({
     surface: SURFACE,
     targetType: TARGET_TYPE,
@@ -264,6 +291,9 @@ export async function createStickerPlacement({
   if (space.ownerId === placerId)
     throw throwBadRequestError('placement: you cannot place a sticker on your own content');
 
+  // Above the free branch, so both creation routes scan the note they store.
+  await throwOnBlockedUserContent(commentFrom(data), { surface: 'sticker-placement' });
+
   // The creator's size limit, refused rather than clamped. Quietly shrinking a
   // sticker someone just paid for is the same shape as v1's recurring defect: a
   // rule applied as a filter where a refusal was needed. The editor also caps
@@ -274,12 +304,26 @@ export async function createStickerPlacement({
   // they were accepted at, and a creator lowering their limit is not a licence
   // to take back something already paid for.
   const maxScale = stickerMaxScale(space.settings);
-  if (data.scale > maxScale)
+  if (data.scale > maxScale || (track && stickerTrackMaxScale(track) > maxScale))
     throw throwBadRequestError(
       `placement: this creator allows stickers up to ${Math.round(
         maxScale * 100
       )}% of the image width`
     );
+
+  // A key multiplies the placer's own opacity, so the floor applies to the product. The schema
+  // checks each factor; only here are both known.
+  const faintest = track && stickerTrackFaintestShown(track);
+  if (faintest != null && faintest * (data.opacity ?? 1) < STICKER_PLACEMENT_MIN_OPACITY - 1e-9)
+    throw throwBadRequestError(
+      `placement: a shown sticker must be at least ${Math.round(
+        STICKER_PLACEMENT_MIN_OPACITY * 100
+      )}% opaque`
+    );
+
+  // Only the resolved space knows the image's type, so this cannot sit in the schema.
+  if (track && space.mediaType !== 'video')
+    throw throwBadRequestError('placement: movement can only be recorded on a video');
 
   // Everything below is the paid path: the escrow, the price, and the two
   // refusals `createFreePlacement` makes for itself under its lock. Branching
@@ -287,7 +331,7 @@ export async function createStickerPlacement({
   // offer — the alternative is a paid path with free-shaped holes in it, which
   // is the guard-versus-filter shape this feature has already shipped five
   // times.
-  if (free) return placeFreeSticker({ placerId, imageId, data, space });
+  if (free) return placeFreeSticker({ placerId, imageId, data, track, space });
 
   // Below the branch rather than above it, and not a `!free` condition: a
   // creator can open free capacity on a space they have never priced, so an
@@ -332,6 +376,7 @@ export async function createStickerPlacement({
         ...(comment ? { comment } : {}),
         ...autoSpaceStamp(space),
       },
+      ...(track ? { track } : {}),
     },
     select: { id: true },
   });
@@ -402,11 +447,13 @@ async function placeFreeSticker({
   placerId,
   imageId,
   data,
+  track,
   space,
 }: {
   placerId: number;
   imageId: number;
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
+  track?: StickerTrack;
   space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>>;
 }) {
   const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId, imageId });
@@ -429,6 +476,7 @@ async function placeFreeSticker({
       ...(comment ? { comment } : {}),
       ...autoSpaceStamp(space),
     },
+    track,
   });
 
   try {
@@ -527,6 +575,12 @@ export type StickerPlacementView = {
   isPending: boolean;
   /** Whether this placement carries a note the viewer may read. */
   hasComment: boolean;
+  /**
+   * Kept off this image by a moderator flag, so it is not in the approved count.
+   * Set only on a moderator's combined listing — the one listing that shows such
+   * rows — and absent everywhere else, so no other payload changes shape.
+   */
+  keptOff?: true;
 };
 
 /**
@@ -693,11 +747,13 @@ async function keptOffPlacementIds(
   const cosmeticIds = [...new Set(rows.map((row) => row.cosmeticId).filter(isDefined))];
   if (!cosmeticIds.length) return new Set<number>();
 
-  const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+  // Past this pod's L1: a moderator's rating refreshes Redis at once, and hiding the sticker should
+  // not wait for another pod's L1 entry to expire.
+  const cosmetics = await cosmeticCache.fetch(cosmeticIds, { bypassLocal: true });
   const flagged = rows.filter(
     (row) =>
       row.cosmeticId != null &&
-      Flags.hasFlag(cosmetics[row.cosmeticId]?.flags ?? 0, CosmeticFlag.SfwPlacementsOnly)
+      Flags.intersects(cosmetics[row.cosmeticId]?.flags ?? 0, STICKER_PLACEMENT_RATING_MASK)
   );
   if (!flagged.length) return new Set<number>();
 
@@ -719,8 +775,29 @@ async function keptOffPlacementIds(
   );
 }
 
+const stickerPlacementRowSelect = {
+  id: true,
+  targetId: true,
+  placerId: true,
+  ownerId: true,
+  status: true,
+  amount: true,
+  // Beside `amount` rather than derived from it. Zero is what a free row
+  // carries, but it is not what makes it free — and the owner controls the
+  // copy that depends on the answer, so an inference is a wrong sentence
+  // about money rather than a missing one.
+  free: true,
+  data: true,
+  createdAt: true,
+} satisfies Prisma.PlacementSelect;
+
+type StickerPlacementRow = Prisma.PlacementGetPayload<{
+  select: typeof stickerPlacementRowSelect;
+}>;
+
 /**
- * Approved placements for a set of images, plus the viewer's own pending ones.
+ * The rows behind the listing: approved placements on these images, plus the
+ * pending ones the viewer is a party to.
  *
  * The pending row is deliberately in the same payload rather than a second call:
  * the placer sees their own submission rendered faint while it waits, and
@@ -728,65 +805,67 @@ async function keptOffPlacementIds(
  * ends up rendering someone else's pending placement on a page that forgot to
  * filter.
  */
-export async function getStickerPlacements({
+async function readStickerPlacementRows({
   imageIds,
   viewerId,
-  isModerator = false,
 }: {
   imageIds: number[];
   viewerId?: number;
-  isModerator?: boolean;
-}): Promise<StickerPlacementView[]> {
-  if (!imageIds.length) return [];
+}): Promise<StickerPlacementRow[]> {
+  // A pending placement is visible to exactly two people: the one who paid for it, and the one
+  // being asked to accept it (`viewerId` as placer or owner). Without both scoped this becomes
+  // "everyone sees every pending placement", which is the feature working in reverse.
+  return (await listStickerPlacementRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetIds: imageIds,
+    viewerId,
+  })) as StickerPlacementRow[];
+}
 
-  const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      OR: [
-        { status: 'approved' },
-        // A pending placement is visible to exactly two people: the one who paid
-        // for it, and the one being asked to accept it. Without both ids scoped
-        // this becomes "everyone sees every pending placement", which is the
-        // feature working in reverse.
-        ...(viewerId
-          ? [
-              { status: 'pending' as const, placerId: viewerId },
-              { status: 'pending' as const, ownerId: viewerId },
-            ]
-          : []),
-      ],
-    },
-    select: {
-      id: true,
-      targetId: true,
-      placerId: true,
-      ownerId: true,
-      status: true,
-      amount: true,
-      // Beside `amount` rather than derived from it. Zero is what a free row
-      // carries, but it is not what makes it free — and the owner controls the
-      // copy that depends on the answer, so an inference is a wrong sentence
-      // about money rather than a missing one.
-      free: true,
-      data: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: 'asc' },
-  });
+/** Each row with its `data` parsed ONCE, for both the kept-off check and the listing. */
+function parseRows<T extends { data: Prisma.JsonValue }>(rows: T[]) {
+  return rows.map((row) => ({ row, data: parseStickerPlacementData(row.data) }));
+}
 
-  const parsed = rows.map((row) => ({ row, data: parseStickerPlacementData(row.data) }));
-  const keptOff = isModerator
-    ? new Set<number>()
-    : await keptOffPlacementIds(
-        parsed.map(({ row, data }) => ({
-          id: row.id,
-          targetId: row.targetId,
-          cosmeticId: data?.cosmeticId ?? null,
-        }))
-      );
+const keptOffInputs = (
+  parsed: { row: { id: number; targetId: number }; data: { cosmeticId: number } | null }[]
+) =>
+  parsed.map(({ row, data }) => ({
+    id: row.id,
+    targetId: row.targetId,
+    cosmeticId: data?.cosmeticId ?? null,
+  }));
 
+/**
+ * The approved count per image: every approved row not kept off its image.
+ *
+ * The one counting rule, shared by the count-only read and the combined one, so
+ * the two cannot disagree about what a badge says. Deliberately NOT derived from
+ * the listing: a row whose `data` no longer parses is dropped from the listing
+ * but still counted, and a moderator's listing skips the kept-off filter that
+ * the count always applies. Both are long-standing behaviour the badge depends
+ * on, and a count read off the listing would change them.
+ */
+function countApprovedPlacements(
+  rows: { id: number; targetId: number; status: string }[],
+  keptOff: Set<number>
+) {
+  const counts: Record<number, number> = {};
+  for (const row of rows) {
+    if (row.status !== 'approved' || keptOff.has(row.id)) continue;
+    counts[row.targetId] = (counts[row.targetId] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function toStickerPlacementViews(
+  parsed: ReturnType<typeof parseRows<StickerPlacementRow>>,
+  keptOff: Set<number>,
+  viewerId?: number,
+  /** Rows to list but mark as kept off — a moderator's view of what `keptOff` hides. */
+  markedKeptOff: Set<number> = new Set()
+): StickerPlacementView[] {
   return parsed.flatMap(({ row, data }) => {
     if (!data || keptOff.has(row.id)) return [];
 
@@ -809,9 +888,74 @@ export async function getStickerPlacements({
         data: { ...data, comment: undefined, commentHidden: undefined },
         isPending: row.status === 'pending',
         hasComment: !!visibleStickerComment(data, isParty),
+        ...(markedKeptOff.has(row.id) ? { keptOff: true as const } : {}),
       },
     ];
   });
+}
+
+/**
+ * Approved placements for a set of images, plus the viewer's own pending ones.
+ *
+ * Kept for clients that predate `getStickerPlacementsAndCounts`; a deployed
+ * bundle keeps calling it for hours after a release.
+ */
+export async function getStickerPlacements({
+  imageIds,
+  viewerId,
+  isModerator = false,
+}: {
+  imageIds: number[];
+  viewerId?: number;
+  isModerator?: boolean;
+}): Promise<StickerPlacementView[]> {
+  if (!imageIds.length) return [];
+
+  const parsed = parseRows(await readStickerPlacementRows({ imageIds, viewerId }));
+  const keptOff = isModerator
+    ? new Set<number>()
+    : await keptOffPlacementIds(keptOffInputs(parsed));
+
+  return toStickerPlacementViews(parsed, keptOff, viewerId);
+}
+
+/**
+ * Every write goes through the schema, but a row that does not (a hand edit, a backfill) would
+ * break the player for everyone who opens the video, so a track that fails the rules is dropped.
+ */
+function isPlayableTrack(track: unknown) {
+  try {
+    return (
+      !!track && typeof track === 'object' && stickerTrackRefusal(track as StickerTrack) === null
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** For the detail view of one video; the listing never carries tracks. */
+export async function getStickerPlacementTracks({
+  imageId,
+  viewerId,
+  isModerator = false,
+}: {
+  imageId: number;
+  viewerId?: number;
+  isModerator?: boolean;
+}) {
+  const rows = (await listPlacementTrackRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetId: imageId,
+    viewerId,
+  })) as { id: number; targetId: number; data: Prisma.JsonValue; track: unknown }[];
+  // Same withholding as the listing: only a moderator gets kept-off placements.
+  const keptOff = isModerator
+    ? new Set<number>()
+    : await keptOffPlacementIds(keptOffInputs(parseRows(rows)));
+  return rows
+    .filter(({ id, track }) => !keptOff.has(id) && isPlayableTrack(track))
+    .map(({ id, track }) => ({ id, track: track as StickerTrack }));
 }
 
 /** Approved placements per image, for the reaction-bar count. */
@@ -820,30 +964,53 @@ export async function getStickerPlacementCounts(imageIds: number[]) {
 
   // Rows rather than a groupBy, so the count agrees with the listing about
   // placements kept off an image by a moderator flag.
-  const rows = await dbRead.placement.findMany({
-    where: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: { in: imageIds },
-      status: 'approved',
-    },
-    select: { id: true, targetId: true, data: true },
-  });
+  const rows = (await listApprovedPlacementRows((await loadKyselyDb()).kyselyRead, {
+    surface: SURFACE,
+    targetType: TARGET_TYPE,
+    targetIds: imageIds,
+  })) as { id: number; targetId: number; status: string; data: Prisma.JsonValue }[];
 
-  const keptOff = await keptOffPlacementIds(
-    rows.map((row) => ({
-      id: row.id,
-      targetId: row.targetId,
-      cosmeticId: parseStickerPlacementData(row.data)?.cosmeticId ?? null,
-    }))
-  );
+  return countApprovedPlacements(rows, await keptOffPlacementIds(keptOffInputs(parseRows(rows))));
+}
 
-  const counts: Record<number, number> = {};
-  for (const row of rows) {
-    if (keptOff.has(row.id)) continue;
-    counts[row.targetId] = (counts[row.targetId] ?? 0) + 1;
-  }
-  return counts;
+/**
+ * The listing and the approved counts for the same images, from ONE read.
+ *
+ * Every surface that wants placements also wants the count, and asking for both
+ * separately cost two procedure calls and two scans of the same rows. The
+ * listing's read already returns every approved row the count would, so the
+ * count is taken from it here — under `countApprovedPlacements`, the same rule
+ * `getStickerPlacementCounts` uses, so both halves are byte-for-byte what the two
+ * separate procedures return for this viewer.
+ *
+ * The count is still viewer-independent: pending rows are in the read only for
+ * the listing, and the counting rule takes approved rows alone.
+ */
+export async function getStickerPlacementsAndCounts({
+  imageIds,
+  viewerId,
+  isModerator = false,
+}: {
+  imageIds: number[];
+  viewerId?: number;
+  isModerator?: boolean;
+}): Promise<{ placements: StickerPlacementView[]; counts: Record<number, number> }> {
+  if (!imageIds.length) return { placements: [], counts: {} };
+
+  const rows = await readStickerPlacementRows({ imageIds, viewerId });
+  const parsed = parseRows(rows);
+  const keptOff = await keptOffPlacementIds(keptOffInputs(parsed));
+
+  return {
+    // A moderator's listing skips the kept-off filter so they can act on what
+    // it hides; their COUNT does not, exactly as the separate procedures behave.
+    // Those rows are marked, so removing one does not take it off a count that
+    // never included it.
+    placements: isModerator
+      ? toStickerPlacementViews(parsed, new Set<number>(), viewerId, keptOff)
+      : toStickerPlacementViews(parsed, keptOff, viewerId),
+    counts: countApprovedPlacements(rows, keptOff),
+  };
 }
 
 /**
@@ -1082,6 +1249,7 @@ async function removeApprovedSticker({
       takenDownById: userId,
     },
   });
+  if (count > 0) void onPlacementsTakenDown([placement.id]);
 
   return { settled: count > 0 };
 }

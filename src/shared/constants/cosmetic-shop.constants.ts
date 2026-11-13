@@ -44,3 +44,9 @@ export const COSMETIC_SIMILARITY_CLOSE_RATIO = 0.125;
 // redrawn imitation (cosmetic 1426 vs official 107, at 60). Per cosmetic the
 // median is 0 and the max 20, so most submissions correctly show nothing.
 export const COSMETIC_SIMILARITY_MAX_RATIO = 0.25;
+
+/**
+ * The server's answer to a shop purchase whose idempotency key was already
+ * granted. The client treats it as a success, so the two sides share the text.
+ */
+export const PURCHASE_ALREADY_COMPLETED_MESSAGE = 'This purchase has already been completed';

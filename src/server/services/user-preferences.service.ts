@@ -1,10 +1,16 @@
+import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { isImageReviewed } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { setUserFollowCached, userFollowsCache } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import type {
+  ClearHiddenInput,
+  GetHiddenModelsInput,
+  ToggleHiddenSchemaOutput,
+} from '~/server/schema/user-preferences.schema';
 import type { BlockHideCommentsResult } from '~/server/services/block-hide-comments.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import type { HiddenPreferencesCompact } from '~/shared/hidden-preferences/compact';
@@ -13,8 +19,17 @@ import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { clearUserEngagement, setUserEngagement } from '~/server/services/user-engagement';
-import { Availability, TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
+import {
+  clearAllUserEngagements,
+  clearUserEngagement,
+  setUserEngagement,
+} from '~/server/services/user-engagement';
+import {
+  Availability,
+  ModelStatus,
+  TagEngagementType,
+  UserEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
@@ -51,11 +66,17 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   // per-key TTLs gave: if an invalidation is ever missed, the field can't go
   // stale indefinitely — the hash expires and is rebuilt. (Jitter on first
   // population still staggers expiry across users to avoid a herd.)
+  //
+  // The write-back is best-effort and bounded (cluster-cache guard): the value is already read from
+  // the source, so a cache that cannot take it must not fail or hold the caller — the next read just
+  // misses again.
   const get = async ({ userId = -1, ...rest }: TArgs) => {
     const data = await callback({ userId, ...rest } as TArgs);
     const hashKey = getUserPrefsHashKey(userId);
-    await redis.packed.hSet(hashKey, field, data);
-    await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
+    await clusterCacheGuard.writeBestEffort('user-preferences.cache-fill', async () => {
+      await redis.packed.hSet(hashKey, field, data);
+      await redis.expire(hashKey, getHiddenCacheExpiry(), 'NX');
+    });
     return data;
   };
 
@@ -80,11 +101,16 @@ function createUserCache<T, TArgs extends { userId?: number }>({
 
   return {
     get,
+    /** Read from the source only: no cache write. */
+    fetch: (args: TArgs) => callback({ ...args, userId: args.userId ?? -1 } as TArgs),
     getCached,
     field,
     refreshCache: refresh,
   };
 }
+
+/** The hash read failed: what `getAllHiddenForUsersCached` reads every preference from instead. */
+const UNREADABLE_HASH = Symbol('hidden-prefs-hash-unreadable');
 
 // const getHiddenTagsOfHiddenTags = async (tagIds: number[]) => {
 //   const tagsOnTags = await dbWrite.tagsOnTags.findMany({
@@ -215,10 +241,17 @@ export const HiddenUsers = createUserCache({
       `,
 });
 
+// The two block caches refill from the PRIMARY, not the replica. `toggleBlockUser` commits
+// the Block and then drops these fields; a refill inside the replica-lag window would read
+// a replica without the Block and write "not blocked" back. The hash TTL is set with `NX`,
+// so that stale field would then stand until the hash expires (up to ~4.5h) instead of
+// healing when the replica catches up. A block is a safety control, so pay the primary
+// read on a cache miss. Both caches, because both are dropped by the same toggle and the
+// block is enforced in both directions (`getBlockedPairIds`, the feed filter).
 export const BlockedUsers = createUserCache({
   key: 'blocked-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."targetUserId" "id",
           u."username"
@@ -231,7 +264,7 @@ export const BlockedUsers = createUserCache({
 export const BlockedByUsers = createUserCache({
   key: 'blocked-by-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
           ue."userId" "id",
           u."username"
@@ -251,6 +284,20 @@ export const getBlockedPairIds = async (userId: number) => {
   ]);
   return boundExcludedUserIds(
     [],
+    blockedBy.map((u) => u.id),
+    blocked.map((u) => u.id)
+  );
+};
+
+// User ids a cross-user feed drops for this viewer: the ones they hid, plus a block either way.
+export const getHiddenOrBlockedUserIds = async (userId: number) => {
+  const [hidden, blockedBy, blocked] = await Promise.all([
+    HiddenUsers.getCached({ userId }),
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  return boundExcludedUserIds(
+    hidden.map((u) => u.id),
     blockedBy.map((u) => u.id),
     blocked.map((u) => u.id)
   );
@@ -337,39 +384,62 @@ const getAllHiddenForUsersCached = async ({
   // contributor on the feed path), alongside the global moderated-tags blob.
   // Absent fields fall back per-pref to the DB via each cache's get() (see
   // createUserCache).
-  const [hashFields, cachedModeratedTags] = await withSpan(
+  //
+  // 🔴 Hidden content is a user-safety preference, so a cache that cannot answer must never read as
+  // "nothing hidden". Both reads are guarded (bounded, breaker-aware): a hash read that fails or
+  // times out reads every preference from the DATABASE, the source of truth, so what the user hid
+  // stays hidden — at the cost of the database read the cache normally saves. Nothing is written
+  // back on that path (the store just failed). A failed moderated-tags read falls to
+  // getModeratedTags, which reads the database the same way.
+  const [hashRead, cachedModeratedTags] = await withSpan(
     'user-preferences:getAllHidden:redisFetch',
     () =>
       Promise.all([
-        redis.packed.hGetAll<unknown>(getUserPrefsHashKey(userId)),
-        redis.packed.get<AsyncReturnType<typeof getModeratedTags>>(
-          REDIS_KEYS.SYSTEM.MODERATED_TAGS
+        clusterCacheGuard.readOr(
+          'user-preferences.getAllHidden hGetAll',
+          () => redis.packed.hGetAll<unknown>(getUserPrefsHashKey(userId)),
+          UNREADABLE_HASH
+        ),
+        clusterCacheGuard.readOr(
+          'user-preferences.getAllHidden moderated-tags',
+          () =>
+            redis.packed.get<AsyncReturnType<typeof getModeratedTags>>(
+              REDIS_KEYS.SYSTEM.MODERATED_TAGS
+            ),
+          null
         ),
       ])
   );
+  const hashUnreadable = hashRead === UNREADABLE_HASH;
+  const hashFields: Record<string, unknown> = hashUnreadable ? {} : hashRead;
+  // On an unreadable hash, read straight from the source and skip the write-back.
+  const fill = <T, A extends { userId?: number }>(
+    cache: { get: (args: A) => Promise<T>; fetch: (args: A) => Promise<T> },
+    args: A
+  ) => (hashUnreadable ? cache.fetch(args) : cache.get(args));
 
   const getModerationTags = async () =>
     (cachedModeratedTags as AsyncReturnType<typeof getModeratedTags>) ?? (await getModeratedTags());
 
   const getHiddenTags = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenTags.field] as AsyncReturnType<typeof HiddenTags.get>) ??
-    (await HiddenTags.get({ userId }));
+    (await fill(HiddenTags, { userId }));
 
   const getHiddenImages = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenImages.field] as AsyncReturnType<typeof HiddenImages.get>) ??
-    (await HiddenImages.get({ userId }));
+    (await fill(HiddenImages, { userId }));
 
   const getHiddenModels = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenModels.field] as AsyncReturnType<typeof HiddenModels.get>) ??
-    (await HiddenModels.get({ userId }));
+    (await fill(HiddenModels, { userId }));
 
   const getHiddenModel3Ds = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenModel3Ds.field] as AsyncReturnType<typeof HiddenModel3Ds.get>) ??
-    (await HiddenModel3Ds.get({ userId }));
+    (await fill(HiddenModel3Ds, { userId }));
 
   const getHiddenUsers = async ({ userId }: { userId: number }) =>
     (hashFields[HiddenUsers.field] as AsyncReturnType<typeof HiddenUsers.get>) ??
-    (await HiddenUsers.get({ userId }));
+    (await fill(HiddenUsers, { userId }));
 
   const getHiddenImplicitImages = async ({
     userId,
@@ -381,15 +451,15 @@ const getAllHiddenForUsersCached = async ({
     moderatedTagIds: number[];
   }) =>
     (hashFields[ImplicitHiddenImages.field] as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
-    (await ImplicitHiddenImages.get({ userId, hiddenTagIds, moderatedTagIds }));
+    (await fill(ImplicitHiddenImages, { userId, hiddenTagIds, moderatedTagIds }));
 
   const getBlockedUsers = async ({ userId }: { userId: number }) =>
     (hashFields[BlockedUsers.field] as AsyncReturnType<typeof BlockedUsers.get>) ??
-    (await BlockedUsers.get({ userId }));
+    (await fill(BlockedUsers, { userId }));
 
   const getBlockedByUsers = async ({ userId }: { userId: number }) =>
     (hashFields[BlockedByUsers.field] as AsyncReturnType<typeof BlockedByUsers.get>) ??
-    (await BlockedByUsers.get({ userId }));
+    (await fill(BlockedByUsers, { userId }));
 
   // Resolve the 8 base preferences — each is a no-op if cached, otherwise
   // hits the DB. Wrapped so we can attribute the cache-miss DB fallback
@@ -549,6 +619,79 @@ export async function toggleHidden(
   }
 }
 
+// `name`, `type` and `username` are null when the viewer can no longer see the model: a Hide
+// can be written for any model id, so this list must not become a way to read drafts,
+// unpublished, removed or private models. The id stays so the hide can still be undone.
+export type HiddenModelListItem = {
+  id: number;
+  name: string | null;
+  type: string | null;
+  username: string | null;
+};
+
+// Hidden models are cached as bare ids, so the settings list resolves names here. Not
+// `getModelsRaw({ hidden: true })`: that applies feed status/browsing-level rules, and this list
+// must show every hide the user can undo, including ones the feed would now filter out.
+// Paged by model id, a stable single-column cursor; no index orders Hide rows by `createdAt`.
+export async function getHiddenModelsForUser({
+  userId,
+  query,
+  limit,
+  cursor,
+}: GetHiddenModelsInput & { userId: number }) {
+  const visible = Prisma.sql`(
+    (m.status = ${ModelStatus.Published}::"ModelStatus"
+      AND m.availability != ${Availability.Private}::"Availability")
+    OR m."userId" = ${userId}
+  )`;
+  const where = [
+    Prisma.sql`me."userId" = ${userId}`,
+    Prisma.sql`me.type = 'Hide'`,
+    Prisma.sql`m.status != ${ModelStatus.Deleted}::"ModelStatus"`,
+  ];
+  if (cursor) where.push(Prisma.sql`me."modelId" < ${cursor}`);
+  if (query) {
+    const pattern = `%${query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+    where.push(Prisma.sql`${visible} AND m.name ILIKE ${pattern}`);
+  }
+
+  // The creator join runs after the LIMIT: joined inside, it ran once per hidden model.
+  const rows = await dbRead.$queryRaw<HiddenModelListItem[]>(Prisma.sql`
+    WITH page AS (
+      SELECT
+        me."modelId" "id",
+        CASE WHEN ${visible} THEN m.name END "name",
+        CASE WHEN ${visible} THEN m.type::text END "type",
+        CASE WHEN ${visible} THEN m."userId" END "userId"
+      FROM "ModelEngagement" me
+      JOIN "Model" m ON m.id = me."modelId"
+      WHERE ${Prisma.join(where, ' AND ')}
+      ORDER BY me."modelId" DESC
+      LIMIT ${limit + 1}
+    )
+    SELECT p.id, p.name, p.type, u.username
+    FROM page p
+    LEFT JOIN "User" u ON u.id = p."userId"
+    ORDER BY p.id DESC
+  `);
+
+  const items = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? items[items.length - 1].id : undefined;
+  return { items, nextCursor };
+}
+
+// Removes every Hide of one kind and nothing else: hidden tags, browsing level and the other
+// engagement types (Follow, Block, Favorite, Notify, Mute) on the same rows are untouched.
+export async function clearHidden({ userId, kind }: ClearHiddenInput & { userId: number }) {
+  if (kind === 'model') return { count: await clearAllHiddenModels({ userId }) };
+
+  const count = await clearAllUserEngagements({ userId, type: UserEngagementType.Hide });
+  // Mirrors the follow-cache step of toggleHideUser's un-hide path.
+  await userFollowsCache.refresh(userId);
+  await HiddenUsers.refreshCache({ userId });
+  return { count };
+}
+
 async function toggleHiddenTags({
   tagIds,
   userId,
@@ -702,6 +845,29 @@ async function toggleHideModel({
   };
 }
 
+const CLEAR_HIDDEN_MODELS_BATCH = 5000;
+
+// Batched because the heaviest accounts hold several hundred thousand Hide rows; one DELETE of
+// that size floods WAL (replica lag for every dbRead caller) and can hit the statement timeout.
+async function clearAllHiddenModels({ userId }: { userId: number }) {
+  let total = 0;
+  let deleted: number;
+  do {
+    deleted = await dbWrite.$executeRaw`
+      DELETE FROM "ModelEngagement"
+      WHERE "userId" = ${userId} AND type = 'Hide' AND "modelId" IN (
+        SELECT "modelId" FROM "ModelEngagement"
+        WHERE "userId" = ${userId} AND type = 'Hide'
+        LIMIT ${CLEAR_HIDDEN_MODELS_BATCH}
+      )
+    `;
+    total += deleted;
+  } while (deleted === CLEAR_HIDDEN_MODELS_BATCH);
+
+  await HiddenModels.refreshCache({ userId });
+  return total;
+}
+
 // Hide / unhide a single Model3D for a viewer. Mirrors `toggleHideModel`
 // using the `Model3DEngagement` table (Hide type already exists, so no
 // migration required). Refreshes the per-user `HiddenModel3Ds` cache so the
@@ -853,6 +1019,28 @@ async function cascadeBlockToPlacements({
   }
 }
 
+/** The blocked user's follow of the blocker is the reverse pair, which the block's upsert never touches. */
+async function removeBlockedUsersFollow({
+  userId,
+  targetUserId,
+}: {
+  userId: number;
+  targetUserId: number;
+}) {
+  // Scoped to Follow so a reverse Block or Hide survives.
+  const unfollowed = await clearUserEngagement({
+    userId: targetUserId,
+    targetUserId: userId,
+    type: UserEngagementType.Follow,
+  });
+  if (!unfollowed) return;
+  await setUserFollowCached({ userId: targetUserId, targetUserId: userId, following: false });
+  // The metric job finds changed pairs by `createdAt`, which a deleted row lacks.
+  // Dynamic: a static import closes an import cycle through the search index.
+  const { userMetrics } = await import('~/server/metrics/user.metrics');
+  await userMetrics.queueUpdate([userId, targetUserId]);
+}
+
 async function toggleBlockUser({
   userId,
   targetUserId,
@@ -918,6 +1106,18 @@ async function toggleBlockUser({
     // The pair carries a Block now, so it carries no Follow.
     if (blocked) await setUserFollowCached({ userId, targetUserId, following: false });
     else await userFollowsCache.refresh(userId);
+    // The block has committed; a failure here must not skip the block-cache refreshes below.
+    if (blocked)
+      await removeBlockedUsersFollow({ userId, targetUserId }).catch((error) =>
+        logToAxiom({
+          name: 'block-user',
+          type: 'error',
+          message: "block committed but the blocked user's follow was not removed",
+          userId,
+          targetUserId,
+          error: (error as Error).message,
+        }).catch(() => null)
+      );
   } else {
     const removed = await clearUserEngagement({
       userId,

@@ -1,0 +1,243 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import type * as ImageService from '~/server/services/image.service';
+import type * as ModelService from '~/server/services/model.service';
+import type * as PostService from '~/server/services/post.service';
+import { NsfwLevel } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { ModelModifier } from '~/shared/utils/prisma/enums';
+
+const { fetches, versionImages, posts } = vi.hoisted(() => ({
+  posts: vi.fn(async () => ({ items: [{ id: 100 }], nextCursor: undefined })),
+  fetches: vi.fn(async () => ({
+    items: [{ id: 1, postId: 100, nsfwLevel: 1, user: { id: 5 } }],
+    nextCursor: undefined,
+  })),
+  versionImages: vi.fn(async (ids: number[]) =>
+    Object.fromEntries(
+      ids.map((id) => [id, { modelVersionId: id, images: [{ id: 1, nsfwLevel: 1, userId: 5 }] }])
+    )
+  ),
+}));
+
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  getAllImages: fetches,
+  getAllImagesIndex: fetches,
+  getImagesForModelVersionCache: versionImages,
+}));
+// The real withhold check; the gallery hold and settings are other suites' concern.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelService>()),
+  getGallerySettingsByModelId: async () => null,
+  getHeldGalleryLevel: async () => undefined,
+  getHeldLevelsByPost: async () => new Map(),
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  getPostsInfinite: posts,
+}));
+vi.mock('~/server/services/promotion.service', () => ({
+  getSponsoredGalleryPost: async () => undefined,
+}));
+
+const {
+  getInfiniteImagesHandler,
+  getImagesAsPostsInfiniteHandler,
+  getImagesForModelVersionHandler,
+} = await import('~/server/controllers/image.controller');
+const { getPostsInfiniteHandler } = await import('~/server/controllers/post.controller');
+
+const OWNER = 5;
+// Model 1 (version 10) is taken down; model 2 (version 20) is not.
+const modes: Record<number, ModelModifier | null> = { 1: ModelModifier.TakenDown, 2: null };
+
+type User = { id: number; isModerator?: boolean };
+const ctx = (user?: User, subject?: unknown) =>
+  ({
+    user,
+    subject,
+    features: { imageIndexFeed: true },
+    req: { headers: {} },
+    ip: '127.0.0.1',
+  } as never);
+const feedInput = (selector: object) =>
+  ({ limit: 10, include: [], browsingLevel: allBrowsingLevelsFlag, ...selector } as never);
+
+const surfaces = [
+  [
+    'image.getInfinite by version',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ modelVersionId: versionId }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getInfinite by model',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ modelId: versionId / 10 }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  // Post 100 is on version 10 and post 200 on version 20; review n is of version 10n.
+  [
+    'image.getInfinite by post',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ postId: versionId * 10 }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getInfinite by a page of posts',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ postIds: [versionId * 10] }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getInfinite by review',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getInfiniteImagesHandler({
+        input: feedInput({ reviewId: versionId / 10 }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getImagesAsPostsInfinite',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getImagesAsPostsInfiniteHandler({
+        input: feedInput({ modelId: versionId / 10, modelVersionId: versionId }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'post.getInfinite by version',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getPostsInfiniteHandler({
+        input: feedInput({ modelVersionId: versionId }),
+        ctx: ctx(user, subject),
+      }).then((result) => result.items),
+  ],
+  [
+    'image.getImagesForModelVersion',
+    (user?: User, subject?: unknown, versionId = 10) =>
+      getImagesForModelVersionHandler({ input: { id: versionId }, ctx: ctx(user, subject) }).then(
+        (result) => Object.values(result).flatMap((entry) => entry.images)
+      ),
+  ],
+] as const;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  installFakeCacheRedis();
+  dbMock.dbRead.modelVersion.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ id, modelId: id / 10 }))) as never);
+  dbMock.dbRead.model.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ userId: OWNER, mode: modes[id] ?? null }))) as never);
+  dbMock.dbRead.resourceReview.findMany.mockResolvedValue([] as never);
+  dbMock.dbRead.post.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ id, modelVersionId: id / 10 }))) as never);
+  dbMock.dbRead.resourceReview.findUnique.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number };
+  }) => ({ modelVersionId: where.id * 10 })) as never);
+});
+
+describe('image.getInfinite by a single selector that cannot be resolved', () => {
+  it('serves another user no images of a post not yet found', async () => {
+    dbMock.dbRead.post.findMany.mockResolvedValue([] as never);
+    const { items } = await getInfiniteImagesHandler({
+      input: feedInput({ postId: 300 }),
+      ctx: ctx({ id: 99 }),
+    });
+    expect(items).toEqual([]);
+  });
+});
+
+describe.each(surfaces)('%s on a taken-down model', (_name, run) => {
+  it.each([
+    ['a signed-out visitor', undefined, undefined],
+    ['another user', { id: 99 }, undefined],
+    [
+      'a moderator through an app they authorised',
+      { id: 99, isModerator: true },
+      { type: 'oauth' },
+    ],
+    ['its owner through an app they authorised', { id: OWNER }, { type: 'oauth' }],
+  ])('serves %s no images', async (_viewer, user, subject) => {
+    expect(await run(user, subject)).toEqual([]);
+  });
+
+  it.each([
+    ['its owner', { id: OWNER }],
+    ['a moderator', { id: 99, isModerator: true }],
+  ])('serves %s its images', async (_viewer, user) => {
+    expect(await run(user)).not.toEqual([]);
+  });
+
+  it("serves another user the images of a model that isn't taken down", async () => {
+    expect(await run({ id: 99 }, undefined, 20)).not.toEqual([]);
+  });
+});
+
+describe('image.getImagesForModelVersion on a capped site', () => {
+  const image = (id: number, nsfwLevel: number) => ({ id, nsfwLevel, userId: OWNER });
+  const run = async (context: object) => {
+    versionImages.mockResolvedValueOnce({
+      20: {
+        modelVersionId: 20,
+        images: [
+          image(1, NsfwLevel.PG),
+          image(2, NsfwLevel.X),
+          image(3, 0),
+          image(4, NsfwLevel.PG | NsfwLevel.XXX),
+          image(5, NsfwLevel.PG | NsfwLevel.PG13),
+        ],
+      },
+    } as never);
+    const result = await getImagesForModelVersionHandler({
+      input: { id: 20 },
+      ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+    });
+    return result[20].images.map((i) => i.id);
+  };
+
+  it('sends a capped viewer only images whose every rating bit is inside the cap', async () => {
+    expect(await run({ user: { id: 6 }, features: { canViewNsfw: false } })).toEqual([1, 5]);
+    expect(await run({ features: { canViewNsfw: true } })).toEqual([1]);
+  });
+
+  it.each([
+    ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
+    ['a moderator', { user: { id: 7, isModerator: true }, features: { canViewNsfw: false } }],
+    ['an uncapped viewer', { user: { id: 6 }, features: { canViewNsfw: true } }],
+  ])('keeps every image for %s', async (_label, context) => {
+    expect(await run(context)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("keeps a verified crawler's answer out of the edge cache, since humans get a capped one", async () => {
+    const cache = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+    const req = { headers: { 'x-civitai-verified-bot': 'googlebot' } };
+    await run({ features: { canViewNsfw: true }, req, cache });
+    expect(cache).toEqual({ edgeTTL: 0, browserTTL: 0, staleWhileRevalidate: 0 });
+
+    const human = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
+    await run({ features: { canViewNsfw: true }, req: { headers: {} }, cache: human });
+    expect(human).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
+  });
+});

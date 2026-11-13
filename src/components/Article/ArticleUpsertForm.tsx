@@ -1,29 +1,28 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import {
-  Alert,
-  Anchor,
-  Button,
-  Group,
-  Input,
-  Paper,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Anchor, Button, Group, Input, Paper, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
+import { aspectRatioMap } from '~/components/CardTemplates/AspectRatioCard';
 import { openConfirmModal } from '@mantine/modals';
-import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
+import { IconLink, IconQuestionMark, IconSparkles, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
+import { ArticleEditEventCard } from '~/components/Article/ArticleEditEventCard';
+import { articleEditEventCard } from '~/components/Article/article-edit-event-card.utils';
+import { openArticleReframeModal } from '~/components/Article/ArticleReframeModal';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { openArticleShareDraftModal } from '~/components/Article/ArticleShareDraftModal';
+import { getUserNsfwLevelSubmit } from '~/components/Article/article-nsfw-submit';
+import { getArticleScheduleSubmit } from '~/components/Article/article-schedule-submit';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
 import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -44,8 +43,9 @@ import {
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { upsertArticleInput } from '~/server/schema/article.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { articleFormSchema } from '~/components/Article/article-form.schema';
+import type { ImageSchema } from '~/server/schema/image.schema';
+import { getReframeRefusal, type ArticleReframeTarget } from '~/shared/utils/article-reframe';
 import type { ArticleGetById } from '~/server/services/article.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
@@ -56,20 +56,7 @@ import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-const schema = upsertArticleInput
-  .omit({
-    coverImage: true,
-    userNsfwLevel: true,
-    moderatorNsfwLevel: true,
-    lockedProperties: true,
-  })
-  .extend({
-    categoryId: z.number().min(0, 'Please select a valid category'),
-    coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
-    userNsfwLevel: z.string().optional(),
-    moderatorNsfwLevel: z.string().optional(),
-    lockedProperties: z.string().array().optional(),
-  });
+const schema = articleFormSchema(true);
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional().default(-1)),
 });
@@ -102,6 +89,10 @@ export function ArticleUpsertForm({ article }: Props) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
+  const formSchema = useMemo(
+    () => articleFormSchema(!!features.articleTypography),
+    [features.articleTypography]
+  );
   const result = querySchema.safeParse(router.query);
 
   const defaultCategory = result.success ? result.data.category : -1;
@@ -112,7 +103,7 @@ export function ArticleUpsertForm({ article }: Props) {
     : true;
 
   const form = useForm({
-    schema,
+    schema: formSchema,
     shouldUnregister: false,
     defaultValues: {
       ...article,
@@ -123,18 +114,20 @@ export function ArticleUpsertForm({ article }: Props) {
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
+      bannerImage: article?.bannerImage ?? null,
       lockedProperties: article?.lockedProperties ?? [],
       isOfficial: article?.isOfficial ?? false,
     } as any,
   });
   const clearStorage = useFormStorage({
-    schema,
+    schema: formSchema,
     form,
     timeout: 1000,
     key: `article${article?.id ? `_${article?.id}` : 'new'}`,
-    watch: ({ content, coverImage, categoryId, tags, title }) => ({
+    watch: ({ content, coverImage, bannerImage, categoryId, tags, title }) => ({
       content,
       coverImage,
+      bannerImage,
       categoryId,
       tags,
       title,
@@ -144,9 +137,11 @@ export function ArticleUpsertForm({ article }: Props) {
     // treat an image it already has a row for as brand new. Keep the loaded value when the
     // persisted one is the same object minus its id; a genuinely different url still wins.
     shouldRestoreField: ({ name, storedValue, currentValue }) =>
-      name !== 'coverImage' || !persistedValueLostIdentity(storedValue, currentValue),
+      (name !== 'coverImage' && name !== 'bannerImage') ||
+      !persistedValueLostIdentity(storedValue, currentValue),
   });
   const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
+  const [watchedCover, watchedBanner] = form.watch(['coverImage', 'bannerImage']);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -161,6 +156,9 @@ export function ArticleUpsertForm({ article }: Props) {
   }, [currentUser?.isModerator, userNsfwLevel]);
 
   const [publishing, setPublishing] = useState(false);
+  // A ref, not state: the schedule dialog sets it and submits in the same tick.
+  const scheduleIntentRef = useRef<Date | null | undefined>(undefined);
+  const eventCard = articleEditEventCard(article, currentUser);
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
     categories: true,
@@ -177,13 +175,19 @@ export function ArticleUpsertForm({ article }: Props) {
     categoryId,
     tags: selectedTags,
     coverImage,
+    bannerImage,
     userNsfwLevel,
     moderatorNsfwLevel,
     lockedProperties,
     isOfficial,
     content,
-    ...rest
+    ...values
   }: z.infer<typeof schema>) => {
+    const { rest, scheduledAt, publishNow } = getArticleScheduleSubmit(values, {
+      publishing,
+      scheduleIntent: scheduleIntentRef.current,
+    });
+    scheduleIntentRef.current = undefined;
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
@@ -198,11 +202,7 @@ export function ArticleUpsertForm({ article }: Props) {
         {
           ...rest,
           content,
-          userNsfwLevel: canEditUserNsfwLevel
-            ? userNsfwLevel
-              ? Number(userNsfwLevel)
-              : 0
-            : undefined,
+          userNsfwLevel: getUserNsfwLevelSubmit(userNsfwLevel, canEditUserNsfwLevel),
           // moderatorNsfwLevel is gated server-side too, but only send it from
           // the mod-only picker so non-mod payloads never carry the key.
           // Empty string means "clear override" -> null.
@@ -213,8 +213,11 @@ export function ArticleUpsertForm({ article }: Props) {
             : undefined,
           tags,
           // publishedAt will be set server-side based on status
-          status: args?.status ? args.status : publishing ? ArticleStatus.Published : undefined,
+          status: args?.status ? args.status : publishNow ? ArticleStatus.Published : undefined,
+          scheduledAt,
           coverImage,
+          // Only flagged editors see the banner field; the server drops it for everyone else too.
+          bannerImage: features.articleTypography ? bannerImage ?? null : undefined,
           lockedProperties: lockedPropertiesRef.current,
           // Same shape as moderatorNsfwLevel above, and for a stronger reason: the server
           // DROPS this field for a non-moderator rather than refusing the save, so a
@@ -246,7 +249,7 @@ export function ArticleUpsertForm({ article }: Props) {
     // Check if publishing or updating published article with embedded images.
     const contentImages = features.articleImageScanning ? extractImagesFromArticle(content) : [];
     const needsImageScanConfirm =
-      contentImages.length > 0 && (publishing || article?.status === ArticleStatus.Published);
+      contentImages.length > 0 && (publishNow || article?.status === ArticleStatus.Published);
     const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
     const newImages = needsImageScanConfirm
       ? contentImages.filter((img) => !existingImageUrls.has(img.url))
@@ -312,6 +315,24 @@ export function ArticleUpsertForm({ article }: Props) {
     });
   };
 
+  const submitWithSchedule = (intent: Date | null) => {
+    setPublishing(false);
+    scheduleIntentRef.current = intent;
+    void form.handleSubmit(handleSubmit, () => {
+      scheduleIntentRef.current = undefined;
+    })();
+  };
+  const handleSchedule = () =>
+    dialogStore.trigger({
+      component: SchedulePostModal,
+      props: {
+        entity: 'article',
+        publishedAt: article?.scheduledAt,
+        onSubmit: submitWithSchedule,
+      },
+    });
+  const handleCancelSchedule = () => submitWithSchedule(null);
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <ReadOnlyAlert
@@ -345,12 +366,17 @@ export function ArticleUpsertForm({ article }: Props) {
                 'formatting',
                 'list',
                 'link',
+                'mentions',
                 'media',
                 'video',
                 'polls',
                 'colors',
                 'timestamp',
                 'blurb',
+                'imageSize',
+                'align',
+                'civitaiEmbed',
+                'spoiler',
               ]}
               withAsterisk
               stickyToolbar
@@ -384,8 +410,18 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
+              scheduleProps={
+                features.articleScheduling
+                  ? {
+                      disabled: upsertArticleMutation.isPending || !features.canWrite,
+                      onSchedule: handleSchedule,
+                      onCancelSchedule: handleCancelSchedule,
+                    }
+                  : undefined
+              }
               className="hidden @sm:flex"
             />
+            {eventCard && <ArticleEditEventCard {...eventCard} />}
             <InputSelect
               name="userNsfwLevel"
               data={browsingLevelSelectOptions}
@@ -477,9 +513,39 @@ export function ArticleUpsertForm({ article }: Props) {
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
-              withAsterisk
+              description={
+                features.articleTypography
+                  ? `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight} when there is no banner. Optional if you add a banner: without a cover, cards crop the banner once it has been reviewed.`
+                  : `Shown on cards, cropped from the top (a 7:9 portrait in feeds), and across the top of your article at ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}. Keep the subject near the top center.`
+              }
+              cardCrop={aspectRatioMap.portrait}
+              previewWidth={constants.article.coverImageWidth}
+              withAsterisk={!features.articleTypography}
             />
+            {features.articleTypography && (
+              <ReframeButton
+                source={watchedCover}
+                target="banner"
+                onKeep={(image) => form.setValue('bannerImage', image, { shouldDirty: true })}
+              />
+            )}
+            {features.articleTypography && (
+              <InputSimpleImageUpload
+                name="bannerImage"
+                label="Banner Image"
+                description={`Optional. Shown across the full width of the top of your article. Cards use your cover image, or this banner if there is no cover. Use a wide 4:1 image, ${constants.article.bannerImageWidth} x ${constants.article.bannerImageHeight} suggested.`}
+                aspectRatio={
+                  constants.article.bannerImageHeight / constants.article.bannerImageWidth
+                }
+              />
+            )}
+            {features.articleTypography && (
+              <ReframeButton
+                source={watchedBanner}
+                target="cover"
+                onKeep={(image) => form.setValue('coverImage', image, { shouldDirty: true })}
+              />
+            )}
             <InputSelect
               name="categoryId"
               label={
@@ -599,6 +665,15 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isPending || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
+              scheduleProps={
+                features.articleScheduling
+                  ? {
+                      disabled: upsertArticleMutation.isPending || !features.canWrite,
+                      onSchedule: handleSchedule,
+                      onCancelSchedule: handleCancelSchedule,
+                    }
+                  : undefined
+              }
               className="@sm:hidden"
             />
           </Stack>
@@ -615,6 +690,7 @@ function ActionButtons({
   currentContent,
   saveButtonProps,
   publishButtonProps,
+  scheduleProps,
   ...stackProps
 }: ActionButtonProps) {
   // Get scan status for articles in Processing state
@@ -689,14 +765,54 @@ function ActionButtons({
           </Button>
           <Tooltip label={publishTooltipLabel} disabled={!hasProblematicImages} {...tooltipProps}>
             <Button {...publishButtonProps} disabled={publishDisabled} type="submit" fullWidth>
-              Publish
+              {article?.scheduledAt ? 'Publish now' : 'Publish'}
             </Button>
           </Tooltip>
+          {scheduleProps && (
+            <Button
+              variant="light"
+              type="button"
+              fullWidth
+              disabled={scheduleProps.disabled || hasProblematicImages}
+              onClick={scheduleProps.onSchedule}
+            >
+              {article?.scheduledAt ? 'Reschedule' : 'Schedule'}
+            </Button>
+          )}
         </>
       )}
+      {article?.id &&
+        (article.status === ArticleStatus.Draft ||
+          article.status === ArticleStatus.Unpublished) && (
+          <Button
+            variant="default"
+            type="button"
+            fullWidth
+            leftSection={<IconLink size={16} />}
+            onClick={() => openArticleShareDraftModal(article.id)}
+          >
+            Share draft
+          </Button>
+        )}
       {article?.publishedAt ? (
         <Text size="xs" c="dimmed">
           Published at {formatDate(article.publishedAt)}
+        </Text>
+      ) : article?.scheduledAt ? (
+        <Text size="xs" c="dimmed">
+          Scheduled to publish {formatDate(article.scheduledAt, 'lll')} your time (
+          {formatDate(article.scheduledAt, 'MMM D, HH:mm', true)} UTC).{' '}
+          {scheduleProps && (
+            <Anchor
+              component="button"
+              type="button"
+              size="xs"
+              disabled={scheduleProps.disabled}
+              onClick={scheduleProps.onCancelSchedule}
+            >
+              Cancel schedule
+            </Anchor>
+          )}
         </Text>
       ) : (
         <Text size="xs" c="dimmed">
@@ -722,6 +838,40 @@ type FormButtonProps = Pick<ButtonProps, 'disabled' | 'loading'> & {
 type ActionButtonProps = StackProps & {
   saveButtonProps: FormButtonProps;
   publishButtonProps: FormButtonProps;
+  scheduleProps?: { disabled: boolean; onSchedule: () => void; onCancelSchedule: () => void };
   article?: ArticleGetById;
   currentContent?: string;
 };
+
+/** Only beside a saved image: the source must be an Image row the server can check. */
+function ReframeButton({
+  source,
+  target,
+  onKeep,
+}: {
+  source?: { id?: number; url: string; nsfwLevel?: number | null } | null;
+  target: ArticleReframeTarget;
+  onKeep: (image: ImageSchema) => void;
+}) {
+  const id = source?.id;
+  if (!source || !id) return null;
+  const refusal = getReframeRefusal(target, source);
+  if (refusal)
+    return (
+      <Text size="xs" c="dimmed" ta="right" mt={-8}>
+        {refusal}
+      </Text>
+    );
+  return (
+    <Group justify="flex-end" mt={-8}>
+      <Button
+        size="compact-sm"
+        variant="light"
+        leftSection={<IconSparkles size={14} />}
+        onClick={() => openArticleReframeModal({ source: { id, url: source.url }, target, onKeep })}
+      >
+        Generate {target} from this image
+      </Button>
+    </Group>
+  );
+}

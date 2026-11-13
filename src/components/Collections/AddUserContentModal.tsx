@@ -34,6 +34,7 @@ import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import {
   addSimpleImagePostInput,
+  BULK_SAVE_MAX_IMAGES,
   bulkSaveCollectionItemsInput,
 } from '~/server/schema/collection.schema';
 import type { ImageGetInfinite } from '~/types/router';
@@ -115,7 +116,11 @@ export function AddUserContentModal({ collectionId }: Props) {
     // Manually check for input errors
     const results = bulkSaveCollectionItemsInput.safeParse(data);
     if (!results.success) {
-      setError('You must upload or select at least one image');
+      setError(
+        selected.length > BULK_SAVE_MAX_IMAGES
+          ? `You can add up to ${BULK_SAVE_MAX_IMAGES} images at a time`
+          : 'You must upload or select at least one image'
+      );
       return;
     }
 

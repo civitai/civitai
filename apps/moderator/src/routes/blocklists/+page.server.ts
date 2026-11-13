@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
-import { parseRowId } from './form';
+import { inertEntries, parseRowId } from './form';
 import {
   BlocklistRowMismatchError,
   getBlocklistDTO,
@@ -40,6 +40,14 @@ export const actions: Actions = {
     if (!isType(type)) return fail(400, { error: 'Invalid blocklist type.' });
     if (id === null) return fail(400, { error: 'Invalid blocklist row.' });
     if (items.length === 0) return fail(400, { error: 'No items to add.' });
+
+    const inert = inertEntries(type, items);
+    if (inert.length > 0)
+      return fail(400, {
+        error: `Not a single word, so the filter can never match it: ${inert
+          .map((i) => `"${i}"`)
+          .join(', ')}. Enter one word per entry, without spaces or punctuation.`,
+      });
 
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
     // statement itself rather than here — see `upsertBlocklist`.

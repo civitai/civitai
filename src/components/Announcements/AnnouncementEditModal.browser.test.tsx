@@ -263,3 +263,121 @@ describe('AnnouncementEditModal banner safety', () => {
     expect(savedImage()).toBeUndefined();
   });
 });
+
+const savedMetadata = () => mocks.mutate.mock.calls.at(-1)?.[0]?.metadata;
+
+async function save() {
+  (await findByText<HTMLButtonElement>('button', 'Save')).click();
+  await vi.waitFor(() => expect(mocks.mutate).toHaveBeenCalled());
+}
+
+/** Uses the native value setter so React's value tracking sees the change. */
+async function inputByLabel(label: string) {
+  const labelEl = await findByText<HTMLLabelElement>('label', label);
+  return document.getElementById(labelEl.htmlFor) as HTMLInputElement;
+}
+
+async function typeInto(label: string, value: string) {
+  const input = await inputByLabel(label);
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+async function statusPageCheckbox() {
+  const labelEl = await findByText<HTMLLabelElement>('label', 'Show on status page');
+  return document.getElementById(labelEl.htmlFor) as HTMLInputElement;
+}
+
+describe('AnnouncementEditModal metadata', () => {
+  beforeEach(() => {
+    mocks.behavior = 'success';
+    mocks.mutate.mockClear();
+  });
+
+  test('a new announcement is off the status page and saves false', async () => {
+    renderWithProviders(
+      <AnnouncementEditModal announcement={{ title: 'x', content: 'y', color: 'blue' } as never} />
+    );
+
+    expect((await statusPageCheckbox()).checked).toBe(false);
+    await save();
+
+    expect(savedMetadata().statusPage).toBe(false);
+  });
+
+  test('ticking the box saves statusPage true', async () => {
+    renderWithProviders(<AnnouncementEditModal announcement={existingAnnouncement} />);
+
+    (await statusPageCheckbox()).click();
+    await save();
+
+    expect(savedMetadata().statusPage).toBe(true);
+  });
+
+  test('an announcement stored with the flag opens ticked and keeps it', async () => {
+    const stored = { ...(existingAnnouncement as object), metadata: { statusPage: true } } as never;
+    renderWithProviders(<AnnouncementEditModal announcement={stored} />);
+
+    expect((await statusPageCheckbox()).checked).toBe(true);
+    await save();
+
+    expect(savedMetadata().statusPage).toBe(true);
+  });
+
+  test('editing keeps the stored audience, dismissibility, column span and order', async () => {
+    const stored = {
+      ...(existingAnnouncement as object),
+      metadata: {
+        image: EXISTING_KEY,
+        targetAudience: 'authenticated',
+        dismissible: false,
+        colSpan: 3,
+        index: 2,
+      },
+    } as never;
+    renderWithProviders(<AnnouncementEditModal announcement={stored} />);
+
+    await save();
+
+    expect(savedMetadata()).toMatchObject({
+      targetAudience: 'authenticated',
+      dismissible: false,
+      colSpan: 3,
+      index: 2,
+      image: EXISTING_KEY,
+    });
+  });
+
+  test('clearing the link removes the stored action instead of resurrecting it', async () => {
+    const stored = {
+      ...(existingAnnouncement as object),
+      metadata: {
+        targetAudience: 'authenticated',
+        actions: [{ type: 'button', link: 'https://example.com', linkText: 'Read more' }],
+      },
+    } as never;
+    renderWithProviders(<AnnouncementEditModal announcement={stored} />);
+
+    expect(await inputByLabel('CTA Text')).toHaveProperty('value', 'Read more');
+    await typeInto('CTA Text', '');
+    await save();
+
+    expect(savedMetadata().actions).toBeUndefined();
+    expect(savedMetadata().targetAudience).toBe('authenticated');
+  });
+
+  test('removing the banner still clears it when other metadata is kept', async () => {
+    const stored = {
+      ...(existingAnnouncement as object),
+      metadata: { image: EXISTING_KEY, dismissible: false },
+    } as never;
+    renderWithProviders(<AnnouncementEditModal announcement={stored} />);
+
+    await removeBanner();
+    await save();
+
+    expect(savedMetadata().image).toBeUndefined();
+    expect(savedMetadata().dismissible).toBe(false);
+  });
+});

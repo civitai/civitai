@@ -3,7 +3,6 @@ import {
   Alert,
   Badge,
   Group,
-  HoverCard,
   Skeleton,
   Stack,
   Text,
@@ -11,6 +10,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';

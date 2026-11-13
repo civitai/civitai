@@ -10,8 +10,8 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCircleCheck, IconCopy, IconGift, IconTicket } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { CopyButton } from '~/components/CopyButton/CopyButton';

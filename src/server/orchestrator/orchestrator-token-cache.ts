@@ -25,10 +25,9 @@
  * HA migration, briefly it will be), every authenticated request that
  * needs an orchestrator token falls through to
  * `getTemporaryUserApiKey(userId)`. That function runs **1 INSERT + 2
- * deleteMany** per call. At civitai-dp-prod scale (80 pods × ~1k RPS) a
- * sustained sysRedis-down event would aim ~80k inserts/s and ~160k
- * deletes/s at the primary — the "cold-mint amplification" failure mode
- * tracked by the `sysredis-token-mint-amplification-warn` alert (see
+ * deleteMany** per call. Across the fleet, a sustained sysRedis-down event
+ * would aim that INSERT + delete load at the primary for every request —
+ * the "cold-mint amplification" failure mode (see
  * `logSysRedisFailOpen('token-mint-amplification', ...)` in
  * `get-orchestrator-token.ts`).
  *
@@ -58,66 +57,21 @@
  *  - No cache invalidation API. Eviction is implicit-via-TTL.
  *  - Bounded memory: `max` entries × ~50 bytes/entry ≈ 2.5 MB worst case.
  *
- * KNOWN BEHAVIOR (ban / logout / API-key rotation / account-deletion)
- * --------------------------------------------------------------------
- * This cache is NOT invalidated by ANY of the auth-revocation paths in
- * the codebase today. Specifically:
+ * Revocation
+ * ----------
+ * Entries are never invalidated; they age out after `ORCHESTRATOR_TOKEN_CACHE_TTL_MS`.
+ * `getOrchestratorToken` serves an entry in two cases only: when its sysRedis read fails,
+ * and for `WRITE_DEGRADED_WINDOW_MS` after a failed writeback to the sysRedis hash. It never
+ * writes an entry back to the hash, so an entry holding a revoked key cannot outlive that
+ * TTL or spread to other pods. To revoke a user's orchestrator tokens, call
+ * `expireUserApiKeys` (`src/server/services/api-key.service.ts`): it expires the rows,
+ * evicts them from the bearer-path cache and drops the hash entry, so the next call mints
+ * afresh. In either case above, a pod can still serve an entry cached before the
+ * revocation, for up to the TTL.
  *
- *   - The 401 handlers in `src/server/services/orchestrator/`:
- *       workflows.ts:58, workflows.ts:84, workflows.ts:154,
- *       imageUpload.ts:30, consumerBlobUpload.ts:27, videoEnhancement.ts:27
- *     all `throw throwAuthorizationError(...)` and do nothing else.
- *   - `signOut` next-auth callback (`pages/api/auth/[...nextauth].ts:68-73`)
- *     invalidates the JWT and clears the encrypted cookie but does NOT
- *     touch this cache or the sysRedis hash.
- *   - `invalidateSession(userId)` (`server/auth/session-invalidation.ts`)
- *     only writes to `REDIS_SYS_KEYS.SESSION.TOKEN_STATE`. Neither the
- *     generation-token cache nor `REDIS_KEYS.GENERATION.TOKENS` is touched.
- *   - `toggleBan` (`server/services/user.service.ts:1607`) calls
- *     `invalidateSession` — inherits the same gap.
- *   - `deleteUser` / GDPR account-deletion (`server/services/user.service.ts:944`)
- *     scrubs PII and calls `invalidateSession` but does NOT delete the
- *     `ApiKey` row with `name='generation-token'`. A deleted user's
- *     orchestrator token stays valid in the DB until its `expiresAt`
- *     (~1h) AND lingers in this in-memory cache for up to
- *     `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` per pod.
- *   - `deleteApiKey(id, userId)` (`server/services/api-key.service.ts:134`)
- *     removes the DB row but the cache entry (and the sysRedis hash entry)
- *     are independent and stay until natural TTL eviction.
- *
- * A revoked user therefore keeps minting/holding a valid orchestrator
- * token for up to `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` on any pod whose
- * cache they touched — and this is per-pod across all ~220 pods
- * (api ~80 + jobs ~10 + ssr ~130). Worst-case fleet-wide window: TTL_MS
- * × per-pod-staggered cache lifetime. The previously claimed
- * "orchestrator rejects, next request mints fresh" self-healing
- * behaviour does NOT exist — a 401 from the orchestrator surfaces to
- * the user as an auth error and the cache entry is left in place until
- * natural TTL eviction.
- *
- * Cross-user mints (the `moderatorProcedure.queryUserGeneratedImages`
- * path at `routers/orchestrator.router.ts:543-555`) bypass this cache
- * via the `bypassCache` arg on `getOrchestratorToken` — see the H2
- * finding in `claudedocs/sysredis-pr2333-round5-audit-2026-06-16.md`.
- * Without that bypass, a compromised moderator would leave per-target-user
- * cache entries on every pod they touched.
- *
- * If invalidation latency matters for your use case, EITHER:
- *   - add an explicit `invalidate(userId)` call (export to be added)
- *     alongside the revocation AND delete the underlying `ApiKey` row
- *     where `name='generation-token' AND userId=X` — without the row
- *     deletion, even a perfect cache invalidation leaves the token
- *     valid at the orchestrator side until `expiresAt`, OR
- *   - shorten `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` to the maximum tolerable
- *     stale-window.
- *
- * Incident response: revoking ALL active orchestrator tokens for a user
- * requires (a) `kubectl rollout restart` of `civitai-dp-prod-api`,
- * `civitai-dp-prod` (SSR), and `civitai-dp-prod-jobs` to clear all
- * per-pod caches, plus (b) `DELETE FROM "ApiKey" WHERE "userId" = X AND
- * "name" = 'generation-token'` to invalidate any in-flight bearer tokens.
- * Waiting ≥ `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` is an acceptable
- * alternative to (a) for non-urgent cases.
+ * Cross-user mints (the `moderatorProcedure.queryUserGeneratedImages` path) bypass this
+ * cache via the `bypassCache` arg on `getOrchestratorToken`, so a moderator session never
+ * leaves another user's token cached on the pods it touched.
  *
  * KNOWN BEHAVIOR (mint timeout)
  * -----------------------------
@@ -147,7 +101,7 @@ import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 const CACHE_NAME = 'orchestrator-token-cold-mint';
 const CACHE_TYPE = 'lruCache';
 
-// 50k entries × ~60s TTL. With 80 pods, an active-user set in the low
+// 50k entries × ~60s TTL. An active-user set in the low
 // thousands will round-trip each user to the DB roughly once per minute
 // per pod during sysRedis-down — a 60-100x reduction in DB load vs the
 // uncached fallback. Both knobs can be tuned via env without code change.
@@ -216,10 +170,14 @@ const inflight = new Map<number, Promise<string>>();
  * Caller contract: `mint` must be idempotent (we may share its result
  * across all current callers for this userId). `getTemporaryUserApiKey`
  * is — every call mints a fresh DB-backed key and trims older ones.
+ *
+ * `readCache: false` still coalesces and refreshes the entry but never serves one: an entry can
+ * hold a key revoked since it was cached, so only a caller with no better source should take it.
  */
 export async function getOrMintCachedToken(
   userId: number,
-  mint: () => Promise<string>
+  mint: () => Promise<string>,
+  { readCache = true }: { readCache?: boolean } = {}
 ): Promise<string> {
   // Kill-switch: when `ORCHESTRATOR_TOKEN_CACHE_MAX=0`, bypass both the
   // cache AND the coalescing layer. N concurrent callers all hit `mint()`
@@ -233,12 +191,14 @@ export async function getOrMintCachedToken(
   // from the key that found them — see orchestrator-token-identity.ts. Anything not owned
   // by this user falls through to a fresh mint, so a poisoned entry costs a DB round-trip
   // instead of billing the wrong account.
-  const owned = decodeOwnedToken(tokenCache.get(userId), userId);
-  if (owned.outcome === 'ok' && owned.token) {
-    cacheHitCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
-    return owned.token;
+  if (readCache) {
+    const owned = decodeOwnedToken(tokenCache.get(userId), userId);
+    if (owned.outcome === 'ok' && owned.token) {
+      cacheHitCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
+      return owned.token;
+    }
+    if (owned.outcome === 'mismatch') observeTokenIdentityMismatch('lru');
   }
-  if (owned.outcome === 'mismatch') observeTokenIdentityMismatch('lru');
 
   const pending = inflight.get(userId);
   if (pending) {

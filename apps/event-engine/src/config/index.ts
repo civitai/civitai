@@ -1,14 +1,74 @@
 import * as dotenv from 'dotenv';
+import { envTimeoutMs } from '@/utils/env-timeout';
 
 dotenv.config();
+
+const invalidVectorEnv: string[] = [];
+
+/** An unset or blank value is the fallback; a malformed or out-of-range one is refused by assertVectorSyncConfig. */
+function vectorInt(name: string, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER) {
+  const raw = process.env[name];
+  if (!raw?.trim()) return fallback;
+  const n = /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  if (n >= min && n <= max) return n;
+  invalidVectorEnv.push(`${name}=${JSON.stringify(raw)} (an integer from ${min} to ${max})`);
+  return fallback;
+}
+
+/** Vector-sync processes call this at startup: a typo'd number must not run on a silent default. */
+export function assertVectorSyncConfig() {
+  if (invalidVectorEnv.length) throw new Error(`invalid ${invalidVectorEnv.join(', ')}`);
+}
+
+/** The content search indexes' tables, streamed by CDC_CONTENT_ENABLED. Article already streams. */
+export const CONTENT_CDC_TABLES = [
+  'public.ComicProject',
+  'public.ComicChapter',
+  'public.Challenge',
+  'public.ChallengeEvent',
+  'public.Crucible',
+  'public.Model3D',
+  'public.TagsOnModel3D',
+  'public.Storyline',
+  'public.StorylineChapter',
+];
+
+/**
+ * Their unbounded text and JSON columns, kept out of the stream: content sync re-reads rows from
+ * Postgres, and a record over the producer's size limit fails the connector task for every table.
+ */
+export const CONTENT_EXCLUDED_COLUMNS = {
+  ComicProject: ['description', 'meta'],
+  ComicChapter: ['earlyAccessConfig'],
+  Challenge: [
+    'description',
+    'invitation',
+    'judgingPrompt',
+    'judgingCategories',
+    'prizes',
+    'entryPrize',
+    'prizeDistribution',
+    'metadata',
+  ],
+  ChallengeEvent: ['description'],
+  Crucible: ['description', 'prizePositions', 'allowedResources', 'takedownReason'],
+  Model3D: ['description', 'licenseDetails', 'generationParams', 'meta', 'gallerySettings'],
+};
 
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
+    // Bounds on the event processor's pool, so a stalled database turns an awaited handler query into
+    // an error instead of a partition that silently stops moving while its heartbeat keeps it in the
+    // consumer group. connectionTimeoutMs covers both opening a connection and waiting for a free one.
+    // queryTimeoutMs is client-side (pg's query_timeout), so it holds through any connection pooler.
+    // Either set to 0 turns that bound off.
+    connectionTimeoutMs: envTimeoutMs(process.env.PG_CONNECTION_TIMEOUT_MS, 5_000),
+    queryTimeoutMs: envTimeoutMs(process.env.PG_QUERY_TIMEOUT_MS, 30_000),
   },
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,
-    metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents',
+    metricEventsTable: process.env.CLICKHOUSE_METRIC_EVENTS_TABLE ?? 'entityMetricEvents_month',
   },
   redis: {
     url: process.env.REDIS_URL!,
@@ -37,8 +97,7 @@ export const config = {
       'public.ImageReaction',
       'public.ResourceReview',
       'public.CollectionItem',
-      'public.Comment',
-      'public.CommentV2',
+      'public.CommentV3',
       'public.ImageResourceNew',
       'public.BuzzTip',
       'public.TagEngagement',
@@ -56,7 +115,17 @@ export const config = {
       'public.TagsOnBounty',
       'public.Bounty',
       'public.Article',
-      'public.ComicProjectEngagement'
+      'public.ComicProjectEngagement',
+    ],
+
+    // Streamed by the connector but not consumed by the metrics watcher (only by
+    // vector-sync). Adding a table here changes the Debezium publication, and the
+    // watcher recreates the connector on startup, so each entry is opt-in.
+    cdcOnlyTables: [
+      ...(process.env.CDC_IMAGE_ENABLED === 'true' ? ['public.Image'] : []),
+      ...(process.env.CDC_MODEL_ENABLED === 'true' ? ['public.Model', 'public.ModelVersion'] : []),
+      // Every content search index at once: each change to this list recreates the connector.
+      ...(process.env.CDC_CONTENT_ENABLED === 'true' ? CONTENT_CDC_TABLES : []),
     ],
 
     // ClickHouse topics streamed directly to Kafka
@@ -95,17 +164,17 @@ export const config = {
   },
   cache: {
     queryCache: {
-      maxSize: parseInt(process.env.QUERY_CACHE_MAX_SIZE ?? (250 * 1024 * 1024)+''), // max size in bytes
+      maxSize: parseInt(process.env.QUERY_CACHE_MAX_SIZE ?? 250 * 1024 * 1024 + ''), // max size in bytes
       syncEnabled: process.env.QUERY_CACHE_SYNC_ENABLED !== 'false', // default: true
       backupKey: process.env.QUERY_CACHE_BACKUP_KEY ?? 'query-cache:backup', // Redis key for backup
       chunkSize: parseInt(process.env.QUERY_CACHE_CHUNK_SIZE ?? '500000'), // entries per chunk (500k ~= 25-50MB uncompressed)
       // When sync is enabled: backup every 30min (cache is shared across instances)
       // When sync is disabled: backup every 5min (need frequent snapshots)
       get backupIntervalMs() {
-        const envInterval = process.env.QUERY_CACHE_BACKUP_INTERVAL
-        if (envInterval) return parseInt(envInterval) * 1000
-        return this.syncEnabled ? 30 * 60 * 1000 : 5 * 60 * 1000
-      }
+        const envInterval = process.env.QUERY_CACHE_BACKUP_INTERVAL;
+        if (envInterval) return parseInt(envInterval) * 1000;
+        return this.syncEnabled ? 30 * 60 * 1000 : 5 * 60 * 1000;
+      },
     },
     pgPoolMaxConnections: parseInt(process.env.PG_POOL_MAX_CONNECTIONS ?? '20'),
   },
@@ -116,20 +185,81 @@ export const config = {
   spine: {
     url: process.env.SPINE_URL ?? '',
     apiKey: process.env.SPINE_API_KEY ?? '',
-    kafkaCallbackUrl: process.env.SPINE_KAFKA_CALLBACK_URL ?? 'https://orchestrator-kafka.civitai.com/callback',
+    kafkaCallbackUrl:
+      process.env.SPINE_KAFKA_CALLBACK_URL ?? 'https://orchestrator-kafka.civitai.com/callback',
   },
   s3: {
     accessKey: process.env.S3_ACCESS_KEY ?? '',
     secretKey: process.env.S3_SECRET_KEY ?? '',
-  }
+  },
+  // Semantic image search: see docs/features/semantic-image-search.md at the repo root.
+  vectorSync: {
+    consumerGroup: process.env.VECTOR_SYNC_CONSUMER_GROUP ?? 'image-vector-sync',
+    modelConsumerGroup: process.env.VECTOR_MODEL_CONSUMER_GROUP ?? 'model-vector-sync',
+    contentConsumerGroup: process.env.VECTOR_CONTENT_CONSUMER_GROUP ?? 'content-vector-sync',
+    // The content consumer's domains, by name (e.g. "article,comic"); one is added per rollout step.
+    contentDomains: (process.env.VECTOR_CONTENT_DOMAINS ?? '')
+      .split(',')
+      .map((d) => d.trim())
+      .filter(Boolean),
+    pgPoolMax: vectorInt('VECTOR_PG_POOL_MAX', 4, 1),
+    // Off: nothing embeds (a paid call). The consumer and reconcile still delete and update
+    // payloads; backfill refuses to run. Embedding also needs CDC_IMAGE_ENABLED, see
+    // embedBlockedReason in vector-sync/sync.ts.
+    embedEnabled: process.env.VECTOR_SYNC_EMBED_ENABLED === 'true',
+    // Events for one image arriving within this window collapse into one re-read.
+    debounceMs: vectorInt('VECTOR_SYNC_DEBOUNCE_MS', 5000, 0, 600_000),
+    qdrantUrl: process.env.QDRANT_URL ?? 'http://localhost:6333',
+    qdrantApiKey: process.env.QDRANT_API_KEY || undefined,
+    // Writes go to the collection, reads to the alias, so a model migration can fill a new
+    // collection while the old one keeps serving.
+    collection: process.env.VECTOR_COLLECTION ?? 'images_wemm2b_256_v1',
+    alias: process.env.VECTOR_ALIAS ?? 'images_semantic',
+    // Semantic model search, the same way: the search service reads the alias.
+    modelCollection: process.env.VECTOR_MODEL_COLLECTION ?? 'models_wemm2b_256_v1',
+    modelAlias: process.env.VECTOR_MODEL_ALIAS ?? 'models_semantic',
+    articleCollection: process.env.VECTOR_ARTICLE_COLLECTION ?? 'articles_wemm2b_256_v1',
+    articleAlias: process.env.VECTOR_ARTICLE_ALIAS ?? 'articles_semantic',
+    comicCollection: process.env.VECTOR_COMIC_COLLECTION ?? 'comics_wemm2b_256_v1',
+    comicAlias: process.env.VECTOR_COMIC_ALIAS ?? 'comics_semantic',
+    crucibleCollection: process.env.VECTOR_CRUCIBLE_COLLECTION ?? 'crucibles_wemm2b_256_v1',
+    crucibleAlias: process.env.VECTOR_CRUCIBLE_ALIAS ?? 'crucibles_semantic',
+    challengeCollection: process.env.VECTOR_CHALLENGE_COLLECTION ?? 'challenges_wemm2b_256_v1',
+    challengeAlias: process.env.VECTOR_CHALLENGE_ALIAS ?? 'challenges_semantic',
+    // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
+    imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
+    orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',
+    embedToken: process.env.VECTOR_EMBED_TOKEN ?? '',
+    // Orchestrator jobs in flight per process: one per step, i.e. per image. An upper bound: the
+    // orchestrator's per-account quota (its RateLimit headers) usually lowers it.
+    embedMaxInFlight: vectorInt('VECTOR_EMBED_MAX_IN_FLIGHT', 500, 1),
+    embedMaxRetries: vectorInt('VECTOR_EMBED_MAX_RETRIES', 8, 0),
+    // Wait before re-sending a submit that may have been accepted (ephemeral workflows don't dedupe).
+    embedResubmitDelaySeconds: vectorInt('VECTOR_EMBED_RESUBMIT_DELAY_SECONDS', 120, 0, 3600),
+    // How long after a batch's first attempt an outage (expired, canceled, all failed) may be re-submitted.
+    embedOutageRetrySeconds: vectorInt('VECTOR_EMBED_OUTAGE_RETRY_SECONDS', 900, 0, 7200),
+    // Backfill and reconcile steps submitted per second per process, cache hits included; 0 is unlimited.
+    embedMaxStepsPerSecond: vectorInt('VECTOR_EMBED_MAX_STEPS_PER_SECOND', 10, 0, 1000),
+    // false: ignore the orchestrator's in-flight quota headers (429s still hold); anything else honours them.
+    embedHonorQuota: process.env.VECTOR_EMBED_HONOR_QUOTA !== 'false',
+    // Inputs per workflow, 1 to 128.
+    embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),
+    embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
+  },
 };
 
+/**
+ * Whether a vector-sync domain may embed: the global switch, then VECTOR_<NAME>_EMBED_ENABLED
+ * ('true' or 'false'), else the domain's default.
+ */
+export function domainEmbedEnabled(name: string, byDefault = false) {
+  if (!config.vectorSync.embedEnabled) return false;
+  const own = process.env[`VECTOR_${name.toUpperCase()}_EMBED_ENABLED`];
+  return own === undefined ? byDefault : own === 'true';
+}
+
 export function validateConfig() {
-  const required = [
-    'DATABASE_URL',
-    'CLICKHOUSE_URL',
-    'REDIS_URL',
-  ];
+  const required = ['DATABASE_URL', 'CLICKHOUSE_URL', 'REDIS_URL'];
 
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length > 0) {

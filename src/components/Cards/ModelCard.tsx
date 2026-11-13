@@ -2,10 +2,10 @@ import {
   Badge,
   getPrimaryShade,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
@@ -47,6 +47,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { getModelUrl } from '~/utils/string-helpers';
+import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import {
+  isNonCommercialBaseModel,
+  NOT_COMMERCIALLY_AVAILABLE_LABEL,
+} from '~/server/common/constants';
+import { pickCoverImageId } from '~/shared/utils/model-sfw-face';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
   return (
@@ -60,8 +66,8 @@ function ModFlagBadge({ labels }: { labels: string[] }) {
   );
 }
 
-export const ModelCard = memo(function ModelCard({ data }: Props) {
-  return <ModelCardContent data={data} />;
+export const ModelCard = memo(function ModelCard({ data, linkVersionId }: Props) {
+  return <ModelCardContent data={data} linkVersionId={linkVersionId} />;
 });
 
 const accessChipStyles = { label: { display: 'flex', alignItems: 'center', gap: 4 } } as const;
@@ -134,7 +140,7 @@ function AccessChip({
   );
 }
 
-function ModelCardContent({ data }: Props) {
+function ModelCardContent({ data, linkVersionId }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
@@ -175,7 +181,13 @@ function ModelCardContent({ data }: Props) {
   // reading `!!salesByModelId` fired every card once on first paint and the requests were already gone
   // by the time the flag flipped.
   const ownSale = useModelSaleBadge(data.id, !!hasSaleProvider);
-  const sale = salesByModelId?.[data.id] ?? ownSale;
+  // A non-commercial base can't be bought, so a sale or price hint would advertise nothing.
+  const isNonCommercial = isNonCommercialBaseModel(data.version.baseModel);
+  const sale = isNonCommercial ? undefined : salesByModelId?.[data.id] ?? ownSale;
+
+  const showSfwFace = useShowsSfwFace();
+  // Search hits carry both names; feed items arrive resolved.
+  const modelName = (showSfwFace && (data as { sfwName?: string | null }).sfwName) || data.name;
 
   const cardBaseModels = getCardBaseModels(
     data as Parameters<typeof getCardBaseModels>[0],
@@ -194,32 +206,42 @@ function ModelCardContent({ data }: Props) {
     () =>
       getModelUrl({
         modelId: data.id,
-        modelName: data.name,
-        modelVersionId: useModelVersionRedirect ? targetVersionId : null,
+        modelName,
+        modelVersionId: linkVersionId ?? (useModelVersionRedirect ? targetVersionId : null),
       }),
-    [data.id, data.name, targetVersionId, useModelVersionRedirect]
+    [data.id, modelName, targetVersionId, useModelVersionRedirect, linkVersionId]
   );
 
   // The search doc carries images for the newest version of each base model, but
   // images[0] is always the latest version's cover — show the matched version's
   // cover instead when a base-model filter is active. The feed type omits
   // modelVersionId (its images are already the matched version's), so it falls back.
+  const coverId = activeBaseModels?.length
+    ? null
+    : pickCoverImageId(
+        data as { hasSfwFace?: boolean; coverImageId?: number; sfwCoverImageId?: number },
+        showSfwFace
+      );
   const image =
+    (coverId ? data.images.find((i) => i.id === coverId) : undefined) ??
     (activeBaseModels?.length
       ? data.images.find(
           (i) => (i as { modelVersionId?: number }).modelVersionId === targetVersionId
         )
-      : undefined) ?? data.images[0];
+      : undefined) ??
+    data.images[0];
 
   return (
     <AspectRatioImageCard
       impression={{ entityType: 'Model', entityId: data.id }}
       href={href}
       cosmetic={data.cosmetic?.data}
+      eventDecoration={data.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Model', entityId: data.id }}
       contentType="model"
       contentId={data.id}
       image={image}
-      alt={data.name}
+      alt={modelName}
       onSite={!!data.version.trainingStatus}
       isRemix={!!image?.remixOfId}
       header={
@@ -265,14 +287,14 @@ function ModelCardContent({ data }: Props) {
             )}
             {isEarlyAccess ? (
               <AccessChip
-                label="Early Access"
+                label={isNonCommercial ? NOT_COMMERCIALLY_AVAILABLE_LABEL : 'Early Access'}
                 icon={<IconClockDollar size={16} color="white" />}
                 href={href}
                 sale={sale}
               />
             ) : isPaidAccess ? (
               <AccessChip
-                label="Paid"
+                label={isNonCommercial ? NOT_COMMERCIALLY_AVAILABLE_LABEL : 'Paid'}
                 icon={<IconLockDollar size={16} color="white" />}
                 href={href}
                 sale={sale}
@@ -294,7 +316,7 @@ function ModelCardContent({ data }: Props) {
 
             <CivitaiLinkManageButton
               modelId={data.id}
-              modelName={data.name}
+              modelName={modelName}
               modelType={data.type}
               hashes={data.hashes}
               noTooltip
@@ -320,7 +342,7 @@ function ModelCardContent({ data }: Props) {
         <div className="flex w-full flex-col items-start gap-1">
           <UserAvatarSimple {...data.user} />
           <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
-            {data.name}
+            {modelName}
           </Text>
           {data.rank && <ModelCardStats data={data} />}
         </div>
@@ -436,4 +458,9 @@ function ModelCardStats({ data }: { data: Props['data'] }) {
   );
 }
 
-type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };
+type Props = {
+  data: UseQueryModelReturn[number];
+  forceInView?: boolean;
+  /** Links to this version instead of the model; set by article embeds of a version URL. */
+  linkVersionId?: number;
+};

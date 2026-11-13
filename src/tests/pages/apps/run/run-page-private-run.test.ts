@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 // Module scope, not a test body: from a body this transform is charged to one test's
 // 60s budget. See vitest.config.mts.
 import '~/pages/apps/run/[slug]/[[...path]]';
@@ -110,19 +111,25 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
   recordAppListingOpen: mockRecordOpen,
 }));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+const mockIsMyAppHidden = vi.hoisted(() =>
+  vi.fn<(a: unknown) => Promise<boolean>>(async () => false)
+);
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: mockIsMyAppHidden,
+}));
 vi.mock('~/components/Apps/recentlyOpenedAppsStore', () => ({
   recordRecentlyOpenedApp: mockRecordRecent,
 }));
-// Both fail open to their "absent" value on the public path, so a stub that simply
-// resolves is faithful rather than convenient.
+// It fails open to "not beta" on the public path, so a stub that simply resolves is
+// faithful rather than convenient.
 vi.mock('~/server/services/blocks/app-listing-beta.service', () => ({
   readListingBetaBySlugForRender: async () => ({ isBeta: false, betaMessage: null }),
 }));
-vi.mock('~/server/services/blocks/app-listing-icon.service', () => ({
-  readListingIconBySlugForRender: async () => null,
-}));
 // Real-ish host gate: mature (r/x) requires civitai.red.
-vi.mock('~/server/utils/server-domain', () => ({
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
   ratingAllowedOnHost: (rating: unknown, host: string) => {
     const mature = typeof rating === 'string' && ['r', 'x'].includes(rating.toLowerCase());
     if (!mature) return true;
@@ -227,6 +234,21 @@ describe('private-run SSR — the grant path [REG]', () => {
       trustTier: 'unverified',
       sandbox: 'allow-scripts',
     });
+  });
+
+  it('🔴 a private run never clears a My apps hide, even when the viewer has one', async () => {
+    // The read runs concurrently with the resolve (before the private fallback is known), so it
+    // is stubbed TRUE here: the private path must still hand the page `false`, or a moderator's
+    // look at a suspended app would rewrite the viewer's home.
+    mockIsMyAppHidden.mockResolvedValueOnce(true);
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK(),
+    });
+    const res = await resolver()(ctx());
+    expect(res.props.audience).toBe('moderator'); // positive control: the private path ran
+    expect(res.props.isHiddenForViewer).toBe(false);
   });
 
   it('🔴 a private run records NO play', async () => {
@@ -456,8 +478,29 @@ describe('private-run SSR — the inherited gates [REG]', () => {
       block: BLOCK({ contentRating: 'r' }),
     });
     expect(await resolver()(ctx({ host: 'civitai.com' }))).toEqual({ notFound: true });
-    const onRed = await resolver()(ctx({ host: 'civitai.red' }));
-    expect(onRed.props).toBeDefined();
+    // On .red the viewer also needs R in their browsing level — moderators included.
+    const rViewer = { user: { id: 4004, isModerator: true, showNsfw: true, browsingLevel: 7 } };
+    const onRed = await resolver()({
+      ...ctx({ host: 'civitai.red', user: rViewer }),
+      features: { appBlocks: true, appBlocksPages: true, canViewNsfw: true },
+    });
+    expect(onRed.props.appBlockId).toBeDefined();
+  });
+
+  it('🔴 a moderator (or owner) whose browsing level excludes R gets the hidden state, not the app', async () => {
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK({ contentRating: 'r' }),
+    });
+    const pgViewer = { user: { id: 4004, isModerator: true, showNsfw: true, browsingLevel: 1 } };
+    const result = await resolver()({
+      ...ctx({ host: 'civitai.red', user: pgViewer }),
+      features: { appBlocks: true, appBlocksPages: true, canViewNsfw: true },
+    });
+    expect(result).toEqual({
+      props: { hiddenByBrowsingLevel: { contentRating: 'r', signedIn: true } },
+    });
   });
 
   it('the maturity gate runs AFTER access, so it cannot be probed by an outsider', async () => {
@@ -560,7 +603,7 @@ describe('the audience-keyed client decisions [REG]', () => {
     // it. `recentsEntryFor` returns the entry or `null`, so the call site has no `!` to
     // invert and the inverted form does not type-check.
     const { recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
-    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
+    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
     expect(recentsEntryFor({ ...args, audience: 'moderator' })).toBeNull();
     expect(recentsEntryFor({ ...args, audience: 'owner' })).toBeNull();
     expect(recentsEntryFor({ ...args, audience: 'editor' })).toBeNull();
@@ -572,15 +615,12 @@ describe('the audience-keyed client decisions [REG]', () => {
     expect(pub).toMatchObject({ id: 'apb_x', blockId: 'cool-app', kind: 'onsite', hasPage: true });
   });
 
-  it('the recents entry carries the listing icon only when there is one', async () => {
-    // `RecentApp.iconUrl` is OPTIONAL and the store keeps the key only when truthy, so an
-    // absent icon must leave the key OFF rather than write `undefined`.
+  it('the recents entry carries no icon — the store never persists one', async () => {
     const { recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
     const args = { audience: null, appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
-    expect(recentsEntryFor({ ...args, iconUrl: 'https://cdn/i.png' })).toMatchObject({
-      iconUrl: 'https://cdn/i.png',
-    });
-    expect(Object.keys(recentsEntryFor({ ...args, iconUrl: null })!)).not.toContain('iconUrl');
+    const entry = recentsEntryFor(args);
+    expect(entry, 'a public run must still get an entry').not.toBeNull();
+    expect(Object.keys(entry!)).not.toContain('iconUrl');
   });
 
   it('🔴 the two decisions are EXACT COMPLEMENTS across the audience domain', async () => {
@@ -589,7 +629,7 @@ describe('the audience-keyed client decisions [REG]', () => {
     // recents. Enumerated over the audience tuple rather than a hand-written list, so a
     // FOURTH audience added to `PRIVATE_RUN_AUDIENCES` lands here with no coverage gap.
     const { hostSurfaceFor, recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
-    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
+    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
     const { PRIVATE_RUN_AUDIENCES } = await import('~/shared/constants/block-scope.constants');
     expect(PRIVATE_RUN_AUDIENCES.length).toBeGreaterThan(0);
     for (const a of PRIVATE_RUN_AUDIENCES) {

@@ -96,7 +96,7 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
   lines.push(`  relations considered           : ${counts.relationsConsidered}`);
   // 🔴 SPLIT ON PURPOSE. These used to be one "already enforced (no action)" line, which
   // reported every constraint the catalog could not vouch for as enforced — 408 of them
-  // against the committed snapshot, which carries no `convalidated` data for a single
+  // against the 2026-08-03 snapshot, which carries no `convalidated` data for a single
   // relation. That is the half-applied-constraint failure mode relocated from the live
   // path to the `--catalog` path, and it was reassuring in exactly the same way.
   lines.push(`  already enforced (validated)   : ${counts.satisfied}`);

@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -26,10 +26,9 @@ import { describe, expect, it } from 'vitest';
  *  - `src/server/utils/og-image-helpers.ts` — `fetch()` on a `getEdgeUrl(image.url, …)`,
  *    reached from the public `src/pages/api/og.tsx`. Whether every `Image.url` reaching it can
  *    be attacker-chosen is NOT established.
- *  - `src/server/services/chat.service.ts` — `unfurl(href)` on a URL parsed out of a user's
- *    chat message; `src/server/utils/safe-fetch.ts` names `unfurl.js` as unguarded.
- * Neither is in scope for this change. They are listed because a guard whose description is
- * wider than its body is worse than no guard.
+ * It is not in scope for this change. It is listed because a guard whose description is
+ * wider than its body is worse than no guard. (Chat link previews used to be listed here; they
+ * now fetch through `safeFetch` via `src/server/utils/safe-unfurl.ts`.)
  *
  * Why a seam guard at all: each funnel's own suite passes in ISOLATION, and that is exactly
  * how this class survived — `createImageIngestionRequest` was gated and audit-clean while
@@ -56,7 +55,11 @@ function sourceFiles(): [string, string][] {
       // ordinary spelling `src/server/utils/image-scan-url.test.ts` would have joined the
       // guard-consumer set and reddened the set-equality row for no defect at all.
       if (/\.(test|spec|browser\.test)\.tsx?$/.test(entry)) continue;
-      out.push([relative(SRC, full), readFileSync(full, 'utf8')]);
+      // Posix separators: every comparison below is written with `/`, so on Windows
+      // `relative()`'s backslashes matched none of them and 12 of this file's 13 rows failed —
+      // red for everyone locally, which masks a real failure instead of showing one. Same bug
+      // the ad-SDK callback guard had.
+      out.push([relative(SRC, full).split(sep).join('/'), readFileSync(full, 'utf8')]);
     }
   };
   walk(SRC);
@@ -88,6 +91,10 @@ const GATED_FUNNELS: [string, string][] = [
   ['server/services/creator-shop.service.ts', 'validateArtwork → fetch() from the WEB pod'],
   ['server/controllers/user.controller.ts', 'verifyAvatar'],
   ['pages/api/media/ingest/[mediaId].ts', 'the ingest route maps the refusal to a status'],
+  [
+    'server/services/csam-original-image.ts',
+    'readOriginalImage → fetch() of a stored full URL (csam-original-image.test.ts)',
+  ],
 ];
 
 describe('media-fetch funnel ledger', () => {
@@ -177,6 +184,20 @@ describe('media-fetch funnel ledger', () => {
       'components/Comics/PanelModal.tsx',
       'components/IterativeEditor/IterativeImageEditor.tsx',
     ]);
+  });
+
+  it('unfurl.js is imported only by safe-unfurl.ts, which hands it safeFetch', () => {
+    // unfurl.js fetches with its own unguarded client unless given `opts.fetch`. Chat link
+    // previews reach it through `safeUnfurl`; a second importer would be a new way around it.
+    const importers = files
+      .filter(([, body]) =>
+        /from\s+['"]unfurl\.js['"]|require\(\s*['"]unfurl\.js['"]\s*\)/.test(body)
+      )
+      .map(([p]) => p);
+    expect(importers).toEqual(['server/utils/safe-unfurl.ts']);
+    const chat = files.find(([p]) => p === 'server/services/chat.service.ts');
+    expect(chat, 'chat.service.ts moved — update this row').toBeDefined();
+    expect(chat![1]).toMatch(/\bsafeUnfurl\(/);
   });
 
   it('the shared passthrough predicate is still ZERO-IMPORT', () => {

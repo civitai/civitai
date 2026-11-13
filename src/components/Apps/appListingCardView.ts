@@ -3,8 +3,7 @@
  *
  * The kind-aware badge / CTA / recommend-label logic for `AppListingCard`,
  * extracted into pure functions so the correctness gate lives in the node `unit`
- * project (the civitai browser-mode component suites are REPORT-ONLY / non-
- * blocking — so the real, blocking test coverage for this behaviour is here).
+ * project, which needs no browser.
  *
  * LIVE (P2d cut over): this view-model now backs the DEFAULT `/apps` store grid
  * (`AppListingsMarketplaceBody` → `AppListingCard`), reading the unified
@@ -78,15 +77,25 @@ export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): L
 }
 
 /**
- * Recommend rollup → display label. `recommendPct` is `null` when there are no
- * reviews yet (metric row absent OR zero counts) — render "No reviews yet"
- * rather than a misleading "0% recommend". Otherwise a Steam-style
- * "N% recommend (M)" with the review count.
+ * Recommend rollup → display label, in three cases:
+ *   - zero reviews → "No reviews yet" (never a misleading "0% recommend");
+ *   - reviews but `recommendPct == null` → the counts, "3 reviews · 2 recommend". The
+ *     server withholds the percentage below a minimum review count (`recommendRollup`
+ *     owns that number; nothing here compares against it);
+ *   - otherwise a Steam-style "N% recommend (M)" with the review count.
  */
 export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
-  if (recommend.recommendPct == null) return 'No reviews yet';
+  if (reviewCount === 0) return 'No reviews yet';
+  if (recommend.recommendPct == null) return getRecommendCountsLabel(recommend, reviewCount);
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
+}
+
+/** "1 review · 1 recommends", "3 reviews · 2 recommend" — the below-threshold label. */
+function getRecommendCountsLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
+  const up = recommend.recommendedCount;
+  const reviews = `${reviewCount.toLocaleString()} ${reviewCount === 1 ? 'review' : 'reviews'}`;
+  return `${reviews} · ${up.toLocaleString()} ${up === 1 ? 'recommends' : 'recommend'}`;
 }
 
 /**
@@ -133,13 +142,11 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  *
  * 🔴 THE DECISION LIVES HERE RATHER THAN IN THE COMPONENT ON PURPOSE, and it is the
  * same reasoning `appListingStatChips.ts` was extracted for. `AppListingCard` is
- * only covered by the browser `component` project, which is REPORT-ONLY; the node
- * `unit` project is the one that reddens a `main` push. A rule expressed as JSX
- * (`card.openCount ? … : null`) would be invisible to the only tier that ever goes
- * red on its own. Expressed as this function's return type it is pinned in
- * `__tests__/appListingCardView.test.ts` — with `null`, `0` and `>0` as three
- * separately-named cases — and the component is left with a branch that has nothing
- * to get wrong.
+ * only covered by the browser `component` project. A rule expressed as JSX
+ * (`card.openCount ? … : null`) would be invisible to the node `unit` tier. Expressed as this
+ * function's return type it is pinned in `__tests__/appListingCardView.test.ts` — with `null`, `0`
+ * and `>0` as three separately-named cases — and the component is left with a branch that has
+ * nothing to get wrong.
  *
  * 🔴 ABBREVIATED, NOT `toLocaleString()`-ED, which is a deliberate DIVERGENCE from
  * `getRecommendLabel` above rather than an inconsistency. A review count is an
@@ -157,8 +164,48 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  */
 export function getPlayCountLabel(openCount: number | null): string | null {
   // Both arms are absence-on-screen; they are NOT the same fact. See above.
-  if (openCount == null || openCount === 0) return null;
+  if (!hasShownPlayCount(openCount)) return null;
   return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
+}
+
+/**
+ * Does a listing show a play count at all? The ONE rule for every surface that shows plays
+ * (the store card here, the detail page's "Plays" row and stat chip), so they cannot
+ * disagree about the same listing: `null` (off-site, unmeasurable) and `0` show nothing.
+ * A `typeof` test rather than `!= null`, because some `ListingDetail`-shaped producers
+ * reach the detail builders through a cast and can carry `undefined`.
+ */
+export function hasShownPlayCount(openCount: number | null | undefined): openCount is number {
+  return typeof openCount === 'number' && openCount > 0;
+}
+
+/** The one usage number the app page shows for a listing, and its word. */
+export type ListingUsageStat = { key: 'plays' | 'installs'; label: string; count: number };
+
+/**
+ * Which usage number the app page shows: PLAYS for an on-site listing (the store card's
+ * number, by {@link hasShownPlayCount}), INSTALLS for any other kind, since an off-site
+ * listing has no play count — the same fallback the `popular` sort makes
+ * (`listingPopularSortKey`). Either is shown only when it is above zero, and `null` means
+ * show nothing.
+ *
+ * The positive `=== 'onsite'` test matches `cardOpenCount`. The `typeof` guards cover the
+ * `ListingDetail`-shaped producers that arrive through a cast.
+ */
+export function listingUsageStat(detail: {
+  kindData?: { kind?: string } | null;
+  openCount?: number | null;
+  installCount?: number | null;
+}): ListingUsageStat | null {
+  if (detail.kindData?.kind === 'onsite') {
+    return hasShownPlayCount(detail.openCount)
+      ? { key: 'plays', label: 'Plays', count: detail.openCount }
+      : null;
+  }
+  const installs = detail.installCount;
+  return typeof installs === 'number' && installs > 0
+    ? { key: 'installs', label: 'Installs', count: installs }
+    : null;
 }
 
 /**
@@ -237,7 +284,7 @@ export function getListingCta(
 // ---------------------------------------------------------------------------
 // Owner "Edit" deep-link (Item 2) — pure gating + href builders, shared by the
 // store card + detail. Mirrors the my-submissions edit gating
-// (`MySubmissionsList` `showEdit` / `OffsiteSubmissionsList` `canEdit`): the
+// (`OffsiteSubmissionsList` `canEdit`): the
 // owner can edit an app that is still editable (NOT mod-removed / rejected).
 // ---------------------------------------------------------------------------
 
@@ -306,12 +353,6 @@ export function getOwnerEditHref(
 //     `LISTING_ROLLUP_HIDE_BELOW_PX`(264) — the derived container-query threshold
 //     `listingRollupHideThreshold()`      — the function that derived it
 //
-//   MOVED, same name, new home:
-//     `LISTING_ACTION_ROW_GAP_PX`   (10) → `~/components/Apps/appListingCardGeometry.ts`,
-//     where the card reads it as the action row's `gap`. It is still live geometry;
-//     it just is not rollup-threshold arithmetic any more. 🔴 IF YOU CAME HERE
-//     LOOKING FOR THE ROW GAP, IMPORT IT FROM THERE — do NOT mint a second copy,
-//     which is exactly the two-copies drift the geometry module exists to remove.
 //
 // Also deleted, though it was never an export: the spelling guard in
 // `__tests__/appListingCardView.test.ts` that asserted the component's `@[264px]`
@@ -321,15 +362,15 @@ export function getOwnerEditHref(
 // action row: a floor so a growing CTA could not starve the rollup, a container
 // query hiding the rollup where even the floor did not fit, a measured
 // action-cluster width to derive that threshold from, and a drift guard because a
-// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup up into
-// the card's meta block removed the competition, and with it the entire
+// Tailwind arbitrary variant cannot read a JS constant. Moving the rollup out of
+// the action row removed the competition, and with it the entire
 // apparatus. Deleting a derived number and its guard TOGETHER is the point — a
 // surviving constant with no consumer is the shape that gets "fixed" back into
 // use later.
 //
-// The geometry this card DOES still have — cover ratio, icon size, reserved title
-// lines, action-row height / padding / gap / control size — lives in
-// `~/components/Apps/appListingCardGeometry.ts`, which exists so the (later)
+// The geometry this card DOES have — cover ratio, icon size and overlap, title font and
+// line height, CTA / menu / footer / avatar sizes — lives in
+// `~/components/Apps/appListingCardGeometry.ts`, which exists so
 // `AppListingCardSkeleton` reserves the same numbers by import rather than by
 // copy. This module is back to being the pure kind/CTA/label view-model its
 // header describes.

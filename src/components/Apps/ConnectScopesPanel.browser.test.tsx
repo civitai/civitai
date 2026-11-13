@@ -1,8 +1,10 @@
 import { describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
@@ -31,11 +33,19 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
 // which reads useCurrentUser — boundary-stub it (null user is fine).
+// The embedded listing card's creator is the shared `UserAvatar` (hover card), which reads user data
+// this suite's `trpc` stand-in does not serve. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // Same spread, same reason as the FeatureFlagsProvider factory above — and this one is the
 // case that actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
 // requested module '/src/utils/notifications.tsx' does not provide an export named
 // 'showWarningNotification'`. #5102
@@ -55,16 +65,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appListings: {
-          listPendingRequests: { invalidate: vi.fn() },
-          listApprovedRequests: { invalidate: vi.fn() },
-          listRejectedRequests: { invalidate: vi.fn() },
-        },
-      }),
-      appListings: {
-        getAssets: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.getAssets': {
           useQuery: () => ({
             data: {
               listingId: 'listing-c',
@@ -78,15 +81,24 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             error: null,
           }),
         },
-        approveExternalRequest: { useMutation: mutation },
-        rejectExternalRequest: { useMutation: mutation },
+        'appListings.approveExternalRequest': { useMutation: mutation },
+        'appListings.rejectExternalRequest': { useMutation: mutation },
         // Listing-preview projection — undefined data → the section falls back to
         // the placeholder-art layout preview (fine for these connect-panel tests).
-        getListingPreviewForReview: {
+        'appListings.getListingPreviewForReview': {
           useQuery: () => ({ data: undefined, isLoading: false, error: null }),
         },
       },
-    },
+      {
+        useUtils: () => ({
+          appListings: {
+            listPendingRequests: { invalidate: vi.fn() },
+            listApprovedRequests: { invalidate: vi.fn() },
+            listRejectedRequests: { invalidate: vi.fn() },
+          },
+        }),
+      }
+    ),
   };
 });
 
@@ -160,7 +172,7 @@ function makeRow(appListing: Record<string, unknown>) {
     submittedAt: new Date('2026-01-01T00:00:00Z'),
     changelog: null,
     appListing,
-    submittedBy: { id: 42, username: 'dev', image: null },
+    submittedBy: { id: 42, username: 'dev', deletedAt: null, image: null },
   } as never;
 }
 

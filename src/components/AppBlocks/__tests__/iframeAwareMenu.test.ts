@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
  * EVERY `<Menu>` in the app-block host chrome must be iframe-aware. Node `unit`
  * project — the tier that EXECUTES this assertion (report-only on a pull request,
  * an honest verdict on a push to `main`). The behavioural proof lives in
- * `AppBlockChrome.browser.test.tsx`, which runs in CI as the REPORT-ONLY
- * `preview / component-tests` status. NEITHER TIER BLOCKS A MERGE: `main` requires
+ * `AppBlockChrome.browser.test.tsx`, which runs in CI as the
+ * `Component tests` check. NEITHER TIER BLOCKS A MERGE: `main` requires
  * no status check at all in this repo, so this is a signal a reviewer must read,
  * not a door that stays shut.
  *

@@ -377,6 +377,7 @@ export async function reuseStoredFile({
   });
 
   const name = path.split('/').pop() ?? path;
+  // The url is the object this import wrote, chosen server-side, so it is not bound like a client's.
   const file = await createModelFile({
     input: {
       modelVersionId,

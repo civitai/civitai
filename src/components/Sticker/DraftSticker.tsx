@@ -1,14 +1,13 @@
 import {
   ActionIcon,
   Button,
-  Popover,
   SegmentedControl,
   Slider,
   Text,
   Textarea,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangleFilled,
   IconCopy,
@@ -18,17 +17,14 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
-import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
-import {
-  candidateDistance,
-  chromeClearance,
-  placeButtonBoxes,
-  shouldFlipPlaceButton,
-} from '~/components/Sticker/place-button-position';
+import { KNOB_OFFSET, knobBelowFor, rotate } from '~/components/Sticker/draft-gesture';
+import { placeButtonPosition } from '~/components/Sticker/place-button-position';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   FREE_REVIEW_CAVEAT,
@@ -46,15 +42,14 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   STICKER_COMMENT_MAX_LENGTH,
   STICKER_PLACEMENT_MIN_OPACITY,
+  snapScaleOvershoot,
 } from '~/shared/utils/sticker-placement';
+import { stickerKeysRefusal, stickerKeysTrack } from '~/shared/utils/sticker-track-edit';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import type { DraftPurchase, StickerDraft } from '~/store/sticker-placement-draft.store';
-import {
-  pointerToSurfaceFraction,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+import { pointerToSurfaceFraction, useDraftStoreHook } from '~/store/sticker-placement-draft.store';
 
 /** Enough for the label and the currency badge at the smallest allowed sticker. */
 const BUY_BUTTON_MIN_WIDTH = 132;
@@ -66,6 +61,15 @@ const BUY_BUTTON_MIN_WIDTH = 132;
  */
 const NOTE_WIDTH = 220;
 
+const HIDDEN = { visibility: 'hidden' } as const;
+
+const ARROW_STEPS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
+
 /** Clear air between the sticker and the chrome, on whichever side it lands. */
 const BUY_BUTTON_GAP = 8;
 
@@ -75,6 +79,15 @@ const BUY_BUTTON_GAP = 8;
  * clearance measured to the artwork's edge puts the toolbar on the handles.
  */
 const HANDLE_OUTSET = 6;
+
+/**
+ * The dots stay small so they do not cover the artwork, but a finger needs about
+ * 40px to land on one: an invisible ring around each takes the press. 12px
+ * corners become 40px targets, the 16px knob a 44px one. Each ring is pushed
+ * outward, away from the sticker, so on a small sticker the rings do not cover
+ * the body and it can still be dragged.
+ */
+const HANDLE_HIT_AREA = "before:absolute before:-inset-3.5 before:content-['']";
 
 /**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
@@ -95,10 +108,30 @@ function nearestClipElement(element: HTMLElement): HTMLElement | null {
 }
 
 const CORNERS = [
-  { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
-  { sx: 1, sy: -1, className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
-  { sx: -1, sy: 1, className: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
-  { sx: 1, sy: 1, className: '-bottom-1.5 -right-1.5 cursor-nwse-resize' },
+  {
+    sx: -1,
+    sy: -1,
+    className:
+      '-left-1.5 -top-1.5 cursor-nwse-resize before:-translate-x-2.5 before:-translate-y-2.5',
+  },
+  {
+    sx: 1,
+    sy: -1,
+    className:
+      '-right-1.5 -top-1.5 cursor-nesw-resize before:translate-x-2.5 before:-translate-y-2.5',
+  },
+  {
+    sx: -1,
+    sy: 1,
+    className:
+      '-bottom-1.5 -left-1.5 cursor-nesw-resize before:-translate-x-2.5 before:translate-y-2.5',
+  },
+  {
+    sx: 1,
+    sy: 1,
+    className:
+      '-bottom-1.5 -right-1.5 cursor-nwse-resize before:translate-x-2.5 before:translate-y-2.5',
+  },
 ];
 
 /**
@@ -114,25 +147,43 @@ const CORNERS = [
  * and the pair never settles. Selection raises z-order so the one last touched
  * is on top and reachable; beyond that, moving the stickers apart is the fix.
  */
+/**
+ * A sticker in Movement drawn at its key opacity, as `filter` because the treatments own
+ * `opacity`. Never fainter than a ghost, so a sticker on a hidden key can still be picked up.
+ */
+const keyFade = (shown: number | undefined) =>
+  shown == null || shown >= 1
+    ? undefined
+    : { filter: `opacity(${Math.max(shown, KEY_GHOST_OPACITY)})` };
+const KEY_GHOST_OPACITY = 0.2;
+
 export function DraftSticker({
   draft,
   art,
   selected,
   dressed,
   price,
+  creatorMaxScale,
   freeOffer,
   ownerShare,
   ownerUsername,
   onGesture,
   onDuplicate,
   purchase,
+  commit,
+  artwork,
+  opaque,
+  liftOverTray,
+  knobFlips,
 }: {
   draft: StickerDraft;
-  art: ResolvedSticker;
+  /** The sticker's artwork; or pass `artwork` to draw something else in its place. */
+  art?: ResolvedSticker;
   /** Only decides what is on top. Every draft carries its own controls. */
   selected: boolean;
   dressed: StickerTreatment;
   price: number;
+  creatorMaxScale: number;
   /**
    * The free option, when this creator has a slot open and the placer still has
    * their day. `null` means paid is the only offer — including while the
@@ -159,9 +210,25 @@ export function DraftSticker({
    * the host recomputes it and passes it down.
    */
   purchase?: DraftPurchase;
+  /**
+   * Replaces the note, payout and buy cluster under the toolbar, for a host that
+   * saves the draft through its own mutation (a Hat Turf hat). With it set, the
+   * pricing props are unused and nothing here can charge.
+   */
+  commit?: ReactNode;
+  /** Drawn instead of `art`, filling the draft's width (a Hat Turf hat's fitted art). */
+  artwork?: ReactNode;
+  /** No opacity control: the draft stays fully opaque (a Hat Turf hat). */
+  opaque?: boolean;
+  /** Pull the cluster over the draft when the tray covers it, not only past the clip (a Hat Turf hat). */
+  liftOverTray?: boolean;
+  /** Hang the rotate knob below when above would put it past the clipping edge (a Hat Turf hat). */
+  knobFlips?: boolean;
 }) {
-  const markPurchased = useStickerPlacementDraftStore((state) => state.markPurchased);
-  const markPaidForUse = useStickerPlacementDraftStore((state) => state.markPaidForUse);
+  const useStore = useDraftStoreHook();
+  const markPurchased = useStore((state) => state.markPurchased);
+  const markPaidForUse = useStore((state) => state.markPaidForUse);
+  const previewing = useStore((state) => state.previewing);
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
   const queryUtils = trpc.useUtils();
   // 🔴 ONE KEY PER STICKER PER SESSION, HELD IN THE STORE — not one per draft.
@@ -171,8 +238,8 @@ export function DraftSticker({
   // something you only get once; duplicating put those two buttons a click
   // apart. The per-use path below is unaffected: each use genuinely is another
   // purchase.
-  const packPurchaseKey = useStickerPlacementDraftStore((state) => state.packPurchaseKey);
-  const clearPackPurchaseKey = useStickerPlacementDraftStore((state) => state.clearPackPurchaseKey);
+  const packPurchaseKey = useStore((state) => state.packPurchaseKey);
+  const clearPackPurchaseKey = useStore((state) => state.clearPackPurchaseKey);
   const buyUses = useBuyStickerUses();
 
   const buySticker = async () => {
@@ -213,10 +280,11 @@ export function DraftSticker({
         message: 'Place it whenever you like — it stays where you put it.',
       });
     } catch (error) {
-      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx is the end of the attempt, so
-      // the next press is a new intent and needs a new key. A 5xx or a timeout
-      // is NOT: the charge may well have gone through, and minting a fresh key
-      // for the retry is how one purchase becomes two. Holding it wrongly costs
+      // 🔴 ONLY WHERE THE SERVER DECLINED. A 4xx other than 408 and 429 is the end
+      // of the attempt, so the next press is a new intent and needs a new key. A
+      // 5xx or a timeout is NOT: the charge may well have gone through. Nor is a
+      // 429: an earlier press under this key may still be charging. Minting a
+      // fresh key for the retry is how one purchase becomes two. Holding it wrongly costs
       // a refusal on the next press; releasing it wrongly costs someone's Buzz.
       if (purchaseCanBeRetriedFresh(error)) clearPackPurchaseKey(draft.cosmeticId);
       showErrorNotification({
@@ -255,9 +323,9 @@ export function DraftSticker({
     }
   };
 
-  const select = useStickerPlacementDraftStore((state) => state.select);
-  const cancelDraft = useStickerPlacementDraftStore((state) => state.cancelDraft);
-  const move = useStickerPlacementDraftStore((state) => state.move);
+  const select = useStore((state) => state.select);
+  const cancelDraft = useStore((state) => state.cancelDraft);
+  const move = useStore((state) => state.move);
 
   // `null` until somebody presses the control, which is what lets the default
   // track an offer that arrives with a query rather than freezing whatever was
@@ -310,22 +378,31 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the cluster,
   // so it moves above the sticker when that is the better of the two positions.
-  // The two standoffs ride along because they come from the same measurement,
-  // and because the side they apply to is decided in the same breath — see the
-  // note above `setPosition` in `measure`.
-  const [{ flipped, below, above }, setPosition] = useState({
+  // The two standoffs and the lift ride along because they come from the same
+  // measurement, and because the side they apply to is decided in the same
+  // breath — see the note above `setPosition` in `measure`.
+  const [{ flipped, below, above, lift, knobBelow }, setPosition] = useState({
     flipped: false,
+    lift: 0,
     below: 0,
     above: 0,
+    knobBelow: false,
   });
-  const trayElement = useStickerPlacementDraftStore((state) => state.tray);
+  const trayElement = useStore((state) => state.tray);
 
   // `measure` is what the ResizeObserver and the window listener are bound to,
   // so it has to keep its identity across a drag — otherwise re-binding them is
-  // back on the pointermove path, which is the whole problem. It reads the two
+  // back on the pointermove path, which is the whole problem. It reads the
   // values it needs through a ref instead of closing over them.
-  const frame = useRef({ flipped, rotation: draft.rotation });
-  frame.current = { flipped, rotation: draft.rotation };
+  const frame = useRef({
+    flipped,
+    lift,
+    liftOverTray,
+    knobFlips,
+    knobBelow,
+    rotation: draft.rotation,
+  });
+  frame.current = { flipped, lift, liftOverTray, knobFlips, knobBelow, rotation: draft.rotation };
 
   const clip = useRef<HTMLElement | null>(null);
 
@@ -334,68 +411,65 @@ export function DraftSticker({
     const button = buttonRef.current;
     if (!element || !button) return;
 
-    const { flipped, rotation } = frame.current;
-    const tray = useStickerPlacementDraftStore.getState().tray;
-    // Layout size, not the bounding box. This element no longer rotates — the
-    // artwork inside it does — so its own box is the sticker's unrotated one,
-    // which is what the chrome is laid out against and what the clearance turns
-    // into the rotated extent.
-    const height = element.offsetHeight;
-    const width = element.offsetWidth;
-    // 🔴 AN UNMEASURED STICKER DECIDES NOTHING. `EdgeImage` has no intrinsic
-    // size until it loads, so a draft dragged in from the tray measures 0 tall
-    // for its first frames. Every number below is derived from that box, and a
-    // flip decided from a zero-height sticker puts the two candidate positions
-    // close enough together that each one argues for the other. Keeping the
-    // current side until the sticker has a size is the same rule
-    // `placementControlPosition` states for the same reason.
-    if (!(height > 0) || !(width > 0)) return;
-    const clearance = chromeClearance({
-      width,
-      height,
-      rotation,
-      knobOffset: KNOB_OFFSET,
-      outset: HANDLE_OUTSET,
-      gap: BUY_BUTTON_GAP,
-    });
-    // From the cluster's own measured rect, both times: the pair that comes out
-    // is the same whichever side it is currently on, which is what stops a flip
-    // from removing its own cause and oscillating.
-    const boxes = placeButtonBoxes({
-      current: button.getBoundingClientRect(),
-      flipped,
-      distance: candidateDistance({
-        height,
-        clusterHeight: button.offsetHeight,
-        below: clearance.below,
-        above: clearance.above,
-      }),
-    });
-
-    const willFlip = shouldFlipPlaceButton({
-      below: boxes.below,
-      above: boxes.above,
-      tray: tray?.getBoundingClientRect() ?? null,
-      clip: clip.current?.getBoundingClientRect() ?? null,
-    });
+    const { flipped, lift, liftOverTray, knobFlips, rotation } = frame.current;
+    const { tray, interaction } = useStore.getState();
+    const clipBox = clip.current?.getBoundingClientRect() ?? null;
+    // Decided here, with the standoffs that depend on it, and held still through a rotate drag:
+    // the drag reads the side it started on, so a swap mid-turn would spin the sticker half a turn.
+    let knobBelow = false;
+    if (knobFlips) {
+      const rect = element.getBoundingClientRect();
+      knobBelow =
+        interaction === 'rotate'
+          ? frame.current.knobBelow
+          : knobBelowFor({
+              centre: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+              height: rect.height,
+              rotation,
+              knobOffset: KNOB_OFFSET,
+              clip: clipBox ?? {
+                top: 0,
+                left: 0,
+                right: window.innerWidth,
+                bottom: window.innerHeight,
+              },
+              current: frame.current.knobBelow,
+            });
+    }
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
     // real distance between the two candidate positions is off by `below +
     // above` against the model `candidateDistance` builds. A flip decision feeds
     // on that mismatch.
-    const next = { flipped: willFlip, below: clearance.below, above: clearance.above };
+    const next = placeButtonPosition({
+      sticker: element,
+      cluster: button,
+      tray: tray?.getBoundingClientRect() ?? null,
+      clip: clipBox,
+      flipped,
+      lift,
+      liftOverTray,
+      rotation,
+      knobOffset: KNOB_OFFSET,
+      knobBelow,
+      outset: HANDLE_OUTSET,
+      gap: BUY_BUTTON_GAP,
+    });
+    if (!next) return;
 
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
     setPosition((current) =>
       current.flipped === next.flipped &&
       current.below === next.below &&
-      current.above === next.above
+      current.above === next.above &&
+      current.lift === next.lift &&
+      current.knobBelow === knobBelow
         ? current
-        : next
+        : { ...next, knobBelow }
     );
-  }, []);
+  }, [useStore]);
 
   const remeasure = useCallback(() => {
     clip.current = rootRef.current ? nearestClipElement(rootRef.current) : null;
@@ -449,16 +523,18 @@ export function DraftSticker({
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
   // sticker's own transform, so none of these deps can change it.
+  // Ending a turn re-decides the knob's side, which the turn held still.
+  const rotating = useStore((state) => state.interaction === 'rotate');
   useLayoutEffect(() => {
     measure();
-  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped]);
+  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped, rotating]);
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
       event.preventDefault();
       event.stopPropagation();
 
-      const point = pointerToSurfaceFraction(event.clientX, event.clientY);
+      const point = pointerToSurfaceFraction(event.clientX, event.clientY, useStore);
       const element = rootRef.current;
       if (!point || !element) return;
 
@@ -540,6 +616,7 @@ export function DraftSticker({
           draftId: draft.id,
           pointerId: event.pointerId,
           mode: 'rotate',
+          knobBelow,
         });
       }
     };
@@ -552,28 +629,87 @@ export function DraftSticker({
   // neighbour under the finger holding it.
   const pressPanel = (event: React.PointerEvent) => {
     event.stopPropagation();
-    if (!useStickerPlacementDraftStore.getState().interaction) select(draft.id);
+    if (!useStore.getState().interaction) select(draft.id);
   };
 
   // One payload for both buttons, so the two offers cannot drift into placing
   // different stickers. `free` is the only thing that differs, and it selects a
   // path rather than asserting anything — the server re-decides all of it.
-  const placementInput = () => ({
-    imageId: draft.imageId,
-    free: placingFree,
-    data: {
-      cosmeticId: draft.cosmeticId,
-      x: draft.x,
-      y: draft.y,
-      scale: draft.scale,
-      rotation: draft.rotation,
-      flip: draft.flip,
-      opacity: draft.opacity,
-      // Sent only when there is something to send, so an opened-then-abandoned
-      // field is the same as never opening it.
-      ...(note.trim() ? { comment: note } : {}),
-    },
-  });
+  // Label of this draft's pay button; the editor's floating Place presses that button.
+  const primaryLabel = commit
+    ? null
+    : purchase && effectiveMode === 'pack' && purchase.pack
+    ? purchase.refill
+      ? 'Buy another pack'
+      : 'Purchase sticker'
+    : purchase
+    ? 'Buy a use'
+    : placingFree
+    ? 'Place free'
+    : `Place · ${numberWithCommas(price)} Buzz`;
+  const setPrimaryLabel = useStore((state) => state.setPrimaryLabel);
+  useEffect(() => {
+    setPrimaryLabel(draft.id, primaryLabel);
+    return () => setPrimaryLabel(draft.id, null);
+  }, [draft.id, primaryLabel, setPrimaryLabel]);
+
+  // Disabled only; StickerMotionEditor shows the reason.
+  const motionRefused =
+    !!draft.motion?.on &&
+    draft.motion.keys.length > 0 &&
+    stickerKeysRefusal(draft.motion.keys, draft.opacity) != null;
+
+  const placementInput = () => {
+    const scale = snapScaleOvershoot(draft.scale, creatorMaxScale);
+    const track =
+      draft.motion?.on && draft.motion.keys.length
+        ? (() => {
+            const keys = stickerKeysTrack(draft.motion.keys);
+            return {
+              ...keys,
+              keys: keys.keys.map((key) => ({
+                ...key,
+                s: snapScaleOvershoot(key.s, creatorMaxScale),
+              })),
+            };
+          })()
+        : null;
+    const first = track?.keys[0];
+    return {
+      imageId: draft.imageId,
+      free: placingFree,
+      ...(track ? { track } : {}),
+      data: {
+        cosmeticId: draft.cosmeticId,
+        // A moving sticker's own pose is its first key, so anything that ignores tracks draws
+        // it where it starts.
+        x: first?.x ?? draft.x,
+        y: first?.y ?? draft.y,
+        scale: first ? snapScaleOvershoot(first.s, creatorMaxScale) : scale,
+        rotation: first?.r ?? draft.rotation,
+        flip: draft.flip,
+        opacity: draft.opacity,
+        // Sent only when there is something to send, so an opened-then-abandoned
+        // field is the same as never opening it.
+        ...(note.trim() ? { comment: note } : {}),
+      },
+    };
+  };
+
+  // Must mirror when this draft's own Place button would place it.
+  const latestInput = useRef(placementInput);
+  latestInput.current = placementInput;
+  // Not while its own placement is in flight, or Place all would place it a second time.
+  const readyToPlace = !commit && !purchase && !motionRefused && !place.isPending;
+  const setReadyPlacement = useStore((state) => state.setReadyPlacement);
+  const placingAll = useStore((state) => state.placingAll);
+  useEffect(() => {
+    setReadyPlacement(
+      draft.id,
+      readyToPlace ? { free: placingFree, input: () => latestInput.current() } : null
+    );
+    return () => setReadyPlacement(draft.id, null);
+  }, [draft.id, readyToPlace, placingFree, setReadyPlacement]);
 
   /**
    * A second copy of this sticker, already arranged.
@@ -637,7 +773,9 @@ export function DraftSticker({
           <IconDropletHalf2 size={14} />
         </ActionIcon>
       </Popover.Target>
-      <Popover.Dropdown p="sm">
+      {/* Portalled, so the cluster's hiding does not reach it. A keyboard press
+          on the toggle is not an outside click, so the slider stays open. */}
+      <Popover.Dropdown p="sm" style={previewing ? HIDDEN : undefined}>
         <Text size="xs" c="dimmed" className="mb-2">
           Opacity
         </Text>
@@ -674,22 +812,24 @@ export function DraftSticker({
     </Tooltip>
   );
 
-  const artworkImage = (
-    <EdgeImage
-      src={art.url}
-      alt={`:${art.slug}:`}
-      options={{ width: 512, anim: art.animated, optimized: true }}
-      style={{
-        width: '100%',
-        height: 'auto',
-        display: 'block',
-        pointerEvents: 'none',
-        ...dressed.imageStyle?.detail,
-        ...stickerArtworkStyle(draft),
-      }}
-      draggable={false}
-    />
-  );
+  const artworkImage =
+    artwork ??
+    (art && (
+      <EdgeImage
+        src={art.url}
+        alt={`:${art.slug}:`}
+        options={{ width: 512, anim: art.animated, optimized: true }}
+        style={{
+          width: '100%',
+          height: 'auto',
+          display: 'block',
+          pointerEvents: 'none',
+          ...dressed.imageStyle?.detail,
+          ...stickerArtworkStyle(draft),
+        }}
+        draggable={false}
+      />
+    ));
 
   return (
     /**
@@ -713,6 +853,8 @@ export function DraftSticker({
      */
     <div
       ref={rootRef}
+      // A finger on the draft is editing it, not swiping the carousel.
+      {...{ [STICKER_EDITOR_ATTR]: '' }}
       className="pointer-events-none absolute"
       style={{
         left: `${draft.x * 100}%`,
@@ -727,12 +869,24 @@ export function DraftSticker({
       }}
     >
       <div
-        className="pointer-events-auto relative cursor-move"
+        className={clsx('relative', !previewing && 'pointer-events-auto cursor-move')}
         style={{
           transform: `rotate(${draft.rotation}deg)`,
           touchAction: 'none',
         }}
         onPointerDown={begin('move')}
+        // The keyboard path to the same move: arrows nudge, Shift for a bigger step.
+        tabIndex={0}
+        data-arrow-keys
+        aria-label="Sticker position: arrow keys to move"
+        onKeyDown={(event) => {
+          const step = event.shiftKey ? 0.05 : 0.01;
+          const delta = ARROW_STEPS[event.key];
+          if (!delta) return;
+          event.preventDefault();
+          // The store clamps to the image.
+          move(draft.id, { x: draft.x + delta[0] * step, y: draft.y + delta[1] * step });
+        }}
       >
         {/* The rotated wrapper's own transform makes it a stacking context, so a
             negative z-index here stays behind the sticker without reaching
@@ -750,27 +904,40 @@ export function DraftSticker({
             die-cut edge and a plate both grow the sticker's apparent bounds — so
             positioning against the undressed version means moving it again after
             paying. */}
-        {dressed.animationClassName ? (
-          <div className={dressed.animationClassName}>{artworkImage}</div>
-        ) : (
-          artworkImage
-        )}
+        <div style={keyFade(draft.shown)}>
+          {dressed.animationClassName ? (
+            <div className={dressed.animationClassName}>{artworkImage}</div>
+          ) : (
+            artworkImage
+          )}
+        </div>
 
-        <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
+        {/* Hidden rather than unmounted: the chrome keeps its box, so the buy
+            button's measured side is still right when it comes back. */}
+        <div style={previewing ? HIDDEN : undefined}>
+          <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
 
-        {CORNERS.map((corner) => (
+          {CORNERS.map((corner) => (
+            <span
+              key={corner.className}
+              onPointerDown={begin('resize', corner)}
+              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} ${corner.className}`}
+            />
+          ))}
+
           <span
-            key={corner.className}
-            onPointerDown={begin('resize', corner)}
-            className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+            onPointerDown={begin('rotate')}
+            data-testid="draft-rotate-knob"
+            data-knob-below={knobBelow || undefined}
+            className={clsx(
+              `absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA}`,
+              knobBelow ? 'before:translate-y-2.5' : 'before:-translate-y-2.5'
+            )}
+            style={
+              knobBelow ? { bottom: `-${KNOB_OFFSET * 100}%` } : { top: `-${KNOB_OFFSET * 100}%` }
+            }
           />
-        ))}
-
-        <span
-          onPointerDown={begin('rotate')}
-          className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
-          style={{ top: `-${KNOB_OFFSET * 100}%` }}
-        />
+        </div>
       </div>
 
       <div
@@ -788,13 +955,14 @@ export function DraftSticker({
           flipped ? 'bottom-full' : 'top-full'
         )}
         style={{
+          ...(previewing ? HIDDEN : null),
           minWidth: BUY_BUTTON_MIN_WIDTH,
           // The standoff from the sticker's own box out to the rotated artwork,
           // the knob and the handles. Derived — see `chromeClearance` — because
           // no constant is right at both ends of the scale range or at both ends
           // of the rotation range. Set from the same state as the class above,
           // never written to the node separately.
-          ...(flipped ? { marginBottom: above } : { marginTop: below }),
+          ...(flipped ? { marginBottom: above - lift } : { marginTop: below - lift }),
         }}
         // Outside the rotated body but still inside the draft, and the layer
         // starts a move from a press anywhere on it, so without this every press
@@ -821,72 +989,74 @@ export function DraftSticker({
         >
           {duplicateControl}
           {flipControl}
-          {opacityControl}
+          {!opaque && opacityControl}
           {removeControl}
         </div>
 
-        {/* Optional, and folded away until asked for: a field on every draft
+        {commit ?? (
+          <>
+            {/* Optional, and folded away until asked for: a field on every draft
             would sit over the artwork through the whole arrangement, which is
             the one thing this overlay is trying not to do. */}
-        {writingNote ? (
-          <Textarea
-            autoFocus
-            size="xs"
-            autosize
-            minRows={2}
-            maxRows={4}
-            w={NOTE_WIDTH}
-            className="whitespace-normal"
-            placeholder="Say something with it (optional)"
-            maxLength={STICKER_COMMENT_MAX_LENGTH}
-            value={note}
-            onChange={(event) => setNote(event.currentTarget.value)}
-          />
-        ) : (
-          <UnstyledButton
-            className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
-            onClick={() => setWritingNote(true)}
-          >
-            <IconMessage size={12} />
-            Add a note
-          </UnstyledButton>
-        )}
+            {writingNote ? (
+              <Textarea
+                autoFocus
+                size="xs"
+                autosize
+                minRows={2}
+                maxRows={4}
+                w={NOTE_WIDTH}
+                className="whitespace-normal"
+                placeholder="Say something with it (optional)"
+                maxLength={STICKER_COMMENT_MAX_LENGTH}
+                value={note}
+                onChange={(event) => setNote(event.currentTarget.value)}
+              />
+            ) : (
+              <UnstyledButton
+                className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5 text-xs text-white"
+                onClick={() => setWritingNote(true)}
+              >
+                <IconMessage size={12} />
+                Add a note
+              </UnstyledButton>
+            )}
 
-        {/* Above the button in both states: this is who the press underneath it
+            {/* Above the button in both states: this is who the press underneath it
             pays, so it reads as a label on the button rather than a footnote
             after the decision. Capped and truncated because the cluster is
             `w-max`, and its width feeds the overlap test that decides whether
             the button flips above the sticker. */}
-        {payout && (
-          <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
-            <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
-              {payout.lead}
-              {payout.name ? ' ' : ''}
-              {payout.name && <span className="font-bold">{payout.name}</span>}
-            </Text>
-          </div>
-        )}
+            {payout && (
+              <div className="max-w-[240px] truncate rounded-full bg-black/80 px-2 py-0.5 text-center">
+                <Text size="xs" fw={500} c="yellow.4" className="leading-tight" title={payout.name}>
+                  {payout.lead}
+                  {payout.name ? ' ' : ''}
+                  {payout.name && <span className="font-bold">{payout.name}</span>}
+                </Text>
+              </div>
+            )}
 
-        {/* Both ways to pay for a spent sticker, where both are open. One use is
+            {/* Both ways to pay for a spent sticker, where both are open. One use is
             what placing this draft actually costs; the pack is the listing's own
             price, offered only while it is genuinely on sale. */}
-        {offersBoth && (
-          <SegmentedControl
-            size="xs"
-            radius="xl"
-            value={buyMode}
-            onChange={(value) => setBuyMode(value as 'use' | 'pack')}
-            data={[
-              { label: '1 use', value: 'use' },
-              {
-                label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
-                value: 'pack',
-              },
-            ]}
-          />
-        )}
+            {offersBoth && (
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={buyMode}
+                onChange={(value) => setBuyMode(value as 'use' | 'pack')}
+                data={[
+                  { label: '1 use', value: 'use' },
+                  {
+                    label: packUses == null ? 'Pack' : `${numberWithCommas(packUses)} uses`,
+                    value: 'pack',
+                  },
+                ]}
+              />
+            )}
 
-        {/* The other two-way choice, and deliberately the same control as the
+            {/* The other two-way choice, and deliberately the same control as the
             one above it: this is the same kind of decision — which of two
             offers you are taking — made a step later, so giving it a different
             shape would make them read as unrelated. They never coexist; the one
@@ -896,104 +1066,112 @@ export function DraftSticker({
             deliberately does not. This is the last moment the placer can change
             their mind, and it is what makes auto-accept and review read as two
             different offers rather than a setting nobody can see. */}
-        {!purchase && freeOffer && (
-          <SegmentedControl
-            size="xs"
-            radius="xl"
-            value={payMode}
-            onChange={(value) => setPayChoice(value as 'free' | 'paid')}
-            data={[
-              { label: freeOptionLabel(), value: 'free' },
-              { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
-            ]}
-          />
-        )}
+            {!purchase && freeOffer && (
+              <SegmentedControl
+                size="xs"
+                radius="xl"
+                value={payMode}
+                onChange={(value) => setPayChoice(value as 'free' | 'paid')}
+                data={[
+                  { label: freeOptionLabel(), value: 'free' },
+                  { label: `${numberWithCommas(price)} Buzz`, value: 'paid' },
+                ]}
+              />
+            )}
 
-        {purchase && effectiveMode === 'pack' && purchase.pack ? (
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={purchase.pack.unitAmount}
-            accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
-            label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
-            loading={purchasingShopItem}
-            onPerformTransaction={buySticker}
-          />
-        ) : purchase ? (
-          // Owned, and out of uses. One use, because one is what placing this
-          // draft spends.
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={purchase.perUse ?? 0}
-            accountTypes={spendTypes}
-            label="Buy a use"
-            loading={buyUses.isPending}
-            // A sticker sold before per-use pricing existed has no price to
-            // charge, and the listing price is not a stand-in for one. Says so
-            // rather than offering a button that cannot work.
-            error={
-              purchase.perUse == null
-                ? 'This sticker sells no extra uses, and it is not on sale right now'
-                : undefined
-            }
-            onPerformTransaction={buyOneUse}
-          />
-        ) : placingFree ? (
-          // Not a `BuzzTransactionButton`. That control exists to show a price
-          // and check a balance against it, and a free placement has neither —
-          // rendering it at zero would put a currency badge on something nobody
-          // is paying for, and its account picker would ask which Buzz to spend.
-          // The use it does spend is shown by the tray's own count, and refused
-          // by the server independently.
-          <Button
-            size="sm"
-            radius="xl"
-            color="yellow"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            loading={place.isPending}
-            onClick={() => place.mutate(placementInput())}
-          >
-            Place free
-          </Button>
-        ) : (
-          <BuzzTransactionButton
-            size="sm"
-            style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
-            buzzAmount={price}
-            accountTypes={spendTypes}
-            label="Place"
-            loading={place.isPending}
-            onPerformTransaction={() => place.mutate(placementInput())}
-          />
-        )}
+            {purchase && effectiveMode === 'pack' && purchase.pack ? (
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={purchase.pack.unitAmount}
+                accountTypes={purchase.pack.acceptsBlue ? ['blue', ...spendTypes] : spendTypes}
+                label={purchase.refill ? 'Buy another pack' : 'Purchase sticker'}
+                data-draft-primary={draft.id}
+                loading={purchasingShopItem}
+                onPerformTransaction={buySticker}
+              />
+            ) : purchase ? (
+              // Owned, and out of uses. One use, because one is what placing this
+              // draft spends.
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={purchase.perUse ?? 0}
+                accountTypes={spendTypes}
+                label="Buy a use"
+                data-draft-primary={draft.id}
+                loading={buyUses.isPending}
+                // A sticker sold before per-use pricing existed has no price to
+                // charge, and the listing price is not a stand-in for one. Says so
+                // rather than offering a button that cannot work.
+                error={
+                  purchase.perUse == null
+                    ? 'This sticker sells no extra uses, and it is not on sale right now'
+                    : undefined
+                }
+                onPerformTransaction={buyOneUse}
+              />
+            ) : placingFree ? (
+              // Not a `BuzzTransactionButton`. That control exists to show a price
+              // and check a balance against it, and a free placement has neither —
+              // rendering it at zero would put a currency badge on something nobody
+              // is paying for, and its account picker would ask which Buzz to spend.
+              // The use it does spend is shown by the tray's own count, and refused
+              // by the server independently.
+              <Button
+                size="sm"
+                radius="xl"
+                color="yellow"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                loading={place.isPending}
+                disabled={motionRefused || placingAll}
+                onClick={() => place.mutate(placementInput())}
+                data-draft-primary={draft.id}
+              >
+                Place free
+              </Button>
+            ) : (
+              <BuzzTransactionButton
+                size="sm"
+                style={{ minWidth: BUY_BUTTON_MIN_WIDTH }}
+                buzzAmount={price}
+                accountTypes={spendTypes}
+                label="Place"
+                data-draft-primary={draft.id}
+                loading={place.isPending}
+                disabled={motionRefused || placingAll}
+                onPerformTransaction={() => place.mutate(placementInput())}
+              />
+            )}
 
-        {/* Under the button, not above it: it is a consequence of pressing, and
+            {/* Under the button, not above it: it is a consequence of pressing, and
             above the control it read as a description of the option. Same chip
             shape and same triangle as the second-payment warning below, because
             they are the same kind of thing — a cost you meet by pressing.
 
             Only where it is true. On an auto-accept space the placement is live
             the moment it is made, so there is no decline to warn about. */}
-        {placingFree && freeOffer && !freeOffer.instant && (
-          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
-            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
-            <Text size="xs" c="gray.3" className="leading-tight">
-              {FREE_REVIEW_CAVEAT}
-            </Text>
-          </div>
-        )}
+            {placingFree && freeOffer && !freeOffer.instant && (
+              <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+                <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+                <Text size="xs" c="gray.3" className="leading-tight">
+                  {FREE_REVIEW_CAVEAT}
+                </Text>
+              </div>
+            )}
 
-        {/* The second payment, said before the first one is made. Someone who
+            {/* The second payment, said before the first one is made. Someone who
             buys a sticker to put it here and then meets another price has been
             surprised with their own money. */}
-        {purchase && (
-          <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
-            <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
-            <Text size="xs" c="gray.3" className="leading-tight">
-              Then {numberWithCommas(price)} Buzz to place it
-            </Text>
-          </div>
+            {purchase && (
+              <div className="flex items-center gap-1 rounded-full bg-black/80 px-2 py-0.5">
+                <IconAlertTriangleFilled size={12} className="shrink-0 text-yellow-4" />
+                <Text size="xs" c="gray.3" className="leading-tight">
+                  Then {numberWithCommas(price)} Buzz to place it
+                </Text>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

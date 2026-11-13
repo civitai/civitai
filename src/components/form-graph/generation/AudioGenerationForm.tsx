@@ -1,27 +1,27 @@
 import { Checkbox, Input, Stack, Textarea } from '@mantine/core';
+import { FieldCorrectionNote } from './FieldCorrectionNote';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController, useField } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
-import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
-import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { audioHub } from '~/shared/form-graph/generation/audio/hub.graph';
 import { yue2ScorePlanningInfo } from '~/shared/constants/yue2.constants';
 
-import { ControllerLabel, PromptLabel, VersionGroupSelector } from './form-helpers';
+import { ControllerLabel, PromptLabel, VersionGroupSelector, ModelCardInput } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import type { GenerationStore } from './store';
 
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
  * The graph decides which fields apply to the selected ecosystem, so
- * this holds the superset of audio fields. `title` exists in the Ace graph
- * but has no control, matching v1.
+ * this holds the superset of audio fields. `title` exists in the Ace graph but has no
+ * control.
  */
 
 export function AudioGenerationForm({ store }: { store: GenerationStore }) {
@@ -35,10 +35,9 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
           const defaultModelId = meta?.defaultModelId;
           return (
             <>
-              <ResourceSelectInput
+              <ModelCardInput
                 value={value}
                 onChange={onChange}
-                label={<ControllerLabel label="Model" />}
                 buttonLabel="Select Model"
                 modalTitle="Select Model"
                 options={meta?.options}
@@ -49,14 +48,15 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
                     ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
                     : undefined
                 }
-              />
-              {meta?.versions ? (
-                <VersionGroupSelector
-                  versions={meta.versions}
-                  modelId={value?.id}
-                  onChange={onChange}
-                />
-              ) : null}
+              >
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </ModelCardInput>
             </>
           );
         }}
@@ -99,7 +99,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Mode</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={meta?.options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
@@ -113,7 +113,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Mode</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={meta?.options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
@@ -127,7 +127,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Mode</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={meta?.options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
@@ -141,7 +141,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Generate</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={meta?.options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
@@ -217,7 +217,7 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <ControllerLabel label="Score planning" info={yue2ScorePlanningInfo} />
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={[...(meta?.options ?? [])]}
@@ -331,8 +331,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={audioHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
       </AccordionLayout>

@@ -9,15 +9,21 @@ import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { FeaturedCollectionHeader } from '~/components/HomeBlocks/FeaturedCollectionHeader';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
-import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
+import {
+  dedupeOrder,
+  useDedupedCappedItems,
+  useModelClaimKeys,
+} from '~/components/HomeBlocks/homeBlockDedupe';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { PickedFeaturedCollection } from '~/server/services/home-block.service';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { shuffle } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -85,8 +91,11 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
   // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
   // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
   // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  const modelKeysFor = useModelClaimKeys();
   const items = useDedupedCappedItems(
-    useHydratedImageReactions(filtered, { entity: type }) as {
+    useHydratedImageReactions(useViewerEventDecorations(filtered, { entity: type }), {
+      entity: type,
+    }) as {
       id: number;
       user?: { id: number } | null;
     }[],
@@ -95,6 +104,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
       entity: type,
       rows,
       maxPerUser,
+      keysFor: type === 'model' ? modelKeysFor : undefined,
     }
   );
 
@@ -125,6 +135,7 @@ function FeaturedCollectionSection({ pick, isLoading, order }: SectionProps) {
           <RemixFlyoutLayoutProvider layout="side">
             <ImagesProvider
               hideReactionCount={collection?.mode === CollectionMode.Contest}
+              hideHatTurf={collectionHidesHatTurf(collection)}
               images={type === 'image' ? (items as any) : undefined}
             >
               <ReactionSettingsProvider

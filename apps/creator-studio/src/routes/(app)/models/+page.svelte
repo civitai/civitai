@@ -39,6 +39,7 @@
     PRICING_SLOT_EXPLAINER,
     capMediaType,
     formatPricingAllowance,
+    feeAllowanceBoostNote,
     pricingAllowanceState,
     pricingFloorMessage,
     type CapTier,
@@ -52,6 +53,7 @@
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
   import BulkBar from '$lib/components/BulkBar.svelte';
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
+  import MakeSafeDialog from '$lib/components/MakeSafeDialog.svelte';
   import type { BulkAction } from '$lib/monetization/bulk-actions';
 
   import {
@@ -60,8 +62,9 @@
     IconChevronLeft,
     IconChevronRight,
     IconExternalLink,
+    IconGift,
   } from '@tabler/icons-svelte';
-  import { modelUrl } from '$lib/model-url';
+  import { modelUrl, siteModelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
   import type { ModelsView } from '$lib/server/models-view';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
@@ -133,6 +136,9 @@
     pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.pricingLimit })
   );
   const permAtCap = $derived(allowance.atLimit);
+  const feeAllowance = $derived(
+    pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.feePricingLimit })
+  );
   const eaAtCap = $derived(
     data.caps.earlyAccessCap > 0 && data.caps.earlyAccessUsed >= data.caps.earlyAccessCap
   );
@@ -152,6 +158,14 @@
     { value: 'draft', label: 'Drafts only' },
     { value: 'all', label: 'All statuses' },
   ];
+  const SITES = ['com', 'red'] as const;
+  const siteOptions = [
+    { value: '', label: 'Any site' },
+    { value: 'both', label: 'On both sites' },
+    { value: 'com', label: 'Only on civitai.com' },
+    { value: 'red', label: 'Only on civitai.red' },
+    { value: 'com-face', label: 'Customized for civitai.com' },
+  ];
   const feeOptions = [
     { value: '', label: 'All fees' },
     { value: 'set', label: 'Has a fee' },
@@ -163,7 +177,8 @@
       (view.query.bm ? 1 : 0) +
       (view.query.mt ? 1 : 0) +
       (view.query.access ? 1 : 0) +
-      (view.query.fee ? 1 : 0)
+      (view.query.fee ? 1 : 0) +
+      (view.query.site ? 1 : 0)
   );
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
@@ -259,14 +274,24 @@
   // never think to look for them. A reactive Set — in-place add/delete/clear stay fine-grained.
   const selected = new SvelteSet<number>();
   let bulkAction = $state<BulkAction | null>(null);
+  let makeSafe = $state<ReturnType<typeof MakeSafeDialog>>();
+  // Only models on this page: the face is per model, and the page is what the creator has reviewed.
+  const makeSafeModels = $derived(
+    view.models.filter((model) => model.versions.some((version) => selected.has(version.id)))
+  );
   // Prices the creator can still apply this month (null limit = unlimited).
   const remainingPricingSlots = $derived(
     data.caps.pricingLimit === null
       ? Infinity
       : Math.max(0, data.caps.pricingLimit - data.caps.pricingUsed)
   );
+  const remainingFeeSlots = $derived(
+    data.caps.feePricingLimit === null
+      ? Infinity
+      : Math.max(0, data.caps.feePricingLimit - data.caps.pricingUsed)
+  );
   // A version that already carries a price spends nothing when re-priced — mirrors the server's
-  // unpricedVersionIds, so editing stays possible even with the month's allowance used up.
+  // unpricedVersionIds. The server can still refuse a boosted licensed version a permanent gate.
   const alreadyPricedIds = $derived(
     new Set(
       view.models
@@ -404,6 +429,7 @@
       !!view.query.mt ||
       !!view.query.usage ||
       !!view.query.status ||
+      !!view.query.site ||
       view.query.access
   );
 
@@ -516,6 +542,16 @@
         <span class="text-dark-2" title={PRICING_SLOT_EXPLAINER}>
           · licensing fees and permanent paid access
         </span>
+        {#if data.caps.feeBoost > 0 && data.caps.feePricingLimit !== null}
+          <span
+            class="font-medium {feeAllowance.atLimit ? 'text-yellow-5' : 'text-white'}"
+            data-testid="fee-allowance-boost"
+          >
+            · {feeAllowance.used} of {feeAllowance.limit} for licensing fees ({feeAllowanceBoostNote(
+              data.caps.feeBoost
+            )})
+          </span>
+        {/if}
         {#if !allowance.unlimited}
           <CapUpsell
             used={allowance.used}
@@ -548,6 +584,13 @@
     <!-- Two meters side by side get read as one budget — say what each counts where they meet. -->
     {#if permAtCap && data.caps.pricingFloor.eligible}
       <p class="w-full text-yellow-5">{PRICING_SLOT_EXPLAINER}</p>
+      {#if data.caps.feeBoost > 0 && !feeAllowance.atLimit}
+        <p class="w-full text-dark-2">
+          You can still add {feeAllowance.remaining} more licensing {feeAllowance.remaining === 1
+            ? 'fee'
+            : 'fees'} this month with your extra slots. They don't cover permanent paid access.
+        </p>
+      {/if}
     {/if}
     <details class="w-full">
       <summary
@@ -682,13 +725,38 @@
           {/each}
         </RadioGroup>
       </fieldset>
+      <fieldset>
+        <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2"
+          >Listed on</legend
+        >
+        <RadioGroup
+          value={view.query.site ?? ''}
+          onValueChange={(v) => navigate({ site: v || null, page: null })}
+        >
+          {#each siteOptions as opt (opt.value)}
+            {@const id = `site-${opt.value || 'any'}`}
+            <div class="flex items-center gap-2">
+              <RadioGroupItem value={opt.value} {id} />
+              <Label for={id} class="cursor-pointer font-normal">{opt.label}</Label>
+            </div>
+          {/each}
+        </RadioGroup>
+      </fieldset>
       {#if activeFilterCount > 0}
         <Button
           variant="link"
           size="sm"
           class="h-auto p-0 text-xs"
           onclick={() =>
-            navigate({ status: null, bm: null, mt: null, access: null, fee: null, page: null })}
+            navigate({
+              status: null,
+              bm: null,
+              mt: null,
+              access: null,
+              fee: null,
+              site: null,
+              page: null,
+            })}
         >
           Clear filters
         </Button>
@@ -744,6 +812,12 @@
     {exportHref}
     onAction={(a) => (bulkAction = a)}
     onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+    onMakeSafe={() =>
+      makeSafe?.start(
+        makeSafeModels,
+        selected.size -
+          view.models.flatMap((m) => m.versions).filter((v) => selected.has(v.id)).length
+      )}
     salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
       for (const id of view.matchingVersionIds) selected.add(id);
@@ -751,6 +825,8 @@
     onClear={() => selected.clear()}
   />
 {/if}
+
+<MakeSafeDialog bind:this={makeSafe} />
 
 <BulkActionDialog
   bind:action={bulkAction}
@@ -763,6 +839,7 @@
   needsAffirmation={selectionNeedsAffirmation}
   pricingSlotsLeft={remainingPricingSlots - newSlotsUsed + selected.size}
   pricingSlotsRemaining={remainingPricingSlots}
+  feeSlotsRemaining={remainingFeeSlots}
 />
 
 <!-- Dimmed rather than emptied while a search settles: replacing results with a spinner makes every
@@ -782,6 +859,7 @@
               usage: null,
               status: null,
               access: null,
+              site: null,
               page: null,
             })}>Clear</button
         >
@@ -818,6 +896,32 @@
                 <CardTitle class="text-base text-white">{model.name}</CardTitle>
               {/if}
               <Badge variant="secondary">{model.type}</Badge>
+              {#if model.listing.com || model.listing.red}
+                {#each SITES as site (site)}
+                  {#if model.listing[site]}
+                    <Badge
+                      href={siteModelUrl(site, model.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      variant="outline"
+                      class={site === 'com'
+                        ? 'border-blue-4/30 bg-blue-4/10 text-blue-3'
+                        : 'border-red-5/30 bg-red-5/10 text-red-4'}
+                      title="View on civitai.{site}"
+                      aria-label="View {model.name} on civitai.{site} (opens in a new tab)"
+                    >
+                      .{site}
+                    </Badge>
+                  {/if}
+                {/each}
+              {:else}
+                <Badge variant="outline" class="border-dark-4 bg-dark-6 text-dark-2">
+                  Not listed
+                </Badge>
+              {/if}
+              {#if model.listing.note}
+                <span class="text-xs text-dark-2">{model.listing.note}</span>
+              {/if}
               {#if model.poi}
                 <Badge
                   variant="outline"
@@ -898,6 +1002,16 @@
                           />
                         </span>
                       </button>
+                      {#if data.giftLinksEnabled && version.paidAccessConfig}
+                        <a
+                          href="/models/gifts/{version.id}"
+                          title="Gift links"
+                          aria-label="Gift links for {version.name}"
+                          class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
+                        >
+                          <IconGift size={16} />
+                        </a>
+                      {/if}
                     </div>
                   </li>
                 {/each}

@@ -1,8 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 
 import { NsfwLevel } from '~/server/common/enums';
 import { approveExternalRequest } from '~/server/services/blocks/offsite-listing.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * 🔴 APPROVING A NON-SHADOW **ON-SITE** LISTING REQUEST — a shape that did not exist
@@ -26,6 +48,18 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
+
+// LIVE RESTORE (`app-blocks-live-unpublish`): what the approve hands the shared static server once
+// the block is approved again. Its own behaviour is pinned in live-unpublish.service.test.ts.
+const live = vi.hoisted(() => ({
+  restore: vi.fn(async (_input: { slug: string; appBlockId: string }) => 'settled' as const),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  takeDownLiveApp: async () => ({}),
+  restoreLiveAppSoon: (input: { slug: string; appBlockId: string }) => {
+    void Promise.resolve(live.restore(input)).catch(() => undefined);
+  },
+}));
 
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
@@ -132,6 +166,7 @@ beforeEach(() => {
   }
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockNotify.mockReset().mockResolvedValue(undefined);
+  live.restore.mockReset().mockResolvedValue('settled');
 });
 
 describe('approveExternalRequest — ON-SITE rating is RAISE-ONLY over the app declaration', () => {
@@ -153,6 +188,14 @@ describe('approveExternalRequest — ON-SITE rating is RAISE-ONLY over the app d
     });
     await approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD });
     expect(flipData()).toEqual({ status: 'approved', contentRating: 'x' });
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: LISTING_ID,
+      slug: SLUG,
+      before: 'g',
+      after: 'x',
+      actorUserId: MOD,
+    });
   });
 
   it('a moderator override may raise above the floor', async () => {
@@ -223,5 +266,54 @@ describe('approveExternalRequest — ON-SITE un-suspends the backing block', () 
       approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD })
     ).rejects.toMatchObject({ code: 'NOT_PENDING' });
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// The owner-republish REVIEW arm leaves the block suspended, and with `app-blocks-live-unpublish`
+// on its takedown also removed the app from the shared static server. Approving the card un-suspends
+// the block, so the app is put back there too, exactly as on the immediate arm.
+describe('approveExternalRequest — ON-SITE puts the app back live', () => {
+  it('🔴 after the approve commits, with the block un-suspended: restores the app', async () => {
+    wire({});
+    await approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD });
+    expect(live.restore).toHaveBeenCalledTimes(1);
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
+    expect(live.restore.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+    // After the commit: the transaction callback has returned before the restore starts.
+    expect(live.restore.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockNotify.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a block that was not suspended (0 rows): nothing restored', async () => {
+    wire({ blockUnsuspendCount: 0 });
+    await approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('OFF-SITE: nothing restored', async () => {
+    wire({ kind: 'offsite', appBlockId: null });
+    await approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('an approve that lost its race restores nothing', async () => {
+    wire({});
+    mockWrite.appListing.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'NOT_PENDING' });
+    expect(live.restore).not.toHaveBeenCalled();
+  });
+
+  it('a failing restore never fails the approve', async () => {
+    wire({});
+    live.restore.mockRejectedValue(new Error('k8s down'));
+    await expect(
+      approveExternalRequest({ publishRequestId: REQUEST_ID, reviewerUserId: MOD })
+    ).resolves.toMatchObject({ listingId: LISTING_ID });
+    expect(live.restore).toHaveBeenCalledWith({ slug: SLUG, appBlockId: BLOCK_ID });
   });
 });

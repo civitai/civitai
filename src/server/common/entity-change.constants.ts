@@ -42,7 +42,11 @@ export const watchedEntityFields = {
     // support had been charging the reporter twice per image for a month.
     'licensingSourceVersionId',
   ],
-  ModelFile: ['hash.SHA256'],
+  // A new upload behind a file is a new record; `replacedBy` links the old record to it so the
+  // file's history can be followed across the two ids.
+  ModelFile: ['hash.SHA256', 'replacedBy'],
+  // One row per section an item enters or leaves; written by cosmetic-shop-featured-log.service.
+  CosmeticShopItem: ['shopSection'],
 } as const;
 
 export type WatchedEntityType = keyof typeof watchedEntityFields;

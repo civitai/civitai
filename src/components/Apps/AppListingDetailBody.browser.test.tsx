@@ -6,11 +6,12 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as RecentsMod from '~/components/Apps/recentlyOpenedAppsStore';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as NotificationsMod from '~/utils/notifications';
+import type * as TrackBufferMod from '~/components/TrackView/trackEventBuffer';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * `AppListingDetailBody` component tests (REPORT-ONLY — the browser project is
- * non-blocking; the blocking gates are `__tests__/appListingDetailView.test.ts`,
+ * `AppListingDetailBody` component tests (`Component tests` in CI; the node-tier
+ * gates are `__tests__/appListingDetailView.test.ts`,
  * `__tests__/appListingDetailRows.test.ts` and `__tests__/appsPageWidths.test.ts`).
  *
  * 🔴 WHAT THIS SUITE STRUCTURALLY CANNOT SEE — read before treating any result here
@@ -45,6 +46,10 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
+  // When set, the answer to the rail's query WITHOUT a category (the popular top-up).
+  relatedPopularItems: null as unknown[] | null,
+  // When true, every enabled `listAvailable` query is still pending (no data yet).
+  relatedPending: false,
   // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
   // `{ app, ownerId }`, because the owner is now half the contract (#4048).
   recorded: [] as unknown[],
@@ -69,6 +74,12 @@ const mocks = vi.hoisted(() => ({
     string,
     boolean
   >,
+  // The owner "Visibility" item's lazy read, recorded with its `enabled` per call. Data is
+  // returned only when enabled, matching React Query for a disabled query.
+  authoringCalls: [] as { input: unknown; enabled: boolean | undefined }[],
+  authoringContext: null as null | Record<string, unknown>,
+  setVisibilityMutate: vi.fn(),
+  setVisibilityAsModMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -112,6 +123,13 @@ vi.mock('~/components/Apps/recentlyOpenedAppsStore', async (importOriginal) => {
 // `useFeatureFlags` left the optional one resolving to the REAL null-outside-provider
 // value, i.e. store scope `none`, which silently hid the review affordance and failed two
 // tests here for a reason that had nothing to do with what they assert.
+// Acquisition telemetry rides the shared beacon; spied so a test can read the exact
+// `AppStore_Action` rows the detail page queues. Spread, not replaced.
+const trackMocks = vi.hoisted(() => ({ enqueue: vi.fn() }));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackBufferMod>()),
+  enqueueTrackEvent: trackMocks.enqueue,
+}));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => mocks.features,
@@ -125,14 +143,33 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: {
     appListings: {
       listAvailable: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => ({
-          data: opts?.enabled === false ? undefined : { items: mocks.relatedItems },
-          isLoading: false,
-        }),
+        useQuery: (
+          input: { category?: string; userId?: number } | undefined,
+          opts?: { enabled?: boolean }
+        ) => {
+          const pending = opts?.enabled === false || mocks.relatedPending;
+          // The rail's "More by this developer" query: no other apps by the developer here, so
+          // the rail's category / popular groups below are what these tests read.
+          if (input?.userId !== undefined)
+            return {
+              data: pending ? undefined : { items: [] },
+              isLoading: false,
+              isPending: pending,
+            };
+          const items =
+            mocks.relatedPopularItems && input?.category === undefined
+              ? mocks.relatedPopularItems
+              : mocks.relatedItems;
+          return { data: pending ? undefined : { items }, isLoading: false, isPending: pending };
+        },
       },
       // Consumed by the REAL `ReviewListingModal` / `ReportListingModal`, which the
       // `⋮` menu opens. They are NOT mocked away — the menu → modal wiring is the
       // seam this change introduces, so it is exercised end to end.
+      // The track-record line under the creator card (`DeveloperTrackRecord`): no record yet.
+      getDeveloperTrackRecord: {
+        useQuery: () => ({ data: undefined, isLoading: false, isPending: true }),
+      },
       getMyReview: { useQuery: () => ({ data: null, isLoading: false }) },
       upsertReview: {
         useMutation: () => ({ mutate: mocks.upsertMutate, isPending: false }),
@@ -196,6 +233,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // 🔴 THE TWO VISIBILITY PICKERS' HOOKS. Both modals mount (lazily) the first time an
+      // owner's or moderator's menu opens, so a missing key here throws AT MOUNT and fails
+      // every test in this file that opens such a menu — measured: 15 of 99 went red.
+      getAuthoringContext: {
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          mocks.authoringCalls.push({ input, enabled: opts?.enabled });
+          return opts?.enabled
+            ? { data: mocks.authoringContext ?? undefined, isError: false }
+            : { data: undefined, isError: false };
+        },
+      },
+      setListingVisibility: {
+        useMutation: () => ({ mutate: mocks.setVisibilityMutate, isPending: false }),
+      },
+      setListingVisibilityAsModerator: {
+        useMutation: () => ({ mutate: mocks.setVisibilityAsModMutate, isPending: false }),
+      },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
     // `publicProcedure` in `src/server/routers/user.router.ts`, which is why this page
@@ -212,6 +266,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         getMyReview: { invalidate: async () => undefined },
         listReviews: { invalidate: async () => undefined },
         getAppDetail: { invalidate: async () => undefined },
+        getAuthoringContext: { invalidate: async () => undefined },
+        listMine: { invalidate: async () => undefined },
       },
     }),
   },
@@ -276,6 +332,8 @@ beforeEach(async () => {
   mocks.features = { appBlocks: true, appListings: true, appBlocksPages: false };
   mocks.currentUser = null;
   mocks.relatedItems = [];
+  mocks.relatedPopularItems = null;
+  mocks.relatedPending = false;
   mocks.recorded = [];
   mocks.creator = null;
   mocks.reportMutate.mockClear();
@@ -284,6 +342,10 @@ beforeEach(async () => {
   mocks.delistMutate.mockClear();
   mocks.resetOffsiteMutate.mockClear();
   mocks.resetOnsiteMutate.mockClear();
+  mocks.authoringCalls = [];
+  mocks.authoringContext = null;
+  mocks.setVisibilityMutate.mockClear();
+  mocks.setVisibilityAsModMutate.mockClear();
   // 🔴 Restore the WIDE viewport before every test. The viewport is browser-global
   // state, so without this a narrow-layout test silently re-runs every later test at
   // 390px — the "config pins a dimension" trap, arriving by leakage instead of config.
@@ -312,9 +374,16 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     // file and from any constant an assertion names, so a chip that hardcoded a value
     // could not accidentally match it.
     installCount: 4213,
+    // The play count the store card shows. 2718 is distinct from 4213 and from every other
+    // number here, so a chip or row reading installs instead shows the wrong number.
+    openCount: 2718,
     // Default: no public source repo → the Details rail renders no `Source` row.
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     // No declared scopes: this file is not about the permission disclosure, and an
@@ -353,6 +422,7 @@ function relatedCard(id: string, name: string): ListingCard {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: `ab-${id}`,
@@ -535,6 +605,8 @@ describe('AppListingDetailBody', () => {
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-owner-edit"]')).toBeNull();
+    // The owner Visibility item is owner-only, like Edit.
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).toBeNull();
   });
 
   test('🔴 the OWNER gets no Review item (no self-review), but keeps Report', async () => {
@@ -544,7 +616,36 @@ describe('AppListingDetailBody', () => {
     // Positive control from the same dropdown: Report and Edit ARE there.
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-owner-edit"]')).not.toBeNull();
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).toBeNull();
+  });
+
+  test('🔴 the owner Visibility item fetches the authoring context only when clicked', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    mocks.authoringContext = {
+      status: 'approved',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: 'moderators',
+      visibilityAvailable: true,
+    };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-owner-visibility"]'
+    ) as HTMLElement | null;
+    expect(item).not.toBeNull();
+    // Menu open, picker mounted, read still disabled.
+    expect(mocks.authoringCalls.length).toBeGreaterThan(0);
+    expect(mocks.authoringCalls.every((c) => c.enabled === false)).toBe(true);
+
+    await userEvent.click(item as HTMLElement);
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-save').first())
+      .toBeInTheDocument();
+    expect(mocks.authoringCalls.filter((c) => c.enabled).map((c) => c.input)).toContainEqual({
+      appListingId: 'l1',
+    });
   });
 
   test('🔴 a SIGNED-OUT viewer gets no menu at all (nothing in it is available)', async () => {
@@ -661,7 +762,7 @@ describe('AppListingDetailBody', () => {
     const chips = Array.from(container.querySelectorAll('[data-listing-stat]'));
     expect(chips).toHaveLength(2);
     expect(chips.map((c) => c.getAttribute('data-listing-stat')).sort()).toEqual([
-      'installs',
+      'plays',
       'recommend',
     ]);
     for (const chip of chips) {
@@ -670,9 +771,10 @@ describe('AppListingDetailBody', () => {
     expect(
       container.querySelector('[data-listing-stat="recommend"]')?.getAttribute('aria-label')
     ).toBe('317 recommendations');
-    expect(
-      container.querySelector('[data-listing-stat="installs"]')?.getAttribute('aria-label')
-    ).toBe('4,213 installs');
+    // 🔴 PLAYS, from `openCount` — the number the store card shows — not installs.
+    expect(container.querySelector('[data-listing-stat="plays"]')?.getAttribute('aria-label')).toBe(
+      '2,718 plays'
+    );
   });
 
   // ── Meta line ──────────────────────────────────────────────────────────────
@@ -690,8 +792,22 @@ describe('AppListingDetailBody', () => {
     );
   });
 
-  test('🔴 the category is a plain badge, NOT a link (the store has no category route)', async () => {
+  test('🔴 the header category badge LINKS to the store filtered to that category', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-category')).toBeInTheDocument();
+    const badge = container.querySelector('[data-testid="apps-listing-category"]') as HTMLElement;
+    // The exact URL the store's own category filter writes (`/apps/store?category=<stored value>`),
+    // a literal — not read back from the helper that builds it.
+    expect(badge.tagName).toBe('A');
+    expect(badge.getAttribute('href')).toBe('/apps/store?category=utility');
+    expect(badge.getAttribute('target')).toBeNull();
+    expect(badge.textContent).toBe('Utility');
+  });
+
+  test('a category the store cannot filter by stays a plain badge (no link to an unfiltered grid)', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'hats' })} />
+    );
     await expect.element(within.getByTestId('apps-listing-category')).toBeInTheDocument();
     const badge = container.querySelector('[data-testid="apps-listing-category"]') as HTMLElement;
     expect(badge.tagName).not.toBe('A');
@@ -756,11 +872,11 @@ describe('AppListingDetailBody', () => {
     ).toHaveLength(1);
   });
 
-  test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds About', async () => {
+  test('🔴 the rail holds the action card, the creator card and the details accordion; the main column holds the description', async () => {
     const { container, within } = await renderScoped(
       <AppListingDetailBody detail={base({ description: 'Body **text**.' })} />
     );
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
     const rail = container.querySelector('[data-testid="apps-listing-rail-col"]') as HTMLElement;
     const main = container.querySelector('[data-testid="apps-listing-main-col"]') as HTMLElement;
 
@@ -774,33 +890,16 @@ describe('AppListingDetailBody', () => {
 
   // ── Action-card header ─────────────────────────────────────────────────────
 
-  test('🔴 the action card is headed "Use this app"', async () => {
+  test('🔴 the action card has no "Use this app" header — the Open button leads it', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     await expect.element(within.getByText('My App')).toBeInTheDocument();
-
-    // Anchored to the CARD, never a loose page-wide text match — the CTA button
-    // labels below this header live in the same card and change independently
-    // (`getDetailPrimaryAction`), so a free-floating text query would drift onto
-    // them.
     const card = container.querySelector(
       '[data-testid="apps-listing-action-card"]'
     ) as HTMLElement | null;
-    // Positive control: without the card the header assertion below would be a
-    // claim about nothing, and a `toBeNull`-style guard on an absent element
-    // passes vacuously.
     expect(card, 'the action card must render in the non-preview arm').not.toBeNull();
-
-    // The header is the card's first section. Pin the WHOLE normalised string,
-    // not a substring — a substring guard is walkable by rewording ("Get this app
-    // to use it" would satisfy `toContain('Use this app')`).
-    const header = card!.firstElementChild as HTMLElement | null;
-    expect(header).not.toBeNull();
-    expect(header!.textContent?.trim()).toBe('Use this app');
-
-    // …and the superseded label is gone from the card entirely. Plain `toContain`
-    // on `textContent`, because `expect.element(...).not.toBeInTheDocument()` is
-    // inert in this repo (#4197) and passes for any string whatsoever.
-    expect(card!.textContent).not.toContain('Get this app');
+    // Plain `toContain` on `textContent`: `not.toBeInTheDocument()` is inert here (#4197).
+    expect(card!.textContent).not.toContain('Use this app');
+    expect(card!.firstElementChild!.querySelector('a, button')).not.toBeNull();
   });
 
   // ── Creator card ───────────────────────────────────────────────────────────
@@ -847,8 +946,91 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays', 'updated']);
   });
+
+  test('🔴 the Details PLAYS row shows the card\'s play count, labelled "Plays"', async () => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="plays"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    expect(row.textContent).toBe('Plays2,718');
+    // The install count is not shown under any label.
+    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.textContent).not.toContain('4,213');
+  });
+
+  test('every Details row carries its own leading icon', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ contentRating: 'pg' })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-listing-detail-row]'));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const key = row.getAttribute('data-listing-detail-row');
+      expect(
+        row.querySelector(`svg[data-listing-detail-icon="${key}"]`),
+        String(key)
+      ).not.toBeNull();
+    }
+  });
+
+  test('🔴 the Details CATEGORY row links to the store filtered to that category', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="category"]') as HTMLElement;
+    const link = row.querySelector('a') as HTMLAnchorElement | null;
+    expect(link, 'the category value must be a link').not.toBeNull();
+    expect(link!.getAttribute('href')).toBe('/apps/store?category=games');
+    // Same-site navigation: no new tab (that contract belongs to the outbound Source link).
+    expect(link!.getAttribute('target')).toBeNull();
+    expect(link!.textContent).toBe('Games');
+    // Marked as a STORE link, not with the outbound-link marker other tests select on.
+    expect(link!.getAttribute('data-listing-detail-store-link')).toBe('category');
+    expect(link!.getAttribute('data-listing-detail-link')).toBeNull();
+  });
+
+  test('the Details category row is NOT a link in the moderator preview', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} preview />
+    );
+    await expect.element(within.getByTestId('apps-listing-details-accordion')).toBeInTheDocument();
+    const row = container.querySelector('[data-listing-detail-row="category"]') as HTMLElement;
+    // Positive control: the row and its value ARE there.
+    expect(row.textContent).toContain('Games');
+    expect(row.querySelector('a')).toBeNull();
+  });
+
+  // 🔴 One pill per rung, each with its colour as a LITERAL — the site's browsing-level
+  // colours (PG green, PG-13 yellow, R orange, X red; G shares PG's ceiling). An
+  // out-of-ladder value must be gray, never the "safe" green. Read off the Badge's own
+  // `--badge-bg` variable, which Mantine writes inline (no CSS is loaded in this tier).
+  for (const [rating, label, color] of [
+    ['g', 'G', 'green'],
+    ['pg', 'PG', 'green'],
+    ['pg13', 'PG-13', 'yellow'],
+    ['r', 'R', 'orange'],
+    ['x', 'X', 'red'],
+    ['nc17', 'nc17', 'gray'],
+  ] as const) {
+    test(`🔴 the content rating "${rating}" renders as a ${color} pill`, async () => {
+      const { container, within } = await renderScoped(
+        <AppListingDetailBody detail={base({ contentRating: rating })} />
+      );
+      await expect
+        .element(within.getByTestId('apps-listing-details-accordion'))
+        .toBeInTheDocument();
+      const pill = container.querySelector(
+        '[data-listing-detail-row="rating"] [data-listing-detail-pill="rating"]'
+      ) as HTMLElement | null;
+      expect(pill, 'the rating must render as a pill').not.toBeNull();
+      expect(pill!.textContent).toBe(label);
+      expect(pill!.getAttribute('style') ?? '').toContain(`var(--mantine-color-${color}-filled)`);
+    });
+  }
 
   test('🔴 a null field omits its row (positive control paired)', async () => {
     // Control: with a contentRating the `rating` row exists (asserted above). Here it
@@ -860,7 +1042,7 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'reviews', 'plays', 'updated']);
   });
 
   // ── the SOURCE row (public source-repository link) ─────────────────────────
@@ -902,7 +1084,7 @@ describe('AppListingDetailBody', () => {
     const rows = Array.from(container.querySelectorAll('[data-listing-detail-row]')).map((r) =>
       r.getAttribute('data-listing-detail-row')
     );
-    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays', 'updated']);
   });
 
   test('the SOURCE row survives the read-only PREVIEW posture (the mod must see what approving publishes)', async () => {
@@ -915,7 +1097,7 @@ describe('AppListingDetailBody', () => {
     expect(row.textContent).toContain('codeberg.org/o/r');
     // The preview-omitted rows really are omitted here — so this is a claim about the
     // SOURCE row specifically, not about `preview` being ignored.
-    expect(container.querySelector('[data-listing-detail-row="installs"]')).toBeNull();
+    expect(container.querySelector('[data-listing-detail-row="plays"]')).toBeNull();
     expect(container.querySelector('[data-listing-detail-row="updated"]')).toBeNull();
   });
 
@@ -964,7 +1146,7 @@ describe('AppListingDetailBody', () => {
     const { within } = await renderScoped(
       <AppListingDetailBody detail={base({ description: long })} />
     );
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('Paragraph 0 of the description.')).toBeInTheDocument();
     const showMore = within.getByText('Show More');
     await expect.element(showMore).toBeInTheDocument();
     await userEvent.click(showMore);
@@ -975,7 +1157,7 @@ describe('AppListingDetailBody', () => {
     const { container, within } = await renderScoped(
       <AppListingDetailBody detail={base({ description: 'a **bold** word' })} />
     );
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
     // react-markdown produced a real <strong>; a raw-HTML path would not have.
     expect(container.querySelector('.markdown-content strong')?.textContent).toBe('bold');
   });
@@ -994,7 +1176,7 @@ describe('AppListingDetailBody', () => {
     { what: 'the right-rail action card', testid: 'apps-listing-action-card' },
     { what: 'the creator card', testid: 'apps-listing-creator-card' },
     { what: 'the header stat chips', testid: 'apps-listing-stat-chips' },
-    { what: 'the header meta line', testid: 'apps-listing-meta' },
+    { what: 'the header category badge', testid: 'apps-listing-category' },
     { what: 'the related-listings rail', testid: 'apps-related-rail' },
     { what: 'the clickable hero', testid: 'apps-listing-hero-launch' },
   ];
@@ -1033,11 +1215,11 @@ describe('AppListingDetailBody', () => {
 
   test('🔴 preview omits the back-to-store link (text-level, with its control)', async () => {
     const live = await renderScoped(<AppListingDetailBody detail={base({})} />);
-    await expect.element(live.within.getByText('Back to store')).toBeInTheDocument();
+    await expect.element(live.within.getByLabelText('Back to store')).toBeInTheDocument();
 
     const prev = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
     await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
-    expect(prev.within.getByText('Back to store').elements()).toHaveLength(0);
+    expect(prev.within.getByLabelText('Back to store').elements()).toHaveLength(0);
   });
 
   test('🔴 preview omits the REVIEWS / INSTALLS / UPDATED rows, keeping the others', async () => {
@@ -1078,7 +1260,7 @@ describe('AppListingDetailBody', () => {
     );
     await expect.element(within.getByText('My App')).toBeInTheDocument();
     await expect.element(within.getByText('Screenshots')).toBeInTheDocument();
-    await expect.element(within.getByText('About', { exact: true })).toBeInTheDocument();
+    await expect.element(within.getByText('this', { exact: false })).toBeInTheDocument();
   });
 
   test('non-preview (live) still renders comments/reviews + the primary action (regression)', async () => {
@@ -1263,13 +1445,13 @@ describe('AppListingDetailBody', () => {
   test('🔴 the in-site Open CTA and the off-site Visit CTA render DIFFERENT glyphs', async () => {
     const { cta: openBtn } = await renderAndSettle(
       <AppListingDetailBody detail={base({})} canOpenPage />,
-      '/apps/run/my-app'
+      '/apps/run/my-app?src=detail'
     );
     const openGlyph = glyphOf(openBtn);
 
     const { cta: visitBtn } = await renderAndSettle(
       <AppListingDetailBody detail={offsite()} />,
-      'https://ext.app'
+      '/apps/go/l1?src=detail'
     );
     const visitGlyph = glyphOf(visitBtn);
 
@@ -1283,17 +1465,17 @@ describe('AppListingDetailBody', () => {
   test('the glyph change does NOT touch link semantics', async () => {
     const { cta: openBtn } = await renderAndSettle(
       <AppListingDetailBody detail={base({})} canOpenPage />,
-      '/apps/run/my-app'
+      '/apps/run/my-app?src=detail'
     );
     expect(openBtn.getAttribute('target')).toBeNull();
     expect(openBtn.getAttribute('rel')).toBeNull();
 
     const { cta: visitBtn } = await renderAndSettle(
       <AppListingDetailBody detail={offsite()} />,
-      'https://ext.app'
+      '/apps/go/l1?src=detail'
     );
     expect(visitBtn.getAttribute('target')).toBe('_blank');
-    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(visitBtn.getAttribute('rel')).toBe('nofollow noopener noreferrer');
   });
 
   /**
@@ -1326,11 +1508,12 @@ describe('AppListingDetailBody', () => {
           },
         })}
       />,
-      'https://connect.app'
+      // Through the visit redirect, which 302s to the stored `https://connect.app`.
+      '/apps/go/l1?src=detail'
     );
     expect(visitBtn.textContent?.trim()).toBe('Visit');
     expect(visitBtn.getAttribute('target')).toBe('_blank');
-    expect(visitBtn.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(visitBtn.getAttribute('rel')).toBe('nofollow noopener noreferrer');
     expect(glyphOf(visitBtn)).toBe('external-link');
     // The stub copy must be GONE from this state — it is the exact string a user
     // reported as a dead end.
@@ -1410,7 +1593,7 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByText('My App')).toBeInTheDocument();
     const browse = container.querySelector('[data-testid="apps-browse-all"]');
     expect(browse).not.toBeNull();
-    expect(browse?.getAttribute('href')).toBe('/apps');
+    expect(browse?.getAttribute('href')).toBe('/apps/store');
   });
 
   // ── Hero banner click-to-launch ────────────────────────────────────────────
@@ -1463,7 +1646,7 @@ describe('AppListingDetailBody', () => {
     const el = hero.element() as HTMLElement;
     // Semantics, not a click handler on a box: a real anchor, same-tab.
     expect(el.tagName).toBe('A');
-    expect(el.getAttribute('href')).toBe('/apps/run/my-app');
+    expect(el.getAttribute('href')).toBe('/apps/run/my-app?src=detail');
     expect(el.getAttribute('target')).toBeNull();
     // Accessible NAME — neither the cover `alt` ("… cover image") nor the
     // aria-hidden placeholder can supply one, so it is explicit.
@@ -1474,7 +1657,7 @@ describe('AppListingDetailBody', () => {
     // "Same destination as the CTA" asserted as a fact about the DOM, not by
     // restating the string: exactly two anchors point at the run route — the
     // banner and the button. If the banner ever aims somewhere else this is 1.
-    expect(container.querySelectorAll('a[href="/apps/run/my-app"]')).toHaveLength(2);
+    expect(container.querySelectorAll('a[href="/apps/run/my-app?src=detail"]')).toHaveLength(2);
   });
 
   test('🔴 a listing with NO cover art still gets the launch affordance', async () => {
@@ -1483,7 +1666,7 @@ describe('AppListingDetailBody', () => {
     );
     const hero = within.getByTestId(HERO);
     await expect.element(hero).toBeInTheDocument();
-    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app');
+    expect(hero.element().getAttribute('href')).toBe('/apps/run/my-app?src=detail');
     // …and it really is the seeded-gradient placeholder inside, not a cover
     // image — otherwise this test would pass on the wrong branch.
     expect(hero.element().querySelector('[data-listing-cover-placeholder]')).not.toBeNull();
@@ -1510,15 +1693,17 @@ describe('AppListingDetailBody', () => {
     });
     // The browser synthesised an activation click from the keypress, and it came
     // from the banner anchor.
-    expect(activated).toEqual(['/apps/run/my-app']);
+    expect(activated).toEqual(['/apps/run/my-app?src=detail']);
   });
 
   test('off-site (Visit) → the banner is NOT interactive (invariant guard)', async () => {
     const { container, within } = await renderScoped(<AppListingDetailBody detail={offsite()} />);
     await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
     expect(container.querySelectorAll(`[data-testid="${HERO}"]`)).toHaveLength(0);
-    // Exactly one route off-platform: the labelled button.
-    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(1);
+    // Exactly one route off-platform: the labelled button, through the visit redirect (which
+    // records the visit and 302s to the listing's stored URL). The raw URL is not on the page.
+    expect(container.querySelectorAll('a[href="/apps/go/l1?src=detail"]')).toHaveLength(1);
+    expect(container.querySelectorAll('a[href="https://ext.app"]')).toHaveLength(0);
   });
 
   test('the on-site raw-origin escape hatch does NOT make the banner interactive (invariant guard)', async () => {
@@ -1602,7 +1787,7 @@ describe('AppListingDetailBody', () => {
     await expect.element(within.getByTestId(HERO)).toBeInTheDocument();
 
     const links = Array.from(
-      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app"]')
+      container.querySelectorAll<HTMLAnchorElement>('a[href="/apps/run/my-app?src=detail"]')
     );
     expect(links).toHaveLength(2);
     const [heroEl, ctaEl] = links;
@@ -1763,8 +1948,8 @@ describe('AppListingDetailBody — store-scope review seam', () => {
  * fix — which is precisely the defect class here.
  *
  * 🔴 NOT A MERGE GATE: this file is in the browser-mode `component` project, which CI
- * runs only as the preview pipeline's report-only `preview / component-tests` (the
- * same caveat `.gallery.browser.test.tsx` carries). The blocking half of this change
+ * runs as `Component tests`, and no check in this repo blocks a merge (the same
+ * caveat `.gallery.browser.test.tsx` carries). The node-tier half of this change
  * is `__tests__/appListingDescription.test.ts` in the node project — it gates the
  * renderer rule but cannot see a node's position. Both are needed; neither substitutes.
  *
@@ -1896,6 +2081,7 @@ describe('AppListingDetailBody — moderator menu section', () => {
   const NON_MOD = { id: 999, username: 'bob' };
   const MESSAGE_ITEM = 'apps-listing-mod-message-owner';
   const MANAGE_ITEM = 'apps-listing-mod-manage';
+  const VISIBILITY_ITEM = 'apps-listing-mod-visibility';
   // Menu items and confirm fields share a stem per action — see `TAKEDOWN_TESTID_STEM`.
   const UNPUBLISH = 'apps-listing-unpublish';
   const HIDE = 'apps-listing-hide';
@@ -1927,13 +2113,18 @@ describe('AppListingDetailBody — moderator menu section', () => {
     await page.getByTestId(`${stem}-submit`).first().click();
   }
 
-  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, and the review-queue link', async () => {
+  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, Set visibility, and the review-queue link', async () => {
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)?.textContent).toContain(
+      'Set visibility'
+    );
+    // Not the owner, so not the owner's copy of the control.
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).toBeNull();
     // The INVERSE affordance. There is no Relist button because a removed listing 404s
     // on this route; the link is where a removed listing can actually be acted on.
     //
@@ -1947,6 +2138,23 @@ describe('AppListingDetailBody — moderator menu section', () => {
     );
     // Asserted on the STATE, not on a word: no lifecycle action here may be a relist.
     expect(dropdown.textContent).not.toContain('Relist');
+  });
+
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    // Same viewer shape as MOD, differing only in the id: 5 is `base().creator.id`.
+    mocks.currentUser = { ...MOD, id: 5 };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(
+      dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')?.textContent
+    ).toContain('Visibility');
+    // Positive control: the moderator section is there, so the absence is set-visibility's.
+    expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
+    expect(dropdown.textContent).not.toContain('Set visibility');
   });
 
   test('🔴 the two takedown items are TELLABLE APART in the rendered menu', async () => {
@@ -1981,7 +2189,19 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).toBeNull();
+  });
+
+  test('the Set visibility item opens the moderator picker (menu → modal wiring)', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(within, VISIBILITY_ITEM);
+    // The REAL `ModListingVisibilityModal`: its required reason field and its title.
+    await expect
+      .element(page.getByTestId('apps-mod-visibility-reason').first())
+      .toBeInTheDocument();
+    expect(document.body.textContent).toContain('Set visibility for my-app');
   });
 
   test('the Contact app owner item opens the composer (menu → modal wiring)', async () => {
@@ -2172,6 +2392,40 @@ describe('AppListingDetailBody — moderator menu section', () => {
  * (civitai/civitai#4197) and passes whether or not the node exists. Every absence below
  * is paired with a positive control proving the same fixture rendered.
  */
+describe('AppListingDetailBody — the Official badge', () => {
+  test('renders the Official badge in the header when the moderator flag is set', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ isOfficial: true })} />
+    );
+    await expect.element(within.getByTestId('apps-listing-official-badge')).toBeInTheDocument();
+    expect(
+      container.querySelector('[data-testid="apps-listing-official-badge"]')?.textContent
+    ).toContain('Official');
+  });
+
+  test('renders it in the moderator review PREVIEW too (the identity block preview keeps)', async () => {
+    const prev = await renderScoped(
+      <AppListingDetailBody detail={base({ isOfficial: true })} canOpenPage preview />
+    );
+    await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-official-badge"]')
+    ).toHaveLength(1);
+  });
+
+  test.each([
+    ['false', { isOfficial: false }],
+    ['absent', {}],
+  ])('renders NO Official badge when the flag is %s', async (_label, over) => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base(over)} />);
+    // Positive control FIRST: the header really did render.
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-testid="apps-listing-official-badge"]')).toHaveLength(
+      0
+    );
+  });
+});
+
 describe('AppListingDetailBody — the beta badge + notice', () => {
   test('renders BOTH the badge and the notice when the listing declares beta', async () => {
     const { container, within } = await renderScoped(
@@ -2291,5 +2545,226 @@ describe('AppListingDetailBody — the beta badge + notice', () => {
       prev.container.querySelectorAll('[data-testid="apps-listing-action-card"]'),
       'preview must still be suppressing the surfaces it is documented to omit'
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * The RESTRICTED-VISIBILITY badge in the detail header. Copy decisions are pinned in the
+ * blocking unit tier (`visibilityBadgeFor`); this pins the render. Absences via
+ * `querySelectorAll` (the negative matcher is inert — civitai/civitai#4197), after a
+ * positive control.
+ */
+describe('AppListingDetailBody — the restricted-visibility badge', () => {
+  test.each([
+    ['testers', 'Testers only'],
+    ['moderators', 'Moderators only'],
+    ['private', 'Unlisted'],
+  ] as const)('restrictedAudience=%s renders "%s"', async (restrictedAudience, label) => {
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ restrictedAudience })} />
+    );
+    const badge = within.getByTestId('apps-listing-detail-visibility');
+    await expect.element(badge).toBeInTheDocument();
+    expect(badge.element().textContent).toBe(label);
+  });
+
+  test('renders NO badge when restrictedAudience is null', async () => {
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ restrictedAudience: null })} />
+    );
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+    expect(
+      container.querySelectorAll('[data-testid="apps-listing-detail-visibility"]')
+    ).toHaveLength(0);
+  });
+});
+
+const { LISTING_REVIEWS_ANCHOR_ID } = await import('~/components/Apps/listingKindLabels');
+
+/**
+ * Below the two-column body the page reads Reviews → Comments → the "More in <category>" rail.
+ * The rail sits after two unbounded threads, so the Details panel carries a same-page link to it;
+ * the link test checks BOTH ends (the href's target is a rendered element holding the rail), so a
+ * rename on either side fails it.
+ */
+describe('AppListingDetailBody — page order and the related-rail link', () => {
+  const follows = (a: Element, b: Element) =>
+    !a.contains(b) && !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  test('🔴 the reviews section precedes the comments, which precede the related rail', async () => {
+    mocks.relatedItems = [relatedCard('l2', 'Sibling One')];
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-related-rail')).toBeInTheDocument();
+
+    const reviews = container.querySelector(`[id="${LISTING_REVIEWS_ANCHOR_ID}"]`);
+    const comments = container.querySelector('[data-testid="mock-comments"]');
+    const rail = container.querySelector('[data-testid="apps-related-rail"]');
+    expect(reviews, 'reviews section').not.toBeNull();
+    expect(comments, 'comments').not.toBeNull();
+    expect(rail, 'related rail').not.toBeNull();
+    expect(reviews!.contains(container.querySelector('[data-testid="mock-reviews"]'))).toBe(true);
+
+    expect(follows(reviews!, comments!), 'comments come after reviews').toBe(true);
+    expect(follows(comments!, rail!), 'the related rail comes after comments').toBe(true);
+  });
+
+  test.each([
+    ['games', 'More in Games →'],
+    [null, 'More apps →'],
+  ] as const)(
+    '🔴 category=%s: the Details link "%s" jumps to an id the rendered rail carries',
+    async (category, label) => {
+      const { container, within } = await renderScoped(
+        <AppListingDetailBody detail={base({ category })} />
+      );
+      const link = within.getByTestId('apps-listing-details-related-link');
+      await expect.element(link).toBeInTheDocument();
+      const anchor = link.element() as HTMLAnchorElement;
+
+      expect(anchor.textContent).toBe(label);
+      const details = container.querySelector('[data-testid="apps-listing-details-accordion"]');
+      expect(details!.contains(anchor), 'the link lives in the Details panel').toBe(true);
+      // Same-page jump: no new tab.
+      expect(anchor.getAttribute('target')).toBeNull();
+
+      const href = anchor.getAttribute('href') ?? '';
+      expect(href).toMatch(/^#./);
+      const target = container.querySelector(`[id="${href.slice(1)}"]`);
+      expect(target, `${href} must land on a rendered element`).not.toBeNull();
+      const rail = container.querySelector('[data-testid="apps-related-rail"]');
+      expect(rail).not.toBeNull();
+      expect(target === rail || target!.contains(rail), 'the target holds the related rail').toBe(
+        true
+      );
+    }
+  );
+
+  /**
+   * 🔴 The link names what it lands on: its text is the rail's FIRST rendered heading. An app
+   * alone in its category gets only the "Popular apps" group (other categories' apps), so a
+   * link reading "More in <category>" would send the reader to exactly the mismatch the
+   * rail's own headings fix.
+   */
+  const railFirstHeading = (container: Element) =>
+    container.querySelector('[data-testid="apps-related-rail"] h4')?.textContent;
+
+  test.each([
+    {
+      name: 'a category with other apps',
+      category: 'games',
+      same: [relatedCard('l2', 'Sibling One')],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'More in Games →',
+    },
+    {
+      name: 'an app alone in its category',
+      category: 'games',
+      same: [],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'Popular apps →',
+    },
+    {
+      name: 'no category',
+      category: null,
+      same: [],
+      popular: [relatedCard('l3', 'Popular One')],
+      label: 'Popular apps →',
+    },
+  ])('🔴 $name: the Details link reads "$label", the rail\'s first heading', async (c) => {
+    mocks.relatedItems = c.same;
+    mocks.relatedPopularItems = c.popular;
+    const { container, within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: c.category })} />
+    );
+    await expect.element(within.getByText('Popular One').first()).toBeInTheDocument();
+    const link = within.getByTestId('apps-listing-details-related-link');
+    await expect.element(link).toHaveTextContent(c.label);
+    expect(link.element().textContent).toBe(c.label);
+    expect(`${railFirstHeading(container)} →`).toBe(c.label);
+    // Still the same-page jump onto the element that holds the rail.
+    const href = link.element().getAttribute('href') ?? '';
+    const target = container.querySelector(`[id="${href.slice(1)}"]`);
+    expect(target?.querySelector('[data-testid="apps-related-rail"]')).not.toBeNull();
+  });
+
+  test('while the rail is loading the link reads a neutral "Related apps →"', async () => {
+    mocks.relatedPending = true;
+    const { within } = await renderScoped(
+      <AppListingDetailBody detail={base({ category: 'games' })} />
+    );
+    const link = within.getByTestId('apps-listing-details-related-link');
+    await expect.element(link).toBeInTheDocument();
+    expect(link.element().textContent).toBe('Related apps →');
+  });
+
+  test('🔴 preview renders no related-rail link — with its live positive control', async () => {
+    const live = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect
+      .element(live.within.getByTestId('apps-listing-details-related-link'))
+      .toBeInTheDocument();
+
+    const prev = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
+    await expect
+      .element(prev.within.getByTestId('apps-listing-details-accordion'))
+      .toBeInTheDocument();
+    expect(
+      prev.container.querySelectorAll('[data-testid="apps-listing-details-related-link"]')
+    ).toHaveLength(0);
+  });
+});
+
+describe('AppListingDetailBody — store funnel events', () => {
+  const storeActions = () =>
+    trackMocks.enqueue.mock.calls
+      .map(([event]) => event)
+      .filter((e: any) => e?.kind === 'action' && e.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+  const offsiteDetail = () =>
+    base({
+      kind: 'offsite',
+      kindData: { kind: 'offsite', externalUrl: 'https://ext.app', connectClientId: null },
+    });
+
+  beforeEach(() => {
+    trackMocks.enqueue.mockReset();
+    // The funnel's one gate (the `feedImpressions` dial), ON unless a case turns it off.
+    mocks.features = { ...mocks.features, feedImpressions: true };
+  });
+
+  test('mounting the detail page queues exactly ONE detail_view for the listing', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    await vi.waitUntil(() => storeActions().length > 0, { timeout: 5000, interval: 25 });
+    expect(storeActions()).toEqual([{ action: 'detail_view', listingId: 'l1', surface: 'detail' }]);
+  });
+
+  test('a moderator PREVIEW queues no detail_view', async () => {
+    const { container } = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
+    // Positive control that the body rendered (and its effects ran) before reading the absence.
+    await vi.waitUntil(() => container.textContent?.includes('My App'), {
+      timeout: 5000,
+      interval: 25,
+    });
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('with the funnel gate OFF the page queues no detail_view', async () => {
+    mocks.features = { ...mocks.features, feedImpressions: false };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByTestId('apps-listing-open-live')).toBeInTheDocument();
+    expect(storeActions()).toEqual([]);
+  });
+
+  test('following the off-site Visit CTA queues a cta_click (after the detail_view)', async () => {
+    const { within } = await renderScoped(<AppListingDetailBody detail={offsiteDetail()} />);
+    const visit = within.getByTestId('apps-listing-open-live');
+    await expect.element(visit).toHaveAttribute('href', '/apps/go/l1?src=detail');
+    await vi.waitUntil(() => storeActions().length > 0, { timeout: 5000, interval: 25 });
+    visit.element().addEventListener('click', (e) => e.preventDefault());
+    await visit.click();
+    expect(storeActions()).toEqual([
+      { action: 'detail_view', listingId: 'l1', surface: 'detail' },
+      { action: 'cta_click', listingId: 'l1', surface: 'detail' },
+    ]);
   });
 });

@@ -1,4 +1,4 @@
-import { getResource, queryResources } from '@civitai/client';
+import { getResource, queryResources } from '@civitai/orchestration-client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
@@ -13,6 +13,8 @@ import {
   modelVersionToAir,
   type ModelVersionAirInput,
 } from '~/server/utils/resource-air';
+import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export async function getModelClient({
   token,
@@ -33,17 +35,21 @@ export async function queryResourcesClient({
   return await queryResources({ client, query });
 }
 
-// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/client: the operation
+// DELETE /v2/resources/{air} is called with fetch rather than through @civitai/orchestration-client: the operation
 // carries [ApiExplorerSettings(IgnoreApi = true)] (orchestrator c2d2c370), so it is absent from the
 // OpenAPI documents the SDK is generated from — the endpoint itself is live.
 async function invalidateOrchestratorResource(air: string, etag: string, userId?: number) {
   const query = new URLSearchParams({ etag });
   if (userId != null) query.set('userId', String(userId));
 
-  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v2/resources/${air}?${query}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
-  });
+  const response = await outboundFetch(
+    `${env.ORCHESTRATOR_ENDPOINT}/v2/resources/${air}?${query}`,
+    {
+      timeoutMs: 30_000,
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
+    }
+  );
   // 401/403 here means the system token lacks the role the endpoint requires. That must be loud:
   // this function spent ~2.5 months commented out, and a silently-swallowed authz failure is
   // indistinguishable from the no-op it replaced — stale prices in the generator, no signal.
@@ -60,15 +66,32 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   if (!Array.isArray(versionIds)) versionIds = [versionIds];
   if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
 
+  try {
+    await invalidateVersions(versionIds, userId);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      versionIds: versionIds.slice(0, 10),
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateVersions(versionIds: number[], userId?: number) {
+  const airs = await versionAirs(versionIds);
+  if (airs.length) await invalidateAirs(airs, userId);
+}
+
+async function versionAirs(versionIds: number[]) {
   const versions = (await dbWrite.modelVersion.findMany({
     where: { id: { in: versionIds } },
     select: modelVersionAirSelect,
   })) as ModelVersionAirInput[];
-  if (!versions.length) return;
 
   // The orchestrator caches per AIR string, and a Checkpoint whose generation file is a diffusion
   // model or UNet is reachable under both its file-kind AIR and the plain `checkpoint` one.
-  const airs = [
+  return [
     ...new Set(
       versions.flatMap((version) => [
         modelVersionToAir(version),
@@ -76,7 +99,71 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
       ])
     ),
   ];
+}
 
+/**
+ * `bustOrchestratorModelCache` for a caller that must stop on failure (a backfill): throws when the
+ * orchestrator is not configured or any invalidation fails, instead of logging. Returns the AIR count.
+ */
+export async function invalidateOrchestratorVersionsOrThrow(versionIds: number[]) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw new Error('orchestrator is not configured');
+  const airs = await versionAirs(versionIds);
+  if (!airs.length) return 0;
+  const etag = await getCurrentLSN();
+  await Promise.all(airs.map((air) => invalidateOrchestratorResource(air, etag)));
+  return airs.length;
+}
+
+/**
+ * The versions' AIRs as derived now. Read them before a write that deletes a version or changes its
+ * AIR kind, and pass them to `bustOrchestratorAirs` after the commit: a bust after the write derives
+ * only the new AIRs, and one before it can be refilled while the write runs. Never throws.
+ */
+export async function getOrchestratorVersionAirs(versionIds: number[]): Promise<string[]> {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return [];
+  return versionAirs(versionIds).catch((error) => {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `reading version AIRs failed: ${(error as Error).message}`,
+      versionIds: versionIds.slice(0, 10),
+    }).catch(() => undefined);
+    return [];
+  });
+}
+
+/** Evicts AIRs read earlier with `getOrchestratorVersionAirs`. Never throws. */
+export async function bustOrchestratorAirs(airs: string[]) {
+  if (!airs.length || !env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+  try {
+    await invalidateAirs(airs);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+    }).catch(() => undefined);
+  }
+}
+
+/** Evicts the file-pinned AIR a scan resolves; the version busts above never reach it. Never throws. */
+export async function bustOrchestratorScannedFileCache(file: ModelFileScanAirInput) {
+  if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
+
+  try {
+    await invalidateAirs([modelFileScanAir(file)]);
+  } catch (error) {
+    logToAxiom({
+      name: 'bust-orchestrator-model-cache',
+      type: 'error',
+      message: `bust failed before invalidating: ${(error as Error).message}`,
+      fileId: file.fileId,
+    }).catch(() => undefined);
+  }
+}
+
+async function invalidateAirs(airs: string[], userId?: number) {
   const etag = await getCurrentLSN();
   const failures: string[] = [];
 

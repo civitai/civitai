@@ -1,10 +1,23 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
+import {
+  isNavigationRequest,
+  parseCookieHeader,
+  spokeReauthResponse,
+  withSetCookies,
+} from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
+import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
+import {
+  clearedSheetCookie,
+  isSheetImagePath,
+  resolveSheetSession,
+  SHEET_COOKIE,
+} from '$lib/server/held-sheet';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -18,8 +31,15 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
-// where there is no cookie). Everything else is gated.
-const PUBLIC_PATHS = new Set(['/favicon.svg']);
+// where there is no cookie) and the sign-in routes. Everything else is gated.
+const SHEET_EXCHANGE_PATH = '/api/held-media/auth/exchange';
+
+const PUBLIC_PATHS = new Set([
+  '/favicon.svg',
+  '/logout',
+  '/api/auth/authorize',
+  '/api/auth/callback',
+]);
 
 /**
  * The `event` string every credential-attribution line carries. One constant so a soak query and the
@@ -75,8 +95,24 @@ function logCredentialAttribution(
   }
 }
 
+// Boot has no session, so no scan can resume here. Releasing this host's dead leases lets runs resume on
+// the next Test sets page load instead of after the lease goes stale.
+export const init: ServerInit = async () => {
+  try {
+    const { releaseLeasesAtBoot } = await import('$lib/server/text-scan-tests/deps');
+    await releaseLeasesAtBoot();
+  } catch (error) {
+    void logAxiomError(error, { event: 'text-scan test run lease release failed' });
+  }
+};
+
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  // The held-media sheet: its code exchange carries no session, and its scoped cookie stands in for
+  // the web session on the image route alone, and only when there is no valid web session. Anywhere
+  // else the cookie is ignored.
+  if (event.url.pathname === SHEET_EXCHANGE_PATH && event.request.method === 'POST')
+    return resolve(event);
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
   // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
   // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified
@@ -101,11 +137,77 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
+  const cookieHeader = event.request.headers.get('cookie') ?? '';
+  const sheetToken = parseCookieHeader(cookieHeader)[SHEET_COOKIE];
+  let webSession: Awaited<ReturnType<typeof guard.check>> | undefined;
+  if (
+    sheetToken !== undefined &&
+    isSheetImagePath(event.url.pathname) &&
+    (event.request.method === 'GET' || event.request.method === 'HEAD')
+  ) {
+    webSession = await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    });
+  }
+  // A signed-in account that may not use this app never falls back to a sheet cookie.
+  if (webSession?.status === 'forbidden') {
+    console.warn('[held-sheet] sheet cookie refused beside a non-moderator session');
+    void logToAxiom({
+      name: 'held-sheet-refused-beside-session',
+      type: 'warning',
+      userId: webSession.user.id,
+    }).catch(() => undefined);
+    return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
+  }
+  if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {
+    // The web session could not be resolved right now, so whether one exists is unknown: answer from
+    // neither, and keep the sheet cookie for when it can be.
+    return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+  }
+  // Only a missing or invalid web session falls back to the sheet. `host-cookie` is a real web
+  // session, so it takes the usual redirect below.
+  if (
+    webSession &&
+    webSession.status !== 'ok' &&
+    (webSession.reason === 'no-session' || webSession.reason === 'invalid')
+  ) {
+    // Two sheet cookies (one set from elsewhere on the domain) answer as an invalid session.
+    // Counted by the parser's own rule: the name before the first '=', trimmed.
+    const sheetCookies = cookieHeader
+      .split(';')
+      .filter((c) => c.includes('=') && c.slice(0, c.indexOf('=')).trim() === SHEET_COOKIE);
+    if (sheetCookies.length > 1)
+      console.warn('[held-sheet] duplicate sheet cookies refused', { count: sheetCookies.length });
+    const user =
+      sheetCookies.length > 1
+        ? null
+        : await resolveSheetSession(sheetToken).catch(() => {
+            console.error('[held-sheet] session lookup failed');
+            return undefined;
+          });
+    if (user === undefined)
+      return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+    if (!user)
+      return new Response(null, {
+        status: 401,
+        headers: { 'cache-control': 'no-store', 'set-cookie': clearedSheetCookie() },
+      });
+    event.locals.user = user;
+    event.locals.heldCredential = 'sheet';
+    applyGrants(await loadPageAccessGrants());
+    event.locals.grants = resolvePermissions(user);
+    return resolve(event);
+  }
+  const result =
+    webSession ??
+    (await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    }));
 
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });
   }
+  if (result.status === 'reauth') return spokeReauthResponse(result.authorize);
   if (result.status === 'forbidden') {
     return new Response(null, { status: 303, headers: { location: NON_MODERATOR_REDIRECT } });
   }
@@ -115,6 +217,14 @@ export const handle: Handle = async ({ event, resolve }) => {
   applyGrants(await loadPageAccessGrants());
   // After applyGrants, never before: the resolver reads the store it just populated.
   event.locals.grants = resolvePermissions(result.user);
+
+  const moved = movedViewTarget(event.url);
+  if (moved) {
+    return withSetCookies(
+      new Response(null, { status: 307, headers: { location: moved } }),
+      result.setCookies
+    );
+  }
 
   // Global role-tier gate — one place covering loads, actions, and endpoints. Keyed on the concrete
   // pathname (not route.id) so a dynamic route like /images/[slug] gates per-slug: /images/csam →
@@ -131,11 +241,15 @@ export const handle: Handle = async ({ event, resolve }) => {
     // Says WHY on arrival. A bare bounce is indistinguishable from the page being broken — it was
     // reported as "bulk image manager tosses you back to dashboard" by a moderator who simply had no
     // grant for it, and there was nothing on screen that could have told them otherwise.
-    const denied = `/?denied=${encodeURIComponent(event.url.pathname)}`;
-    return new Response(null, { status: 303, headers: { location: denied } });
+    // The query string rides along so the dashboard can link back to exactly what was asked for.
+    const denied = `/?denied=${encodeURIComponent(event.url.pathname + event.url.search)}`;
+    return withSetCookies(
+      new Response(null, { status: 303, headers: { location: denied } }),
+      result.setCookies
+    );
   }
 
-  return resolve(event);
+  return withSetCookies(await resolve(event), result.setCookies);
 };
 
 // Without this, an uncaught throw anywhere in a load, action or endpoint is a 500 page and a stack on pod

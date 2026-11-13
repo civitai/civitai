@@ -1,13 +1,20 @@
 import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconInfoCircle, IconSend } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
+
+const SCAN_SETTLED_REFETCH_MS = 3000;
 
 /**
  * On-site listing MEDIA editor (owner) — the icon / cover / screenshot editor body
@@ -154,6 +161,28 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   // would be true for a moderator on one.
   const modDirectLiveEdit = isModerator && !shadowId;
 
+  const assetsQuery = trpc.appListings.getAssets.useQuery(
+    { listingId: editTargetId ?? '' },
+    { enabled: !!editTargetId && !editBlockedReason }
+  );
+  // Read at call time: the step's scan poll keeps the callback it started with, and the
+  // first edit of a live listing moves the edit target to a new shadow mid-poll.
+  const editTargetRef = useRef(editTargetId);
+  editTargetRef.current = editTargetId;
+  const refreshAssetLevels = useCallback(() => {
+    const listingId = editTargetRef.current;
+    if (listingId) void utils.appListings.getAssets.invalidate({ listingId });
+  }, [utils]);
+  // The scan poll reads the primary and the level read a replica, so the first refetch can
+  // land before the level does; the delayed second one is best-effort, not a guarantee.
+  const settledRefetch = useRef<ReturnType<typeof setTimeout>>();
+  const handleScanSettled = useCallback(() => {
+    refreshAssetLevels();
+    clearTimeout(settledRefetch.current);
+    settledRefetch.current = setTimeout(refreshAssetLevels, SCAN_SETTLED_REFETCH_MS);
+  }, [refreshAssetLevels]);
+  useEffect(() => () => clearTimeout(settledRefetch.current), []);
+
   // 3) Re-pull the projected assets after EVERY successful asset mutation.
   //
   // 🔴 The step seeds icon/cover/screenshots in `useState` INITIALISERS only, and the
@@ -168,7 +197,8 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   // the mounted step is never thrown away.
   const handleAssetMutated = useCallback(() => {
     void utils.appListings.getMyListingForApp.invalidate({ appBlockId });
-  }, [utils, appBlockId]);
+    refreshAssetLevels();
+  }, [utils, appBlockId, refreshAssetLevels]);
 
   // Track the asset floor so the submit button matches the server floor gate
   // (icon+cover required; screenshots optional). Submit is deliberately NOT gated on
@@ -183,6 +213,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
   //    shadow EXISTS — i.e. once the owner has actually changed something. With no
   //    edits there is nothing to review (and no shadow id to submit).
   const submitRevision = trpc.appListings.submitListingRevision.useMutation();
+  const termsAccepted = useAppDeveloperTermsAccepted();
   async function handleSubmit() {
     if (!shadowId) return;
     try {
@@ -192,7 +223,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
         title: 'Sent for review',
         message: 'Your image changes go live once a moderator re-approves them.',
       });
-      void router.push('/apps/build');
+      void router.push(MY_APPS_HREF);
     } catch (e) {
       const message = (e as { message?: string }).message ?? 'Failed to submit for review.';
       showErrorNotification({ title: 'Could not submit', error: new Error(message) });
@@ -370,11 +401,39 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               // — see `resolveOwnerScreenshotTarget`. Do NOT add a client path that
               // mutates a screenshot row outside those procs.
               initial={listing.assets}
+              // The edit target's civitai.red overrides, read with the same payload (so the
+              // same settled-before-mount seed as `initial`). Set through `setRedMedia`, which
+              // takes the same revision path as `setIcon` / `setCover`: an owner's first edit of
+              // a live listing opens the revision that "Submit for review" sends.
+              redMedia={listing.redMedia}
               allowRemove
               onAssetMutated={handleAssetMutated}
+              onScanSettled={handleScanSettled}
               onCompletenessChange={handleCompletenessChange}
+              rating={
+                assetsQuery.data && {
+                  declaredRating: listing.declaredContentRating,
+                  listingRating: listing.contentRating,
+                  // Only a never-approved `draft` is re-rated from its declaration on
+                  // approve; every other status keeps its current rating as the floor.
+                  stage: !isApproved
+                    ? listing.status === 'draft'
+                      ? 'not-live'
+                      : 'was-live'
+                    : modDirectLiveEdit
+                    ? 'live-direct'
+                    : 'live-revision',
+                  assets: assetsQuery.data,
+                  mediaSplit: assetsQuery.data.mediaSplitApproved === true,
+                }
+              }
             />
           </div>
+          {assetsQuery.isError && (
+            <Text size="xs" c="dimmed" data-testid="apps-listing-media-ratings-unavailable">
+              Could not load your images’ ratings. Reload the page to see them.
+            </Text>
+          )}
           {/* 🔴 Same discriminator as the notice above, deliberately. For a moderator
               editing the LIVE parent, no edit will ever mint a shadow, so "Change an
               image to stage a revision" is false and `disabled={… || !shadowId}` makes
@@ -382,6 +441,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
               lines above it. There is nothing to submit: their change is already live.
               🔴 Do NOT widen this to `isModerator` — a moderator WITH a shadow has a
               real revision that still needs submitting for re-approval. */}
+          {isApproved && !modDirectLiveEdit && shadowId && <AppDeveloperTermsCheckbox />}
           {isApproved && !modDirectLiveEdit && (
             <Group justify="flex-end" align="center">
               {!shadowId && (
@@ -393,7 +453,7 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
                 onClick={() => void handleSubmit()}
                 loading={submitRevision.isPending}
                 // No shadow ⇒ nothing has changed ⇒ there is no revision to submit.
-                disabled={!meetsFloor || !shadowId}
+                disabled={!meetsFloor || !shadowId || !termsAccepted}
                 leftSection={<IconSend size={16} />}
                 data-testid="apps-listing-media-submit"
               >

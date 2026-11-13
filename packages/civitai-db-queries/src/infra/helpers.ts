@@ -1,9 +1,9 @@
 import { sql } from 'kysely';
 
-// Nested-read helpers. Kysely's Postgres helpers build correlated `jsonb_agg`/`to_jsonb` subqueries whose
+// Nested-read helpers. Kysely's Postgres helpers build correlated `json_agg`/`to_json` subqueries whose
 // result types are INFERRED from the subquery — the Kysely equivalent of a Prisma `include`, with the return
 // type derived automatically (no hand-authored selector/GetPayload type). Postgres (node-postgres) parses the
-// jsonb result to JS objects on its own, so no result-parsing plugin is needed. Note: dates/bigints inside the
+// json result to JS objects on its own, so no result-parsing plugin is needed. Note: dates/bigints inside the
 // nested json come back as STRINGS (JSON serialization) — parse per-field where a Date/bigint is needed.
 export { jsonArrayFrom, jsonObjectFrom, jsonBuildObject } from 'kysely/helpers/postgres';
 

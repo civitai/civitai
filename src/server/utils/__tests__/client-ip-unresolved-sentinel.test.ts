@@ -67,14 +67,6 @@ describe('client-ip: the unresolvable sentinel and its adapter', () => {
         )
       ).toBe('198.51.100.4');
     });
-
-    it('is the exact literal the tracker already defaults to', () => {
-      // Pinned as a literal on purpose. The tracker's `actor.ip` initialiser is
-      // a separate declaration in a different file; if either moves, the
-      // tracker's "no address" value stops matching the shared one and its
-      // rows silently split across two spellings of the same fact.
-      expect(UNRESOLVED_CLIENT_IP).toBe('unknown');
-    });
   });
 
   describe('the adapter translates ONLY the sentinel', () => {

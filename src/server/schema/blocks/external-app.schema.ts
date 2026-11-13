@@ -19,9 +19,7 @@
 /** Max length for a stored external URL (defensive bound; well above any real URL). */
 export const MAX_EXTERNAL_URL_LENGTH = 2048;
 
-export type ExternalUrlValidation =
-  | { ok: true; url: string }
-  | { ok: false; error: string };
+export type ExternalUrlValidation = { ok: true; url: string } | { ok: false; error: string };
 
 /**
  * Validate a candidate external-link URL. Returns the parsed (whitespace-trimmed)
@@ -193,6 +191,60 @@ export function validateRepositoryUrl(raw: unknown): ExternalUrlValidation {
   return { ok: true, url: `https://${host}/${owner}/${repo}` };
 }
 
+// ---------------------------------------------------------------------------
+// ISSUE TRACKER URL — the optional "report a bug / get support" link on a store
+// listing (`app_listings.issue_tracker_url`; manifest key `bugs`).
+// ---------------------------------------------------------------------------
+
+/**
+ * Max length of a stored issue-tracker URL. The same bound as the source link: both are one
+ * labelled row on the store page. Applied BEFORE delegating to {@link validateExternalUrl},
+ * whose bound is ten times looser and would otherwise decide first.
+ */
+export const MAX_ISSUE_TRACKER_URL_LENGTH = 200;
+
+/**
+ * Validate + normalise a public issue-tracker / support URL.
+ *
+ * ANY HOST, unlike {@link validateRepositoryUrl}: a project may track issues on its forge, on
+ * its own site or on a support desk, so there is no allowlist to keep. What is bounded is the
+ * shape: `https://` only (so no `mailto:`, `http:` or `javascript:`), a host, no embedded
+ * credentials (all three inherited from {@link validateExternalUrl}), no port, and at most
+ * {@link MAX_ISSUE_TRACKER_URL_LENGTH} characters. The store renders it with
+ * `rel="noopener noreferrer nofollow ugc"` because the destination is author-chosen.
+ *
+ * Returns the WHATWG-serialised URL, so two spellings of one URL compare equal in the material
+ * change check.
+ */
+export function validateIssueTrackerUrl(raw: unknown): ExternalUrlValidation {
+  if (typeof raw !== 'string') return { ok: false, error: 'issueTrackerUrl must be a string' };
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return { ok: false, error: 'issueTrackerUrl must not be empty' };
+  if (trimmed.length > MAX_ISSUE_TRACKER_URL_LENGTH) {
+    return {
+      ok: false,
+      error: `issueTrackerUrl must be ≤ ${MAX_ISSUE_TRACKER_URL_LENGTH} chars`,
+    };
+  }
+  const base = validateExternalUrl(trimmed);
+  if (!base.ok) return { ok: false, error: base.error.replace('externalUrl', 'issueTrackerUrl') };
+  let parsed: URL;
+  try {
+    parsed = new URL(base.url);
+  } catch {
+    return { ok: false, error: `issueTrackerUrl "${trimmed}" is not a valid absolute URL` };
+  }
+  if (parsed.port) return { ok: false, error: 'issueTrackerUrl must not specify a port' };
+  // The serialised form can be longer than the input (percent-encoding), so bound it again.
+  if (parsed.toString().length > MAX_ISSUE_TRACKER_URL_LENGTH) {
+    return {
+      ok: false,
+      error: `issueTrackerUrl must be ≤ ${MAX_ISSUE_TRACKER_URL_LENGTH} chars`,
+    };
+  }
+  return { ok: true, url: parsed.toString() };
+}
+
 /**
  * Minimal manifest shape an external-link registration may carry. An external
  * app is a pure listing, so the only honoured fields are display metadata. A
@@ -209,16 +261,16 @@ export type ExternalAppManifestInput = {
   iframe?: unknown;
 };
 
-export type ExternalManifestValidation =
-  | { ok: true }
-  | { ok: false; error: string };
+export type ExternalManifestValidation = { ok: true } | { ok: false; error: string };
 
 /**
  * Assert a manifest does NOT declare any on-platform hosting surface. Used at
  * external-app registration: an external app links OUT, so a page / iframe /
  * target slot is a contradiction.
  */
-export function assertNoOnPlatformSurface(manifest: ExternalAppManifestInput): ExternalManifestValidation {
+export function assertNoOnPlatformSurface(
+  manifest: ExternalAppManifestInput
+): ExternalManifestValidation {
   const page = manifest.page;
   if (page && typeof page === 'object') {
     return {

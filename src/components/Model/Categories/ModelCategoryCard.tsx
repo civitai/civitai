@@ -4,14 +4,13 @@ import {
   Badge,
   Box,
   Group,
-  HoverCard,
   Indicator,
   LoadingOverlay,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
 } from '@mantine/core';
+import { HoverCard, Menu } from '~/components/MantineOverlays';
 import { CollectionType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
@@ -222,7 +221,7 @@ function ModelCategoryCardContent({
       ...[
         {
           key: 'hide-model',
-          component: <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
+          component: <HideModelButton key="hide-model" as="menu-item" model={data} />,
         },
         {
           key: 'hide-button',

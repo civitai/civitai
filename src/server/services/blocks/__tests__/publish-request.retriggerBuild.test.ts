@@ -35,6 +35,7 @@ const {
   mockSetCommitStatus,
   mockRedis,
   limiter,
+  mockAttemptCreateMany,
 } = vi.hoisted(() => {
   const mockRedis = { nxResult: true, nxThrows: false, quotaAllowed: true };
   return {
@@ -51,6 +52,8 @@ const {
       name: 'pipelinerun-1',
     })),
     mockSetCommitStatus: vi.fn(async () => undefined),
+    // The build-attempts table: the trigger-time row the stale-run guard keys on.
+    mockAttemptCreateMany: vi.fn(async () => ({ id: 1 })),
     limiter: {
       acquire: vi.fn(async () => mockRedis.nxResult),
       release: vi.fn(async () => undefined),
@@ -67,6 +70,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: {
     appBlockPublishRequest: { findUnique: mockDbWriteFindUnique, updateMany: mockUpdateMany },
+    appBlockBuildAttempt: { create: mockAttemptCreateMany },
   },
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
@@ -603,7 +607,9 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
   });
 
   it('stores the FIXED author-facing message — identical whatever was thrown', async () => {
-    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import('../publish-request.service');
+    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import(
+      '~/shared/constants/app-block-deploy.constants'
+    );
 
     mockTriggerBuild.mockRejectedValue(new Error(`trigger 502 Bad Gateway: ${RECEIVER_BODY}`));
     await expectRejectCode(callRetrigger(), 'TRIGGER_FAILED');
@@ -619,7 +625,9 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
   });
 
   it('the stored detail survives sanitizeBuildFailureReason unchanged (the invariant)', async () => {
-    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import('../publish-request.service');
+    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import(
+      '~/shared/constants/app-block-deploy.constants'
+    );
     const { sanitizeBuildFailureReason } = await import('../build-failure-reason');
     // The value is written THROUGH the sanitizer, so the stored bytes are
     // guaranteed printable + bounded like every other deploy_detail write.
@@ -639,24 +647,47 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
     expect(failure?.description ?? '').not.toContain('SENTINEL-TRACE-A1');
     expect(failure?.description ?? '').not.toContain('SENTINEL-INTERNAL-B2');
   });
+});
 
-  it('logs the INTERNAL detail server-side so the failure is still diagnosable', async () => {
-    const { logToAxiom } = await import('~/server/logging/client');
-    mockTriggerBuild.mockRejectedValue(
-      new Error(`trigger 500 Internal Server Error: ${RECEIVER_BODY}`)
-    );
-    await expectRejectCode(callRetrigger(), 'TRIGGER_FAILED');
-    // The dynamic import + `.then` chain resolves on a later microtask tick.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'app-block-retrigger-failed',
-        details: expect.objectContaining({
+describe('retriggerBuild — records the run it started, for the stale-run guard', () => {
+  it('writes a triggered row with the returned run name BEFORE the building write', async () => {
+    mockTriggerBuild.mockResolvedValue({ name: 'app-blocks-my-app-aaaaaaaa-222222' });
+    await callRetrigger({ deployState: 'failed', deployUpdatedAt: new Date() });
+    expect(mockAttemptCreateMany).toHaveBeenCalledTimes(1);
+    expect(mockAttemptCreateMany.mock.calls[0]).toEqual([
+      {
+        data: {
           publishRequestId: REQ_ID,
-          error: expect.stringContaining(RECEIVER_BODY),
-        }),
-      }),
-      'app-blocks'
+          slug: 'my-app',
+          sha: SHA,
+          runId: 'app-blocks-my-app-aaaaaaaa-222222',
+          mode: 'build',
+          status: 'triggered',
+          failedStep: null,
+          failedReason: null,
+          failureClass: null,
+        },
+        select: { id: true },
+      },
+    ]);
+    // Ordering: once the row reads 'building', the new run must already be the latest.
+    const buildingCall = mockUpdateMany.mock.calls.findIndex(
+      (c) => (c[0] as { data: { deployState: string } }).data.deployState === 'building'
     );
+    expect(mockAttemptCreateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpdateMany.mock.invocationCallOrder[buildingCall]
+    );
+  });
+
+  it('a missing attempts table does not fail the retrigger', async () => {
+    mockAttemptCreateMany.mockRejectedValueOnce(new Error('relation does not exist'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await expect(
+      callRetrigger({ deployState: 'failed', deployUpdatedAt: new Date() })
+    ).resolves.toMatchObject({
+      publishRequestId: REQ_ID,
+    });
+    expect(deployWrites().map((w) => w.state)).toEqual(['building']);
+    warn.mockRestore();
   });
 });

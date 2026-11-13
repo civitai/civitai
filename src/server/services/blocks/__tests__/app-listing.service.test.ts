@@ -48,23 +48,47 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
+// The Official-badge reads, as PASS-THROUGH spies: every test gets the real reader unless it
+// overrides one call, and a test can identify the read by FUNCTION REFERENCE rather than by
+// the SQL text it happens to contain.
+vi.mock('~/server/services/blocks/app-listing-official.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof OfficialService>();
+  return {
+    ...actual,
+    readListingOfficialForRender: vi.fn(actual.readListingOfficialForRender),
+    readListingOfficialManyForRender: vi.fn(actual.readListingOfficialManyForRender),
+  };
+});
+
 import fs from 'fs';
 import path from 'path';
+import type * as OfficialService from '~/server/services/blocks/app-listing-official.service';
+import {
+  readListingOfficialForRender,
+  readListingOfficialManyForRender,
+} from '~/server/services/blocks/app-listing-official.service';
 import {
   decodeListingCursor,
   encodeListingCursor,
+  getListingCard,
   getListingDetail,
+  LISTING_CURSOR_VERSION,
   getListingPreviewForReview,
+  listAllListingsForModeration,
   listAvailableListings,
   listingHydrateSelect,
   moderationStatusWhere,
   projectListingCard,
   projectListingDetail,
+  projectModerationListing,
   recommendRollup,
 } from '../app-listing.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
+import { SFW_PUBLIC_MEDIA } from '~/server/services/blocks/listing-media-audience';
 
 const SEP = String.fromCharCode(31);
+/** The version field every current cursor starts with. */
+const VER = `${LISTING_CURSOR_VERSION}${SEP}`;
 
 /** Reconstruct the SQL string Prisma received (single Prisma.Sql arg). */
 function capturedSql(): string {
@@ -81,6 +105,21 @@ function capturedValues(): unknown[] {
 }
 
 /** A fully-hydrated onsite listing row (as `listingHydrateSelect` returns). */
+/** A listing image as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
+function scannedPgImage(url: string) {
+  return {
+    url,
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+  };
+}
+
 function hydratedRow(over: Record<string, unknown> = {}) {
   return {
     id: 'apl_1',
@@ -96,8 +135,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     externalUrl: null,
     connectClientId: null,
     appBlockId: 'ab_1',
-    icon: { url: 'icon-key' },
-    cover: { url: 'cover-key' },
+    // Scanned, unflagged, PG — what a live listing's media is. The per-image store gate
+    // (`listing-media-audience`) hides anything else, which its own suites cover.
+    icon: scannedPgImage('icon-key'),
+    cover: scannedPgImage('cover-key'),
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
     // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
@@ -127,7 +168,7 @@ function hydratedRow(over: Record<string, unknown> = {}) {
         settings: { apiKey: 'super-secret' },
       },
     },
-    screenshots: [{ caption: 'first shot', image: { url: 'shot-0' } }],
+    screenshots: [{ caption: 'first shot', image: scannedPgImage('shot-0') }],
     ...over,
   };
 }
@@ -156,6 +197,23 @@ describe('recommendRollup', () => {
 
   it('recommendPct is null (not 0) when there are zero reviews', () => {
     expect(recommendRollup({ thumbsUpCount: 0, thumbsDownCount: 0 }).recommendPct).toBeNull();
+  });
+
+  // One review used to read "100% recommend (1)". Below the threshold the counts still
+  // travel; only the percentage is withheld.
+  it('withholds the percentage below LISTING_RECOMMEND_PCT_MIN_REVIEWS (4 up / 0 down)', () => {
+    expect(recommendRollup({ thumbsUpCount: 4, thumbsDownCount: 0 })).toEqual({
+      recommendedCount: 4,
+      notRecommendedCount: 0,
+      recommendPct: null,
+    });
+    // Counted across both buckets, not just the positive one.
+    expect(recommendRollup({ thumbsUpCount: 1, thumbsDownCount: 3 }).recommendPct).toBeNull();
+  });
+
+  it('returns the percentage from the threshold on (5 up / 0 down → 1; 3 up / 2 down → 0.6)', () => {
+    expect(recommendRollup({ thumbsUpCount: 5, thumbsDownCount: 0 }).recommendPct).toBe(1);
+    expect(recommendRollup({ thumbsUpCount: 3, thumbsDownCount: 2 }).recommendPct).toBe(0.6);
   });
 });
 
@@ -210,11 +268,37 @@ describe('cursor encode/decode', () => {
       cursorMean: null,
     });
     // Large-negative mean, encoded raw (also out of range → dropped).
-    const neg = Buffer.from(`000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
+    const neg = Buffer.from(`${VER}000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
     expect(decodeListingCursor(neg).cursorMean).toBeNull();
     // A boundary in-range mean (0 and 1) is KEPT.
     expect(decodeListingCursor(encodeListingCursor('k', 'id', 0)).cursorMean).toBe(0);
     expect(decodeListingCursor(encodeListingCursor('k', 'id', 1)).cursorMean).toBe(1);
+  });
+
+  /**
+   * 🔴 A cursor minted under another sort-key encoding must NOT be compared: the raw key it
+   * carries has another shape, so the keyset would skip or repeat rows. During a rollout
+   * both versions serve the store, so this is a live path, and the safe answer is page 1.
+   */
+  it('🔴 an UN-VERSIONED (pre-version) cursor decodes to first-page, not a keyset', () => {
+    const old = (body: string) => Buffer.from(body, 'utf8').toString('base64url');
+    const FIRST_PAGE = { cursorSortKey: null, cursorId: null, cursorMean: null };
+    expect(decodeListingCursor(old(`00000000000000000030${SEP}apl_B`))).toEqual(FIRST_PAGE);
+    expect(decodeListingCursor(old(`000000900${SEP}apl_2${SEP}0.72`))).toEqual(FIRST_PAGE);
+    // Another version marker is treated the same way.
+    expect(decodeListingCursor(old(`v1${SEP}000000900${SEP}apl_2`))).toEqual(FIRST_PAGE);
+    // Control: the same body WITH the current version decodes to its keyset.
+    expect(decodeListingCursor(old(`${VER}000000900${SEP}apl_2`))).toEqual({
+      cursorSortKey: '000000900',
+      cursorId: 'apl_2',
+      cursorMean: null,
+    });
+  });
+
+  it('a current cursor carries the version and round-trips', () => {
+    const c = encodeListingCursor('0000000005', 'apl_9');
+    expect(Buffer.from(c, 'base64url').toString('utf8').startsWith(VER)).toBe(true);
+    expect(decodeListingCursor(c).cursorSortKey).toBe('0000000005');
   });
 });
 
@@ -235,6 +319,9 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         // that field's presence and this list asserts its absence, which is the pair that
         // pins the split.
         'isBeta',
+        // The MODERATOR-SET provenance badge ("made by Civitai"). Card AND detail; stripped
+        // from the public REST responses (`withoutUndocumentedRestFields`).
+        'isOfficial',
         'kind',
         'kindData',
         'name',
@@ -244,9 +331,14 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         // `number | null`, and the null-vs-zero suite below pins which is which.
         'openCount',
         'recommend',
+        // 🔴 VIEWER-SCOPED and DERIVED — never the raw `visibility` column, which stays off
+        // every public DTO. `null` unless the caller derived it for this viewer.
+        'restrictedAudience',
         'reviewCount',
         'slug',
         'tagline',
+        // The card's "Updated …" line: the same public value the detail DTO carries.
+        'updatedAt',
       ].sort()
     );
     expect(card).not.toHaveProperty('status');
@@ -457,24 +549,38 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'coverUrl',
         'creator',
         'description',
+        // Fork opt-in + provenance. `forkOf` is viewer-scoped: the parent's name/slug are
+        // present only when this viewer may open the parent (see `ListingDetail.forkOf`).
+        'forkOf',
+        'forkable',
         'iconUrl',
         'id',
+        // 🔴 DETAIL-ONLY, like `sourceRepoUrl`: the issue-tracker / support link. Present as
+        // `null` from the projection (the no-type column is read by the callers, not on `row`).
+        'issueTrackerUrl',
         // 🔴 The two fields added for the store-detail header. Both are in the
         // ALLOWLIST deliberately (see their docstrings on `ListingDetail`):
         // `installCount` is the very column the public `popular` sort already orders
         // every approved listing by, and `updatedAt` is the direct analogue of the
         // model page's public `Updated: <date>` line.
         'installCount',
+        // The store card's play count, from the same projection (`cardOpenCount`), so the
+        // detail page's "Plays" and the card can never show different numbers.
+        'openCount',
         // 🔴 The author-declared beta pair. `isBeta` is also on the CARD (a badge); the
         // free-text `betaMessage` is DETAIL-ONLY, for the same reason `sourceRepoUrl` is —
         // a grid tile has no room for a sentence. The card allowlist above asserts the
         // note's absence.
         'betaMessage',
         'isBeta',
+        'isOfficial',
         'kind',
         'kindData',
         'name',
         'recommend',
+        // 🔴 VIEWER-SCOPED and DERIVED — never the raw `visibility` column, which stays off
+        // every public DTO. `null` unless the caller derived it for this viewer.
+        'restrictedAudience',
         'reviewCount',
         // 🔴 DETAIL-ONLY BY DECISION, like `sourceRepoUrl` — the card allowlist above
         // asserts its ABSENCE. The pre-launch permission disclosure: the app's APPROVED
@@ -494,6 +600,7 @@ describe('projectListingDetail — public allowlist + gallery', () => {
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
+    expect(detail.issueTrackerUrl).toBeNull();
     expect(detail.description).toBe('# Cool app\n\nbody');
     // The integer surrogate is surfaced for the CommentsV2 thread key.
     expect(detail.serialId).toBe(101);
@@ -572,9 +679,8 @@ describe('projectListingDetail — public allowlist + gallery', () => {
    * PRE-LAUNCH PERMISSION DISCLOSURE (`ListingDetail.scopes`).
    *
    * 🔴 THE GATING HALF of this change. The sibling browser test renders the section,
-   * but the `component` project is report-only in CI and cannot block a merge; these
-   * assertions run in the blocking node project and are what actually hold the
-   * source-of-truth decision in place.
+   * and these assertions, in the node project, hold the source-of-truth decision in
+   * place.
    *
    * 🔴 The claim is about WHICH COLUMN feeds the disclosure, not merely that a
    * `scopes` key exists. `hydratedRow`'s `approvedScopes` and `manifest.scopes` are
@@ -725,9 +831,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
   it('the gallery excludes screenshots whose backing Image is gone (null image)', () => {
     const row = hydratedRow({
       screenshots: [
-        { caption: 'a', image: { url: 's0' } },
+        { caption: 'a', image: scannedPgImage('s0') },
         { caption: 'b', image: null },
-        { caption: 'c', image: { url: 's2' } },
+        { caption: 'c', image: scannedPgImage('s2') },
       ],
     });
     const detail = projectListingDetail(row as never);
@@ -786,8 +892,12 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedSql()).toMatch(/content_rating.*NOT IN \('r', 'x'\)/i);
   });
 
-  it('maturity gate is a no-op (TRUE) on a red-capable host', async () => {
-    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 }, { redCapable: true });
+  // R and X also need their own browsing-level bits now; PG|PG13|R|X (15) allows both.
+  it('maturity gate is a no-op (TRUE) on a red-capable host for a viewer with R and X', async () => {
+    await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      { redCapable: true, viewerBrowsingLevel: 15 }
+    );
     expect(capturedSql()).not.toMatch(/content_rating.*NOT IN/i);
   });
 
@@ -868,7 +978,7 @@ describe('listAvailableListings — query building + pagination', () => {
     // The cursor is the LAST returned row's (sortKey, id) — carries the sort key,
     // not just the id, so a paged scan over tied sort values is stable.
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
-    expect(decoded).toBe(`20260101000000000001${SEP}apl_1`);
+    expect(decoded).toBe(`${VER}20260101000000000001${SEP}apl_1`);
   });
 
   it('no nextCursor when the result fits in one page', async () => {
@@ -897,15 +1007,19 @@ describe('listAvailableListings — query building + pagination', () => {
       limit: 2,
     });
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
-    expect(decoded).toBe(`000000790${SEP}apl_1${SEP}0.8`);
+    expect(decoded).toBe(`${VER}000000790${SEP}apl_1${SEP}0.8`);
   });
 
   it('sort=top-rated with a pinned-mean cursor REUSES it (no global-mean re-read)', async () => {
-    const cursor = Buffer.from(`000000250${SEP}apl_5${SEP}0.25`, 'utf8').toString('base64url');
+    const cursor = Buffer.from(`${VER}000000250${SEP}apl_5${SEP}0.25`, 'utf8').toString(
+      'base64url'
+    );
     // ONLY the id-page query is queued — if the service re-read the mean it would
     // consume this and the id page would get [].
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 'apl_9', sort_key: '000000240' }]);
     mockDbRead.appListing.findMany.mockResolvedValueOnce([hydratedRow({ id: 'apl_9' })]);
+    vi.mocked(readListingOfficialManyForRender).mockClear();
+    vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set());
     const { items } = await listAvailableListings({
       kind: 'all',
       sort: 'top-rated',
@@ -913,10 +1027,18 @@ describe('listAvailableListings — query building + pagination', () => {
       limit: 20,
     });
     expect(items).toHaveLength(1);
-    // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped.
+    // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped. (The
+    // restricted-audience level read is also a `$queryRaw`, but it is skipped for this
+    // anonymous, `public`-floor call because it could disclose nothing.) The Official-badge
+    // batch read is answered by its spy for this one call (see the `mockResolvedValueOnce`
+    // above), so it issues no `$queryRaw` and the count stays exact; it is pinned by reference.
     expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(readListingOfficialManyForRender)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual(['apl_9']);
+    const idPage = mockDbRead.$queryRaw.mock.calls[0]?.[0] as { sql: string; values: unknown[] };
+    expect(idPage.sql).toContain('sort_key');
     // The pinned mean 0.25 is bound into the Bayesian key (C*m term).
-    expect(capturedValues()).toContain(0.25);
+    expect(idPage.values).toContain(0.25);
   });
 
   it('sort=top-rated with a crafted out-of-range mean cursor does NOT 500', async () => {
@@ -935,7 +1057,7 @@ describe('listAvailableListings — query building + pagination', () => {
     expect(capturedValues()).toContain(0.8);
 
     // Also large-negative, via a raw-built cursor.
-    const neg = Buffer.from(`000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
+    const neg = Buffer.from(`${VER}000000900${SEP}apl_2${SEP}-1e300`, 'utf8').toString('base64url');
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ mean: 0.5 }]);
     mockDbRead.$queryRaw.mockResolvedValueOnce([]);
     await expect(
@@ -1080,7 +1202,8 @@ describe('getListingDetail — approved-only + maturity gate', () => {
     });
     const detail = await getListingDetail(
       { slug: 'cool-app' },
-      { redCapable: true, scope: 'full' }
+      // An X listing also needs X in the viewer's browsing level (PG|PG13|R|X).
+      { redCapable: true, scope: 'full', viewerBrowsingLevel: 15 }
     );
     expect(detail?.contentRating).toBe('x');
   });
@@ -1521,6 +1644,222 @@ describe('the beta projections — flag, note, and the stale-note rule', () => {
   });
 });
 
+describe('the Official flag — card + detail DTOs', () => {
+  /** A `$queryRaw` that answers the keyset id page with `idPage` and every other raw query with
+   *  no rows. The Official read is answered through its spy, never by matching SQL text. */
+  function rawIdPage(idPage: unknown[] = []) {
+    return async (q: unknown) => {
+      const sql = (q as { sql?: string } | undefined)?.sql ?? '';
+      return /al\.status\s*=\s*'approved'/.test(sql) ? idPage : [];
+    };
+  }
+
+  beforeEach(() => {
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockDbRead.appListing.findMany.mockReset();
+    mockDbRead.appListing.findMany.mockResolvedValue([]);
+    mockDbRead.appListing.findFirst.mockReset();
+  });
+
+  it('projects true onto the CARD and the DETAIL when passed, false by default', () => {
+    expect(
+      projectListingCard(hydratedRow() as never, undefined, null, SFW_PUBLIC_MEDIA, true).isOfficial
+    ).toBe(true);
+    expect(projectListingCard(hydratedRow() as never).isOfficial).toBe(false);
+    const detail = projectListingDetail(
+      hydratedRow() as never,
+      [],
+      null,
+      undefined,
+      null,
+      null,
+      SFW_PUBLIC_MEDIA,
+      true
+    );
+    expect(detail.isOfficial).toBe(true);
+    expect(projectListingDetail(hydratedRow() as never).isOfficial).toBe(false);
+  });
+
+  it('projects true / false onto the MODERATION row', () => {
+    const modRow = {
+      ...hydratedRow(),
+      status: 'approved',
+      user: { id: 7, username: 'dev', image: null },
+      metric: { installCount: 0, thumbsUpCount: 0, thumbsDownCount: 0 },
+      publishRequests: [],
+    };
+    expect(projectModerationListing(modRow as never, new Set(), undefined, true).isOfficial).toBe(
+      true
+    );
+    expect(projectModerationListing(modRow as never).isOfficial).toBe(false);
+  });
+
+  it('the /apps grid marks exactly the listings the Official read returns', async () => {
+    mockDbRead.$queryRaw.mockImplementation(
+      rawIdPage([
+        { id: 'apl_off', sort_key: 'k0' },
+        { id: 'apl_plain', sort_key: 'k1' },
+      ])
+    );
+    vi.mocked(readListingOfficialManyForRender).mockClear();
+    vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set(['apl_off']));
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      hydratedRow({ id: 'apl_off', slug: 'off-app' }),
+      hydratedRow({ id: 'apl_plain', slug: 'plain-app' }),
+    ]);
+    const { items } = await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      { scope: 'full' }
+    );
+    expect(items).toHaveLength(2);
+    expect(
+      (items as Array<{ id: string; isOfficial?: boolean }>).map((c) => [c.id, c.isOfficial])
+    ).toEqual([
+      ['apl_off', true],
+      ['apl_plain', false],
+    ]);
+    expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual([
+      'apl_off',
+      'apl_plain',
+    ]);
+  });
+
+  it('the detail read carries true when the Official read says so, false when it does not', async () => {
+    vi.mocked(readListingOfficialForRender).mockClear();
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(true);
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    expect((await getListingDetail({ slug: 'cool-app' }, { scope: 'full' }))?.isOfficial).toBe(
+      true
+    );
+    expect(vi.mocked(readListingOfficialForRender).mock.calls[0][0]).toBe('apl_1');
+
+    // The real reader this time, over a raw client that returns no rows.
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    expect((await getListingDetail({ slug: 'cool-app' }, { scope: 'full' }))?.isOfficial).toBe(
+      false
+    );
+  });
+
+  it('a failing Official read degrades to false instead of failing the page', async () => {
+    // The REAL render reader, handed a client whose query fails — so the degrade path inside
+    // the seam runs, rather than a stub that returns `false` by fiat.
+    const actual = await vi.importActual<typeof OfficialService>(
+      '~/server/services/blocks/app-listing-official.service'
+    );
+    const outage = Object.assign(new Error('boom'), { code: '57014' });
+    vi.mocked(readListingOfficialForRender).mockImplementationOnce((id) =>
+      actual.readListingOfficialForRender(id, { $queryRaw: async () => Promise.reject(outage) })
+    );
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+    expect(detail?.id).toBe('apl_1');
+    expect(detail?.isOfficial).toBe(false);
+  });
+
+  it('the moderation table marks exactly the rows the Official read returns', async () => {
+    // Off-site rows, so the on-site pending-request lookup (not mocked here) is skipped.
+    const modRow = (id: string, slug: string) => ({
+      ...hydratedRow({ id, slug, kind: 'offsite' }),
+      status: 'approved',
+      user: { id: 7, username: 'dev', image: null },
+      metric: { installCount: 0, thumbsUpCount: 0, thumbsDownCount: 0 },
+      publishRequests: [],
+    });
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      modRow('apl_mod_off', 'mod-off-app'),
+      modRow('apl_mod_plain', 'mod-plain-app'),
+    ]);
+    vi.mocked(readListingOfficialManyForRender).mockClear();
+    vi.mocked(readListingOfficialManyForRender).mockResolvedValueOnce(new Set(['apl_mod_off']));
+    const { items } = await listAllListingsForModeration({ limit: 25 });
+    expect(items).toHaveLength(2);
+    expect(items.map((r) => [r.id, r.isOfficial])).toEqual([
+      ['apl_mod_off', true],
+      ['apl_mod_plain', false],
+    ]);
+    expect(vi.mocked(readListingOfficialManyForRender).mock.calls[0][0]).toEqual([
+      'apl_mod_off',
+      'apl_mod_plain',
+    ]);
+  });
+
+  it('the single card read carries the flag for ITS listing only', async () => {
+    // Answered by id, so a read keyed on anything but this row's id gets the wrong answer.
+    // Queued one call at a time, right before the call that consumes it, so a failing
+    // assertion cannot leave a queued answer behind for a later test.
+    const byId = async (id: string) => id === 'apl_card_off';
+    vi.mocked(readListingOfficialForRender).mockClear();
+
+    vi.mocked(readListingOfficialForRender).mockImplementationOnce(byId);
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...hydratedRow({ id: 'apl_card_off', slug: 'card-off-app' }),
+      status: 'approved',
+    });
+    const official = await getListingCard({ slug: 'card-off-app' }, { scope: 'full' });
+    expect(official?.id).toBe('apl_card_off');
+    expect(official?.isOfficial).toBe(true);
+
+    vi.mocked(readListingOfficialForRender).mockImplementationOnce(byId);
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...hydratedRow({ id: 'apl_card_plain', slug: 'card-plain-app' }),
+      status: 'approved',
+    });
+    const plain = await getListingCard({ slug: 'card-plain-app' }, { scope: 'full' });
+    expect(plain?.id).toBe('apl_card_plain');
+    expect(plain?.isOfficial).toBe(false);
+
+    expect(vi.mocked(readListingOfficialForRender).mock.calls.map((c) => c[0])).toEqual([
+      'apl_card_off',
+      'apl_card_plain',
+    ]);
+  });
+});
+
+describe('getListingPreviewForReview carries the Official flag — keyed on the PARENT', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findUnique.mockReset();
+    vi.mocked(readListingOfficialForRender).mockClear();
+  });
+
+  it('an Official listing previews WITH the flag on both the card and the detail', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_live_off',
+      revisionOfId: null,
+    });
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(true);
+    const res = await getListingPreviewForReview({ listingId: 'apl_live_off' });
+    expect(res!.card.isOfficial).toBe(true);
+    expect(res!.detail.isOfficial).toBe(true);
+    expect(vi.mocked(readListingOfficialForRender).mock.calls[0][0]).toBe('apl_live_off');
+  });
+
+  it('a shadow revision reads the flag from its PARENT (the only row the write targets)', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_shadow_off',
+      revisionOfId: 'apl_parent_off',
+    });
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(true);
+    const res = await getListingPreviewForReview({ listingId: 'apl_shadow_off' });
+    expect(vi.mocked(readListingOfficialForRender).mock.calls[0][0]).toBe('apl_parent_off');
+    expect(res!.card.isOfficial).toBe(true);
+  });
+
+  it('a listing that is not Official previews without it', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_live_plain',
+      revisionOfId: null,
+    });
+    vi.mocked(readListingOfficialForRender).mockResolvedValueOnce(false);
+    const res = await getListingPreviewForReview({ listingId: 'apl_live_plain' });
+    expect(res!.card.isOfficial).toBe(false);
+    expect(res!.detail.isOfficial).toBe(false);
+  });
+});
+
 describe('🔴 getListingPreviewForReview reads beta from the PARENT for a shadow', () => {
   /**
    * 🔴 THIS IS THE MECHANISM THAT REPLACED THE CLONE, so it is the thing that must not
@@ -1607,5 +1946,34 @@ describe('🔴 getListingPreviewForReview reads beta from the PARENT for a shado
     expect(res!.card.isBeta).toBe(true);
     expect(res!.detail.isBeta).toBe(true);
     expect(res!.detail.betaMessage).toBe('reviewer sees this');
+  });
+});
+
+describe('🔴 the detail page and the store card show the SAME play count', () => {
+  // installs and plays pairwise distinct, so a detail reading installs shows the wrong one.
+  const metric = { thumbsUpCount: 9, thumbsDownCount: 1, installCount: 4213, openCount: 2718 };
+
+  it("on-site: detail.openCount is the card's number, not installs", () => {
+    const row = hydratedRow({ metric }) as never;
+    expect(projectListingDetail(row).openCount).toBe(2718);
+    expect(projectListingDetail(row).openCount).toBe(projectListingCard(row).openCount);
+  });
+
+  it('off-site: both are null (unmeasurable), never the column default 0', () => {
+    const row = hydratedRow({
+      kind: 'offsite',
+      appBlockId: null,
+      externalUrl: 'https://x.example',
+      metric: { ...metric, openCount: 0 },
+    }) as never;
+    expect(projectListingDetail(row).openCount).toBeNull();
+    expect(projectListingCard(row).openCount).toBeNull();
+  });
+
+  it("the card carries the listing row's update time, as ISO-8601", () => {
+    const card = projectListingCard(
+      hydratedRow({ updatedAt: new Date('2026-05-06T07:08:09.000Z') }) as never
+    );
+    expect(card.updatedAt).toBe('2026-05-06T07:08:09.000Z');
   });
 });

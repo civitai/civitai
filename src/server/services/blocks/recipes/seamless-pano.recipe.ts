@@ -17,8 +17,7 @@ import type { BlockRecipe, ComfyGraph, CustomComfyStepInput } from './index';
 // snapshot, no layer-AIR cache. The SDXL conv-wrap engine (the nodepack-snapshot
 // path) is deferred (plan R4).
 //
-// INERT/DARK: nothing in this module is wired into the live blocks.router submit
-// / estimate path yet. PR6 (router + post-paid budget belt) is what calls it.
+// LIVE: registered in `recipes/index.ts`, which the blocks.router customComfy submit resolves.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The DiT engine variants this recipe exposes (v1 = DiT only, no SDXL). */
@@ -72,8 +71,9 @@ export const ZIMAGE_DIFFUSION_AIR =
   'urn:air:zimageturbo:diffusion_model:huggingface:Comfy-Org/z_image_turbo@main/split_files/diffusion_models/z_image_turbo_bf16.safetensors';
 export const ZIMAGE_CLIP_AIR =
   'urn:air:qwen:clip:huggingface:Comfy-Org/z_image_turbo@main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors';
+// Pinned to a revision: Apache-2.0, published with Z-Image-Turbo (Tongyi-MAI/Z-Image-Turbo).
 export const ZIMAGE_VAE_AIR =
-  'urn:air:flux1:vae:huggingface:black-forest-labs/FLUX.1-dev@main/ae.safetensors';
+  'urn:air:flux1:vae:huggingface:Comfy-Org/Z-Image-Turbo@6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors';
 // Ecosystem must be `zimageturbo` (the version's canonical AIR per the civitai
 // API) — `zimage:lora` fails resource resolution on the workers.
 export const ZIMAGE_LORA_VERSION_ID = 2702227;
@@ -181,9 +181,7 @@ export const seamlessPanoParamSchema = z
     prompt: z.string().max(PROMPT_MAX),
     seed: z.coerce.number().int().nullish(),
     engine: z.enum(SEAMLESS_PANO_ENGINES).optional(),
-    accountType: z
-      .enum(buzzSpendTypes as [BuzzSpendType, ...BuzzSpendType[]])
-      .optional(),
+    accountType: z.enum(buzzSpendTypes as [BuzzSpendType, ...BuzzSpendType[]]).optional(),
   })
   .strict();
 
@@ -547,10 +545,19 @@ function buildStep(params: SeamlessPanoParams): CustomComfyStepInput {
   const engine = resolveEngine(params);
   const [resources, workflow] =
     engine === 'flux2-klein'
-      ? ([[FLUX2_DIFFUSION_AIR, FLUX2_CLIP_AIR, FLUX2_VAE_AIR, FLUX2_LORA_AIR], buildFlux2SeamlessGraph(params)] as const)
+      ? ([
+          [FLUX2_DIFFUSION_AIR, FLUX2_CLIP_AIR, FLUX2_VAE_AIR, FLUX2_LORA_AIR],
+          buildFlux2SeamlessGraph(params),
+        ] as const)
       : engine === 'qwen-image'
-      ? ([[QWEN_DIFFUSION_AIR, QWEN_CLIP_AIR, QWEN_VAE_AIR, QWEN_LORA_AIR], buildQwenSeamlessGraph(params)] as const)
-      : ([[ZIMAGE_DIFFUSION_AIR, ZIMAGE_CLIP_AIR, ZIMAGE_VAE_AIR, ZIMAGE_LORA_AIR], buildZimageSeamlessGraph(params)] as const);
+      ? ([
+          [QWEN_DIFFUSION_AIR, QWEN_CLIP_AIR, QWEN_VAE_AIR, QWEN_LORA_AIR],
+          buildQwenSeamlessGraph(params),
+        ] as const)
+      : ([
+          [ZIMAGE_DIFFUSION_AIR, ZIMAGE_CLIP_AIR, ZIMAGE_VAE_AIR, ZIMAGE_LORA_AIR],
+          buildZimageSeamlessGraph(params),
+        ] as const);
   return { resources: [...resources], trace: 'binary', workflow };
 }
 

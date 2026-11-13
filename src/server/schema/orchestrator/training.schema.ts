@@ -9,6 +9,7 @@ import {
   trainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { aiToolkitLrSchedulerTypes, aiToolkitOptimizerTypes } from '~/utils/training';
 
 const imageTrainingBaseSchema = z.object({
   model: z.string(),
@@ -35,19 +36,8 @@ const aiToolkitBaseParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),
@@ -58,8 +48,12 @@ const aiToolkitBaseParams = z.object({
   numRepeats: z.number().optional(),
 });
 
-// Use discriminated union to enforce modelVariant requirements per ecosystem
-const aiToolkitTrainingParams = z
+// Use discriminated union to enforce modelVariant requirements per ecosystem.
+//
+// Exported (as `aiToolkitTrainingParamsSchema`) for the App Blocks `kind:'training'`
+// wire body, which validates an app-supplied param set against THIS schema rather
+// than a second copy that could drift from what the training form accepts.
+export const aiToolkitTrainingParamsSchema = z
   .discriminatedUnion('ecosystem', [
     // SD1, SDXL, Chroma, Qwen, and ZImageTurbo don't need modelVariant
     aiToolkitBaseParams.extend({
@@ -179,7 +173,7 @@ const aiToolkitTrainingParams = z
     }
   );
 
-export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParams>;
+export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParamsSchema>;
 
 const whatIfTrainingDetailsParams = trainingDetailsParams.pick({
   resolution: true,
@@ -228,20 +222,8 @@ const whatIfAiToolkitParams = z.object({
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
-  lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
-  optimizerType: z.enum([
-    'adam',
-    'adamw',
-    'adamw8bit',
-    'adam8bit',
-    'lion',
-    'lion8bit',
-    'adafactor',
-    'adagrad',
-    'prodigy',
-    'prodigy8bit',
-    'automagic',
-  ]),
+  lrScheduler: z.enum(aiToolkitLrSchedulerTypes),
+  optimizerType: z.enum(aiToolkitOptimizerTypes),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
   noiseOffset: z.number().nullable(),

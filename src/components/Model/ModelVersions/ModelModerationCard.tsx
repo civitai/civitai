@@ -14,10 +14,33 @@ import { IconHistory, IconShieldCheck, IconShieldHalfFilled } from '@tabler/icon
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ModelChangeHistoryModal from '~/components/Model/ModelVersions/ModelChangeHistoryModal';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { getModelVersionFlagLabels } from '~/shared/constants/model-version-flags.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
+
+const scanStatusText: Record<string, string> = {
+  Succeeded: 'complete',
+  Pending: 'rescan pending',
+  Failed: 'failed',
+  Expired: 'expired',
+  Canceled: 'canceled',
+};
+
+// A label's verdict can come from a row whose rescan has not finished; its updatedAt is then the
+// rescan's, not the verdict's.
+function verdictProvenance(v: { source: string; status: string; updatedAt: Date }) {
+  const source = v.source === 'main' ? 'main scan' : v.source;
+  if (v.status === 'Succeeded') return `${source} · ${formatDate(v.updatedAt)}`;
+  if (v.status === 'Pending') return `${source} · rescan pending — last verdict shown`;
+  return `${source} · last rescan failed — last verdict shown`;
+}
+
+function detectedText(detected: boolean | null) {
+  if (detected === null) return 'no verdict';
+  return detected ? 'detected' : 'not detected';
+}
 
 // Mod-only at-a-glance moderation status for a model. Surfaces automated state
 // (minor/POI/nsfw flags, locked properties, profanity lock, unpublish/takedown)
@@ -53,9 +76,15 @@ export function ModelModerationCard({
     flags.push({ label, color: 'orange' });
 
   const locked = data?.lockedProperties ?? [];
+  const verdicts = data?.textScanFlags ?? [];
+  // An open verdict is the reason behind its label's flag badge; count it only without one.
+  const badgedLabels = { poi: !!data?.poi, minor: !!data?.minor };
+  const unbadgedOpenVerdicts = verdicts.filter((v) => v.open && !badgedLabels[v.label]).length;
   const hasFooter = !!(
+    verdicts.length ||
     data?.profanity ||
     data?.textModeration ||
+    data?.textScan ||
     data?.unpublishedAt ||
     data?.takenDownAt ||
     data?.deletedAt
@@ -86,6 +115,8 @@ export function ModelModerationCard({
     locked.length +
     (data?.profanity ? 1 : 0) +
     (data?.textModeration ? 1 : 0) +
+    unbadgedOpenVerdicts +
+    (data?.textScan?.triggeredLabels.length ? 1 : 0) +
     (data?.unpublishedAt ? 1 : 0) +
     (data?.takenDownAt ? 1 : 0) +
     (data?.deletedAt ? 1 : 0);
@@ -196,7 +227,9 @@ export function ModelModerationCard({
                           these policies return no matched terms. */}
                       <Text size="xs" c="dimmed">
                         {data.textModeration.labels
-                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .map(
+                            (l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`
+                          )
                           .join(' · ')}
                       </Text>
                       {data.textModeration.matchedTerms.length > 0 && (
@@ -211,10 +244,88 @@ export function ModelModerationCard({
                       </Text>
                     </Stack>
                   )}
+                  {verdicts.map((v) => (
+                    <Stack key={v.label} gap={4}>
+                      <Group gap={6}>
+                        <Text size="xs" fw={600} c="red">
+                          Flagged by text scan · {v.label}
+                          {v.at ? ` · ${formatDate(v.at)}` : ''}
+                        </Text>
+                        {v.open && (
+                          <Badge size="xs" radius="xl" color="red" variant="light">
+                            Open
+                          </Badge>
+                        )}
+                        {v.appealGranted && (
+                          <Badge size="xs" radius="xl" color="green" variant="light">
+                            Appeal granted
+                          </Badge>
+                        )}
+                        {v.appealUpheld && (
+                          <Badge size="xs" radius="xl" color="gray" variant="light">
+                            Appeal upheld
+                          </Badge>
+                        )}
+                      </Group>
+                      {v.reason && <Text size="xs">{v.reason}</Text>}
+                      {v.names.length > 0 && (
+                        <Group gap={4}>
+                          {v.names.map((name) => (
+                            <Code key={name}>{name}</Code>
+                          ))}
+                        </Group>
+                      )}
+                      <Text size="xs" c="dimmed">
+                        Workflow {v.workflowId}
+                        {v.model ? ` · ${v.model}` : ''}
+                      </Text>
+                    </Stack>
+                  ))}
+                  {data.textScan && (
+                    <Stack gap={4}>
+                      <Text size="xs" fw={600} c="orange">
+                        Latest scan · {scanStatusText[data.textScan.status] ?? data.textScan.status}
+                        {data.textScan.nsfwLevel
+                          ? ` · ${getBrowsingLevelLabel(data.textScan.nsfwLevel)}`
+                          : ''}{' '}
+                        · {formatDate(data.textScan.updatedAt)}
+                      </Text>
+                      {data.textScan.reasons
+                        .filter(
+                          (r) => !data.textScan?.labelVerdicts?.some((v) => v.label === r.label)
+                        )
+                        .map((r) => (
+                          <Text key={r.label} size="xs">
+                            <Code>{r.label}</Code> {r.reason}
+                          </Text>
+                        ))}
+                      {data.textScan.labelVerdicts?.map((v) => (
+                        <Stack key={v.label} gap={0}>
+                          <Text size="xs">
+                            <Code>{v.label}</Code> {detectedText(v.detected)}
+                            {v.reason ? ` — ${v.reason}` : ''}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {verdictProvenance(v)}
+                          </Text>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  )}
                   {data.unpublishedAt && (
                     <Text size="xs">
                       Unpublished {formatDate(data.unpublishedAt)}
-                      {data.unpublishedReason ? ` — ${data.unpublishedReason}` : ''}
+                      {data.modelRules
+                        ? ` — Model rules, ${
+                            data.modelRules.source === 'literal'
+                              ? 'named at publish'
+                              : 'matched by the scan'
+                          }: ${data.modelRules.rules
+                            .map((rule) => rule.subject ?? `rule ${rule.id}`)
+                            .join(', ')}`
+                        : data.unpublishedReason
+                        ? ` — ${data.unpublishedReason}`
+                        : ''}
                     </Text>
                   )}
                   {data.takenDownAt && (

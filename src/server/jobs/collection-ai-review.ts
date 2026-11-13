@@ -5,6 +5,7 @@ import {
   CollectionItemStatus,
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
@@ -14,6 +15,7 @@ import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import {
   AI_REVIEW_SYSTEM_USER_ID as SYSTEM_USER_ID,
   COLLECTION_AI_REVIEW_KEY_PREFIX,
+  judgeRatedSql,
   updateCollectionItemsStatus,
 } from '~/server/services/collection.service';
 import {
@@ -21,10 +23,15 @@ import {
   isAiReviewAvailable,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
+  needsMinorReview,
   resolveRejectionMessage,
   reviewImage,
+  toObservationColumns,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
+import { describeProviderError } from '~/server/services/ai/provider-error';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -50,7 +57,16 @@ type PendingItem = {
   nsfwLevel: number;
   ingestion: string;
   prompt: string | null;
+  minor: boolean;
+  acceptableMinor: boolean;
 };
+
+export const HELD_MINOR_ESCALATION = 'scanner-flagged minor';
+export const ACCEPTABLE_MINOR_ESCALATION = 'marked acceptable minor';
+
+// An entry marked acceptableMinor goes to a human too, like a flagged one.
+const isHeldMinor = (item: Pick<PendingItem, 'minor' | 'acceptableMinor'>) =>
+  !!item.minor || !!item.acceptableMinor;
 
 export const collectionAiReview = createJob(
   'collection-ai-review',
@@ -85,12 +101,23 @@ export async function reviewCollection(collectionId: number, config: CollectionA
   // later run.
   const pending = await dbWrite.$queryRaw<PendingItem[]>`
     SELECT ci.id "collectionItemId", i.id "imageId", i.url, i.type::text, i."nsfwLevel",
-           i.ingestion::text, i.meta->>'prompt' prompt
+           i.ingestion::text, i.meta->>'prompt' prompt, i.minor, i."acceptableMinor"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'REVIEW'
       AND ci."reviewedById" IS NULL
+      -- Where judges apply the rating, an item waits for a judge's rating (and for any moderator
+      -- hold to clear) before it is reviewed, so it is not reclassified, and re-billed, every run.
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM "Collection" c
+          WHERE c.id = ci."collectionId"
+            AND c.type = 'Image'
+            AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+        )
+        OR ${judgeRatedSql('i', collectionId)}
+      )
     ORDER BY ci.id
     LIMIT ${BATCH_SIZE}
   `;
@@ -116,8 +143,13 @@ export async function reviewCollection(collectionId: number, config: CollectionA
 
 type Outcome = {
   collectionItemId: number;
+  imageId: number;
   action: 'accept' | 'reject' | 'stamp';
   message?: string;
+  minorReview?: boolean;
+  // The level this outcome was decided on; see the claim in applyOutcomes.
+  nsfwLevel: number;
+  levelReject?: boolean;
 };
 
 async function classifyItem({
@@ -134,7 +166,9 @@ async function classifyItem({
   let decision: AiReviewDecision;
   let reason = '';
   let rejectionMessage: string | undefined;
+  let levelReject = false;
   let usage = { promptTokens: 0, completionTokens: 0 };
+  let observed = toObservationColumns(undefined);
 
   if (isUnavailableImage(item)) {
     decision = { decision: 'reject', violations: [], escalations: [] };
@@ -143,6 +177,7 @@ async function classifyItem({
   } else if (!isNsfwLevelAllowed(item.nsfwLevel, config.allowedNsfwLevels)) {
     decision = { decision: 'reject', violations: ['sexual/adult content'], escalations: [] };
     reason = `Rated outside the levels this collection allows (nsfwLevel ${item.nsfwLevel}).`;
+    levelReject = true;
   } else {
     const imageUrl = getEdgeUrl(item.url, {
       width: 512,
@@ -173,6 +208,7 @@ async function classifyItem({
 
       ({ usage } = result);
       decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
+      observed = toObservationColumns(result.observations);
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
       const attempts = await recordFailedAttempt(item.collectionItemId);
@@ -182,15 +218,32 @@ async function classifyItem({
         collectionId,
         imageId: item.imageId,
         attempts,
-        error: (error as Error).message,
+        error: describeProviderError(error, { sent: [item.prompt, config.prompt] }),
       }).catch(() => undefined);
       // Most failures clear on a later run, so the item is left for the next one. Stamped once the
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
       // retried, and re-billed, on every run for the life of the collection.
       if (attempts < MAX_REVIEW_ATTEMPTS) return undefined;
-      return { collectionItemId: item.collectionItemId, action: 'stamp' };
+      return {
+        collectionItemId: item.collectionItemId,
+        imageId: item.imageId,
+        action: 'stamp',
+        nsfwLevel: item.nsfwLevel,
+      };
     }
   }
+
+  const heldMinor = decision.decision === 'approve' && isHeldMinor(item);
+  if (heldMinor)
+    decision = {
+      decision: 'escalate',
+      violations: decision.violations,
+      escalations: [
+        ...decision.escalations,
+        item.minor ? HELD_MINOR_ESCALATION : ACCEPTABLE_MINOR_ESCALATION,
+      ],
+      neverReject: true,
+    };
 
   const applied = !config.dryRun;
   let action: Outcome['action'] = 'stamp';
@@ -222,9 +275,19 @@ async function classifyItem({
     applied,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
+    nsfwLevel: item.nsfwLevel,
+    ...observed,
   });
 
-  return { collectionItemId: item.collectionItemId, action, message };
+  return {
+    collectionItemId: item.collectionItemId,
+    imageId: item.imageId,
+    action,
+    message,
+    minorReview: applied && (heldMinor || needsMinorReview(decision)),
+    nsfwLevel: item.nsfwLevel,
+    levelReject,
+  };
 }
 
 // The scanner could not fetch the file, and nothing rescans a NotFound image on its own.
@@ -256,28 +319,170 @@ export function resolveAutomatedRejectionReason({
     : undefined;
 }
 
+function logFlagError(collectionId: number, error: string, imageIds?: number[]) {
+  logToAxiom({
+    type: 'job-error',
+    name: 'collection-ai-review',
+    collectionId,
+    imageIds,
+    error,
+  }).catch(() => undefined);
+}
+
+// Only fills an empty slot. Even the queues minor review outranks are left alone: accepting in the
+// minor queue also resolves tag reviews it never shows and can clear the scanner's minor flag, so
+// moving an image there could lower it. Rewriting 'minor' with itself counts it as routed.
+// Resolves false only when the write itself failed.
+export async function flagForMinorReview({
+  collectionId,
+  imageIds,
+}: {
+  collectionId: number;
+  imageIds: number[];
+}) {
+  if (!imageIds.length) return true;
+
+  let flagged: { id: number; postId: number | null }[];
+  try {
+    flagged = await dbWrite.$queryRaw<{ id: number; postId: number | null }[]>`
+      UPDATE "Image"
+      SET "needsReview" = 'minor', "updatedAt" = now()
+      WHERE id IN (${Prisma.join(imageIds)})
+        AND ("needsReview" IS NULL OR "needsReview" = 'minor')
+        AND ingestion = 'Scanned'
+      RETURNING id, "postId"
+    `;
+  } catch (error) {
+    logFlagError(
+      collectionId,
+      `Failed to flag images for minor review: ${(error as Error).message}`,
+      imageIds
+    );
+    return false;
+  }
+
+  // Held in a queue minor review does not outrank, or not scanned: without this the escalation is
+  // recorded only in ClickHouse.
+  const flaggedIds = new Set(flagged.map((row) => row.id));
+  const unrouted = imageIds.filter((id) => !flaggedIds.has(id));
+  if (unrouted.length)
+    logFlagError(collectionId, 'Minor escalation not routed to the minor queue', unrouted);
+
+  if (!flagged.length) return true;
+
+  const postIds = [...new Set(flagged.map((row) => row.postId).filter(isDefined))];
+  await Promise.all([
+    queueImageSearchIndexUpdate({
+      ids: [...flaggedIds],
+      action: SearchIndexUpdateQueueAction.Update,
+    }).catch((error) =>
+      logFlagError(collectionId, `Search index update failed: ${(error as Error).message}`)
+    ),
+    bustCachesForPosts(postIds).catch((error) =>
+      logFlagError(collectionId, `Post cache bust failed: ${(error as Error).message}`)
+    ),
+  ]);
+  return true;
+}
+
+// A rejected item can be deleted within the hour, taking the only trace of the escalation with it,
+// so an item whose flag did not land is left for the next run to retry. Out of attempts, it is
+// stamped rather than decided: never accepted on the strength of a later, different verdict.
+async function holdUnflagged(reviewed: Outcome[], minor: Outcome[]) {
+  const retry = new Set<number>();
+  const stamp = new Set<number>();
+  for (const { collectionItemId } of minor) {
+    const attempts = await recordFailedAttempt(collectionItemId);
+    (attempts < MAX_REVIEW_ATTEMPTS ? retry : stamp).add(collectionItemId);
+  }
+  return reviewed
+    .filter((o) => !retry.has(o.collectionItemId))
+    .map((o) =>
+      stamp.has(o.collectionItemId) ? { ...o, action: 'stamp' as const, message: undefined } : o
+    );
+}
+
 // Stamps before writing status: a status write can throw, and an unstamped item is reselected and
 // re-billed on the next run.
 async function applyOutcomes({
   collectionId,
-  outcomes,
+  outcomes: reviewed,
 }: {
   collectionId: number;
   outcomes: Outcome[];
 }) {
+  if (!reviewed.length) return;
+
+  const minor = reviewed.filter((o) => o.minorReview);
+  const flagged = await flagForMinorReview({
+    collectionId,
+    imageIds: minor.map((o) => o.imageId),
+  });
+  const outcomes = flagged ? reviewed : await holdUnflagged(reviewed, minor);
   if (!outcomes.length) return;
 
   // Minutes can pass between selecting an item and writing its outcome. Claiming the row only
   // while it is still untouched means a moderator who decided it in the meantime keeps their
   // decision and their attribution — and the status write below skips whatever we did not claim.
+  // A decision that rests on the image's rating is also left for the next run if the image was
+  // re-rated in that window, so nothing is accepted or rejected on a level it no longer has.
+  const levelBound = outcomes.filter(
+    (o) => o.action === 'accept' || (o.action === 'reject' && o.levelReject)
+  );
+  const acceptIds = outcomes.filter((o) => o.action === 'accept').map((o) => o.collectionItemId);
   const claimed = await dbWrite.$queryRaw<{ id: number }[]>`
-    UPDATE "CollectionItem"
+    UPDATE "CollectionItem" ci
     SET "reviewedById" = ${SYSTEM_USER_ID}, "reviewedAt" = now(), "updatedAt" = now()
-    WHERE "collectionId" = ${collectionId}
-      AND id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
-      AND status = 'REVIEW'
-      AND "reviewedById" IS NULL
-    RETURNING id
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci.id IN (${Prisma.join(outcomes.map((o) => o.collectionItemId))})
+      AND ci.status = 'REVIEW'
+      AND ci."reviewedById" IS NULL
+      ${
+        levelBound.length
+          ? Prisma.sql`AND NOT EXISTS (
+              SELECT 1
+              FROM (VALUES ${Prisma.join(
+                levelBound.map((o) => Prisma.sql`(${o.collectionItemId}::int, ${o.nsfwLevel}::int)`)
+              )}) AS decided(id, "nsfwLevel")
+              JOIN "Image" i ON i.id = ci."imageId"
+              WHERE decided.id = ci.id AND i."nsfwLevel" IS DISTINCT FROM decided."nsfwLevel"
+            )`
+          : Prisma.empty
+      }
+      ${
+        // Re-checks the minor flag for accepts; an unclaimed item is held on the next run.
+        acceptIds.length
+          ? Prisma.sql`AND NOT (
+              ci.id IN (${Prisma.join(acceptIds)})
+              AND EXISTS (
+                SELECT 1 FROM "Image" i
+                WHERE i.id = ci."imageId" AND (i.minor OR i."acceptableMinor")
+              )
+            )`
+          : Prisma.empty
+      }
+      ${
+        // Where judges apply the rating, an accept needs a judge's rating and no moderator hold: such
+        // an item stays in REVIEW, unclaimed, and the rest of the batch goes ahead.
+        acceptIds.length
+          ? Prisma.sql`AND NOT (
+              ci.id IN (${Prisma.join(acceptIds)})
+              AND EXISTS (
+                SELECT 1 FROM "Collection" c
+                WHERE c.id = ci."collectionId"
+                  AND c.type = 'Image'
+                  AND c.metadata->>'judgesApplyBrowsingLevel' = 'true'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM "Image" i WHERE i.id = ci."imageId" AND ${judgeRatedSql(
+                  'i',
+                  collectionId
+                )}
+              )
+            )`
+          : Prisma.empty
+      }
+    RETURNING ci.id
   `;
   if (!claimed.length) return;
 

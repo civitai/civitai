@@ -1,5 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import type { ReactNode } from 'react';
+import { page, userEvent } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as CosmeticShopUtil from '~/components/CosmeticShop/cosmetic-shop.util';
@@ -8,6 +9,8 @@ import type * as Trpc from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import type { StickerTrackKey, StickerTrackV2 } from '~/shared/utils/sticker-track';
+import { sampleStickerTrack, stickerTrackRefusal } from '~/shared/utils/sticker-track';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -26,12 +29,14 @@ const PRICE = 700;
 
 /** Every press, with its variables, in order. */
 const placed: { imageId: number; free: boolean; data: Record<string, unknown> }[] = [];
+/** Whether the draft's own placement is in flight. */
+const placeState = { pending: false };
 
 vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementUtil>()),
   useCreateStickerPlacement: () => ({
     mutate: (variables: (typeof placed)[number]) => placed.push(variables),
-    isPending: false,
+    isPending: placeState.pending,
   }),
 }));
 
@@ -45,16 +50,18 @@ vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
   BuzzTransactionButton: ({
     label,
     onPerformTransaction,
+    disabled,
   }: {
     label: string;
     onPerformTransaction: () => void;
+    disabled?: boolean;
   }) => (
     // `data-buzz-button` is load-bearing. Without it the stub is
     // indistinguishable from a plain Mantine `Button` by name alone, so swapping
     // the free option TO a BuzzTransactionButton left all ten tests green — the
     // component's own docstring argues at length that it must not be one, and
     // nothing held that argument.
-    <button type="button" data-buzz-button onClick={onPerformTransaction}>
+    <button type="button" data-buzz-button disabled={disabled} onClick={onPerformTransaction}>
       {label}
     </button>
   ),
@@ -84,6 +91,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
   return {
     ...actual,
+    // eslint-disable-next-line local-rules/no-hand-enumerated-trpc-mock -- spreads the real client, so an unlisted procedure is the real hook, not undefined
     trpc: {
       ...actual.trpc,
       useUtils: () => ({ cosmetic: { getStickerBalances: { invalidate: vi.fn() } } }),
@@ -113,6 +121,7 @@ const draft: StickerDraft = {
 const art = { id: COSMETIC_ID, name: 'Star', slug: 'star', url: 'star.png' };
 
 const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
+const { StickerMotionEditor } = await import('~/components/Sticker/StickerMotionEditor');
 
 /**
  * `ownerShare` is opt-in, and that is not tidiness.
@@ -128,7 +137,23 @@ const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
  */
 const renderDraft = async (
   freeOffer: { instant: boolean } | null,
-  { ownerShare }: { ownerShare?: number } = {}
+  {
+    ownerShare,
+    maxScale,
+    scale,
+    commit,
+    motion,
+    opacity,
+    purchase,
+  }: {
+    ownerShare?: number;
+    maxScale?: number;
+    scale?: number;
+    commit?: ReactNode;
+    motion?: StickerDraft['motion'];
+    opacity?: number;
+    purchase?: StickerDraft['purchase'];
+  } = {}
 ) => {
   renderWithProviders(
     // Positioned absolutely inside the media box in the app; a plain relative
@@ -137,15 +162,23 @@ const renderDraft = async (
     // box: the cluster has to be reachable, and none of this asserts geometry.
     <div style={{ position: 'relative', width: 380, height: 600 }}>
       <DraftSticker
-        draft={draft}
+        draft={{
+          ...draft,
+          ...(scale == null ? null : { scale }),
+          ...(opacity == null ? null : { opacity }),
+          motion,
+        }}
         art={art}
         selected
         dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
         price={PRICE}
+        creatorMaxScale={maxScale ?? 0.25}
         freeOffer={freeOffer}
         ownerShare={ownerShare}
         ownerUsername="creator"
         onGesture={() => true}
+        commit={commit}
+        purchase={purchase}
       />
     </div>
   );
@@ -207,9 +240,162 @@ const choosePaid = async () => {
 
 beforeEach(() => {
   placed.length = 0;
+  placeState.pending = false;
+  useStickerPlacementDraftStore.setState({ placingAll: false, readyPlacements: {} });
 });
 
 describe('what a draft sends when it is placed', () => {
+  const key = (t: number, overrides: Partial<StickerTrackKey> = {}): StickerTrackKey => ({
+    t,
+    x: 0.2,
+    y: 0.5,
+    s: 0.2,
+    r: 15,
+    o: 1,
+    ease: 'smooth',
+    ...overrides,
+  });
+
+  test('a draft in Movement sends its keys, with its own pose at the first key', async () => {
+    await renderDraft(
+      { instant: true },
+      { motion: { on: true, keys: [key(1000), key(3000, { x: 0.6, s: 0.25 + 1e-12 })] } }
+    );
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    const { track, data } = placed[0] as unknown as { track: StickerTrackV2; data: typeof draft };
+    expect(track.v).toBe(2);
+    expect(track.keys.map((k) => [k.t, k.x])).toEqual([
+      [1000, 0.2],
+      [3000, 0.6],
+    ]);
+    // A resize's float noise past the creator's limit is snapped, as on a still sticker.
+    expect(track.keys[1].s).toBe(0.25);
+    expect(data).toMatchObject({ x: 0.2, y: 0.5, rotation: 15 });
+  });
+
+  test('a fade longer than the server allows is sent as one it accepts', async () => {
+    await renderDraft(
+      { instant: true },
+      { motion: { on: true, keys: [key(0, { o: 0 }), key(10_000)] } }
+    );
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    const { track } = placed[0] as unknown as { track: StickerTrackV2 };
+    expect(stickerTrackRefusal(track)).toBeNull();
+    expect(sampleStickerTrack(track, 10_000).opacity).toBe(1);
+  });
+
+  test('a draft switched back to Static sends no track, though it keeps its keys', async () => {
+    await renderDraft(
+      { instant: true },
+      { motion: { on: false, keys: [key(1000), key(3000, { x: 0.6 })] } }
+    );
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0]).not.toHaveProperty('track');
+  });
+
+  // Each fade is under the per-fade cap; together they pass STICKER_TRACK_MAX_FAINT_MS.
+  const tooMuchFading = () =>
+    Array.from({ length: 10 }, (_, i) => key(i * 1000, { o: i % 2 ? 1 : 0 }));
+
+  test('a movement the server would refuse cannot be placed free', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: tooMuchFading() } });
+
+    const button = page.getByRole('button', { name: 'Place free' });
+    await expect.element(button).toBeDisabled();
+    ((await button.element()) as HTMLElement).click();
+
+    expect(placed).toHaveLength(0);
+  });
+
+  // Nothing fades, so only the opacity floor (key × sticker opacity) can refuse these.
+  const halfShown = () => [key(0, { o: 0.5 }), key(1000, { o: 0.5, x: 0.6 })];
+
+  test('a key too faint for the sticker’s own opacity cannot be placed', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: halfShown() }, opacity: 0.5 });
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeDisabled();
+  });
+
+  test('the same keys on a fully opaque sticker can be placed', async () => {
+    await renderDraft({ instant: true }, { motion: { on: true, keys: halfShown() }, opacity: 1 });
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeEnabled();
+  });
+
+  test('a movement the server would refuse cannot be placed paid', async () => {
+    await renderDraft(null, { motion: { on: true, keys: tooMuchFading() } });
+
+    await expect.element(page.getByRole('button', { name: 'Place' })).toBeDisabled();
+    await pressPaid();
+
+    expect(placed).toHaveLength(0);
+  });
+
+  test('the floating Place presses the selected draft’s own button', async () => {
+    const video = document.createElement('video');
+    useStickerPlacementDraftStore.setState({
+      drafts: [draft],
+      selectedDraftId: draft.id,
+      trayOpen: false,
+    });
+    const Live = () => {
+      const current = useStickerPlacementDraftStore((state) =>
+        state.drafts.find((d) => d.id === draft.id)
+      );
+      return current ? (
+        <DraftSticker
+          draft={current}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          creatorMaxScale={0.25}
+          freeOffer={{ instant: true }}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+        />
+      ) : null;
+    };
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <Live />
+        <StickerMotionEditor video={video} />
+      </div>
+    );
+
+    const floating = () =>
+      page
+        .getByRole('button', { name: 'Place free' })
+        .elements()
+        .find((button) => !button.hasAttribute('data-draft-primary'));
+    await expect.poll(floating).toBeDefined();
+    (floating() as HTMLButtonElement).click();
+
+    await expect.poll(() => placed.length).toBe(1);
+    expect(placed[0]).toMatchObject({ free: true });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(placed).toHaveLength(1);
+
+    // A draft that goes takes its floating Place with it.
+    useStickerPlacementDraftStore.setState({ drafts: [] });
+    await expect
+      .poll(() => useStickerPlacementDraftStore.getState().primaryLabels[draft.id] ?? null)
+      .toBeNull();
+  });
+
+  test('a Static draft sends no track', async () => {
+    await renderDraft({ instant: true });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0]).not.toHaveProperty('track');
+  });
+
   test('a free press sends free: true', async () => {
     await renderDraft({ instant: true });
 
@@ -288,6 +474,112 @@ describe('what a draft sends when it is placed', () => {
       scale: draft.scale,
       rotation: draft.rotation,
     });
+  });
+});
+
+describe('what a draft offers Place all', () => {
+  const offered = () => useStickerPlacementDraftStore.getState().readyPlacements[draft.id];
+  // The label is registered by an effect in the same commit as the offer, so once it is there an
+  // absent offer was withheld rather than not registered yet.
+  const registered = () =>
+    expect
+      .poll(() => useStickerPlacementDraftStore.getState().primaryLabels[draft.id])
+      .toBeTruthy();
+
+  test('offers exactly what its own button sends', async () => {
+    await renderDraft(null);
+    await expect.poll(() => offered()?.free).toBe(false);
+
+    await pressPaid();
+
+    expect(offered()!.input()).toEqual(placed[0]);
+  });
+
+  test('sends what the draft says when Place all runs, not when it was offered', async () => {
+    await renderDraft(null);
+    await expect.poll(() => offered()).toBeDefined();
+
+    await page.getByText('Add a note').click();
+    await page.getByPlaceholder('Say something with it (optional)').fill('hello');
+
+    await expect.poll(() => offered()!.input().data.comment).toBe('hello');
+  });
+
+  test('offers the free placement as free', async () => {
+    await renderDraft({ instant: true });
+    await expect.poll(() => offered()?.free).toBe(true);
+  });
+
+  test('is not offered when its movement would be refused', async () => {
+    await renderDraft(null, {
+      motion: {
+        on: true,
+        keys: [
+          { t: 0, x: 0.2, y: 0.5, s: 0.2, r: 0, o: 0.1, ease: 'smooth' },
+          { t: 1000, x: 0.6, y: 0.5, s: 0.2, r: 0, o: 0.1, ease: 'smooth' },
+        ],
+      },
+    });
+    await registered();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('is not offered while a use still has to be bought', async () => {
+    await renderDraft(null, {
+      purchase: { refill: false, perUse: 50, creatorUsername: 'maker' },
+    });
+    await registered();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('is not offered while its own placement is in flight', async () => {
+    placeState.pending = true;
+    await renderDraft(null);
+    await registered();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('is not offered when a host supplies its own commit button', async () => {
+    await renderDraft(null, { commit: <button type="button">Wear it</button> });
+    await expect.element(page.getByRole('button', { name: 'Wear it' })).toBeInTheDocument();
+    expect(offered()).toBeUndefined();
+  });
+
+  test('its own Place does nothing while Place all is placing it', async () => {
+    useStickerPlacementDraftStore.setState({ placingAll: true });
+    await renderDraft(null);
+
+    await expect.element(page.getByRole('button', { name: 'Place' })).toBeDisabled();
+    await pressPaid();
+
+    expect(placed).toHaveLength(0);
+  });
+
+  test('its own Place free is disabled too while Place all runs', async () => {
+    useStickerPlacementDraftStore.setState({ placingAll: true });
+    await renderDraft({ instant: true });
+
+    await expect.element(page.getByRole('button', { name: 'Place free' })).toBeDisabled();
+  });
+});
+
+describe('the size a draft sends against the creator limit', () => {
+  const CAP = 0.22;
+
+  test('a rounding overshoot past the limit is sent as the limit', async () => {
+    await renderDraft({ instant: true }, { maxScale: CAP, scale: CAP + 2 ** -50 });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data.scale).toBe(CAP);
+  });
+
+  test('a draft really over the limit is sent unchanged, for the server to refuse', async () => {
+    await renderDraft({ instant: true }, { maxScale: CAP, scale: 0.25 });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data.scale).toBe(0.25);
   });
 });
 
@@ -448,6 +740,7 @@ describe('the control toolbar', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -562,6 +855,7 @@ describe('the duplicate control', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -645,6 +939,7 @@ describe('alt-dragging a draft', () => {
     renderWithProviders(
       <div data-drag-host style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={draft}
           art={art}
           selected
@@ -742,6 +1037,7 @@ describe('the pack purchase key across one session', () => {
     renderWithProviders(
       <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={gated}
           // The gate is a prop now, decided across the drafts on the image
           // rather than frozen onto one of them — so a test that wants a gated
@@ -810,6 +1106,7 @@ describe('the clearance reaches the element', () => {
     renderWithProviders(
       <div className="sticker-sized" style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
+          creatorMaxScale={draft.scale}
           draft={{ ...draft, rotation, y: 0.4 }}
           art={art}
           selected
@@ -904,3 +1201,80 @@ describe('the clearance reaches the element', () => {
  * that positions the draft in a viewport-realistic place and a deterministic
  * way to drive a second measure.
  */
+
+describe('previewing without the controls', () => {
+  test('hides the toolbar and the Place button, and brings them back', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    // `includeHidden`: a visibility-hidden control leaves the accessibility tree,
+    // so a plain role query stops finding it and the assertion fails on lookup.
+    const remove = page.getByRole('button', { name: 'Remove this sticker', includeHidden: true });
+    const place = page.getByRole('button', { name: 'Place', includeHidden: true });
+    await expect.element(remove).toBeVisible();
+
+    // The handles and knob are hidden by a separate wrapper from the toolbar.
+    const knob = document.querySelector<HTMLElement>('span.cursor-grab');
+    expect(knob, 'the rotate knob did not render').not.toBeNull();
+    const knobVisibility = () => getComputedStyle(knob as HTMLElement).visibility;
+    expect(knobVisibility()).toBe('visible');
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(remove).not.toBeVisible();
+    await expect.element(place).not.toBeVisible();
+    expect(knobVisibility()).toBe('hidden');
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(remove).toBeVisible();
+    expect(knobVisibility()).toBe('visible');
+  });
+
+  // Portalled, so hiding the cluster never reaches it.
+  test('hides an open opacity slider too', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    await page.getByRole('button', { name: "Set this sticker's opacity" }).click();
+    const slider = page.getByText('Opacity', { exact: true });
+    await expect.element(slider).toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(slider).not.toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(slider).toBeVisible();
+  });
+});
+
+describe('a host-supplied commit replaces every way to pay', () => {
+  test('shows the commit and none of the buy, note or payout controls', async () => {
+    await renderDraft({ instant: true }, { ownerShare: 0.7, commit: <button>Place hat</button> });
+
+    await expect.element(page.getByRole('button', { name: 'Place hat' })).toBeInTheDocument();
+    // The sticker editing bar stays: a hat is moved, flipped and removed like a sticker.
+    await expect
+      .element(page.getByRole('button', { name: 'Flip this sticker' }))
+      .toBeInTheDocument();
+    for (const name of ['Place free', 'Place', 'Add a note']) {
+      expect(page.getByRole('button', { name, exact: true }).elements()).toHaveLength(0);
+    }
+    expect(page.getByRole('radio').elements()).toHaveLength(0);
+    expect(placed).toHaveLength(0);
+  });
+});
+
+describe('the keyboard moves a draft like a drag does', () => {
+  test.each([
+    ['{ArrowRight}', 0.01, 0],
+    ['{Shift>}{ArrowUp}{/Shift}', 0, -0.05],
+  ])('%s nudges the stored draft', async (keys, dx, dy) => {
+    useStickerPlacementDraftStore.setState({ drafts: [draft] });
+    await renderDraft(null);
+    const body = page.getByLabelText('Sticker position: arrow keys to move');
+
+    (body.element() as HTMLElement).focus();
+    await userEvent.keyboard(keys);
+
+    const [moved] = useStickerPlacementDraftStore.getState().drafts;
+    expect(moved.x).toBeCloseTo(draft.x + dx, 10);
+    expect(moved.y).toBeCloseTo(draft.y + dy, 10);
+  });
+});

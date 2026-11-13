@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Group, Paper, Skeleton, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Group, Paper, Skeleton, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconBox,
   IconClock,

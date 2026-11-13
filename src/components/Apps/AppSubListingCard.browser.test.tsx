@@ -1,0 +1,206 @@
+import { describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { renderWithProviders } from '../../../test/component-setup';
+import type { SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+
+// The creator is the shared `UserAvatar` (hover card), which needs providers the component setup does
+// not mount. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', () => ({
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// The store funnel: its gate (the `feedImpressions` dial) and the shared beacon, spied.
+const funnel = vi.hoisted(() => ({ on: true, enqueue: vi.fn() }));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/providers/FeatureFlagsProvider')>()),
+  useOptionalFeatureFlags: () => ({ feedImpressions: funnel.on }),
+}));
+vi.mock('~/components/TrackView/trackEventBuffer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/components/TrackView/trackEventBuffer')>()),
+  enqueueTrackEvent: funnel.enqueue,
+}));
+
+const { AppSubListingCard, getSubListingHref } = await import('./AppSubListingCard');
+
+const CARD: SubListingCard = {
+  cardType: 'sub-listing',
+  id: 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A',
+  name: 'Neon Portraits',
+  tagline: 'Glowing headshots',
+  kind: 'onsite',
+  category: 'generation',
+  contentRating: 'pg',
+  coverUrl: null,
+  creator: { id: 7, username: 'pixelwitch', image: null },
+  parent: { id: 'apl_P', slug: 'custom-generators', name: 'Custom Generators', iconUrl: null },
+  runHref: '/apps/run/custom-generators/g/NEON?sl=asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A',
+};
+
+const hrefOf = (el: Element | null) => el?.closest('a')?.getAttribute('href');
+
+describe('AppSubListingCard', () => {
+  test('shows the item, its author and the app it lives in', async () => {
+    renderWithProviders(<AppSubListingCard card={CARD} canOpenPage />);
+    await expect.element(page.getByText('Neon Portraits')).toBeVisible();
+    await expect.element(page.getByText('Glowing headshots')).toBeVisible();
+    await expect
+      .element(page.getByTestId('apps-sub-listing-parent-chip'))
+      .toHaveTextContent('in Custom Generators');
+    const author = page.getByTestId('apps-sub-listing-author');
+    await expect.element(author).toHaveTextContent('pixelwitch');
+    expect(author.element().querySelector('a')?.getAttribute('href')).toBe('/user/pixelwitch');
+    expect(hrefOf(page.getByTestId('apps-sub-listing-parent-chip').element())).toBe(
+      '/apps/store-preview/custom-generators'
+    );
+  });
+
+  test('opens the item inside the app when the viewer can open app pages', async () => {
+    renderWithProviders(<AppSubListingCard card={CARD} canOpenPage />);
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toHaveTextContent('Open');
+    expect(hrefOf(cta.element())).toBe(CARD.runHref);
+    expect(hrefOf(page.getByText('Neon Portraits').element())).toBe(CARD.runHref);
+  });
+
+  test("otherwise sends the viewer to the app's store page", async () => {
+    renderWithProviders(<AppSubListingCard card={CARD} canOpenPage={false} />);
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toHaveTextContent('View');
+    expect(hrefOf(cta.element())).toBe('/apps/store-preview/custom-generators');
+    expect(hrefOf(page.getByText('Neon Portraits').element())).toBe(
+      '/apps/store-preview/custom-generators'
+    );
+  });
+
+  test('🔴 lays out like the app card: Open right of the title, then a full-width divider, then the creator', async () => {
+    renderWithProviders(
+      <div style={{ width: 360 }}>
+        <AppSubListingCard card={CARD} canOpenPage />
+      </div>
+    );
+    const card = page.getByTestId('apps-sub-listing-card');
+    await expect.element(card).toBeInTheDocument();
+    const rect = (el: Element) => el.getBoundingClientRect();
+    const title = page.getByText('Neon Portraits', { exact: true }).element();
+    const cta = page.getByTestId('apps-sub-listing-cta').element();
+    const author = page.getByTestId('apps-sub-listing-author').element();
+    const divider = page.getByTestId('apps-sub-listing-divider').element();
+    expect(divider, 'the card must render a divider').not.toBeNull();
+    expect(rect(cta).left).toBeGreaterThanOrEqual(rect(title).right - 1);
+    expect(
+      Math.abs(rect(cta).top + rect(cta).height / 2 - (rect(title).top + rect(title).height / 2))
+    ).toBeLessThanOrEqual(2);
+    // The component tier loads no stylesheet (the Stack's padding and the spacing variable are
+    // both absent), so the bleed is pinned as the divider's own inline negative margin. That it
+    // meets the card edges in the real layout is measured in the browser, not here.
+    expect(divider.getAttribute('style')).toContain(
+      'margin-inline: calc(var(--mantine-spacing-md) * -1)'
+    );
+    expect(rect(author).top).toBeGreaterThanOrEqual(rect(divider).bottom - 1);
+  });
+
+  test('falls back to the placeholder cover when there is no image', async () => {
+    renderWithProviders(<AppSubListingCard card={CARD} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-cover-placeholder')).toBeInTheDocument();
+  });
+
+  test('getSubListingHref never returns a URL the card did not get from the server', () => {
+    expect(getSubListingHref(CARD, true)).toBe(CARD.runHref);
+    expect(getSubListingHref(CARD, false)).toBe('/apps/store-preview/custom-generators');
+  });
+
+  describe('an off-site parent’s item', () => {
+    const EXTERNAL: SubListingCard = {
+      ...CARD,
+      kind: 'offsite',
+      parent: { id: 'apl_G', slug: 'civitai-games', name: 'Civitai Games', iconUrl: null },
+      runHref: 'https://games.example.com/?game=neon-drift',
+      external: true,
+    };
+
+    test.each([true, false])(
+      'opens on its platform in a new tab (canOpenPage %s)',
+      async (canOpenPage) => {
+        renderWithProviders(<AppSubListingCard card={EXTERNAL} canOpenPage={canOpenPage} />);
+        const cta = page.getByTestId('apps-sub-listing-cta');
+        await expect.element(cta).toHaveTextContent('Open');
+        for (const el of [cta.element(), page.getByText('Neon Portraits').element()]) {
+          const a = el.closest('a');
+          expect(a?.getAttribute('href')).toBe(EXTERNAL.runHref);
+          expect(a?.getAttribute('target')).toBe('_blank');
+          expect(a?.getAttribute('rel')).toBe('noopener noreferrer');
+        }
+        // The chip still leads to the parent's store page on Civitai.
+        expect(hrefOf(page.getByTestId('apps-sub-listing-parent-chip').element())).toBe(
+          '/apps/store-preview/civitai-games'
+        );
+      }
+    );
+
+    test('an on-site card never opens in a new tab (negative control)', async () => {
+      renderWithProviders(<AppSubListingCard card={CARD} canOpenPage />);
+      const cta = page.getByTestId('apps-sub-listing-cta');
+      await expect.element(cta).toHaveTextContent('Open');
+      expect(cta.element().closest('a')?.getAttribute('target')).toBeNull();
+    });
+
+    test('getSubListingHref returns the external link whether or not pages can open', () => {
+      expect(getSubListingHref(EXTERNAL, true)).toBe(EXTERNAL.runHref);
+      expect(getSubListingHref(EXTERNAL, false)).toBe(EXTERNAL.runHref);
+    });
+  });
+});
+
+describe('AppSubListingCard — acquisition telemetry', () => {
+  test('a tracked in-site launch carries its surface beside the sub-listing id', async () => {
+    renderWithProviders(
+      <AppSubListingCard
+        card={CARD}
+        canOpenPage
+        telemetry={{ surface: 'sub_listing', position: 2 }}
+      />
+    );
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toHaveTextContent('Open');
+    expect(hrefOf(cta.element())).toBe(`${CARD.runHref}&src=sub_listing`);
+  });
+
+  test('a tracked card that cannot open pages links to the parent detail, untagged', async () => {
+    renderWithProviders(
+      <AppSubListingCard
+        card={CARD}
+        canOpenPage={false}
+        telemetry={{ surface: 'sub_listing', position: 2 }}
+      />
+    );
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toBeInTheDocument();
+    expect(hrefOf(cta.element())).toBe('/apps/store-preview/custom-generators');
+  });
+
+  test('clicking a tracked sub-listing card queues ONE card_click keyed on the sub-listing id', async () => {
+    funnel.enqueue.mockReset();
+    funnel.on = true;
+    renderWithProviders(
+      <AppSubListingCard
+        card={CARD}
+        canOpenPage
+        telemetry={{ surface: 'sub_listing', position: 2 }}
+      />
+    );
+    const title = page.getByText('Neon Portraits');
+    await expect.element(title).toBeVisible();
+    const link = title.element().closest('a') as HTMLAnchorElement;
+    link.addEventListener('click', (e) => e.preventDefault());
+    link.click();
+    const rows = funnel.enqueue.mock.calls
+      .map(([e]) => e)
+      .filter((e: any) => e?.data?.type === 'AppStore_Action')
+      .map((e: any) => e.data.details);
+    expect(rows).toEqual([
+      { action: 'card_click', listingId: CARD.id, surface: 'sub_listing', position: 2 },
+    ]);
+  });
+});

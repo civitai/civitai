@@ -27,3 +27,28 @@
   bottom: 4px;
   overflow: visible;
 }
+
+.glow {
+  border-color: var(--card-glow-color);
+  box-shadow:
+    0 0 var(--card-glow-size) var(--card-glow-color),
+    inset 0 0 calc(var(--card-glow-size) / 2) color-mix(in srgb, var(--card-glow-color) 50%, transparent);
+}
+
+.glowAnimated {
+  animation: cardGlowPulse 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glowAnimated {
+    animation: none;
+  }
+}
+
+@keyframes cardGlowPulse {
+  50% {
+    box-shadow:
+      0 0 calc(var(--card-glow-size) * 1.6) var(--card-glow-color),
+      inset 0 0 var(--card-glow-size) color-mix(in srgb, var(--card-glow-color) 60%, transparent);
+  }
+}

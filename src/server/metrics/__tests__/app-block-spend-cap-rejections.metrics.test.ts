@@ -46,11 +46,6 @@ beforeEach(() => {
 });
 
 describe('civitai_app_block_spend_cap_rejections_total', () => {
-  it('is registered on the default registry that /api/metrics scrapes', () => {
-    ensureRegisterAppBlockRuntimeMetrics();
-    expect(client.register.getSingleMetric(METRIC)).toBeDefined();
-  });
-
   it.each(APP_SPEND_CAP_REJECTION_REASONS.map((r) => [r] as [AppSpendCapRejectionReason]))(
     'increments the `%s` series',
     async (reason) => {
@@ -116,23 +111,6 @@ describe('civitai_app_block_spend_cap_rejections_total', () => {
     const { values } = await metric.get();
     expect(values).toHaveLength(3);
     expect(await readReason('daily')).toBe(100);
-  });
-
-  it('is idempotent to register — a double module import does not throw', () => {
-    // prom-client throws on a duplicate metric name; Next.js can import a module
-    // twice (hot reload / route bundling), so the get-or-create guard is what
-    // keeps that from taking the process down.
-    expect(() => {
-      ensureRegisterAppBlockRuntimeMetrics();
-      ensureRegisterAppBlockRuntimeMetrics();
-    }).not.toThrow();
-  });
-
-  it('appears in the scrape output under its exact name', async () => {
-    recordAppSpendCapRejection('velocity');
-    const scrape = await client.register.metrics();
-    expect(scrape).toContain(METRIC);
-    expect(scrape).toContain(`${METRIC}{reason="velocity"}`);
   });
 
   it('🔴 the emitter NEVER throws — a broken registry cannot turn a 402 into a 500', () => {

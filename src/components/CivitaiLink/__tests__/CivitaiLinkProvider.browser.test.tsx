@@ -34,8 +34,7 @@ const mocks = vi.hoisted(() => ({
 // something in the graph starts importing another of its exports, the file fails
 // to IMPORT, collects 0 tests and reports 0 failures — see
 // `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`,
-// which records six suites that went quietly to zero exactly this way. The tier
-// that runs this file is report-only, so that would be silent.
+// which records six suites that went quietly to zero exactly this way.
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
   useFeatureFlags: () => ({ civitaiLink: true }),

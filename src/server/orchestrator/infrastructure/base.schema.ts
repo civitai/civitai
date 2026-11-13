@@ -1,4 +1,4 @@
-import { Priority } from '@civitai/client';
+import { Priority } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { maxUpscaleSize } from '~/server/common/constants';
 

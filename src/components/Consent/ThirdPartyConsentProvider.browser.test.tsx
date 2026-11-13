@@ -32,8 +32,8 @@ import type { ServerDomains } from '~/shared/constants/domain.constants';
  * freezing its context value, and `ThirdPartyConsentProvider` reading region from there. A
  * `vi.mock` of `useAppContext` — what every other component test in this repo does — would
  * assert the second half against a fake first half and go green even if `AppProvider` stopped
- * freezing. So the real provider is mounted, with only the four ambient tRPC queries it fires
- * stubbed (the network boundary), and `rerender` drives the navigation.
+ * freezing. So the real provider is mounted, with every tRPC query it fires
+ * stubbed inert (the network boundary), and `rerender` drives the navigation.
  *
  * ## Why the harness still passes a `region` PROP to the consent provider
  *
@@ -47,28 +47,12 @@ import type { ServerDomains } from '~/shared/constants/domain.constants';
  * does not read.
  */
 
-// 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.ssrHydration.browser.test.tsx` stubs
-// the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
-// be added to BOTH. This is a comment rather than a shared module because the failure is LOUD:
-// an unstubbed query is a `TypeError` naming the missing property during render, not a silent
-// zero, and the duplicate is eight lines of fixture with no logic in it.
-// Only the AMBIENT queries `AppProvider` fires on mount. Spread of the original module, not a
-// wholesale replacement — `local-rules/no-wholesale-module-mock` bans the latter, and an
-// omitted export fails the whole file at COLLECTION, reported as "no tests" rather than red.
+// The suite measures no tRPC query, so every procedure `AppProvider` fires (and any it gains later)
+// answers through `makeTrpcProxy`'s inert hooks rather than a hand-kept list. Spread of the real
+// module, not a wholesale replacement (`local-rules/no-wholesale-module-mock`).
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const actual = await importOriginal<typeof TrpcModule>();
-  const seeded = () => ({ data: undefined, isInitialLoading: false });
-  return {
-    ...actual,
-    trpc: {
-      user: {
-        getSettings: { useQuery: seeded },
-        getFollowingUsers: { useQuery: seeded },
-      },
-      system: { getLiveNow: { useQuery: seeded } },
-      chat: { getUserSettings: { useQuery: seeded } },
-    },
-  };
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return { ...(await importOriginal<typeof TrpcModule>()), trpc: makeTrpcProxy() };
 });
 
 import { renderWithProviders } from '../../../test/component-setup';
@@ -320,5 +304,91 @@ describe('ThirdPartyConsentProvider — the consent gate must survive a client-s
     await expect.element(probe()).toHaveAttribute('data-nav', '1');
     await expect.element(probe()).toHaveAttribute('data-required', 'false');
     await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
+  });
+});
+
+/**
+ * A shell boot learns the region after mount (`AppProvider`'s `shell` prop: `null`, then the
+ * upgrade), and `isConsentRequired(undefined)` fails open — so until the region arrives the gate
+ * must be CLOSED, and when it arrives nothing below it may remount.
+ */
+function ShellAppShell({
+  shell,
+  initialConsent,
+}: {
+  shell: { region?: RegionInfo } | null;
+  initialConsent: ConsentDecision | null;
+}) {
+  return (
+    <AppProvider
+      seed={1}
+      canIndex={false}
+      settings={{} as UserContentSettings}
+      liveNow={false}
+      domain="blue"
+      host="civitai.com"
+      serverDomains={SERVER_DOMAINS}
+      availableOAuthProviders={[]}
+      verifiedBot={null}
+      isAuthed={false}
+      shell={shell}
+    >
+      <ThirdPartyConsentProvider initialConsent={initialConsent} loggedIn={false}>
+        <MountLedger />
+        <Probe nav={shell ? 1 : 0} />
+      </ThirdPartyConsentProvider>
+    </AppProvider>
+  );
+}
+
+describe('ThirdPartyConsentProvider — on a shell boot, closed until the region is known', () => {
+  test('🔴 while the region is pending, third parties are NOT allowed and no banner shows', async () => {
+    await renderWithProviders(<ShellAppShell shell={null} initialConsent={null} />);
+
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+    await expect.element(probe()).toHaveAttribute('data-required', 'false');
+    await expect
+      .element(page.getByText('Your privacy choices', { exact: true }))
+      .not.toBeInTheDocument();
+  });
+
+  test('🔴 a consent-required region arriving gates and ASKS, without remounting the app', async () => {
+    const { rerender } = await renderWithProviders(
+      <ShellAppShell shell={null} initialConsent={null} />
+    );
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+
+    await rerender(<ShellAppShell shell={{ region: CALIFORNIA }} initialConsent={null} />);
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+    await expect.element(probe()).toHaveAttribute('data-required', 'true');
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+    await expect.element(page.getByText('Your privacy choices', { exact: true })).toBeVisible();
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
+  });
+
+  test('a consent-required region arriving honours a REJECTED cookie', async () => {
+    const { rerender } = await renderWithProviders(
+      <ShellAppShell shell={null} initialConsent="rejected" />
+    );
+    await rerender(<ShellAppShell shell={{ region: CALIFORNIA }} initialConsent="rejected" />);
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+    await expect.element(probe()).toHaveAttribute('data-consent', 'rejected');
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+  });
+
+  test('a region that needs no consent arriving opens it, without remounting the app', async () => {
+    const { rerender } = await renderWithProviders(
+      <ShellAppShell shell={null} initialConsent={null} />
+    );
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'false');
+
+    await rerender(<ShellAppShell shell={{ region: TEXAS }} initialConsent={null} />);
+
+    await expect.element(probe()).toHaveAttribute('data-nav', '1');
+    await expect.element(probe()).toHaveAttribute('data-required', 'false');
+    await expect.element(probe()).toHaveAttribute('data-allowed', 'true');
+    await expect.element(mountLedger()).toHaveAttribute('data-mounts', '1');
   });
 });

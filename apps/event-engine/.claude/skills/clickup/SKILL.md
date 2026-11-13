@@ -121,7 +121,7 @@ node .claude/skills/clickup/query.mjs status 86a1b2c3d "complete"
 
 ```bash
 # Assign by username
-node .claude/skills/clickup/query.mjs assign 86a1b2c3d justin
+node .claude/skills/clickup/query.mjs assign 86a1b2c3d jane
 
 # Assign by email
 node .claude/skills/clickup/query.mjs assign 86a1b2c3d jane@example.com
@@ -220,7 +220,7 @@ node .claude/skills/clickup/query.mjs delete-comment 90110200841741
 
 ```bash
 # Notify user via @mention comment (ClickUp API doesn't support adding watchers directly)
-node .claude/skills/clickup/query.mjs watch 86a1b2c3d koen
+node .claude/skills/clickup/query.mjs watch 86a1b2c3d john
 
 # Notify by email
 node .claude/skills/clickup/query.mjs watch 86a1b2c3d jane@example.com

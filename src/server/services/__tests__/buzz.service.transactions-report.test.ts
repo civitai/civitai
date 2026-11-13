@@ -83,13 +83,12 @@ describe('getTransactionsReport', () => {
     // The whole predicate, operator included: an assertion on the type names alone passes just as
     // well against `type IN (...)`, which would draw ONLY cash-outs.
     //
-    // Each excluded type now carries its NUMBER as well as its name. The ingest MV's int→string map
-    // stops at 26 and falls back to `toString(Type)`, so a member above it is stored as its digits —
-    // all three here are below it, so the numeric arms match nothing and the chart is unchanged. The
-    // arms are emitted unconditionally because the builder does not branch, which is what keeps one
-    // rule in one place; see `clickhouseTransactionTypeExclusionPredicate`.
+    // Each excluded type carries every spelling the column can hold, not just its name. All three
+    // here are stored by name, so the extra arms match nothing and the chart is unchanged. They are
+    // emitted unconditionally because the builder does not branch, which keeps one rule in one
+    // place; see `clickhouseTransactionTypeExclusionPredicate`.
     expect(branches(sqlOf()).spent).toContain(
-      "AND type NOT IN ('bank','23','withdrawal','17','extract','24')"
+      "AND type NOT IN ('bank','23','unknown_23','withdrawal','17','unknown_17','extract','24','unknown_24')"
     );
   });
 
@@ -97,7 +96,7 @@ describe('getTransactionsReport', () => {
     await getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' });
 
     expect(branches(sqlOf()).gained).toContain(
-      "AND type NOT IN ('bank','23','withdrawal','17','extract','24')"
+      "AND type NOT IN ('bank','23','unknown_23','withdrawal','17','unknown_17','extract','24','unknown_24')"
     );
   });
 
@@ -216,13 +215,7 @@ describe('getTransactionsReport', () => {
     // Both fields the chart keys on, not just the value: it looks the bucket up by a formatted `date`
     // and picks the account by `accountType`, so a fallback returning either in an unexpected shape
     // draws every bar at zero while an assertion on `gained` alone stays green.
-    //
-    // The format, not the instant. This path runs the buzz service's payload through
-    // `getTransactionsReportResultSchema`, whose `z.coerce.date()` reads a bare timestamp as LOCAL and
-    // then formats it as UTC — so the value shifts by the host's offset (nothing on a UTC server, six
-    // hours on the box this was written on). Pre-existing on this path; pinning the literal would make
-    // the test fail by timezone rather than by defect.
-    expect(report[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+    expect(report[0].date).toBe('2026-08-31T00:00:00');
     expect(report[0].accounts[0]).toEqual({ accountType: 'yellow', spent: 10, gained: 20 });
   });
 

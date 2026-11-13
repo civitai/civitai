@@ -14,7 +14,30 @@
 // prompt that writes it and its area flag is off, so it cannot grow.
 // Enforced: `feedback.schema.test.ts` compares a hand-typed list against this one,
 // so removing the slug fails there with an array diff rather than silently.
-export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const;
+//
+// `app-block` is private per-app feedback about one App Block, read by the app's owner and by
+// moderators. Unlike the other areas its rows carry `Feedback.appListingId` (the DB CHECK
+// `Feedback_app_columns_check` requires all eight app columns — appListingId, appBlockVersion,
+// appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById, ownerFlaggedAt, hiddenFromOwnerAt — to be
+// NULL on every other area), and it is NOT meant to be written through the generic
+// `feedback.create` — a dedicated procedure resolves the listing server-side. Listing it here makes
+// the shared area enum accept the slug, so the generic `feedback.create` / `feedback.getArea`
+// inputs refuse it explicitly (`genericFeedbackAreaSchema` in src/server/schema/feedback.schema.ts)
+// whatever its `feedback-area-app-block` flag says; that flag gates only the dedicated procedure.
+//
+// `apps-platform` is feedback about the developer platform (CLI, SDK, docs, review), sent by a
+// coding agent with an API token. Its rows are deduplicated on a server-computed fingerprint held
+// in `context.server`, so the generic inputs refuse it for the same reason they refuse `app-block`:
+// a row written there would carry no fingerprint and never be counted.
+export const FEEDBACK_AREAS = [
+  'bitdex-image-feed',
+  'apps-marketplace',
+  'site-bug-report',
+  'app-block',
+  'apps-platform',
+  'semantic-image-search',
+  'orchestration',
+] as const;
 
 /**
  * The area behind the support menu's "Report a bug", and the only one that is not
@@ -22,6 +45,59 @@ export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace', 'site-bu
  * `context.path` is the only thing that says where the report came from.
  */
 export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
+
+/**
+ * Generation and training failures, filed from a toast or alert's "Report this" action by a caller
+ * that knows the failure is the orchestrator's. Never inferred from an error's text.
+ */
+export const ORCHESTRATION_FEEDBACK_AREA: FeedbackArea = 'orchestration';
+
+/** Private per-app feedback from the App Block chrome — see the `app-block` note on FEEDBACK_AREAS. */
+export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
+
+/** Developer-platform feedback from coding agents — see the `apps-platform` note on FEEDBACK_AREAS. */
+export const APPS_PLATFORM_FEEDBACK_AREA: FeedbackArea = 'apps-platform';
+
+/**
+ * `apps-platform` values the moderator app must agree with, because it writes or explains what the
+ * main app's platform-feedback service reads back to reporters.
+ */
+/** The only reporter-sent URL the moderator panel renders as a link. */
+export const PLATFORM_FEEDBACK_DOC_URL_PREFIX = 'https://developer.civitai.com/';
+/** Longest public note a moderator can save, and so how much of one the readback returns. */
+export const PLATFORM_FEEDBACK_PUBLIC_NOTE_MAX_LENGTH = 1000;
+/**
+ * Which `resolution.fixedIn.component` a reporting client's own version is compared against, to open
+ * a regression row. `other` is absent on purpose: its version says nothing about any component we ship.
+ */
+export const PLATFORM_FEEDBACK_CLIENT_COMPONENT = {
+  'civitai-cli': 'cli',
+  'civitai-mcp': 'mcp',
+} as const;
+
+/**
+ * Who can read an `app-block` report, as user-facing copy. The developer's inbox note
+ * interpolates it (`INBOX_PRIVACY_NOTE`); the send dialog no longer states its readers, only that
+ * the feedback is private. Accepted collaborators (editor seats)
+ * read the inbox alongside the owner — `resolveInboxListingId` in `app-feedback.service.ts`.
+ */
+export const APP_FEEDBACK_READERS =
+  "this app's developer, their collaborators and Civitai moderators";
+
+/**
+ * The developer's status on an `app-block` report. NULL in the column means "new to the developer".
+ *
+ * Deliberately a SEPARATE vocabulary from the moderator triage `status` ('new' | 'reviewed' |
+ * 'actioned' | 'dismissed'), stored in separate columns, so an owner can never move moderator
+ * triage and neither status drives the other.
+ *
+ * 🔴 Mirrored by the `Feedback_ownerStatus_check` CHECK in the manual-apply migration
+ * `*_feedback_app_listing`. A value added here and not there fails the owner's write with a
+ * constraint violation; `feedback.schema.test.ts` reads the CHECK back out of the SQL and compares.
+ */
+export const FEEDBACK_OWNER_STATUSES = ['acknowledged', 'resolved', 'wont_fix'] as const;
+
+export type FeedbackOwnerStatus = (typeof FEEDBACK_OWNER_STATUSES)[number];
 
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
 
@@ -64,6 +140,16 @@ export const FEEDBACK_PATH_MAX_LENGTH = 300;
 
 /** Faro session ids are short opaque strings; bounded because it is still client-supplied. */
 export const FEEDBACK_SESSION_ID_MAX_LENGTH = 64;
+
+/**
+ * The reference a masked server fault shows the user, "(ref: <12 hex>)", and the key its full error
+ * is logged under (`getClientSafeError`). Reported so triage can find that log line.
+ */
+export const FEEDBACK_ERROR_REF_PATTERN = /^[0-9a-f]{12}$/;
+/** Orchestrator workflow and job ids, as a reporter's browser claims them. */
+export const FEEDBACK_ORCHESTRATOR_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+/** Each of the title and message of the toast a report was filed from. */
+export const FEEDBACK_TOAST_TEXT_MAX_LENGTH = 300;
 
 /**
  * Length ceiling on ONE value inside `context.filters`.
@@ -131,5 +217,22 @@ export const FEEDBACK_NETWORK_URL_MAX_LENGTH = 300;
  * submission on the surface that exists to collect reports.
  */
 export const FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH = 20;
+
+/**
+ * Failed tRPC calls. A batched call fails inside an HTTP 200 response, so the network buffer above
+ * never sees it. Each entry is the procedure path, the tRPC error code and status, and a time:
+ * never the input, never the error message (a message can echo what the user typed).
+ */
+export const FEEDBACK_TRPC_ERROR_MAX_COUNT = 10;
+export const FEEDBACK_TRPC_PATH_MAX_LENGTH = 100;
+/** A procedure path is dotted identifiers (`model.getById`). Anything else is not recorded. */
+export const FEEDBACK_TRPC_PATH_PATTERN = /^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/;
+/** tRPC codes are SCREAMING_SNAKE (`NOT_FOUND`, `INTERNAL_SERVER_ERROR`). */
+export const FEEDBACK_TRPC_CODE_PATTERN = /^[A-Z_]{1,40}$/;
+
+/** Bounds on the environment the client reports: build id, short device strings, user agent. */
+export const FEEDBACK_BUILD_MAX_LENGTH = 64;
+export const FEEDBACK_DEVICE_TEXT_MAX_LENGTH = 64;
+export const FEEDBACK_USER_AGENT_MAX_LENGTH = 400;
 
 export const feedbackAreaFlagKey = (area: FeedbackArea) => `feedback-area-${area}`;

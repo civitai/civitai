@@ -5,7 +5,7 @@ import {
   createNotificationProcessor,
   notBlockedBetween,
 } from '~/server/notifications/base.notifications';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { getDisplayName, slugit, withDefiniteArticle } from '~/utils/string-helpers';
 
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
 const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
@@ -117,7 +117,9 @@ export const modelNotifications = createNotificationProcessor({
     displayName: 'New versions of models you follow',
     category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `The ${details.modelName} model has a new version: ${details.versionName}`,
+      message: `${withDefiniteArticle(details.modelName, 'The')} model has a new version: ${
+        details.versionName
+      }`,
       url: `/models/${details.modelId}${
         details.modelVersionId ? `?modelVersionId=${details.modelVersionId}` : ''
       }`,
@@ -413,6 +415,19 @@ export const modelNotifications = createNotificationProcessor({
       message: `The hash in the metadata of your resource "${details.modelName}: ${details.versionName}" has been corrected. Please redownload it to ensure that your images report the correct hash going forward.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
         details.versionId
+      }`,
+    }),
+  },
+  'model-gallery-post-pinned': {
+    displayName: 'Your post was pinned to a model gallery',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `${details.username ?? 'A creator'} pinned your post to the ${
+        details.modelName
+      } gallery`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
+        details.modelVersionId
       }`,
     }),
   },

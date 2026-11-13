@@ -36,7 +36,12 @@ export const getMinorFlagAppealsSchema = z.object({
 // The model id, not the appeal id — appeals resolve by entity, and a model can
 // carry more than one.
 export type ResolveMinorFlagAppealInput = z.infer<typeof resolveMinorFlagAppealSchema>;
+const appealLabelDecision = z.enum(['uphold', 'overturn']);
+
 export const resolveMinorFlagAppealSchema = z.object({
   modelId: z.number(),
   uphold: z.boolean(),
+  labels: z
+    .object({ minor: appealLabelDecision.optional(), poi: appealLabelDecision.optional() })
+    .optional(),
 });

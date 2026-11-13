@@ -20,6 +20,7 @@ const { envBox } = vi.hoisted(() => ({
     LOGGING: '',
     MEILI_CALL_CONCURRENCY: 50,
     SIGNALS_CALL_CONCURRENCY: 30,
+    SIGNALS_TOKEN_CALL_CONCURRENCY: 30,
     S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
     S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
   } as Record<string, unknown>,
@@ -61,8 +62,13 @@ vi.mock('~/server/services/model.service', () => ({
 vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
+const { mockPurgeCache } = vi.hoisted(() => ({ mockPurgeCache: vi.fn() }));
+vi.mock('~/server/cloudflare/client', () => ({ purgeCache: mockPurgeCache }));
 
-import { bustPublicModelResponseCache } from '~/server/services/model-version.service';
+import {
+  bustPublicModelResponseCache,
+  purgePublicModelShowcaseEdgeCache,
+} from '~/server/services/model-version.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -75,8 +81,8 @@ const mockDbWrite = dbMock.dbWrite;
 const mockRedisDel = redisMock.redis.del;
 
 const keysFor = (id: number) => [
-  `packed:caches:public-model-response:${id}:${allBrowsingLevelsFlag}`,
-  `packed:caches:public-model-response:${id}:${sfwBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${allBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${sfwBrowsingLevelsFlag}`,
 ];
 
 beforeEach(() => {
@@ -109,5 +115,17 @@ describe('bustPublicModelResponseCache', () => {
   it('fails open: swallows a Redis error and does not throw into the mutation path', async () => {
     mockRedisDel.mockRejectedValueOnce(new Error('redis down'));
     await expect(bustPublicModelResponseCache(123)).resolves.toBeUndefined();
+  });
+});
+
+describe('purgePublicModelShowcaseEdgeCache', () => {
+  it('drops the origin model response before purging the edge, so the edge cannot refill from it', async () => {
+    mockDbRead.modelFileHash.findMany.mockResolvedValue([] as never);
+    await purgePublicModelShowcaseEdgeCache(123, [10]);
+    expect(mockRedisDel).toHaveBeenCalledWith(keysFor(123));
+    expect(mockPurgeCache).toHaveBeenCalled();
+    expect(mockRedisDel.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPurgeCache.mock.invocationCallOrder[0]
+    );
   });
 });

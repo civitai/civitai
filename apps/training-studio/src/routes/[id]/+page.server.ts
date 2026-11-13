@@ -2,18 +2,21 @@ import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getTrainingWorkflow } from '$lib/server/orchestrator';
 import { orchestratorToken } from '$lib/server/orchestrator-token';
-import { SAMPLE_DETAIL } from '$lib/data/trainingRows';
+import { SAMPLE_DETAIL, workflowToDetail } from '$lib/data/trainingRows';
+import { sampleReviewWorkflows } from '$lib/data/sampleReviewRuns';
 
 export const load: PageServerLoad = async ({ locals, params, depends }) => {
   // Lets the detail page re-run this load on a timer while the run is still training (live epochs).
   depends('app:training-detail');
   // The dev-login stub has no real token; show the sample detail so the screen is previewable.
-  if (locals.devPreview)
+  if (locals.devPreview) {
+    const held = sampleReviewWorkflows().find((w) => w.id === params.id);
     return {
-      detail: SAMPLE_DETAIL,
+      detail: (held && workflowToDetail(held)) || SAMPLE_DETAIL,
       username: locals.user.username,
       image: locals.user.image,
     };
+  }
 
   let detail;
   try {

@@ -18,39 +18,22 @@
 --
 -- WHAT IT DOES NOT FIX: the aggregate is O(table), not O(page), so cost grows with
 -- the table regardless of indexing. The durable fix is a `groupBy` restricted to the
--- page's ids -- and that is BLOCKED ON THIS INDEX: measured, a groupBy over 60 ids
--- is still a whole-table seq scan today, and becomes a ~9-cost index-only nested
--- loop with the index. `withSoldCount` in src/server/selectors/cosmetic-shop.selector.ts
--- is the seam. The heaviest per-call consumer is `getCommunityCosmetics`, which under
+-- page's ids -- and that needs this index: measured without it, a groupBy over 60 ids
+-- is still a whole-table seq scan, and with it a ~9-cost index-only nested loop. The
+-- heaviest per-call consumer is `getCommunityCosmetics`, which under
 -- MostPopular carries TWO of these aggregates -- one for the value, one for the
 -- `orderBy` -- confirmed by reading Prisma's emitted SQL, and Postgres does not dedupe
 -- them. `getShop` runs one aggregate but at higher volume.
 --
--- 🔴 NOT APPROVED. DO NOT APPLY THIS YET.
+-- APPLIED on prod and dev, 2026-10-17. It was held until the sold counts moved to raw
+-- SQL (`getSoldCounts` in src/server/services/cosmetic-shop-sold-count.ts); measured
+-- after that rewrite, a single-item count still scanned the whole table, which only
+-- this index fixes.
 --
--- This file is committed for review and history, not as an instruction. The owner's
--- answer to the request to apply it was: Prisma emits poor SQL here, so replace the
--- query with raw SQL FIRST and re-measure -- the index may not be needed at all. That
--- measurement has not been done as of this commit.
---
--- The doubled aggregate this header describes is a Prisma artifact, not a database
--- necessity, which is what makes that the right order.
---
--- What is NOT in question is the single-item read: counting one item's rows by
--- scanning 40,600 is a missing index rather than a bad query, and no rewrite fixes
--- that. So the likely outcome is that this file survives with a smaller
--- justification. Confirm with a measurement before anyone acts on it.
---
--- IF AND WHEN IT IS APPROVED: apply BEFORE the deploy. Not because a reader would
--- 500 without it -- no column is added, which is why this is an index and not a
--- `purchaseCount` column -- but so the single-item reads are not served at ~4 ms of
--- pure scan each from the moment it lands. A slowdown, not a brownout. Apply to DEV
--- too.
---
--- 🔴 APPLIED BY HAND. Feed this file to psql on STDIN so each statement runs in its
--- own implicit transaction: `CONCURRENTLY` cannot run inside a transaction block and
--- a multi-statement `-c` would wrap it in one. Takes SHARE UPDATE EXCLUSIVE, not
--- ACCESS EXCLUSIVE -- it blocks neither reads nor writes.
+-- 🔴 APPLIED BY HAND. Run the CREATE INDEX statement on its own, outside a
+-- transaction: `CONCURRENTLY` cannot run inside a transaction block, and running the
+-- whole file as one multi-statement batch wraps it in one. Takes SHARE UPDATE
+-- EXCLUSIVE, not ACCESS EXCLUSIVE -- it blocks neither reads nor writes.
 --
 -- 🔴 `IF NOT EXISTS` WILL SKIP A BROKEN INDEX. A cancelled CONCURRENTLY build leaves
 -- an INVALID index behind that is never used and never cleaned up, so a second run of

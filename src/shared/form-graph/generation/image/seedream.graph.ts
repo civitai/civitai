@@ -8,15 +8,13 @@ import {
 } from '~/shared/constants/generation.constants';
 
 /**
- * Seedream (v3 / v4 / v4.5 / v5.0-lite / v5.0-pro), ported from
- * `seedream-graph.ts`. One field set across versions — only the 2K/4K
+ * Seedream (v3 / v4 / v4.5 / v5.0-lite / v5.0-pro / v5.5). One field set across versions —
+ * only the 2K/4K
  * resolution toggle is version-gated. No negative prompt, sampler, steps, or
  * CLIP skip.
  */
 
-// ---- copied from seedream-graph.ts, which dies with the data-graph engine ---
-
-export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro';
+export type SeedreamVersion = 'v3' | 'v4' | 'v4.5' | 'v5.0-lite' | 'v5.0-pro' | 'v5.5';
 
 export const seedreamVersionIds = {
   v3: 2208174,
@@ -24,6 +22,7 @@ export const seedreamVersionIds = {
   'v4.5': 2470991,
   'v5.0-lite': 2720141,
   'v5.0-pro': 3110984,
+  'v5.5': 3464384,
 } as const;
 
 const seedreamVersionOptions = [
@@ -32,9 +31,12 @@ const seedreamVersionOptions = [
   { label: 'v4.5', value: seedreamVersionIds['v4.5'] },
   { label: 'v5.0 lite', value: seedreamVersionIds['v5.0-lite'] },
   { label: 'v5.0 pro', value: seedreamVersionIds['v5.0-pro'] },
+  { label: 'v5.5', value: seedreamVersionIds['v5.5'], newUntil: new Date('2026-12-12') },
 ];
 
 const seedreamAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
+/** 2K sizes: the presets send `resolution: '2K'` because the toggle on v4.5 and v5.0-lite defaults to 4K. */
+export const seedreamAspectRatios2K = getAspectRatioOptions('2K', seedreamAspectRatioList);
 
 const seedreamResolutionOptions = [
   { label: '2K', value: '2K' },
@@ -46,8 +48,6 @@ const versionsWithResolutionToggle = new Set<number>([
   seedreamVersionIds['v4.5'],
   seedreamVersionIds['v5.0-lite'],
 ]);
-
-// ---- end of seedream-graph.ts copies ----------------------------------------
 
 const RESOLUTION = enumDef({ options: seedreamResolutionOptions, default: '4K' });
 
@@ -61,13 +61,14 @@ const AR = defFamily((resolution: string) =>
 
 export const seedream = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
+  // Model-locked: a gated v5.5 falls back to the ecosystem default, so that default must stay a launched version.
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
       versions: { options: seedreamVersionOptions },
-      defaultModelId: seedreamVersionIds['v5.0-pro'],
+      defaultModelId: seedreamVersionIds['v5.5'],
     })
   )
   .field('resolution', ({ model }) =>

@@ -1,14 +1,5 @@
-import {
-  Button,
-  Group,
-  Image,
-  List,
-  Paper,
-  Popover,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { Button, Group, Image, List, Paper, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconDownload, IconPointFilled } from '@tabler/icons-react';
 import { CREATOR_SHOP_BORDER } from '~/components/CreatorShop/creator-shop.constants';
 import { COSMETIC_STANDARDS } from '~/components/CreatorShop/Submit/standards.constants';

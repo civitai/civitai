@@ -49,6 +49,8 @@ const {
 } = vi.hoisted(() => {
   const state = {
     flagEnabled: true,
+    // `app-blocks-review-autodeploy`: gates the new-submission alert (and the automatic preview).
+    autodeployEnabled: false,
     // app_blocks row returned by findFirst (null = not provisioned yet → 404)
     appBlock: null as null | Record<string, unknown>,
     // approved publish request match for (slug, sha) — race backstop
@@ -109,13 +111,19 @@ vi.mock('~/env/server', () => ({
 // is hard-false so a regression that repointed back to it would 503.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: vi.fn(async (flag: string) =>
-    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
+    flag === 'app-blocks-pipeline-enabled'
+      ? mockFlag.enabled
+      : flag === 'app-blocks-review-autodeploy'
+      ? state.autodeployEnabled
+      : false
   ),
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlock: { findFirst: mockAppBlockFindFirst, findUnique: mockAppBlockFindUnique },
     appBlockPublishRequest: { findFirst: mockPubReqFindFirst },
+    // The new-submission moderator alert names the author.
+    user: { findUnique: async () => ({ username: 'author' }) },
   },
   dbWrite: {
     appBlock: { update: mockAppBlockUpdate },
@@ -124,6 +132,8 @@ vi.mock('~/server/db/client', () => ({
       create: mockPubReqCreate,
       update: mockPubReqUpdate,
       updateMany: mockPubReqUpdateMany,
+      // The supersede read: no other pending request with a preview to tear down.
+      findMany: async () => [],
     },
   },
 }));
@@ -148,6 +158,19 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 
 import { isFlipt } from '~/server/flipt/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { appDeveloperTermsRefusalMessage } from '~/shared/constants/app-developer-terms.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 const mockedIsFlipt = vi.mocked(isFlipt);
 
@@ -215,6 +238,7 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', mockFetch);
     state.flagEnabled = true;
+    state.autodeployEnabled = false;
     state.appBlock = {
       id: APP_BLOCK_ID,
       appId: `appblk-${SLUG}`,
@@ -234,25 +258,63 @@ describe('git-push webhook — no-trust-on-push gate', () => {
   });
 
   // ---- the mod-alerts Discord ping ----------------------------------------
-  // The park path (202) is the SUCCESS path of the "Author via git" flow and
-  // already has two review surfaces: the /apps/review queue and the Forgejo
-  // commit status. It must NOT ping the shared mod-alerts webhook (that ping
-  // was the noisy red "Apps build-chain rejected" alarm, ~1/day from fleet
-  // automation). The genuine failure stages keep the ping.
+  // The park path (202) is the SUCCESS path of the "Author via git" flow. It must NOT raise the
+  // red "Apps build-chain rejected" failure alarm (noisy, ~1/day from fleet automation); the
+  // genuine failure stages keep that. With `app-blocks-review-autodeploy` on, a NEW pending
+  // request posts the one neutral "New app submission" alert (review-autodeploy.service); off, none.
 
-  it('a parked unreviewed push does NOT ping the mod-alerts webhook', async () => {
+  it('autodeploy flag OFF: a parked unreviewed push does NOT ping the mod-alerts webhook', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);
+    expect(mockPubReqCreate).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 50));
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('a re-delivery of the same parked sha does NOT ping the mod-alerts webhook either', async () => {
+  it('autodeploy flag ON: a parked unreviewed push posts only the new-submission alert, never the failure alarm', async () => {
+    state.autodeployEnabled = true;
+    // The per-submitter alert throttle reads a counter: first alert of the hour. The automatic
+    // build's budget counter is left unreadable, so no preview is queued from this test.
+    redisMock.sysRedis.multi.mockImplementation(() => {
+      let key = '';
+      const chain = {
+        set: vi.fn((k: string) => {
+          key = k;
+          return chain;
+        }),
+        incr: vi.fn(() => chain),
+        exec: vi.fn(async () => {
+          if (!key.includes('review-submission-alerts')) throw new Error('not in this test');
+          return ['OK', 1];
+        }),
+      };
+      return chain;
+    });
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    // The alert is fire-and-forget after the response.
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled(), { timeout: 15_000 });
+    const titles = mockFetch.mock.calls.map(
+      (c) =>
+        (
+          JSON.parse((c as unknown as [string, { body: string }])[1].body) as {
+            embeds: Array<{ title: string }>;
+          }
+        ).embeds[0].title
+    );
+    expect(titles).toHaveLength(1);
+    expect(titles[0]).toMatch(/^New app submission: /);
+  });
+
+  it('a re-delivery of the same parked sha does NOT ping the mod-alerts webhook at all', async () => {
     state.pendingPubReqForSha = { id: 'pubreq_existing' };
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
     expect(res._status).toBe(202);
     expect(mockPubReqCreate).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 0));
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -269,6 +331,19 @@ describe('git-push webhook — no-trust-on-push gate', () => {
   });
 
   // ---- the core fix --------------------------------------------------------
+
+  it('🔴 git-push re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(mockValidate).toHaveBeenCalled();
+    expect(
+      mockValidate.mock.calls.some(
+        (c: unknown[]) =>
+          (c[2] as { strictIssueTrackerLink?: boolean } | undefined)?.strictIssueTrackerLink ===
+          false
+      )
+    ).toBe(true);
+  });
 
   it('a NEW signed push to an existing approved block does NOT approve or deploy — it parks a PENDING review request', async () => {
     const res = makeRes();
@@ -291,6 +366,78 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     // Response signals pending-review, not deployed.
     expect(res._status).toBe(202);
     expect(res._body).toMatchObject({ status: 'pending-review', deployed: false });
+  });
+
+  it('an owner who has not accepted the App Developer Terms: 403, a failure status linking to where to accept, nothing parked, no mod ping', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new terms.AppDeveloperTermsNotAcceptedError(
+        appDeveloperTermsRefusalMessage('https://civitai.com')
+      )
+    );
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(403);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'failure',
+        description: expect.stringContaining('/content/app-developer-terms'),
+        targetUrl: expect.stringMatching(/\/apps\/submit$/),
+      })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("checks the pusher's own acceptance, mapped from the dev-<userId> Forgejo handle", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    await invoke(signedReq(body), makeRes());
+    expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
+  });
+
+  it("a collaborator's push blocked by the OWNER says the owner must accept, not the pusher", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockResolvedValueOnce(false);
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    expect(res._status).toBe(403);
+    expect(vi.mocked(terms.hasAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(77);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        state: 'failure',
+        description: expect.stringMatching(/^The app's owner has not accepted/),
+      })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  it("a collaborator's push blocked by the PUSHER shows the pusher's own refusal", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new terms.AppDeveloperTermsNotAcceptedError('pusher-refusal-marker')
+    );
+    const body = {
+      ...pushBody({ after: NEW_SHA }),
+      pusher: { login: 'dev-42', username: 'dev-42' },
+    };
+    const res = makeRes();
+    await invoke(signedReq(body), res);
+    expect(res._status).toBe(403);
+    expect(vi.mocked(terms.assertAcceptedAppDeveloperTerms)).toHaveBeenCalledWith(42);
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failure', description: 'pusher-refusal-marker' })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
   });
 
   it('the new pending push supersedes any older pending request for the slug (one-pending-per-slug)', async () => {
@@ -364,6 +511,32 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
+  it('🔴 a push to the SOURCE org (civitai-apps-src/<slug>) files nothing and builds nothing (403)', async () => {
+    // Everything else about this push would park a pending request: a valid signature, `main`,
+    // an approved block under the same slug, a new sha and a valid manifest (the test above shows
+    // the same body under civitai-apps/ does park). Only the org differs, so the 403 is the gate's.
+    const res = makeRes();
+    await invoke(
+      signedReq(pushBody({ after: NEW_SHA, fullName: `civitai-apps-src/${SLUG}` })),
+      res
+    );
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({
+      error: 'Unexpected or missing repository org',
+      fullName: `civitai-apps-src/${SLUG}`,
+    });
+    expect(mockGetRawFile).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('control for the source-org case: the same push under civitai-apps/ parks a pending request', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockPubReqCreate).toHaveBeenCalledTimes(1);
+  });
+
   it('503s when the pipeline flag is off (kill switch) before any DB work', async () => {
     state.flagEnabled = false;
     const res = makeRes();
@@ -400,11 +573,116 @@ describe('git-push webhook — no-trust-on-push gate', () => {
     expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 
+  it('🔴 refuses a pushed permission hook (400 + storageHookErrors), parks nothing and pings no one', async () => {
+    // The manifest validator is stubbed valid here, so the refusal is the push-path hook pin's:
+    // the hooks storage feature ships off, so the declaration is not available yet.
+    state.manifest = {
+      ...validManifest(NEW_SHA),
+      storage: {
+        collections: {
+          cards: {
+            visibility: 'private',
+            hook: { file: 'hooks/cards.js', sha256: 'a'.repeat(64) },
+          },
+        },
+      },
+    };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(400);
+    expect(res._body).toEqual({
+      error: 'Storage hook refused',
+      storageHookErrors: [{ collection: 'cards', file: 'hooks/cards.js', reason: 'not_available' }],
+    });
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failure', context: 'civitai/manifest-validation' })
+    );
+    expect(mockPubReqUpdateMany).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('ignores non-main branch pushes (200 skipped)', async () => {
     const res = makeRes();
     await invoke(signedReq(pushBody({ after: NEW_SHA, ref: 'refs/heads/dev' })), res);
     expect(res._status).toBe(200);
     expect(res._body).toMatchObject({ skipped: 'non-main branch' });
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  // ---- iframe.src: pushes WITH and WITHOUT the key ------------------------
+  // INVARIANT GUARDS (the behaviour predates this change): the webhook stamps the canonical
+  // iframe.src onto the parsed manifest before validating, so a developer tree with no
+  // `iframe.src`, with the canonical one, or with a wrong one is treated identically. These pin
+  // that before any change stops the platform writing the key into the repository: a tree a
+  // developer edits after `civitai app pull` may arrive either way.
+
+  /** The manifest the validator was handed for the last push. */
+  const validatedManifest = () =>
+    (mockValidate.mock.calls.at(-1) as unknown[] | undefined)?.[0] as
+      | { iframe?: Record<string, unknown> }
+      | undefined;
+
+  it.each([
+    ['without iframe.src', { minHeight: 300 }],
+    ['with the canonical iframe.src', { src: `https://${SLUG}.civit.ai/`, minHeight: 300 }],
+    ['with a wrong iframe.src', { src: 'https://evil.example/', minHeight: 300 }],
+  ])('a push %s parks a pending review with the canonical src validated', async (_n, iframe) => {
+    state.manifest = { ...validManifest(NEW_SHA), iframe };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockPubReqCreate).toHaveBeenCalledTimes(1);
+    expect(validatedManifest()?.iframe).toEqual({
+      src: `https://${SLUG}.civit.ai/`,
+      minHeight: 300,
+    });
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('a push with NO iframe object at all gets one with the canonical src', async () => {
+    const { iframe: _drop, ...rest } = validManifest(NEW_SHA);
+    state.manifest = rest;
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(validatedManifest()?.iframe).toEqual({ src: `https://${SLUG}.civit.ai/` });
+  });
+
+  it.each([
+    ['without iframe.src', { minHeight: 300 }],
+    ['with the canonical iframe.src', { src: `https://${SLUG}.civit.ai/`, minHeight: 300 }],
+  ])('the approved sha %s no-ops BEFORE the manifest is fetched', async (_n, iframe) => {
+    state.manifest = { ...validManifest(APPROVED_SHA), iframe };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: APPROVED_SHA })), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ deploy: 'already-approved' });
+    expect(mockGetRawFile).not.toHaveBeenCalled();
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a JSON array', '[]'],
+    ['not JSON', '{nope'],
+  ])('a manifest that is %s is still refused (400), nothing parked', async (_n, raw) => {
+    mockGetRawFile.mockResolvedValueOnce(raw);
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(400);
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+  });
+
+  // The approve path now creates `v<version>` / `approved-<id>` tags through the API, and a tag
+  // creation is delivered to this webhook as a push to `refs/tags/...`. It must be skipped like
+  // any non-main ref: it is not a code change and must never park a review request.
+  it('invariant guard: a tag push (refs/tags/v1.0.0) is skipped, nothing parked or fetched', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA, ref: 'refs/tags/v1.0.0' })), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toMatchObject({ skipped: 'non-main branch', ref: 'refs/tags/v1.0.0' });
+    expect(mockGetRawFile).not.toHaveBeenCalled();
     expect(mockPubReqCreate).not.toHaveBeenCalled();
   });
 });

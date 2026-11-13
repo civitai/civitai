@@ -1,6 +1,7 @@
 ---
 name: civitai-intent-review
 description: Scores a feature segment in the main Civitai Next.js app (src/) against the intent doc for the work — did the PR do what was actually asked, without quietly narrowing, widening, or transforming it. Use before calling a segment done, alongside civitai-reuse-review, civitai-correctness-review, civitai-perf-review and civitai-test-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -16,24 +17,21 @@ Findings only — you never apply a fix.
 
 ## The intent doc
 
-`INTENT_DIR` — the single constant this convention hangs on:
+Read the intent directory from an `INTENT_DIR: <absolute path>` line in your loaded instructions, or
+else from the primary checkout's `CLAUDE.local.md` (a worktree has none):
 
+```bash
+cat "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/CLAUDE.local.md"
 ```
-C:\Dev\Repos\work\model-share\_local\docs\plans\
-```
 
-The doc for a piece of work is `<INTENT_DIR>\<feature>.md`, where `<feature>` matches the branch or
-the feature name.
+The doc for a piece of work is `<INTENT_DIR>/<feature>.md`, where `<feature>` matches the branch or
+the feature name. Use the path exactly as written, from any worktree.
 
-**Use that absolute path from every worktree, whatever your cwd.** 🔴 `_local/` is Justin's private,
-local-only git repo and it is gitignored, so it exists **only in the primary worktree**. A relative
-`_local/docs/plans/...` resolved from a worktree does not fail — it silently creates a **second,
-private, wrong copy** that no other agent will ever read, and the divergence is invisible until two
-agents disagree about the requirements. Never create a `_local/` inside a worktree. One absolute path,
-one doc, every agent on the project reading the same thing.
+**No `INTENT_DIR` set:** score against the PR title and body, the linked issue or ticket, and the
+conversation you were given, and say in your report that the intent was not recorded before the work.
 
-Private is deliberate: the doc records what Justin actually wants and why, and this repository is
-public. Nothing from it goes into a commit message, a PR body, or a file under `docs/`.
+Intent docs stay out of git history: this repository is public. Never create one at a tracked path,
+and nothing from one goes into a commit message, a PR body, or a file under `docs/`.
 
 ### It is a living document
 
@@ -43,8 +41,8 @@ public. Nothing from it goes into a commit message, a PR body, or a file under `
 
 ### If no doc exists, you create it — and you say so
 
-Write `<INTENT_DIR>\<feature>.md` from the PR title and body, the linked issue or ClickUp task, the
-branch name, and the conversation you were given.
+With `INTENT_DIR` set, write `<INTENT_DIR>/<feature>.md` from the PR title and body, the linked issue
+or ClickUp task, the branch name, and the conversation you were given.
 
 Then **state in your report that the doc was reviewer-authored.** This matters and is not a formality:
 
@@ -54,11 +52,11 @@ catches nothing — every requirement is met by construction. A reviewer-authore
 artifact, useful mainly to the *next* iteration, and your report has to be honest about that rather
 than presenting the score as if it were grounded.
 
-**Check the doc predates the diff, even when one exists.** Compare its mtime and its own git history in
-`_local` against the branch's first commit:
+**Check the doc predates the diff, even when one exists.** Compare its mtime, and its own git history
+if `INTENT_DIR` is inside a git repo, against the branch's first commit:
 
 ```bash
-git -C "C:\Dev\Repos\work\model-share\_local" log --format='%ad %s' --date=iso -- docs/plans/<feature>.md
+git -C "<INTENT_DIR>" log --format='%ad %s' --date=iso -- <feature>.md
 git log --format='%ad %s' --date=iso main..HEAD | tail -1
 ```
 
@@ -106,8 +104,8 @@ Then, in the other direction:
 
 A requirement can be technically satisfied and still miss. Ask:
 
-- **Would Justin, reading this, say "yes, that's what I meant"?** Where the doc records a *reason* for
-  a requirement, check the implementation serves the reason, not just the sentence.
+- **Would the person who asked, reading this, say "yes, that's what I meant"?** Where the doc records a
+  *reason* for a requirement, check the implementation serves the reason, not just the sentence.
 - **Is it reachable?** A capability built but not wired into any surface a user or moderator can get to
   is not delivered. Grep for a caller of the new code — a new service function with no route, or a
   component with no page, is the classic.
@@ -122,7 +120,7 @@ A requirement can be technically satisfied and still miss. Ask:
 ## Update the doc
 
 If the conversation you were given contains scope changes the doc doesn't reflect, **update
-`<INTENT_DIR>\<feature>.md`** — that is what "living document" means, and a stale doc scores the next
+`<INTENT_DIR>/<feature>.md`** — that is what "living document" means, and a stale doc scores the next
 review wrongly. Note in your report that you changed it and what you added. Do not rewrite the recorded
 intent to match what shipped; that is backfilling, and it is the thing you are here to catch.
 
@@ -141,6 +139,40 @@ next, unrequested extras last.
 entry — the evidence column is enough. Say plainly when a PR delivers exactly what was asked; that is
 a real and welcome outcome, and it is worth stating in one sentence rather than being padded into a
 report.
+
+### Facts on every finding — required
+
+<!-- pr-review-gate:facts -->
+Still give your own best severity; the gate may recompute it from these facts. Report all three on
+every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
+otherwise end each finding with them as `impact / reach / evidence`, e.g.
+`money / unusual-state / traced src/server/services/x.service.ts:42`.
+
+- `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
+  user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
+  moderation, NSFW gating), `data-loss` (rows or files destroyed or corrupted), `privacy` (PII or private
+  content shown to the wrong person), `wrong-for-user` (a visible wrong result, nothing lost: a wrong
+  count, a dead button), `internal` (cost only we see: an extra query, log noise), `maintainability`
+  (nothing wrong yet: a duplicate, a misleading comment).
+- `reach`, when it happens: `normal-use` (an ordinary request on the main path), `unusual-state` (a rare
+  but real state: a retry, a webhook delivered twice, a race), `theoretical` (you found no path to it).
+- `evidence`, `{kind, ref}`: `traced` (you followed the path; `ref` is the `file:line` that does it),
+  `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
+  `ref` is the `file:line` you reasoned from).
+
+Report the reach you can show, not the worst you can imagine. The allowed values, for tools:
+
+```json
+{
+  "impact": ["money", "access", "data-loss", "privacy", "wrong-for-user", "internal", "maintainability"],
+  "reach": ["normal-use", "unusual-state", "theoretical"],
+  "evidence.kind": ["traced", "reproduced", "inferred"]
+}
+```
+<!-- /pr-review-gate:facts -->
+
+Example: a requirement silently dropped is `wrong-for-user` when users see the gap and `internal` when
+only we do; a dropped guard (a limit, a permission check) takes the impact of what it guarded.
 
 ## Delivering your report
 

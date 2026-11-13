@@ -5,15 +5,14 @@ import {
   Flex,
   Group,
   Loader,
-  Menu,
   Paper,
   ScrollArea,
   Stack,
   Text,
   Textarea,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -26,6 +25,7 @@ import {
 } from '@tabler/icons-react';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { TRAINING_REVIEW_COPY, trainingHeldSince } from '@civitai/shared/training-review';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -49,6 +49,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { getEpochJobAndFileName } from '~/server/utils/model-helpers';
 import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
+import { TrainingReviewNotice } from '~/components/Training/TrainingReviewNotice/TrainingReviewNotice';
 import { TrainingRunSummary } from '~/components/Training/TrainingRunSummary/TrainingRunSummary';
 import { trainingArchitectureKey } from '~/utils/training/run-summary';
 import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
@@ -59,7 +60,7 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { buildContinuationRunUpdate, trainingStore } from '~/store/training.store';
 import { basePath as trainWizardBasePath } from '~/components/Training/Form/TrainingCommon';
 import type { TrainingBaseModelType } from '~/utils/training';
-import { canGenerateWithEpochs } from '~/utils/training';
+import { canGenerateWithEpochs, isHeldForTrainingReview } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -441,6 +442,7 @@ export default function TrainingSelectFile({
 
   const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;
   const trainingStatus = runState?.trainingStatus ?? modelVersion.trainingStatus;
+  const heldForReview = isHeldForTrainingReview(trainingStatus, trainingResults);
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
@@ -811,16 +813,17 @@ export default function TrainingSelectFile({
   // Show alert when NOT paid with yellow buzz (yellow is the only type that guarantees no blur)
   const epochImagesMayBeBlurred = buzzType !== 'yellow';
 
-  const errorMessage =
-    trainingStatus === TrainingStatus.Paused
-      ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
-      : trainingStatus === TrainingStatus.Failed
-      ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
-      : trainingStatus === TrainingStatus.Denied
-      ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
-      : trainingStatus === TrainingStatus.Expired
-      ? 'The training data review was not completed in time. Please submit your training again.'
-      : undefined;
+  const errorMessage = heldForReview
+    ? TRAINING_REVIEW_COPY.pendingBody
+    : trainingStatus === TrainingStatus.Paused
+    ? 'This run is paused.'
+    : trainingStatus === TrainingStatus.Failed
+    ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
+    : trainingStatus === TrainingStatus.Denied
+    ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
+    : trainingStatus === TrainingStatus.Expired
+    ? 'The training data review was not completed in time. Please submit your training again.'
+    : undefined;
   const noEpochs = !epochs || !epochs.length;
   // Allow access to epochs for failed trainings if epochs exist
   const hasFailedWithEpochs = trainingStatus === TrainingStatus.Failed && !noEpochs;
@@ -855,7 +858,14 @@ export default function TrainingSelectFile({
         versionName={modelVersion.name}
         trainingDetails={thisTrainingDetails}
       />
-      {showBlockingError ? (
+      {heldForReview ? (
+        <TrainingReviewNotice
+          heldSince={trainingHeldSince(tResultsV2?.startedAt, trainingResults?.submittedAt)}
+          runId={tResultsV2?.workflowId ?? String(modelVersion.id)}
+          completedEpochs={epochsCompletedForRun(trainingResults ?? {})}
+          plannedEpochs={thisTrainingDetails?.params?.maxTrainEpochs}
+        />
+      ) : showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
           <Text>{errorMessage}</Text>

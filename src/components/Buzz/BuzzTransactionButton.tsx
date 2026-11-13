@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Badge, Button, Text, Tooltip, useComputedColorScheme } from '@mantine/core';
+import { Badge, Button, Text, useComputedColorScheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React from 'react';

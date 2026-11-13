@@ -4,7 +4,7 @@ import type {
   TextToImageStep,
   WorkflowCost,
   TransactionInfo,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 
 export type {

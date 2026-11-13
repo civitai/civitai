@@ -4,10 +4,8 @@ import {
   Button,
   Center,
   Group,
-  Popover,
   Stack,
   Table,
-  Tooltip,
   Text,
   Alert,
   Divider,
@@ -17,6 +15,7 @@ import {
   Card,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconInfoCircle,
   IconRefresh,

@@ -105,7 +105,7 @@ vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
 vi.mock('~/server/services/report.service', () => ({ createReport: vi.fn() }));
-vi.mock('~/server/services/user.service', () => ({ claimCosmetic: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ awardTrophyCosmetic: vi.fn() }));
 vi.mock('~/utils/signal-client', () => ({
   signalClient: { send: mockSignalSend, topicSend: vi.fn() },
 }));

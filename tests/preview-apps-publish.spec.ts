@@ -1,12 +1,22 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
 import JSZip from 'jszip';
+import { previewAppBlockManifest } from './preview-app-block-manifest';
 import { storageStatePath } from './preview-fixtures';
+import {
+  budgetBlocksReviewBuild,
+  reviewBuildTimeoutMessage,
+  reviewBuildVerdict,
+  type AutoBuildBudgetLike,
+  type ReviewStatusLike,
+} from './preview-review-build';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
 /**
  * Preview-e2e: App Blocks PUBLISH-REQUEST submit leg — proves the developer
- * never authors `iframe.src` and never needs a `Dockerfile` in the bundle.
+ * never authors `iframe.src` and never needs a `Dockerfile` in the bundle, and
+ * that the platform's automatic REVIEW build of the submission passes the build
+ * pipeline's manifest check.
  *
  * The deterministic DX change under test (see `manifest-normalize.ts`):
  *   - `iframe.src` is PLATFORM-OWNED. A bundle whose manifest OMITS it is
@@ -16,9 +26,11 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *   - `Dockerfile`/`nginx.conf` are NOT required in the bundle (only
  *     `block.manifest.json` is mandatory); the build pipeline injects its own.
  *
- * Runs as the `mod` fixture (id 2000000001): `/api/blocks/submit-version` is a
- * `ModEndpoint` and `features.appBlocks` (the Flipt mod segment) gates it, so a
- * non-mod would be 401/503 on every call. mod is also rate-limit-exempt.
+ * Runs as the `mod` fixture (id 2000000001): `/api/blocks/submit-version` takes a
+ * signed-in session (or a full-access personal key) with the `appBlocksAuthor`
+ * capability (static fallback mod-only), and `features.appBlocks` (the Flipt mod
+ * segment) gates it, so a user with neither would be 403/503 on every call. The
+ * route rate-limits submits per user (`SUBMIT_RATE_LIMIT`).
  *
  * SAFE + SELF-CLEANING (the dev DB + Forgejo are shared across concurrent
  * previews):
@@ -28,11 +40,23 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *     pre-withdraw any leftover pending row before submitting.
  *   - submit only pushes to the REVIEW org (`civitai-apps-review/<slug>`), which
  *     deliberately has NO build webhook, plus a MinIO object + one dev-DB row —
- *     so it triggers NO Tekton build, NO `civitai-apps` Deployment, NO CF DNS.
+ *     so it creates NO `civitai-apps` Deployment and NO CF DNS. It DOES start an
+ *     automatic REVIEW PREVIEW build of the submission, and this spec waits
+ *     (bounded) for that build to pass: `blocks.getReviewStatus` reaching
+ *     `preview-deploying` or `preview-live`, which the platform sets only once
+ *     the whole build, manifest check included, succeeded
+ *     (preview-review-build.ts). A `preview-failed` fails the test with the
+ *     failed step. The withdraw below ends the preview.
+ *   - The automatic build is charged to the submitter's daily automatic-build
+ *     budget. The test reads it (`blocks.getMyAutoReviewBuildBudget`) BEFORE
+ *     submitting and FAILS, saying the budget is spent, rather than timing out or
+ *     skipping. A test environment can list its fixture accounts in
+ *     `APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS` to count them per app slug, so
+ *     this spec's per-preview slug has its own allowance.
  *   - We `withdrawPublishRequest` in `finally` so a mid-test failure still
  *     leaves no pending row and re-runs don't accumulate/collide.
  *
- * --- APPROVE → BUILD → RENDER IS INTENTIONALLY NOT E2E'd HERE -----------------
+ * --- APPROVE → PRODUCTION BUILD → RENDER IS INTENTIONALLY NOT E2E'd HERE ------
  * `approveRequest` creates a canonical `civitai-apps/<slug>` Forgejo repo (no
  * cheap teardown without Forgejo admin), fires a real ~5-min Tekton build, an
  * apply Job in the shared prod `civitai-apps` namespace, and a CF DNS record —
@@ -49,7 +73,7 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  * in PR #2581. ---------------------------------------------------------------
  *
  * Verified shapes (origin/main, paths relative to civitai/src):
- *  - POST /api/blocks/submit-version (ModEndpoint; body { bundleBase64 }) → 200
+ *  - POST /api/blocks/submit-version (session + appBlocksAuthor; body { bundleBase64 }) → 200
  *    `{ publishRequestId, slug, version, bundleSha256, fileSummary,
  *    manifestDiffSummary }` (publish-request.service.ts SubmitVersionResult).
  *    isProd CSRF gate → stamp Origin/Referer (the trpc helper does the same).
@@ -60,12 +84,15 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *    `{ pending: { id, ... } | null }` — scoped to the caller's own row.
  *  - blocks.withdrawPublishRequest (moderatorProcedure + flag; input
  *    { publishRequestId }) → `{ ok: true }`. Idempotent self-clean.
+ *  - blocks.getReviewStatus (moderatorProcedure + flag + review-sandbox flag;
+ *    input { publishRequestId }) → `{ state, detail: { error? }, ... }`.
+ *  - blocks.getMyAutoReviewBuildBudget (appDeveloperProcedure + flag; input
+ *    { slug }) → `{ available, scope, limit, remaining? }` for the caller.
  */
 
 const ROLE = 'mod' as const;
 const PREVIEW_URL = process.env.PREVIEW_URL ?? '';
 const APPS_DOMAIN = process.env.APPS_DOMAIN ?? 'civit.ai';
-const VERSION = '0.1.0';
 
 // Per-preview slug so concurrent previews don't collide on the pending-per-slug
 // unique index. Derive from the preview host's first label (e.g.
@@ -87,6 +114,11 @@ function previewSlug(): string {
 const SLUG = previewSlug();
 const CANONICAL_SRC = `https://${SLUG}.${APPS_DOMAIN}/`;
 
+// Room for the build plus a queue behind the platform's build slots. Kept well under the
+// per-test timeout below.
+const REVIEW_BUILD_TIMEOUT_MS = 5 * 60_000;
+const REVIEW_BUILD_POLL_MS = 5_000;
+
 type SubmitResult = { publishRequestId: string; slug: string; version: string };
 type PendingItem = { id: string; slug: string; manifest: { iframe?: { src?: string } } };
 type PendingList = { items: PendingItem[]; nextCursor: string | null };
@@ -94,15 +126,10 @@ type PendingList = { items: PendingItem[]; nextCursor: string | null };
 // Bundle whose manifest OMITS iframe.src and which contains NO Dockerfile —
 // exactly the shape the DX change is meant to accept.
 async function buildBundleBase64(): Promise<string> {
-  const manifest = {
-    blockId: SLUG,
-    version: VERSION,
+  const manifest = previewAppBlockManifest({
+    slug: SLUG,
     name: 'CI Smoke — publish DX (omits iframe.src)',
-    contentRating: 'g',
-    scopes: [] as string[],
-    // NOTE: no `src`. minHeight/sandbox stay developer-authored.
-    iframe: { minHeight: 300, sandbox: 'allow-scripts allow-forms' },
-  };
+  });
   const zip = new JSZip();
   zip.file('block.manifest.json', JSON.stringify(manifest, null, 2));
   zip.file('index.html', '<!doctype html><html><body>ci-smoke-pub-dx</body></html>');
@@ -154,10 +181,47 @@ async function findPendingBySlug(
   return null;
 }
 
-async function withdrawPendingForSlug(
+function readBudget(request: APIRequestContext): Promise<AutoBuildBudgetLike> {
+  return trpcQuery<AutoBuildBudgetLike>(request, 'blocks.getMyAutoReviewBuildBudget', {
+    slug: SLUG,
+  });
+}
+
+/**
+ * Poll the submission's review preview until the build passes or fails, bounded by
+ * REVIEW_BUILD_TIMEOUT_MS. Throws with the reason on anything but a pass.
+ */
+async function expectReviewBuildPasses(
   request: APIRequestContext,
-  slug: string
+  publishRequestId: string
 ): Promise<void> {
+  const deadline = Date.now() + REVIEW_BUILD_TIMEOUT_MS;
+  let lastState: string | null = null;
+  for (;;) {
+    const status = await trpcQuery<ReviewStatusLike>(request, 'blocks.getReviewStatus', {
+      publishRequestId,
+    });
+    lastState = status.state;
+    const verdict = reviewBuildVerdict(status);
+    if (verdict.done) {
+      expect(verdict.pass, verdict.message).toBe(true);
+      return;
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, REVIEW_BUILD_POLL_MS));
+  }
+  const budgetAfter = await readBudget(request).catch(() => null);
+  throw new Error(
+    reviewBuildTimeoutMessage({
+      slug: SLUG,
+      timeoutMs: REVIEW_BUILD_TIMEOUT_MS,
+      lastState,
+      budgetAfter,
+    })
+  );
+}
+
+async function withdrawPendingForSlug(request: APIRequestContext, slug: string): Promise<void> {
   const r = await trpcQuery<{ pending: { id: string } | null }>(
     request,
     'blocks.getMyPendingForSlug',
@@ -173,9 +237,10 @@ async function withdrawPendingForSlug(
 test.describe('App Blocks publish-request: iframe.src is platform-stamped (mod, self-cleaning)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
-  test('submit a bundle that omits iframe.src + has no Dockerfile → accepted, canonical src stamped', async ({
+  test('submit a bundle that omits iframe.src + has no Dockerfile → accepted, canonical src stamped, review build passes', async ({
     page,
   }) => {
+    test.setTimeout(REVIEW_BUILD_TIMEOUT_MS + 120_000);
     // Warm page.request against the preview origin (shares the mod auth cookie;
     // the helpers stamp Origin/Referer for the CSRF gate). domcontentloaded ONLY.
     await page.goto('/', { waitUntil: 'domcontentloaded' });
@@ -183,6 +248,10 @@ test.describe('App Blocks publish-request: iframe.src is platform-stamped (mod, 
 
     // Pre-clean any leftover pending row for this preview's slug (prior crashed run).
     await withdrawPendingForSlug(request, SLUG);
+
+    // Read BEFORE submitting: a spent budget means no build will start, and the test must say
+    // so instead of waiting out the timeout.
+    const budgetBlock = budgetBlocksReviewBuild(await readBudget(request), SLUG);
 
     let publishRequestId: string | null = null;
     try {
@@ -206,6 +275,11 @@ test.describe('App Blocks publish-request: iframe.src is platform-stamped (mod, 
         item!.manifest?.iframe?.src,
         'iframe.src is server-stamped to the canonical per-app subdomain root'
       ).toBe(CANONICAL_SRC);
+
+      // REVIEW BUILD: the platform's automatic build of THIS submission passes the build
+      // pipeline's manifest check.
+      if (budgetBlock) throw new Error(budgetBlock);
+      await expectReviewBuildPasses(request, publishRequestId);
     } finally {
       // SELF-CLEAN: withdraw so no pending row lingers and re-runs don't collide.
       if (publishRequestId) {

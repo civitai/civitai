@@ -1,5 +1,11 @@
-import { Checkbox, Loader, Menu, Text } from '@mantine/core';
-import { IconAlertTriangle, IconDotsVertical, IconInfoCircle } from '@tabler/icons-react';
+import { Checkbox, Loader, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
+import {
+  IconAlertTriangle,
+  IconDotsVertical,
+  IconDownload,
+  IconInfoCircle,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
@@ -22,7 +28,9 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
 import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 
-import { GeneratedOutputActions } from './GeneratedOutputActions';
+import { GeneratedOutputActions, useDownloadOutput } from './GeneratedOutputActions';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { useMenuSheet } from '~/components/Drawer/useMenuSheet';
 import classes from './GeneratedImage.module.css';
 
 export function GeneratedOutputWrapper({
@@ -47,6 +55,9 @@ export function GeneratedOutputWrapper({
   const { select } = useActions();
   const { running, helpers } = useTourContext();
   const available = image.available;
+  const compact = useMobileGenerator() && !isLightbox;
+  const { handleDownload } = useDownloadOutput(image);
+  const menuSheet = useMenuSheet();
 
   const handleClick = (e?: { shiftKey?: boolean }) => {
     if (!image || !available || isLightbox) return;
@@ -200,7 +211,7 @@ export function GeneratedOutputWrapper({
               </label>
             )}
             {!image.blockedReason && (
-              <Menu zIndex={400} withinPortal>
+              <Menu zIndex={400} withinPortal {...menuSheet.menuProps}>
                 <Menu.Target>
                   <div className="absolute right-3 top-3">
                     <LegacyActionIcon variant="transparent">
@@ -212,9 +223,17 @@ export function GeneratedOutputWrapper({
                     </LegacyActionIcon>
                   </div>
                 </Menu.Target>
-                <Menu.Dropdown className={classes.scrollableDropdown}>
+                <Menu.Dropdown
+                  className={menuSheet.dropdownClassName ?? classes.scrollableDropdown}
+                >
+                  {compact && (
+                    <Menu.Item leftSection={<IconDownload size={14} />} onClick={handleDownload}>
+                      Download
+                    </Menu.Item>
+                  )}
                   <GeneratedItemWorkflowMenu image={image} isLightbox={isLightbox} />
                 </Menu.Dropdown>
+                {menuSheet.backdrop}
               </Menu>
             )}
           </div>
@@ -224,18 +243,21 @@ export function GeneratedOutputWrapper({
               output={image}
               state={state}
               isLightbox={isLightbox}
+              compact={compact}
               onToggleFavorite={handleToggleFavorite}
               onToggleFeedback={handleToggleFeedback}
               infoSlot={
-                <ImageMetaPopover
-                  meta={step.params as any}
-                  zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
-                  hideSoftware
-                >
-                  <LegacyActionIcon size="md" variant="subtle" color="gray">
-                    <IconInfoCircle size={16} />
-                  </LegacyActionIcon>
-                </ImageMetaPopover>
+                !image.hideDetails && (
+                  <ImageMetaPopover
+                    meta={step.params as any}
+                    zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
+                    hideSoftware
+                  >
+                    <LegacyActionIcon size="md" variant="subtle" color="gray">
+                      <IconInfoCircle size={16} />
+                    </LegacyActionIcon>
+                  </ImageMetaPopover>
+                )
               }
             />
           )}

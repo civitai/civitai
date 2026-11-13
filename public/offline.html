@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>You're offline</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fff;
+        --fg: #1a1b1e;
+        --muted: #5c5f66;
+        --accent: #228be6;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101113;
+          --fg: #f1f3f5;
+          --muted: #a6a7ab;
+          --accent: #4dabf7;
+        }
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        box-sizing: border-box;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        text-align: center;
+      }
+      main {
+        max-width: 360px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 24px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      button {
+        min-height: 44px;
+        padding: 0 28px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #000;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>You're offline</h1>
+      <p>We can't connect right now. Check your connection, then try again.</p>
+      <button type="button" id="retry">Retry</button>
+    </main>
+    <script>
+      document.getElementById('retry').addEventListener('click', function () {
+        location.reload();
+      });
+      window.addEventListener('online', function () {
+        location.reload();
+      });
+    </script>
+  </body>
+</html>

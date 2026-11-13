@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
-import { appBlockTag } from '~/server/services/blocks/workflow.service';
+import { appBlockInstanceTag, appBlockTag } from '~/server/services/blocks/workflow.service';
 import { workflowOwnerId } from '~/server/services/orchestrator/assert-workflow-owner';
 
 /**
@@ -21,8 +21,16 @@ import { workflowOwnerId } from '~/server/services/orchestrator/assert-workflow-
  * this module's, called from all five sites, and the viewer half is not.
  *
  * The row is deliberately not part of the pair this module offers: `upsertBlockWorkflowOnSubmit` is
- * fire-and-forget behind its own swallowing try/catch, and the submit sites skip it entirely for
- * `claims.dev === true`, so its absence does not mean what a gate would need it to mean.
+ * fire-and-forget behind its own swallowing try/catch, and most submit sites skip it for
+ * `claims.dev === true` (the post-paid customComfy arm does not), so its absence does not mean
+ * what a gate would need it to mean.
+ *
+ * ONE PLACE COMBINES THEM: `publishGenerationOutputs`, for an ephemeral dev-tunnel token
+ * (`isEphemeralDevTunnelToken`) with no row only,
+ * replaces the row with viewer + app tag + INSTANCE tag (`assertBlockWorkflowTaggedForInstance`).
+ * The instance tag is what keeps that per-app-block rather than per-app; dropping it would be the
+ * widening described above. `cancelAppWorkflow` and `resolveOwnedWorkflowOutputs` still require the
+ * row, so they still refuse dev-token workflows.
  */
 
 /**
@@ -94,4 +102,56 @@ export function assertBlockWorkflowTaggedForApp(input: {
     code: 'FORBIDDEN',
     message: 'workflow is not tagged for this app',
   });
+}
+
+/**
+ * INSTANCE SCOPE. The orchestrator's own record must carry the calling token's per-instance tag,
+ * which `buildWorkflowTags` stamps from the VERIFIED `blockInstanceId` on every block submit.
+ *
+ * Used ONLY as part of the ephemeral dev-tunnel stand-in for the `block_workflows` row on
+ * `publishGenerationOutputs` (see that procedure). The row binds (viewer, app BLOCK); the app tag
+ * alone binds only (viewer, app), and an app can have several blocks. The instance id is minted
+ * for exactly one app block (a page token's is `page_<appBlockId>`), so this keeps the stand-in
+ * at least as narrow as the row it replaces. Exact tag equality, fail-closed on absent tags.
+ */
+export function assertBlockWorkflowTaggedForInstance(input: {
+  tags: readonly string[] | null | undefined;
+  blockInstanceId: string;
+}): void {
+  if ((input.tags ?? []).includes(appBlockInstanceTag(input.blockInstanceId))) return;
+  throw new TRPCError({
+    code: 'FORBIDDEN',
+    message: 'workflow is not tagged for this app instance',
+  });
+}
+
+/**
+ * The ONE token class the publish stand-in admits: a `dev: true` token whose app ids are BOTH
+ * the synthetic `ephemeral-<slug>` (mint path D in `block-approval.service.ts`'s table,
+ * `tryDevTunnelScopedMint`). That mint requires a cookie session that owns the slug, the author
+ * capability, the dev-tunnel flag and an active tunnel, and binds `sub` to that session user, so
+ * the block code asking to publish is the viewer's own unsubmitted code.
+ *
+ * 🔴 NOT "any `dev: true` token". `dev: true` covers six mint paths, and one of them is a
+ * MODERATOR's review run-for-real token for someone else's pending app — admitting it would let
+ * unreviewed third-party code ask a moderator to publish public images under the moderator's
+ * account. The other dev classes (approved-app `dev:live`, pending/local `dev-token`, owned
+ * non-approved tunnel) are left on the row path unchanged; widening to any of them is a
+ * separate decision. Both ids are checked because both are signed claims and an id in the
+ * `ephemeral-` namespace can never equal a real `apb_…` / OauthClient id.
+ *
+ * The literal `'ephemeral-'` also lives in `pages/api/v1/block-tokens/index.ts` and
+ * `middleware/block-scope.middleware.ts` (the mint side); a change to the namespace must move
+ * all three.
+ */
+export function isEphemeralDevTunnelToken(claims: {
+  dev?: boolean;
+  appId: string;
+  appBlockId: string;
+}): boolean {
+  return (
+    claims.dev === true &&
+    claims.appId.startsWith('ephemeral-') &&
+    claims.appBlockId.startsWith('ephemeral-')
+  );
 }

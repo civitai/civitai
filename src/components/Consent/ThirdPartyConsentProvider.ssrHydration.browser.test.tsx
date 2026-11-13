@@ -43,23 +43,12 @@ import type { ConsentDecision } from '~/components/Consent/consent.utils';
  * that the fix costs nothing at hydration.
  */
 
-// 🔴 SIBLING FILE, SAME STUB. `ThirdPartyConsentProvider.browser.test.tsx` stubs
-// the SAME four ambient queries. `AppProvider` has accreted them one at a time, so a fifth must
-// be added to BOTH. This is a comment rather than a shared module because the failure is LOUD:
-// an unstubbed query is a `TypeError` naming the missing property during render, not a silent
-// zero, and the duplicate is eight lines of fixture with no logic in it.
-// Only the ambient queries `AppProvider` fires. Spread of the real module, not a wholesale
-// replacement (`local-rules/no-wholesale-module-mock`).
+// The suite measures no tRPC query, so every procedure `AppProvider` fires (and any it gains later)
+// answers through `makeTrpcProxy`'s inert hooks rather than a hand-kept list. Spread of the real
+// module, not a wholesale replacement (`local-rules/no-wholesale-module-mock`).
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const seeded = () => ({ data: undefined, isInitialLoading: false });
-  return {
-    ...(await importOriginal<typeof TrpcMod>()),
-    trpc: {
-      user: { getSettings: { useQuery: seeded }, getFollowingUsers: { useQuery: seeded } },
-      system: { getLiveNow: { useQuery: seeded } },
-      chat: { getUserSettings: { useQuery: seeded } },
-    },
-  };
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return { ...(await importOriginal<typeof TrpcMod>()), trpc: makeTrpcProxy() };
 });
 
 const { AppProvider } = await import('~/providers/AppProvider');
@@ -234,7 +223,7 @@ const BEACON_TIMEOUT_MS = 10_000;
 /**
  * The `component` project's effective per-test timeout. Nothing in this repo DECLARES it —
  * `vitest.config.mts` sets `testTimeout` only inside `unitTestConfig`, which the `component`
- * project does not spread — so this is vitest's browser-mode default, and the root `CLAUDE.md`
+ * project does not spread — so this is vitest's browser-mode default, and `.claude/rules/testing.md`
  * states the same fact in prose. This copy is the only one a machine checks, via the guard test's
  * equality assertion against `server.config.testTimeout` (the project's own resolved config).
  *
@@ -252,7 +241,7 @@ const BEACON_TIMEOUT_MS = 10_000;
  *
  * Other files reason about the same number in prose, in several spellings, and an
  * unrelated PRODUCT timeout shares the value; no sweep pattern is given here, because two were
- * tried and both returned nothing in the files they named. Start from `CLAUDE.md` and read each
+ * tried and both returned nothing in the files they named. Start from `.claude/rules/testing.md` and read each
  * hit rather than counting it.
  */
 const PROJECT_TIMEOUT_MS = 15_000;
@@ -376,7 +365,7 @@ function hydrationConsoleErrors() {
  * 🔴 `awaitBeacon` IS THE BARRIER, NOT THE TICK COUNT. React 18 time-slices hydration across
  * macrotasks, so how many turns a tree needs scales with its SIZE and with how loaded the box
  * is — a fixed budget is green on a quiet machine and red on a busy one, with no change to
- * blame. `HydrationBeacon` is an absorbing arrival state, which is exactly the shape `CLAUDE.md`
+ * blame. `HydrationBeacon` is an absorbing arrival state, which is exactly the shape `.claude/rules/testing.md`
  * says to await, so the three content tests poll for it instead of guessing. The INSTRUMENT
  * CHECK carries no beacon (its tree is a single element and it is deliberately mismatching), so
  * it keeps the fixed budget — and that is safe there because its assertion is that `recoverable`
@@ -384,7 +373,7 @@ function hydrationConsoleErrors() {
  *
  * ⚠️ `vi.waitFor` is still a wall-clock budget, not an unbounded wait — it is simply a far
  * better one: it fails RED rather than green, and it names the beacon when it does. The 1 s
- * default is deliberately raised; `CLAUDE.md`'s never-widen-a-budget rule is scoped to states
+ * default is deliberately raised; `.claude/rules/testing.md`'s never-widen-a-budget rule is scoped to states
  * that DELETE themselves, and does not reach an absorbing arrival state like this one.
  *
  * 🔴 AND IT IS SET BELOW THE ENCLOSING TEST TIMEOUT ON PURPOSE. That deadline is

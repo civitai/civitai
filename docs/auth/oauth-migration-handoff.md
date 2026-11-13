@@ -76,7 +76,7 @@ The library/model do NOT enforce these alone; the main app enforces each at its 
 
 ### Two OPEN DESIGN DECISIONS (match the main app today; confirm before cutover)
 - **Refresh cascade scope** — `revokeToken` deletes *all* a (user, client)'s access tokens, so refreshing one authorization nukes a second concurrent one. Keep "one live session per (user, client)", or scope to the rotated token's lineage? (No refresh-reuse-detection either.)
-- **`client_credentials` grant** — `getUserFromClient` mints a token *as the client owner's user*. Keep, or omit from registered clients' grants to shrink surface?
+- **`client_credentials` grant** — `getUserFromClient` mints a token *as the client owner's user*. Keep, or omit from registered clients' grants to shrink surface? *(Since narrowed: confidential clients only, access-only, scopes capped at `UserRead|AppStoreCatalogWrite`; see `oauth-developer-docs.md` → Client Credentials Flow.)*
 
 ---
 

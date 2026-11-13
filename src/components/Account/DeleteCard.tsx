@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Button,
   Card,
+  Checkbox,
   Stack,
   Text,
   Title,
@@ -12,10 +13,12 @@ import {
   Radio,
   ThemeIcon,
   Alert,
+  Anchor,
 } from '@mantine/core';
 import { IconAlertTriangle, IconTrash } from '@tabler/icons-react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { PointerCard } from '~/components/Account/SettingsLayout';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -28,6 +31,19 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
       enabled: !!currentUser,
     });
   const hasActiveMembership = !subscriptionsLoading && !!subscriptions && subscriptions.length > 0;
+  // The server refuses too (`deleteUserHandler`); this just says so before the user gets there.
+  const restricted = !!currentUser?.muted;
+  // Inline content only: PointerCard already wraps `description` in a <Text>.
+  const restrictedNotice = restricted ? (
+    <>
+      Restricted accounts can&apos;t be closed from account settings. You can still have your
+      account deleted:{' '}
+      <Anchor href={SUPPORT_LINKS.portal} target="_blank" rel="noopener noreferrer" inherit>
+        open a ticket through our support portal
+      </Anchor>{' '}
+      and our team will process it.
+    </>
+  ) : null;
 
   const deleteAccountMutation = trpc.user.delete.useMutation({
     async onSuccess() {
@@ -43,6 +59,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [modelsChoice, setModelsChoice] = useState('');
   const [imagesChoice, setImagesChoice] = useState('');
+  const [removeAppData, setRemoveAppData] = useState(false);
   const [confirmDeleteInput, setConfirmDeleteInput] = useState('');
 
   const handleDeleteClick = () => {
@@ -73,6 +90,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
     setConfirmModalOpen(false);
     setModelsChoice('');
     setImagesChoice('');
+    setRemoveAppData(false);
     setConfirmDeleteInput('');
   };
 
@@ -83,6 +101,7 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
         id: currentUser.id,
         removeModels: modelsChoice === 'delete',
         removeImages: imagesChoice === 'now',
+        removeAppData,
       });
     }
   };
@@ -172,6 +191,12 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
               />
             </Stack>
           </Radio.Group>
+          <Checkbox
+            label="Also delete my data in apps"
+            description="Everything apps have saved for you, including what you posted in them. Deleted 7 days after your account closes; restore the account before then and it stays"
+            checked={removeAppData}
+            onChange={(event) => setRemoveAppData(event.currentTarget.checked)}
+          />
           <Group justify="flex-end">
             <Button variant="outline" onClick={handleCancelAll}>
               Cancel
@@ -196,6 +221,11 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
               {imagesChoice === 'now'
                 ? 'Your images will be deleted in the background, which can take up to a day'
                 : 'Your images will be hidden in the background within a day, then deleted after 7 days'}
+            </List.Item>
+            <List.Item>
+              {removeAppData
+                ? 'Your data in apps will be deleted after 7 days'
+                : 'Your data in apps will be kept'}
             </List.Item>
           </List>
           <Text size="sm" c="dimmed">
@@ -227,15 +257,20 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
 
       {flat ? (
         <PointerCard
+          id="delete-account"
           tone="danger"
           icon={<IconAlertTriangle size={18} />}
           title="Delete account"
-          description="You choose what happens to your models and images. This cannot be undone."
+          description={
+            restrictedNotice ??
+            'You choose what happens to your models and images. This cannot be undone.'
+          }
           action={
             <Button
               color="red"
               size="compact-sm"
               leftSection={<IconTrash size={14} />}
+              disabled={restricted}
               onClick={handleDeleteClick}
             >
               Delete account
@@ -250,7 +285,8 @@ export function DeleteCard({ flat }: { flat?: boolean } = {}) {
               Once you delete your account, there is no going back. Please be certain when taking
               this action.
             </Text>
-            <Button variant="outline" color="red" onClick={handleDeleteClick}>
+            {restrictedNotice && <Text size="sm">{restrictedNotice}</Text>}
+            <Button variant="outline" color="red" disabled={restricted} onClick={handleDeleteClick}>
               Delete your account
             </Button>
           </Stack>

@@ -1,3 +1,4 @@
+import { minorContentBrowsingLevelsFlag } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -175,6 +176,22 @@ export function offsiteContentRatingLabel(rating: string): string {
 }
 
 /**
+ * Stored content-rating value → the Mantine colour of its rating pill.
+ *
+ * NOT A NEW PALETTE: each rating resolves to its maturity ceiling
+ * ({@link nsfwLevelFromContentRating}) and takes that level's colour from
+ * {@link nsfwLevelColors}, the map the site already colours browsing levels with — so a PG-13
+ * app pill and a PG-13 badge elsewhere are the same yellow. `g` shares `pg`'s PG ceiling and
+ * therefore its colour. An out-of-ladder value is `gray`, never the fail-closed PG green that
+ * `nsfwLevelFromContentRating` would give it: a colour that reads "safe" must not be inferred
+ * from a value nobody recognises.
+ */
+export function offsiteContentRatingColor(rating: string): string {
+  if (!isOffsiteContentRating(rating)) return 'gray';
+  return nsfwLevelColors[nsfwLevelFromContentRating(rating)] ?? 'gray';
+}
+
+/**
  * Map an off-site content rating (`g|pg|pg13|r|x` — nullable) to the MAXIMUM
  * `NsfwLevel` bit its published assets may carry. Reuses the canonical
  * `orchestratorNsfwLevelMap` (which lacks the SFW `g` rating → PG). A null/unknown
@@ -222,6 +239,32 @@ export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArr
 
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
+
+/** R, X and XXX; unlike nsfwBrowsingLevelsFlag, without Blocked. */
+export const matureBrowsingLevelsFlag = allBrowsingLevelsFlag & ~sfwBrowsingLevelsFlag;
+
+/**
+ * The levels a model is held to wherever it is shown or used: a model flagged as depicting a minor
+ * by the minor content rule, an SFW-only model to PG/PG-13. The two are kept apart because only the
+ * first is a minor rule.
+ */
+export const modelBrowsingLevelLimit = (model: { minor: boolean; sfwOnly: boolean }) =>
+  model.minor
+    ? minorContentBrowsingLevelsFlag
+    : model.sfwOnly
+    ? sfwBrowsingLevelsFlag
+    : allBrowsingLevelsFlag;
+
+/** The level a minor model's gallery and carousel are forced to for a viewer who is not a moderator. */
+export const forcedMinorModelBrowsingLevel = (signedIn: boolean) =>
+  signedIn
+    ? minorContentBrowsingLevelsFlag
+    : Flags.intersection(minorContentBrowsingLevelsFlag, publicBrowsingLevelsFlag);
+
+export const exceedsModelBrowsingLevelLimit = (
+  nsfwLevel: number,
+  model: { minor: boolean; sfwOnly: boolean }
+) => (nsfwLevel & ~modelBrowsingLevelLimit(model)) !== 0;
 
 /**
  * App Blocks maturity policy — the SINGLE SOURCE OF TRUTH mapping a color
@@ -339,6 +382,11 @@ export function getIsSafeBrowsingLevel(level: number) {
 /** includes a level suitable for public browsing */
 export function hasPublicBrowsingLevel(level: number) {
   return Flags.hasFlag(level, publicBrowsingLevelsFlag);
+}
+
+/** every bit is a public level; an unrated 0 is not */
+export function isPublicOnlyBrowsingLevel(level: number) {
+  return level !== 0 && Flags.hasFlag(publicBrowsingLevelsFlag, level);
 }
 
 export function hasSafeBrowsingLevel(level: number) {

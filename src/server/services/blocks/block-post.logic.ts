@@ -44,6 +44,12 @@ import type { AppWorkflow } from '~/server/services/blocks/workflow.service';
  */
 export const BLOCK_POST_APP_ID_META_KEY = 'blockPublishedAppId' as const;
 
+/**
+ * The `AppSubListing.id` a post was shared from, beside the app id. Only a credit: the chip
+ * re-checks it against the app's listing on every render.
+ */
+export const BLOCK_POST_SUB_LISTING_ID_META_KEY = 'blockPublishedSubListingId' as const;
+
 /** Hard ceiling on images in ONE app-created post. */
 export const BLOCK_POST_MAX_IMAGES = 20;
 

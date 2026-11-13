@@ -271,9 +271,6 @@ export function SelfHostedGenerationStatusCard() {
     onSettled: () =>
       Promise.all([
         utils.generation.getStatusModerator.invalidate(),
-        // The toggle changes `selfHostedMode` + the resolved disabled list that
-        // the generator reads via `getGenerationConfig` (cached staleTime:
-        // Infinity), so it must be invalidated for the picker/alert to update.
         utils.generation.getGenerationConfig.invalidate(),
       ]),
   });

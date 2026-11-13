@@ -304,9 +304,11 @@ Author the recipe once, with the agent driving the bridge by hand: `open` the ap
 run `capture.sh --state <name>` per state until each one frames cleanly. Execution after that is
 always deterministic — the agent is not in the loop of a capture run.
 
-🔴 **This is the ONE path where `site_notes` applies — read it before the first op.** Every
-bridge envelope from a `<slug>.civit.ai` host names `<devrc>/scripts/browser-bridge/reference/sites/civit.ai.md`,
-which carries the same platform facts this skill encodes as refusals, written for driving a
+🔴 **This is the ONE path where `site_flows` applies — read it before the first op.** Every
+bridge envelope from a `<slug>.civit.ai` host names `<devrc>/scripts/browser-bridge/flows/civit.ai.md`
+(or a more specific per-app file such as `flows/yt-thumbnail.civit.ai.md`, when one is
+registered — the longest host-suffix match wins; host-page reads on civitai.com get
+`flows/civitai.com.md`), which carries the same platform facts this skill encodes as refusals, written for driving a
 block **by hand**. A frame-scoped op reports the FRAME's url, so it is the in-iframe ops — all
 of them — that carry the pointer. **`capture.sh` deliberately ignores it**: a deterministic run
 must not acquire a second, prose input the guards cannot see.

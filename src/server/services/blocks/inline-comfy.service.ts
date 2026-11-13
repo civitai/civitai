@@ -1,9 +1,16 @@
 import { TRPCError } from '@trpc/server';
+import { checkComfyGraph } from '@civitai/app-sdk/blocks';
+import type { ComfyGraphRefusal } from '@civitai/app-sdk/blocks';
+import { detectGraphFormat } from '~/components/AppBlocks/resourceFileParse';
+import { inlineComfyApiGraphSchema } from '~/server/schema/blocks/workflow.schema';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { AIR_URN_PREFIX } from '~/server/services/blocks/steps';
+import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 import type { ComfyGraph } from '~/server/services/blocks/recipes';
+import { INLINE_NODE_REFUSED_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks customComfy INLINE-GRAPH belt.
@@ -20,13 +27,20 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
 //   2. `assertViewerEntitledToInlineResources` — entitlement over `resources`.
 //   3. `collectInlineAuditText` — the moderation sweep (see below).
 //
+// Before all three, `checkInlineComfyGraph` refuses a graph that is certain to
+// fail on the worker. It is the one gate here that RETURNS instead of throwing,
+// because its refusal is a failed snapshot carrying an `errorCode` the app
+// branches on, and a throw would lose the code. Its callers have no way to skip
+// it: it is the only source of the typed `ComfyGraph` the other gates and the
+// step builder take.
+//
 // 🔴 WHY THE ENTITLEMENT SURFACE IS A FLAT `string[]` AND NOT THE GRAPH.
 // `CustomComfyInput.resources` is the orchestrator's DECLARED DOWNLOAD MANIFEST
 // — "All resources the workflow needs, declared explicitly as AIR URNs …
 // Anything the workflow references that isn't listed here will fail at load time
 // inside ComfyUI" — while `CustomComfyInput.workflow` is "Forwarded opaquely to
 // the worker; the orchestrator does not inspect or validate node contents"
-// (both from the generated `@civitai/client` types). So the untrusted
+// (both from the generated `@civitai/orchestration-client` types). So the untrusted
 // entitlement surface is that array, and it does not need graph parsing.
 //
 // 🔴 THAT CLAIM IS TRUSTED BUT NOT DEPENDED ON. It comes from a doc comment on a
@@ -40,7 +54,7 @@ import type { ComfyGraph } from '~/server/services/blocks/recipes';
 // nodes (e.g. urn:air:comfy:nodepack:comfyregistry:kijai/comfyui-kjnodes@1.4.0)"
 // — and production rejects exactly that, telling you to send a
 // `comfy:nodepacklayer` AIR instead. The contradiction sits INSIDE ONE GENERATED
-// FILE: `@civitai/client@0.2.0-beta.84`'s `types.gen.d.ts` carries that claim at
+// FILE: `@civitai/orchestration-client@0.2.0-beta.84`'s `types.gen.d.ts` carries that claim at
 // `CustomComfyInput.resources` and its refutation ~500 lines earlier at
 // `ComfyNodepackSnapshotResult.layerAir` — "Consumers declare THIS on a
 // customComfy step's `resources` (not the bare pack URN)". A generated docstring
@@ -280,6 +294,273 @@ function badRequest(message: string): TRPCError {
 }
 
 /**
+ * The `checkComfyGraph` reason codes the host REFUSES on an inline body. Each
+ * is a certain failure on the worker, so refusing it before any spend loses an
+ * app nothing:
+ *   - `not-api-format`: an editor (UI) graph or unknown JSON. Only ComfyUI's API
+ *     format can be submitted, and the host does not convert.
+ *   - `model-filenames`: a loader input holds a model filename. The worker
+ *     downloads only the AIRs declared in `resources`, so a filename never loads.
+ *
+ * The other codes are not refused here. `custom-nodes` is advisory: the core-node
+ * list is pinned to a ComfyUI commit, not to the worker image, so the host cannot
+ * know a class is missing. `too-many-nodes` and `too-large` are already refused
+ * by the wire schema (`INLINE_GRAPH_NODES_MAX`, `INLINE_GRAPH_BYTES_MAX`).
+ *
+ * Typed against the SDK's own union, so a code the SDK renames is a type error here.
+ */
+export const INLINE_COMFY_REFUSED_CODES = [
+  'not-api-format',
+  'model-filenames',
+] as const satisfies readonly ComfyGraphRefusal['code'][];
+
+export type InlineComfyRefusedCode = (typeof INLINE_COMFY_REFUSED_CODES)[number];
+
+/** How many offending loader inputs a `model-filenames` message names. */
+const INLINE_FILENAME_INPUTS_SHOWN = 5;
+
+/** The failed snapshot an inline estimate or submit returns when the graph is refused. */
+export type InlineComfyRefusalSnapshot = {
+  workflowId: 'failed';
+  status: 'failed';
+  error: string;
+  errorCode: InlineComfyRefusedCode | typeof INLINE_NODE_REFUSED_ERROR_CODE;
+};
+
+export type InlineComfyGraphVerdict =
+  | { runnable: true; graph: ComfyGraph }
+  | { runnable: false; snapshot: InlineComfyRefusalSnapshot };
+
+type RefusedReason = Extract<ComfyGraphRefusal, { code: InlineComfyRefusedCode }>;
+
+function isRefusedReason(reason: ComfyGraphRefusal): reason is RefusedReason {
+  return (INLINE_COMFY_REFUSED_CODES as readonly string[]).includes(reason.code);
+}
+
+function refusalMessage(reason: RefusedReason): string {
+  if (reason.code === 'not-api-format') {
+    return (
+      `inline workflow is not a ComfyUI API-format graph (detected: ${reason.format}). ` +
+      'Export it from ComfyUI with "Export (API)"; the host does not convert editor graphs. ' +
+      'Then strip per-node extras: each node may carry only `class_type` and `inputs` ' +
+      "(remove an export's `_meta`), or the host's strict node schema rejects it."
+    );
+  }
+  const shown = reason.inputs
+    .slice(0, INLINE_FILENAME_INPUTS_SHOWN)
+    .map((i) => `node ${i.nodeId} (${i.classType}) ${i.input} = '${i.value.slice(0, 200)}'`)
+    .join('; ');
+  const more =
+    reason.inputs.length > INLINE_FILENAME_INPUTS_SHOWN
+      ? ` and ${reason.inputs.length - INLINE_FILENAME_INPUTS_SHOWN} more`
+      : '';
+  return (
+    `inline workflow loads models by filename, which the worker cannot load: ${shown}${more}. ` +
+    'Reference each model by its AIR (urn:air:…) and declare it in resources.'
+  );
+}
+
+/**
+ * THE RUNNABILITY CHECK for an inline graph, run by the inline estimate and the
+ * inline submit before anything is quoted, reserved or sent to the orchestrator.
+ *
+ * The rules are the SDK's (`checkComfyGraph` in `@civitai/app-sdk/blocks`), not a
+ * copy: an app that runs the same function before offering "Run" gets the same
+ * answer for the codes refused here. The format is read with the host's own
+ * detector (`detectGraphFormat`, the one `GET_RESOURCE_FILE` labels entries with).
+ * Of the SDK's reasons only `INLINE_COMFY_REFUSED_CODES` refuse; see there for why
+ * the rest are left alone.
+ *
+ * At most one refused code can apply: the SDK checks `model-filenames` only on an
+ * API-format graph, so the refusal carries a single `errorCode`. A graph that passes
+ * the SDK's rules is then refused with `INLINE_NODE_REFUSED_ERROR_CODE` if a node
+ * touches a file path or a loader takes a linked input (`findRefusedInlineNodes`).
+ *
+ * A runnable verdict carries the graph re-parsed through the strict API-node
+ * schema. The wire schema already enforced it on API-shaped graphs, so this parse
+ * cannot fail for a body that came through `blockWorkflowBodySchema`; it is what
+ * lets the result be typed `ComfyGraph` without a cast.
+ */
+export function checkInlineComfyGraph(workflow: Record<string, unknown>): InlineComfyGraphVerdict {
+  const check = checkComfyGraph({ format: detectGraphFormat(workflow), graph: workflow });
+  const refused = check.runnable ? undefined : check.reasons.find(isRefusedReason);
+  if (refused) {
+    return {
+      runnable: false,
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: refusalMessage(refused),
+        errorCode: refused.code,
+      },
+    };
+  }
+  const parsed = inlineComfyApiGraphSchema.safeParse(workflow);
+  if (!parsed.success) throw badRequest('inline workflow is not a valid ComfyUI API-format graph');
+  const refusedNodes = findRefusedInlineNodes(parsed.data);
+  if (refusedNodes.length > 0) {
+    return {
+      runnable: false,
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed',
+        error: refusedNodesMessage(refusedNodes),
+        errorCode: INLINE_NODE_REFUSED_ERROR_CODE,
+      },
+    };
+  }
+  return { runnable: true, graph: parsed.data };
+}
+
+// ComfyUI input and output dirs are shared by every job on a worker, so a node that
+// reads or writes a path can reach another job's files whether the path is literal
+// or linked. Matched by name, failing closed: the worker's node set is not enumerable.
+const FILESYSTEM_CLASS_RE = /path|dir|folder/i;
+const FILESYSTEM_INPUT_RE = /path|folder|director(y|ies)|dir(?!ect)|root/i;
+const FILESYSTEM_CLASSES: ReadonlySet<string> = new Set([
+  'VHS_LoadAudio',
+  'LoadImageOutput',
+  'WebcamCapture',
+  'RecordAudio',
+  'ImageReceiver',
+  'LatentReceiver',
+  'PreviewBridge',
+  'PreviewBridgeLatent',
+  'Get Batch From History (mtb)',
+  'LoadText|pysssss',
+  'SaveText|pysssss',
+]);
+
+// The source gate reads literal values only, so a loader input must be one it can check:
+// an AIR, a public https URL, or a plain option word.
+const LOADER_CLASS_RE = /load|url|fetch|download/i;
+const LOADER_CLASSES: ReadonlySet<string> = new Set([
+  'CreateHookLora',
+  'CreateHookLoraModelOnly',
+  'CreateHookModelAsLora',
+  'CreateHookModelAsLoraModelOnly',
+]);
+
+// Linked inputs that carry a model, CLIP, LoRA, hooks or a number, never a string.
+const LINKED_STRENGTH_RE = /^strength(_model|_clip)?$/;
+const LOADER_LINKED_INPUTS_ALLOWED: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['LoraLoader', new Set(['model', 'clip'])],
+  ['LoraLoaderModelOnly', new Set(['model'])],
+  ['LoraLoaderBypass', new Set(['model', 'clip'])],
+  ['LoraLoaderBypassModelOnly', new Set(['model'])],
+  ['LoraModelLoader', new Set(['model', 'lora'])],
+  ['HypernetworkLoader', new Set(['model'])],
+  ['DiffControlNetLoader', new Set(['model'])],
+  ['CreateHookLora', new Set(['prev_hooks'])],
+  ['CreateHookLoraModelOnly', new Set(['prev_hooks'])],
+  ['CreateHookModelAsLora', new Set(['prev_hooks'])],
+  ['CreateHookModelAsLoraModelOnly', new Set(['prev_hooks'])],
+]);
+
+const HAS_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const FILE_LIKE_RE = /[./\\[\]]/;
+// The worker stages inputs under extensionless names built from blob keys, which the
+// source gate does not resolve. A media input takes only an AIR or a URL.
+const MEDIA_INPUT_NAMES: ReadonlySet<string> = new Set([
+  'image',
+  'audio',
+  'video',
+  'file',
+  'model_file',
+  'latent',
+  'mask',
+]);
+const KEY_LIKE_RE = /[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-/i;
+
+/** A public https URL (shared SSRF check), with no credentials, port or traversal. */
+function isFetchableMediaUrl(value: string): boolean {
+  if (/[\s[\]\\]/.test(value) || !isPublicHttpsUrl(value).ok) return false;
+  const url = new URL(value);
+  if (url.username || url.password || url.port) return false;
+  let path: string;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    return false;
+  }
+  return !/\.\.|[\s[\]\\]/.test(path);
+}
+
+function literalLoaderInputRefusal(name: string, value: unknown): string | null {
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return null;
+  if (typeof value !== 'string') return `passes ${name} as an object`;
+  if (value.toLowerCase().startsWith(AIR_URN_PREFIX)) return null;
+  if (HAS_SCHEME_RE.test(value)) {
+    return isFetchableMediaUrl(value) ? null : `gives ${name} a URL the host does not fetch`;
+  }
+  if (MEDIA_INPUT_NAMES.has(name) || FILE_LIKE_RE.test(value) || KEY_LIKE_RE.test(value)) {
+    return `names a local file in ${name}; upload the media and pass its URL`;
+  }
+  return null;
+}
+
+type RefusedInlineNode = { nodeId: string; classType: string; reason: string };
+
+/** ComfyUI reads every array input as a link (`[nodeId, slot]`), so this does too. */
+function isLinkedInput(value: unknown): boolean {
+  return Array.isArray(value);
+}
+
+function findRefusedInlineNodes(graph: ComfyGraph): RefusedInlineNode[] {
+  const refused: RefusedInlineNode[] = [];
+  for (const [nodeId, node] of Object.entries(graph)) {
+    const classType = node.class_type;
+    const inputs = Object.entries(node.inputs);
+    if (
+      FILESYSTEM_CLASSES.has(classType) ||
+      FILESYSTEM_CLASS_RE.test(classType) ||
+      inputs.some(([name]) => FILESYSTEM_INPUT_RE.test(name))
+    ) {
+      refused.push({ nodeId, classType, reason: 'reads or writes a file path' });
+      continue;
+    }
+    if (!LOADER_CLASSES.has(classType) && !LOADER_CLASS_RE.test(classType)) continue;
+    const allowed = LOADER_LINKED_INPUTS_ALLOWED.get(classType);
+    const linked = inputs
+      .filter(([, value]) => isLinkedInput(value))
+      .map(([name]) => name)
+      .filter((name) => !allowed?.has(name) && !LINKED_STRENGTH_RE.test(name));
+    if (linked.length > 0) {
+      refused.push({
+        nodeId,
+        classType,
+        reason: `takes ${linked.join(', ')} from another node instead of a literal value`,
+      });
+      continue;
+    }
+    for (const [name, value] of inputs) {
+      if (isLinkedInput(value)) continue;
+      const reason = literalLoaderInputRefusal(name, value);
+      if (reason) {
+        refused.push({ nodeId, classType, reason });
+        break;
+      }
+    }
+  }
+  return refused;
+}
+
+function refusedNodesMessage(nodes: RefusedInlineNode[]): string {
+  const shown = nodes
+    .slice(0, INLINE_FILENAME_INPUTS_SHOWN)
+    .map((n) => `node ${n.nodeId} (${n.classType}) ${n.reason}`)
+    .join('; ');
+  const more =
+    nodes.length > INLINE_FILENAME_INPUTS_SHOWN
+      ? ` and ${nodes.length - INLINE_FILENAME_INPUTS_SHOWN} more`
+      : '';
+  return (
+    `inline workflow uses nodes the host does not run inline: ${shown}${more}. ` +
+    'Give loader inputs as literal values, and bring media in as Civitai uploads.'
+  );
+}
+
+/**
  * One total walk over the graph, collecting every STRING that appears anywhere —
  * as a leaf, an array element, an object VALUE, **or an object KEY**.
  *
@@ -393,10 +674,10 @@ type ParsedInlineAir = {
  * are lowercased after extraction, `id`/`version` keep their case (a
  * huggingface id is case-sensitive, e.g. `black-forest-labs/FLUX.1-dev`).
  *
- * 🔴 WHY THIS IS NOT `Air.parseSafe` FROM `@civitai/client`, EVEN THOUGH THAT
+ * 🔴 WHY THIS IS NOT `Air.parseSafe` FROM `@civitai/orchestration-client`, EVEN THOUGH THAT
  * EXISTS AND `shared/utils/air.ts` WRAPS IT. That parser is a LENIENT READER for
  * input we already trust; this is a GATE over input we do not. Measured against
- * `@civitai/client` 0.2.0-beta.84 by running it, its regex
+ * `@civitai/orchestration-client` 0.2.0-beta.84 by running it, its regex
  * (`^(?:urn:)?(?:air:)?(?:(?<ecosystem>…):)?(?:(?<type>…):)?(?<source>…):(?<id>…)…`)
  * has three properties that each fail OPEN here:
  *
@@ -517,6 +798,7 @@ export async function assertViewerEntitledToInlineResources(opts: {
     if (rawSeen.has(key)) throw badRequest(`duplicate resource declared: '${p.raw.slice(0, 200)}'`);
     rawSeen.add(key);
   }
+  assertNoRestrictedBaseModels({ airs: opts.airs });
 
   const versionIds = parsed
     .map((p) => p.versionId)
@@ -528,6 +810,7 @@ export async function assertViewerEntitledToInlineResources(opts: {
     generation: true,
   });
   const byId = new Map(resources.map((r) => [r.id, r]));
+  assertNoRestrictedBaseModels({ baseModels: resources.map((r) => r.baseModel) });
 
   for (const id of versionIds) {
     const resource = byId.get(id);

@@ -4,3 +4,8 @@
 // Normalise on the server so panels can treat it like any other ISO timestamp.
 export const clickhouseDate = (value: string): string =>
   value ? `${value.replace(' ', 'T')}Z` : value;
+
+/** The ClickHouse helper interpolates with NO escaping, so a time reaches a query only once it matches
+ *  ClickHouse's own DateTime form exactly. */
+export const isClickhouseDateTime = (value: string): boolean =>
+  /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value);

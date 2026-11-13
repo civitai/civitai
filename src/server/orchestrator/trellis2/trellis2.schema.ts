@@ -20,7 +20,7 @@
  * defaults for the remaining sampler / step / resolution fields.
  */
 
-import type { Trellis2ImageTo3dComfyPolyGenInput } from '@civitai/client';
+import type { Trellis2ImageTo3dComfyPolyGenInput } from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { removeEmpty } from '~/utils/object-helpers';

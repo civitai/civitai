@@ -32,7 +32,7 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  * scope-subset-of-OAuth-client, sandbox-token-allowlist-by-trust-tier, the
  * buildCommand shape-allowlist, and outputDir traversal — which remain
  * server-authoritative. The schema is a developer convenience for early local
- * feedback; the validator at submit time is the enforcement boundary. If the two
+ * feedback; the validator is the enforcement boundary. If the two
  * ever conflict, the validator wins.
  */
 const handler = async (_req: AxiomAPIRequest, res: NextApiResponse) => {

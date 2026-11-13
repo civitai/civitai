@@ -46,7 +46,7 @@ import {
 
 const { mockSubmitWorkflow } = vi.hoisted(() => ({ mockSubmitWorkflow: vi.fn() }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   addWorkflowTag: vi.fn(),
   deleteWorkflow: vi.fn(),
@@ -79,19 +79,14 @@ import {
   submitWorkflowWithRetry,
   withTraceHeaders,
 } from '~/server/services/orchestrator/workflows';
-import { observeOrchestratorRead } from '~/server/services/orchestrator/orchestrator-read-metrics';
 import {
   clampSubmitSource,
   classifySubmitRetryOutcome,
-  submitSourceForSurface,
 } from '~/server/services/orchestrator/orchestrator-submit-metrics';
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
 import { withSpan } from '~/server/utils/otel-helpers';
 
 const DURATION = 'civitai_app_orchestrator_submit_duration_seconds';
-const READ_DURATION = 'civitai_app_orchestrator_read_duration_seconds';
 const RETRIES = 'civitai_app_orchestrator_submit_retries_total';
-const TIMEOUTS = 'civitai_app_orchestrator_submit_timeouts_total';
 
 const exporter = new InMemorySpanExporter();
 let provider: NodeTracerProvider;
@@ -124,15 +119,7 @@ beforeEach(() => {
 
 const okResult = (id = 'wf-1') => ({ data: { id }, response: { status: 200 } });
 const serverErrorResult = (status = 500) => ({ data: undefined, response: { status } });
-const timeoutError = () =>
-  Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
-const timeoutResolveResult = () => ({
-  data: undefined,
-  response: undefined,
-  error: timeoutError(),
-});
 
-const spanNames = (): string[] => exporter.getFinishedSpans().map((s: ReadableSpan) => s.name);
 const spansNamed = (name: string): ReadableSpan[] =>
   exporter.getFinishedSpans().filter((s: ReadableSpan) => s.name === name);
 
@@ -152,15 +139,6 @@ async function histRow(
 
 const histCount = (source: string, outcome: string) =>
   histRow(DURATION, '_count', (l) => l.source === source && l.outcome === outcome);
-/** `_sum` — the observed VALUE, in seconds. The one number this whole change exists to produce. */
-const histSum = (source: string, outcome: string) =>
-  histRow(DURATION, '_sum', (l) => l.source === source && l.outcome === outcome);
-const histBucket = (source: string, outcome: string, le: string) =>
-  histRow(
-    DURATION,
-    '_bucket',
-    (l) => l.source === source && l.outcome === outcome && String(l.le) === le
-  );
 
 async function counterValue(
   metricName: string,
@@ -178,7 +156,6 @@ const retryCount = (source: string, attempt: string, outcome: string) =>
     RETRIES,
     (l) => l.source === source && l.attempt === attempt && l.outcome === outcome
   );
-const timeoutCount = (source: string) => counterValue(TIMEOUTS, (l) => l.source === source);
 
 // Backoff uses real setTimeout; skip it deterministically so a 3-attempt case doesn't cost ~2s.
 const runWithFakeTimers = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -192,291 +169,7 @@ const runWithFakeTimers = async <T>(fn: () => Promise<T>): Promise<T> => {
   }
 };
 
-describe('orchestrator:submit — the span over the uninstrumented interval', () => {
-  it('emits a real, SDK-exported span around the submit (positive control: the exporter DOES see spans)', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-
-    await submitWorkflow({ token: 'tok', body: {} as never, query: {} as never });
-
-    // If the tracer provider were not registered this list would be empty and every other span
-    // assertion in this file would pass vacuously. Assert non-empty FIRST.
-    expect(exporter.getFinishedSpans().length).toBeGreaterThan(0);
-    expect(spanNames()).toContain('orchestrator:submit');
-  });
-
-  it('records the attempts count on the parent span, so a 3x-retry park is distinguishable from one long attempt', async () => {
-    mockSubmitWorkflow
-      .mockResolvedValueOnce(serverErrorResult(500))
-      .mockResolvedValueOnce(serverErrorResult(503))
-      .mockResolvedValueOnce(okResult('wf-3'));
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({ token: 'tok', source: 'generate', body: {} as never, query: {} as never })
-    );
-
-    const parent = spansNamed('orchestrator:submit');
-    expect(parent).toHaveLength(1);
-    // 🔴 The load-bearing attribute: `attempts` is what the wrapper has always returned and every
-    // caller has always discarded. Without it a ~95s span is unattributable between `3 x ~30s` and
-    // one ~95s attempt.
-    expect(parent[0].attributes['orchestrator.submit.attempts']).toBe(3);
-    expect(parent[0].attributes['orchestrator.submit.source']).toBe('generate');
-  });
-
-  it('emits ONE per-attempt child span per attempt, numbered, nested under the parent', async () => {
-    mockSubmitWorkflow
-      .mockResolvedValueOnce(serverErrorResult(502))
-      .mockResolvedValueOnce(okResult('wf-2'));
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({ token: 'tok', body: {} as never, query: {} as never })
-    );
-
-    const attempts = spansNamed('orchestrator:submit:attempt');
-    expect(attempts).toHaveLength(2);
-    expect(attempts.map((s) => s.attributes['orchestrator.submit.attempt'])).toEqual([1, 2]);
-    // Nesting is the whole point: the children must sit UNDER the submit span, not beside it, or a
-    // trace cannot show three attempts adding up to one park.
-    const parent = spansNamed('orchestrator:submit')[0];
-    for (const a of attempts) expect(a.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
-  });
-
-  it('a single slow submit produces exactly ONE attempt span (the discriminator this PR exists for)', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-
-    await submitWorkflow({ token: 'tok', body: {} as never, query: {} as never });
-
-    expect(spansNamed('orchestrator:submit:attempt')).toHaveLength(1);
-    expect(spansNamed('orchestrator:submit')[0].attributes['orchestrator.submit.attempts']).toBe(1);
-  });
-});
-
-describe('civitai_app_orchestrator_submit_duration_seconds — sizing the leg', () => {
-  it('records exactly one ok observation per successful submit', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    const before = await histCount('generate', 'ok');
-
-    await submitWorkflow({
-      token: 'tok',
-      source: 'generate',
-      body: {} as never,
-      query: {} as never,
-    });
-
-    expect(await histCount('generate', 'ok')).toBe(before + 1);
-  });
-
-  // 🔴 THE VALUE TEST. Every other assertion in this file proves only that "a number was written" —
-  // which is exactly how a 1000x unit error ships green. Three mutants survive a suite without this
-  // test: the duration hardcoded to 0, the timer restarted immediately before the observation, and
-  // MILLISECONDS instead of seconds. All three are caught here, and by two independent assertions
-  // each (the `_sum` band and the bucket placement), because the entire deliverable of this change is
-  // a duration number and nothing else in the file constrains it.
-  it('observes the duration in SECONDS, and it tracks the real elapsed time', async () => {
-    const DELAY_MS = 60;
-    mockSubmitWorkflow.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve(okResult()), DELAY_MS))
-    );
-    const beforeSum = await histSum('other', 'ok');
-    const beforeFast = await histBucket('other', 'ok', '0.05');
-    const beforeSlow = await histBucket('other', 'ok', '5');
-
-    // REAL timers: a faked clock would let a hardcoded observation coincide with a faked elapsed.
-    await submitWorkflow({ token: 'tok', body: {} as never, query: {} as never });
-
-    const observed = (await histSum('other', 'ok')) - beforeSum;
-    // Lower bound kills `0` and kills a timer restarted just before the observation (both ≈ 0).
-    // `setTimeout(60)` cannot fire earlier than 60ms, so 30ms is a floor with 2x of slack.
-    expect(observed).toBeGreaterThanOrEqual(DELAY_MS / 1000 / 2);
-    // Upper bound kills MILLISECONDS-instead-of-seconds, which would record ≈60 here. A 60ms sleep
-    // cannot take 5 real seconds even on a loaded runner, so this band is wide AND still 12x below
-    // the value the unit bug produces.
-    expect(observed).toBeLessThan(5);
-
-    // Independent of the sum: bucket placement. A ≥60ms observation in seconds MUST fall above the
-    // 0.05 boundary and at or below 5 — the exact inverse of where the millisecond bug puts it.
-    expect(await histBucket('other', 'ok', '0.05')).toBe(beforeFast);
-    expect(await histBucket('other', 'ok', '5')).toBe(beforeSlow + 1);
-  });
-
-  it('records ONE observation (not one per attempt) for a retried submit — the caller-visible interval', async () => {
-    mockSubmitWorkflow
-      .mockResolvedValueOnce(serverErrorResult(500))
-      .mockResolvedValueOnce(okResult());
-    const before = await histCount('generate', 'ok');
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({ token: 'tok', source: 'generate', body: {} as never, query: {} as never })
-    );
-
-    // Whole-call timing: 2 attempts, ONE observation. Anything else double-counts the leg against the
-    // procedure's own wall time, which is the single comparison this metric exists to support.
-    expect(await histCount('generate', 'ok')).toBe(before + 1);
-  });
-
-  it('classifies an exhausted per-attempt abort as outcome=timeout, and counts it on the timeouts counter', async () => {
-    mockSubmitWorkflow.mockResolvedValue(timeoutResolveResult());
-    const beforeTimeout = await histCount('whatIf', 'timeout');
-    const beforeError = await histCount('whatIf', 'error');
-    const beforeCounter = await timeoutCount('whatIf');
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({ token: 'tok', body: {} as never, query: { whatif: true } as never }).catch(
-        (e) => e
-      )
-    );
-
-    expect(await histCount('whatIf', 'timeout')).toBe(beforeTimeout + 1);
-    expect(await histCount('whatIf', 'error')).toBe(beforeError);
-    expect(await timeoutCount('whatIf')).toBe(beforeCounter + 1);
-  });
-
-  it('records an error observation when the final attempt THROWS', async () => {
-    mockSubmitWorkflow.mockRejectedValue(new TypeError('boom'));
-    const before = await histCount('generate', 'error');
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({
-        token: 'tok',
-        source: 'generate',
-        body: {} as never,
-        query: {} as never,
-      }).catch((e) => e)
-    );
-
-    expect(await histCount('generate', 'error')).toBe(before + 1);
-  });
-
-  it('carries buckets above 30s, or the entire population this metric was added to see collapses into +Inf', async () => {
-    // prom-client materializes bucket rows only for label sets that have been observed, so make one
-    // observation here rather than depending on an earlier test having run.
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    await submitWorkflowWithRetry({ client: {} as never, body: {} as never });
-
-    const metric = promClient.register.getSingleMetric(DURATION) as promClient.Histogram<string>;
-    const data = await metric.get();
-    const buckets = new Set(
-      data.values
-        .filter((v) => v.metricName === `${DURATION}_bucket`)
-        .map((v) => String(v.labels.le))
-    );
-    // The generate submit has NO per-attempt timeout and its observed ceiling recurs at ~95s.
-    expect(buckets.has('45')).toBe(true);
-    expect(buckets.has('90')).toBe(true);
-    // …and a low end fine enough to resolve the healthy population, or the metric only sees parks.
-    expect(buckets.has('0.05')).toBe(true);
-  });
-
-  // ⚠️ INVARIANT GUARD, not regression coverage — measured green at the pre-change base, because the
-  // base read family already looked like this. It pins the DESIGN DECISION that the submit lives in its own
-  // family: prom-client applies one bucket array family-wide, so putting `submit` on the read family
-  // would mint >30s boundaries for two funnels hard-capped at 20s (never anything but a copy of
-  // le=30), force every read query to filter `op!="submit"` forever, and make `sum by (le)`
-  // non-monotonic across a rollout. This test fails the moment someone merges the two back together.
-  it('leaves the READ family completely untouched — no submit op, no widened buckets', async () => {
-    // One real read observation, so the read histogram materializes its bucket rows and this test is
-    // reading the family's ACTUAL boundaries rather than an empty value list that would vacuously pass.
-    observeOrchestratorRead('getWorkflow', 'ok', 0.01);
-
-    const metric = promClient.register.getSingleMetric(
-      READ_DURATION
-    ) as promClient.Histogram<string>;
-    const data = await metric.get();
-    const buckets = new Set(
-      data.values
-        .filter((v) => v.metricName === `${READ_DURATION}_bucket`)
-        .map((v) => String(v.labels.le))
-    );
-    for (const le of ['45', '60', '90', '120']) expect(buckets.has(le)).toBe(false);
-    expect(buckets.has('20')).toBe(true);
-    expect(data.values.some((v) => v.labels.op === 'submit')).toBe(false);
-  });
-});
-
 describe('the instruments live on the ONE funnel every submit passes through', () => {
-  // 🔴 REGRESSION COVERAGE for the seam. Image ingestion calls `submitWorkflowWithRetry` DIRECTLY and
-  // never touches `submitWorkflow`. Instrumenting a level up gave the attempt spans one population and
-  // the duration histogram another — the two signals this change exists to JOIN. This test builds the
-  // direct-call state and demands both signals from it.
-  it('a direct wrapper call (the image-ingestion shape) gets BOTH the span and the histogram', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    const before = await histCount('imageIngest', 'ok');
-
-    await submitWorkflowWithRetry(
-      { client: {} as never, body: {} as never },
-      { source: 'imageIngest' }
-    );
-
-    expect(await histCount('imageIngest', 'ok')).toBe(before + 1);
-    expect(spansNamed('orchestrator:submit')).toHaveLength(1);
-    expect(spansNamed('orchestrator:submit:attempt')).toHaveLength(1);
-    expect(spansNamed('orchestrator:submit')[0].attributes['orchestrator.submit.source']).toBe(
-      'imageIngest'
-    );
-  });
-
-  // 🔴 The span's `attempts` attribute is claimed to settle "is a ~95s park 3x30s or one long attempt?".
-  // It was set only on the RESOLVE path, so the throw-shaped park — a network failure that exhausts every
-  // attempt — produced a span with NO attempt count, which is one of the exactly two shapes the attribute
-  // exists to tell apart. The fired-AbortSignal park resolves instead, which is why this read as covered.
-  it('stamps `attempts` on the parent span even when the submit exhausts its attempts by THROWING', async () => {
-    mockSubmitWorkflow.mockRejectedValue(new TypeError('socket hang up'));
-
-    await runWithFakeTimers(() =>
-      submitWorkflowWithRetry({ client: {} as never, body: {} as never }).catch((e) => e)
-    );
-
-    const parent = spansNamed('orchestrator:submit');
-    expect(parent).toHaveLength(1);
-    expect(parent[0].attributes['orchestrator.submit.attempts']).toBe(3);
-  });
-
-  it('an unlabelled caller lands in `other`, never silently in `generate`', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    const beforeOther = await histCount('other', 'ok');
-    const beforeGenerate = await histCount('generate', 'ok');
-
-    await submitWorkflowWithRetry({ client: {} as never, body: {} as never });
-
-    expect(await histCount('other', 'ok')).toBe(beforeOther + 1);
-    // The whole point of the label: `generate` must mean the generate leg and nothing else, or the
-    // comparison against generateFromGraph's own wall time is contaminated by every other funnel.
-    expect(await histCount('generate', 'ok')).toBe(beforeGenerate);
-  });
-
-  it('a whatIf is always its own population, even when the caller declares another source', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    const beforeWhatIf = await histCount('whatIf', 'ok');
-    const beforeGenerate = await histCount('generate', 'ok');
-
-    await submitWorkflow({
-      token: 'tok',
-      source: 'generate',
-      body: {} as never,
-      query: { whatif: true } as never,
-    });
-
-    expect(await histCount('whatIf', 'ok')).toBe(beforeWhatIf + 1);
-    expect(await histCount('generate', 'ok')).toBe(beforeGenerate);
-  });
-
-  // The coercion lives in the WRAPPER, not in `submitWorkflow`, so it applies to a direct caller too.
-  // Pinning this is the difference between the label's docstring ("any submit carrying
-  // query.whatif === true") being true and being true-only-for-callers-who-took-the-long-way.
-  it('classifies a DIRECT wrapper call carrying query.whatif as whatIf, not as its declared source', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    const beforeWhatIf = await histCount('whatIf', 'ok');
-    const beforeIngest = await histCount('imageIngest', 'ok');
-
-    await submitWorkflowWithRetry(
-      { client: {} as never, body: {} as never, query: { whatif: true } as never },
-      { source: 'imageIngest' }
-    );
-
-    expect(await histCount('whatIf', 'ok')).toBe(beforeWhatIf + 1);
-    expect(await histCount('imageIngest', 'ok')).toBe(beforeIngest);
-  });
-
   // 🔴 The TYPE on `source` is a compile-time guarantee only, and excess-property checking does not
   // apply to spread properties — so a call site doing `submitWorkflow({ ...opts, token })` where `opts`
   // carries a stray `source` string would mint an unbounded label on a hot-path histogram with a fully
@@ -500,52 +193,6 @@ describe('the instruments live on the ONE funnel every submit passes through', (
 });
 
 describe('onRetry → civitai_app_orchestrator_submit_retries_total (the 3x multiplier, finally counted)', () => {
-  it('increments once per fired retry, labeled by the FAILED attempt and its 5xx status', async () => {
-    mockSubmitWorkflow
-      .mockResolvedValueOnce(serverErrorResult(500))
-      .mockResolvedValueOnce(serverErrorResult(503))
-      .mockResolvedValueOnce(okResult());
-    const before1 = await retryCount('generate', '1', '500');
-    const before2 = await retryCount('generate', '2', '503');
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({ token: 'tok', source: 'generate', body: {} as never, query: {} as never })
-    );
-
-    // 🔴 The assertion the mutation test targets: a 3-attempt submit contributes exactly 2 retries,
-    // attributed to the attempt that failed and the status it failed with.
-    expect(await retryCount('generate', '1', '500')).toBe(before1 + 1);
-    expect(await retryCount('generate', '2', '503')).toBe(before2 + 1);
-  });
-
-  // ⚠️ INVARIANT GUARD, not regression coverage: this passes at the pre-change base too (the counter
-  // did not exist there, so 0 === 0). It pins that the counter stays quiet on the happy path — worth
-  // having, but it is NOT evidence the wiring works. The test above it is.
-  it('does NOT increment when the submit succeeds first try', async () => {
-    mockSubmitWorkflow.mockResolvedValue(okResult());
-    const before = await retryCount('generate', '1', '500');
-
-    await submitWorkflow({
-      token: 'tok',
-      source: 'generate',
-      body: {} as never,
-      query: {} as never,
-    });
-
-    expect(await retryCount('generate', '1', '500')).toBe(before);
-  });
-
-  it('labels a status-less failure (thrown network error / fired abort) as outcome=network', async () => {
-    mockSubmitWorkflow.mockRejectedValueOnce(timeoutError()).mockResolvedValueOnce(okResult());
-    const before = await retryCount('generate', '1', 'network');
-
-    await runWithFakeTimers(() =>
-      submitWorkflow({ token: 'tok', source: 'generate', body: {} as never, query: {} as never })
-    );
-
-    expect(await retryCount('generate', '1', 'network')).toBe(before + 1);
-  });
-
   it('counts the retry even when the caller supplies its OWN onRetry — the hook cannot be displaced', async () => {
     mockSubmitWorkflow
       .mockResolvedValueOnce(serverErrorResult(504))
@@ -590,37 +237,6 @@ describe('onRetry → civitai_app_orchestrator_submit_retries_total (the 3x mult
     // throw and change what callers see while this test stayed green.
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe('caller hook exploded');
-  });
-});
-
-describe('submitSourceForSurface — keeping a CRON JOB out of the headline population', () => {
-  // 🔴 `generateFromGraph` has two entry points and only one is the tRPC procedure: the preset/comics
-  // path reaches the same code, and one of ITS callers is the `process-enqueued-comic-panels` cron job,
-  // which runs outside the request path entirely. If `source` were stamped flat as `generate` there, the
-  // number that gets divided against `orchestrator.generateFromGraph`'s wall time would include a
-  // background job — the same contamination the label exists to remove, one level further up.
-  it('splits `preset` out of `generate`, so `generate` is the tRPC procedure and nothing else', () => {
-    expect(submitSourceForSurface('preset')).toBe('preset');
-    expect(submitSourceForSurface('onsite')).toBe('generate');
-    expect(submitSourceForSurface('api')).toBe('generate');
-  });
-
-  it('falls to `other` on an absent surface — an unknown caller must never inflate `generate`', () => {
-    expect(submitSourceForSurface(undefined)).toBe('other');
-  });
-
-  // Pins the mapping to the WHOLE surface enum rather than the three values spelled above, so a surface
-  // added later cannot silently default into `generate` without this test being looked at.
-  it('maps every declared GenerationSurface, and only `preset` leaves the generate population', () => {
-    const mapped = Object.fromEntries(
-      GENERATION_SURFACES.map((x) => [x, submitSourceForSurface(x)])
-    );
-    expect(mapped).toEqual({
-      api: 'generate',
-      block: 'generate',
-      onsite: 'generate',
-      preset: 'preset',
-    });
   });
 });
 

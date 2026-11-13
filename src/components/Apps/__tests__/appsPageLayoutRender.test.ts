@@ -31,11 +31,8 @@ import type { AppsMeasure } from '~/components/Apps/appsPageWidths';
  * both die here by construction rather than by a better-worded regex.
  *
  * 🔴 AND WHY IT IS IN THE BLOCKING `unit` PROJECT, NOT BESIDE THE PIXEL TEST.
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures real pixels, but the
- * browser-mode `component` project is report-only in CI *and* currently red for reasons
- * unrelated to this code. A permanently-red non-blocking gate trains everyone to click
- * through it, so anything only it catches is effectively unguarded. This file runs in
- * `unit`, which is the tier whose verdict is read.
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures real pixels; this file pins
+ * the structure in `unit`, without a browser.
  *
  * Node env, so this is `renderToStaticMarkup` + happy-dom rather than a real browser —
  * which is enough for STRUCTURE (what contains what) though not for pixels. The two
@@ -107,7 +104,7 @@ type Tree = {
   band: Element;
 };
 
-function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
+function renderLayout(measure?: AppsMeasure, withHeader = false, align?: 'start' | 'center'): Tree {
   const html = renderToStaticMarkup(
     createElement(
       MantineProvider,
@@ -116,6 +113,7 @@ function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
         AppsPageLayout,
         {
           measure,
+          ...(align ? { align } : {}),
           ...(withHeader
             ? {
                 title: 'A title',
@@ -145,7 +143,8 @@ function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
   // mode a structural test can have. The markers are read from the rendered tree, so a
   // renamed/removed one throws here rather than silently re-pointing.
   const band = doc.querySelector('[data-apps-chrome="band"]');
-  const rootStack = band?.parentElement;
+  // The root stack is the body column's only child; the band sits inside a wrapper under it.
+  const rootStack = doc.querySelector('[data-apps-chrome="body-column"]')?.firstElementChild;
   if (!band || !rootStack) throw new Error('could not resolve the layout band / root stack');
 
   const allBoxes = Array.from(doc.querySelectorAll('[style*="max-width"]')) as unknown as Element[];
@@ -351,7 +350,7 @@ describe('the measure box, on the rendered tree', () => {
     // WHY THIS IS HERE RATHER THAN IN THE PIXEL TEST: the vertical pins in
     // `AppsPageLayout.geometry.browser.test.tsx` render a header with NO measure, so they
     // are structurally blind to the box this change adds inside the band — and that file
-    // is in the report-only tier anyway. The mechanism that keeps the 16px/32px grouping
+    // is in the browser tier anyway. The mechanism that keeps the 16px/32px grouping
     // intact is that these wrappers contribute no box model of their own, which IS
     // checkable here, in the blocking tier.
     const t = renderLayout(1068, true);
@@ -393,5 +392,36 @@ describe('the measure box, on the rendered tree', () => {
       const container = node!.parentElement;
       expect(container?.getAttribute('style') ?? '').toContain(remOf(APPS_PAGE_CONTAINER_WIDTH));
     }
+  });
+});
+
+describe('`align="center"` — the one declared opt-out from the shared left edge', () => {
+  // The listing DETAIL page centres its measured body (a product decision; see `align` on
+  // the layout). Everything above pins the DEFAULT, which renders no `align` at all; these
+  // pin that the opt-out does what it says and changes nothing else.
+  it('centres the MEASURED body box with auto inline margins', () => {
+    const t = renderLayout(1068, false, 'center');
+    expect(t.measureBox, 'the measure box must still render').not.toBeNull();
+    expect(t.measureBox!.getAttribute('style') ?? '').toMatch(/margin-inline:\s*auto/);
+    // Still the SAME box — a direct child of the root stack, outside the chrome.
+    expect(t.measureBox!.parentElement).toBe(t.rootStack);
+    expect(t.measureBox!.contains(t.nav)).toBe(false);
+  });
+
+  it('fills the column, so auto margins cannot shrink-wrap it wider than a phone screen', () => {
+    const t = renderLayout(1068, false, 'center');
+    expect(t.measureBox!.getAttribute('style') ?? '').toMatch(/(^|[;\s])width:\s*100%/);
+  });
+
+  it('`align="start"` is byte-identical to omitting it (the default stays left-aligned)', () => {
+    const explicit = renderLayout(1068, false, 'start');
+    expect(explicit.measureBox!.getAttribute('style') ?? '').not.toMatch(/margin/i);
+    expect(explicit.measureBox!.outerHTML).toBe(renderLayout(1068).measureBox!.outerHTML);
+  });
+
+  it('without a measure there is nothing to centre: the body stays unbounded', () => {
+    const t = renderLayout(undefined, false, 'center');
+    expect(t.measureBox).toBeNull();
+    expect(t.body.parentElement).toBe(t.rootStack);
   });
 });

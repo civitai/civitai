@@ -254,7 +254,10 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
   };
 
   const db = {
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing,
+    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     appListingScreenshot,
     image,
     $transaction: vi.fn(async (arg: unknown) => {
@@ -341,12 +344,25 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
 // 🔴 dbRead and dbWrite are DISTINCT fakes over one store. They used to be the same
 // object, which silently made every "reads the primary" claim in this module
 // unfalsifiable.
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: readDb, dbWrite: db }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_gen_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_gen_${++ids.n}`,
   newAppListingScreenshotId: () => `apls_gen_${++ids.n}`,
   newUlid: () => `ULID${++ids.n}`,
+}));
+const { recordModeratorEdit } = vi.hoisted(() => ({
+  recordModeratorEdit: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-moderator-edit', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  recordModeratorListingEdit: (...a: unknown[]) => recordModeratorEdit(...a),
 }));
 
 import {

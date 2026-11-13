@@ -1,0 +1,15 @@
+import './model.profile';
+import './article.profile';
+import './post.profile';
+import './bounty.profile';
+import './bounty-entry.profile';
+import './challenge.profile';
+import './chat-message.profile';
+import './comment-v3.profile';
+import './resource-review.profile';
+import './user.profile';
+import './user-profile.profile';
+import './crucible.profile';
+import './collection.profile';
+import './storyline.profile';
+import './image-caption.profile';

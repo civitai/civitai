@@ -7,7 +7,10 @@ import { usePrevious } from '@mantine/hooks';
 import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import type { CSSProperties } from 'react';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
+import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
@@ -86,6 +89,7 @@ function SortableImage({ image, sortableId }: ItemProps) {
   const { attributes, listeners, isDragging, setNodeRef, transform, transition } = useSortable({
     id: sortableId,
   });
+  const { nsfwLevel } = useImageStore(image);
 
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -117,6 +121,17 @@ function SortableImage({ image, sortableId }: ItemProps) {
           color="white"
         />
       </div>
+      {!!nsfwLevel && (
+        <BrowsingLevelBadge
+          browsingLevel={nsfwLevel}
+          size="lg"
+          className="pointer-events-none absolute left-2 top-2 z-20"
+        />
+      )}
+      <ImageReactionCount
+        count={image.reactionCount}
+        className="pointer-events-none absolute bottom-2 left-2 z-20"
+      />
     </div>
   );
 }

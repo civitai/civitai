@@ -8,6 +8,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `@typescript-eslint/consistent-type-imports` rejects an inline
 // `typeof import('...')` annotation, so the types have to arrive this way.
 import type * as MantineNotifications from '@mantine/notifications';
+import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as Trpc from '~/utils/trpc';
 
 /**
@@ -58,7 +59,20 @@ import type * as Trpc from '~/utils/trpc';
 
 // AppBlockChrome calls useCurrentUser() for the platform-nav moderator gate; this
 // scaffold mounts no CivitaiSessionProvider.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// Signed in by default — the viewer `context.viewerUserId` describes. The
+// anonymous seam test sets it to null: IframeHost reads the live session from
+// this hook, and it decides whether an un-grantable REQUEST_CONSENT toasts or
+// offers sign-in.
+const session = vi.hoisted(() => ({
+  user: { id: 42, username: 'tester' } as null | { id: number; username: string },
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => session.user }));
+
+const openLoginPopupSpy = vi.fn();
+vi.mock('~/utils/auth-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuthHelpers>()),
+  openLoginPopup: (...args: unknown[]) => openLoginPopupSpy(...args),
+}));
 
 // The REAL useFeatureFlags THROWS without a FeatureFlagsProvider, which this
 // scaffold does not mount, so every test that MOUNTS IframeHost would crash.
@@ -272,6 +286,8 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+    session.user = { id: 42, username: 'tester' };
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
@@ -372,6 +388,97 @@ describe('IframeHost consent backstop — the BlockHost → useBlockToken → If
     }
   });
 
+  test('🔴 ANONYMOUS viewer: the mint-signed scopes reach BLOCK_INIT / TOKEN_REFRESH, and a REQUEST_CONSENT for a stripped gated scope is refused', async () => {
+    // The anon mint (`userId == null`) strips every consent-gated scope but reports
+    // `missingScopes: []` and `needsConsent: false`. Before the hook carried the
+    // mint's `scopes`, the host advertised `declared − []` — the gated scope too —
+    // and then treated a REQUEST_CONSENT for it as "already granted" and dropped it.
+    const EXEMPT = 'apps:storage:read';
+    const GATED = 'apps:storage:publish';
+    const anonInstall: BlockInstall = {
+      ...install,
+      blockInstanceId: 'inst_anon',
+      manifest: { ...install.manifest, scopes: [EXEMPT, GATED] },
+    };
+    respondWith(
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            token: 'tok_anon',
+            expiresAt: new Date(Date.now() + TOKEN_TTL_MS).toISOString(),
+            kind: 'block',
+            scopes: [EXEMPT],
+            needsConsent: false,
+            missingScopes: [],
+            domain: 'blue',
+            maxBrowsingLevel: 3,
+          }),
+        } as unknown as Response)
+    );
+    session.user = null;
+    renderWithProviders(
+      <BlockHost
+        blockInstall={anonInstall}
+        slotContext={{ ...context, viewerUserId: null, viewerUsername: null }}
+      />
+    );
+    const el = await waitForIframe();
+    const posts = listenForPosts(el);
+    const postFromBlock = (type: string, payload: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type, payload },
+          origin: window.location.origin,
+          source: el.contentWindow,
+        })
+      );
+    try {
+      for (let i = 0; i < 200 && posts.of('BLOCK_INIT').length === 0; i++) await advance(5);
+      const init = posts.of('BLOCK_INIT');
+      expect(init.length).toBeGreaterThan(0);
+      expect((init[0].payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([
+        EXEMPT,
+      ]);
+
+      await driveToReady(el);
+
+      // REQUEST_TOKEN with no requestId is answered with a TOKEN_REFRESH push.
+      // A rotation push shares the message type, so assert on the post(s) AFTER the
+      // request rather than on `[0]`.
+      const refreshesBefore = posts.of('TOKEN_REFRESH').length;
+      postFromBlock('REQUEST_TOKEN', {});
+      for (let i = 0; i < 200 && posts.of('TOKEN_REFRESH').length === refreshesBefore; i++) {
+        await advance(5);
+      }
+      const reply = posts.of('TOKEN_REFRESH').slice(refreshesBefore);
+      expect(reply.length).toBeGreaterThan(0);
+      for (const m of reply) {
+        expect((m.payload as { token?: { scopes?: string[] } }).token?.scopes).toEqual([EXEMPT]);
+      }
+
+      postFromBlock('REQUEST_CONSENT', { scopes: [GATED] });
+      for (let i = 0; i < 200 && posts.of('CONSENT_UNAVAILABLE').length === 0; i++) {
+        await advance(5);
+      }
+      expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1);
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: [GATED],
+      });
+      // Signed out: the host offers sign-in (it would make the scope grantable),
+      // never the "isn't available here" toast.
+      expect(openLoginPopupSpy).toHaveBeenCalledTimes(1);
+      expect(showNotificationSpy).not.toHaveBeenCalled();
+      // Invariant guard, not regression coverage: with `missingScopes: []` no modal
+      // can open on main either.
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
   test('DISCRIMINATING CONTROL — the same seam with a fully-granted mint shows nothing', async () => {
     // Everything about this render is identical except the mint's verdict, so a pass
     // above cannot be "the notice renders unconditionally once ready".
@@ -408,6 +515,8 @@ describe('IframeHost consent backstop — the surface', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
     showNotificationSpy.mockClear();
+    openLoginPopupSpy.mockClear();
+    session.user = { id: 42, username: 'tester' };
   });
 
   afterEach(() => cleanup());
@@ -530,6 +639,102 @@ describe('IframeHost consent backstop — the surface', () => {
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
+  // ── A REFUSAL BRINGS A DISMISSED NOTICE BACK ───────────────────────────────
+  // The rule is `resolveConsentNoticeAfterRefusal` (unit-tested in
+  // `__tests__/requestConsentGate.test.ts`); these pin that the MODEL SLOT wires a
+  // reaction refused as `needs-consent` to it, as PageBlockHost does, and that
+  // REQUEST_CONSENT does not revive it.
+  const REACT = 'social:react:self';
+  const reactionRequest = {
+    requestId: 'react-1',
+    entityType: 'image',
+    entityId: 5,
+    reaction: 'Heart',
+    reacted: true,
+  };
+
+  async function dismissNotice() {
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+  }
+
+  test('🔴 dismissed, then a reaction is refused for a MISSING permission → the notice is back, highlighted', async () => {
+    renderWithProviders(
+      <IframeHost {...baseProps} missingScopes={[WITHHELD, REACT]} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() =>
+        expect(posts.of('ENTITY_REACTION_RESULT').map((m) => m.payload)).toEqual([
+          { requestId: 'react-1', error: 'needs-consent' },
+        ])
+      );
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+      expect((noticeQuery() as HTMLElement).getAttribute('data-highlight')).toBe('true');
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 ONE revival per mount: dismissed again, later refusals do NOT bring it back', async () => {
+    // An app can send this request whenever it likes, with no user gesture, so an
+    // uncapped revival would make the notice impossible to get rid of.
+    renderWithProviders(
+      <IframeHost {...baseProps} missingScopes={[WITHHELD, REACT]} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull()); // first revival
+      await dismissNotice();
+      for (let i = 2; i <= 3; i++) {
+        postFromBlock('SET_ENTITY_REACTION', { ...reactionRequest, requestId: `react-${i}` });
+        // Positive control: each later refusal still reached the app.
+        await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(i));
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('CONTROL — the same refusal for a permission the viewer CANNOT grant here leaves it dismissed', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      // Positive control: the refusal reached the block.
+      await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 dismissed, then REQUEST_CONSENT for a missing scope opens the modal and does NOT bring the notice back', async () => {
+    // That path already answers the request with the consent modal, so a notice
+    // reappearing behind it (and staying after the viewer declines) would only undo
+    // the dismissal. The modal is the positive control that the request was handled.
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    postFromBlock('REQUEST_CONSENT', { scopes: [WITHHELD] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
   // 🔴 ONE VARIABLE EACH. A fixture that moves `missingScopes` AND `needsConsent`
   // together cannot attribute the absence to either term, which is how the page
   // host's `needsConsent &&` once sat in a render condition with no killing
@@ -617,8 +822,38 @@ describe('IframeHost consent backstop — the surface', () => {
       // 🔴 NO "preview" CLAIM. The un-grantable state is reachable from an ordinary
       // mint clamp on a live model page, so the old page-host wording was false here.
       expect(toast.message).toBe('This app requested a permission that isn’t available here.');
+      // Signed in: the toast, never the sign-in popup.
+      expect(openLoginPopupSpy).not.toHaveBeenCalled();
       // No modal: there is nothing consent can add.
       expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('the model slot is NOT a local preview: a document-store REQUEST_CONSENT still toasts, as before', async () => {
+    // INVARIANT GUARD, not regression coverage: this host passes the literal
+    // 'model-slot' and toasted here before the change too. Only the dev-tunnel
+    // surface serves the document store locally; the unit-test ledger over the
+    // whole surface record is the guard on the condition itself.
+    renderWithProviders(
+      <IframeHost
+        {...baseProps}
+        missingScopes={[]}
+        needsConsent={false}
+        onConsentGranted={vi.fn()}
+      />
+    );
+    await driveToReady();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage', 'apps:storage:publish'] });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(1));
+      expect(posts.of('CONSENT_UNAVAILABLE')[0].payload).toEqual({
+        reason: 'ungrantable',
+        scopes: ['apps:storage', 'apps:storage:publish'],
+      });
+      expect(showNotificationSpy).toHaveBeenCalledTimes(1);
     } finally {
       posts.stop();
     }
@@ -667,6 +902,27 @@ describe('IframeHost consent backstop — the surface', () => {
       await new Promise((r) => setTimeout(r, 100));
       expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(0);
       expect(showNotificationSpy).not.toHaveBeenCalled();
+    } finally {
+      posts.stop();
+    }
+  });
+  // GUARD: the model slot has no prompt for `apps:storage:publish` in a SOURCE app (only the page
+  // host has one), so a request carrying `from` is refused here. Read as an ordinary request it
+  // would open THIS app's own prompt for its missing scopes, which is not what the block asked.
+  // `baseProps` leaves `WITHHELD` missing, so without the refusal each request below opens it.
+  test('a REQUEST_CONSENT carrying from gets CONSENT_UNAVAILABLE and opens no modal', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'], from: 'notes-app' });
+      postFromBlock('REQUEST_CONSENT', { scopes: [WITHHELD], from: 'notes-app' });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(2));
+      for (const m of posts.of('CONSENT_UNAVAILABLE')) {
+        expect(m.payload).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+      }
+      await new Promise((r) => setTimeout(r, 100));
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
     } finally {
       posts.stop();
     }

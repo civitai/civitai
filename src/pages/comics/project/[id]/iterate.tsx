@@ -1,15 +1,16 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { ActionIcon, Alert, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconArrowLeft, IconMessages } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
 
+import { PRESET_MODEL_SIZES } from '~/shared/generation/preset-sizes';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
-  COMIC_MODEL_SIZES,
 } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
@@ -139,7 +140,7 @@ function ComicIteratePage() {
   const config: IterativeEditorConfig = useMemo(
     () => ({
       modelOptions: COMIC_MODEL_OPTIONS,
-      modelSizes: COMIC_MODEL_SIZES,
+      modelSizes: PRESET_MODEL_SIZES,
       modelMaxImages: COMIC_MODEL_MAX_IMAGES,
       defaultModel: project?.baseModel ?? DEFAULT_MODEL,
       defaultAspectRatio: '3:4',

@@ -1,4 +1,4 @@
-import type { SeedreamImageGenInput, SeedreamVersion } from '@civitai/client';
+import type { SeedreamImageGenInput, SeedreamVersion } from '@civitai/orchestration-client';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 export const seedreamModels: SeedreamVersion[] = ['v3', 'v4', 'v4.5', 'v5.0-lite'];

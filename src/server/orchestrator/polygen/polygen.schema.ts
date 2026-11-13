@@ -20,7 +20,10 @@
  * multi-view operation. `polygen-graph.handler.ts` picks between the two.
  */
 
-import type { MeshyImageTo3dFalPolyGenInput, MeshyTextTo3dFalPolyGenInput } from '@civitai/client';
+import type {
+  MeshyImageTo3dFalPolyGenInput,
+  MeshyTextTo3dFalPolyGenInput,
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 
@@ -107,10 +110,10 @@ export type Model3DGenerationSchema = z.infer<typeof model3dGenerationSchema>;
 // =============================================================================
 
 /**
- * Strip undefined fields from an object. Mirrors the orchestrator's
- * `removeEmpty` helper but inline here to keep the schema self-contained.
+ * Strip undefined fields from an object — shared by every 3D input builder.
+ * Unlike `removeEmpty`, keeps `null` and empty arrays.
  */
-function dropUndefined<T extends Record<string, unknown>>(obj: T): T {
+export function dropUndefined<T extends Record<string, unknown>>(obj: T): T {
   const out = {} as Record<string, unknown>;
   for (const [k, v] of Object.entries(obj)) {
     if (v !== undefined) out[k] = v;

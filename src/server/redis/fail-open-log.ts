@@ -8,10 +8,11 @@ import { logToAxiom, safeError } from '~/server/logging/client';
  * Subtypes map to specific operational concerns:
  *
  * - `defaults-firing`        getGenerationStatus / getTrainingServiceStatus
- *                            / getCreationBlockedTags fell back to schema
- *                            defaults. The first two default to
- *                            `available=true` — if admin had disabled the
- *                            service, it now appears enabled.
+ *                            / getCreationBlockedTags could not read their
+ *                            value. getCreationBlockedTags falls back to
+ *                            schema defaults; getGenerationStatus and
+ *                            getTrainingServiceStatus serve last-known-good
+ *                            or refuse (see their `served` field).
  *
  * - `tracking-write-cliff`   setToken's USER_TOKENS write failed. Next
  *                            authenticated request from that user will
@@ -28,7 +29,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
  * - `write-degraded`         Any other best-effort writeback that
  *                            swallowed a sysRedis error.
  *
- * - `rate-limit-write-degraded`  middleware.trpc.recordAttempt failed to
+ * - `rate-limit-write-degraded`  rate-limit-bucket.claimRateLimitAttempt (the rateLimit() body) failed to
  *                            persist the rate-limit attempt counter. The
  *                            current request still completes; the user's
  *                            sliding-window quota under-counts this

@@ -14,6 +14,11 @@ import {
   Progress,
   UnstyledButton,
 } from '@mantine/core';
+import {
+  canWithdrawCatalogItem,
+  markCatalogItemsWithdrawn,
+  type CatalogItem,
+} from '~/components/Account/CatalogItemsCard';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
   IconPlugConnected,
@@ -56,9 +61,34 @@ export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
       spendMap.set(entry.id, entry.spend);
     }
   }
+  // The store items each app listed under the user's name; revoking the app withdraws them
+  // (except under a listing the user owns themselves).
+  const withdrawnOnRevoke = (clientId: string) => (item: CatalogItem) =>
+    item.parent.clientId === clientId && !item.parent.isYours;
+  const { data: catalogItems } = trpc.appListings.listMyCatalogSubListings.useQuery(undefined, {
+    enabled: apps.length > 0,
+  });
+  const activeCatalogItemCount = (clientId: string) =>
+    (catalogItems?.items ?? []).filter(
+      (item) => withdrawnOnRevoke(clientId)(item) && canWithdrawCatalogItem(item.status)
+    ).length;
   const revokeMutation = trpc.oauthConsent.revokeApp.useMutation({
-    onSuccess: () => {
+    onSuccess: (result, { clientId }) => {
       utils.oauthConsent.getConnectedApps.invalidate();
+      if (result.catalogItemsWithdrawn === null) {
+        showErrorNotification({
+          title: 'App access revoked',
+          autoClose: false,
+          error: new Error(
+            'Its store items could not be withdrawn. Withdraw them under "Store items listed under your name".'
+          ),
+        });
+        utils.appListings.listMyCatalogSubListings.invalidate();
+        return;
+      }
+      if (result.catalogItemsWithdrawn > 0) {
+        markCatalogItemsWithdrawn(utils, withdrawnOnRevoke(clientId));
+      }
       showSuccessNotification({ message: 'App access revoked' });
     },
     onError: (error) => {
@@ -67,6 +97,7 @@ export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
   });
 
   const handleRevoke = (clientId: string, appName: string) => {
+    const catalogCount = activeCatalogItemCount(clientId);
     openConfirmModal({
       title: 'Revoke App Access',
       children: (
@@ -74,6 +105,10 @@ export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
           Are you sure you want to revoke access for <strong>{appName}</strong>? This will
           disconnect the app and delete all its tokens. You&apos;ll need to re-authorize if you want
           to use it again.
+          {catalogCount > 0 &&
+            ` It also withdraws the ${catalogCount} App Store ${
+              catalogCount === 1 ? 'item' : 'items'
+            } it listed under your name.`}
         </Text>
       ),
       labels: { confirm: 'Revoke Access', cancel: 'Cancel' },

@@ -20,6 +20,10 @@ export type SocialBlockSchema = z.infer<typeof socialBlockSchema>;
 const cosmeticShopSectionSchema = z.object({
   id: z.number(),
   maxItems: z.number().optional(),
+  // Shows a different `maxItems` of the section every `rotateHours`, the same set for every
+  // visitor in that window. Off by default: a block without it keeps the section's own order.
+  random: z.boolean().optional(),
+  rotateHours: z.number().min(1).max(168).optional(),
 });
 
 export type AutoFeatureSchema = z.infer<typeof autoFeatureSchema>;
@@ -64,6 +68,8 @@ export const homeBlockMetaSchema = z
     description: getSanitizedStringSchema(),
     stackedHeader: z.boolean(),
     descriptionAlwaysVisible: z.boolean(),
+    // Signed-in popover only. Never render it in the inline (anonymous) description.
+    selectionNote: getSanitizedStringSchema(),
     withIcon: z.boolean(),
     collection: z.object({
       id: z.number(),
@@ -73,6 +79,9 @@ export const homeBlockMetaSchema = z
       // Caps how many items from the same creator can appear in one homeblock render.
       // Pair with a fetch `limit` larger than `rows * 7` so the dedup has a pool to pick from.
       maxPerUser: z.number().int().positive().optional(),
+      // The event whose Flag Race flags this Collection holds: the row keeps the flags' rank order
+      // and draws their flag badges.
+      flagRace: z.string().optional(),
     }),
     leaderboards: z.array(
       z.object({
@@ -90,7 +99,7 @@ export const homeBlockMetaSchema = z
     // a passthrough of the feed input — home-block metadata is mod-editable, and a
     // passthrough would let a config change reach every knob those services expose.
     feed: z.object({
-      entity: z.enum(['images', 'models']),
+      entity: z.enum(['images', 'models', 'crucibles']),
       limit: z.number().int().min(1).max(100).default(28),
       rows: z.number().int().min(1).max(4).default(2),
       maxPerUser: z.number().int().positive().optional(),
@@ -104,6 +113,9 @@ export const homeBlockMetaSchema = z
       baseModels: z.array(z.string()).optional(),
       // images only
       types: z.array(z.enum(MediaType)).optional(),
+      // crucibles only, and required there: the block lists the running and upcoming crucibles a
+      // moderator gave this event tag. sort/period/newCreators/baseModels do not apply.
+      eventTag: z.string().optional(),
     }),
     announcements: z.object({
       ids: z.array(z.number()).optional(),
@@ -130,6 +142,8 @@ export const homeBlockMetaSchema = z
       autoFeature: autoFeatureSchema.optional(),
     }),
     footer: z.string().optional(),
+    // A FeatureFlagKey with a Flipt key: the row shows only to viewers that flag is on for.
+    featureFlag: z.string(),
   })
   .partial();
 

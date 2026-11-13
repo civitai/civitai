@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import * as z from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbRead } from '~/server/db/client';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
@@ -10,10 +10,14 @@ import {
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import {
+  getCoverBrowsingLevels,
+  publicCoverImageSelect,
+  toPublicCoverImage,
+} from '~/server/utils/public-cover-image';
+import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils/flags';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
@@ -84,26 +88,27 @@ export default MixedAuthEndpoint(async function handler(
     // maps it to the same 404.
     const collection = await getCollectionById({ input: { id } });
 
-    const coverWithinCeiling =
-      !!collection.image?.url &&
-      (!collection.image.nsfwLevel ||
-        Flags.intersects(collection.image.nsfwLevel, browsingLevel));
+    // getCollectionById's cover select lacks fields the public check reads.
+    const cover = collection.image
+      ? await dbRead.image.findUnique({
+          where: { id: collection.image.id },
+          select: publicCoverImageSelect,
+        })
+      : null;
+    const coverLevel = await getCoverBrowsingLevels([cover], browsingLevel);
+    const coverImage = toPublicCoverImage(cover, coverLevel(cover));
 
     return res.status(200).json({
       id: collection.id,
       name: collection.name,
       description: collection.description ?? null,
       type: collection.type ?? null,
+      mode: collection.mode ?? null,
       nsfwLevel: collection.nsfwLevel ?? null,
       read: collection.read,
       isPublic: collection.read === CollectionReadConfiguration.Public,
-      coverImageUrl:
-        coverWithinCeiling && collection.image?.url
-          ? getEdgeUrl(collection.image.url, {
-              width: 450,
-              type: collection.image.type ?? undefined,
-            })
-          : null,
+      coverImage,
+      coverImageUrl: coverImage?.url ?? null,
       user: collection.user
         ? { id: collection.user.id, username: collection.user.username ?? null }
         : { id: collection.userId, username: null },

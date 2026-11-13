@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as BuzzPackage from '@civitai/buzz';
 
 /**
  * 🔴 THE SEAM TEST. The four `/api/v1/blocks/workflows/*` routes and the four
@@ -67,6 +68,25 @@ const {
  * — but it is the only thing mocked on the request path.
  */
 const claimsBox: { claims: unknown } = { claims: undefined };
+
+// No Buzz service: every call rejects, as it would with the service down. Nothing here asserts on a
+// balance; a call that gets past auth only has to fail in the body, not reach a server.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzPackage>()),
+  createBuzzClient: () =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) =>
+          method === 'then'
+            ? undefined
+            : async () => {
+                throw new Error(`Buzz service unavailable in this test (${String(method)})`);
+              },
+      }
+    ),
+}));
+
 vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
@@ -171,6 +191,8 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckBlockCatalogRateLimit(...(a as [])),
   checkBlockPublishRateLimit: async () => ({ allowed: true }),
   checkBlockPollRateLimit: (...a: unknown[]) => mockCheckBlockPollRateLimit(...(a as [])),
+  checkBlockSubmitRateLimit: async () => ({ allowed: true }),
+  checkBlockSubmitUserRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -183,7 +205,6 @@ import estimateHandler from '~/pages/api/v1/blocks/workflows/estimate';
 import submitHandler from '~/pages/api/v1/blocks/workflows/submit';
 import queryHandler from '~/pages/api/v1/blocks/workflows/query';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
@@ -306,6 +327,15 @@ const TXT2IMG_BODY = {
 const IDEMPOTENCY_KEY = 'c4e81b02-6d39-4f57-8a1e-90b7d2f46c3a';
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   for (const fn of [
     mockVerifyBlockToken,
     mockGetOrchestratorToken,
@@ -498,9 +528,8 @@ describe('assertBlockWorkflowTaggedForApp reaches the wire', () => {
 describe('the rate-limit postures reach the wire unchanged', () => {
   /**
    * The poll limiter deliberately RETURNS a non-terminal snapshot rather than
-   * throwing: the SDK host turns a throw into a TERMINAL failure snapshot, so a 429
-   * here would tell the block that a running, PAID generation had finished and stop
-   * its watch loop. A route that re-mapped this resolve to a 429 would re-introduce
+   * throwing: a 429 here can be read by a block as a TERMINAL failure, telling it
+   * that a running, PAID generation had finished and stopping its watch loop. A route that re-mapped this resolve to a 429 would re-introduce
    * exactly that, and only a test that spans both halves can see it.
    */
   it('a shed poll is a 200 non-terminal snapshot, not a 429', async () => {
@@ -557,9 +586,24 @@ describe('the rate-limit postures reach the wire unchanged', () => {
  * Each of the four exits below is a DIFFERENT layer, and each is identified by the
  * layer's own message rather than by "some failure happened".
  */
+describe('the account-restriction check reaches the wire', () => {
+  it('a restricted subject is a 403 and nothing reaches the orchestrator', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true, bannedAt: null } as never);
+    const out = await call(
+      submitHandler,
+      { body: TXT2IMG_BODY, idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(403);
+    expect(mockOrchSubmitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 describe('the budget and cap ladder reaches the wire as a PRICED 200, not an error', () => {
   /** The whatIf price the orchestrator quotes for the preflight step. */
   const QUOTED = 999;
+  /** The per-user daily app Buzz cap this suite's viewer is held to (the Free tier's). */
+  const FREE_DAILY_CAP = 50_000;
 
   beforeEach(() => {
     mockOrchSubmitWorkflow.mockResolvedValue({
@@ -570,6 +614,11 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
       tags: [APP_TAG],
     });
     mockReserveAppSpend.mockResolvedValue({ allowed: true, dailyKey: 'appspend:key' });
+    // LAYER 2 drives the per-viewer reservation past its cap. Restored HERE rather
+    // than at the end of that test: a restore placed after its assertions never runs
+    // when one of them fails, and the leaked over-cap total then refuses every later
+    // submit in this block with the wrong layer's message.
+    redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
   });
 
   it('LAYER 1 — over the per-call buzzBudget: 200, priced, and no orchestrator submit', async () => {
@@ -584,7 +633,12 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     expect(out.json.snapshot.status).toBe('failed');
     // 🔴 THE PRICE IS PRESENT AND NUMERIC. This single field is what makes the
     // outcome recoverable for the block — it is the number a top-up CTA quotes.
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    // `authorFee: 0` rides along because this route returns the procedure's
+    // snapshot byte-for-byte (`BlockWorkflowSnapshot`, the bridge's shape): a priced
+    // refusal itemises the author's fee, and `0` means it was looked up and none
+    // applies — this fixture's app charges none. LAYERS 2 and 3 pin the same
+    // literal, so dropping the field on this transport goes red here.
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     expect(out.json.snapshot.error).toContain('insufficient buzz budget');
     // Only the whatIf ran. A REAL submit would have been a charge.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
@@ -596,8 +650,8 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
   it('LAYER 2 — over the PER-VIEWER daily Buzz cap: 200, priced, refused by reserveBlockBuzzSpend', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5000 }));
     // The per-(user, UTC-day) reservation is an atomic INCRBY on sysRedis; drive its
-    // running total past BLOCK_BUZZ_CAP_PER_DAY so the platform cap is what refuses.
-    redisMock.sysRedis.incrBy.mockImplementation(async () => BLOCK_BUZZ_CAP_PER_DAY + QUOTED);
+    // running total past the Free tier's daily cap (50,000) so the platform cap is what refuses.
+    redisMock.sysRedis.incrBy.mockImplementation(async () => FREE_DAILY_CAP + QUOTED);
 
     const out = await call(
       submitHandler,
@@ -607,14 +661,13 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     expect(out.status).toBe(200);
     expect(out.json.snapshot.status).toBe('failed');
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     // The LAYER, named: this is the per-user platform ceiling, not the per-call
     // budget above it and not the per-app aggregate below it.
     expect(out.json.snapshot.error).toContain('daily Buzz cap reached');
-    expect(out.json.snapshot.error).toContain(String(BLOCK_BUZZ_CAP_PER_DAY));
+    expect(out.json.snapshot.error).toContain(String(FREE_DAILY_CAP));
     // Still no real submit — the reservation is taken BEFORE the orchestrator call.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
-    redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
   });
 
   it('LAYER 3 — over the PER-APP aggregate cap (G8): 200, priced, refused by reserveAppSpend', async () => {
@@ -629,7 +682,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
 
     expect(out.status).toBe(200);
     expect(out.json.snapshot.status).toBe('failed');
-    expect(out.json.snapshot.cost).toEqual({ total: QUOTED });
+    expect(out.json.snapshot.cost).toEqual({ total: QUOTED, authorFee: 0 });
     expect(out.json.snapshot.error).toContain('app daily spend cap reached');
     // 🔴 The aggregate ceiling is deliberately number-free on the wire — a
     // (potentially hostile) app must not learn it. Pinned so a later "helpful"
@@ -686,6 +739,112 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     expect(out.json.snapshot.status).not.toBe('failed');
     // whatIf THEN the real submit — two calls, and the second carries no `whatif`.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * 🔴 AN UNRUNNABLE INLINE GRAPH IS REFUSED ON THE WIRE WITH ITS CODE
+ * (civitai-app-starters#774). The inline `customComfy` estimate and submit refuse
+ * a graph that is certain to fail with a failed snapshot carrying `errorCode`
+ * (`not-api-format`, `model-filenames`, the codes of `checkComfyGraph` in
+ * `@civitai/app-sdk/blocks`). Through REST that must arrive as a 200 carrying the
+ * snapshot, so an app reads the same `errorCode` it would read over the bridge,
+ * and nothing may reach the orchestrator or the spend reservation.
+ *
+ * Red on the pre-change code: the wire schema refused a UI graph, which this route
+ * answers as `400 Invalid request body` with no code, and a filename graph was
+ * quoted like any other.
+ */
+describe('an unrunnable inline customComfy graph is refused on the wire with its errorCode', () => {
+  const UI_GRAPH = {
+    last_node_id: 2,
+    last_link_id: 1,
+    nodes: [
+      { id: 1, type: 'CheckpointLoaderSimple', widgets_values: ['sd_xl_base_1.0.safetensors'] },
+      { id: 2, type: 'CLIPTextEncode', widgets_values: ['a brass astrolabe on slate'] },
+    ],
+    links: [[1, 1, 1, 2, 0, 'CLIP']],
+    groups: [],
+    config: {},
+    extra: {},
+    version: 0.4,
+  };
+  const FILENAME_GRAPH = {
+    '1': {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: { ckpt_name: 'sd_xl_base_1.0.safetensors' },
+    },
+    '2': { class_type: 'CLIPTextEncode', inputs: { clip: ['1', 1], text: 'a brass astrolabe' } },
+  };
+
+  function inlineBody(workflow: unknown) {
+    return { kind: 'customComfy', mode: 'inline', workflow, resources: [], maxBuzz: 40 };
+  }
+
+  function expectNoOrchestratorOrSpend() {
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+    expect(mockOrchSubmitWorkflow).not.toHaveBeenCalled();
+    expect(mockReserveAppSpend).not.toHaveBeenCalled();
+  }
+
+  it('estimate: a UI graph is a 200 failed snapshot with errorCode not-api-format', async () => {
+    const out = await call(
+      estimateHandler,
+      { body: inlineBody(UI_GRAPH) },
+      '/api/v1/blocks/workflows/estimate'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: expect.stringContaining('(detected: ui)'),
+      errorCode: 'not-api-format',
+    });
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('submit: a UI graph is a 200 failed snapshot with errorCode not-api-format, nothing reserved', async () => {
+    const out = await call(
+      submitHandler,
+      { body: inlineBody(UI_GRAPH), idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toEqual({
+      workflowId: 'failed',
+      status: 'failed',
+      error: expect.stringContaining('(detected: ui)'),
+      errorCode: 'not-api-format',
+    });
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('estimate: a model filename is a 200 failed snapshot with errorCode model-filenames', async () => {
+    const out = await call(
+      estimateHandler,
+      { body: inlineBody(FILENAME_GRAPH) },
+      '/api/v1/blocks/workflows/estimate'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toMatchObject({
+      workflowId: 'failed',
+      status: 'failed',
+      errorCode: 'model-filenames',
+    });
+    expect(out.json.snapshot.error).toContain("ckpt_name = 'sd_xl_base_1.0.safetensors'");
+    expect(out.json.snapshot).not.toHaveProperty('cost');
+    expectNoOrchestratorOrSpend();
+  });
+
+  it('submit: a model filename is a 200 failed snapshot with errorCode model-filenames, nothing reserved', async () => {
+    const out = await call(
+      submitHandler,
+      { body: inlineBody(FILENAME_GRAPH), idempotencyKey: IDEMPOTENCY_KEY },
+      '/api/v1/blocks/workflows/submit'
+    );
+    expect(out.status).toBe(200);
+    expect(out.json.snapshot).toMatchObject({ status: 'failed', errorCode: 'model-filenames' });
+    expectNoOrchestratorOrSpend();
   });
 });
 

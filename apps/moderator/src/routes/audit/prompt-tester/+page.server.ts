@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
-import type { Actions } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+import { prefillInput } from '$lib/restrictions/trigger-evidence';
 import { getPromptHighlightSegments, type PromptSegment } from '@civitai/mod-utils/prompt-audit';
 
 // The prompt audit runs SERVER-SIDE (the detection word lists are ~50KB and server-only), so unlike the
@@ -11,6 +12,14 @@ export type AuditResult = {
   includesInappropriate: boolean;
   promptSegments: PromptSegment[];
   negativeSegments: PromptSegment[] | null;
+};
+
+/** `?prompt=` (and optionally `?negativePrompt=`) prefill the input so a trigger card can link here. */
+export const load: PageServerLoad = ({ url }) => {
+  const prompt = url.searchParams.get('prompt') ?? '';
+  const negativePrompt = url.searchParams.get('negativePrompt');
+  if (!prompt) return { prefill: '' };
+  return { prefill: prefillInput(prompt, negativePrompt) };
 };
 
 export const actions: Actions = {

@@ -1,13 +1,11 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { forcedMinorModelBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -29,13 +27,19 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import classes from './ModelCarousel.module.css';
+import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import {
+  getEventDecorationClearLeftCss,
+  HAT_PLAIN_CARD_NUDGE,
+} from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import clsx from 'clsx';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
   const forceMinorLevel = props.minor && !currentUser?.isModerator;
-  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  const minorBrowsingLevel = forcedMinorModelBrowsingLevel(!!currentUser);
 
   return (
     <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>
@@ -52,8 +56,15 @@ export function ModelCarousel(props: Props) {
   );
 }
 
-function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
+function ModelCarouselContent({
+  modelId,
+  modelVersionId,
+  modelUserId,
+  limit = 10,
+  initialMobile,
+}: Props) {
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { running, helpers } = useTourContext();
   // Both model-page tours spend two steps here — one on the button, one on the
   // options it opens — so the open and the choice each move on by one.
@@ -72,7 +83,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
   });
 
   const hiddenExplained = useExplainHiddenImages(flatData);
-  const mobile = useContainerSmallerThan('md');
+  const mobile = useContainerSmallerThan('md', initialMobile);
 
   if (isLoading)
     return (
@@ -92,6 +103,8 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
       slidesToScroll={1}
       withControls={hasMultipleSlides ? true : false}
       controlSize={mobile ? 32 : 56}
+      hatLayer
+      className="[--event-decoration-allowance-top:36px] [--event-decoration-allowance:16px] md:[--event-decoration-allowance:36px]"
       loop
       // initialHeight={mobile ? 300 : 600}
     >
@@ -110,13 +123,35 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                 {({ inView }) => (
                   <div
                     className="relative w-full"
-                    style={{ aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}` }}
+                    style={
+                      {
+                        aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
+                        ...(showEventCosmetics &&
+                          image.eventDecoration && {
+                            '--event-decoration-clear-left': getEventDecorationClearLeftCss(
+                              image.eventDecoration.data,
+                              'corner',
+                              HAT_PLAIN_CARD_NUDGE
+                            ),
+                          }),
+                      } as React.CSSProperties
+                    }
                   >
+                    <ImpressionSentinel
+                      impressions={[{ entityType: 'Image', entityId: image.id }]}
+                    />
+                    {image.eventDecoration && (
+                      <EventDecorationOverlay
+                        decoration={image.eventDecoration.data}
+                        placement="corner"
+                        wornOn={{ entityType: 'Image', entityId: image.id }}
+                      />
+                    )}
                     {inView && (
                       <ImageGuard2 image={image} connectType="model" connectId={modelId}>
                         {(safe) => (
                           <>
-                            <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                            <ImageGuard2.BlurToggle className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10" />
                             <Stack
                               gap="xs"
                               align="flex-end"
@@ -239,4 +274,5 @@ type Props = {
   modelUserId: number;
   limit?: number;
   minor?: boolean;
+  initialMobile?: boolean;
 };

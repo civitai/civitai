@@ -2,26 +2,55 @@ import { env } from '~/env/server';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 
-export async function invalidateCivitaiUser({ userId }: { userId: number | string }) {
+const DELETE_TIMEOUT_MS = 5_000;
+
+/** True only when the orchestrator answered 2xx. */
+async function deleteOrchestratorUserCache(userId: number | string, url: string) {
   if (!env.ORCHESTRATOR_ACCESS_TOKEN) {
-    return;
+    return false;
   }
 
   try {
     const client = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN!);
+    // Without throwOnError the client resolves on an error status.
     await client.delete({
-      url: `/v2/consumer/civitai/${userId}`,
+      url,
+      throwOnError: true,
+      signal: AbortSignal.timeout(DELETE_TIMEOUT_MS),
     });
+    return true;
   } catch (error) {
-    // Best-effort: this runs on key/token revocation and session changes, so a
-    // failure means the orchestrator keeps serving a stale auth cache until
-    // TTL — exactly the 24h-lingering bug. Surface to Axiom so we can spot it
-    // in prod instead of failing silently. Never throws (callers `await` this
-    // inside user-facing mutations).
+    // Best-effort: a failure leaves the orchestrator serving a stale cache, so surface it to Axiom
+    // instead of failing silently. Never throws (callers `await` this inside user-facing mutations).
     logToAxiom({
       type: 'orchestrator.invalidate-user.failed',
-      message: `invalidateCivitaiUser failed for user ${userId}`,
-      error: safeError(error),
+      message: `orchestrator cache invalidation (${url}) failed for user ${userId}`,
+      // On an error status the client throws the parsed body, not an Error.
+      error: safeError(toError(error)),
     }).catch(() => {});
+    return false;
+  }
+}
+
+/** Refreshes the orchestrator's cached user info (membership, profile). Leaves cached auth alone. */
+export async function invalidateCivitaiUser({ userId }: { userId: number | string }) {
+  return deleteOrchestratorUserCache(userId, `/v2/consumer/civitai/${userId}`);
+}
+
+/**
+ * Makes the orchestrator re-validate every API key and OAuth token of the user it has cached for
+ * auth. Call after revoking any of them; invalidateCivitaiUser does not touch that cache.
+ */
+export async function revokeCivitaiUserTokens({ userId }: { userId: number | string }) {
+  return deleteOrchestratorUserCache(userId, `/v2/consumer/civitai/${userId}/tokens`);
+}
+
+function toError(error: unknown) {
+  if (error instanceof Error) return error;
+  try {
+    return new Error(JSON.stringify(error) ?? String(error));
+  } catch {
+    // A circular or BigInt body; String() can throw too, on a null-prototype object.
+    return new Error(Object.prototype.toString.call(error));
   }
 }

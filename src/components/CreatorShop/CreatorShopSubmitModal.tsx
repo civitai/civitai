@@ -32,7 +32,7 @@ import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.cons
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
   CREATOR_SHOP_CREATOR_SHARE,
-  DECORATION_OFFSET_LIMIT,
+  CREATOR_OFFSET_LIMIT,
   RIGHTS_AFFIRMATION_STATEMENT,
   computeCreatorShopSplit,
   isCreatorCosmeticType,
@@ -174,11 +174,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           </>
         ) : (
           <>
+            {/* The moderator "Copyright / IP" note (pages/moderator/creator-shop.tsx) quotes this rule. */}
             <Alert color="yellow" icon={<IconAlertTriangle size={18} />}>
               <Text size="xs">
-                All cosmetics must be <b>safe-for-work</b> and must not use{' '}
-                <b>copyrighted or trademarked material</b>
-                {" you don't own."} Submissions that violate this will be rejected. Review the{' '}
+                All cosmetics must be <b>safe-for-work</b> and <b>your own original design</b>. No
+                characters, logos or symbols from brands or franchises you don&apos;t own, even
+                redrawn. Submissions that violate this will be rejected. Review the{' '}
                 <Anchor
                   component="button"
                   type="button"
@@ -254,28 +255,32 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               <Stack gap={6}>
                 <Divider label="Adjust fit" labelPosition="left" />
                 <Text size="xs" c="dimmed">
-                  Nudge each edge of your frame by up to {DECORATION_OFFSET_LIMIT}px to fit the
-                  avatar. Negative values extend it outside the avatar (bigger); positive values
-                  pull it in. The preview above updates live.
+                  Nudge each edge of your frame by up to {CREATOR_OFFSET_LIMIT}px to fit the avatar.
+                  Negative values extend it outside the avatar (bigger); positive values pull it in.
+                  The preview above updates live.
                 </Text>
                 <Group grow>
                   {(['top', 'bottom', 'left', 'right'] as const).map((side) => (
                     <NumberInput
                       key={side}
                       label={side.charAt(0).toUpperCase() + side.slice(1)}
-                      min={-DECORATION_OFFSET_LIMIT}
-                      max={DECORATION_OFFSET_LIMIT}
+                      min={-CREATOR_OFFSET_LIMIT}
+                      max={CREATOR_OFFSET_LIMIT}
                       step={1}
                       allowDecimal={false}
                       suffix="px"
                       value={offsets[side]}
+                      disabled={form.moderatorSetSides.includes(side)}
+                      description={
+                        form.moderatorSetSides.includes(side) ? 'Set by a moderator' : undefined
+                      }
                       onChange={(v) =>
                         form.setOffset(
                           side,
                           typeof v === 'number'
                             ? Math.max(
-                                -DECORATION_OFFSET_LIMIT,
-                                Math.min(DECORATION_OFFSET_LIMIT, Math.round(v))
+                                -CREATOR_OFFSET_LIMIT,
+                                Math.min(CREATOR_OFFSET_LIMIT, Math.round(v))
                               )
                             : 0
                         )

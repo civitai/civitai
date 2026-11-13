@@ -15,10 +15,19 @@ import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { StudioOnlyModelsNotice } from '~/components/Training/TrainingStudioSwitch';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import {
+  isTrainingModelBlocked,
+  useTrainingServiceStatus,
+} from '~/components/Training/training.utils';
+import type { TrainingServiceStatus } from '~/server/schema/training.schema';
+import {
+  modelUnavailability,
+  UNAVAILABLE_LABEL,
+  unavailableModelMessage,
+} from '~/utils/training-blocked-models';
 import { trpc } from '~/utils/trpc';
 import type {
   TrainingDetailsBaseModelList,
@@ -81,7 +90,8 @@ import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { useTrainingImageStore } from '~/store/training.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-const ModelSelector = ({
+export const ModelSelector = ({
+  status,
   selectedRun,
   color,
   name,
@@ -94,6 +104,7 @@ const ModelSelector = ({
   allowedKeys,
   customBaseModels,
 }: {
+  status: Pick<TrainingServiceStatus, 'blockedModels' | 'blockedModelReasons'>;
   selectedRun: TrainingRun;
   color: MantineColor;
   name: string;
@@ -112,6 +123,8 @@ const ModelSelector = ({
       baseTypes.includes(v.type) && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
   );
   if (!versions.length) return null;
+  const downs = versions.map(([k]) => modelUnavailability(status, k));
+  const allDown = !isCustom && downs.every((d) => d !== null);
 
   return (
     <Group gap="lg">
@@ -123,16 +136,28 @@ const ModelSelector = ({
         size={16}
         styles={{ indicator: { top: '2px !important', right: '10px !important' } }}
       >
-        <Badge color={color} size="lg" radius="xs" px="xs" w={115}>
+        <Badge color={allDown ? 'gray' : color} size="lg" radius="xs" px="xs" w={115}>
           {name}
         </Badge>
       </Indicator>
-      {!isCustom ? (
+      {allDown ? (
+        <div>
+          <Text size="sm" fw={600}>
+            {UNAVAILABLE_LABEL}
+          </Text>
+          {downs[0]?.reason && (
+            <Text size="xs" c="dimmed">
+              {downs[0].reason}
+            </Text>
+          )}
+        </div>
+      ) : !isCustom ? (
         <SegmentedControl
-          data={versions.map(([k, v]) => {
+          data={versions.map(([k, v], i) => {
             return {
               label: v.label,
               value: k,
+              disabled: downs[i] !== null && k !== value,
             };
           })}
           // @ts-ignore: requires null to prevent auto-selecting first item
@@ -263,9 +288,6 @@ export const ModelSelect = ({
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
 
   const { updateRun } = trainingStore;
-  // blockedCustomModels is already a string[]; wrapping it in another array made
-  // blockedModels a string[][], so .includes() never matched the locally-blocked models.
-  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   // Detect whether the user has tweaked the advanced training params away from the
   // defaults for the current base. Auto-derived length knobs (steps/checkpoints/repeats/
@@ -417,6 +439,7 @@ export const ModelSelect = ({
   };
 
   const formBaseModel = selectedRun.base;
+  const selectedDown = modelUnavailability(status, formBaseModel);
   const isCustomModel = !!selectedRun.customModel;
 
   const baseModelInfo = !isCustomModel
@@ -597,9 +620,11 @@ export const ModelSelect = ({
                   <CustomMarkdown>{announcement.message}</CustomMarkdown>
                 </AlertWithIcon>
               )}
+              {mediaType === 'image' && <StudioOnlyModelsNotice />}
               {mediaType === 'image' && (
                 <>
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="violet"
                     name="SD 1.5"
@@ -608,6 +633,7 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                   />
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="grape"
                     name="SDXL"
@@ -616,6 +642,7 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                   />
                   {/*<ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="pink"
                     name="SD 3.5"
@@ -625,6 +652,7 @@ export const ModelSelect = ({
                     isNew={new Date() < new Date('2024-11-10')}
                   />*/}
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="red"
                     name="Flux.1"
@@ -635,6 +663,7 @@ export const ModelSelect = ({
                   />
                   {features.flux2Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="orange"
                       name="Flux.2"
@@ -644,6 +673,7 @@ export const ModelSelect = ({
                     />
                   )}
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="teal"
                     name="Chroma"
@@ -654,6 +684,7 @@ export const ModelSelect = ({
                   />
                   {features.qwenTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="orange"
                       name="Qwen"
@@ -664,6 +695,7 @@ export const ModelSelect = ({
                   )}
                   {(features.zimageturboTraining || features.zimagebaseTraining) && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="yellow"
                       name="Z Image"
@@ -678,6 +710,7 @@ export const ModelSelect = ({
                   )}
                   {features.fluxTwoKleinTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="pink"
                       name="Flux.2 Klein"
@@ -688,6 +721,7 @@ export const ModelSelect = ({
                   )}
                   {features.ernieTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="blue"
                       name="Ernie"
@@ -698,6 +732,7 @@ export const ModelSelect = ({
                   )}
                   {features.hidreamO1Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="indigo"
                       name="HiDream O1"
@@ -709,6 +744,7 @@ export const ModelSelect = ({
                   )}
                   {features.animaTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="pink"
                       name="Anima"
@@ -720,6 +756,7 @@ export const ModelSelect = ({
                   )}
                   {features.booguTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="orange"
                       name="Boogu"
@@ -731,6 +768,7 @@ export const ModelSelect = ({
                   )}
                   {features.krea2Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="cyan"
                       name="Krea 2"
@@ -742,6 +780,7 @@ export const ModelSelect = ({
                   )}
                   {features.mageflowTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="lime"
                       name="Mage-Flow"
@@ -753,6 +792,7 @@ export const ModelSelect = ({
                   )}
                   {features.mingTraining && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="teal"
                       name="Ming Image"
@@ -764,6 +804,7 @@ export const ModelSelect = ({
                   )}
                   {features.qwen21Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="teal"
                       name="Qwen Image 2.1"
@@ -775,6 +816,7 @@ export const ModelSelect = ({
                   )}
                   {features.ideogram4Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="grape"
                       name="Ideogram 4"
@@ -790,6 +832,7 @@ export const ModelSelect = ({
                 <>
                   {features.yue2Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="cyan"
                       name="YuE2"
@@ -800,6 +843,7 @@ export const ModelSelect = ({
                     />
                   )}
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="violet"
                     name="ACE-Step 1.5"
@@ -809,6 +853,7 @@ export const ModelSelect = ({
                     isNew
                   />
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="grape"
                     name="ACE-Step 1.5 XL"
@@ -822,6 +867,7 @@ export const ModelSelect = ({
               {mediaType === 'video' && (
                 <>
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="teal"
                     name="Hunyuan"
@@ -832,6 +878,7 @@ export const ModelSelect = ({
                     isNew={new Date() < new Date('2025-04-30')}
                   />
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="green"
                     name="Wan"
@@ -848,6 +895,7 @@ export const ModelSelect = ({
                   />
                   {features.ltx2Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="lime"
                       name="LTX2"
@@ -859,6 +907,7 @@ export const ModelSelect = ({
                     />
                   )}
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="lime"
                     name="LTX"
@@ -874,6 +923,7 @@ export const ModelSelect = ({
                   />
                   {features.minimaxh3Training && (
                     <ModelSelector
+                      status={status}
                       selectedRun={selectedRun}
                       color="orange"
                       name="MiniMax H3"
@@ -889,6 +939,7 @@ export const ModelSelect = ({
               {mediaType === 'image' && (
                 <>
                   <ModelSelector
+                    status={status}
                     selectedRun={selectedRun}
                     color="cyan"
                     name="Custom"
@@ -923,7 +974,7 @@ export const ModelSelect = ({
                     View base model on Civitai
                   </Anchor>
                 )}
-                {blockedModels.includes(formBaseModel) ? (
+                {isTrainingModelBlocked(status, formBaseModel) ? (
                   <AlertWithIcon
                     icon={<IconExclamationCircle />}
                     iconColor="default"
@@ -931,8 +982,9 @@ export const ModelSelect = ({
                     color="red"
                   >
                     <Text>
-                      This model is not currently available for LoRA training - please select a
-                      different model.
+                      {selectedDown && baseModelInfo
+                        ? unavailableModelMessage(baseModelInfo.pretty, selectedDown.reason)
+                        : 'This model is not currently available for LoRA training - please select a different model.'}
                     </Text>
                   </AlertWithIcon>
                 ) : isCustomModel ? (

@@ -138,7 +138,7 @@ contest collection can still see the old flash.
 Run `node scripts/ad-request-check.mjs [origin]`.
 
 **This cannot be verified locally.** `adsEnabled` is hard-`false` when `isDev`
-([`AdsProvider.tsx:125`](../src/components/Ads/AdsProvider.tsx#L125)), so a dev server never
+(the `adsEnabled` expression in [`AdsProvider.tsx`](../src/components/Ads/AdsProvider.tsx)), so a dev server never
 requests ads at all and would pass the gated check for the wrong reason. Point the script at
 a preview or production deploy.
 
@@ -204,7 +204,7 @@ representation of the second thing.
 
 ### What already exists
 
-[`entity-moderation.ts:201-204`](../src/server/jobs/entity-moderation.ts#L201-L204) already
+[`entity-moderation.ts:131-134`](../src/server/jobs/entity-moderation.ts#L131-L134) already
 queues and scans `Model.name` and `Model.description` through
 [`text-moderation.service.ts`](../src/server/services/text-moderation.service.ts), with
 policies managed via the XGuard scanner services. This is a tuning and coverage problem, not
@@ -224,7 +224,7 @@ a greenfield build — resist writing a parallel scanner.
 #### Close coverage gaps
 
 - [ ] `ModelVersion.name` is unscanned — there's a `// TODO possibly add modelVersion` at
-      [`entity-moderation.ts:180`](../src/server/jobs/entity-moderation.ts#L180). Version
+      [`entity-moderation.ts:110`](../src/server/jobs/entity-moderation.ts#L110). Version
       names render on the page and reach the `<title>`
 - [ ] Tags and trigger words — both render on the page, neither is in the queue config
 - [ ] Description behind "Show more" — confirm we scan the full field, not a truncated

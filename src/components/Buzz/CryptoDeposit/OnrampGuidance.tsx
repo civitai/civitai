@@ -1,14 +1,5 @@
-import {
-  Button,
-  Divider,
-  Group,
-  Paper,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Button, Divider, Group, Paper, Stack, Tabs, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';

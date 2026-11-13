@@ -7,7 +7,8 @@ import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundar
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { remarkTimestamp } from '~/components/Markdown/remark-timestamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openExternalLinkWarning } from '~/components/ExternalLinkWarning/openExternalLinkWarning';
+import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
 import { isExternalHref } from '~/utils/external-link';
 
@@ -32,6 +33,7 @@ export function CustomMarkdown({
 }: CustomOptions) {
   const user = useCurrentUser();
   const internalHosts = useInternalHosts();
+  const toCurrentDomain = useCurrentDomainHref();
 
   // Discord-style `<t:UNIX:STYLE>` timestamp support is available in every
   // markdown surface. Caller-provided remark plugins still run alongside it.
@@ -49,10 +51,10 @@ export function CustomMarkdown({
       ? Array.from(new Set([...allowedElements, 'time']))
       : undefined;
 
-  // 🔴 `a` and `time` are defined AFTER the spread, so a caller's own renderers for them are
-  // silently dropped — which is why `warnOnExternalLinks` is a prop rather than a component.
-  const mergedComponents: Options['components'] = {
-    ...components,
+  // 🔴 These are applied AFTER the caller's `components`, so a caller's own renderers for `a` and
+  // `time` are silently dropped — which is why `warnOnExternalLinks` is a prop rather than a
+  // component.
+  const overrides: Options['components'] = {
     time: ({ node, ...props }) => {
       const properties = (node?.properties ?? {}) as Record<string, unknown>;
       if (properties.dataType !== 'timestamp') return <time {...props}>{props.children}</time>;
@@ -83,28 +85,22 @@ export function CustomMarkdown({
       }
 
       const isExternalLink = href.startsWith('http');
-      if (typeof window !== 'undefined') href = href.replace('//civitai.com', `//${location.host}`);
+      href = toCurrentDomain(href);
 
       href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
 
-      // Unlike the CTA button, this href is kept — prose text needs it for copy-link and
-      // screen-reader destination announcement — so middle-click and copy-link stay ungated.
-      const warn = warnOnExternalLinks && isExternalHref(href, internalHosts);
+      // A plain anchor, not `Link`: the href is then the `/leaving` page, which `Link` would
+      // treat as an in-app route.
+      if (warnOnExternalLinks && isExternalHref(href, internalHosts))
+        return (
+          <a target="_blank" rel="nofollow noreferrer" {...externalLinkAnchorProps(href)}>
+            {props.children}
+          </a>
+        );
 
       return (
         <Link legacyBehavior href={href} passHref>
-          <a
-            target={isExternalLink ? '_blank' : '_self'}
-            rel="nofollow noreferrer"
-            onClick={
-              warn
-                ? (e) => {
-                    e.preventDefault();
-                    openExternalLinkWarning(href);
-                  }
-                : undefined
-            }
-          >
+          <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
             {props.children}
           </a>
         </Link>
@@ -133,6 +129,9 @@ export function CustomMarkdown({
       return <Table.Td {...props}>{children}</Table.Td>;
     },
   };
+  // `Object.assign`, not an object spread: spreading react-markdown's `Components` map is
+  // expensive to type-check.
+  const mergedComponents = Object.assign({}, components, overrides);
 
   return (
     <ContentErrorBoundary>

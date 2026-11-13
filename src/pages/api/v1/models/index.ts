@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import type { Session } from '~/types/session';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import type { GetAllModelsInput } from '~/server/schema/model.schema';
@@ -54,6 +55,8 @@ export default MixedAuthEndpoint(async function handler(
   const region = getRegion(req);
   let browsingLevel = !parsedParams.data.nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+  if (parsedParams.data.nsfw) res.setHeader('Cache-Control', 'private, no-store');
 
   // Handle pagination
   const { limit, page, cursor, query, ids: queryIds, ...data } = parsedParams.data;
@@ -84,11 +87,8 @@ export default MixedAuthEndpoint(async function handler(
       .json({ error: 'Cannot use page param with query search. Use cursor-based pagination.' });
   }
 
-  // Offset-based pagination for relevance-ranked text search. The query cursor
-  // is an opaque numeric OFFSET, not a model id (the models index puts 'sort'
-  // first in its rankingRules, so forcing an id sort would rank by recency
-  // instead of text relevance). resolveModelSearchIds wraps the Meili call
-  // under withMeili so a backend brownout is bounded by MEILI_CALL_TIMEOUT_MS.
+  // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
+  // (relevance, or the caller's sort) is not monotonic in id.
   let searchIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
@@ -99,6 +99,12 @@ export default MixedAuthEndpoint(async function handler(
         limit,
         browsingLevel,
         types: data.types,
+        baseModels: data.baseModels,
+        supportsGeneration: data.supportsGeneration,
+        // Only a sort the caller named: the schema defaults `sort` to HighestRated,
+        // and `sort` is the first ranking rule, so forwarding the default would
+        // rank every text search by thumbs-up instead of relevance.
+        sort: 'sort' in req.query ? data.sort : undefined,
       });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;
@@ -147,11 +153,13 @@ export default MixedAuthEndpoint(async function handler(
       },
       {
         // PUBLIC endpoint: pass the existing region/nsfw-derived browsingLevel
-        // UNCHANGED, and mirror the legacy `?nsfw=true` image-filter widening.
+        // UNCHANGED, and mirror the legacy `?nsfw=true` image-filter widening, except where the
+        // region holds the level to SFW.
         browsingLevel,
-        nsfwImagePassthrough: !!parsedParams.data.nsfw,
+        nsfwImagePassthrough: !!parsedParams.data.nsfw && !isRegionRestricted(region),
         user,
         baseUrlOrigin,
+        redCapable: isRedCapableHost(req.headers.host),
       }
     );
 

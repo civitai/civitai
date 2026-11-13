@@ -67,7 +67,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/report.service', () => ({ createReport: vi.fn() }));
-vi.mock('~/server/services/user.service', () => ({ claimCosmetic: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({ awardTrophyCosmetic: vi.fn() }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: { topicSend: vi.fn() } }));
 
 // Import AFTER mocks — real decodeRedisString + shuffle stay in play.
@@ -80,7 +80,11 @@ const mockFindUnique = dbMock.dbRead.image.findUnique;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFindUnique.mockResolvedValue({ url: 'https://example.test/img.jpg', metadata: {} });
+  mockFindUnique.mockResolvedValue({
+    url: 'https://example.test/img.jpg',
+    metadata: {},
+    needsReview: null,
+  });
 });
 
 describe('getSanityCheckImage — BLOB_STRING/Buffer sMembers decoding', () => {
@@ -99,10 +103,7 @@ describe('getSanityCheckImage — BLOB_STRING/Buffer sMembers decoding', () => {
     // The failure was swallowed by try/catch → the symptom was a silent null +
     // an error log, never a thrown error. Assert we did NOT hit that path.
     expect(mockHandleLogError).not.toHaveBeenCalled();
-    expect(mockFindUnique).toHaveBeenCalledWith({
-      where: { id: 12345 },
-      select: { url: true, metadata: true },
-    });
+    expect(mockFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 12345 } }));
   });
 
   it('parses a plain string member unchanged (single-node/dev behavior)', async () => {

@@ -8,15 +8,17 @@ import type {
   SetBuzzLimitInput,
 } from '~/server/schema/api-key.schema';
 import {
-  addApiKey,
   deleteApiKey,
   getApiKey,
   getUserApiKeys,
+  mintApiKey,
   setApiKeyBuzzLimit,
 } from '~/server/services/api-key.service';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { dbRead } from '~/server/db/client';
+import { RESTRICTED_ACCOUNT_MESSAGE } from '~/server/common/content-restriction';
+import { assertAccountNotRestricted } from '~/server/services/account-restriction.service';
 import { getBuzzSpendForSubjects, type Subject } from '~/server/http/orchestrator/api-key-spend';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
@@ -63,7 +65,11 @@ export async function addApiKeyHandler({
   input: AddAPIKeyInput;
 }) {
   const { user } = ctx;
-  const apiKey = await addApiKey({ ...input, userId: user.id });
+  await assertAccountNotRestricted(user.id, user);
+  const apiKey = await mintApiKey(
+    { ...input, userId: user.id },
+    { refusalMessage: RESTRICTED_ACCOUNT_MESSAGE, logName: 'add-api-key-closed-account-expire' }
+  );
   await preventReplicationLag('userApiKeys', user.id);
 
   return apiKey;
@@ -78,10 +84,8 @@ export async function setBuzzLimitHandler({
 }) {
   const { user } = ctx;
 
-  // Self-modify guard: a token must not be able to raise/clear the limit on
-  // its own subject. Session auth (subject == null) is unaffected.
-  const subject = (ctx as unknown as { subject?: { type: string; id: number | string } | null })
-    .subject;
+  // A key must not raise or clear its own limit; the credential gate alone allows it.
+  const { subject } = ctx;
   if (subject && subject.type === 'apiKey' && subject.id === input.id) {
     throw new TRPCError({
       code: 'FORBIDDEN',

@@ -7,6 +7,9 @@ export const signalsEndpoint = process.env.SIGNALS_ENDPOINT ?? '';
 /** Shared secret for the producer API. Empty = gate disabled (dev only). */
 export const notificationsToken = process.env.NOTIFICATIONS_TOKEN ?? '';
 
+/** Secret for /notifications/notices*. Empty = those routes refuse every call. */
+export const noticesToken = process.env.NOTIFICATIONS_NOTICES_TOKEN ?? '';
+
 export const port = Number(process.env.PORT ?? 3000);
 export const host = process.env.HOST ?? '0.0.0.0';
 export const logLevel = process.env.LOG_LEVEL ?? 'info';
@@ -19,6 +22,38 @@ export const isProd = process.env.NODE_ENV === 'production';
  * app during the migration soak). The API always runs regardless of this flag.
  */
 export const workerEnabled = process.env.WORKER_ENABLED === 'true';
+
+function positiveMs(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+// --- worker health (GET /health; see lib/server/health.ts) ---
+/** /health fails once every redis command has failed for this long, with no success in between. */
+export const healthRedisFailureWindowMs = positiveMs(
+  process.env.HEALTH_REDIS_FAILURE_WINDOW_MS,
+  60_000
+);
+/** /health fails once the poll loop has finished no row and no tick for this long. */
+export const healthWorkerStallMs = positiveMs(process.env.HEALTH_WORKER_STALL_MS, 10 * 60_000);
+/** Bound on one recipient's unread-counter bump, so a stuck redis call can't hold the tick. */
+export const counterBumpTimeoutMs = positiveMs(process.env.COUNTER_BUMP_TIMEOUT_MS, 2_000);
+
+// --- count path ---
+/** Bound on each redis call the count path makes (lag flag, cache read/bust/write). */
+export const countRedisDeadlineMs = positiveMs(
+  process.env.NOTIFICATIONS_COUNT_REDIS_DEADLINE_MS,
+  300
+);
+/**
+ * What a count does when one of its redis calls fails or times out. Off (unset, the default): answer an
+ * empty count at once, the same answer the main app already gives when this service fails. On
+ * (`NOTIFICATIONS_COUNT_DB_FALLBACK=true`): answer from the DB, the replica when the lag flag is
+ * unreadable. Read per call, so it can be flipped without a rebuild of the module graph.
+ */
+export function countDbFallbackEnabled(): boolean {
+  return process.env.NOTIFICATIONS_COUNT_DB_FALLBACK === 'true';
+}
 
 // --- web push (VAPID) ---
 export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
@@ -50,6 +85,19 @@ function parseDailyCap(raw: string | undefined): number {
 }
 export const pushDailyCap = parseDailyCap(process.env.PUSH_DAILY_CAP);
 
+function nonNegativeInt(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+/** Recipients the notices route may queue in any rolling 24 hours. */
+export const noticesDailyRecipientCeiling = nonNegativeInt(
+  process.env.NOTICES_DAILY_RECIPIENT_CEILING,
+  250_000
+);
+/** Pause between 1,000-row notice write chunks, so a large send doesn't flood the queue the worker polls. */
+export const noticesChunkPauseMs = nonNegativeInt(process.env.NOTICES_CHUNK_PAUSE_MS, 250);
+
 /**
  * Fail-fast boot validation. Called from server.ts BEFORE listen (not from buildServer, so vitest — which
  * imports app.ts — is unaffected). Without this, a missing DB URL or (in prod) an absent auth token
@@ -65,6 +113,9 @@ export function assertRequiredEnv() {
   if (!process.env.DATABASE_REPLICA_URL) missing.push('DATABASE_REPLICA_URL');
   // In prod the producer API must be authed — an empty token disables the gate (see auth.ts).
   if (isProd && !notificationsToken) missing.push('NOTIFICATIONS_TOKEN (required in production)');
+  if (isProd && !noticesToken) missing.push('NOTIFICATIONS_NOTICES_TOKEN (required in production)');
+  if (noticesToken && noticesToken === notificationsToken)
+    missing.push('NOTIFICATIONS_NOTICES_TOKEN (must differ from NOTIFICATIONS_TOKEN)');
   // `pushEnabled` does not imply the push dispatcher can WRITE. Its bookkeeping (lastSuccessAt,
   // the failure streak, deleting 410'd endpoints) goes through `mainDbWrite()` on DATABASE_URL,
   // and every one of those calls is wrapped in `bestEffort` — so with push configured but no

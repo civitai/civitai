@@ -1,4 +1,5 @@
-<script lang="ts">
+<script lang="ts" generics="S extends LiveStrike | Jsonified<LiveStrike>">
+  import type { Snippet } from 'svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { dateTime, type Jsonified } from '$lib/format';
   import type { LiveStrike } from '$lib/server/user-lookup.service';
@@ -6,10 +7,16 @@
   let {
     strikes,
     empty = 'No strikes on this account.',
-  }: { strikes: LiveStrike[] | Jsonified<LiveStrike>[]; empty?: string } = $props();
+    extra,
+  }: {
+    strikes: S[];
+    empty?: string;
+    /** Rendered at the end of each row, for a page's own details and actions on that strike. */
+    extra?: Snippet<[S, boolean]>;
+  } = $props();
 
   // `getActiveStrikes` says the same thing in SQL — a new status value has to be taught to both.
-  const spent = (s: LiveStrike | Jsonified<LiveStrike>) =>
+  const spent = (s: S) =>
     s.voidedAt != null || s.status !== 'Active' || new Date(s.expiresAt).getTime() < Date.now();
 
   const anyImported = $derived(strikes.some((s) => s.imported));
@@ -43,6 +50,7 @@
           {#if !isSpent}· until {dateTime(s.expiresAt)}{/if}
           · {s.issuedByName ? `by ${s.issuedByName}` : 'issuer not recorded'}
         </span>
+        {@render extra?.(s, isSpent)}
       </li>
     {/each}
   </ul>

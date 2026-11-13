@@ -1,4 +1,5 @@
-import { Anchor, Button, Paper, Popover, Stack, Table, Text } from '@mantine/core';
+import { Anchor, Button, Paper, Stack, Table, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import type { CapTier } from '@civitai/buzz';
 import { shouldUpsellAllowance, tierAllowanceRows } from '@civitai/buzz';
 

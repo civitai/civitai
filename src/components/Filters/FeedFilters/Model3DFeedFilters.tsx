@@ -1,5 +1,6 @@
 import type { GroupProps } from '@mantine/core';
-import { Chip, Divider, Drawer, Group, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, ScrollArea, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
@@ -263,6 +264,9 @@ export function Model3DFeedFilters({ ...groupProps }: GroupProps) {
           radius={12}
           opened={opened}
           onClose={close}
+          onChange={(next) => {
+            if (!next) close();
+          }}
           middlewares={{ flip: true, shift: true }}
           withinPortal
         >

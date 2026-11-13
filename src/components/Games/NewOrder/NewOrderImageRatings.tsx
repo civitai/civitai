@@ -1,4 +1,5 @@
-import { Badge, Card, Loader, ScrollArea, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Card, Loader, ScrollArea, Text, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { NsfwLevel } from '~/server/common/enums';

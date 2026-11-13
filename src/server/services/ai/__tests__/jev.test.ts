@@ -74,7 +74,6 @@ const {
   jevConfidenceFloor,
   scoreCriteriaCount,
   JevError,
-  JEV_DECISIONS_URL,
   JEV_TIMEOUT_MS,
 } = await import('~/server/services/ai/jev');
 
@@ -160,17 +159,6 @@ afterEach(() => {
 
 // ───────────────────────────────────────────────────────────────────────────────
 describe('🔴 askJev talks to the DECISIONS endpoint', () => {
-  /**
-   * The regression. `typesafe/jev-1.13` cannot be used with chat/completions;
-   * the previous implementation called exactly that and 400'd on every request
-   * in production. These assertions are the ones no amount of response-shape
-   * coverage could have made.
-   */
-  it('exports the alpha decisions URL and not a chat/completions one', () => {
-    expect(JEV_DECISIONS_URL).toBe('https://openrouter.ai/api/alpha/decisions');
-    expect(JEV_DECISIONS_URL).not.toContain('chat/completions');
-  });
-
   it('POSTs to the decisions URL with a bearer key and a JSON content type', async () => {
     respond(RECORDED_200);
     await askJev({ state: { prompt: 'p' }, questions: recordedQuestions });
@@ -194,9 +182,9 @@ describe('🔴 askJev talks to the DECISIONS endpoint', () => {
     const body = lastRequestBody();
     expect(Object.keys(body).sort()).toEqual(['model', 'questions', 'state'].sort());
     expect(body.state).toEqual({ prompt: 'a red sports car' });
-    // Each of these was sent by the broken chat transport; none is known to be
-    // accepted here, and an alpha endpoint that validates strictly is exactly
-    // where an unverified extra key costs a 400.
+    // Each of these was sent by the broken chat transport. The endpoint ignores
+    // an undeclared key with a 200, so sending one would read as configured while
+    // doing nothing; `provider` is sent only on an explicit zero-retention opt-in.
     for (const key of [
       'messages',
       'temperature',
@@ -208,6 +196,46 @@ describe('🔴 askJev talks to the DECISIONS endpoint', () => {
     ]) {
       expect(body).not.toHaveProperty(key);
     }
+  });
+
+  it('🔴 sends provider.zdr only when zero data retention is requested', async () => {
+    respond(RECORDED_200);
+    await askJev(
+      { state: { prompt: 'p' }, questions: recordedQuestions },
+      { zeroDataRetention: true }
+    );
+    expect(lastRequestBody().provider).toEqual({ zdr: true });
+
+    respond(RECORDED_200);
+    await askJev({ state: { prompt: 'p' }, questions: recordedQuestions });
+    expect(lastRequestBody()).not.toHaveProperty('provider');
+  });
+
+  it('carries option descriptions into the wire criteria, and an undescribed option describes itself', () => {
+    const wire = buildDecisionsQuestions([
+      { ...roleQuestion, optionDescriptions: { character: 'a named character or person' } },
+    ]);
+    expect(wire.role).toEqual({
+      type: 'choice',
+      instructions: roleQuestion.prompt,
+      criteria: {
+        none: 'none',
+        concept: 'concept',
+        character: 'a named character or person',
+        style: 'style',
+      },
+    });
+  });
+
+  it('refuses a description for something that is not an option, before any spend', async () => {
+    respond(RECORDED_200);
+    await expect(
+      askJev({
+        state: { prompt: 'p' },
+        questions: [{ ...roleQuestion, optionDescriptions: { villain: 'not an option' } }],
+      })
+    ).rejects.toThrow('describes "villain", which is not an option');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('🔴 the `questions` that go ON THE WIRE are a record keyed by id, not an array', async () => {
@@ -1076,8 +1104,8 @@ describe('askJev — fail-closed on the response', () => {
   });
 
   it('🔴 rejects an argmax that is absent from its own distribution', async () => {
-    // Passes every other check, and then `reorderShortlistByDistribution` — which
-    // reads `distribution[key] ?? 0` — ranks the vendor's own pick LAST.
+    // Passes every other check, and then `combineStage3Answers` (resource-intent-stage3.ts)
+    // — which reads `distribution[key] ?? 0` — scores the vendor's own pick 0 for that call.
     respondAnswers({
       role: { type: 'choice', choice: 'character', probabilities: { style: 0.5, none: 0.5 } },
     });

@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -21,19 +22,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     from the slug, the committed manifest carries the SLUG.
  */
 
-const {
-  mockIsAppBlocksEnabled,
-  mockCommitFiles,
-  mockRecordPending,
-  mockValidate,
-  mockStamp,
-} = vi.hoisted(() => ({
-  mockIsAppBlocksEnabled: vi.fn(),
-  mockCommitFiles: vi.fn(),
-  mockRecordPending: vi.fn(),
-  mockValidate: vi.fn(),
-  mockStamp: vi.fn(),
-}));
+const { mockIsAppBlocksEnabled, mockCommitFiles, mockRecordPending, mockValidate, mockStamp } =
+  vi.hoisted(() => ({
+    mockIsAppBlocksEnabled: vi.fn(),
+    mockCommitFiles: vi.fn(),
+    mockRecordPending: vi.fn(),
+    mockValidate: vi.fn(),
+    mockStamp: vi.fn(),
+  }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -109,6 +105,17 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 function fakeCtx(user: unknown) {
   return {
@@ -138,7 +145,12 @@ const approvedBlock = {
   app: { userId: ownerUser.id, allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] },
 };
 
-const validPatch = { version: '1.0.1', name: 'My App v2', contentRating: 'g', scopes: [] as string[] };
+const validPatch = {
+  version: '1.0.1',
+  name: 'My App v2',
+  contentRating: 'g',
+  scopes: [] as string[],
+};
 
 beforeEach(() => {
   mockIsAppBlocksEnabled.mockReset().mockResolvedValue(true);
@@ -176,6 +188,47 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it('App Developer Terms not accepted: refused before anything is committed', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    findUnique.mockResolvedValue(approvedBlock);
+    const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+    await expect(
+      caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockCommitFiles).not.toHaveBeenCalled();
+  });
+
+  it("collaborator while the owner hasn't accepted the terms: refused before anything is committed", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertOwnerAcceptedAppDeveloperTerms).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' })
+    );
+    findUnique.mockResolvedValue(approvedBlock);
+    (dbRead.appListing.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: 'l_1' });
+    (dbRead.appCollaborator.findFirst as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      userId: otherUser.id,
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(otherUser) as never);
+    await expect(
+      caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'The app owner must accept the terms' });
+    expect(terms.assertOwnerAcceptedAppDeveloperTerms).toHaveBeenCalledWith(ownerUser.id);
+    expect(mockCommitFiles).not.toHaveBeenCalled();
+  });
+
+  it('owner editing: the owner check is not called separately', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertOwnerAcceptedAppDeveloperTerms).mockClear();
+    findUnique.mockResolvedValue(approvedBlock);
+    const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+    await caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch });
+    expect(terms.assertOwnerAcceptedAppDeveloperTerms).not.toHaveBeenCalled();
+    expect(mockCommitFiles).toHaveBeenCalledTimes(1);
+  });
+
   it('owner, app NOT approved: PRECONDITION_FAILED, nothing committed', async () => {
     findUnique.mockResolvedValue({ ...approvedBlock, status: 'pending' });
     const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
@@ -196,7 +249,10 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
 
   it('invalid manifest (validator reject) → BAD_REQUEST, nothing committed', async () => {
     findUnique.mockResolvedValue(approvedBlock);
-    mockValidate.mockReturnValue({ valid: false, errors: ['scope "x" is not a known block scope'] });
+    mockValidate.mockReturnValue({
+      valid: false,
+      errors: ['scope "x" is not a known block scope'],
+    });
     const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
     await expect(
       caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch })
@@ -222,7 +278,9 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     // allowedScopes bitmask + allowedOrigins), i.e. the subset check actually ran.
     expect(mockValidate).toHaveBeenCalledWith(
       expect.any(Object),
-      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] })
+      expect.objectContaining({ allowedScopes: 1, allowedOrigins: ['https://my-app.civit.ai'] }),
+      // The in-app editor re-validates an EXISTING manifest: `bugs` is lenient there.
+      { strictIssueTrackerLink: false }
     );
     expect(mockCommitFiles).not.toHaveBeenCalled();
   });
@@ -251,7 +309,12 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
 
     // PENDING review recorded (no auto-approve / no deploy) with the commit sha.
     expect(mockRecordPending).toHaveBeenCalledWith(
-      expect.objectContaining({ slug: 'my-app', sha: 'a'.repeat(40), appBlockId: 'ab_1', version: '1.0.1' })
+      expect.objectContaining({
+        slug: 'my-app',
+        sha: 'a'.repeat(40),
+        appBlockId: 'ab_1',
+        version: '1.0.1',
+      })
     );
   });
 
@@ -273,16 +336,14 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     // server unconditionally stamps the canonical `https://<slug>.<APPS_DOMAIN>/`
     // before committing. Use the REAL stamper here (not the pass-through mock)
     // so this asserts the actual normalization, on the bytes that get committed.
-    mockStamp.mockImplementation(
-      (m: Record<string, unknown>, slug: string, appsDomain: string) => {
-        const existing =
-          m.iframe && typeof m.iframe === 'object' && !Array.isArray(m.iframe)
-            ? (m.iframe as Record<string, unknown>)
-            : {};
-        m.iframe = { ...existing, src: `https://${slug}.${appsDomain}/` };
-        return m;
-      }
-    );
+    mockStamp.mockImplementation((m: Record<string, unknown>, slug: string, appsDomain: string) => {
+      const existing =
+        m.iframe && typeof m.iframe === 'object' && !Array.isArray(m.iframe)
+          ? (m.iframe as Record<string, unknown>)
+          : {};
+      m.iframe = { ...existing, src: `https://${slug}.${appsDomain}/` };
+      return m;
+    });
     findUnique.mockResolvedValue({
       ...approvedBlock,
       // Stored manifest already carries a hostile src; the patch tries to set
@@ -433,7 +494,6 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
     });
   });
 
-
   // The public SOURCE-REPOSITORY link is manifest-governed on exactly the same terms
   // as tagline/category, so the same SET / CLEAR / OMIT contract has to hold for it.
   // 🔴 These live in the BLOCKING node project deliberately: the browser tier is
@@ -441,6 +501,22 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
   // gated there alone — a dropped `undefined` would silently retain a stale published
   // repository link, which is the exact failure the null was introduced for.
   describe('repository (the manifest-governed public source-repo link)', () => {
+    it('🔴 the in-app editor re-validates with the issue-tracker link LENIENT', async () => {
+      // A manifest stored before the `bugs` rule must stay editable: a non-conforming `bugs`
+      // is a warning there, never a refusal (it is strict only on a new submission).
+      findUnique.mockResolvedValue(approvedBlock);
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({ appBlockId: 'ab_1', patch: { ...validPatch } });
+      expect(mockValidate).toHaveBeenCalled();
+      expect(
+        mockValidate.mock.calls.some(
+          (c: unknown[]) =>
+            (c[2] as { strictIssueTrackerLink?: boolean } | undefined)?.strictIssueTrackerLink ===
+            false
+        )
+      ).toBe(true);
+    });
+
     it('accepts + commits a repository link', async () => {
       findUnique.mockResolvedValue(approvedBlock);
       const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);

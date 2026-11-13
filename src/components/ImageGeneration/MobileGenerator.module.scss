@@ -1,0 +1,202 @@
+// The generator on a phone. Its bottom edge rises with the on-screen keyboard (set by
+// MobileGenerator), so the open form's footer sits above it instead of under it.
+.root {
+  position: fixed;
+  inset: 0;
+  bottom: var(--generator-keyboard, 0px);
+  // Fixed, so it pays its own inset: the header stays clear of the status bar.
+  padding-top: var(--safe-area-inset-top, 0px);
+  z-index: 210;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--mantine-color-body);
+}
+
+// Header and results are their own stacking contexts, so nothing in them (Mantine's Indicator
+// sits at z-index 200) shows through the sheet.
+//
+// Overlays the results instead of sitting above them: folding its height resized the scroller and
+// made the list jump mid-scroll.
+.header {
+  position: absolute;
+  top: var(--safe-area-inset-top, 0px);
+  inset-inline: 0;
+  z-index: 1;
+  background: var(--mantine-color-body);
+  transition: transform 0.2s ease;
+
+  &[data-hidden] {
+    transform: translateY(calc(-100% - var(--safe-area-inset-top, 0px)));
+  }
+}
+
+.headerRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 56px;
+  padding-inline: 8px;
+  // On the row, not the header, so the header's measured height includes it.
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.results {
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.resultsScroll {
+  // The header's measured height, set by MobileGenerator.
+  padding-top: var(--generator-header, 57px);
+  // The last results scroll clear of the Create button.
+  padding-bottom: calc(72px + var(--safe-area-inset-bottom, 0px));
+}
+
+// Dims the results behind the open sheet; visible through the status-bar inset and when the sheet is
+// dragged down.
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  background: rgb(0 0 0 / 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s;
+
+  &[data-visible] {
+    opacity: 1;
+  }
+}
+
+.sheet {
+  position: absolute;
+  inset-inline: 0;
+  // Open, it fills the screen below the status bar.
+  top: var(--safe-area-inset-top, 0px);
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-body);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 0.35);
+  transform: translateY(calc(100% + var(--sheet-drag, 0px)));
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+
+  &[data-expanded] {
+    transform: translateY(var(--sheet-drag, 0px));
+    // Full screen when open, so square corners.
+    border-radius: 0;
+  }
+
+  &[data-dragging] {
+    transition: none;
+  }
+
+  // Its shadow would show above the screen's bottom edge.
+  &:not([data-expanded], [data-dragging]) {
+    box-shadow: none;
+  }
+}
+
+// Only the head drags the sheet (touch-action: none); the form body scrolls.
+.head {
+  flex: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+// The generator footer (GenerationLayout) hides while a field is being typed in. Its Tailwind `flex`
+// is unlayered and outranks this module, hence the !important.
+.sheet[data-typing] :global([data-generator-footer]) {
+  display: none !important;
+}
+
+// While jobs run, a ring spins around the form's down chevron and a badge counts them.
+.closeForm {
+  position: relative;
+  overflow: visible;
+
+  &[data-running]::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--mantine-color-blue-filled) 25%, transparent);
+    border-top-color: var(--mantine-color-blue-filled);
+    animation: close-form-spin 0.9s linear infinite;
+  }
+}
+
+.runningCount {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 4px;
+  border-radius: 8px;
+  background: var(--mantine-color-blue-filled);
+  color: var(--mantine-color-white);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+@keyframes close-form-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .closeForm[data-running]::before {
+    animation: none;
+  }
+}
+
+// Closed, the form is this button, floating over the results' bottom corner.
+.create {
+  position: absolute;
+  right: 8px;
+  bottom: calc(8px + var(--safe-area-inset-bottom, 0px));
+  z-index: 25;
+  border-radius: 28px;
+  padding-inline: 18px 22px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+  animation: create-in 0.2s ease-out;
+}
+
+@keyframes create-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .sheet {
+    transition: none;
+  }
+
+  .create {
+    animation: none;
+  }
+}

@@ -1,15 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isRedCapableHost } from '~/server/utils/server-domain';
 import * as z from 'zod';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { dbRead } from '~/server/db/client';
+import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { ModelSort } from '~/server/common/enums';
 import {
   createModelFileDownloadUrl,
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
+import { publicFileMetadata } from '~/server/utils/public-file-metadata';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { publicModelResponseKey } from '~/server/services/model-version.service';
 import { PublicEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -17,13 +21,10 @@ import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { Flags } from '~/shared/utils/flags';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -43,13 +44,11 @@ export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(214748364
 
 const baseUrl = getBaseUrl();
 
-// Origin-side response cache for the PUBLIC path. Cloudflare already caches this
-// endpoint at the edge (PublicEndpoint sets `s-maxage=300, swr=150`), but every
-// edge-MISS re-runs the full getModelsWithVersions pipeline — whose tail cost is a
-// cold getImagesForModelVersion CROSS JOIN LATERAL (p99 ~1.7s). This cache spares
-// that work on edge-misses. The TTL is held at CacheTTL.sm (180s) ≤ the 300s edge
-// TTL, so the origin cache introduces NO staleness beyond what the edge already
-// serves. Keyed by (modelId, browsingLevel) — browsingLevel is binary here
+// Origin-side response cache for the PUBLIC path. The response is not shared-cached at the
+// edge (its body depends on the caller's region, which the edge does not key on), so every
+// request reaches here, and each build runs the full getModelsWithVersions pipeline — whose tail
+// cost is a cold getImagesForModelVersion CROSS JOIN LATERAL (p99 ~1.7s). This cache spares that
+// work. TTL CacheTTL.sm (180s). Keyed by (modelId, browsingLevel) — browsingLevel is binary here
 // (sfwBrowsingLevelsFlag when region-restricted, else allBrowsingLevelsFlag), so
 // including its numeric flag value in the key is exact and self-documenting.
 const PUBLIC_MODEL_RESPONSE_TTL = env.IS_DATAPACKET ? CacheTTL.sm : 0;
@@ -89,12 +88,15 @@ async function buildPublicModelResponse(
     creator: user
       ? {
           username: user.username,
+          // A rated picture above the served level is dropped, not swapped for the unrated one.
           image: user.profilePicture
-            ? getEdgeUrl(user.profilePicture.url, {
-                width: 96,
-                name: user.username,
-                type: user.profilePicture.type,
-              })
+            ? !Flags.intersects(user.profilePicture.nsfwLevel, browsingLevel)
+              ? null
+              : getEdgeUrl(user.profilePicture.url, {
+                  width: 96,
+                  name: user.username,
+                  type: user.profilePicture.type,
+                })
             : user.image
             ? getEdgeUrl(user.image, { width: 96, name: user.username })
             : null,
@@ -120,7 +122,7 @@ async function buildPublicModelResponse(
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
                 .map(({ hashes, metadata, modelVersionId, ...file }) => ({
                   ...file,
-                  metadata: removeEmpty(metadata),
+                  metadata: removeEmpty(publicFileMetadata(file.type, metadata)),
                   name: safeDecodeURIComponent(
                     getDownloadFilename({
                       model,
@@ -156,15 +158,18 @@ async function buildPublicModelResponse(
                   visibility: undefined,
                 }))
             : [],
+          // Only images within the level this response is served at (SFW in a restricted region).
           images: includeImages
-            ? images.map(({ url, id, ...image }) => ({
-                url: getEdgeUrl(url, {
-                  original: true,
-                  name: id.toString(),
-                  type: image.type,
-                }),
-                ...image,
-              }))
+            ? images
+                .filter((image) => Flags.intersects(image.nsfwLevel, browsingLevel))
+                .map(({ url, id, ...image }) => ({
+                  url: getEdgeUrl(url, {
+                    original: true,
+                    name: id.toString(),
+                    type: image.type,
+                  }),
+                  ...image,
+                }))
             : [],
           downloadUrl: includeDownloadUrl
             ? `${baseUrl}${createModelFileDownloadUrl({
@@ -188,9 +193,10 @@ const baseHandler = PublicEndpoint(async function handler(
       error: z.prettifyError(parsedParams.error) ?? `Invalid id`,
     });
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const browsingLevel = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const browsingLevel = apiBrowsingLevel(req);
+  // The body depends on the caller's region (the level above), which the shared cache does not key
+  // on. The origin cache below is keyed by level.
+  res.setHeader('Cache-Control', 'private, no-store');
   const { id } = parsedParams.data;
 
   // Bypass the origin cache when this request is taking the block-scoped path
@@ -220,8 +226,6 @@ const baseHandler = PublicEndpoint(async function handler(
 
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.
-    // TTL (CacheTTL.sm = 180s) ≤ the edge s-maxage (300s), so the origin cache
-    // never serves staler than the edge already would.
     const shouldCache = PUBLIC_MODEL_RESPONSE_TTL > 0 && !isBlockScoped;
     const body = shouldCache
       ? await fetchModelResponseCached(id, browsingLevel)
@@ -236,11 +240,29 @@ const baseHandler = PublicEndpoint(async function handler(
     // stored.
     if (body === null) return res.status(404).json({ error: `No model with id ${id}` });
 
-    return res.status(200).json(body);
+    return res
+      .status(200)
+      .json(await withListableTrainingData(body, isRedCapableHost(req.headers.host)));
   } catch (error) {
     return handleEndpointError(res, error);
   }
 });
+
+type BodyFile = { id: number; type: string; visibility: string };
+
+/** Applied after the origin cache, which keys on neither the host nor a restriction placed since. */
+async function withListableTrainingData(body: Record<string, unknown>, redCapable: boolean) {
+  const versions = (body.modelVersions ?? []) as { id: number; files?: BodyFile[] }[];
+  const listed = await trainingDataListing(
+    dbRead,
+    versions.map((v) => ({ id: v.id, files: v.files ?? [] })),
+    { redCapable }
+  );
+  return {
+    ...body,
+    modelVersions: versions.map((v) => (v.files ? { ...v, files: v.files.filter(listed) } : v)),
+  };
+}
 
 // Positive-only origin cache for the public body.
 //
@@ -254,8 +276,7 @@ const baseHandler = PublicEndpoint(async function handler(
 // fail-open Redis set, and matching the key scheme bustPublicModelResponseCache
 // busts). This deliberately forgoes fetchThroughCache's distributed cold-miss
 // single-flight lock; acceptable here because this is a low-volume endpoint
-// (~0.5 req/s) that Cloudflare already fronts (s-maxage=300), so a cold-key
-// thundering herd is negligible. (See FIX 3 in the PR description for the
+// (~0.5 req/s at the time), so a cold-key thundering herd is small. (See FIX 3 in the PR description for the
 // pre-existing ~15s lock-retry 500 on fetchThroughCache itself.)
 async function fetchModelResponseCached(
   id: number,
@@ -270,9 +291,7 @@ async function fetchModelResponseCached(
     // Honor the LOGICAL ttl. fetchThroughCache stores with EX = ttl*2 (the physical
     // key lives 360s) and normally gates freshness on `cachedAt`, serving older
     // entries only as stampede-protection stale. A bare presence check here would
-    // serve entries up to 2×ttl (360s) old — PAST the 300s edge s-maxage — breaking
-    // the "origin TTL ≤ edge TTL ⇒ no new staleness" invariant (and could compound
-    // through the edge's stale-while-revalidate). Re-apply the same cachedAt gate so
+    // serve entries up to 2×ttl (360s) old. Re-apply the same cachedAt gate so
     // a logically-expired-but-physically-present entry falls through to a rebuild.
     if (cached && Date.now() - cached.cachedAt <= PUBLIC_MODEL_RESPONSE_TTL * 1000)
       return cached.data;

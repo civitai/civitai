@@ -49,6 +49,12 @@ const { mockRead, mockWrite } = vi.hoisted(() => {
   return { mockRead: make(), mockWrite: make() };
 });
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 
 const { updateListingScreenshotCaption } = await import(

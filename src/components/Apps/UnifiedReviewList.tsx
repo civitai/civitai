@@ -13,8 +13,8 @@ import {
 import {
   IconAlertTriangle,
   IconCheck,
+  IconChevronRight,
   IconClock,
-  IconExternalLink,
   IconHistory,
   IconInfoCircle,
   IconRefresh,
@@ -22,16 +22,36 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
-import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
+import {
+  compactRelativeTime,
+  REVIEW_RELATIVE_TICK_MS,
+  useNowTick,
+} from '~/components/Apps/reviewRelativeTime';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
+  previewChipState,
+  PREVIEW_CHIP_COLORS,
+  PREVIEW_CHIP_LABELS,
+  sensitiveChipLabel,
+} from '~/components/Apps/reviewQueueSignals';
+import {
+  agentReviewDisplay,
+  AGENT_REVIEW_LANE_BADGES,
+  listingEditCheckBadge,
+} from '~/shared/utils/agent-review-findings';
+import classes from './UnifiedReviewList.module.scss';
+import {
+  failedBuildSummary,
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
   onsiteRequestToUnifiedRow,
+  reviewRowLane,
   type CombinedReviewPayload,
   type OffsiteReviewRequest,
   type OnsiteReviewRequest,
@@ -66,17 +86,13 @@ export type VersionHistoryTarget = {
   title: string;
 };
 
-/**
- * How often the relative-age column re-renders, in ms.
- *
- * 🔴 ONE TIMER FOR THE WHOLE LIST, not one per row. The Pending tab already repaints on its
- * own 15s poll, but the history tabs do not poll at all, so without this an Approved row
- * opened in a background tab would keep reading `5h` for a day. `DaysFromNow`'s `live` tick
- * is the precedent; this is that tick hoisted to the list so a 50-row page has one interval
- * rather than 50. A minute is the finest granularity the ladder can express past the `now`
- * rung, so a faster tick could not change a single label.
+/*
+ * 🔴 THE TICK AND ITS HOOK MOVED TO `reviewRelativeTime.ts`, beside the ladder they drive.
+ * `REVIEW_RELATIVE_TICK_MS` is re-exported here because this module's own tests and the
+ * `/apps/review` page import it from this path; the rationale (one timer for the whole list,
+ * and why a minute is the floor) now lives on the hook.
  */
-export const REVIEW_RELATIVE_TICK_MS = 60_000;
+export { REVIEW_RELATIVE_TICK_MS };
 
 /**
  * What the Plays column does and does not mean.
@@ -102,15 +118,6 @@ export const PLAYS_CAVEAT =
   `${STANDALONE_KIND_LABEL} listing can never record one: its CTA leaves the site, so an ` +
   'em dash there means unmeasurable, not zero.';
 
-function useNowTick(intervalMs: number): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
-
 export function UnifiedReviewList({
   onsiteItems,
   offsiteItems,
@@ -129,6 +136,8 @@ export function UnifiedReviewList({
   onLoadMore,
   onRetriggerBuild,
   retriggeringId,
+  showSignals = false,
+  hideIds,
 }: {
   onsiteItems: OnsiteReviewRequest[];
   offsiteItems: OffsiteReviewRequest[];
@@ -166,11 +175,26 @@ export function UnifiedReviewList({
   /** The publish-request id currently being re-triggered — disables + spins ITS
    *  button only, so a double-click cannot fire the mutation twice client-side. */
   retriggeringId?: string | null;
+  /**
+   * PENDING tab only: the column that would hold Plays holds the row's DECISION SIGNALS
+   * instead — the review preview's state, the AI review's finding counts and the sensitive-permission
+   * count. Plays is a store metric; on a submission nobody has approved yet it is noise.
+   * The column count is unchanged, so the ledger is the same.
+   */
+  showSignals?: boolean;
+  /** On-site request ids to leave out — approvals still in their undo window. */
+  hideIds?: ReadonlySet<string>;
 }) {
   const rows = useMemo(() => {
-    const onsiteRows = onsiteItems.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
+    const visibleOnsite = hideIds?.size
+      ? onsiteItems.filter((r) => !hideIds.has(r.id))
+      : onsiteItems;
+    const onsiteRows = visibleOnsite.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
     const offsiteRows = offsiteItems.map((r) => offsiteRequestToUnifiedRow(r, openOffsiteReview));
-    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview);
+    // The pending queue (the tab that shows signals) puts agent-clean submissions first.
+    return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview, {
+      fastLane: showSignals,
+    });
   }, [
     onsiteItems,
     offsiteItems,
@@ -178,6 +202,8 @@ export function UnifiedReviewList({
     openOnsiteReview,
     openOffsiteReview,
     openCombinedReview,
+    hideIds,
+    showSignals,
   ]);
 
   // The Deploy column exists only where a retrigger handler was supplied (the
@@ -214,7 +240,15 @@ export function UnifiedReviewList({
 
       {rows.length > 0 && (
         <Card withBorder p={0}>
-          <Table verticalSpacing="md" horizontalSpacing="md">
+          {/* Below `sm` the stylesheet turns each row into a CARD (icon + name, kind,
+              version, age, the signal chips and a full-width Review button) — CSS only, so
+              there is one DOM and no JS breakpoint to diverge between server and client. */}
+          <Table
+            verticalSpacing="md"
+            horizontalSpacing="md"
+            className={classes.table}
+            data-testid="apps-unified-review-table"
+          >
             {/*
               🔴 FIRST CHILD, BEFORE the row groups — HTML requires it there, and
               `__tests__/appsWideLayout.test.ts` is what enforces it (see the note on that
@@ -246,11 +280,15 @@ export function UnifiedReviewList({
                     `apps-unified-review-` testid — which `InfoPopover` has no typed way to
                     pass. A `title` needs no control, is announced by screen readers, and
                     survives with no JS. */}
-                <Table.Th title={PLAYS_CAVEAT}>
-                  <Group gap={4} wrap="nowrap" style={{ cursor: 'help' }}>
-                    Plays
-                    <IconInfoCircle size={13} style={{ opacity: 0.6 }} aria-hidden />
-                  </Group>
+                <Table.Th title={showSignals ? undefined : PLAYS_CAVEAT}>
+                  {showSignals ? (
+                    'Signals'
+                  ) : (
+                    <Group gap={4} wrap="nowrap" style={{ cursor: 'help' }}>
+                      Plays
+                      <IconInfoCircle size={13} style={{ opacity: 0.6 }} aria-hidden />
+                    </Group>
+                  )}
                 </Table.Th>
                 <Table.Th>{dateLabel}</Table.Th>
                 {showDeploy && <Table.Th>Deploy</Table.Th>}
@@ -268,6 +306,7 @@ export function UnifiedReviewList({
                   onRetriggerBuild={onRetriggerBuild}
                   retriggeringId={retriggeringId ?? null}
                   openVersionHistory={openVersionHistory}
+                  showSignals={showSignals}
                 />
               ))}
             </Table.Tbody>
@@ -297,7 +336,15 @@ export function UnifiedReviewList({
  * `null` case: an approval whose build never started looked, until now, exactly
  * like a healthy one in the mod queue.
  */
-function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: string }) {
+function DeployStateChip({
+  state,
+  rowKey,
+  buildSignals,
+}: {
+  state: string | null;
+  rowKey: string;
+  buildSignals?: BuildAttemptSignals | null;
+}) {
   const testId = `apps-unified-review-deploy-${rowKey}`;
   if (state === null || state === undefined) {
     return (
@@ -321,10 +368,134 @@ function DeployStateChip({ state, rowKey }: { state: string | null; rowKey: stri
       : state.startsWith('preview-')
       ? 'grape'
       : 'blue';
+  // A failed build names its step and class: structured fields, never the excerpt.
+  const summary = state === 'failed' ? failedBuildSummary(buildSignals) : null;
+  const text = summary ? `${state} · ${summary}` : state;
   return (
-    <Badge size="sm" color={color} variant="light" data-testid={testId}>
-      {state}
+    <Badge
+      size="sm"
+      color={color}
+      variant="light"
+      data-testid={testId}
+      title={text}
+      // A failure chip names its step and class, which is longer than the column: it WRAPS
+      // (and keeps the whole text on hover) rather than truncating to "failed · secu…".
+      styles={WRAPPING_BADGE_STYLES}
+    >
+      {text}
     </Badge>
+  );
+}
+
+/** A badge whose label may wrap onto a second line instead of being cut with an ellipsis. */
+const WRAPPING_BADGE_STYLES = {
+  root: { height: 'auto', minHeight: 'var(--badge-height)', maxWidth: '100%' },
+  label: { whiteSpace: 'normal', overflow: 'visible', textOverflow: 'clip', lineHeight: 1.3 },
+} as const;
+
+/** A one-word badge that must show its WHOLE label: no ellipsis ("A.."), no wrap. */
+export const FULL_LABEL_BADGE_STYLES = {
+  label: { overflow: 'visible', textOverflow: 'clip' },
+} as const;
+
+/**
+ * The PENDING row's decision signals: the review preview, the AI review's finding counts, and how
+ * many sensitive permissions it asks for. Listing-only rows (no code) have none and show `—`.
+ * The AI chip is absent — not "not run" — when the viewer has no agentic surface.
+ */
+function ListingEditCheckBadge({ row }: { row: UnifiedReviewRow }) {
+  const badge = listingEditCheckBadge(row.listingEditCheck);
+  if (!badge) return null;
+  return (
+    <Badge
+      size="sm"
+      variant="light"
+      color={badge.color}
+      styles={FULL_LABEL_BADGE_STYLES}
+      data-signal="listing-impersonation"
+      data-state={row.listingEditCheck?.status ?? 'none'}
+      title={badge.title}
+    >
+      {badge.label}
+    </Badge>
+  );
+}
+
+function RowSignals({ row }: { row: UnifiedReviewRow }) {
+  const signals = row.signals;
+  if (!signals) {
+    // A listing-only row: no code signals, but an approved app's listing edit may carry an
+    // impersonation-check badge. Nothing to show → the dash, exactly as before.
+    if (listingEditCheckBadge(row.listingEditCheck)) {
+      return (
+        <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+          <ListingEditCheckBadge row={row} />
+        </Group>
+      );
+    }
+    return (
+      <Text size="xs" c="dimmed" data-testid={`apps-unified-review-signals-${row.key}`}>
+        —
+      </Text>
+    );
+  }
+  const preview = previewChipState(signals.previewState);
+  // Finding COUNTS, never a verdict ("AI: 1 high · 2 medium" / "AI: no findings").
+  const ai = signals.agentReview === undefined ? null : agentReviewDisplay(signals.agentReview);
+  // The lane says what to do next — never that the submission "passed".
+  const lane = reviewRowLane(row);
+  const laneBadge = lane.lane === 'waiting' ? null : AGENT_REVIEW_LANE_BADGES[lane.lane];
+  return (
+    <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
+      {laneBadge && (
+        <Badge
+          size="sm"
+          variant="light"
+          color={laneBadge.color}
+          styles={FULL_LABEL_BADGE_STYLES}
+          data-signal="lane"
+          data-state={lane.lane}
+          title={lane.reasons.length > 0 ? lane.reasons.join('; ') : undefined}
+        >
+          {laneBadge.label}
+        </Badge>
+      )}
+      <Badge
+        size="sm"
+        variant="light"
+        color={PREVIEW_CHIP_COLORS[preview]}
+        styles={FULL_LABEL_BADGE_STYLES}
+        data-signal="preview"
+        data-state={preview}
+      >
+        {PREVIEW_CHIP_LABELS[preview]}
+      </Badge>
+      {ai && (
+        <Badge
+          size="sm"
+          variant="light"
+          color={ai.color}
+          styles={FULL_LABEL_BADGE_STYLES}
+          data-signal="ai"
+          data-state={ai.state}
+          data-worst={ai.worst ?? 'none'}
+        >
+          {ai.label}
+        </Badge>
+      )}
+      <Badge
+        size="sm"
+        variant={signals.sensitiveCount > 0 ? 'light' : 'outline'}
+        color={signals.sensitiveCount > 0 ? 'orange' : 'gray'}
+        styles={FULL_LABEL_BADGE_STYLES}
+        leftSection={signals.sensitiveCount > 0 ? <IconAlertTriangle size={11} /> : undefined}
+        data-signal="sensitive"
+        data-state={String(signals.sensitiveCount)}
+      >
+        {sensitiveChipLabel(signals.sensitiveCount)}
+      </Badge>
+      <ListingEditCheckBadge row={row} />
+    </Group>
   );
 }
 
@@ -412,12 +583,15 @@ function VersionCell({
     // 🔴 `nowrap` for the same reason as the kind badge: this cell is a semver NEXT TO a
     // badge, and letting the pair break across lines grows the row.
     <Group gap={6} wrap="nowrap" data-testid={`apps-unified-review-version-${row.key}`}>
-      <Code>{row.version}</Code>
+      {/* `flexShrink: 0` — in a squeezed cell the semver was the thing that gave, down to a
+          sliver UNDER the badge. The version is the fact; it never shrinks. */}
+      <Code style={{ flexShrink: 0 }}>{row.version}</Code>
       {row.isFirstVersion && (
         <Badge
           color="violet"
           size="sm"
-          style={{ whiteSpace: 'nowrap' }}
+          style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+          styles={FULL_LABEL_BADGE_STYLES}
           data-testid={`apps-unified-review-first-version-${row.key}`}
         >
           first version
@@ -457,6 +631,7 @@ function UnifiedReviewRowView({
   onRetriggerBuild,
   retriggeringId,
   openVersionHistory,
+  showSignals,
 }: {
   row: UnifiedReviewRow;
   now: Date;
@@ -465,6 +640,7 @@ function UnifiedReviewRowView({
   onRetriggerBuild?: (publishRequestId: string) => void;
   retriggeringId: string | null;
   openVersionHistory?: (target: VersionHistoryTarget) => void;
+  showSignals: boolean;
 }) {
   const submitter = row.submitter;
   const deploy = row.deploy;
@@ -474,8 +650,12 @@ function UnifiedReviewRowView({
     ? row.submittedAt.toISOString()
     : undefined;
   return (
-    <Table.Tr style={{ cursor: 'pointer' }} data-testid={`apps-unified-review-row-${row.key}`}>
-      <Table.Td onClick={row.onReview}>
+    <Table.Tr
+      style={{ cursor: 'pointer' }}
+      className={classes.row}
+      data-testid={`apps-unified-review-row-${row.key}`}
+    >
+      <Table.Td onClick={row.onReview} className={classes.cellKind}>
         <Badge
           size="sm"
           variant="light"
@@ -484,13 +664,16 @@ function UnifiedReviewRowView({
           // broke across lines and the row grew; see the height invariant in
           // `AppsWideLayout.geometry.test.tsx`.
           style={{ whiteSpace: 'nowrap' }}
+          // …and the LABEL must not ellipsize either: Mantine's badge label clips with
+          // `text-overflow: ellipsis`, so a squeezed column read "A..". The whole word, always.
+          styles={FULL_LABEL_BADGE_STYLES}
           color={row.badgeColor}
           data-testid={`apps-unified-review-kind-${row.key}`}
         >
           {row.badge}
         </Badge>
       </Table.Td>
-      <Table.Td onClick={row.onReview}>
+      <Table.Td onClick={row.onReview} className={classes.cellApp}>
         {/* The icon lives INSIDE this cell rather than in a column of its own: a 40px
             image cannot use a column's share, so a sixth fixed column would take width
             off the primary one to pad a fixed-size box.
@@ -502,26 +685,39 @@ function UnifiedReviewRowView({
             interactive child in a whole-row-clickable cell, i.e. a second thing one click
             could do. */}
         <Group gap="sm" wrap="nowrap">
-          <ListingIconThumb
-            url={row.iconUrl}
-            name={row.title}
-            imgTestId={`apps-unified-review-icon-${row.key}`}
-            placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
-          />
-          <Stack gap={0} style={{ minWidth: 0 }}>
-            {row.slug && <Code>{row.slug}</Code>}
-            {row.title && row.title !== row.slug && (
-              <Text size="xs" c="dimmed">
-                {row.title}
-              </Text>
-            )}
+          {/* Blurred, without the overlay, when it is above SFW on civitai.com: 40px cannot
+              carry the reveal button, and the row opens the review, which reveals it. */}
+          <ReviewMediaReveal
+            image={row.reviewMedia?.icon}
+            explain={false}
+            testId={`apps-unified-review-icon-reveal-${row.key}`}
+          >
+            <ListingIconThumb
+              url={row.iconUrl}
+              name={row.title}
+              imgTestId={`apps-unified-review-icon-${row.key}`}
+              placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
+            />
+          </ReviewMediaReveal>
+          {/* The DISPLAY NAME leads — it is what the moderator recognises; the slug is the
+              identifier under it. */}
+          <Stack gap={2} style={{ minWidth: 0 }}>
+            <Text
+              size="sm"
+              fw={600}
+              lineClamp={2}
+              data-testid={`apps-unified-review-name-${row.key}`}
+            >
+              {row.title || row.slug}
+            </Text>
+            {row.slug && row.title !== row.slug && <Code fz="xs">{row.slug}</Code>}
           </Stack>
         </Group>
       </Table.Td>
-      <Table.Td onClick={row.onReview}>
+      <Table.Td onClick={row.onReview} className={classes.cellVersion}>
         <VersionCell row={row} openVersionHistory={openVersionHistory} />
       </Table.Td>
-      <Table.Td onClick={row.onReview}>
+      <Table.Td onClick={row.onReview} className={classes.cellSubmitter}>
         {submitter?.username ? (
           /*
             🔴 `stopPropagation` AROUND THE CHIP, not on the cell, because `linkToProfile`
@@ -551,21 +747,28 @@ function UnifiedReviewRowView({
           </Text>
         )}
       </Table.Td>
-      <Table.Td onClick={row.onReview}>
-        {/* `getPlayCountLabel` returns null for 0 ON PURPOSE (an absent count and a zero
-            count are both "nothing happened yet" on screen) — honour it rather than
-            rendering "0 plays". See `UnifiedReviewRow.playCount` for what this number
-            does and does not mean. */}
-        <Text
-          size="xs"
-          c={playLabel ? undefined : 'dimmed'}
-          style={{ whiteSpace: 'nowrap' }}
-          data-testid={`apps-unified-review-plays-${row.key}`}
-        >
-          {playLabel ?? '—'}
-        </Text>
+      <Table.Td
+        onClick={row.onReview}
+        className={showSignals ? classes.cellSignals : classes.cellPlays}
+      >
+        {showSignals ? (
+          <RowSignals row={row} />
+        ) : (
+          /* `getPlayCountLabel` returns null for 0 ON PURPOSE (an absent count and a zero
+             count are both "nothing happened yet" on screen) — honour it rather than
+             rendering "0 plays". See `UnifiedReviewRow.playCount` for what this number
+             does and does not mean. */
+          <Text
+            size="xs"
+            c={playLabel ? undefined : 'dimmed'}
+            style={{ whiteSpace: 'nowrap' }}
+            data-testid={`apps-unified-review-plays-${row.key}`}
+          >
+            {playLabel ?? '—'}
+          </Text>
+        )}
       </Table.Td>
-      <Table.Td onClick={row.onReview}>
+      <Table.Td onClick={row.onReview} className={classes.cellAge}>
         {/* Same reason as the kind badge: an age is one token and must not wrap. The exact
             timestamp stays reachable on hover + to a screen reader via `title`/`dateTime`,
             which is what makes a relative label safe to show a moderator. */}
@@ -583,11 +786,19 @@ function UnifiedReviewRowView({
         </Group>
       </Table.Td>
       {showDeploy && (
-        <Table.Td>
+        <Table.Td className={classes.cellDeploy}>
           {deploy ? (
             <Stack gap={4} align="flex-start">
-              <DeployStateChip state={deploy.state} rowKey={row.key} />
-              {onRetriggerBuild && (
+              <DeployStateChip
+                state={deploy.state}
+                rowKey={row.key}
+                buildSignals={deploy.buildSignals}
+              />
+              {/* Not on a LIVE row: there is nothing to recover, and a permanently greyed
+                  button there was noise on every healthy approval. Other non-retriggerable
+                  states (a build in flight, the first build still starting) keep the disabled
+                  control — they can become retriggerable, and the title says why not yet. */}
+              {onRetriggerBuild && deploy.state !== 'live' && (
                 <RetriggerBuildButton
                   publishRequestId={deploy.publishRequestId}
                   rowKey={row.key}
@@ -604,12 +815,13 @@ function UnifiedReviewRowView({
           )}
         </Table.Td>
       )}
-      <Table.Td>
+      <Table.Td className={classes.cellAction}>
         <Button
           size="xs"
           variant="default"
           onClick={row.onReview}
-          rightSection={<IconExternalLink size={12} />}
+          rightSection={<IconChevronRight size={12} />}
+          className={classes.actionButton}
           data-testid={`apps-unified-review-action-${row.key}`}
         >
           {actionLabel}

@@ -14,7 +14,7 @@ import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.
  *
  * `SCOPE_DESCRIPTIONS` lives under `server/services/blocks/` but is a plain const
  * with no server-only imports and is ALREADY imported by client components
- * (`BlockScopeList.tsx`), so it is safe to bundle here — no server code is pulled
+ * (`BlockScopeList.tsx`, `listingPermissions.ts`), so it is safe to bundle here — no server code is pulled
  * into the client graph.
  */
 

@@ -42,14 +42,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let event: Stripe.Event;
 
     // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('stripe-connect', rawPayload).catch(() => {});
+    trackWebhookEvent('stripe-connect', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
       event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      return res.status(400).send('Webhook Error');
     }
 
     if (relevantEvents.has(event.type)) {
@@ -68,7 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
       } catch (error: any) {
         return res.status(400).send({
-          error: error.message,
+          error: 'Webhook handler failed',
         });
       }
     }

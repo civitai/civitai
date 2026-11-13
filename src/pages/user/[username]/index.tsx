@@ -6,15 +6,20 @@ import React, { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
+import { useMilestoneLanding } from '~/components/CreatorJourney/useMilestoneLanding';
 import {
   getAllAvailableProfileSections,
+  getShowcaseSectionByKey,
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
+import { CustomShowcaseSection } from '~/components/Profile/Sections/CustomShowcaseSection';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { parseMilestoneShareToken } from '~/shared/constants/creator-journey.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -23,11 +28,24 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
-      await Promise.all([
-        ssg?.user.getCreator.prefetch({ username }),
-        ssg?.userProfile.get.prefetch({ username }),
-        ssg?.userProfile.overview.prefetch({ username }),
+      // Prefetch under the route's own spelling, not the slugified `username`: the layout queries
+      // `router.query.username` as-is, and a lowercased key misses for `/user/JustMaier`, so the
+      // server render (and every crawler's og:image) falls back to the empty profile meta.
+      const routeUsername = ctx.params?.username as string;
+      const milestone = parseMilestoneShareToken(ctx.query.milestone);
+      const [, profile] = await Promise.all([
+        ssg?.user.getCreator.prefetch({ username: routeUsername }),
+        milestone
+          ? ssg?.userProfile.get.fetch({ username: routeUsername }).catch(() => null)
+          : ssg?.userProfile.get.prefetch({ username: routeUsername }).then(() => null),
+        ssg?.userProfile.overview.prefetch({ username: routeUsername }),
       ]);
+      // Crawlers read og:image from the server render, so whether `?milestone=` swaps it is decided here.
+      if (ssg && milestone && profile)
+        await ssg.creatorJourney.isMilestoneShareable.prefetch({
+          userId: profile.id,
+          milestone,
+        });
     }
 
     return {
@@ -45,14 +63,22 @@ function ProfileOverview() {
   });
   const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
 
+  useMilestoneLanding(user);
+  const { profileShowcases } = useFeatureFlags();
+  const showcaseSections = useMemo(
+    () => (profileShowcases ? user?.profile?.showcaseSections ?? [] : []),
+    [profileShowcases, user]
+  );
+
   const sections = useMemo(
     () =>
       !user
         ? []
         : getAllAvailableProfileSections(
-            user.profile?.profileSectionsSettings as ProfileSectionSchema[]
+            user.profile?.profileSectionsSettings as ProfileSectionSchema[],
+            showcaseSections
           ).filter((section) => section.enabled),
-    [user]
+    [user, showcaseSections]
   );
 
   if (isLoading) {
@@ -70,6 +96,7 @@ function ProfileOverview() {
   const shouldDisplayUserNullStateBool = shouldDisplayUserNullState({
     overview: userOverview,
     userWithProfile: user,
+    showcaseSections,
   });
 
   return (
@@ -103,6 +130,16 @@ function ProfileOverview() {
       ) : (
         <Stack gap={0}>
           {sections.map((section) => {
+            const showcase = getShowcaseSectionByKey(section.key, showcaseSections);
+            if (showcase)
+              return (
+                <CustomShowcaseSection
+                  key={section.key}
+                  section={showcase}
+                  user={{ ...user, username: user.username as string }}
+                />
+              );
+
             const Section = ProfileSectionComponent[section.key as ProfileSectionType];
 
             if (!Section) {

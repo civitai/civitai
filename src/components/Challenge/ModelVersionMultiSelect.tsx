@@ -10,8 +10,8 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPlus, IconX, IconCube } from '@tabler/icons-react';
 import { useMemo, useState, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -82,8 +82,7 @@ export function ModelVersionMultiSelect({
         baseModel: v.baseModel || 'Unknown',
         canGenerate: true,
         hasAccess: true,
-        minStrength: 0,
-        maxStrength: 1,
+        settings: { strength: { min: 0, max: 1, default: 1 } },
         strength: 1,
         model: {
           id: v.modelId,

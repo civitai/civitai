@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
+// Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
+// this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
+// validator is untouched).
+vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManifestSubmitValidation>()),
+  assertManifestValidAtSubmit: vi.fn(async () => undefined),
+}));
 import JSZip from 'jszip';
 import {
   computeBundleLineDiff,
@@ -14,6 +22,17 @@ import {
   MAX_FILE_SIZE_BYTES,
   MAX_TOTAL_DECOMPRESSED_BYTES,
 } from '~/server/schema/blocks/publish-request.schema';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 // submitVersion dynamically imports these; mock them so the sensitive-scope
 // gate can be exercised end-to-end without a real DB / MinIO / Forgejo. The
@@ -39,13 +58,19 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
-    appListing: { findFirst: dbMocks.appListingFindFirst },
+    appListing: { findFirst: dbMocks.appListingFindFirst, findUnique: async () => null },
     appListingPublishRequest: { findFirst: dbMocks.listingReqFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {
-    appBlockPublishRequest: { create: dbMocks.createPublishRequest },
+    appBlockPublishRequest: {
+      create: dbMocks.createPublishRequest,
+      // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+      findMany: async () => [],
+    },
     appListing: { create: dbMocks.appListingCreate },
+    // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+    appBlock: { findFirst: async () => null },
   },
 }));
 
@@ -133,6 +158,49 @@ describe('computeFileDiff', () => {
 });
 
 describe('computeManifestDiff', () => {
+  const withStorage = (collections: Record<string, unknown>) => ({
+    blockId: 'x',
+    storage: { collections },
+  });
+  const sharedColl = (extra: Record<string, unknown> = {}) => ({
+    visibility: 'shared',
+    write: 'own',
+    ...extra,
+  });
+
+  it('🔴 names the collections a version newly publishes to registries', () => {
+    const prev = withStorage({ notes: sharedColl(), pins: sharedColl({ registry: 'public' }) });
+    const curr = withStorage({
+      notes: sharedColl({ registry: 'public' }),
+      pins: sharedColl({ registry: 'public' }),
+    });
+    expect(computeManifestDiff(curr, prev).registryExports).toEqual({
+      exported: ['notes', 'pins'],
+      added: ['notes'],
+      removed: [],
+    });
+  });
+
+  it('names a collection that stops being published, and a first version that publishes', () => {
+    expect(
+      computeManifestDiff(
+        withStorage({ notes: sharedColl() }),
+        withStorage({
+          notes: sharedColl({ registry: 'public' }),
+        })
+      ).registryExports
+    ).toEqual({ exported: [], added: [], removed: ['notes'] });
+    expect(
+      computeManifestDiff(withStorage({ notes: sharedColl({ registry: 'public' }) }), null)
+        .registryExports
+    ).toEqual({ exported: ['notes'], added: ['notes'], removed: [] });
+  });
+
+  it('says nothing about registries when no version publishes', () => {
+    const diff = computeManifestDiff(withStorage({ notes: sharedColl() }), withStorage({}));
+    expect(Object.hasOwn(diff, 'registryExports')).toBe(false);
+  });
+
   it('treats null previous as a first-version diff', () => {
     const curr = { blockId: 'x', version: '0.1.0', name: 'X' };
     const result = computeManifestDiff(curr, null);
@@ -623,7 +691,12 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
   it('does NOT create a draft on a SUBSEQUENT-version submit (an AppBlock already exists)', async () => {
     dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_existing', appId: 'app_1' });
     const buf = await makeBundle({ ...baseManifest, version: '0.2.0', scopes: [] });
-    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
 
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
@@ -768,5 +841,82 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     // The submit path never mints a Forgejo commit — that happens on approve. A
     // fallback between the two would show up here as the sha leaking across.
     expect(data.forgejoCommitSha).toBeUndefined();
+  });
+});
+
+describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
+  async function makeBundle(blockId: string): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file(
+      'block.manifest.json',
+      JSON.stringify({ blockId, version: '0.3.0', name: 'Fixture App', scopes: [] })
+    );
+    zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const SUBMITTER = 61;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.pubReqFindFirst.mockResolvedValue(null);
+    dbMocks.listingReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
+    dbMocks.createPublishRequest.mockResolvedValue({});
+    dbMocks.appListingFindFirst.mockResolvedValue(null);
+    dbMocks.appListingCreate.mockResolvedValue({ id: 'apl_fixture' });
+  });
+
+  it.each(['my--app', 'a---b'])('refuses a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
+    ).rejects.toThrow(
+      `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+    );
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(['my-app', 'ab-c-d', 'plainapp'])('accepts a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    expect(result.slug).toBe(blockId);
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('old--name');
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: SUBMITTER,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
+    expect(result.slug).toBe('old--name');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a first version with a reserved blockId', async () => {
+    const buf = await makeBundle('dev-0123456789abcdef');
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
+    ).rejects.toThrow('blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-"');
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it('accepts a new version of an EXISTING app whose blockId is now reserved', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('dev-legacy');
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: SUBMITTER,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
+    expect(result.slug).toBe('dev-legacy');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });
 });

@@ -302,7 +302,7 @@ describe('recordSpendAttribution', () => {
 /**
  * G5 — GENERIC published-content-author attribution. When the app supplies an
  * opaque `sharedContentKey`, the CONTENT AUTHOR is resolved SERVER-SIDE from the
- * app's own shared storage (`app_<slug>.shared_kv`) and recorded as the
+ * app's own shared data (here: the legacy `app_<slug>.shared_kv`) and recorded as the
  * future-payout basis. Track-only; the existing app-owner attribution is
  * unchanged in every case. FULLY GENERIC — not tied to any one app kind.
  */
@@ -330,7 +330,8 @@ describe('recordSpendAttribution — content-author basis (G5)', () => {
     );
     const [sql, params] = mockAppsQuery.mock.calls[0];
     expect(sql).toContain('"app_blk_test".shared_kv');
-    expect(sql).toContain('hidden_at IS NULL');
+    // The row's hidden state is read, so a hidden item is excluded by the resolver.
+    expect(sql).toContain('hidden_at IS NOT NULL AS hidden');
     expect(params).toEqual([CONTENT_KEY]);
   });
 
@@ -359,13 +360,13 @@ describe('recordSpendAttribution — content-author basis (G5)', () => {
     expect(res.written).toBe(true);
   });
 
-  it('hidden row → excluded by the query (hidden_at IS NULL) → content_author NULL', async () => {
-    // A hidden row returns no result from the `hidden_at IS NULL` filter.
-    mockAppsQuery.mockResolvedValueOnce({ rows: [] });
+  it('hidden row → content_author NULL', async () => {
+    mockAppsQuery.mockResolvedValueOnce({
+      rows: [{ author_user_id: CONTENT_AUTHOR_ID, hidden: true }],
+    });
     await recordSpendAttribution(fakeInput({ sharedContentKey: CONTENT_KEY }));
     const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
     expect(data.contentAuthorUserId).toBeNull();
-    expect(mockAppsQuery.mock.calls[0][0]).toContain('hidden_at IS NULL');
   });
 
   it('self-author (content author == spender) → content_author NULL', async () => {

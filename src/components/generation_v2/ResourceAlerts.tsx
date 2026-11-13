@@ -16,18 +16,19 @@ import { IconBolt } from '@tabler/icons-react';
 import { useRef } from 'react';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { useAppContext } from '~/providers/AppProvider';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import { formatDownloadEta } from '~/components/ResourceLoad/download-eta';
 import {
   BOOST_LANE_LABEL,
   DownloadLanesInfo,
   BoostFeeNote,
+  BoostRequiredNote,
 } from '~/components/ResourceLoad/download-lanes';
 import { DownloadEtaCompare } from '~/components/ResourceLoad/DownloadEtaCompare';
-import { useWhatIfContext } from './WhatIfProvider';
+import { useWhatIfContext } from '~/components/form-graph/generation/WhatIfProvider';
 
 // =============================================================================
 // Types
@@ -222,25 +223,54 @@ export type DownloadAlertWhatIf = {
   canEstimateCost: boolean;
   preBoost: boolean;
   setPreBoost: (on: boolean) => void;
+  boostRequired?: boolean;
   download?: {
     preparation: DownloadPreparation;
     boostable: boolean;
     boostFee: number | null;
     pricing: boolean;
+    required?: boolean;
   };
 };
 
 /** Takes the whatIf as a prop because the two generation forms each have their own provider. */
 export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) {
-  const { data, download, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
+  const {
+    data,
+    download,
+    isLoading,
+    isSuccess,
+    canEstimateCost,
+    preBoost,
+    setPreBoost,
+    boostRequired,
+  } = whatIf;
   // Too tall for a phone. Mobile gets the same offer as a confirm on Generate instead
   // (`resolveBoostSubmitFields`).
-  const isMobile = useIsMobile({ type: 'media' });
+  const isMobile = useGeneratorLayout() !== 'desktop';
 
   // Rendering from the last settled response keeps the alert on screen while a changed form re-prices.
-  const settledRef = useRef<{ ready?: boolean; download: typeof download } | null>(null);
-  if (isSuccess && !isLoading) settledRef.current = { ready: data.ready, download };
+  const settledRef = useRef<{
+    ready?: boolean;
+    download: typeof download;
+    boostRequired?: boolean;
+  } | null>(null);
+  if (isSuccess && !isLoading) settledRef.current = { ready: data.ready, download, boostRequired };
   const settled = settledRef.current;
+
+  if (canEstimateCost && settled?.boostRequired && !settled.download) {
+    const size = isMobile ? 'xs' : 'sm';
+    return (
+      <Alert color="yellow" radius="md" p={size}>
+        <Stack gap={6}>
+          <BoostRequiredNote size={size} />
+          <Text size={size}>
+            The download couldn&apos;t be priced just now. Try again in a moment.
+          </Text>
+        </Stack>
+      </Alert>
+    );
+  }
 
   if (!canEstimateCost || !settled || (settled.ready !== false && !settled.download)) {
     return null;
@@ -251,15 +281,21 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     const preparation = settled.download?.preparation;
     if (!preparation) return null;
     const size = preparation.resources.reduce((sum, r) => sum + r.sizeBytes, 0);
+    const required = !!settled.download?.required;
+    // A required boost is always sent, so the wait to state is the boosted one.
+    const eta = required
+      ? preparation.boostedEtaSeconds ?? preparation.etaSeconds
+      : preparation.etaSeconds;
     return (
-      <Alert color="blue" radius="md" p="xs">
-        <Text size="xs">
-          {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to be loaded
-          first{size > 0 ? ` — ${formatBytes(size)}` : ''}
-          {preparation.etaSeconds != null
-            ? `. Ready in ${formatDownloadEta(preparation.etaSeconds)}.`
-            : '.'}
-        </Text>
+      <Alert color={required ? 'yellow' : 'blue'} radius="md" p="xs">
+        <Stack gap={6}>
+          {required && <BoostRequiredNote size="xs" />}
+          <Text size="xs">
+            {preparation.resources.length === 1 ? 'A resource needs' : 'Resources need'} to be
+            loaded first{size > 0 ? ` — ${formatBytes(size)}` : ''}
+            {eta != null ? `. Ready in ${formatDownloadEta(eta)}.` : '.'}
+          </Text>
+        </Stack>
       </Alert>
     );
   }
@@ -278,7 +314,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
     );
   }
 
-  const { preparation, boostable, boostFee, pricing } = settled.download;
+  const { preparation, boostable, boostFee, pricing, required } = settled.download;
   const { etaSeconds, boostedEtaSeconds, lane } = preparation;
   const count = preparation.resources.length;
   const resourcesLabel = count === 1 ? 'resource' : `${count} resources`;
@@ -288,6 +324,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
   return (
     <Alert color={on ? 'yellow' : 'blue'} radius="md" p="sm">
       <Stack gap="sm">
+        {required && <BoostRequiredNote />}
         {on ? (
           <Text size="sm">
             <Text span fw={600}>
@@ -330,7 +367,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
                 size="sm"
                 color="yellow"
                 checked={on}
-                disabled={boostFee == null}
+                disabled={boostFee == null || required}
                 onChange={(e) => setPreBoost(e.currentTarget.checked)}
                 label="Boost download"
                 styles={{ label: { fontWeight: 600 } }}

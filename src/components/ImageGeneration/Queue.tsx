@@ -41,7 +41,8 @@ export function Queue() {
       </Center>
     );
 
-  if (!data.length)
+  // A page can come back empty after app runs are filtered out; keep the loader so it pages on.
+  if (!data.length && !hasNextPage)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3">
         <Stack gap="xs" align="center" py="16">
@@ -114,11 +115,3 @@ export function Queue() {
     </div>
   );
 }
-
-// supposedly ~5.5x faster than createElement without the memo
-// const createRenderElement = trieMemoize(
-//   [OneKeyMap, WeakMap, WeakMap],
-//   (RenderComponent, request, step) => (
-//     <RenderComponent key={request.id} id={request.id.toString()} request={request} step={step} />
-//   )
-// );

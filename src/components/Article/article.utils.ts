@@ -19,15 +19,13 @@ export const useArticleFilters = () => {
   return removeEmpty(storeFilters);
 };
 
-const articleQueryParamSchema = z
+export const articleQueryParamSchema = z
   .object({
     tags: numericStringArray(),
     view: z.enum(['categories', 'feed']),
     period: z.enum(MetricTimeframe),
     sort: z.enum(ArticleSort),
     section: z.enum(['published', 'draft']),
-    // `?isOfficial=true` makes "everything Civitai published" a link you can send.
-    isOfficial: booleanString(),
     favorites: booleanString(),
     hidden: booleanString(),
     username: z.string(),

@@ -20,10 +20,8 @@ import { describe, expect, it } from 'vitest';
  * 🔴 WHY IT IS IN THE NODE `unit` PROJECT AND WHAT IT IS NOT. The real proof lives in
  * `AppListingDetailBody.gallery.browser.test.tsx`, which renders the page in Chromium
  * with Mantine's stylesheet loaded and MEASURES the tiles. But that file is in the
- * browser-mode `component` project, which CI runs only as the preview pipeline's
- * `preview / component-tests` — report-only, non-blocking, and not reported at all
- * when the preview build fails. So the geometry claim cannot gate anything, and this
- * file is what does. It is a SOURCE-TEXT gate, with the honesty that implies:
+ * browser-mode `component` project (`Component tests` in CI). This file pins the
+ * same rule in the node tier. It is a SOURCE-TEXT gate, with the honesty that implies:
  *
  *   - CAUGHT: deleting the rule from the stylesheet; deleting the stylesheet import;
  *     dropping `className` from the grid; renaming the class on one side only;

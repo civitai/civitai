@@ -1,6 +1,8 @@
 import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { randomId } from '@mantine/hooks';
 import type { NotificationData } from '@mantine/notifications';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
+import { lazy, Suspense } from 'react';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -9,17 +11,72 @@ import {
   IconInfoCircle,
   IconX,
 } from '@tabler/icons-react';
+import type { ReportProblem } from '~/components/Feedback/ReportProblemButton';
+import { parseErrorRef } from '~/utils/feedback/errorRef';
+import { getRateLimit, withRetryText } from '~/utils/rate-limit';
 
+// Lazy: this module is imported almost everywhere, including by `~/utils/trpc`, which the button
+// needs. A static import would make that a cycle and load the tRPC client into every importer.
+const ReportProblemButton = lazy(() =>
+  import('~/components/Feedback/ReportProblemButton').then((m) => ({
+    default: m.ReportProblemButton,
+  }))
+);
+
+/** A toast with a "Report this" action stays up long enough to reach it. */
+const REPORTABLE_AUTO_CLOSE = 10_000;
+const DEFAULT_AUTO_CLOSE = 3000;
+
+/** A notification message with "Report this" under it; `id` is the notification's, to close it. */
+export function withReportAction({
+  id,
+  message,
+  title,
+  text,
+  errorRef,
+  report,
+}: {
+  id: string;
+  message: React.ReactNode;
+  title?: string;
+  text: string;
+  errorRef?: string;
+  report: ReportProblem;
+}) {
+  return (
+    <Stack gap={0} align="flex-start">
+      <div>{message}</div>
+      <Suspense fallback={null}>
+        <ReportProblemButton
+          {...report}
+          title={title}
+          message={text}
+          errorRef={errorRef}
+          onOpen={() => hideNotification(id)}
+        />
+      </Suspense>
+    </Stack>
+  );
+}
+
+/**
+ * `report`: offer "Report this", for a caller that knows what failed (an orchestration failure
+ * passes `{ area: 'orchestration', workflowId?, jobId? }`). Without it the action is offered only
+ * for a masked server fault — one whose message carries a server ref — never for a validation
+ * message, which a report could not help with.
+ */
 export function showErrorNotification({
   error,
   reason,
   title,
-  autoClose = 3000,
+  autoClose,
+  report,
 }: {
   error: Error | { message: string } | { message: string }[];
-  reason?: string;
+  reason?: React.ReactNode;
   title?: string;
   autoClose?: number | false;
+  report?: ReportProblem;
 }) {
   const message = Array.isArray(error) ? (
     <ul>
@@ -28,15 +85,27 @@ export function showErrorNotification({
       ))}
     </ul>
   ) : (
-    reason ?? error.message
+    reason ?? withRetryText(error.message, getRateLimit(error))
   );
 
+  const text = Array.isArray(error)
+    ? error.map((e) => e.message).join('\n')
+    : typeof reason === 'string'
+    ? reason
+    : error.message;
+  const errorRef = Array.isArray(error) ? undefined : parseErrorRef(error.message);
+  const reportable = !!report || !!errorRef;
+  const id = randomId();
+
   showNotification({
+    id,
     icon: <IconX size={18} />,
     color: 'red',
-    message,
+    message: reportable
+      ? withReportAction({ id, message, title, text, errorRef, report: report ?? {} })
+      : message,
     title,
-    autoClose,
+    autoClose: autoClose ?? (reportable ? REPORTABLE_AUTO_CLOSE : DEFAULT_AUTO_CLOSE),
   });
 }
 
@@ -61,7 +130,7 @@ export function showSuccessNotification({
 export function showWarningNotification({
   message,
   title,
-  autoClose = 3000,
+  autoClose = DEFAULT_AUTO_CLOSE,
 }: {
   message: string | React.ReactNode;
   title?: string;
@@ -77,15 +146,19 @@ export function showWarningNotification({
 }
 
 export function showInfoNotification({
+  id,
   message,
   title,
   autoClose = 3000,
 }: {
+  /** Showing an id that is already on screen is a no-op, so repeats don't stack. */
+  id?: string;
   message: string | React.ReactNode;
   title?: string;
   autoClose?: number | false;
 }) {
   showNotification({
+    id,
     icon: <IconInfoCircle size={18} />,
     color: 'blue',
     message,

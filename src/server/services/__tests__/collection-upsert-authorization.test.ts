@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as RedisCaches from '~/server/redis/caches';
+import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -19,11 +22,26 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   userCollectionCountCache: { refresh: mockCountCacheRefresh },
 }));
 
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanSubmit>()),
+  scanEntityInBackground: vi.fn(),
+}));
+
+vi.mock('~/server/services/job-queue.service', () => ({
+  enqueueJobs: vi.fn(async () => undefined),
+}));
+
 const { upsertCollection } = await import('~/server/services/collection.service');
+const { enqueueJobs } = await import('~/server/services/job-queue.service');
+const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
 const MANAGER_ID = 777;
+
+// The transaction's own client, apart from `dbWrite`, so a read made outside it is not answered.
+const txImageFindUnique = vi.fn();
+const txQueryRaw = vi.fn();
 
 function arrange({
   actorId,
@@ -53,9 +71,13 @@ function arrange({
     createdAt: new Date('2026-01-01'),
     image: null,
   });
+  txImageFindUnique.mockReset().mockResolvedValue(null);
+  txQueryRaw.mockReset().mockResolvedValue([]);
   mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
     fn({
       collection: { update: mockDbWrite.collection.update },
+      image: { findUnique: txImageFindUnique },
+      $queryRaw: txQueryRaw,
       tagsOnCollection: { deleteMany: vi.fn(), createMany: vi.fn() },
     })
   );
@@ -99,6 +121,152 @@ describe('upsertCollection authorization', () => {
     expect(updateArgs.data.read).toBeUndefined();
     expect(updateArgs.data.write).toBeUndefined();
     expect(updateArgs.data.mode).toBeUndefined();
+  });
+
+  describe('the cover image', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e34';
+    const OTHER_ID = 555;
+    const saveCover = (
+      cover: { image?: Record<string, unknown>; imageId?: number },
+      actor: { userId?: number; isModerator?: boolean } = {}
+    ) =>
+      upsertCollection({
+        input: {
+          id: COLLECTION_ID,
+          name: 'Mine',
+          userId: OWNER_ID,
+          isMember: true,
+          ...cover,
+          ...actor,
+        },
+      } as never);
+    // Answers from these rows and the bound values, so a wrong key set or userId is seen.
+    const withRows = (
+      rows: { id: number; url: string; userId: number }[],
+      issuedTo: number = OWNER_ID
+    ) => {
+      redisMock.sysRedis.mGet.mockResolvedValue([String(issuedTo)] as never);
+      txQueryRaw.mockImplementation(imageUrlOwnersFake(rows));
+      txImageFindUnique.mockImplementation(
+        (async ({ where }: { where: { id: number } }) =>
+          rows.find((r) => r.id === where.id) ?? null) as never
+      );
+    };
+    const imageWrite = () => mockDbWrite.collection.update.mock.calls[0][0].data.image;
+    it('is refused, before writing, when its url is owned by another user', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+
+      await expect(saveCover({ image: { url: KEY, type: 'image' } })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('is refused, before writing, when its key was issued to another user', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([], OTHER_ID);
+
+      await expect(saveCover({ image: { url: KEY, type: 'image' } })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('reads its key issue record before opening the transaction', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([]);
+
+      await saveCover({ image: { url: KEY, type: 'image' } });
+
+      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
+        mockDbWrite.$transaction.mock.invocationCallOrder[0]
+      );
+      expect(imageWrite()).toEqual({
+        create: expect.objectContaining({ url: KEY, userId: OWNER_ID }),
+      });
+    });
+
+    it('is created from a url no row has, or one the caller owns', async () => {
+      for (const rows of [[], [{ id: 1, url: KEY, userId: OWNER_ID }]]) {
+        vi.clearAllMocks();
+        arrange({ actorId: OWNER_ID });
+        withRows(rows);
+
+        await saveCover({ image: { url: KEY, type: 'image' } });
+
+        expect(imageWrite()).toEqual({
+          create: expect.objectContaining({ url: KEY, userId: OWNER_ID }),
+        });
+      }
+    });
+
+    it("is refused when an id that names no row carries another user's url", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+
+      await expect(
+        saveCover({ image: { id: 404, url: KEY, type: 'image' } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it('is refused when an id that names no row carries a key issued to another user', async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([], OTHER_ID);
+
+      await expect(
+        saveCover({ image: { id: 404, url: KEY, type: 'image' } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+    });
+
+    it("connects the caller's own image by id, without checking the url it carries", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([
+        { id: 55, url: 'own-key', userId: OWNER_ID },
+        { id: 1, url: KEY, userId: OTHER_ID },
+      ]);
+
+      await saveCover({ image: { id: 55, url: KEY, type: 'image' } });
+
+      expect(imageWrite()).toEqual({ connect: { id: 55 } });
+    });
+
+    it("refuses to connect another user's image by id", async () => {
+      for (const cover of [{ imageId: 1 }, { image: { id: 1, url: KEY, type: 'image' } }]) {
+        vi.clearAllMocks();
+        arrange({ actorId: OWNER_ID });
+        withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+
+        await expect(saveCover(cover)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+      }
+    });
+
+    it("keeps another user's image that is already the cover", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+      mockDbWrite.collection.findUnique.mockResolvedValue({
+        id: COLLECTION_ID,
+        read: 'Public',
+        write: 'Private',
+        mode: null,
+        image: { id: 1 },
+      } as never);
+
+      await saveCover({ image: { id: 1, url: KEY, type: 'image' } });
+      expect(imageWrite()).toEqual({ connect: { id: 1 } });
+    });
+
+    it("lets a moderator connect another user's image", async () => {
+      arrange({ actorId: OWNER_ID });
+      withRows([{ id: 1, url: KEY, userId: OTHER_ID }]);
+      await saveCover({ imageId: 1 }, { isModerator: true });
+      expect(imageWrite()).toEqual({ connect: { id: 1 } });
+    });
   });
 
   it('lets the owner change write when they are a member', async () => {
@@ -256,5 +424,394 @@ describe('upsertCollection authorization', () => {
     } as never);
 
     expect(mockDbWrite.collection.update).toHaveBeenCalled();
+  });
+
+  it('scans a Private collection made Public after the transaction commits', async () => {
+    arrange({ actorId: OWNER_ID });
+    const current = { name: 'Mine', description: null, availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...current,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...current,
+    });
+    let committed = false;
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      const result = await fn({
+        collection: { update: mockDbWrite.collection.update },
+        tagsOnCollection: { deleteMany: vi.fn(), createMany: vi.fn() },
+      });
+      committed = true;
+      return result;
+    });
+    let committedAtScan: boolean | undefined;
+    let committedAtEnqueue: boolean | undefined;
+    vi.mocked(scanEntityInBackground).mockImplementation(() => {
+      committedAtScan = committed;
+    });
+    vi.mocked(enqueueJobs).mockImplementation(async () => {
+      committedAtEnqueue = committed;
+    });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Mine', read: 'Public', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(committedAtScan).toBe(true);
+    expect(committedAtEnqueue).toBe(true);
+
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Collection',
+      entityId: COLLECTION_ID,
+    });
+    // Queued, not run inline: the recompute can time out on a huge collection.
+    expect(enqueueJobs).toHaveBeenCalledWith([
+      { entityType: 'Collection', entityId: COLLECTION_ID, type: 'UpdateNsfwLevel' },
+    ]);
+  });
+
+  it('saves a Private → Public flip even when queueing the recompute fails', async () => {
+    arrange({ actorId: OWNER_ID });
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      name: 'Mine',
+      description: null,
+      read: 'Private',
+      write: 'Private',
+      availability: 'Public',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      name: 'Mine',
+      description: null,
+      read: 'Public',
+      write: 'Private',
+      availability: 'Public',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+    });
+    vi.mocked(enqueueJobs).mockRejectedValueOnce(new Error('db down'));
+
+    await expect(
+      upsertCollection({
+        input: {
+          id: COLLECTION_ID,
+          name: 'Mine',
+          read: 'Public',
+          userId: OWNER_ID,
+          isMember: true,
+        },
+      } as never)
+    ).resolves.toMatchObject({ id: COLLECTION_ID });
+    expect(scanEntityInBackground).toHaveBeenCalled();
+  });
+
+  it('scans a text edit of a visible collection without queueing a recompute', async () => {
+    arrange({ actorId: OWNER_ID, currentWrite: 'Public' });
+    const visible = { description: null, read: 'Public', availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      name: 'Mine',
+      write: 'Public',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...visible,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      name: 'Renamed',
+      write: 'Public',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...visible,
+    });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Renamed', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Collection',
+      entityId: COLLECTION_ID,
+    });
+    expect(enqueueJobs).not.toHaveBeenCalled();
+  });
+
+  it('does not scan an edit that leaves text and visibility alone', async () => {
+    arrange({ actorId: OWNER_ID, currentWrite: 'Public' });
+    const row = { name: 'Mine', description: null, read: 'Public', availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      write: 'Public',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...row,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      write: 'Public',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...row,
+    });
+    await upsertCollection({
+      input: { id: COLLECTION_ID, write: 'Public', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+  });
+
+  // The pin reads the stored blob off the primary row `upsertCollection` loads for the update.
+  const storedMetadata = (metadata: Record<string, unknown>) =>
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      metadata,
+    } as never);
+  const writtenMetadata = () => mockDbWrite.collection.update.mock.calls[0][0].data.metadata;
+
+  it('pins forcedBrowsingLevel to the stored value for a non-moderator', async () => {
+    arrange({ actorId: OWNER_ID });
+    storedMetadata({ forcedBrowsingLevel: 1 });
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: OWNER_ID,
+        isMember: true,
+      },
+    } as never);
+
+    expect(writtenMetadata().forcedBrowsingLevel).toBe(1);
+  });
+
+  it('keeps the stored forcedBrowsingLevel and autoTagId when a non-moderator sends no metadata', async () => {
+    arrange({ actorId: MANAGER_ID });
+    storedMetadata({ forcedBrowsingLevel: 1, autoTagId: 5 });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Renamed', userId: MANAGER_ID, isMember: true },
+    } as never);
+
+    expect(writtenMetadata()).toEqual({ forcedBrowsingLevel: 1, autoTagId: 5 });
+    expect(mockDbRead.collection.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('drops forcedBrowsingLevel from a non-moderator when none is stored', async () => {
+    arrange({ actorId: OWNER_ID });
+    storedMetadata({});
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: OWNER_ID,
+        isMember: true,
+      },
+    } as never);
+
+    expect(writtenMetadata()).not.toHaveProperty('forcedBrowsingLevel');
+  });
+
+  it('drops forcedBrowsingLevel from a non-moderator creating a collection', async () => {
+    mockDbWrite.collection.create.mockResolvedValue({
+      id: COLLECTION_ID,
+      name: 'New',
+      description: null,
+      read: 'Private',
+      availability: 'Public',
+      userId: OWNER_ID,
+    } as never);
+
+    await upsertCollection({
+      input: {
+        name: 'New',
+        read: 'Private',
+        type: 'Image',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: OWNER_ID,
+        isMember: true,
+      },
+    } as never);
+
+    const createArgs = mockDbWrite.collection.create.mock.calls[0][0];
+    expect(createArgs.data.metadata).not.toHaveProperty('forcedBrowsingLevel');
+  });
+
+  it('lets a moderator change forcedBrowsingLevel', async () => {
+    arrange({ actorId: MANAGER_ID });
+    storedMetadata({ forcedBrowsingLevel: 1 });
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: MANAGER_ID,
+        isModerator: true,
+        isMember: true,
+      },
+    } as never);
+
+    expect(writtenMetadata().forcedBrowsingLevel).toBe(31);
+  });
+
+  it('lets a moderator clear forcedBrowsingLevel', async () => {
+    arrange({ actorId: MANAGER_ID });
+    storedMetadata({ forcedBrowsingLevel: 1 });
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: {},
+        userId: MANAGER_ID,
+        isModerator: true,
+        isMember: true,
+      },
+    } as never);
+
+    expect(writtenMetadata()).not.toHaveProperty('forcedBrowsingLevel');
+  });
+});
+
+describe('upsertCollection create-path scan', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const created = (read: 'Public' | 'Private') => ({
+    id: COLLECTION_ID,
+    name: 'New',
+    description: null,
+    read,
+    write: 'Private',
+    availability: 'Public',
+    userId: OWNER_ID,
+    mode: null,
+    image: null,
+  });
+
+  it('scans a new public collection', async () => {
+    mockDbWrite.collection.create.mockResolvedValue(created('Public') as never);
+
+    await upsertCollection({
+      input: { name: 'New', read: 'Public', type: 'Image', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Collection',
+      entityId: COLLECTION_ID,
+    });
+    expect(enqueueJobs).not.toHaveBeenCalled();
+  });
+
+  it('does not scan a new private collection', async () => {
+    mockDbWrite.collection.create.mockResolvedValue(created('Private') as never);
+
+    await upsertCollection({
+      input: { name: 'New', read: 'Private', type: 'Image', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(mockDbWrite.collection.create).toHaveBeenCalled();
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+    expect(enqueueJobs).not.toHaveBeenCalled();
+  });
+
+  it('does not scan a Public → Private edit', async () => {
+    arrange({ actorId: OWNER_ID });
+    const row = { name: 'Mine', description: null, availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...row,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Private',
+      write: 'Private',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...row,
+    });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Mine', read: 'Private', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(mockDbWrite.collection.update).toHaveBeenCalled();
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+    expect(enqueueJobs).not.toHaveBeenCalled();
+  });
+});
+
+describe('upsertCollection cover image', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const COVER_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+  const EXISTING_IMAGE = 4_321;
+
+  const save = (image: Record<string, unknown>, actorId = MANAGER_ID) =>
+    upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Covered', image, userId: actorId, isMember: true },
+    } as never);
+
+  it('points the cover at an existing image by id', async () => {
+    arrange({ actorId: MANAGER_ID });
+    txImageFindUnique.mockResolvedValueOnce({
+      id: EXISTING_IMAGE,
+      userId: MANAGER_ID,
+    } as never);
+
+    await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image).toEqual({ connect: { id: EXISTING_IMAGE } });
+  });
+
+  it('creates a new cover from client columns only', async () => {
+    arrange({ actorId: MANAGER_ID });
+    redisMock.sysRedis.mGet.mockResolvedValue([String(MANAGER_ID)] as never);
+
+    await save({ url: COVER_KEY, type: 'image', width: 10, postId: 9_001, index: 2 });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.create).toMatchObject({
+      url: COVER_KEY,
+      width: 10,
+      userId: MANAGER_ID,
+    });
+    expect(image.create).not.toHaveProperty('postId');
+    expect(image.create).not.toHaveProperty('index');
   });
 });

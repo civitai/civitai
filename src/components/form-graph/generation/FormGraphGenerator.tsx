@@ -4,18 +4,19 @@ import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 
 import { BaseGenerationForm } from './BaseGenerationForm';
 
 /**
- * The form-graph lane's counterpart of `GenerationFormV2` — the shell
- * GenerationTabs mounts when the `formGraphGenerator` flag is on. Same
- * provider stack (queue state, resource data, announcements, scroll
- * restore); only the form inside differs.
+ * The generation form's shell, mounted by GenerationTabs: queue state, resource data,
+ * announcements and scroll restore around the form itself.
  */
 export function FormGraphGenerator() {
   const isClient = useIsClient();
   const loading = useGenerationGraphStore((s) => s.loading);
+  // In the mobile generator the form is a sheet, and a downward drag on it must not reload the page.
+  const mobileGenerator = useMobileGenerator();
 
   if (!isClient) return null;
 
@@ -27,6 +28,7 @@ export function FormGraphGenerator() {
           scrollRestore={{ key: 'form-graph-generator' }}
           pt={0}
           className="flex flex-col gap-2"
+          withPullToRefresh={!mobileGenerator}
         >
           <Announcements type="generator" />
           <BaseGenerationForm />

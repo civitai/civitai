@@ -19,6 +19,9 @@ import {
 
 const version = (id: number, overrides: Partial<LabelableVersion> = {}): LabelableVersion => ({
   id,
+  // Deliberately a DIFFERENT id space from the version id: a fixture where
+  // the two coincide cannot tell a model-id enqueue from a version-id one.
+  modelId: 9000 + id,
   name: `Version ${id}`,
   baseModel: 'SDXL 1.0',
   trainedWords: ['trigger'],
@@ -84,6 +87,18 @@ describe('buildLabelQuestions', () => {
     ]);
     expect(Object.keys(state)).toEqual(['resource0']);
     const parsed = JSON.parse(state.resource0) as Record<string, unknown>;
+    // 🔴 The EXACT key set, not `toMatchObject`. The fetched row now carries
+    // `modelId`, which exists only so a written label can be announced to the
+    // models index and is explicitly not a judgment input — and `toMatchObject`
+    // ignores extra keys, so it would pass while the vendor request quietly
+    // gained a field. Pinning the keys is what makes that claim testable.
+    expect(Object.keys(parsed).sort()).toEqual([
+      'baseModel',
+      'description',
+      'name',
+      'trainedWords',
+      'type',
+    ]);
     expect(parsed).toMatchObject({ name: 'Alpha', type: 'LORA', baseModel: 'SDXL 1.0' });
     // Description truncated to the cap, so one noisy resource cannot dominate the request.
     expect((parsed.description as string).length).toBeLessThanOrEqual(300);

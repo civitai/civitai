@@ -30,8 +30,26 @@ describe('by-hash/ids endpoint', () => {
 
   it('includes modelId alongside modelVersionId and hash for each result', async () => {
     mockFindMany.mockResolvedValue([
-      { modelVersionId: 101, modelVersion: { modelId: 11 }, hashes: [{ hash: HASH }] },
-      { modelVersionId: 202, modelVersion: { modelId: 22 }, hashes: [{ hash: HASH_2 }] },
+      {
+        modelVersionId: 101,
+        modelVersion: {
+          id: 101,
+          modelId: 11,
+          availability: 'Public',
+          model: { poi: false, availability: 'Public', userId: 1 },
+        },
+        hashes: [{ hash: HASH }],
+      },
+      {
+        modelVersionId: 202,
+        modelVersion: {
+          id: 202,
+          modelId: 22,
+          availability: 'Public',
+          model: { poi: false, availability: 'Public', userId: 1 },
+        },
+        hashes: [{ hash: HASH_2 }],
+      },
     ]);
 
     const { promise, res, json } = runRequest([HASH, HASH_2]);

@@ -10,12 +10,12 @@ import {
   Center,
   CopyButton,
   Button,
-  Tooltip,
   Pagination,
   Skeleton,
   SegmentedControl,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import buzzClasses from '~/components/Buzz/buzz.module.scss';
 import { IconCopy, IconCheck, IconGift, IconTicket } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';

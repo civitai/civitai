@@ -1,6 +1,5 @@
 import type { FC, Ref } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ParsedUrlQuery } from 'querystring';
 import { useComputedColorScheme } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { env } from '~/env/client';
@@ -8,9 +7,18 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { checkStudioModelLive } from '~/components/Training/studio-model-live';
+import { studioPublishUrl } from '~/components/Training/studio-publish-url';
+import { checkStudioTriggerWord } from '~/components/Training/studio-trigger-word-check';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
+import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { canGenerateWithEpochs, paidMemberHostFlag } from '~/utils/training';
+import {
+  canGenerateWithEpochs,
+  enabledStudioModelFlags,
+  paidMemberHostFlag,
+} from '~/utils/training';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { getAirEcosystem, stringifyAIR } from '~/shared/utils/air';
@@ -42,12 +50,6 @@ const hrefFor = (loc: StudioLocation) =>
     : loc.view === 'new'
     ? '/training-studio?view=new'
     : `/training-studio?run=${encodeURIComponent(loc.workflowId)}`;
-
-const locationFromQuery = (query: ParsedUrlQuery): StudioLocation => {
-  if (typeof query.run === 'string' && query.run) return { view: 'run', workflowId: query.run };
-  if (query.view === 'new') return { view: 'new' };
-  return { view: 'home' };
-};
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -92,7 +94,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   // the v2 lane ignores it — so both need BOTH flags or they would target a lane that silently
   // does nothing with the handoff.
   const features = useFeatureFlags();
-  const canGenerate = features.generationAirResources && features.formGraphGenerator;
+  const canGenerate = features.generationAirResources;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
   // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same
@@ -101,6 +103,11 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   const currentUser = useCurrentUser();
   const canGenerateUnpublished = canGenerateWithEpochs(currentUser);
   const isPaidMember = paidMemberHostFlag(currentUser);
+  const enabledModelFlagsKey = enabledStudioModelFlags(features).join(',');
+  const enabledModelFlags = useMemo(
+    () => enabledModelFlagsKey.split(',').filter(Boolean),
+    [enabledModelFlagsKey]
+  );
 
   const run = typeof router.query.run === 'string' ? router.query.run : null;
   const isNew = router.query.view === 'new';
@@ -151,6 +158,16 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           if (!r.ok) throw new Error(`token mint failed (${r.status})`);
           return (await r.json()).token as string;
         },
+        checkTrainingText: checkStudioTriggerWord,
+        // Auto-label is free: it runs on the system token here, never the user's (which would be
+        // charged). The element refuses auto-label when a host lacks these.
+        autoLabelSubmit: (
+          items: { mediaUrl: string; key: string }[],
+          mode: 'tag' | 'caption',
+          media: 'image' | 'video' | 'audio'
+        ) => utilsRef.current.client.training.studioAutoLabelSubmit.mutate({ items, mode, media }),
+        autoLabelPoll: (workflowId: string, signal?: AbortSignal) =>
+          utilsRef.current.client.training.studioAutoLabelPoll.query({ workflowId }, { signal }),
         // Without this the element has no Blue balance to compare against, and its Review step's
         // Yellow/Green spend confirmation degrades to the vaguer "up to the full price" wording.
         getBuzzBalances: async () => {
@@ -169,6 +186,15 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
             return null;
           }
         },
+        // Same status the classic trainer's TrainStatusMessage reads; the element shows the notice and
+        // disables Start when training is off. Null (e.g. the `imageTraining` flag is off) = no banner.
+        getTrainingStatus: async () => {
+          try {
+            return await utilsRef.current.training.getStatus.fetch();
+          } catch {
+            return null;
+          }
+        },
         // pricingUrl relative on purpose: the element treats it as an in-host same-tab navigation.
         config: {
           orchestratorEndpoint,
@@ -177,6 +203,9 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           canGenerateUnpublished,
           isPaidMember,
           pricingUrl: '/pricing',
+          supportUrl: SUPPORT_LINKS.portal,
+          dataPolicyUrl: '/content/training/data-policy',
+          enabledModelFlags,
         },
         hrefFor,
         navigate: async (loc: StudioLocation) => {
@@ -198,12 +227,9 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
           : undefined,
         // Relative on purpose (same-tab). Not gated on canGenerate — the publish entry guards
         // muted/onboarding itself, and publishing doesn't ride the generation lanes.
-        publishUrl: (req: { workflowId: string; epoch: number }) =>
-          `/models/train/from-orchestrator?${new URLSearchParams({
-            workflowId: req.workflowId,
-            epoch: String(req.epoch),
-          })}`,
+        publishUrl: studioPublishUrl,
         modelPageUrl: (req: { modelId: number }) => `/models/${req.modelId}`,
+        modelLive: checkStudioModelLive,
         // The studio's Custom base: open this app's resource-select modal and hand back the picked
         // checkpoint as an AIR (the same urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>
         // shape the studio's paste input takes). Resolves null on cancel.
@@ -266,6 +292,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
     buzzMode,
     canGenerateUnpublished,
     isPaidMember,
+    enabledModelFlags,
   ]);
 
   // Browser navigation (and the element's own host.navigate round-trip) drives the view: the query
@@ -283,8 +310,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
+  const classicTrainerUrl =
+    isNew || !currentUser?.username
+      ? '/models/train'
+      : `/user/${currentUser.username}/models?section=training`;
+
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+    <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );

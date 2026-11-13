@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { createStore, useStore } from 'zustand';
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { Flags } from '~/shared/utils/flags';
@@ -12,6 +12,29 @@ import type { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import type { UserContentSettings } from '~/server/schema/user.schema';
+import type { EventPointPops } from '~/shared/constants/event-point-pops.constants';
+
+/**
+ * Whether this viewer sees event cosmetics (worn hats) and Hat Turf. Reads true outside the
+ * provider. Viewer-side only: it changes nothing about opt-in, stock or scoring.
+ */
+export function useShowEventCosmetics() {
+  const store = useContext(Context);
+  const preview = useContext(EventCosmeticsPreviewContext);
+  const getSnapshot = () => preview || (store?.getState().showEventCosmetics ?? true);
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, getSnapshot, getSnapshot);
+}
+
+const EventCosmeticsPreviewContext = createContext(false);
+/**
+ * Shows event cosmetics inside whatever the setting: for a preview of the hat someone is picking,
+ * fitting or buying, which is a control they opened, not content.
+ */
+export function EventCosmeticsPreview({ children }: { children: React.ReactNode }) {
+  return (
+    <EventCosmeticsPreviewContext.Provider value>{children}</EventCosmeticsPreviewContext.Provider>
+  );
+}
 
 const Context = createContext<ContentSettingsStore | null>(null);
 
@@ -22,6 +45,17 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
+      // These lists are filtered on the server by these two, read from the session, which this
+      // mutation has refreshed by the time it returns: the app image picker's posted list, a 3D
+      // model's related posts, and a shop's services (mature ones show only at the viewer's
+      // level). A list fetched before that was filtered at the old level. A no-op for a list
+      // that has not been opened.
+      if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
+        void queryUtils.blockImagePicker.getPosted.reset();
+        void queryUtils.creatorService.getForShop.reset();
+        void queryUtils.model3d.getRelatedPosts.reset();
+      }
+
       // Patch every confirmed field into the getSettings React Query cache so
       // `CivitaiSessionProvider` sees the user's intent immediately, instead
       // of the stale `session.user.*` values that live behind the JWT cookie
@@ -36,6 +70,10 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       if (variables.blurNsfw !== undefined) changedSettings.blurNsfw = variables.blurNsfw;
       if (variables.autoplayGifs !== undefined)
         changedSettings.autoplayGifs = variables.autoplayGifs;
+      if (variables.showEventCosmetics !== undefined)
+        changedSettings.showEventCosmetics = variables.showEventCosmetics;
+      if (variables.eventPointPops !== undefined)
+        changedSettings.eventPointPops = variables.eventPointPops;
 
       if (Object.keys(changedSettings).length === 0) return;
 
@@ -88,6 +126,19 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
     }
   }, [settings]);
 
+  // Event cosmetics are hidden on this device by its cookie too: the only place a signed-out
+  // viewer's choice lives, and the first paint's answer before an account is read.
+  useEffect(() => {
+    const store = storeRef.current;
+    if (!store) return;
+    return store.subscribe((curr, prev) => {
+      if (curr.showEventCosmetics !== prev.showEventCosmetics)
+        setCookie('showEventCosmetics', curr.showEventCosmetics);
+      if (curr.eventPointPops !== prev.eventPointPops)
+        setCookie('eventPointPops', curr.eventPointPops);
+    });
+  }, []);
+
   useEffect(() => {
     const store = storeRef.current;
     if (!store || type === 'unauthed') return;
@@ -129,6 +180,14 @@ export function useBrowsingSettings<T>(selector: (state: StoreState & StoreState
   return useStore(store, selector);
 }
 
+const noSubscription = () => () => undefined;
+/** `autoplayGifs` for components that can mount outside the provider, where it reads true. */
+export function useAutoplayGifs() {
+  const store = useContext(Context);
+  const getSnapshot = () => store?.getState().autoplayGifs ?? true;
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, getSnapshot, getSnapshot);
+}
+
 type StoreState = {
   showNsfw: boolean;
   blurNsfw: boolean;
@@ -136,6 +195,8 @@ type StoreState = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
+  showEventCosmetics: boolean;
+  eventPointPops: EventPointPops;
   domain: ColorDomain;
 };
 

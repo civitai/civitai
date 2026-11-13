@@ -11,6 +11,13 @@ import {
   type PaidAccessConfig,
 } from '$lib/monetization/paid-access';
 import { saleEligibleFilter } from '$lib/server/monetization/sale-eligibility';
+import {
+  allBrowsingLevelsFlag,
+  childBrowsingTagIds,
+  peopleBrowsingTagIds,
+  sfwBrowsingLevelsFlag,
+} from '@civitai/shared';
+import { siteListing, type SiteFilter, type SiteListing } from '$lib/site-listing';
 
 // "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
 function paidAccessFilter(alias: string) {
@@ -27,6 +34,34 @@ function feeFilter(alias: string, mode: 'set' | 'off') {
   return mode === 'set'
     ? sql<boolean>`(${f} is not null and ${f} > 0)`
     : sql<boolean>`(${f} is null or ${f} <= 0)`;
+}
+
+function hasTagSql(alias: string, tagIds: number[]) {
+  const ids = sql.join(tagIds.map((id) => sql.lit(id)));
+  return sql<boolean>`exists (select 1 from "TagsOnModels" tom where tom."modelId" = ${sql.raw(alias)}."id" and tom."tagId" in (${ids}))`;
+}
+
+function hasPublicVersionSql(alias: string) {
+  return sql<boolean>`exists (select 1 from "ModelVersion" pv where pv."modelId" = ${sql.raw(alias)}."id" and pv."status" = 'Published' and pv."availability" = 'Public')`;
+}
+
+// The model shows a separate face to civitai.com viewers: `sfwName` turns it on, and a moderator removal
+// that has cleared the cover (`meta.comFaceRemoved`) turns it off until the owner sets a new one.
+export function hasComFaceSql(alias: string) {
+  const m = sql.raw(`${alias}.`);
+  return sql<boolean>`(${m}"sfwName" is not null and not (${m}"meta"->'comFaceRemoved' is not null and ${m}"sfwCoverImageId" is null))`;
+}
+
+// The SQL twin of `siteListing`: a change to one is a change to both.
+function siteFilterSql(alias: string, site: SiteFilter) {
+  if (site === 'com-face') return hasComFaceSql(alias);
+  const m = sql.raw(`${alias}.`);
+  const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
+  const onCom = sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`;
+  const hiddenOnRed = sql`(${m}"minor" or ${hasTagSql(alias, childBrowsingTagIds)})`;
+  if (site === 'both') return sql<boolean>`(${listed} and ${onCom} and not ${hiddenOnRed})`;
+  if (site === 'com') return sql<boolean>`(${listed} and ${onCom} and ${hiddenOnRed})`;
+  return sql<boolean>`(${listed} and not ${onCom} and not ${hiddenOnRed})`;
 }
 
 // Rebuild the UI-facing PaidAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
@@ -78,6 +113,10 @@ export type CreatorModel = {
   nsfwLevel: number;
   /** Flagged as depicting a real person — a new price on it is refused (licensingFeeBlockedFor). */
   poi: boolean;
+  listing: SiteListing;
+  /** Has its own civitai.com title, which a fresh draft would replace. False for a face the
+   *  listing re-check removed: Make Safe may draft that one again. */
+  hasComFace: boolean;
   versions: CreatorModelVersion[];
 };
 
@@ -99,6 +138,7 @@ export type ModelsQuery = {
   usage?: 'download' | 'generation';
   /** Only versions a sale could actually discount — the sale picker's list (868kwp6mp). */
   saleEligible?: boolean;
+  site?: SiteFilter;
   sort?: ModelsSort;
   page?: number;
   /** Rows per page (defaults to MODELS_PER_PAGE); the page's cookie-backed size selector sets it. */
@@ -151,7 +191,7 @@ export type CsvVersionRow = {
 // Every version matching the page's filters (no pagination) for CSV export. Mirrors getCreatorModels' filters so
 // "export" matches what the creator is currently looking at.
 export async function getCreatorVersionsForCsv(query: ModelsQuery): Promise<CsvVersionRow[]> {
-  const { userId, q, fee, baseModel, type, status, access } = query;
+  const { userId, q, fee, baseModel, type, status, access, site } = query;
   let qb = dbRead
     .selectFrom('ModelVersion as mv')
     .innerJoin('Model as m', 'm.id', 'mv.modelId')
@@ -163,6 +203,7 @@ export async function getCreatorVersionsForCsv(query: ModelsQuery): Promise<CsvV
   else if (status === 'draft') qb = qb.where('m.status', '=', 'Draft');
   else if (status !== 'all') qb = qb.where('m.status', '!=', 'Draft');
   if (baseModel) qb = qb.where('mv.baseModel', '=', baseModel);
+  if (site) qb = qb.where(siteFilterSql('m', site));
   if (access) qb = qb.where(paidAccessFilter('mv'));
   if (fee === 'set') qb = qb.where(feeFilter('mv', 'set'));
   if (fee === 'off') qb = qb.where(feeFilter('mv', 'off'));
@@ -253,6 +294,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
     access,
     usage,
     saleEligible,
+    site,
     sort = 'recent',
   } = query;
   const page = Math.max(1, query.page ?? 1);
@@ -270,6 +312,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   if (status === 'published') filtered = filtered.where('status', '=', 'Published');
   else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
   else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
+  if (site) filtered = filtered.where(siteFilterSql('"Model"', site));
   const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue || !!saleEligible;
   if (hasVersionFilter)
     filtered = filtered.where((eb) =>
@@ -290,7 +333,24 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
   const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
     filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
     filtered
-      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel', 'poi'])
+      .select([
+        'id',
+        'name',
+        'type',
+        'status',
+        'nsfw',
+        'nsfwLevel',
+        'poi',
+        'minor',
+        'availability',
+        'mode',
+      ])
+      .select([
+        hasPublicVersionSql('"Model"').as('hasPublicVersion'),
+        hasTagSql('"Model"', peopleBrowsingTagIds).as('hasPeopleTag'),
+        hasTagSql('"Model"', childBrowsingTagIds).as('hasChildTag'),
+        hasComFaceSql('"Model"').as('hasComFace'),
+      ])
       .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
       .limit(perPage)
       .offset((page - 1) * perPage)
@@ -399,6 +459,7 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       .$if(!status || (status !== 'all' && status !== 'published' && status !== 'draft'), (b) =>
         b.where('m.status', '!=', 'Draft')
       )
+      .$if(!!site, (b) => b.where(siteFilterSql('m', site!)))
       .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
       .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
       .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
@@ -447,6 +508,18 @@ export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModel
       nsfw: !!m.nsfw,
       nsfwLevel: Number(m.nsfwLevel ?? 0),
       poi: !!m.poi,
+      listing: siteListing({
+        status: m.status,
+        availability: m.availability,
+        mode: m.mode,
+        hasPublicVersion: !!m.hasPublicVersion,
+        nsfwLevel: Number(m.nsfwLevel ?? 0),
+        poi: !!m.poi,
+        minor: !!m.minor,
+        hasPeopleTag: !!m.hasPeopleTag,
+        hasChildTag: !!m.hasChildTag,
+      }),
+      hasComFace: !!m.hasComFace,
       versions: byModel.get(m.id) ?? [],
     })),
     total,

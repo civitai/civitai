@@ -11,6 +11,7 @@ export type ModeratorArticleRow = {
   id: number;
   title: string;
   status: ArticleStatus;
+  userId: number;
   createdAt: Date | null;
   publishedAt: Date | null;
   metadata: ArticleMetadata;
@@ -49,6 +50,7 @@ export async function getModeratorArticles({
       'Article.id',
       'Article.title',
       'Article.status',
+      'Article.userId',
       'Article.createdAt',
       'Article.publishedAt',
       'Article.metadata',

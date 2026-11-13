@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModelVersionAccessService from '~/server/services/model-version-access.service';
 
 // `~/server/redis/client` and `~/server/logging/client` are covered by the canonical
 // shared mocks (`redisMock` / `loggingMock`) that `src/__tests__/setup.ts` registers for
@@ -19,6 +20,7 @@ const {
   mockGetOwnerDonationGoals,
   mockHasEntityAccess,
   mockCheckDonationGoalComplete,
+  mockGrantModelVersionAccess,
 } = vi.hoisted(() => ({
   mockCreateMultiAccountBuzzTransaction: vi.fn(),
   mockGetPaidAccess: vi.fn(),
@@ -27,6 +29,7 @@ const {
   mockGetOwnerDonationGoals: vi.fn(),
   mockHasEntityAccess: vi.fn(),
   mockCheckDonationGoalComplete: vi.fn(),
+  mockGrantModelVersionAccess: vi.fn(),
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
@@ -42,7 +45,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
@@ -63,6 +65,10 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundMultiAccountTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
+vi.mock('~/server/services/model-version-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelVersionAccessService>()),
+  grantModelVersionAccess: mockGrantModelVersionAccess,
+}));
 vi.mock('~/server/services/donation-goal.service', () => ({
   checkDonationGoalComplete: mockCheckDonationGoalComplete,
   ensureDonationGoal: vi.fn(),
@@ -96,15 +102,24 @@ const VERSION_ID = 555;
 const seed = ({
   acceptsBlueBuzz = false,
   goal = null as { id: number; active: boolean } | null,
+  baseModel = 'SDXL 1.0',
+  model = {} as Record<string, unknown>,
 } = {}) => {
   const versionRow = {
     id: VERSION_ID,
     status: 'Published',
     name: 'v1',
     meta: { hadEarlyAccessPurchase: true },
-    baseModel: 'SDXL 1.0',
+    baseModel,
     model: { id: 1, name: 'Model', userId: OWNER, nsfw: false },
   };
+  dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
+    nsfw: false,
+    nsfwLevel: 1,
+    sfwName: null,
+    sfwCoverImageId: null,
+    ...model,
+  });
   // getDbWithoutLag('modelVersion', id) returns dbRead when REPLICATION_LAG_DELAY=0;
   // earlyAccessPurchase calls getVersionById which uses it. Set up both sides so
   // the test is correct regardless of which client the service routes through.
@@ -126,6 +141,7 @@ const seed = ({
   dbMock.dbRead.entityAccess.findFirst.mockResolvedValue(null);
   dbMock.dbRead.entityAccess.upsert.mockResolvedValue({});
   dbMock.dbWrite.entityAccess.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.entityAccess.findUnique.mockResolvedValue(null);
   dbMock.dbWrite.entityAccess.upsert.mockResolvedValue({});
   mockCreateMultiAccountBuzzTransaction.mockResolvedValue({
     transactionCount: 1,
@@ -300,7 +316,50 @@ describe('earlyAccessPurchase — a scheduled sale is priced from the PRIMARY, n
     ).rejects.toThrow();
 
     expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.entityAccess.upsert).not.toHaveBeenCalled();
+    expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('earlyAccessPurchase — a user who already holds access is not charged again', () => {
+  it('refuses before any charge when the held grant (e.g. a gift, no transaction id) covers it', async () => {
+    seed();
+    dbMock.dbWrite.entityAccess.findUnique.mockResolvedValue({ permissions: 3 });
+
+    await expect(
+      earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType: 'yellow',
+      })
+    ).rejects.toThrow('You already have access to this model version.');
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+
+  it('still charges a generation-only holder who upgrades to download', async () => {
+    seed();
+    dbMock.dbWrite.entityAccess.findUnique.mockResolvedValue({ permissions: 1 });
+
+    await earlyAccessPurchase({
+      userId: BUYER,
+      modelVersionId: VERSION_ID,
+      type: 'download',
+      buzzType: 'yellow',
+    });
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(mockGrantModelVersionAccess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        permissions: 3,
+        // The refund reads both keys.
+        meta: {
+          'download-buzzTransactionId': `early-access-${VERSION_ID}-download-${BUYER}`,
+          'download-purchasedAt': expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        },
+      })
+    );
   });
 });
 
@@ -397,4 +456,117 @@ describe('earlyAccessPurchase — a sale on a PERMANENT gate, where the price ce
     // A zero-Buzz purchase writes no ledger row, and the 30-day refund path reads amounts back from it.
     expect(charged()).toBe(1);
   });
+});
+
+describe('earlyAccessPurchase — Green Buzz needs the model on civitai.com', () => {
+  // A mature model with a complete .com face: a .com title, a .com cover, and a PG level to show it at.
+  const withComFace = { nsfw: true, nsfwLevel: 1 | 16, sfwName: 'Safe title', sfwCoverImageId: 9 };
+  const buy = (buzzType: 'green' | 'yellow') =>
+    earlyAccessPurchase({ userId: BUYER, modelVersionId: VERSION_ID, type: 'download', buzzType });
+
+  it.each([
+    ['no .com face at all', { nsfw: true, nsfwLevel: 16, sfwName: null, sfwCoverImageId: null }],
+    ['a .com title but its cover removed', { ...withComFace, sfwCoverImageId: null }],
+    ['a .com title and cover but no PG level to show them at', { ...withComFace, nsfwLevel: 16 }],
+  ])('refuses Green on a mature model with %s, before any Buzz moves', async (_n, model) => {
+    seed({ model });
+
+    await expect(buy('green')).rejects.toThrow('not available with this currency');
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockGrantModelVersionAccess).not.toHaveBeenCalled();
+  });
+
+  it('reads the face from the primary, not the replica', async () => {
+    seed({ model: withComFace });
+
+    await buy('green');
+
+    expect(dbMock.dbWrite.model.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1 },
+        select: expect.objectContaining({
+          nsfw: true,
+          nsfwLevel: true,
+          sfwName: true,
+          sfwCoverImageId: true,
+        }),
+      })
+    );
+    expect(dbMock.dbRead.model.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('sells in Green when the mature model has a .com face (control)', async () => {
+    seed({ model: withComFace });
+
+    await buy('green');
+
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ fromAccountTypes: ['green'] })
+    );
+  });
+
+  it('still sells a face-less mature model in yellow', async () => {
+    seed({ model: { ...withComFace, sfwName: null, sfwCoverImageId: null } });
+
+    await buy('yellow');
+
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses Green on a non-mature model rated with no PG or PG-13 level', async () => {
+    seed({ model: { nsfw: false, nsfwLevel: 4 } });
+
+    await expect(buy('green')).rejects.toThrow('not available with this currency');
+    expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a PG level (control)', 1 | 4],
+    ['no rating yet', 0],
+  ])('still sells a non-mature model with %s in Green', async (_n, nsfwLevel) => {
+    seed({ model: { nsfw: false, nsfwLevel, sfwName: null, sfwCoverImageId: null } });
+
+    await buy('green');
+
+    expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('earlyAccessPurchase — non-commercial base models', () => {
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
+    'refuses a %s purchase before any Buzz moves',
+    async (baseModel) => {
+      seed({ baseModel, goal: { id: 77, active: true } });
+
+      await expect(
+        earlyAccessPurchase({
+          userId: BUYER,
+          modelVersionId: VERSION_ID,
+          type: 'download',
+          buzzType: 'yellow',
+        })
+      ).rejects.toThrow(
+        `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`
+      );
+      expect(mockCreateMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.donation.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
+    'still sells a %s version (control)',
+    async (baseModel) => {
+      seed({ baseModel });
+
+      await earlyAccessPurchase({
+        userId: BUYER,
+        modelVersionId: VERSION_ID,
+        type: 'download',
+        buzzType: 'yellow',
+      });
+
+      expect(mockCreateMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+      expect(mockCreateMultiAccountBuzzTransaction.mock.calls[0][0].amount).toBe(500);
+    }
+  );
 });

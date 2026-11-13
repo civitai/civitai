@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDownload, IconHeart, IconThumbDown, IconThumbUp, IconWand } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
@@ -6,45 +6,23 @@ import { useState } from 'react';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
+import { useMenuSheet } from '~/components/Drawer/useMenuSheet';
 import { GeneratedOutputRemixMenu } from '~/components/ImageGeneration/GeneratedOutputRemixMenu';
 import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { downloadBlob, fetchBlob } from '~/utils/file-utils';
+import { downloadOutput } from '~/components/ImageGeneration/utils/output-download';
 import { showErrorNotification } from '~/utils/notifications';
 
 import classes from './GeneratedImage.module.css';
 
-export function GeneratedOutputActions({
-  output,
-  state,
-  isLightbox,
-  infoSlot,
-  onToggleFavorite,
-  onToggleFeedback,
-}: {
-  output: BlobData;
-  state: { favorite?: boolean; feedback?: string };
-  isLightbox?: boolean;
-  infoSlot?: ReactNode;
-  onToggleFavorite: (value: boolean) => void;
-  onToggleFeedback: (feedback: 'liked' | 'disliked') => void;
-}) {
-  const { groups } = useGeneratedItemWorkflows({
-    outputType: output.mediaType,
-    ecosystemKey: output.ecosystemKey,
-  });
-  const hasWorkflows = groups.some((g) => g.workflows.length > 0);
-
+/** Saves the output to the device, under its own id. */
+export function useDownloadOutput(output: BlobData) {
   const [downloading, setDownloading] = useState(false);
   const handleDownload = async () => {
     if (downloading) return;
     setDownloading(true);
     try {
-      const blob = await fetchBlob(output.url);
-      if (!blob) throw new Error('Failed to fetch file');
-      const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'bin';
-      const baseName = output.id.replace(/\.[^./\\]+$/, '');
-      downloadBlob(blob, `${baseName}.${ext}`);
+      await downloadOutput(output);
     } catch (e) {
       showErrorNotification({
         title: 'Download failed',
@@ -54,6 +32,34 @@ export function GeneratedOutputActions({
       setDownloading(false);
     }
   };
+  return { downloading, handleDownload };
+}
+
+export function GeneratedOutputActions({
+  output,
+  state,
+  isLightbox,
+  compact,
+  infoSlot,
+  onToggleFavorite,
+  onToggleFeedback,
+}: {
+  output: BlobData;
+  state: { favorite?: boolean; feedback?: string };
+  isLightbox?: boolean;
+  /** A tile in the mobile generator: four actions, the rest in its menu and the lightbox. */
+  compact?: boolean;
+  infoSlot?: ReactNode;
+  onToggleFavorite: (value: boolean) => void;
+  onToggleFeedback: (feedback: 'liked' | 'disliked') => void;
+}) {
+  const { groups } = useGeneratedItemWorkflows({
+    outputType: output.mediaType,
+    ecosystemKey: output.ecosystemKey,
+  });
+  const hasWorkflows = output.canUse('derive') && groups.some((g) => g.workflows.length > 0);
+  const { downloading, handleDownload } = useDownloadOutput(output);
+  const improveSheet = useMenuSheet();
 
   return (
     <div className={clsx(classes.actionsFooter, 'flex w-full items-center')}>
@@ -63,6 +69,8 @@ export function GeneratedOutputActions({
           className={state.favorite ? classes.favoriteButton : undefined}
           variant={state.favorite ? 'light' : 'subtle'}
           color={state.favorite ? 'red' : 'gray'}
+          aria-label="Favorite"
+          aria-pressed={!!state.favorite}
           onClick={() => onToggleFavorite(!state.favorite)}
         >
           <IconHeart size={16} />
@@ -72,6 +80,8 @@ export function GeneratedOutputActions({
           size="md"
           variant={state.feedback === 'liked' ? 'light' : 'subtle'}
           color={state.feedback === 'liked' ? 'green' : 'gray'}
+          aria-label="Like"
+          aria-pressed={state.feedback === 'liked'}
           onClick={() => onToggleFeedback('liked')}
         >
           <IconThumbUp size={16} />
@@ -81,6 +91,8 @@ export function GeneratedOutputActions({
           size="md"
           variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
           color={state.feedback === 'disliked' ? 'red' : 'gray'}
+          aria-label="Dislike"
+          aria-pressed={state.feedback === 'disliked'}
           onClick={() => onToggleFeedback('disliked')}
         >
           <IconThumbDown size={16} />
@@ -96,30 +108,41 @@ export function GeneratedOutputActions({
             withinPortal
             position="top"
             withArrow
+            {...improveSheet.menuProps}
           >
             <Menu.Target>
-              <LegacyActionIcon size="md">
+              <LegacyActionIcon size="md" aria-label="Improve">
                 <IconWand size={16} />
               </LegacyActionIcon>
             </Menu.Target>
-            <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
+            <Menu.Dropdown
+              className={
+                improveSheet.dropdownClassName ??
+                clsx(classes.improveMenu, classes.scrollableDropdown)
+              }
+            >
               <GeneratedItemWorkflowMenu image={output} workflowsOnly isLightbox={isLightbox} />
             </Menu.Dropdown>
+            {improveSheet.backdrop}
           </Menu>
         )}
 
-        <GeneratedOutputRemixMenu output={output} />
+        {!compact && (
+          <>
+            <GeneratedOutputRemixMenu output={output} />
 
-        <LegacyActionIcon
-          size="md"
-          onClick={handleDownload}
-          loading={downloading}
-          aria-label="Download"
-        >
-          <IconDownload size={16} />
-        </LegacyActionIcon>
+            <LegacyActionIcon
+              size="md"
+              onClick={handleDownload}
+              loading={downloading}
+              aria-label="Download"
+            >
+              <IconDownload size={16} />
+            </LegacyActionIcon>
+          </>
+        )}
       </div>
-      {infoSlot && (
+      {infoSlot && !compact && (
         <>
           <div className="flex-1" />
           {infoSlot}

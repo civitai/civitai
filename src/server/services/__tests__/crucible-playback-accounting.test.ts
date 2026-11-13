@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS,
   accumulatePlaybackMs,
+  playsToEnd,
 } from '~/shared/constants/crucible.constants';
 
 /**
@@ -67,5 +68,30 @@ describe('accumulatePlaybackMs', () => {
       });
     }
     expect(watched).toBe(6000);
+  });
+});
+
+describe('playsToEnd', () => {
+  it('plays a clip a few frames past the cap to its end', () => {
+    expect(playsToEnd(6.2, 6)).toBe(true);
+  });
+
+  it('plays a clip exactly 35% past the cap to its end', () => {
+    expect(playsToEnd(8.1, 6)).toBe(true);
+  });
+
+  it('stops a clip more than 35% past the cap at the cap', () => {
+    expect(playsToEnd(8.2, 6)).toBe(false);
+    expect(playsToEnd(60, 6)).toBe(false);
+  });
+
+  it('leaves a clip no longer than the cap alone, since it already plays through', () => {
+    expect(playsToEnd(6, 6)).toBe(false);
+    expect(playsToEnd(4, 6)).toBe(false);
+  });
+
+  it('does nothing without a cap or a decoded duration', () => {
+    expect(playsToEnd(6.2, 0)).toBe(false);
+    expect(playsToEnd(null, 6)).toBe(false);
   });
 });

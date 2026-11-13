@@ -1,8 +1,14 @@
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import type { ImageSchema } from '~/server/schema/image.schema';
+import type { ImageReferenceInput, ImageSchema } from '~/server/schema/image.schema';
 import { createImage } from '~/server/services/image.service';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/image-url-ownership';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
 
 /**
@@ -40,9 +46,7 @@ import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
  * well beyond the bug.
  */
 
-/** Shown to the user when the uploaded object is definitively gone. Keep it actionable. */
-export const COVER_IMAGE_UNAVAILABLE_MESSAGE =
-  'This cover image is no longer available. Please re-upload it.';
+export { COVER_IMAGE_UNAVAILABLE_MESSAGE };
 
 /**
  * The subset of an `Image` row needed to decide whether it can be safely re-pointed at a new
@@ -53,6 +57,8 @@ export type ReusableCoverImageCandidate = {
   postId: number | null;
   /** `Article.coverId` is `@unique` — a row already covering an article cannot cover another. */
   article: { id: number } | null;
+  /** Same for `Article.bannerId`. */
+  articleBanner: { id: number } | null;
   _count: {
     connections: number;
     challengesCover: number;
@@ -72,13 +78,13 @@ export type ReusableCoverImageCandidate = {
  *     trading the bug being fixed here for a different broken image.
  *
  * So a row is reusable only when it is either (a) the entity's CURRENT cover — trivially safe,
- * it is already exactly this pointer — or (b) unattached as far as the FIVE relations checked
- * below are concerned: `postId`, `article`, `connections`, `challengesCover`,
+ * it is already exactly this pointer — or (b) unattached as far as the SIX relations checked
+ * below are concerned: `postId`, `article`, `articleBanner`, `connections`, `challengesCover`,
  * `challengeEventCovers`.
  *
  * 🔴 That list is PARTIAL, not exhaustive. `Image` carries many more relations than these —
  * profile pictures, club covers, collection items, comic panels, app-listing assets, challenge
- * wins, … — and a row attached only through one of those will still be accepted here. The five
+ * wins, … — and a row attached only through one of those will still be accepted here. The six
  * are the ones a cover-image reuse can actually collide with today; treat the predicate as
  * "not attached to anything a cover can conflict with", NOT as "attached to nothing at all".
  * Anyone extending cover reuse to a new surface must widen this list deliberately.
@@ -92,6 +98,7 @@ export function isReusableCoverImage(
   return (
     candidate.postId == null &&
     candidate.article == null &&
+    candidate.articleBanner == null &&
     candidate._count.connections === 0 &&
     candidate._count.challengesCover === 0 &&
     candidate._count.challengeEventCovers === 0
@@ -110,6 +117,8 @@ export type CoverImageDeps = {
   }) => Promise<number | null>;
   /** `true` present · `false` definitively absent · `null` bucket could not be consulted. */
   objectExists: (url: string) => Promise<boolean | null>;
+  /** Throws {@link COVER_IMAGE_UNAVAILABLE_MESSAGE} when the caller may not use this url. */
+  assertUrlUsable: (args: { url: string; userId: number; uploaderId?: number }) => Promise<void>;
   createImage: (args: ImageSchema & { userId: number }) => Promise<{ id: number }>;
   /**
    * Called when the existence check came back indeterminate and we therefore proceeded
@@ -137,17 +146,15 @@ async function findReusableImageId({
   // or local database. On a database without it this is a sequential scan of `Image`; keep that
   // in mind before adding a call site on a hotter path than "the user saved a cover with no id".
   //
-  // 🔴 Scoped to `userId` on purpose. `Image.url` is the bare object key and it is visible in
-  // every public image URL, so an unscoped url→row reuse would let anyone attach somebody
-  // else's (possibly unpublished, blocked or moderated) image as their own cover just by
-  // reading a key off the site. Scoping to the caller keeps the outcome identical to what
-  // `createImage` would have produced — a row owned by the caller — minus the duplicate.
+  // Keep this scoped to `userId`: a reused cover must be a row the caller owns, the same
+  // outcome `createImage` would have produced, minus the duplicate.
   const candidates = await dbWrite.image.findMany({
     where: { url, userId },
     select: {
       id: true,
       postId: true,
       article: { select: { id: true } },
+      articleBanner: { select: { id: true } },
       _count: { select: { connections: true, challengesCover: true, challengeEventCovers: true } },
     },
     orderBy: { id: 'desc' },
@@ -219,6 +226,10 @@ function logExistenceUnknown({ userId }: { userId: number }) {
 export const productionCoverImageDeps: CoverImageDeps = {
   findReusableImageId,
   objectExists: objectExistsInUploads,
+  assertUrlUsable: async ({ url, userId, uploaderId }) => {
+    await assertClientImageUrlsUsable({ urls: [url], userId });
+    await assertClientKeysIssuedToCaller({ urls: [url], userId, alsoIssuedTo: uploaderId });
+  },
   logExistenceUnknown,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
@@ -234,9 +245,12 @@ export async function resolveCoverImageId(
     userId,
     currentCoverId,
     assertOwnership,
+    uploaderId,
   }: {
-    coverImage: ImageSchema;
+    coverImage: ImageReferenceInput;
     userId: number;
+    /** Who uploaded a new cover, when not `userId` (a moderator editing another user's entity). */
+    uploaderId?: number;
     /** The entity's existing `coverId`, when the caller already has it loaded. */
     currentCoverId?: number | null;
     /** The call site's own ownership rule for an `id` the client supplied. Must throw to deny. */
@@ -275,6 +289,8 @@ export async function resolveCoverImageId(
     deps.logExistenceUnknown({ userId });
   }
 
-  const created = await deps.createImage({ ...image, userId });
+  // After the bucket check, so both refusals cost the same round-trip.
+  await deps.assertUrlUsable({ url: image.url, userId, uploaderId });
+  const created = await deps.createImage({ ...pickClientImageColumns(image), userId });
   return created.id;
 }

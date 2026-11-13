@@ -8,9 +8,7 @@ const CommentEditModal = dynamic(
 
 const commentEditDialog = routedDialogDictionary.addItem('commentEdit', {
   component: CommentEditModal,
-  resolve: (query, { commentId }) => ({
-    query: { ...query, commentId },
-  }),
+  resolve: (query) => ({ query }),
 });
 
 export type CommentEditDialog = typeof commentEditDialog;

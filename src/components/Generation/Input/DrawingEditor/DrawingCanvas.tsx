@@ -26,7 +26,8 @@ import type {
 } from './drawing.types';
 import { generateElementId, isTransformableElement } from './drawing.utils';
 import styles from './DrawingEditor.module.scss';
-import { ActionIcon, Loader, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Loader, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconTrash, IconFlipHorizontal, IconFlipVertical } from '@tabler/icons-react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 

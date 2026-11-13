@@ -7,6 +7,8 @@ import {
   voidUnscannedCrucibles,
 } from '~/server/services/crucible.service';
 import { logToAxiom } from '~/server/logging/client';
+import { CrucibleRankingDeferredError } from '~/server/services/crucible-bradley-terry';
+import { swapAllFlagDays } from '~/server/events/turf/turf.service';
 
 const log = createLogger('finalize-crucibles', 'yellow');
 
@@ -51,9 +53,11 @@ export const finalizeCruciblesJob = createJob(
 
     const results: {
       success: number[];
+      deferred: number[];
       failed: { id: number; error: string }[];
     } = {
       success: [],
+      deferred: [],
       failed: [],
     };
 
@@ -69,6 +73,12 @@ export const finalizeCruciblesJob = createJob(
 
         results.success.push(crucibleId);
       } catch (error) {
+        // Waiting on ClickHouse ingest is expected; the next run finalizes it.
+        if (error instanceof CrucibleRankingDeferredError) {
+          log(error.message);
+          results.deferred.push(crucibleId);
+          continue;
+        }
         const errorMessage = error instanceof Error ? error.message : String(error);
         log(`Failed to finalize crucible ${crucibleId}: ${errorMessage}`);
 
@@ -86,13 +96,18 @@ export const finalizeCruciblesJob = createJob(
     }
 
     log(
-      `Finalize-crucibles job complete: ${results.success.length} succeeded, ${results.failed.length} failed`
+      `Finalize-crucibles job complete: ${results.success.length} succeeded, ${results.deferred.length} deferred, ${results.failed.length} failed`
     );
+
+    // A finished flag Crucible becomes the home row's flags now, not at the next turf reconcile.
+    // swapAllFlagDays logs its own failures and never throws for one event.
+    if (results.success.length) await swapAllFlagDays();
 
     return {
       finalized: results.success.length,
       failed: results.failed.length,
       successIds: results.success,
+      deferredIds: results.deferred,
       failedIds: results.failed,
     };
   },

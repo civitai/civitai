@@ -1,4 +1,4 @@
-import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
+import { gateRuleSchema } from '~/shared/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
@@ -7,13 +7,17 @@ import {
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
+  resolveResourceFileSchema,
   setEvictableSchema,
+  setAdditionalResourceFeeWaivedSchema,
+  setPartnerDisclosureSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
   checkResourcesCoverage,
   getGenerationData,
   getGenerationStatus,
+  getGenerationStatusState,
   getGateRules,
   getGeneratorMessages,
   getGenerationConfig,
@@ -29,11 +33,14 @@ import {
   // textToImageTestRun,
   toggleGenerationDisabled,
   setEvictable,
+  setAdditionalResourceFeeWaived,
+  setPartnerDisclosure,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { resolveWildcardPackForUser } from '~/server/services/wildcard-pack.service';
+import { resolveResourceFileForUser } from '~/server/services/resource-file.service';
 import { CacheTTL } from '~/server/common/constants';
 import {
   getWorkflowDefinitions,
@@ -42,6 +49,11 @@ import {
 import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import {
+  coverageAudience,
+  generatorAcceptsBoostRequired,
+} from '~/server/services/generation/coverage-source';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -63,13 +75,21 @@ export const generationRouter = router({
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
-    .query(({ input, ctx }) =>
-      getGenerationData({
+    .query(async ({ input, ctx }) => {
+      const data = await getGenerationData({
         query: input,
         user: ctx.user,
         browsingLevel: getRequestBrowsingLevel(ctx),
-      })
-    ),
+        mediaViewer: ctx,
+      });
+      if (input.type !== 'modelVersion' && input.type !== 'modelVersions') return data;
+      return {
+        ...data,
+        resources: data.resources.filter((r) =>
+          canViewPoiModel(r.model.poi, r.model.userId, ctx.user)
+        ),
+      };
+    }),
   checkResourcesCoverage: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(checkResourcesCoverageSchema)
@@ -78,10 +98,14 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
-    .query(async () => {
+    .query(async ({ ctx }) => {
+      const { status: read, known } = await getGenerationStatusState();
+      // A cold pod's fail-closed fallback (kill switch unreadable, never read) must not be cached
+      // at the edge: it would be served to everyone for the TTL after the pod recovers.
+      if (!known && ctx.cache) ctx.cache.skip = true;
       // Don't expose the moderator-identity audit stamps on the public,
       // edge-cached endpoint — they're moderator-only (getStatusModerator).
-      const { updatedBy, selfHostedUpdatedBy, ...status } = await getGenerationStatus();
+      const { updatedBy, selfHostedUpdatedBy, ...status } = read;
 
       // Only surface the status message to clients while the gate is actually
       // engaged. The message stays persisted in Redis (so operators don't have
@@ -147,15 +171,33 @@ export const generationRouter = router({
   setEvictable: moderatorProcedure
     .input(setEvictableSchema)
     .mutation(({ input, ctx }) => setEvictable({ ...input, isModerator: ctx.user.isModerator })),
+  setAdditionalResourceFeeWaived: moderatorProcedure
+    .input(setAdditionalResourceFeeWaivedSchema)
+    .mutation(({ input, ctx }) =>
+      setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
+    ),
+  setPartnerDisclosure: moderatorProcedure
+    .input(setPartnerDisclosureSchema)
+    .mutation(({ input, ctx }) =>
+      setPartnerDisclosure({ ...input, isModerator: ctx.user.isModerator })
+    ),
+  getCoverageAudience: publicProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .query(({ ctx }) => coverageAudience(ctx.user ?? undefined)),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)
-    .query(({ input, ctx }) =>
-      getResourceData(input.ids, {
-        user: ctx.user,
-        withPreview: true,
-        browsingLevel: getRequestBrowsingLevel(ctx),
-      })
+    .query(async ({ input, ctx }) =>
+      (
+        await getResourceData(input.ids, {
+          user: ctx.user,
+          withPreview: true,
+          browsingLevel: getRequestBrowsingLevel(ctx),
+          // The generator form's own read of the resources it will submit, so it must agree with
+          // the whatIf: an admitted cold checkpoint reads as generatable, not stripped at submit.
+          acceptBoostRequired: generatorAcceptsBoostRequired(input.acceptBoostRequired, ctx),
+        })
+      ).filter((r) => canViewPoiModel(r.model.poi, r.model.userId, ctx.user))
     ),
   resolveImageMeta: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -188,6 +230,26 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       resolveWildcardPackForUser({
         modelVersionId: input.modelVersionId,
+        user: ctx.user,
+        canViewNsfw: ctx.features.canViewNsfw,
+      })
+    ),
+  // App Blocks GET_RESOURCE_FILE. A mutation for the same signed-URL reason as
+  // resolveWildcardPack; the limiter keys on the procedure path, so this is its
+  // own 30/min bucket.
+  resolveResourceFile: protectedProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 60,
+        errorMessage: 'Too many resource-file requests — slow down.',
+      })
+    )
+    .input(resolveResourceFileSchema)
+    .mutation(({ input, ctx }) =>
+      resolveResourceFileForUser({
+        modelVersionId: input.modelVersionId,
+        fileId: input.fileId,
         user: ctx.user,
         canViewNsfw: ctx.features.canViewNsfw,
       })

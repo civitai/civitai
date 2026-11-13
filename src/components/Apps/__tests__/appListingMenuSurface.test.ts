@@ -11,15 +11,11 @@ import {
  * BLOCKING correctness gate).
  *
  * 🔴 WHY THIS FILE EXISTS AT ALL, WHEN THE BEHAVIOUR IS ALREADY ASSERTED IN TWO
- * BROWSER SUITES. Because those suites are REPORT-ONLY. `*.browser.test.tsx` runs in
- * the `component` project, which CI reaches only through the PR-preview pipeline's
- * `preview / component-tests` task — non-blocking, gated on the `preview` label, and
- * not reported at all when the preview build fails. `.github/workflows/lint.yml`'s
- * `Unit tests` job runs `--project 'unit*'`, whose include is `src/**\/*.test.ts`:
- * `.tsx` is not in it. So the real rendered assertions — a signed-in shopper gets no
- * card menu, the same shopper still gets Review/Report on the detail page — can go
- * red without blocking anything. This file re-states the parts of that claim a node
- * test CAN hold, in the tier that blocks.
+ * BROWSER SUITES. Because a node test can hold part of the claim without a browser.
+ * `.github/workflows/lint.yml`'s `Unit tests` job runs `--project 'unit*'`, whose include is
+ * `src/**\/*.test.ts`: `.tsx` is not in it. The real rendered assertions — a signed-in shopper gets
+ * no card menu, the same shopper still gets Review/Report on the detail page — run in
+ * `Component tests`. This file re-states the parts of that claim a node test CAN hold.
  *
  * 🔴 WHAT IT THEREFORE CANNOT SEE, stated rather than implied: it renders nothing. It
  * cannot tell you that the card's action row is 138px wide, that the menu trigger is

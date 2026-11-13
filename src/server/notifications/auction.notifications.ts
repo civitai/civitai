@@ -1,6 +1,6 @@
-import { MY_BIDS } from '~/components/Auction/AuctionProvider';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { MY_BIDS } from '~/shared/constants/auction.constants';
 import { asOrdinal } from '~/utils/number-helpers';
 
 export type DetailsWonAuction = {

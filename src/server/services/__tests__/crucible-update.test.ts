@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import {
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -11,6 +13,8 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as NotificationService from '~/server/services/notification.service';
 
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
@@ -18,10 +22,21 @@ const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
 const submitTextModeration = vi.fn();
+const createNotification = vi.fn();
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
   submitTextModeration,
+}));
+
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -41,7 +56,10 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   refundMultiAccountTransaction,
 }));
 
-const { updateCrucible } = await import('~/server/services/crucible.service');
+const { activateScheduledCrucibles, updateCrucible } = await import(
+  '~/server/services/crucible.service'
+);
+const { isCrucibleAwaitingReviewToStart } = await import('~/utils/crucible-helpers');
 
 const OWNER = 4;
 const HOUR = 60 * 60 * 1000;
@@ -70,14 +88,19 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   entryLimit: 1,
   freeEntriesPerUser: 0,
   maxTotalEntries: null,
+  entryWarningPercent: 20,
+  entryCutoffPercent: 0,
   minViewSeconds: null,
   maxClipSeconds: null,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   allowedResources: null,
+  allowedBaseModels: [],
   duration: 24 * 60,
   seededPrizePool: 0,
   buzzTransactionId: null,
   seedTransactionId: null,
+  ingestion: 'Scanned',
+  image: { ingestion: 'Scanned' },
   ...overrides,
 });
 const upcoming = (overrides: Record<string, unknown> = {}) =>
@@ -118,6 +141,26 @@ describe('updateCrucible — text scan', () => {
     expect(submitTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'Crucible', entityId: 1, content: 'New name' })
     );
+  });
+
+  it('clears the description and rescans what is left', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'Old name', description: null });
+
+    await edit({ description: null });
+
+    expect(written()).toMatchObject({ description: null, ingestion: 'Pending' });
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
+      ['Old name', null],
+      expect.objectContaining({ surface: 'crucible' })
+    );
+  });
+
+  it('lets a non-moderator rename a PG crucible to a word the profanity dictionary only half-matches', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'Fukushima', description: null });
+
+    await edit({ name: 'Fukushima' });
+
+    expect(written()).toMatchObject({ name: 'Fukushima', ingestion: 'Pending' });
   });
 
   it('leaves the verdict alone when the text is unchanged', async () => {
@@ -195,6 +238,40 @@ describe('updateCrucible — while upcoming', () => {
       createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );
     expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-(?!old)/);
+  });
+
+  it('restricts by base model for free', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ allowedBaseModels: ['SDXL 1.0'] });
+
+    expect(written()).toMatchObject({ allowedBaseModels: ['SDXL 1.0'] });
+    expect(charged()).toEqual([]);
+  });
+
+  it('locks the base models once the crucible has started', async () => {
+    await expect(edit({ allowedBaseModels: ['SDXL 1.0'] })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('re-checks every allowed base model against a new content type', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    await expect(edit({ contentType: MediaType.video })).rejects.toThrow(
+      /allowed base model must make videos/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses adding a base model that makes the other media type', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await expect(edit({ allowedBaseModels: ['MiniMax H3'] })).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('refuses swapping in a model that is not published and public', async () => {
@@ -426,25 +503,259 @@ describe('updateCrucible — while upcoming', () => {
   });
 });
 
-describe('updateCrucible — free entries', () => {
-  it('lets a moderator who owns an upcoming crucible set them', async () => {
-    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+describe('updateCrucible — starting it now', () => {
+  const startingSends = () =>
+    createNotification.mock.calls.map(([n]) => n).filter((n) => n.type === 'crucible-starting');
 
-    await edit({ freeEntriesPerUser: 1 }, OWNER, true);
-
-    expect(written().freeEntriesPerUser).toBe(1);
+  beforeEach(() => {
+    findUnique.mockResolvedValue(upcoming());
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      name: 'Old name',
+      textNsfw: false,
+      ingestion: 'Scanned',
+      image: { ingestion: 'Scanned' },
+    });
+    dbMock.dbWrite.crucibleEngagement.findMany.mockResolvedValue([
+      { userId: OWNER },
+      { userId: 9 },
+    ]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+    createNotification.mockResolvedValue(undefined);
   });
 
-  it('refuses them from an owner who is not a moderator', async () => {
-    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+  it('tells its followers, not the host, when the owner moves the start to now', async () => {
+    await edit({ startAt: new Date(Date.now() - 1000) });
 
-    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
-      'Only moderators can offer free entries'
+    expect(written()).toMatchObject({ status: CrucibleStatus.Active });
+    expect(startingSends()).toEqual([
+      expect.objectContaining({ key: 'crucible-starting:1', userIds: [9] }),
+    ]);
+  });
+
+  it('keeps the saved edit when the read for the notification fails', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockRejectedValue(new Error('db hiccup'));
+
+    await expect(edit({ startAt: new Date(Date.now() - 1000) })).resolves.toBeDefined();
+  });
+
+  it('sends nothing for an edit to one already running', async () => {
+    findUnique.mockResolvedValue(crucible());
+    update.mockImplementation(async ({ data }: { data: object }) => ({ ...crucible(), ...data }));
+
+    await edit({ coverImage: { url: 'x' } });
+
+    expect(startingSends()).toEqual([]);
+  });
+
+  it('sends nothing when the new start is still ahead', async () => {
+    await edit({ startAt: new Date(Date.now() + 72 * HOUR) });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending });
+    expect(startingSends()).toEqual([]);
+  });
+});
+
+describe('updateCrucible — starting it now before its review finishes', () => {
+  const past = () => new Date(Date.now() - 1000);
+  const startingSends = () =>
+    createNotification.mock.calls.map(([n]) => n).filter((n) => n.type === 'crucible-starting');
+
+  beforeEach(() => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      name: 'Old name',
+      description: 'Old description',
+      textNsfw: false,
+      ingestion: 'Pending',
+      image: { ingestion: 'Scanned' },
+    });
+    dbMock.dbWrite.crucibleEngagement.findMany.mockResolvedValue([{ userId: 9 }]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+    createNotification.mockResolvedValue(undefined);
+  });
+
+  it('stays upcoming while its text is under review, and tells the host it starts after review', async () => {
+    findUnique.mockResolvedValue(upcoming({ ingestion: 'Pending' }));
+
+    const result = await edit({ startAt: past() });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending });
+    expect((written().startAt as Date).getTime()).toBeLessThanOrEqual(Date.now());
+    expect(isCrucibleAwaitingReviewToStart(result)).toBe(true);
+    expect(startingSends()).toEqual([]);
+  });
+
+  it('stays upcoming while its cover is under review', async () => {
+    findUnique.mockResolvedValue(upcoming({ image: { ingestion: 'Pending' } }));
+
+    await edit({ startAt: past() });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending });
+  });
+
+  it('stays upcoming when the same save changes its text, which goes back under review', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ startAt: past(), name: 'New name' });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending, ingestion: 'Pending' });
+  });
+
+  it('stays upcoming when the same save swaps in a cover still under review', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ingestion: 'Pending' });
+
+    await edit({ startAt: past(), coverImage: { url: 'new-cover' } });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending });
+  });
+
+  it('stays upcoming when its new cover cannot be read yet', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    dbMock.dbRead.image.findUnique.mockResolvedValue(null);
+
+    await edit({ startAt: past(), coverImage: { url: 'new-cover' } });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Pending });
+  });
+
+  it('opens at once with a new cover that has already passed', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ingestion: 'Scanned' });
+
+    await edit({ startAt: past(), coverImage: { url: 'new-cover' } });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Active });
+  });
+
+  it('stays upcoming when another edit put it back under review before this one saved', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    // The row only matches without the scan check, as after a concurrent rename.
+    update.mockImplementation(async ({ where, data }: { where: object; data: object }) => {
+      if ('ingestion' in where)
+        throw new Prisma.PrismaClientKnownRequestError('No record', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      return { id: 1, ...data };
+    });
+
+    const result = await edit({ startAt: past() });
+
+    expect(result).toMatchObject({ status: CrucibleStatus.Pending });
+    expect(isCrucibleAwaitingReviewToStart(result)).toBe(true);
+  });
+
+  it('still refuses an edit that lost the race to a status change', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('No record', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
     );
+
+    await expect(edit({ startAt: past() })).rejects.toThrow(/changed while you were editing/);
+  });
+
+  it('opens at once when both have passed and the save changes neither', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    const result = await edit({ startAt: past() });
+
+    expect(written()).toMatchObject({ status: CrucibleStatus.Active });
+    expect(isCrucibleAwaitingReviewToStart(result)).toBe(false);
+  });
+
+  it('does not say it starts after review when its start is still ahead', async () => {
+    findUnique.mockResolvedValue(upcoming({ ingestion: 'Pending' }));
+
+    const result = await edit({ startAt: new Date(Date.now() + 72 * HOUR) });
+
+    expect(isCrucibleAwaitingReviewToStart(result)).toBe(false);
+  });
+
+  it('is opened by the job once its review passes, which tells followers once', async () => {
+    findUnique.mockResolvedValue(upcoming({ ingestion: 'Pending' }));
+    await edit({ startAt: past() });
+    const held = written();
+    expect(held).toMatchObject({ status: CrucibleStatus.Pending });
+
+    dbMock.dbWrite.crucible.findMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: OWNER,
+        name: 'Old name',
+        textNsfw: false,
+        ingestion: 'Scanned',
+        image: { ingestion: 'Scanned' },
+      },
+    ]);
+    dbMock.dbWrite.crucible.updateMany.mockResolvedValue({ count: 1 });
+    await expect(activateScheduledCrucibles()).resolves.toBe(1);
+
+    const { where } = dbMock.dbWrite.crucible.findMany.mock.calls[0][0];
+    expect(where.startAt.lte.getTime()).toBeGreaterThanOrEqual((held.startAt as Date).getTime());
+    expect(startingSends()).toEqual([
+      expect.objectContaining({ key: 'crucible-starting:1', userIds: [9] }),
+    ]);
+  });
+});
+
+describe('updateCrucible — required models unsuitable for mature content', () => {
+  const R = 1 | 2 | 4;
+  /** Version 12 is flagged; the media-type check's query gets nothing back. */
+  const withFlaggedVersion12 = () =>
+    modelVersionFindMany.mockImplementation(
+      modelFlagsFindMany((id) => ({ minor: id === 12, sfwOnly: false }))
+    );
+
+  it('refuses raising the content level to R+ while a flagged model is required', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10, 12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ nsfwLevel: R })).rejects.toThrow(/PG and PG-13/);
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("still lets that owner save other changes alongside free entries they didn't change", async () => {
+  it('refuses adding a flagged model to an R+ crucible', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [10] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ allowedResources: [10, 12] })).rejects.toThrow(/PG and PG-13/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('still lets an R+ crucible that already requires one take an edit that changes neither', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ name: 'Renamed' })).resolves.toBeDefined();
+    expect(update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator lower it to PG-13 even though a flagged model is required', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ nsfwLevel: 1 | 2 }, 1, true)).resolves.toBeDefined();
+  });
+});
+
+describe('updateCrucible — free entries', () => {
+  // Deliberately not moderator-only.
+  it('lets an owner who is not a moderator set them on an upcoming crucible', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await edit({ freeEntriesPerUser: 2 });
+
+    expect(written().freeEntriesPerUser).toBe(2);
+  });
+
+  it('keeps the free entries an edit leaves out', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 1 }));
 
     await edit({ entryFee: 200 });
@@ -452,10 +763,19 @@ describe('updateCrucible — free entries', () => {
     expect(written()).toMatchObject({ entryFee: 200, freeEntriesPerUser: 1 });
   });
 
+  it('refuses more free entries than the entry limit', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await expect(edit({ freeEntriesPerUser: 4 })).rejects.toThrow(
+      'Free entries cannot exceed the entry limit per user'
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('refuses an entry limit lowered below the free entries already set', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    await expect(edit({ entryLimit: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ entryLimit: 1 })).rejects.toThrow(
       'Free entries cannot exceed the entry limit per user'
     );
     expect(update).not.toHaveBeenCalled();
@@ -464,9 +784,59 @@ describe('updateCrucible — free entries', () => {
   it('locks them once the crucible has started', async () => {
     findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
 
-    await expect(edit({ freeEntriesPerUser: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
       /only its name, description and images can change/
     );
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCrucible — late entries', () => {
+  it('lets the owner set when entrants are warned and entries close', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ entryWarningPercent: 30, entryCutoffPercent: 15 });
+
+    expect(written()).toMatchObject({ entryWarningPercent: 30, entryCutoffPercent: 15 });
+  });
+
+  it('refuses entries closing before the warning starts, against the stored warning', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryWarningPercent: 20 }));
+
+    await expect(edit({ entryCutoffPercent: 25 })).rejects.toThrow(
+      CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a warning lowered to or below the stored cutoff', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryWarningPercent: 30, entryCutoffPercent: 15 }));
+
+    await expect(edit({ entryWarningPercent: 15 })).rejects.toThrow(
+      CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('reads the stored shares it checks an edit against', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ entryCutoffPercent: 15 });
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ entryWarningPercent: true, entryCutoffPercent: true }),
+      })
+    );
+  });
+
+  it('locks them once the crucible has started', async () => {
+    findUnique.mockResolvedValue(crucible());
+
+    await expect(edit({ entryCutoffPercent: 15 })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 });
 
@@ -474,6 +844,17 @@ describe('updateCrucible — content and images', () => {
   it('keeps a green crucible SFW', async () => {
     findUnique.mockResolvedValue(upcoming({ buzzType: 'green' }));
     await expect(edit({ nsfwLevel: 1 | 4 })).rejects.toThrow(/green Buzz crucible/);
+  });
+
+  it('lets a green crucible whose stored mask carries R still edit its description', async () => {
+    findUnique.mockResolvedValue(crucible({ buzzType: 'green', nsfwLevel: 7 }));
+    await edit({ description: 'Fresh description' });
+    expect(written()).toMatchObject({ description: 'Fresh description' });
+  });
+
+  it('still refuses a green crucible update that sets the mask to include R', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzType: 'green', nsfwLevel: 7 }));
+    await expect(edit({ nsfwLevel: 7 })).rejects.toThrow(/green Buzz crucible/);
   });
 
   it('runs the blocked-content guard on the text it will store', async () => {
@@ -494,8 +875,38 @@ describe('updateCrucible — content and images', () => {
     expect(written()).toMatchObject({ image: { connect: { id: 77 } } });
   });
 
+  it("resolves a moderator's new cover and hero for the owner, uploaded by the moderator", async () => {
+    const MODERATOR = OWNER + 1000;
+    const image = { url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900', width: 1, height: 1 };
+    await edit({ coverImage: image, heroImage: image }, MODERATOR, true);
+
+    expect(resolveCoverImageId).toHaveBeenCalledTimes(2);
+    for (const [args] of resolveCoverImageId.mock.calls) {
+      expect(args).toMatchObject({ userId: OWNER, uploaderId: MODERATOR });
+    }
+  });
+
   it('removes the hero image when sent null', async () => {
     await edit({ heroImage: null });
     expect(written()).toMatchObject({ heroImage: { disconnect: true } });
+  });
+});
+
+// The edited row goes back to the creator, and event tags are moderator data. Prisma returns every
+// scalar column unless told otherwise, so the write has to leave them out.
+describe('updateCrucible — event tags', () => {
+  it('returns the edited crucible without its event tags', async () => {
+    update.mockImplementation(
+      async ({ data, omit }: { data: object; omit?: Record<string, boolean> }) => {
+        const row: Record<string, unknown> = { ...crucible(), ...data, eventTags: ['halloween'] };
+        for (const [key, omitted] of Object.entries(omit ?? {})) if (omitted) delete row[key];
+        return row;
+      }
+    );
+
+    const updated = await edit({ name: 'New name' });
+
+    expect(updated).toMatchObject({ id: 1, name: 'New name' });
+    expect(updated).not.toHaveProperty('eventTags');
   });
 });

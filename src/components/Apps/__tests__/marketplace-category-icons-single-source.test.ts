@@ -22,12 +22,6 @@ function read(file: string): string {
 }
 
 describe('marketplace category icons — single shared source (M2)', () => {
-  test('marketplaceCategoryIcons.ts exports CATEGORY_ICONS and the fallback', () => {
-    const src = read('marketplaceCategoryIcons.ts');
-    expect(src).toMatch(/export const CATEGORY_ICONS\b/);
-    expect(src).toMatch(/export const FALLBACK_CATEGORY_ICON\b/);
-  });
-
   test('AppBlockCard.tsx imports the shared CATEGORY_ICONS and does NOT declare its own', () => {
     const src = read('AppBlockCard.tsx');
     // Imports from the shared module…

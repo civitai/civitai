@@ -54,11 +54,37 @@ describe('recordAppListingOpen', () => {
     mockCtor.mockReset();
   });
 
-  it('emits one App_Open carrying the block id', async () => {
+  it('emits one App_Open carrying the block id, and an untagged launch reads as direct', async () => {
     await recordAppListingOpen({ appBlockId: 'ab_42', session: null, ctx: CTX });
 
     expect(mockAction).toHaveBeenCalledTimes(1);
-    expect(mockAction).toHaveBeenCalledWith({ type: 'App_Open', details: { appBlockId: 'ab_42' } });
+    expect(mockAction).toHaveBeenCalledWith({
+      type: 'App_Open',
+      details: { appBlockId: 'ab_42', from: 'store', surface: 'direct' },
+    });
+  });
+
+  it('carries the launch origin, the surface and the referrer HOST — never its path or query', async () => {
+    await recordAppListingOpen({
+      appBlockId: 'ab_42',
+      launchOrigin: 'home',
+      surface: 'made_with',
+      session: null,
+      ctx: {
+        req: { headers: { referer: 'https://Forum.Example/thread/9?token=abc#x' } },
+        res: {},
+      } as any,
+    });
+    expect(mockAction).toHaveBeenCalledWith({
+      type: 'App_Open',
+      details: {
+        appBlockId: 'ab_42',
+        from: 'home',
+        surface: 'made_with',
+        referrerHost: 'forum.example',
+      },
+    });
+    expect(JSON.stringify(mockAction.mock.calls[0][0])).not.toMatch(/thread|token|abc/);
   });
 
   it('puts NOTHING but ids in details — the column never carries author text', async () => {
@@ -69,7 +95,29 @@ describe('recordAppListingOpen', () => {
     await recordAppListingOpen({ appBlockId: 'ab_42', session: null, ctx: CTX });
 
     const details = mockAction.mock.calls[0][0].details;
-    expect(Object.keys(details)).toEqual(['appBlockId']);
+    // `from` and `surface` are closed enums the resolver parsed; no free text.
+    expect(Object.keys(details)).toEqual(['appBlockId', 'from', 'surface']);
+  });
+
+  it('adds the sub-listing id, and only the id, when the launch came from a sub-card', async () => {
+    const sl = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A';
+    await recordAppListingOpen({ appBlockId: 'ab_42', subListingId: sl, session: null, ctx: CTX });
+    expect(mockAction).toHaveBeenCalledWith({
+      type: 'App_Open',
+      details: { appBlockId: 'ab_42', subListingId: sl, from: 'store', surface: 'direct' },
+    });
+    mockAction.mockClear();
+    await recordAppListingOpen({
+      appBlockId: 'ab_42',
+      subListingId: null,
+      session: null,
+      ctx: CTX,
+    });
+    expect(Object.keys(mockAction.mock.calls[0][0].details)).toEqual([
+      'appBlockId',
+      'from',
+      'surface',
+    ]);
   });
 
   it('does not use skipActorMeta — a play is an interaction, not a private judgement', async () => {

@@ -9,7 +9,7 @@
  * NSFW/CSAM scanning, and Model3DFile rows registered by the same shared
  * service used by the real workflow result handler.
  *
- * Auth: WEBHOOK_TOKEN (?token=…) OR session moderator cookie. The mod-gated
+ * Auth: WEBHOOK_TOKEN (?token=…) OR a moderator's browser session or full-scope personal API key. The mod-gated
  * UI page at /moderator/testing/model3d-seed posts here via the session path.
  *
  * Body (JSON):
@@ -36,21 +36,16 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { randomUUID } from 'crypto';
 import * as z from 'zod';
 import type { Prisma } from '@prisma/client';
-import { env } from '~/env/server';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { createImage } from '~/server/services/image.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import {
-  publishModel3D,
-  upsertModel3DFromWorkflow,
-} from '~/server/services/model3d.service';
+import { publishModel3D, upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
+import { normalizeModel3DFormat } from '~/shared/orchestrator/model3d-output';
 
 const fileSchema = z.object({
-  format: z
-    .string()
-    .min(1)
-    .max(16)
-    .transform((s) => s.toLowerCase().replace(/^\./, '')),
+  format: z.string().min(1).max(16).transform(normalizeModel3DFormat),
   url: z.string().url(),
   sizeKB: z.number().positive(),
   name: z.string().optional(),
@@ -99,17 +94,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Dual auth: WEBHOOK_TOKEN query OR session moderator
-  const tokenOk =
-    typeof req.query.token === 'string' &&
-    env.WEBHOOK_TOKEN.length > 0 &&
-    req.query.token === env.WEBHOOK_TOKEN;
+  const tokenOk = webhookTokenAuthenticates(req, req.query.token);
   let sessionUserId: number | null = null;
 
   if (!tokenOk) {
-    const session = await getServerAuthSession({ req, res });
-    if (!session?.user?.isModerator || session.user.bannedAt) {
-      return res.status(401).json({ error: 'Unauthorized — supply ?token=WEBHOOK_TOKEN or sign in as a moderator.' });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+    if (session === false) return;
+    if (!session?.user?.isModerator) {
+      return res
+        .status(401)
+        .json({ error: 'Unauthorized — supply ?token=WEBHOOK_TOKEN or sign in as a moderator.' });
     }
+    if (!requireFullScopeSession(req, res)) return;
     sessionUserId = session.user.id;
   }
 

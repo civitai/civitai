@@ -1,0 +1,32 @@
+.panelIn {
+  animation: panel-in 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.panelBack {
+  animation: panel-back 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes panel-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes panel-back {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panelIn,
+  .panelBack {
+    animation: none;
+  }
+}

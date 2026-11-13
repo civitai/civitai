@@ -34,7 +34,8 @@ export const CosmeticPreview = ({
     cosmetic.type === CosmeticType.Badge ||
     cosmetic.type === CosmeticType.NamePlate ||
     cosmetic.type === CosmeticType.ProfileBackground ||
-    cosmetic.type === CosmeticType.ProfileDecoration;
+    cosmetic.type === CosmeticType.ProfileDecoration ||
+    cosmetic.type === CosmeticType.CardDecoration;
 
   const currentUser = useCurrentUser();
   const { data: user } = trpc.userProfile.get.useQuery(
@@ -80,6 +81,7 @@ export const CosmeticPreview = ({
     case CosmeticType.ProfileDecoration:
     case CosmeticType.NamePlate:
     case CosmeticType.ProfileBackground:
+    case CosmeticType.CardDecoration:
       if (!userWithEquippedCosmetics) {
         return null;
       }

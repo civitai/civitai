@@ -81,3 +81,51 @@ describe('NotificationList click payload', () => {
     });
   });
 });
+
+// An early-access invitation is sent as `system-announcement`; a red alert on it
+// reads as "you are in trouble". Every other type keeps its own marker, never red.
+describe('NotificationList announcement icon', () => {
+  const announcement = {
+    id: 2,
+    type: 'system-announcement',
+    category: 'System',
+    createdAt: new Date('2026-09-10T00:00:00Z'),
+    read: false,
+    details: { message: 'Try new Civitai features first', url: '/content/early-access' },
+  } as any;
+  const features = {
+    id: 3,
+    type: 'civitai-features',
+    category: 'System',
+    createdAt: new Date('2026-09-10T00:00:00Z'),
+    read: false,
+    details: { featureBlurb: 'a thing', releaseSlug: 'a-thing' },
+  } as any;
+
+  async function renderItems(items: any[]) {
+    renderWithProviders(
+      <IsClientProvider>
+        <NotificationList items={items} searchText="" onItemClick={vi.fn()} />
+      </IsClientProvider>
+    );
+    await vi.waitFor(() => {
+      expect(
+        document.body.querySelector('a[href]'),
+        `body: ${document.body.textContent}`
+      ).toBeTruthy();
+    });
+  }
+
+  test('announcement shows the neutral megaphone, not the red alert', async () => {
+    await renderItems([announcement]);
+    expect(document.body.querySelector('.tabler-icon-speakerphone')).toBeTruthy();
+    expect(document.body.querySelector('.tabler-icon-alert-octagon')).toBeNull();
+  });
+
+  test('other system types never get the alert or the megaphone', async () => {
+    await renderItems([features]);
+    expect(document.body.querySelector('.tabler-icon-bell')).toBeTruthy();
+    expect(document.body.querySelector('.tabler-icon-speakerphone')).toBeNull();
+    expect(document.body.querySelector('.tabler-icon-alert-octagon')).toBeNull();
+  });
+});

@@ -5,6 +5,7 @@ import {
   BLOCK_INIT_FRAGMENT_DENYLIST,
   blockInitFragmentEnabled,
   blockInitFragmentEnabledWith,
+  blockInitStorageMode,
   type BlockHostSurface,
 } from '../blockInitFragmentGate';
 
@@ -373,5 +374,23 @@ describe('blockInitFragmentEnabled — the PRODUCTION allowlist', () => {
     // fragment only BY LUCK — it looks for a `c` key we do not carry. Pinning
     // the entry means widening the allowlist later cannot silently re-enable it.
     expect(BLOCK_INIT_FRAGMENT_DENYLIST.has('playable-collections')).toBe(true);
+  });
+});
+
+describe('BLOCK_INIT storageMode — decided per surface', () => {
+  it('dev-tunnel projects to exactly { storageMode: "local-preview" }', () => {
+    expect(blockInitStorageMode('dev-tunnel')).toEqual({ storageMode: 'local-preview' });
+  });
+
+  it('🔴 every other surface projects to an EMPTY object — the key is absent, not undefined', () => {
+    // `toEqual({})` alone would accept `{ storageMode: undefined }`, which
+    // postMessage still delivers as a present key. Assert on the key set.
+    let absent = 0;
+    for (const surface of ALL_SURFACES) {
+      if (surface === 'dev-tunnel') continue;
+      expect(Object.keys(blockInitStorageMode(surface)), surface).toEqual([]);
+      absent += 1;
+    }
+    expect(absent).toBe(4);
   });
 });

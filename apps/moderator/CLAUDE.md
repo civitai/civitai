@@ -4,8 +4,9 @@
 for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actions, `@civitai/ui`,
 `text-dark-2`, placement, comments, the three review agents).
 
-Everything in this app arrives by **migration**: from Retool, or from the main Next.js app. That
-provenance is the only reason it differs from the standard at all.
+Most of this app arrives by **migration**: from Retool, or from the main Next.js app. That provenance is
+the reason it differs from the standard. Net-new pages (the mystery-box builder under `src/routes/items/`, the mod assistant
+under `src/routes/assistant/`) have no source to port from: the fourth review pass and the two migration skills below do not apply to them.
 
 ## Deltas
 
@@ -70,6 +71,10 @@ provenance is the only reason it differs from the standard at all.
   instead of connecting to whatever that URL is (do not "fix" such a failure by adding the variable);
   and the report queries are the reason the tier exists — most of `reports.service.ts` is raw `sql`
   assembled from `REPORT_ENTITIES`, where not one identifier is typechecked.
+- **A report queue that is not a table follows [`docs/moderator-app/report-queue-pattern.md`](../../docs/moderator-app/report-queue-pattern.md)**
+  — the queue as a layout, the open item in the path, the shared `$lib/components/report-queue/`
+  pieces. 🔴 The layout's load must read the URL key by key (`loadReportQueue`, `parseQueryKeys`):
+  `parseQuery` iterates the query string, which makes SvelteKit rerun the whole queue on every click.
 - **When porting, classify every source query before writing code**, and add the fourth
   export-vs-build review the standard describes. Three code reviews pass cleanly over a faithful
   implementation of the wrong thing — that is how four capabilities were missed on one page after
@@ -101,7 +106,7 @@ standard is one link away**. Each of these has cost real time when broken. Full 
 
 - **Derive the promise; never fetch in `$effect` and assign to `$state`.** The single most repeated bug
   in these apps — it gives a stuck spinner, a re-run loop, or a stale response landing on a newer
-  lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : null)`, then `{#await x}`.
+  lookup. `const x = $derived(browser ? fetch(...).then(r => r.json()) : SSR_PENDING)`, then `{#await x}`. The server half is `SSR_PENDING` (`$lib/ssr-pending`), **never `null`**: null renders `{:then}` on the server while the browser hydrates `pending`, and the browser's content then sits outside its block — when a parent `{#key}`/`{#if}` swaps the panel, it stays on the page and the new one renders under it (the model reports "stuck preview" bug, 2026-10-14). `{#if x}{#await x}` with `: null` is also safe.
 - **Every `{#await}` needs a `{:catch}`.** Without one a rejection is silent and the panel just never
   fills in.
 - **Key every `{#each}` on something unique.** An unkeyed or duplicate-keyed loop reuses the wrong DOM
@@ -124,8 +129,10 @@ standard is one link away**. Each of these has cost real time when broken. Full 
   the dev server's watcher; that collision froze an editor for a full day. Read `svelte-check`'s
   **WARNING** lines too: `state_referenced_locally` is a real bug and appears nowhere else.
 - **`typecheck` stops at `src/`.** It extends `.svelte-kit/tsconfig.json`, so the standalone scripts
-  under `moderator-db/` and `xguard-lab/` are invisible to it — including the two that read and write
-  two production databases at once. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch either.
+  under `moderator-db/`, `xguard-lab/`, `removal-label-eval/`, `automated-text-eval/` and
+  `text-scan-test-sets/` are invisible to it — including the ones that read and write two production
+  databases at once. Run `pnpm run typecheck:scripts` (`tsconfig.scripts.json`) when you touch any of
+  them.
 - **Before calling a segment done**, run `svelte-correctness-review`, `svelte-idiom-review` and
   `svelte-abstraction-review` (or the `/svelte-review` skill) — then **look at the page**. Typecheck
   passes on plenty of pages that render blank.

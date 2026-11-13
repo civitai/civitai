@@ -7,10 +7,18 @@ import { FEEDBACK_SESSION_ID_MAX_LENGTH } from '~/shared/constants/feedback.cons
  * 🔴 ABSENCE IS THE ORDINARY CASE, NOT AN ERROR. `FaroProvider` only calls
  * `initializeFaro` when the build-arg, the collector URL and the `faro` feature
  * flag all agree, so Faro is NOT running in dev, test or preview, and in
- * production it is still absent for anyone whose session was not sampled or whose
- * browser blocked the SDK. Until `initializeFaro` runs, the SDK's `faro` export is
- * a bare `{}` — `faro.api` is `undefined` — which is why every hop below is
- * optional-chained rather than guarded by an "is Faro up?" flag.
+ * production it is still absent for anyone whose browser blocked the SDK. Until
+ * `initializeFaro` runs, the SDK's `faro` export is
+ * `{ api: <no-op API> }` with no `config` (faro-core 2.8.2 `registerFaro`): the no-op
+ * `getSession()` returns `undefined`, so this yields `undefined` with no "is Faro up?"
+ * flag. The hops stay optional-chained in case a future SDK leaves `api` unset.
+ *
+ * An UNSAMPLED session also yields `undefined`. Faro still creates a session and
+ * an id for it, but its transport drops every item whose session attribute
+ * `isSampled` is not the string `'true'` (faro-web-sdk 2.8.2 session
+ * instrumentation), so no telemetry exists under that id. Attaching it would point
+ * a report at a session nobody can open. Only an explicit `'true'` counts; a
+ * missing attribute is treated as unsampled, as the SDK treats it.
  *
  * This returns a value; it never throws. A caller that treats a missing session id
  * as a failure would make feedback unsubmittable on every non-production build,
@@ -23,7 +31,9 @@ import { FEEDBACK_SESSION_ID_MAX_LENGTH } from '~/shared/constants/feedback.cons
  */
 export function getFaroSessionId(): string | undefined {
   try {
-    const id = faro?.api?.getSession?.()?.id;
+    const session = faro?.api?.getSession?.();
+    if (session?.attributes?.isSampled !== 'true') return undefined;
+    const id = session.id;
     if (typeof id !== 'string') return undefined;
     const trimmed = id.trim();
     if (!trimmed) return undefined;

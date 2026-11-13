@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 /**
  * Post a title/description alert to the moderator Discord channel.
@@ -12,8 +13,8 @@ import { env } from '~/env/server';
  * Behaviour is deliberately unchanged from the copies this replaces, timeout included. Only the
  * return value is new.
  *
- * `new-order-jobs.ts` posts this same title/description shape and differs only in `color`, so it is
- * one optional parameter from being the third caller — take it when a third one arrives. The other
+ * `postDiscordAlert` is the same delivery to any webhook with a chosen `color`; the training canary
+ * posts to its own channel through it, and `new-order-jobs.ts` could adopt it unchanged. The other
  * three (`git-push.ts`, `publish-request.service.ts`, `apps-shared.router.ts`) build `fields[]`
  * embeds with `url`/`footer` and are a genuinely different shape; the latter two also resolve `env`
  * through `await import`, so they would not adopt this unchanged even if the shape matched.
@@ -27,14 +28,34 @@ export type ModAlertOutcome = 'delivered' | 'rejected' | 'unconfigured';
  * act on it. A caller reporting "paged" off its own intent instead of this answer keeps claiming it
  * alerted someone long after the webhook is revoked.
  */
-export async function notifyModAlert(title: string, description: string): Promise<ModAlertOutcome> {
-  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return 'unconfigured';
+export async function notifyModAlert(
+  title: string,
+  description: string,
+  opts: { noMentions?: boolean } = {}
+): Promise<ModAlertOutcome> {
+  return postDiscordAlert(env.DISCORD_WEBHOOK_MOD_ALERTS, { title, description, ...opts });
+}
 
-  return fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+/** Same delivery as `notifyModAlert`, to any Discord webhook and with a chosen embed colour. */
+export async function postDiscordAlert(
+  webhookUrl: string | undefined,
+  {
+    title,
+    description,
+    color = 0xf44336,
+    noMentions = false,
+  }: { title: string; description: string; color?: number; noMentions?: boolean }
+): Promise<ModAlertOutcome> {
+  if (!webhookUrl) return 'unconfigured';
+
+  return outboundFetch(webhookUrl, {
+    timeoutMs: 10_000,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      embeds: [{ title, description, color: 0xf44336, timestamp: new Date().toISOString() }],
+      embeds: [{ title, description, color, timestamp: new Date().toISOString() }],
+      // For text an outsider wrote: Discord then pings nobody, whatever the text says.
+      ...(noMentions ? { allowed_mentions: { parse: [] } } : {}),
     }),
   })
     .then((res) => (res.ok ? ('delivered' as const) : ('rejected' as const)))

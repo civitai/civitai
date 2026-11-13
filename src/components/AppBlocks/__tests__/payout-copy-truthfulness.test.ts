@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { stripComments } from '../../../../test/strip-comments';
+import { getDeveloperRateCard } from '~/server/services/blocks/app-developer-terms.service';
+import { DEVELOPER_RATE_CARD_SHOWN_ROWS } from '~/shared/constants/app-developer-terms.constants';
 
 /**
  * Money copy must not describe a disbursement that does not run.
@@ -78,7 +80,6 @@ const MONEY_COPY_ROOTS = ['src/components/AppBlocks', 'src/components/Apps', 'sr
 
 const REVENUE_PAGE = 'src/pages/apps/revenue.tsx';
 const REVENUE_PANEL = 'src/components/AppBlocks/RevenuePanel.tsx';
-const EARNINGS_PANEL = 'src/components/Apps/AppEarningsPanel.tsx';
 const EARNINGS_ROUTER = 'src/server/routers/app-collaborators.router.ts';
 /** The REMOVED mint — was the only writer of `paidOutAt` / `payoutId`. */
 const PAYOUT_MINT = 'mintPayoutForOwner';
@@ -88,7 +89,7 @@ const PAYOUT_MINT = 'mintPayoutForOwner';
  * indistinguishable from a scan that matches nothing because the regex, the walk or the roots
  * are wrong.
  */
-const PAYOUT_MINT_CONTROL = 'getRevenueForOwner';
+const PAYOUT_MINT_CONTROL = 'getGoodsSalesForOwner';
 /** The REMOVED weekly stub cron — neither the module nor the registration may come back. */
 const PAYOUT_JOB_MODULE = 'src/server/jobs/bulk-payout-block-attributions.ts';
 const PAYOUT_JOB_EXPORT = 'bulkPayoutBlockAttributions';
@@ -163,16 +164,30 @@ function jsxText(block: string) {
 }
 
 /**
- * Flatten a JSDoc block to its sentence text: drop the `*` leaders and collapse whitespace,
- * so a claim can be pinned WHOLE without the pin also encoding where prettier happened to
- * wrap the line. Same reasoning as `jsxText` — normalise the presentation, keep the words.
+ * The first single-quoted string literal after a cursor, CONCATENATING a `'a' + 'b'` run.
+ *
+ * 🔴 The run-joining is the point, not decoration. A single-literal regex reads only the
+ * first piece, so the moment prettier wraps a long string into a concatenation — which it
+ * does at the print width, i.e. exactly for the sentences this file pins — the pin would
+ * silently start comparing against a FRAGMENT and pass on a reworded tail. That is the
+ * vacuous-green shape this file exists to prevent, arriving via the formatter.
  */
-function prose(block: string) {
-  return block
-    .replace(/^\s*\/\*\*|\*\/\s*$/g, '')
-    .replace(/^[ \t]*\*[ \t]?/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+function extractSingleQuoted(src: string): string | null {
+  const re = /'((?:[^'\\]|\\.)*)'/g;
+  const first = re.exec(src);
+  if (!first) return null;
+  let out = first[1];
+  let cursor = re.lastIndex;
+  for (;;) {
+    const joiner = /^\s*\+\s*/.exec(src.slice(cursor));
+    if (!joiner) break;
+    re.lastIndex = cursor + joiner[0].length;
+    const next = re.exec(src);
+    if (!next || next.index !== cursor + joiner[0].length) break;
+    out += next[1];
+    cursor = re.lastIndex;
+  }
+  return out;
 }
 
 /** The balanced `{...}` value of a JSX prop, so the extraction cannot run past the prop. */
@@ -189,17 +204,102 @@ function propValue(src: string, prop: string) {
 }
 
 const SUBTITLE =
-  'Revenue share and analytics for your apps. Confirmed earnings accrue here; ' +
-  'automated payouts are not yet enabled. See Apps to manage installations.';
+  'Earnings and analytics for your apps. Author fees are paid into your Buzz account once ' +
+  'a day. Digital goods sales pay out in Buzz at the time of each settled sale, and the ' +
+  'figures shown are your recorded share. See Apps to manage installations.';
 
-const CONFIRMED_TOOLTIP =
-  'Past the refund window. This amount accrues; automated payouts are not yet enabled.';
+/**
+ * The author-fee card's cadence claim, pinned whole. Like the goods tooltip it PROMISES a
+ * disbursement, so it is admissible only while the daily settlement job is registered on a
+ * daily cron (asserted below). That the "paid" figure is the rows that job settles is proven
+ * against real queries in `author-fee-earnings.pglite.test.ts`.
+ */
+const AUTHOR_FEE_PAYOUT_COPY =
+  'Viewers pay your author fee when they run a generation in your app. Fees are paid into ' +
+  'your Buzz account once a day: the fees for each day settle in a daily batch after that ' +
+  'day ends, in the Buzz type the viewer paid with.';
+const AUTHOR_FEE_JOB_MODULE = 'src/server/jobs/settle-block-author-fees.ts';
+const AUTHOR_FEE_JOB_EXPORT = 'settleBlockAuthorFeesJob';
+const AUTHOR_FEE_EARNINGS_SERVICE = 'src/server/services/blocks/author-fee-earnings.service.ts';
+/**
+ * What renders the card-purchase share, which is recorded but never paid out: the revenue
+ * buckets' labels, and the marketplace cards' "Earning $X" chip with the `getMyApps` field and
+ * card prop that fed it.
+ */
+const CARD_SHARE_MARKERS = [
+  'Confirmed (unpaid)',
+  'Paid out',
+  'Earning $',
+  'lifetimeShareCents',
+  'ownedEarningCents',
+];
+
+/**
+ * The digital-goods card's timing disclosure, pinned whole for the same reason the two
+ * sentences above are: it is a claim about WHEN money moves, on a surface a user reads.
+ *
+ * 🔴 UNLIKE THOSE TWO, THIS ONE PROMISES A DISBURSEMENT — so it is only admissible while
+ * the rail behind it exists, which is what `GOODS_PAYOUT_FN` below asserts. That pairing
+ * is the whole point of this file: the three retracted claims it was written for described
+ * a pipeline whose only writer had no production caller, and nothing could tell, because
+ * the prose agreed only with other prose.
+ */
+const GOODS_TOOLTIP =
+  'This rail pays out immediately in Buzz rather than settling daily like author fees. ' +
+  'The figure is your recorded share of each settled sale. Reversed, refunded and ' +
+  'not-yet-settled rows are all excluded.';
+
+/**
+ * 🔴 TWO MORE MONEY CLAIMS, PINNED WHOLE for the reason this file's SHRINK half exists.
+ * Both shipped guarded only by a four-word substring regex in the component test, which is
+ * exactly the SPELLED guard this file forbids: either could be reworded into something
+ * false while staying green.
+ *
+ * - The blue caveat is a claim about NON-BANKABILITY. It must stay "may be": the owner's
+ *   blue leg is floored, so gross blue can be non-zero while the share is entirely domain
+ *   colour (see the constant's own docblock).
+ * - The unavailable message asserts "this is NOT a zero", which is the whole point of
+ *   having a discriminator at all. A reword that softened it back into sounding like a
+ *   measured zero would undo the fix silently.
+ */
+const GOODS_BLUE_CAVEAT =
+  'Some of these sales were paid with Blue Buzz, so part of your share may be Blue and ' +
+  'cannot be withdrawn. The dollar figures are an upper bound.';
+
+const GOODS_UNAVAILABLE_MESSAGE =
+  'Digital goods sales could not be loaded, so none are shown here. This is not a report ' +
+  'of zero sales — the figures above cover your other revenue only.';
+
+/** The goods payout leg — the rail the goods copy describes. */
+const GOODS_SERVICE = 'src/server/services/blocks/block-goods.service.ts';
+const GOODS_PAYOUT_FN = 'payBlockGoodOwner';
+/**
+ * The positive control for the goods-rail assertion — the mirror of `PAYOUT_MINT_CONTROL`
+ * above, which controls a zero; this one controls a NON-zero. An identifier that appears in
+ * that file ONLY as an awaited call, never as a declaration (it is imported from
+ * `~/server/services/buzz.service`).
+ *
+ * ⚠️ CORRECTED. This was `readRecordedPayouts`, which is DECLARED in that same file, so a
+ * bare `name(`-shaped probe matched its `export function readRecordedPayouts(` line. That
+ * controlled "can this read find an identifier followed by a paren" — true of any declared
+ * function — not "can this machinery observe a CALL", which is the only thing the assertion
+ * claims. It could not have gone red if every call vanished while the declaration stayed. A
+ * control must share the assertion's SHAPE, not merely its subject.
+ */
+const GOODS_PAYOUT_CONTROL = 'createMultiAccountBuzzTransaction';
 
 describe('app earnings copy does not promise a payout pipeline that does not run', () => {
   it('sanity: every file this guard reasons about is on disk (positive control)', () => {
     // Without this, a renamed or moved file would make the assertions below pass by
     // reading an empty string / matching nothing, which is the shape of a vacuous green.
-    for (const f of [REVENUE_PAGE, REVENUE_PANEL, EARNINGS_PANEL, EARNINGS_ROUTER]) {
+    for (const f of [
+      REVENUE_PAGE,
+      REVENUE_PANEL,
+      EARNINGS_ROUTER,
+      GOODS_SERVICE,
+      AUTHOR_FEE_JOB_MODULE,
+      AUTHOR_FEE_EARNINGS_SERVICE,
+    ]) {
       expect(read(f).length).toBeGreaterThan(0);
     }
   });
@@ -291,8 +391,7 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // the cadence copy false was that its body only read and logged. It has now been
     // deleted outright, so the check is structural: the module must not exist, and the
     // `jobs` array must not name it. Membership of that array plus a cron string IS the
-    // registration on this deployment — see CLAUDE.md, "How a scheduled job actually gets
-    // scheduled" — so the array is the authoritative place to assert the absence.
+    // registration on this deployment — see .claude/rules/server.md, "Scheduling a job" — so the array is the authoritative place to assert the absence.
     expect(existsSync(join(REPO_ROOT, PAYOUT_JOB_MODULE))).toBe(false);
 
     const runJobs = read(RUN_JOBS);
@@ -317,49 +416,140 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     expect(jsxText(subtitle!)).toBe(SUBTITLE);
   });
 
-  it('the Confirmed (unpaid) tooltip states accrual, pinned whole', () => {
+  it('the author-fee payout cadence is pinned whole, and rendered', () => {
     const panel = read(REVENUE_PANEL);
-    // Anchored to the card it annotates, so the assertion cannot be satisfied by the string
-    // appearing anywhere else in the file.
-    const at = panel.indexOf('Confirmed (unpaid)');
-    // Without this the anchor's absence gives `slice(-1)` — one character — and the failure
-    // reads as a copy mismatch rather than "the card this guard targets is gone".
-    expect(at).toBeGreaterThan(-1);
-    const label = /label="([^"]*)"/.exec(panel.slice(at))?.[1];
-    expect(label).toBe(CONFIRMED_TOOLTIP);
+    const at = panel.indexOf('const AUTHOR_FEE_PAYOUT_COPY');
+    expect(at).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(at))).toBe(AUTHOR_FEE_PAYOUT_COPY);
+    expect(stripComments(panel)).toMatch(/\{AUTHOR_FEE_PAYOUT_COPY\}/);
   });
 
-  it('the earnings docblock describes the gate the proc actually has', () => {
-    // 🔴 STATE, not vocabulary: the defect was a comment asserting an access property the
-    // code does not have. Pinning the procedure name on both sides is what ties them — if
-    // someone widens the proc to `protectedProcedure`, this fails and the docblock (and the
-    // invite disclosure's scope) must be re-read rather than silently becoming true.
+  it('the author-fee payout rail DOES run daily — the state that licenses that cadence', () => {
+    // The job is registered (membership of the run-jobs array plus its cron IS the
+    // registration) and its cron fires once a day.
+    const runJobs = read(RUN_JOBS);
+    expect(runJobs).toContain(RUN_JOBS_CONTROL); // the read can find a registered job
+    expect(stripComments(runJobs)).toMatch(new RegExp(String.raw`\b${AUTHOR_FEE_JOB_EXPORT}\b`));
+    const job = stripComments(read(AUTHOR_FEE_JOB_MODULE));
+    expect(job).toMatch(
+      new RegExp(
+        String.raw`${AUTHOR_FEE_JOB_EXPORT}\s*=\s*createJob\(\s*'[^']+',\s*'\d+ \d+ \* \* \*'`
+      )
+    );
+  });
+
+  it('no author surface renders the card-purchase share, which is never paid out', () => {
+    // Hidden on every author surface until a payout exists: the revenue pages, the listing
+    // editor's Earnings tab and the marketplace cards' earning chip. A surface
+    // that brings one back fails here and has to decide whether that share now has a payout.
+    const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
+    expect(files.map(rel)).toContain(REVENUE_PANEL); // walk control
+    const nonTest = (f: string) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/');
+    const surfaces = files
+      .filter(nonTest)
+      .filter((f) => CARD_SHARE_MARKERS.some((m) => readFileSync(f, 'utf8').includes(m)))
+      .map(rel);
+    expect(surfaces).toEqual([]);
+    // Read control: the same read-and-match finds a label the panel really renders, so the
+    // empty result above is about the markers, not a scan that matches nothing.
+    expect(
+      readFileSync(join(REPO_ROOT, REVENUE_PANEL), 'utf8').includes('Digital goods sales')
+    ).toBe(true);
+  });
+
+  it('the rate card shows only the goods split, never a card-purchase or subscription share row', () => {
+    // `/apps/revenue` renders the rate card, and that is a correct disclosure only while it
+    // lists the goods split alone: every other row is a share of Buzz bought through the app,
+    // which is recorded but never paid out.
+    expect(DEVELOPER_RATE_CARD_SHOWN_ROWS).toEqual(['goods']);
+    // ...and the card is built from that list, so the pin is on what the page shows.
+    expect(getDeveloperRateCard().rows.map((r) => r.row)).toEqual(['goods']);
+  });
+
+  it('the digital-goods timing disclosure is pinned whole', () => {
+    const panel = read(REVENUE_PANEL);
+    // Anchored to the constant that feeds the card's Tooltip, so the assertion cannot be
+    // satisfied by the sentence appearing in a comment elsewhere in the file.
+    const at = panel.indexOf('const GOODS_TIMING_TOOLTIP');
+    // Anchor control: without it a renamed constant gives `slice(-1)` and the failure
+    // reads as a copy mismatch rather than "the card this guard targets is gone".
+    expect(at).toBeGreaterThan(-1);
+    expect(extractSingleQuoted(panel.slice(at))).toBe(GOODS_TOOLTIP);
+    // ...and it must actually be the Tooltip's label, not a dead constant. The GROW
+    // lesson of this file is that a claim nothing renders is still a claim, but a claim
+    // nothing renders is not the one that misleads a user — so pin the wiring too.
+    expect(stripComments(panel)).toMatch(/label=\{GOODS_TIMING_TOOLTIP\}/);
+  });
+
+  it('the two other goods money claims are pinned whole, and are rendered', () => {
+    // The blue caveat and the unavailable message. Both were guarded only by a short
+    // substring regex in the component test — walkable by rewording, which on a money
+    // surface is this file's entire thesis.
+    const panel = read(REVENUE_PANEL);
+
+    const blueAt = panel.indexOf('const GOODS_BLUE_CAVEAT');
+    expect(blueAt).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(blueAt))).toBe(GOODS_BLUE_CAVEAT);
+    // Rendered, not a dead constant.
+    expect(stripComments(panel)).toMatch(/\{GOODS_BLUE_CAVEAT\}/);
+
+    // Anchored past the `case` LABEL, not at the function: the label is itself a
+    // single-quoted literal, so anchoring at the function name extracted `'unreadable'`
+    // and compared the reason code against the sentence.
+    const unavailAt = panel.indexOf("case 'unreadable':");
+    expect(unavailAt).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(unavailAt + "case 'unreadable':".length))).toBe(
+      GOODS_UNAVAILABLE_MESSAGE
+    );
+    // ...and reachable: the card must call it, or the branch is decoration.
+    expect(stripComments(panel)).toMatch(/goodsUnavailableMessage\(unavailable\)/);
+  });
+
+  it('the goods payout rail DOES exist — the one claim here that promises a disbursement', () => {
+    // 🔴 THE STATE HALF FOR THE GOODS COPY, and the inverse of the mint guard above. That
+    // one asserts a rail is GONE so its cadence copy must not return; this one asserts a
+    // rail is WIRED, which is the only thing that licenses the subtitle and the tooltip to
+    // say this rail "pays out" at all.
+    //
+    // ⚠️ This sentence used to quote `is credited at the time of each sale` as the claim
+    // being licensed. That string was REMOVED from the product for being unsupportable —
+    // the figure is an accrual a failed payout leg can leave unpaid — so the comment was
+    // naming a claim that exists nowhere in the tree and telling a reader of this guard
+    // the wrong thing about what it protects.
+    //
+    // Stripping is correct HERE and wrong above, and the difference is polarity: this
+    // assertion is that a call IS present, so the stripper's documented bias toward
+    // over-stripping turns it RED — the safe direction. The absence guards above must not
+    // strip, for exactly the inverted reason recorded at them.
+    const service = stripComments(read(GOODS_SERVICE));
+    // 🔴 POSITIVE CONTROL, IN THE ASSERTION'S OWN SHAPE. A control that merely finds an
+    // identifier followed by a paren is also satisfied by a DECLARATION, so it cannot
+    // establish that this machinery observes a CALL — which is the only thing the assertion
+    // below claims. Same `await X(` pattern, on an identifier that appears in that file only
+    // as a call. If this fails, the read or the stripper is broken and the assertion below
+    // means nothing.
+    expect(service).toMatch(new RegExp(String.raw`await\s+${GOODS_PAYOUT_CONTROL}\s*\(`));
+    // The payout leg is AWAITED somewhere in the service — a declaration alone would match
+    // a bare `name(` shape, which is why the keyword is part of the pattern.
+    expect(service).toMatch(new RegExp(String.raw`await\s+${GOODS_PAYOUT_FN}\s*\(`));
+    // Residual gap, stated rather than papered over: this proves the leg is called from
+    // somewhere in that module, not that the call is reachable from the REST purchase
+    // entry point. Proving reachability needs a call graph; what makes the weaker form
+    // worth having is that the defect this file documents was a writer with NO caller at
+    // all, which this does catch.
+  });
+
+  it('the earnings proc keeps the developer gate', () => {
+    // The invite disclosure describes what an accepted editor may read through
+    // `getAppEarnings`, so if someone widens the proc to `protectedProcedure`, this fails and
+    // the disclosure must be re-read.
     const router = stripComments(read(EARNINGS_ROUTER));
     expect(router).toMatch(/getAppEarnings:\s*appDeveloperProcedure/);
-    // The gate the docblock describes must be the gate the middleware implements. Reading
-    // trpc.ts here is what stops `appDeveloperProcedure` from being a name the docblock and
-    // the router merely agree on while it quietly stops refusing anyone.
     const trpc = stripComments(read('src/server/trpc.ts'));
     expect(trpc).toMatch(
       /appDeveloperProcedure\s*=\s*protectedProcedure\.use\(hasAppBlocksAuthor\)/
     );
     expect(trpc).toMatch(/hasAppBlocksAuthor[\s\S]{0,400}FORBIDDEN/);
-    // ...and the docblock must CARRY THE CORRECTION, pinned whole like the two copy strings.
-    // Deliberately NOT a negative grep for the retracted sentence: the rewrite QUOTES that
-    // sentence so the next reader knows what was wrong, so a "must not contain" test would
-    // forbid the clearest way to document the correction. But two bare `toMatch` identifier
-    // probes would be weaker than this test's NAME claims — a docblock re-asserting the
-    // retracted claim while still naming both identifiers would pass. Pinning the sentence
-    // is what makes the name true.
-    const docblock = read(EARNINGS_PANEL).slice(0, read(EARNINGS_PANEL).indexOf('function '));
-    expect(docblock.length).toBeGreaterThan(0); // anchor control
-    const CORRECTION =
-      'so it throws FORBIDDEN for any caller outside the `appBlocksAuthor` cohort, ' +
-      'accepted editor or not.';
-    expect(prose(docblock)).toContain(CORRECTION);
-    // The disclosure must not be quietly narrowed to today's gate: the reason it stays wide
-    // is that the cohort is a runtime flag, and that reason has to survive in the file.
-    expect(prose(docblock)).toContain('DO NOT SOFTEN THE DISCLOSURE TO MATCH THAT GATE.');
   });
 
   it('GROW half: the set of surfaces rendering settlement buckets is a known ledger', () => {
@@ -376,12 +566,19 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // documentation would have failed the build, which is the unlandable-guard shape that
     // gets a guard deleted rather than obeyed. English cadence is not a regex problem.
     //
-    // What IS checkable is the population. These two bucket labels are the settlement
-    // vocabulary, and this PR's scope deliberately keeps them stable, so they are a reliable
-    // marker for "this file shows a user money that may or may not have been disbursed".
-    // A third such surface fails here, and its author then has to decide — consciously —
-    // whether it needs the accrual disclosure the other two carry.
-    const BUCKET_LABELS = ['Confirmed (unpaid)', 'Paid out'];
+    // What IS checkable is the population. These two bucket labels are the author-fee
+    // settlement vocabulary, so they are a reliable marker for "this file shows a user money
+    // that may or may not have been disbursed". A second such surface fails here, and its
+    // author then has to decide — consciously — whether it needs the cadence disclosure.
+    const BUCKET_LABELS = ['Pending payout', 'Paid to you'];
+    //
+    // 🔴 THE GOODS RAIL HAS ITS OWN SETTLEMENT VOCABULARY, and this half of the guard was
+    // blind to it. `BUCKET_LABELS` is the author-fee rail's; `GoodsSalesCard` shares
+    // neither string, so extracting it into its own file — the obvious next refactor —
+    // would have dropped it from this ledger silently, and a future goods surface on a new
+    // file would be invisible to the very check written to catch that. A second marker,
+    // OR-ed into the same population, so the ledger covers both rails rather than one.
+    const GOODS_LABELS = ['Digital goods sales', 'reversed or refunded'];
     const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
     // Walk positive control: an empty walk yields an empty set, which would "equal" nothing
     // and pass if the expectation below were also empty. It is not — but prove the walk ran.
@@ -392,12 +589,24 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
       .filter((f) => {
         const src = readFileSync(f, 'utf8');
-        return BUCKET_LABELS.every((l) => src.includes(l));
+        return (
+          BUCKET_LABELS.every((l) => src.includes(l)) || GOODS_LABELS.every((l) => src.includes(l))
+        );
       })
       .map(rel)
       .sort();
 
     // Non-empty by construction, so this cannot be a vacuous "no matches" pass.
-    expect(surfaces).toEqual([EARNINGS_PANEL, REVENUE_PANEL].sort());
+    expect(surfaces).toEqual([REVENUE_PANEL]);
+
+    // 🔴 CONTROL ON THE SECOND MARKER. Without this the `||` arm could match nothing —
+    // a typo'd label, a reworded card — and the expectation above would still pass on the
+    // first arm alone, leaving the goods rail unledgered exactly as it was before. Assert
+    // that the goods marker, on its own, finds the surface it was added for.
+    const goodsSurfaces = files
+      .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
+      .filter((f) => GOODS_LABELS.every((l) => readFileSync(f, 'utf8').includes(l)))
+      .map(rel);
+    expect(goodsSurfaces).toEqual([REVENUE_PANEL]);
   });
 });

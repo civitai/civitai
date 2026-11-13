@@ -30,7 +30,8 @@ import type {
   ManifestSettingField,
 } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
-import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
+import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -321,11 +322,12 @@ export function AppSettingsModal(props: AppSettingsModalProps) {
               — don&apos;t install without reviewing what it can access.
             </Text>
           </Group>
+        ) : declaredScopes.length === 0 ? (
+          <Text size="xs" c="dimmed" fs="italic">
+            This app doesn&apos;t request any permissions on your account.
+          </Text>
         ) : (
-          <BlockScopeList
-            scopes={declaredScopes}
-            emptyLabel="This app doesn't request any permissions on your account."
-          />
+          <ListingPermissionGroups permissions={blockScopePermissions(declaredScopes)} />
         )}
 
         <Divider label="Where to show this" labelPosition="left" />

@@ -1,3 +1,4 @@
+import { Notifications } from '@mantine/notifications';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -21,8 +22,13 @@ const state = vi.hoisted(() => ({
   query: { data: undefined as unknown, isLoading: false, isError: false, error: null as unknown },
   // Captured props the page passes to the (stubbed) review body.
   bodyProps: { last: null as null | { selection: any; onClose: () => void } },
+  // Every `selection` IDENTITY the page has handed the body, in order — so a test can ask
+  // whether the object was rebuilt rather than whether it merely looks the same.
+  selections: [] as unknown[],
   // Feature-flags the page sees (switchable per test).
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
+  // listPendingRequests.useQuery — what "next" is chosen from after a decision.
+  pending: { data: undefined as unknown },
 }));
 
 // The page's `getServerSideProps` calls createServerSideProps at module top —
@@ -41,19 +47,16 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // covered by its own tests); stub it so this shell test doesn't pull that live
 // trpc-backed action bar. The title still comes from `OnsiteReviewModal`.
 vi.mock('~/components/Apps/ReviewDetailView', () => ({
+  AllCaughtUp: () => <div data-testid="all-caught-up">No more app submissions waiting</div>,
   ReviewDetailView: (props: { selection: any; onClose: () => void }) => {
     state.bodyProps.last = props;
+    state.selections.push(props.selection);
     return (
       <div data-testid="review-body">
         body:{props.selection.request.id}:{props.selection.mode}
       </div>
     );
   },
-}));
-vi.mock('~/components/Apps/OnsiteReviewModal', () => ({
-  OnsiteReviewModalTitle: ({ selection }: { selection: any }) => (
-    <div data-testid="review-title">{selection.request.slug}</div>
-  ),
 }));
 
 // Pass-through layout so title/actions/children are all in the DOM.
@@ -76,11 +79,19 @@ vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       getPublishRequest: { useQuery: () => state.query },
+      listPendingRequests: { useQuery: () => state.pending },
     },
   },
 }));
 
 const ReviewDetailPage = (await import('~/pages/apps/review/[publishRequestId]')).default;
+
+// The scaffold's `next/router` mock returns one router singleton; read it outside React
+// through an alias so the hook rule does not mistake this helper for a component.
+const readRouter = useRouter;
+function routerPush() {
+  return (readRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
+}
 
 const REQUEST = {
   id: 'pubreq_1',
@@ -88,7 +99,7 @@ const REQUEST = {
   version: '1.2.0',
   submittedAt: new Date('2026-01-01T00:00:00Z'),
   bundleSizeBytes: '2048',
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
   manifest: {},
   fileSummary: {},
   manifestDiffSummary: { kind: 'first-version', fields: [] },
@@ -99,6 +110,7 @@ beforeEach(() => {
   state.query = { data: undefined, isLoading: false, isError: false, error: null };
   state.bodyProps.last = null;
   state.flags = { appBlocks: true, appReviewPage: true };
+  state.pending = { data: undefined };
 });
 
 describe('ReviewDetailPage — route shell', () => {
@@ -117,8 +129,9 @@ describe('ReviewDetailPage — route shell', () => {
     await expect
       .element(page.getByTestId('review-body'))
       .toHaveTextContent('body:pubreq_1:pending');
-    // The page header uses the shared modal title component.
-    await expect.element(page.getByTestId('review-title')).toHaveTextContent('my-onsite-block');
+    // The submission's own header is the body's (`ReviewDetailHeader`); the page's fallback
+    // title only covers loading / not-found, so it is gone once the request resolved.
+    expect(page.getByText('Submission review').elements()).toHaveLength(0);
     // No fail-closed surface on the happy path.
     expect(page.getByTestId('not-found').elements()).toHaveLength(0);
   });
@@ -156,7 +169,89 @@ describe('ReviewDetailPage — route shell', () => {
     expect(page.getByTestId('review-body').elements()).toHaveLength(0);
   });
 
-  test('Q6: the body onClose redirects to the review queue', async () => {
+  test('🔴 after a decision the body’s onClose opens the NEXT oldest pending submission', async () => {
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = {
+      data: {
+        items: [
+          { id: 'pubreq_1', submittedAt: new Date('2026-01-01T00:00:00Z') },
+          { id: 'pubreq_newer', submittedAt: new Date('2026-01-03T00:00:00Z') },
+          { id: 'pubreq_older', submittedAt: new Date('2026-01-02T00:00:00Z') },
+        ],
+        nextCursor: null,
+      },
+    };
+    renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    const push = routerPush();
+    push.mockClear();
+    state.bodyProps.last?.onClose();
+    expect(push).toHaveBeenCalledWith('/apps/review/pubreq_older');
+  });
+
+  test('🔴 …and when nothing is left it shows "No more app submissions waiting" instead of navigating', async () => {
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = {
+      data: { items: [{ id: 'pubreq_1', submittedAt: new Date() }], nextCursor: null },
+    };
+    renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    const push = routerPush();
+    push.mockClear();
+    state.bodyProps.last?.onClose();
+    await expect.element(page.getByTestId('all-caught-up')).toBeInTheDocument();
+    expect(page.getByTestId('review-body').elements()).toHaveLength(0);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  test('🔴 Undo after "Approve & next" on the LAST submission shows that submission again', async () => {
+    // The real queue + toast (only the body is stubbed): "Approve & next" records A's delayed
+    // approval, then calls `onClose` — exactly the bar's order.
+    const { enqueueReviewApproval } = await import('~/components/Apps/reviewApprovalToasts');
+    const { reviewApprovalQueue } = await import('~/components/Apps/pendingApprovalQueue');
+    const id = 'pubreq_last_undo';
+    state.query = {
+      data: { mode: 'pending', request: { ...REQUEST, id } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.pending = { data: { items: [{ id, submittedAt: new Date() }], nextCursor: null } };
+    const commit = vi.fn(async () => undefined);
+    renderWithProviders(
+      <>
+        <Notifications />
+        <ReviewDetailPage publishRequestId={id} />
+      </>
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    try {
+      expect(enqueueReviewApproval({ id, label: 'my-onsite-block v1.2.0', commit })).toBe(true);
+      state.bodyProps.last?.onClose();
+      await expect.element(page.getByTestId('all-caught-up')).toBeInTheDocument();
+
+      // Undo from the toast. Its push is to /apps/review/<id> — the URL the page is already on,
+      // so Next keeps it mounted with the same prop: only the page's own state can bring A back.
+      await page.getByTestId('apps-review-approve-undo').click();
+      await expect.element(page.getByTestId('review-body')).toHaveTextContent(`body:${id}:pending`);
+      expect(page.getByTestId('all-caught-up').elements()).toHaveLength(0);
+      expect(commit).not.toHaveBeenCalled();
+    } finally {
+      if (reviewApprovalQueue.get(id)?.status === 'pending') reviewApprovalQueue.undo(id);
+    }
+  });
+
+  test('the queue not loaded: onClose falls back to the queue page', async () => {
     state.query = {
       data: { mode: 'pending', request: REQUEST },
       isLoading: false,
@@ -165,10 +260,7 @@ describe('ReviewDetailPage — route shell', () => {
     };
     renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
     await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
-
-    // Fire the onClose the shell handed the body (what runs after approve/reject
-    // success) and assert it navigates back to the queue.
-    const push = vi.mocked((useRouter as any)()).push as ReturnType<typeof vi.fn>;
+    const push = routerPush();
     push.mockClear();
     state.bodyProps.last?.onClose();
     expect(push).toHaveBeenCalledWith('/apps/review');
@@ -202,5 +294,85 @@ describe('ReviewDetailPage — the listing-media seam', () => {
     // Every key, not only the two this change added — that is what makes it a pass-through
     // assertion rather than a list someone has to remember to extend.
     expect(state.bodyProps.last?.selection.request).toEqual(request);
+  });
+});
+
+describe('ReviewDetailPage — the `selection` identity the memo downstream depends on', () => {
+  /**
+   * 🔴 THE PAGE'S `useMemo` IS A LOAD-BEARING PERF CONTRACT WITH A SUBTLE SCOPE, and this is
+   * the only test of it.
+   *
+   * `ReviewDetailTabsView` is `memo()`d, and its single prop is this `selection` object — so
+   * a page that rebuilds the object on every render hands the memo a new identity each time
+   * and buys nothing. `ReviewDetailTabsMemo.browser.test.tsx` pins the memo's side of that
+   * bargain against a synthetic parent; this pins the PAGE's side against the real page.
+   *
+   * ⚠️ IT IS NOT ABOUT THE 60-SECOND TICK, and an earlier draft of the memo test's header
+   * said it was. The tick lives one level DOWN in `ReviewDetailView`, and a child's state
+   * update never re-renders its parent — so the page does not re-render on a tick and
+   * `memo()` alone covers that case. What the `useMemo` covers is every OTHER re-render of
+   * the page: the feature flags resolving, a react-query refetch that returns equal data, a
+   * parent update. Those are the ones that would otherwise rebuild the object.
+   */
+  test('🔴 a page re-render hands the body the SAME `selection` object, not an equal one', async () => {
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.selections = [];
+    const { rerender } = await renderWithProviders(
+      <ReviewDetailPage publishRequestId="pubreq_1" />
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    const first = state.selections.length;
+    expect(first, 'the body rendered at all').toBeGreaterThan(0);
+
+    await rerender(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    expect(
+      state.selections.length,
+      'the page re-rendered, so the body was handed a selection again'
+    ).toBeGreaterThan(first);
+
+    // 🔴 IDENTITY, NOT EQUALITY. `toEqual` would pass against a freshly-built twin, which is
+    // exactly the defect: `memo` compares by reference.
+    const distinct = new Set(state.selections);
+    expect(
+      distinct.size,
+      `the page rebuilt \`selection\` across ${state.selections.length} renders`
+    ).toBe(1);
+  });
+
+  test('POSITIVE CONTROL: a DIFFERENT payload does produce a new `selection`', async () => {
+    // Without this, the identity assertion above is satisfied by a page that never rebuilds
+    // because it never re-reads the query at all.
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.selections = [];
+    const { rerender } = await renderWithProviders(
+      <ReviewDetailPage publishRequestId="pubreq_1" />
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    // 🔴 ONLY THE REQUEST MOVES — the mode stays `pending`, deliberately. Changing both let
+    // an UNDER-SPECIFIED dependency array pass: measured, `useMemo(…, [query.data?.mode])`
+    // survived, because the control satisfied it through the mode alone. That mutant's live
+    // failure is worse than the lost bail-out this test was written for — a refetch that
+    // returns a new request at the same mode would hand the memoised body a STALE payload.
+    state.query = {
+      data: { mode: 'pending', request: { ...REQUEST, id: 'pubreq_2' } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    await rerender(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    expect(new Set(state.selections).size, 'new data must yield a new object').toBeGreaterThan(1);
+    expect(state.bodyProps.last?.selection.request.id).toBe('pubreq_2');
   });
 });

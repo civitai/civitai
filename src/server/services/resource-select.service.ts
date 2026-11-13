@@ -144,12 +144,13 @@ export function buildFilter({
     filterTypes,
     filterBaseModels,
     filterLoaded,
+    filterTurbo,
     tagName,
     hidePaid,
   } = input;
 
-  // On the featured tab, determine which types have featured models so we can
-  // skip the baseModel filter for those types and instead AND an explicit id set.
+  // Featured checkpoints span ecosystems (picking one switches it), so only their base models are
+  // skipped.
   const featuredByType = new Map<string, number[]>();
   if (tab === 'featured' && featuredModels?.length) {
     for (const fm of featuredModels) {
@@ -159,17 +160,18 @@ export function buildFilter({
     }
   }
 
-  const skipBaseModel = featuredByType.size > 0 || skipBaseModelForOwnTabs(tab, selectSource);
+  const skipBaseModel = skipBaseModelForOwnTabs(tab, selectSource);
 
   const typeClauses = resources.map(({ type, baseModels = [] }) => {
     const _type = filterTypes.length > 0 ? filterTypes.find((x) => x === type) : type;
     if (!_type) return null;
 
-    const _baseModels = skipBaseModel
-      ? []
-      : filterBaseModels.length > 0
-      ? filterBaseModels.filter((baseModel) => baseModels.includes(baseModel))
-      : baseModels;
+    const _baseModels =
+      skipBaseModel || (featuredByType.size > 0 && _type === 'Checkpoint')
+        ? []
+        : filterBaseModels.length > 0
+        ? filterBaseModels.filter((baseModel) => baseModels.includes(baseModel))
+        : baseModels;
 
     return _baseModels.length
       ? and(eq('type', _type), inArray('versions.baseModel', _baseModels))
@@ -200,6 +202,7 @@ export function buildFilter({
     filterBaseModels.length > 0 && inArray('versions.baseModel', filterBaseModels),
     // Any version resident, not the one the card happens to show — Meili matches a nested array.
     filterLoaded && eq('versions.generatorLoaded', true),
+    filterTurbo && eq('versions.turbo', true),
     tagName ? eq('tags.name', tagName) : null,
     modelPricingFilterClause({ hidePaid }),
     tabIds && inArray('id', tabIds),
@@ -249,11 +252,11 @@ async function searchModels(
 // `retryCount: 0` and the catch keep the pin off the critical path. On a cold key
 // with the refresh lock already held, fetchThroughCache's default retry sleeps
 // lockTTL/2 (5s) up to three times before giving up — inside the request. This runs
-// only while officialPinActive, i.e. the picker's initial state, so that stall lands
+// on the picker's initial state and the browse feed's Hot + base-model view, so that stall lands
 // on every concurrent modal open after a deploy or a Redis eviction even though the
 // lock winner populates the key in ~300ms. Failing to [] instead costs the pin for
 // one request and nothing else.
-async function getOfficialModelIds() {
+export async function getOfficialModelIds() {
   try {
     return await fetchThroughCache(
       REDIS_KEYS.CACHES.OFFICIAL_MODELS,
@@ -270,6 +273,45 @@ async function getOfficialModelIds() {
     console.error('getOfficialModelIds :: pin unavailable, continuing without it', err);
     return [];
   }
+}
+
+// Meilisearch only, never `getModelSearchIndexRecords`: the index holds published, searchable models
+// and `buildFilter` adds the rest of the visibility rules, so a pasted id finds nothing a search
+// could not.
+async function lookupResourceSelectModel(
+  input: GetResourceSelectInput,
+  { modelId, modelVersionId }: NonNullable<GetResourceSelectInput['lookup']>,
+  {
+    user,
+    signal,
+    coverageNext,
+    member,
+  }: { user: ServiceUser; signal?: AbortSignal; coverageNext: boolean; member: boolean }
+) {
+  const filter = and(
+    buildFilter({
+      input: {
+        ...input,
+        tab: 'all',
+        tagName: undefined,
+        resources: [],
+        filterTypes: [],
+        filterBaseModels: [],
+        filterLoaded: false,
+        filterTurbo: false,
+        hidePaid: false,
+      },
+      user,
+      tabIds: null,
+      coverageNext,
+      member,
+    }),
+    !!modelId && eq('id', modelId),
+    !!modelVersionId && eq('versions.id', modelVersionId)
+  );
+
+  const results = await searchModels('', { filter: filter ?? undefined, limit: 1 }, signal);
+  return { items: transformModelHits(results.hits), nextCursor: undefined, coverageNext, member };
 }
 
 export async function getResourceSelectModels(
@@ -289,6 +331,9 @@ export async function getResourceSelectModels(
   } = input;
 
   const { next: coverageNext, member } = await coverageAudience(user);
+  if (input.lookup)
+    return lookupResourceSelectModel(input, input.lookup, { user, signal, coverageNext, member });
+
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
 
@@ -303,6 +348,7 @@ export async function getResourceSelectModels(
     filterTypes.length === 0 &&
     filterBaseModels.length === 0 &&
     !filterLoaded &&
+    !input.filterTurbo &&
     !tagName;
 
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the

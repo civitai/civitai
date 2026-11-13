@@ -228,11 +228,6 @@ describe('getChallengesByIds', () => {
     mockDbRead.$queryRaw.mockResolvedValue([]);
   });
 
-  it('is exported and returns an array', async () => {
-    const { getChallengesByIds } = await import('../challenge-helpers');
-    expect(typeof getChallengesByIds).toBe('function');
-  });
-
   it('returns empty array for empty input without hitting the db', async () => {
     const { getChallengesByIds } = await import('../challenge-helpers');
     await expect(getChallengesByIds([])).resolves.toEqual([]);

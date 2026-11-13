@@ -75,6 +75,7 @@ These steps are done by a human, after the deploy. The `generator-launch` skill 
 
 1. Publish, with the green **Publish** button in the version panel of `/models/<modelId>?modelVersionId=<versionId>`. On a Draft model this publishes the model and the version together; on a published model it publishes only the version.
 2. Remove the gate rule with `onboard.mjs gate remove`, or in the mod UI.
+3. For hosted weights, add a `GenerationBaseModel` row for each base model name (details below). Without it no community LoRA on that base model is generatable, however complete the form support: MOSS Image went live with none of its LoRAs covered. Then bust the version cache for the newly covered versions.
 
 Publish **before** removing the gate. While the rule is in place, the published version stays hidden from non-mods, because a `hidden` rule also blocks site-wide `canGenerate`. Removing the gate first would show everyone a Draft model they can't generate with.
 
@@ -91,6 +92,6 @@ The SQL for all three coverage branches, `GenerationBaseModel` and `AuctionBase`
 
 ## Mistakes that fail silently
 
-- **Wiring only one lane.** The generator has two lanes, data-graph (`src/shared/data-graph/generation/`) and form-graph (`src/shared/form-graph/generation/`). Each has its own graph, handler and registration. The parity tests and `handlers.differential.test.ts` list ecosystems by hand, so a missing entry isn't flagged anywhere.
+- **Registering the graph but not the handler, or the reverse.** The graph lives in `src/shared/form-graph/generation/` (registered in the modality's `hub.graph.ts`) and the handler in `src/server/services/orchestrator/form-graph/` (registered in `index.ts`'s `createStep`). Nothing reconciles the two registrations, so a graph with no handler case throws only on submit.
 - **Skipping the cache bust.** After the coverage insert, the generator reports the version as uncovered for up to an hour.
 - **Misspelling the gate target.** A rule with a wrong ecosystem key has no effect, and nothing distinguishes it from having no rule at all.

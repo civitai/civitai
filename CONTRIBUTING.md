@@ -30,11 +30,10 @@ consequences:
   though they pass in isolation. So a red unit job is a signal to look, not proof
   you broke something, and a green overall check doesn't mean the tests passed.
   Read the job output.
-- **Component tests run in the PR-preview pipeline, report-only.** The 201
-  `*.browser.test.tsx` files need real Chromium; they do not run in GitHub Actions,
-  but the in-cluster preview pipeline runs them and posts a
-  `preview / component-tests` commit status. It never blocks, so read it rather
-  than relying on it.
+- **Component tests run in GitHub Actions as `Component tests`.** The
+  `*.browser.test.tsx` files need real Chromium, which that job installs. A failing
+  test turns the check red; like every check here it does not block a merge, so
+  read it.
 
 A green check on a fork PR therefore means much less than it looks like. Verify
 locally.
@@ -73,7 +72,7 @@ every existing and future worktree of that clone inherits it until you sync.
 
 ## Verifying locally
 
-All of these need the repo's own toolchain — node `24.19.0` (the version in
+All of these need the repo's own toolchain — node `24.22.3` (the version in
 `.nvmrc`) and pnpm 10.x. **Nothing stops you running them on the wrong node**:
 `engines.node` is advisory, so `pnpm install` prints `WARN Unsupported engine`
 and continues. That is why this is worth stating rather than leaving to the
@@ -83,7 +82,7 @@ failure: outside the dev shell there are no `PRISMA_*_ENGINE_*` paths, so Prisma
 goes looking for a `linux-nixos` engine that has never been published.
 
 `nvm use` picks the right node up from `.nvmrc`; with Nix, prefix any of these
-with `nix develop -c`, or use direnv (`cp .envrc.example .envrc && direnv allow`).
+with `nix develop -c` (the locked nixpkgs can lag `.nvmrc`'s patch; see the note in `flake.nix`), or use direnv (`cp .envrc.example .envrc && direnv allow`).
 
 ```bash
 pnpm typecheck                 # full repo
@@ -176,9 +175,10 @@ covers you by default.
 **Never put test files under `src/pages`.** Next.js treats every `.ts`/`.tsx`
 file there as a route — including nested `__tests__/` directories — and
 `next build` runs a route-type validator over them. A Vitest file in that tree
-fails the build with `Property 'default' is missing`, and **only `next build`
-catches it**: typecheck, vitest and every CI job pass. It reaches the preview
-build before anyone notices.
+fails the build with `Property 'default' is missing`. `pnpm run typecheck`
+catches it too, because it runs `next typegen` first, but vitest does not, and a
+convention guard (`src/__tests__/pages/no-test-files-in-pages-tree.test.ts`)
+names the fix.
 
 Put handler tests in a `__tests__/` directory outside `src/pages` (e.g.
 `src/server/__tests__/`) and import the handler through the `~/pages/...` alias.

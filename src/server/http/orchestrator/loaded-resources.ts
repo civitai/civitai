@@ -5,7 +5,7 @@ import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
  * filters on the orchestrator's side (an unknown source returns `[]`); without it the list includes
  * HuggingFace, OCI images, training blobs and more, at about three times the size.
  *
- * `/v1/manager/...` is absent from the OpenAPI documents `@civitai/client` is generated from, so it
+ * `/v1/manager/...` is absent from the OpenAPI documents `@civitai/orchestration-client` is generated from, so it
  * goes through the caller rather than the client — which is also what puts a request timeout on it.
  */
 export async function getLoadedResourceAirs({

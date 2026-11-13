@@ -5,9 +5,10 @@ import { TRPCError } from '@trpc/server';
  * training.service.toOrchestratorError fault classification (mirrors orchestrator
  * PR #2978, commit df625feef0).
  *
- * `toOrchestratorError` is the shared error mapper for the THREE training
- * orchestrator-submit points (getAutoLabelUploadUrl / submitAutoLabelWorkflow /
- * getAutoLabelWorkflow); it is only reached on a `!data` result from an
+ * `toOrchestratorError` is the shared error mapper for the training auto-label
+ * orchestrator round-trips (submitAutoLabelWorkflow / getAutoLabelWorkflow; the
+ * upload URL goes through getConsumerBlobUploadUrlService and its own mapping);
+ * it is only reached on a `!data` result from an
  * orchestrator round-trip. Its old `default` case threw a plain `Error`, so a
  * transient orchestrator 5xx (500/502/503/504) OR a status-less network/timeout
  * failure surfaced as a NON-retryable generic tRPC INTERNAL_SERVER_ERROR (500)
@@ -19,16 +20,16 @@ import { TRPCError } from '@trpc/server';
  * 400/401/403/429 as-is and leaving any OTHER unexpected non-5xx status as a hard
  * error (so a genuine bug is NOT silently masked as a retry-able 503).
  *
- * The heavy training.service import graph (@aws-sdk, @civitai/client, orchestrator
+ * The heavy training.service import graph (@aws-sdk, @civitai/orchestration-client, orchestrator
  * caller, s3, redis, db) is stubbed so the module imports in node; the real
  * `~/server/utils/errorHandling` TRPCError mapping runs end-to-end (NOT mocked).
- * `handleError` (from the mocked @civitai/client) is given a small real-ish impl
+ * `handleError` (from the mocked @civitai/orchestration-client) is given a small real-ish impl
  * so `messages` is a string, matching the production shape.
  */
 
 // Heavy import-graph deps — trivial stubs so training.service imports in node.
 // `handleError` derives the user-facing message string from the client error.
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   handleError: vi.fn((e: unknown) => {
     if (typeof e === 'string') return e;
     if (e && typeof e === 'object') {

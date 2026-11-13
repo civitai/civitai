@@ -13,7 +13,8 @@ export const MAX_OFFSET = 500_000;
 
 /**
  * How many images one action will take. Enforced by the actions' `idsSchema`; here so the bar can say
- * so, and stop, before a moderator walks a destructive confirmation the server will refuse. Reachable
- * only because a selection spans pages — at one page it was bounded by `MAX_LIMIT`.
+ * so, and stop, before a moderator walks a destructive confirmation the server will refuse. Not
+ * reachable from the grid since 2026-10-16, when a selection became one page (`MAX_LIMIT` = 1000);
+ * kept as the client-side mirror of the server's cap.
  */
 export const MAX_SELECTION = 5000;

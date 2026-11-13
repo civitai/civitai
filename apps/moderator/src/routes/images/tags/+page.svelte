@@ -3,6 +3,8 @@
   import { SvelteMap } from 'svelte/reactivity';
   import type { SubmitFunction } from '@sveltejs/kit';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import SelectionBar from '$lib/components/SelectionBar.svelte';
+  import TipButton from '$lib/components/TipButton.svelte';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
   import type { PageData } from './$types';
 
@@ -144,42 +146,37 @@
   empty="No tags to review."
 />
 
-{#if selected.size > 0}
-  <!-- spacer so the fixed bar can't cover the last row / Next button -->
-  <div class="h-20"></div>
-  <div
-    class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 px-4 py-3 backdrop-blur"
-  >
-    <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
-      <span class="text-sm font-semibold">{selected.size} selected</span>
-      <button
-        onclick={() => selected.clear()}
-        class="text-xs text-muted-foreground hover:text-foreground">Clear</button
-      >
-      <div class="ml-auto flex flex-wrap gap-2">
-        <form method="POST" action="?/bulkModerate" use:enhance={bulkSubmit}>
-          <input type="hidden" name="imageIds" value={selectedImageIds} />
-          <button
-            type="submit"
-            name="disable"
-            value="true"
-            class="rounded border border-rose-500/40 px-3 py-1 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
-          >
-            Remove all flagged
-          </button>
-        </form>
-        <form method="POST" action="?/bulkModerate" use:enhance={bulkSubmit}>
-          <input type="hidden" name="imageIds" value={selectedImageIds} />
-          <button
-            type="submit"
-            name="disable"
-            value="false"
-            class="rounded border border-teal-600/40 px-3 py-1 text-xs font-semibold text-teal-400 transition hover:bg-teal-500/10"
-          >
-            Keep all flagged
-          </button>
-        </form>
-      </div>
+<SelectionBar count={selected.size} onclear={() => selected.clear()}>
+  {#snippet actions()}
+    <div class="ml-auto flex flex-wrap gap-2">
+      <form method="POST" action="?/bulkModerate" use:enhance={bulkSubmit}>
+        <input type="hidden" name="imageIds" value={selectedImageIds} />
+        <TipButton
+          tip="Turn off every moderation tag awaiting review on the selected images. The images stay up."
+          type="submit"
+          name="disable"
+          value="true"
+          size="sm"
+          variant="outline"
+          class="border-rose-500/40 text-rose-400 hover:bg-rose-500/10"
+        >
+          Remove all flagged
+        </TipButton>
+      </form>
+      <form method="POST" action="?/bulkModerate" use:enhance={bulkSubmit}>
+        <input type="hidden" name="imageIds" value={selectedImageIds} />
+        <TipButton
+          tip="Confirm every moderation tag awaiting review on the selected images, and clear them from this queue."
+          type="submit"
+          name="disable"
+          value="false"
+          size="sm"
+          variant="outline"
+          class="border-teal-600/40 text-teal-400 hover:bg-teal-500/10"
+        >
+          Keep all flagged
+        </TipButton>
+      </form>
     </div>
-  </div>
-{/if}
+  {/snippet}
+</SelectionBar>

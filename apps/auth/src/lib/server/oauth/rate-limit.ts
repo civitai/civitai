@@ -1,10 +1,20 @@
-import { checkRateLimit } from '$lib/server/auth/rate-limit';
+import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 
 // OAuth endpoint rate limits, ported from the main app's src/server/oauth/rate-limit.ts RATE_LIMITS.
 // The limiter itself (fixed-window, fail-open) is the hub's SHARED checkRateLimit — we don't fork a
 // second implementation, we just carry the per-endpoint limits + identifier policy here:
 //   - authorize: per-user   (10/min)
+//   - authorize-anon: per-IP (60/min) — a signed-out `prompt=none` request, the one signed-out case that
+//                looks the client up (to send login_required back to it). Sized like a NAT of real users.
 //   - token:     per-IP     (20/min) — the authorization-code exchange.
+//   - token-overflow: per-IP (120/min) — FAILED client-secret checks on a request past `token`. Charged only
+//                when the secret does not check out, so an app proving its secret is never held to it; once
+//                an IP has used it up, its requests are refused before any secret check.
+//   - token-client: per-client, at the limit staff set on that OauthClient (`tokenRateLimit`, admin OAuth
+//                Apps page) — for apps Civitai runs, whose pods send every user's code exchange and refresh
+//                from one egress IP. Charged only AFTER client auth succeeds (as `introspect` is), so a flood
+//                against a guessed id cannot exhaust the real client's budget. Clients without a limit set
+//                get the per-IP `token` limit only, as before.
 //   - device:    per-IP     (30/min) — RFC 8628 authorization request. Keyed on the CALLER, never on
 //                client_id: a device-flow client id is public and identical across every install of an
 //                app, so charging it would both cap the whole fleet at one shared budget and let anyone
@@ -29,19 +39,30 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 //                off the single 'unknown' key, not per-tenant abuse-proofing — client_id is unvalidated here).
 //                The limit is a generous gross-abuse ceiling that never throttles legit traffic. Invalid codes
 //                already bail cheaply at the redis lookup.
+//   - worker-token: per-IP (600/min) — the worker token-exchange grant, in place of `token`. A pool of
+//                workers can share one egress IP, each exchanging about every 15 minutes.
+//   - worker-device: per-(client, device) (10/min) — charged after client auth, so the device id is
+//                bound to an authenticated client before it is used as a key.
+//   - introspect-worker: per-client (1200/min) — `introspect` for a caller allowed to see Worker tokens,
+//                which checks each worker that registers.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.
 const OAUTH_RATE_LIMITS = {
   token: { limit: 20, windowSeconds: 60 },
+  'token-overflow': { limit: 120, windowSeconds: 60 },
   device: { limit: 30, windowSeconds: 60 },
   'device-token': { limit: 20, windowSeconds: 60 },
   'device-token-anon': { limit: 240, windowSeconds: 60 },
   authorize: { limit: 10, windowSeconds: 60 },
+  'authorize-anon': { limit: 60, windowSeconds: 60 },
   revoke: { limit: 20, windowSeconds: 60 },
   session: { limit: 300, windowSeconds: 60 },
   introspect: { limit: 60, windowSeconds: 60 },
   'introspect-anon': { limit: 120, windowSeconds: 60 },
   'app-token': { limit: 60, windowSeconds: 60 },
+  'worker-token': { limit: 600, windowSeconds: 60 },
+  'worker-device': { limit: 10, windowSeconds: 60 },
+  'introspect-worker': { limit: 1200, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
@@ -57,4 +78,14 @@ export async function checkOAuthRateLimit(
 ): Promise<boolean> {
   const cfg = OAUTH_RATE_LIMITS[bucket];
   return checkRateLimit(`oauth:${bucket}`, identifier, cfg.limit, cfg.windowSeconds);
+}
+
+/** Whether an IP has used up its `token-overflow` budget of failed secret checks (counts nothing). */
+export async function tokenOverflowExhausted(ip: string | null | undefined): Promise<boolean> {
+  return isRateLimited('oauth:token-overflow', ip, OAUTH_RATE_LIMITS['token-overflow'].limit);
+}
+
+/** The `token-client` check: a client's own per-minute /oauth/token limit, as set by staff. */
+export async function checkClientTokenRateLimit(clientId: string, limit: number): Promise<boolean> {
+  return checkRateLimit('oauth:token-client', clientId, limit, 60);
 }

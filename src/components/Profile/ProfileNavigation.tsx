@@ -1,7 +1,9 @@
 import React from 'react';
 import {
+  IconApps,
   IconAssembly,
   IconBook,
+  IconBook2,
   IconBookmark,
   IconCategory,
   IconCube,
@@ -10,13 +12,17 @@ import {
   IconPhoto,
   IconShoppingBag,
   IconSticker,
+  IconTrophy,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
+import { canShowProfileAppsTab } from '~/components/Profile/profile-apps-tab';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedControl.module.css';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
@@ -31,6 +37,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const settings = useCurrentUserSettings();
   const isProfileOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const isModerator = currentUser?.isModerator ?? false;
@@ -41,6 +48,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     isRefetching,
   } = trpc.userProfile.overview.useQuery({ username });
   const { data: user } = trpc.userProfile.get.useQuery({ username });
+  const { count: achievementCount } = useProfileAchievements(user?.id);
 
   const activePath = router.pathname.split('/').pop() || overviewPath;
   const baseUrl = `/user/${username}`;
@@ -94,6 +102,26 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       count: userOverview?.comicCount ?? 0,
       disabled: !features.comicCreator || !!user?.bannedAt,
     },
+    storylines: {
+      url: `${baseUrl}/storylines`,
+      icon: (props) => <IconBook2 {...props} />,
+      disabled: !features.storylines || !!user?.bannedAt,
+    },
+    apps: {
+      url: `${baseUrl}/apps`,
+      icon: (props) => <IconApps {...props} />,
+      label: 'Apps',
+      // No count: the store-visible set depends on the viewer, so there is no one number.
+      disabled: !canShowProfileAppsTab(features, user),
+    },
+    achievements: {
+      url: `${baseUrl}/achievements`,
+      icon: (props) => <IconTrophy {...props} />,
+      label: 'Achievements',
+      count: achievementCount,
+      // Zero when the flag is off for the viewer, so this also hides it then.
+      disabled: achievementCount === 0 || !!user?.bannedAt,
+    },
     collections: {
       url: `${baseUrl}/collections`,
       icon: (props) => <IconBookmark {...props} />,
@@ -131,6 +159,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       data={opts}
       value={activePath}
       loading={isInitialLoading || isRefetching}
+      keepLabels={settings.navigation?.keepProfileLabels}
     />
   );
 };

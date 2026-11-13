@@ -1,7 +1,7 @@
 {
   "metrics": {
-    "handlers": 24,
-    "handlersWithDebug": 19,
+    "handlers": 23,
+    "handlersWithDebug": 18,
     "metrics": 78
   },
   "entityTypes": {
@@ -12,13 +12,13 @@
       "Laugh": "articleReactionHandler",
       "Like": "articleReactionHandler",
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
     },
     "Bounty": {
       "benefactorCount": "bountyBenefactorHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "entryCount": "bountyEntryHandler",
       "favoriteCount": "bountyEngagementHandler",
       "trackCount": "bountyEngagementHandler",
@@ -58,13 +58,13 @@
       "ReactionHeart": "(not emitted by this app)",
       "ReactionLaugh": "(not emitted by this app)",
       "ReactionLike": "(not emitted by this app)",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
     },
     "Model": {
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentHandler",
+      "commentCount": "commentV3Handler",
       "downloadCount": "(not emitted by this app)",
       "earnedAmount": "updateCompensation",
       "generationCount": "(not emitted by this app)",
@@ -91,7 +91,7 @@
       "Laugh": "imageReactionHandler",
       "Like": "imageReactionHandler",
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "reactionCount": "imageReactionHandler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
@@ -103,7 +103,7 @@
     "User": {
       "articleCount": "articleHandler",
       "bountyCount": "bountyHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "followerCount": "userEngagementHandler",
       "followingCount": "userEngagementHandler",
       "hiddenCount": "userEngagementHandler",
@@ -172,13 +172,11 @@
       "Collection.contributorCount",
       "Collection.followerCount"
     ],
-    "Comment": [
-      "Model.commentCount"
-    ],
-    "CommentV2": [
+    "CommentV3": [
       "Article.commentCount",
       "Bounty.commentCount",
       "Image.commentCount",
+      "Model.commentCount",
       "Post.commentCount",
       "User.commentCount"
     ],

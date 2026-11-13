@@ -31,6 +31,7 @@ import type * as AppBlockIds from '~/server/utils/app-block-ids';
 
 const { mockDb } = vi.hoisted(() => {
   const db = {
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),

@@ -1,9 +1,14 @@
+// Mantine's real stylesheet: the one-row tab-bar case measures layout, which is CSS.
+import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../../test/component-setup';
 import { useRouter } from 'next/router';
 import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as OnsiteReviewModalMod from '~/components/Apps/OnsiteReviewModal';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 /**
  * REVIEW QUEUE dual-path row selection (Phase 1 migration) — browser mode.
@@ -20,6 +25,15 @@ import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
+  // The Pending tab's count badge (`blocks.countReviewQueue`).
+  reviewQueueTotal: 0,
+  subListingCount: 0,
+  flaggedCount: 0,
+  // The Access requests tab: the badge's count proc, and the queue's `list` (useInfiniteQuery).
+  accessPendingCount: 0,
+  accessPending: [] as unknown[],
+  // Every plain `list.useQuery` call. The badge must not make one: it reads the count proc.
+  accessListQueryInputs: [] as unknown[],
 }));
 
 // Page's getServerSideProps calls createServerSideProps at module top — stub so
@@ -59,7 +73,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // Stub the modal component (assert whether a selection opened it) but keep the
 // real byte/date formatters + request types the queue table depends on.
 vi.mock('~/components/Apps/OnsiteReviewModal', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/components/Apps/OnsiteReviewModal')>();
+  const actual = await importOriginal<typeof OnsiteReviewModalMod>();
   return {
     ...actual,
     OnsiteReviewModal: ({ selection }: { selection: { request: { slug: string } } | null }) =>
@@ -115,7 +129,7 @@ const PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: [] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const inert = { invalidate: vi.fn() };
@@ -126,22 +140,11 @@ const emptyQuery = () => ({
   isError: false,
   error: null,
 });
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    useUtils: () => ({
-      blocks: {
-        listPendingRequests: inert,
-        listApprovedRequests: inert,
-        listRejectedRequests: inert,
-      },
-      appListings: {
-        listPendingRequests: inert,
-        listApprovedRequests: inert,
-        listRejectedRequests: inert,
-      },
-    }),
-    blocks: {
-      listPendingRequests: {
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(
+    {
+      'blocks.listPendingRequests': {
         useQuery: () => ({
           data: { items: [PENDING], nextCursor: null },
           isLoading: false,
@@ -150,32 +153,187 @@ vi.mock('~/utils/trpc', () => ({
           error: null,
         }),
       },
-      listApprovedRequests: { useQuery: emptyQuery },
-      listRejectedRequests: { useQuery: emptyQuery },
+      'blocks.listApprovedRequests': { useQuery: emptyQuery },
+      'blocks.listRejectedRequests': { useQuery: emptyQuery },
       // The page mounts `PriorVersionsModal`, whose read is `enabled`-gated but whose
-      // HOOK still runs on every render — an absent entry here is `undefined.useQuery`,
-      // which takes the whole page down rather than only the modal.
-      listVersionHistory: { useQuery: emptyQuery },
+      // HOOK still runs on every render.
+      'blocks.listVersionHistory': { useQuery: emptyQuery },
+      // The unified pending queue also reads the OFF-SITE pending source; return an
+      // empty page so this test isolates the single on-site row's selection path.
+      'appListings.listPendingRequests': { useQuery: emptyQuery },
+      'appListings.listApprovedRequests': { useQuery: emptyQuery },
+      'appListings.listRejectedRequests': { useQuery: emptyQuery },
+      // The Pending tab label's count — on-site + listing requests, from a count proc.
+      'blocks.countReviewQueue': {
+        useQuery: () => ({
+          data: { onsite: state.reviewQueueTotal, offsite: 0, total: state.reviewQueueTotal },
+        }),
+      },
+      // The Sub-listings tab label's pending count runs on every render of the page.
+      'appListings.countSubListingQueue': {
+        useQuery: () => ({ data: { count: state.subListingCount } }),
+      },
+      'appFeedback.modCountFlagged': { useQuery: () => ({ data: state.flaggedCount }) },
+      // The Access requests tab label's pending count has its own count proc…
+      'appAccessRequest.countPending': {
+        useQuery: () => ({ data: state.accessPendingCount }),
+      },
+      'appAccessRequest.list': {
+        useQuery: (input: unknown) => {
+          state.accessListQueryInputs.push(input);
+          return { data: { items: state.accessPending, nextCursor: null } };
+        },
+        // …and the tab's panel is the real `AppAccessRequestsQueue`, which pages `list`.
+        useInfiniteQuery: () => ({
+          data: { pages: [{ items: state.accessPending, nextCursor: null }] },
+          isLoading: false,
+          hasNextPage: false,
+        }),
+      },
+      'appAccessRequest.decide': {
+        useMutation: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+      },
     },
-    // The unified pending queue also reads the OFF-SITE pending source; return an
-    // empty page so this test isolates the single on-site row's selection path.
-    appListings: {
-      listPendingRequests: { useQuery: emptyQuery },
-      listApprovedRequests: { useQuery: emptyQuery },
-      listRejectedRequests: { useQuery: emptyQuery },
-    },
-  },
+    {
+      useUtils: () => ({
+        blocks: {
+          listPendingRequests: inert,
+          listApprovedRequests: inert,
+          listRejectedRequests: inert,
+        },
+        appListings: {
+          listPendingRequests: inert,
+          listApprovedRequests: inert,
+          listRejectedRequests: inert,
+        },
+      }),
+    }
+  ),
 }));
 
 const ReviewQueuePage = (await import('~/pages/apps/review')).default;
 
+// The global `next/router` mock returns one router object; read it outside React through an
+// alias so the hook rule does not mistake this helper for a component.
+const readRouter = useRouter;
 function routerPush() {
-  return (useRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
+  return (readRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
+}
+
+function routerState() {
+  return readRouter() as unknown as { query: Record<string, string> };
 }
 
 beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
+  state.reviewQueueTotal = 0;
+  state.subListingCount = 0;
+  state.flaggedCount = 0;
+  state.accessPendingCount = 0;
+  state.accessPending = [];
+  state.accessListQueryInputs = [];
+  routerState().query = {};
   routerPush().mockClear();
+});
+
+describe('ReviewQueuePage — App feedback tab', () => {
+  test('the tab shows the flagged count on its label', async () => {
+    state.flaggedCount = 3;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-feedback-flagged-count')).toHaveTextContent('3');
+  });
+
+  test('no badge when nothing flagged is waiting', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-feedback-flagged-count').elements()).toHaveLength(0);
+  });
+
+  test('?tab=app-feedback opens it', async () => {
+    routerState().query = { tab: 'app-feedback' };
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByRole('tab', { name: /App feedback/ }))
+      .toHaveAttribute('aria-selected', 'true');
+    await expect.element(page.getByTestId('app-feedback-mod-queue')).toBeInTheDocument();
+  });
+});
+
+const accessRequest = (id: number) => ({
+  id,
+  userId: 9000 + id,
+  username: `builder_${id}`,
+  whatToBuild: `Idea ${id}: a palette board.`,
+  status: 'pending' as const,
+  createdAt: new Date('2026-10-20T09:00:00Z'),
+  reviewedAt: null,
+  reviewedById: null,
+  reviewedByUsername: null,
+});
+
+describe('ReviewQueuePage — Access requests tab', () => {
+  test('?tab=access-requests selects the tab and mounts the access-request queue', async () => {
+    state.accessPending = [accessRequest(41)];
+    routerState().query = { tab: 'access-requests' };
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByRole('tab', { name: /Access requests/ }))
+      .toHaveAttribute('aria-selected', 'true');
+    // The REAL queue, rendering this fixture's row with its decision controls.
+    const row = page.getByTestId('app-access-request-41');
+    await expect.element(row).toBeInTheDocument();
+    await expect.element(row.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+  });
+
+  test('the queue is not mounted while another tab is active', async () => {
+    state.accessPending = [accessRequest(41)];
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Access requests/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-access-request-41').elements()).toHaveLength(0);
+  });
+
+  test('the tab label shows the pending count from the count proc, exactly', async () => {
+    // 137: past the list proc's 100-row page, so only the count proc can produce it.
+    state.accessPendingCount = 137;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByTestId('app-access-request-pending-count'))
+      .toHaveTextContent(/^137$/);
+  });
+
+  test('the badge fetches no request rows: it never reads the list proc', async () => {
+    // The queue is not mounted on the default tab, so any `list.useQuery` call here is the badge's.
+    state.accessPendingCount = 2;
+    state.accessPending = [accessRequest(1), accessRequest(2)];
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByTestId('app-access-request-pending-count'))
+      .toHaveTextContent(/^2$/);
+    expect(state.accessListQueryInputs).toEqual([]);
+  });
+
+  test('no badge when nothing is pending', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Access requests/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-access-request-pending-count').elements()).toHaveLength(0);
+  });
+});
+
+describe('ReviewQueuePage — Sub-listings tab', () => {
+  test('shows the pending store-item count on the tab label', async () => {
+    state.subListingCount = 4;
+    renderWithProviders(<ReviewQueuePage />);
+    const tab = page.getByRole('tab', { name: /Sub-listings/ });
+    await expect.element(tab).toBeInTheDocument();
+    await expect.element(page.getByTestId('sub-listing-pending-count')).toHaveTextContent('4');
+  });
+
+  test('shows no count badge when nothing is waiting', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Sub-listings/ })).toBeInTheDocument();
+    expect(page.getByTestId('sub-listing-pending-count').elements()).toHaveLength(0);
+  });
 });
 
 describe('ReviewQueuePage — dual-path row selection', () => {
@@ -203,5 +361,88 @@ describe('ReviewQueuePage — dual-path row selection', () => {
     // Modal opened with the selected request; NO navigation to the detail page.
     await expect.element(page.getByTestId('modal-open')).toHaveTextContent('my-onsite-block');
     expect(routerPush()).not.toHaveBeenCalledWith('/apps/review/onsite-req-1');
+  });
+});
+
+describe('ReviewQueuePage — Pending tab count', () => {
+  test('🔴 the Pending tab shows how many submissions are waiting', async () => {
+    state.reviewQueueTotal = 12;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Pending/ })).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^12$/);
+  });
+
+  test('no badge when the queue is empty', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Pending/ })).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-pending-count').elements()).toHaveLength(0);
+  });
+
+  test('🔴 approvals in their undo window are not counted (the list hides them too)', async () => {
+    const { reviewApprovalQueue } = await import('~/components/Apps/pendingApprovalQueue');
+    const ids = ['badge-undo-window-1', 'badge-undo-window-2'];
+    for (const id of ids) reviewApprovalQueue.enqueue({ id, label: id, commit: async () => 0 });
+    try {
+      state.reviewQueueTotal = 12;
+      renderWithProviders(<ReviewQueuePage />);
+      await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^10$/);
+      // Undone → waiting again → counted again.
+      reviewApprovalQueue.undo(ids[0]);
+      await expect.element(page.getByTestId('apps-review-pending-count')).toHaveTextContent(/^11$/);
+    } finally {
+      for (const id of ids) reviewApprovalQueue.undo(id);
+    }
+  });
+});
+
+describe('ReviewQueuePage — the tab bar', () => {
+  test('🔴 at phone width every tab sits on ONE row, and only the tab bar scrolls sideways', async () => {
+    await page.viewport(390, 844);
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByTestId('review-queue-tabs')).toBeInTheDocument();
+    const tabs = [...document.querySelectorAll('[role="tab"]')] as HTMLElement[];
+    expect(tabs.length).toBe(9);
+    const tops = new Set(tabs.map((t) => Math.round(t.getBoundingClientRect().top)));
+    expect([...tops], 'tabs wrapped onto more than one row').toHaveLength(1);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390 + 1);
+    const list = page.getByTestId('review-queue-tabs').element() as HTMLElement;
+    expect(getComputedStyle(list).overflowX).toBe('auto');
+  });
+
+  test('to-review tabs come first, then history & admin', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByTestId('review-queue-tabs')).toBeInTheDocument();
+    const order = [...document.querySelectorAll('[role="tab"]')].map((t) =>
+      (t.textContent ?? '').replace(/\d+$/, '').trim()
+    );
+    expect(order).toEqual([
+      'Pending',
+      'Reports',
+      'Sub-listings',
+      'App feedback',
+      'Storage reports',
+      'Access requests',
+      'Approved',
+      'Rejected',
+      'Manage listings',
+    ]);
+  });
+});
+
+describe('ReviewQueuePage — phone and desktop open a review the SAME way', () => {
+  /**
+   * The screenshot tour recorded "mobile opens a modal while desktop navigates". The routing
+   * is ONE flag read (`appReviewPage`), with no viewport input anywhere in it — and the tour's
+   * own mobile screenshots show the queue, not a modal. Pinned at a phone viewport so a
+   * breakpoint-dependent branch cannot creep in.
+   */
+  test('flag ON at 390px: Review NAVIGATES to the page, no modal', async () => {
+    await page.viewport(390, 844);
+    renderWithProviders(<ReviewQueuePage />);
+    const reviewBtn = page.getByRole('button', { name: 'Review' });
+    await expect.element(reviewBtn).toBeInTheDocument();
+    await userEvent.click(reviewBtn);
+    expect(routerPush()).toHaveBeenCalledWith('/apps/review/onsite-req-1');
+    expect(page.getByTestId('modal-open').elements()).toHaveLength(0);
   });
 });

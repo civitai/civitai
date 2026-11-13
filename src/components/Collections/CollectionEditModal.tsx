@@ -1,10 +1,7 @@
 import {
   Alert,
-  Box,
   Button,
   Center,
-  Code,
-  CopyButton,
   Divider,
   Group,
   Input,
@@ -15,10 +12,14 @@ import {
   Text,
 } from '@mantine/core';
 
-import { IconBolt, IconCalendar, IconClipboard } from '@tabler/icons-react';
+import { IconBolt, IconCalendar } from '@tabler/icons-react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
-import { env } from 'process';
+// 🔴 `~/env/client`, NOT `process` — which is what this was, uniquely among client components.
+// Next inlines the LITERAL text `process.env.NEXT_PUBLIC_*`; a destructured `env` binding is
+// not that text, so this read the browser's `process` shim and `joinUrl` below was `''`
+// unconditionally. `NEXT_PUBLIC_BASE_URL` is declared in `src/env/client-schema.ts`.
+import { env } from '~/env/client';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import {
@@ -28,9 +29,9 @@ import {
   useCollection,
   useMutateCollection,
 } from '~/components/Collections/collection.utils';
+import { CollectionInviteLink } from '~/components/Collections/CollectionInviteLink';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -88,7 +89,12 @@ function SubmissionsMemberNotice({ write }: { write?: CollectionWriteConfigurati
   );
 }
 
+// Keyed so a modal reused for another collection starts a fresh form instead of carrying edits over.
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
+  return <CollectionEditForm key={collectionId ?? 'new'} collectionId={collectionId} />;
+}
+
+function CollectionEditForm({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
   const dialog = useDialogContext();
   const queryUtils = trpc.useUtils();
@@ -122,6 +128,9 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     upsertCollectionMutation.mutate(
       {
         ...data,
+        // A cover hidden from this editor reads back as no cover; sending that would remove it.
+        image:
+          collection?.coverHidden && !form.formState.dirtyFields.image ? undefined : data.image,
         mode: data.mode || null,
         metadata: {
           ...(data.metadata ?? {}),
@@ -154,7 +163,8 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
         mode: collection.mode,
         metadata: collection.metadata ?? {},
       });
-      if (result.success) form.reset({ ...result.data });
+      // A refetch while the form is open must not drop what the editor already changed.
+      if (result.success) form.reset({ ...result.data }, { keepDirtyValues: true });
       else console.error(result.error);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,25 +284,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         <Text fw={500} size="sm">
                           Here is your Invite Link:
                         </Text>
-                        <CopyButton value={joinUrl}>
-                          {({ copied, copy }) => (
-                            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                              <LegacyActionIcon
-                                pos="absolute"
-                                top="50%"
-                                right={10}
-                                variant="transparent"
-                                style={{ transform: 'translateY(-50%) !important' }}
-                                disabled={!joinUrl}
-                              >
-                                <IconClipboard />
-                              </LegacyActionIcon>
-                              <Code block color={copied ? 'green' : undefined}>
-                                {copied ? 'Copied' : joinUrl}
-                              </Code>
-                            </Box>
-                          )}
-                        </CopyButton>
+                        <CollectionInviteLink joinUrl={joinUrl} />
                       </Stack>
                     )}
 

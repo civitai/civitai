@@ -8,9 +8,9 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
  * Driven by `Article.isOfficial` — a column with a moderator-only setter
  * (`setArticleOfficial`, mounted on `moderatorProcedure`), mirroring `Model.isOfficial`.
  * 🔴 It is a provenance claim, so never render it from anything a user can set about their
- * own content, and never derive it from a tag name: the design this replaced did exactly
- * that, and article tags attach by name through `connectOrCreate`, so the marker was a
- * string any user could type.
+ * own content, and never from the `civitai official` tag: article tags attach by name through
+ * `connectOrCreate`, so a user can type that string. The tag is derived from the column, not
+ * the reverse.
  *
  * Built on `IconBadge` rather than composing `Badge` + `Tooltip` by hand, so the
  * icon-to-text gap and the horizontal padding stay the ones every other icon badge on the

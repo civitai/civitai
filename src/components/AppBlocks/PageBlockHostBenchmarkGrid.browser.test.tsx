@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * App Blocks Model-Benchmarking shared-grid host bridges — the host-handler tests
@@ -16,9 +17,11 @@ import { renderWithProviders } from '../../../test/component-setup';
  * Mounts the REAL PageBlockHost and drives the actual postMessage bridge.
  */
 
-const { publishMutate, getImagesMutate } = vi.hoisted(() => ({
+const { publishMutate, getImagesMutate, previewPostMutate, createPostMutate } = vi.hoisted(() => ({
   publishMutate: vi.fn(),
   getImagesMutate: vi.fn(),
+  previewPostMutate: vi.fn(),
+  createPostMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -33,7 +36,10 @@ vi.mock('~/utils/trpc', () => ({
       follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -51,8 +57,8 @@ vi.mock('~/utils/trpc', () => ({
       // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
       // that resolves the consent payload, and the write. PageBlockHost reads both
       // at render, so a mock missing either makes the WHOLE component throw.
-      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: previewPostMutate }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: createPostMutate }) },
     },
     apps: {
       shared: {
@@ -198,6 +204,7 @@ describe('PageBlockHost PUBLISH_GENERATION_OUTPUTS (consent-gated publish)', () 
       const r = replies.last('PUBLISH_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_pub', result: { imageIds: [101, 102] } });
+      expectReplyKeys('PUBLISH_GENERATION_OUTPUTS', 'success', ['result'], r.payload);
     });
     replies.stop();
   });
@@ -216,6 +223,7 @@ describe('PageBlockHost PUBLISH_GENERATION_OUTPUTS (consent-gated publish)', () 
       const r = replies.last('PUBLISH_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_no', error: 'publish canceled' });
+      expectReplyKeys('PUBLISH_GENERATION_OUTPUTS', 'error', ['error'], r.payload);
     });
     expect(publishMutate).not.toHaveBeenCalled();
     replies.stop();
@@ -354,6 +362,78 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_err', error: 'boom' });
     });
+    replies.stop();
+  });
+});
+
+/** CREATE_POST_FROM_APP: preview → consent → `createPostFromApp` → `CREATE_POST_RESULT`. */
+describe('PageBlockHost CREATE_POST_FROM_APP (consent-gated post)', () => {
+  const PREVIEW = {
+    title: null,
+    detail: null,
+    tags: [],
+    droppedTags: [],
+    // Three images from two sources, so a count taken from `sources` cannot pass.
+    images: [1, 2, 3].map((n) => ({
+      url: `https://image.civitai.com/x/post-preview-${n}.jpeg`,
+      width: 512,
+      height: 512,
+    })),
+    gallery: null,
+  };
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    previewPostMutate.mockReset();
+    createPostMutate.mockReset();
+  });
+
+  test('on CONFIRM writes with the previewed image count and replies { result }', async () => {
+    previewPostMutate.mockResolvedValue(PREVIEW);
+    createPostMutate.mockResolvedValue({ postId: 901 });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CREATE_POST_FROM_APP', {
+      requestId: 'rq_post',
+      sources: [{ workflowId: 'wf_1' }, { workflowId: 'wf_2' }],
+    });
+
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(createPostMutate).not.toHaveBeenCalled();
+    await (lastDialog().props as ConfirmProps).onConfirm();
+
+    expect(createPostMutate).toHaveBeenCalledWith({
+      blockToken: 'tok_abc',
+      sources: [{ workflowId: 'wf_1' }, { workflowId: 'wf_2' }],
+      confirmedImageCount: 3,
+    });
+    expect(createPostMutate).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      const r = replies.last('CREATE_POST_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_post', result: { postId: 901 } });
+      expectReplyKeys('CREATE_POST_FROM_APP', 'success', ['result'], r.payload);
+    });
+    replies.stop();
+  });
+
+  test('no sources is refused with { error } before any server call', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CREATE_POST_FROM_APP', { requestId: 'rq_empty', sources: [] });
+
+    await vi.waitFor(() => {
+      const r = replies.last('CREATE_POST_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_empty', error: 'no images to post' });
+      expectReplyKeys('CREATE_POST_FROM_APP', 'error', ['error'], r.payload);
+    });
+    expect(previewPostMutate).not.toHaveBeenCalled();
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
     replies.stop();
   });
 });

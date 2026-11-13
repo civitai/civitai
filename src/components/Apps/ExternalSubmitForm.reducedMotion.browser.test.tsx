@@ -14,6 +14,12 @@ import type * as TrpcModule from '~/utils/trpc';
  * real so `useDisclosure` (the collapse) and Mantine core keep working.
  */
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 vi.mock('@mantine/hooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mantine/hooks')>();
   return { ...actual, useReducedMotion: () => true };
@@ -51,6 +57,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         setCover: { useMutation: mutation },
         addScreenshot: { useMutation: mutation },
         removeScreenshot: { useMutation: mutation },
+        setRedMedia: { useMutation: mutation },
       },
       oauthClient: {
         getAll: { useQuery: () => mocks.clients },

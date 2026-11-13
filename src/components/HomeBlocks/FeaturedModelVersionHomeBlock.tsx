@@ -4,19 +4,24 @@ import {
   Box,
   Button,
   Group,
-  Popover,
   Skeleton,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight, IconCategory, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
-import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
+import {
+  dedupeOrder,
+  useDedupedCappedItems,
+  useModelClaimKeys,
+} from '~/components/HomeBlocks/homeBlockDedupe';
+import { useViewerEventDecorations } from '~/components/Decorations/useViewerEventDecorations';
 
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -68,10 +73,12 @@ const FeaturedModelVersionHomeBlockContent = ({ homeBlockId, metadata, blockInde
     data: shuffled,
   });
 
-  const items = useDedupedCappedItems(filtered, {
+  const keysFor = useModelClaimKeys();
+  const items = useDedupedCappedItems(useViewerEventDecorations(filtered, { entity: 'model' }), {
     order: dedupeOrder(blockIndex),
     entity: 'model',
     rows: ROWS,
+    keysFor,
   });
 
   const title = metadata.title ?? 'Featured Models';

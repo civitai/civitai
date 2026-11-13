@@ -1,5 +1,5 @@
 /**
- * The real config with SSR pre-bundling stripped back off the unit projects — i.e. the state
+ * The real config with pre-bundling (ssr and client) stripped back off the unit projects — i.e. the state
  * `vitest.config.mts` was in before the pre-bundling commit. Exists so a control-vs-control pair
  * can be run against the ORIGINAL control after the change has landed, which is what measures
  * run-to-run drift on this box rather than the change.

@@ -45,7 +45,7 @@ function walk(dir: string, files: string[] = []): string[] {
  * right failure direction.
  */
 const WRITE_SITE =
-  /\bimage\.(?:create(?:Many(?:AndReturn)?)?|update(?:Many)?|upsert)\s*\(|\bconnectOrCreate\s*:|\$(?:execute|query)(?:Raw|RawUnsafe)[\s\S]{0,300}?(?:UPDATE|INSERT INTO)\s+"Image"/gi;
+  /\bimage\.(?:create(?:Many(?:AndReturn)?)?|update(?:Many)?|upsert)\s*\(|\bconnectOrCreate\s*:|\bimage\s*:[^,;]{0,400}?\bcreate\s*:|\$(?:execute|query)(?:Raw|RawUnsafe)[\s\S]{0,300}?(?:UPDATE|INSERT INTO)\s+"Image"/gi;
 const FUNCTION_START =
   /\n(?:export )?(?:async )?function |\n(?:export )?const \w+ = |\n {2}\w+\s*\(/g;
 const AFTER = 1200;

@@ -16,9 +16,8 @@ import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.sche
  * is served by `appListings.getAppDetail` → this component.
  *
  * 🔴 READ THIS BEFORE TREATING ANY RESULT HERE AS A GATE: IT IS NOT ONE. This file
- * is in the Vitest browser-mode `component` project, which CI runs only as the
- * preview pipeline's `preview / component-tests` — report-only, non-blocking, and
- * not reported at all when the preview build fails. The GATING half of this change
+ * is in the Vitest browser-mode `component` project, which CI runs as
+ * `Component tests`; no check in this repo blocks a merge. The GATING half of this change
  * lives in the blocking node project, in
  * `src/server/services/blocks/__tests__/app-listing.service.test.ts`, which pins
  * the thing that actually matters for safety: that the disclosure is fed by the
@@ -131,8 +130,13 @@ function base(over: Partial<ListingDetail>): ListingDetail {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     installCount: 4213,
+    openCount: 2718,
     sourceRepoUrl: null,
+    issueTrackerUrl: null,
     betaMessage: null,
+    forkable: false,
+    forkOf: null,
+    restrictedAudience: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],
     scopes: [],
@@ -165,8 +169,33 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     await expect.element(within.getByTestId('apps-listing-permissions')).toBeInTheDocument();
     // Both, not just the first — the fixture's two scopes are distinct strings so
     // "rendered only one" is a different DOM than "rendered both".
-    await expect.element(within.getByText(PLAIN_SCOPE)).toBeInTheDocument();
-    await expect.element(within.getByText(SENSITIVE_SCOPE)).toBeInTheDocument();
+    await expect.element(within.getByText('See the model it sits on')).toBeInTheDocument();
+    await expect.element(within.getByText('Run AI work with your Buzz')).toBeInTheDocument();
+  });
+
+  test('the live card speaks plain language: no scope ids, a Sensitive marker on the sensitive one', async () => {
+    const { container } = await renderBody(base({ scopes: [PLAIN_SCOPE, SENSITIVE_SCOPE] }));
+    const card = container.querySelector('[data-testid="apps-listing-permissions"]') as HTMLElement;
+    expect(card, 'the permissions card must render').not.toBeNull();
+    // Plain `toContain` on `textContent`: `not.toBeInTheDocument()` is inert in this repo.
+    expect(card.textContent).not.toContain(PLAIN_SCOPE);
+    expect(card.textContent).not.toContain(SENSITIVE_SCOPE);
+    expect(card.querySelectorAll('[data-permission-row]')).toHaveLength(2);
+    const sensitiveRow = card.querySelector(`[data-permission-row="${SENSITIVE_SCOPE}"]`)!;
+    const plainRow = card.querySelector(`[data-permission-row="${PLAIN_SCOPE}"]`)!;
+    expect(sensitiveRow.textContent).toContain('Sensitive');
+    expect(plainRow.textContent).not.toContain('Sensitive');
+  });
+
+  test('a divider sits between permission rows, not before the first or after the last', async () => {
+    const { container } = await renderBody(
+      base({ scopes: [PLAIN_SCOPE, 'images:read:self', SENSITIVE_SCOPE] })
+    );
+    const card = container.querySelector('[data-testid="apps-listing-permissions"]') as HTMLElement;
+    const rows = card.querySelectorAll('[data-permission-row]');
+    expect(rows).toHaveLength(3);
+    // One sensitive row (no divider) and two other rows (one divider between them).
+    expect(card.querySelectorAll('[role="separator"]')).toHaveLength(1);
   });
 
   test('the section is ABSENT — not empty — when the app declares no scopes', async () => {
@@ -240,5 +269,105 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     const sensitiveMarks = section!.querySelectorAll('[data-testid="sensitive-scope-badge"]');
     expect(sensitiveMarks.length).toBe(1);
     await expect.element(within.getByTestId('apps-listing-permissions')).toBeInTheDocument();
+  });
+});
+
+/**
+ * One grouped, ordered permission list for both listing shapes, asserted on the rendered TEXT
+ * ORDER of the section (not on a test id or component name).
+ *
+ * Fixtures are stored in an order the grouping must CHANGE (plain scopes first, sensitive
+ * scopes in descending bit order), span both groups with two rows each, and include an
+ * on-site scope with no OAuth bit, which must sort last in its group. Expected titles are
+ * literals, not read from the scope tables.
+ */
+function expectInOrder(section: Element, texts: string[]) {
+  const text = section.textContent ?? '';
+  const positions = texts.map((t) => text.indexOf(t));
+  texts.forEach((t, i) => expect(positions[i], `"${t}" is not in the section`).toBeGreaterThan(-1));
+  expect(
+    positions,
+    `expected, in this order: ${texts.join(' → ')}; got positions ${positions.join(', ')}`
+  ).toEqual([...positions].sort((a, b) => a - b));
+}
+
+describe('permissions — grouped and ordered the same way for every listing shape', () => {
+  test('🔴 ON-SITE app: sensitive group first, then the rest, each in scope order', async () => {
+    const { container } = await renderBody(
+      base({
+        scopes: ['apps:storage', 'models:read:self', 'social:tip:self', 'ai:write:budgeted'],
+      })
+    );
+    const section = container.querySelector('[data-testid="apps-listing-permissions"]');
+    expect(section, 'the on-site permissions section must render').not.toBeNull();
+    expectInOrder(section!, [
+      'Sensitive permissions (2)',
+      'Run AI work with your Buzz',
+      'Tip on your behalf',
+      'Other permissions (2)',
+      'See the model it sits on',
+      'Store your data and read shared entries',
+    ]);
+  });
+
+  test('OFF-SITE connect app: the same grouping and order (invariant guard)', async () => {
+    const { container } = await renderBody(
+      base({
+        kind: 'offsite',
+        scopes: [],
+        connectScopes: ['ModelsRead', 'CollectionsRead', 'SocialTip', 'BuzzRead'],
+        kindData: {
+          kind: 'offsite',
+          externalUrl: 'https://example.com',
+          connectClientId: 'client-1',
+        },
+      })
+    );
+    const section = container.querySelector('[data-testid="connect-scopes-disclosure"]');
+    expect(section, 'the connect permissions section must render').not.toBeNull();
+    expectInOrder(section!, [
+      'Sensitive permissions (2)',
+      'View buzz balance & history',
+      'Tip other users',
+      'Other permissions (2)',
+      'Browse & download models',
+      'View collections',
+    ]);
+  });
+
+  test('both shapes render through ONE component: identical row and group structure', async () => {
+    // The structural half: the same group containers and the same row marker on both, so a
+    // second renderer reappearing for either shape fails here even if it copied the order.
+    const onsite = await renderBody(base({ scopes: ['models:read:self', 'ai:write:budgeted'] }));
+    const connect = await renderBody(
+      base({
+        kind: 'offsite',
+        scopes: [],
+        connectScopes: ['ModelsRead', 'BuzzRead'],
+        kindData: {
+          kind: 'offsite',
+          externalUrl: 'https://example.com',
+          connectClientId: 'client-1',
+        },
+      })
+    );
+    const shape = (root: Element, testid: string) => {
+      const section = root.querySelector(`[data-testid="${testid}"]`)!;
+      const group = (name: string) =>
+        Array.from(
+          section.querySelectorAll(
+            `[data-testid="listing-permissions-${name}-group"] [data-permission-row]`
+          )
+        ).map((r) => r.getAttribute('data-permission-row'));
+      return { sensitive: group('sensitive'), other: group('other') };
+    };
+    expect(shape(onsite.container, 'apps-listing-permissions')).toEqual({
+      sensitive: ['ai:write:budgeted'],
+      other: ['models:read:self'],
+    });
+    expect(shape(connect.container, 'connect-scopes-disclosure')).toEqual({
+      sensitive: ['BuzzRead'],
+      other: ['ModelsRead'],
+    });
   });
 });

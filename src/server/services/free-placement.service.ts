@@ -1,6 +1,15 @@
 import type { Prisma } from '@prisma/client';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { countPlacements } from '@civitai/db-queries/placement';
+import { dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { getPlacementConfig } from '~/server/services/placement.service';
+import {
+  countFreeTier,
+  freePlacementsOnWhere,
+  freePlacementsTodayWhere,
+  TEAM_WAIVER,
+  teamWaivedWhere,
+} from '~/server/services/placement-count-predicates';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import {
   reservedFreeSlots,
@@ -16,6 +25,7 @@ import {
   FREE_PLACEMENTS_PER_DAY,
   PLACEMENT_SURFACES,
   freePlacementDayStart,
+  placementSurfaceAllowsZeroPrice,
 } from '~/shared/utils/placement';
 
 /**
@@ -103,12 +113,11 @@ type SpaceTarget = {
  *
  * Written once because the claim decides on it and the UI displays it. Scope it
  * by status later in one of two copies and the surface offers a placement the
- * mutation refuses.
+ * mutation refuses. The predicate is `freePlacementsTodayWhere`, which the
+ * display path's Kysely count reads too.
  */
 const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
-  client.placement.count({
-    where: { placerId, free: true, createdAt: { gte: freePlacementDayStart() } },
-  });
+  countFreeTier((where) => client.placement.count({ where }), freePlacementsTodayWhere(placerId));
 
 /**
  * Never twice on the same target by the same placer, as one predicate.
@@ -119,19 +128,28 @@ const countFreePlacementsToday = (client: PlacementClient, placerId: number) =>
  * on the same image and one should not consume the other — and the daily
  * allowance already makes that pair cost two days, so it raises no farm rate.
  *
- * Shared with the display path for the same reason as the daily count.
+ * Shared with the display path for the same reason as the daily count, through
+ * `freePlacementsOnWhere` the same way.
  */
 const countFreePlacementsOn = (
   client: PlacementClient,
-  { placerId, surface, targetType, targetId }: SpaceTarget & { placerId: number }
-) => client.placement.count({ where: { placerId, free: true, surface, targetType, targetId } });
+  input: SpaceTarget & { placerId: number }
+) => countFreeTier((where) => client.placement.count({ where }), freePlacementsOnWhere(input));
 
 export type CreateFreePlacement = SpaceTarget & {
   placerId: number;
   /** Who sold the placed thing, when an approval would owe them a cut. */
   sellerId?: number | null;
   /** The surface's own payload. Opaque here, exactly as on the paid path. */
-  data: Prisma.InputJsonValue;
+  data: Prisma.InputJsonObject;
+  /** A sticker's movement over a video, stored beside `data`. Opaque here, like `data`. */
+  track?: Prisma.InputJsonObject;
+  /**
+   * An event's team waiver pays for this row instead of the free tier: the creator's free slots and
+   * the placer's daily allowance are neither required nor spent, and the waiver's own daily limit
+   * is checked under the placer lock instead. The caller decides eligibility.
+   */
+  teamWaiver?: { perDay: number };
 };
 
 /**
@@ -174,7 +192,17 @@ export async function createFreePlacement({
   placerId,
   sellerId,
   data,
+  track,
+  teamWaiver,
 }: CreateFreePlacement) {
+  // A surface that may be priced at zero has no free tier: a `free` row on it would spend a slot
+  // and the daily allowance, which every surface shares, so continuing a story would quietly
+  // cost the placer today's free sticker. Refused before any I/O.
+  if (placementSurfaceAllowsZeroPrice(surface))
+    throw throwBadRequestError(
+      `placement: ${PLACEMENT_SURFACES[surface].label} have no free tier to claim from`
+    );
+
   const target = { surface, targetType, targetId };
   const space = await resolvePlacementSpaceFor(target);
 
@@ -199,7 +227,7 @@ export async function createFreePlacement({
   if (space.ownerId === placerId)
     throw throwBadRequestError('placement: you cannot place on your own content');
 
-  if (space.freeSlots <= 0)
+  if (!teamWaiver && space.freeSlots <= 0)
     throw throwBadRequestError('placement: this creator is not taking free placements here');
 
   // Outside the transaction: it is I/O, which `no-io-in-transaction` guards, and
@@ -222,11 +250,21 @@ export async function createFreePlacement({
     await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PLACER_LOCK_CLASS}::int, ${placerId}::int)`;
 
-    const usedToday = await countFreePlacementsToday(tx, placerId);
-    if (usedToday >= FREE_PLACEMENTS_PER_DAY)
-      throw throwBadRequestError(
-        'placement: you have used your free placement for today. It resets at midnight UTC.'
-      );
+    if (teamWaiver) {
+      const waivedToday = await tx.placement.count({
+        where: teamWaivedWhere(freePlacementsTodayWhere(placerId)),
+      });
+      if (waivedToday >= teamWaiver.perDay)
+        throw throwBadRequestError(
+          'placement: you have used your free team remixes for today. They reset at midnight UTC.'
+        );
+    } else {
+      const usedToday = await countFreePlacementsToday(tx, placerId);
+      if (usedToday >= FREE_PLACEMENTS_PER_DAY)
+        throw throwBadRequestError(
+          'placement: you have used your free placement for today. It resets at midnight UTC.'
+        );
+    }
 
     // Per (owner, placer), so the placer lock above already serialises it. The
     // paid path's cap, applied here for the same reason: it bounds a review
@@ -240,23 +278,30 @@ export async function createFreePlacement({
         'placement: you already have the maximum pending placements with this creator'
       );
 
+    // Taken by a waived row too, although it skips the counts below: the reserved-slot count is
+    // read net of waived rows in two statements, and a waived insert landing between them would
+    // make a concurrent free claim undercount the slots by one.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${TARGET_LOCK_CLASS}::int, hashtext(${spaceLockKey(
       surface,
       targetType,
       targetId
     )}))`;
 
-    const already = await countFreePlacementsOn(tx, { placerId, ...target });
-    if (already > 0)
-      throw throwBadRequestError(
-        `placement: you have already used a free placement here. Free ${PLACEMENT_SURFACES[surface].label} are once per image.`
-      );
+    // The target's rules are the free tier's: a waived row takes no slot and does not count as the
+    // placer's free placement here.
+    if (!teamWaiver) {
+      const already = await countFreePlacementsOn(tx, { placerId, ...target });
+      if (already > 0)
+        throw throwBadRequestError(
+          `placement: you have already used a free placement here. Free ${PLACEMENT_SURFACES[surface].label} are once per image.`
+        );
 
-    // Re-counted inside the lock. `space.freeSlotsRemaining` is what a surface
-    // shows someone; this is what decides.
-    const reserved = await reservedFreeSlots(tx, target);
-    if (reserved >= space.freeSlots)
-      throw throwBadRequestError('placement: the free slots on this one are taken');
+      // Re-counted inside the lock. `space.freeSlotsRemaining` is what a surface
+      // shows someone; this is what decides.
+      const reserved = await reservedFreeSlots(tx, target);
+      if (reserved >= space.freeSlots)
+        throw throwBadRequestError('placement: the free slots on this one are taken');
+    }
 
     return tx.placement.create({
       data: {
@@ -274,7 +319,8 @@ export async function createFreePlacement({
         amount: 0,
         status: 'pending',
         expiresAt,
-        data,
+        data: teamWaiver ? { ...data, waiver: TEAM_WAIVER } : data,
+        ...(track ? { track } : {}),
       },
       select: { id: true },
     });
@@ -294,7 +340,11 @@ export async function createFreePlacement({
  */
 export async function getFreePlacementAllowance({ placerId }: { placerId: number }) {
   const dayStart = freePlacementDayStart();
-  const used = await countFreePlacementsToday(dbRead, placerId);
+  const db = (await loadKyselyDb()).kyselyRead;
+  const used = await countFreeTier(
+    (where) => countPlacements(db, where),
+    freePlacementsTodayWhere(placerId)
+  );
 
   return {
     used,
@@ -310,5 +360,9 @@ export async function getFreePlacementAllowance({ placerId }: { placerId: number
  * Same standing as the allowance above: a listing for the surface to render,
  * never the thing a mutation decides on.
  */
-export const hasUsedFreePlacementOn = async (input: SpaceTarget & { placerId: number }) =>
-  (await countFreePlacementsOn(dbRead, input)) > 0;
+export const hasUsedFreePlacementOn = async (input: SpaceTarget & { placerId: number }) => {
+  const db = (await loadKyselyDb()).kyselyRead;
+  return (
+    (await countFreeTier((where) => countPlacements(db, where), freePlacementsOnWhere(input))) > 0
+  );
+};

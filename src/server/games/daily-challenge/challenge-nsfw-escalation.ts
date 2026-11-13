@@ -14,12 +14,13 @@ import {
   ChallengeStatus,
 } from '~/shared/utils/prisma/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 
 // Applies the scan verdict to a challenge. A green USER challenge whose text is NSFW is cancelled
 // (green must be SFW): void it (Cancelled + collection closed + entry-fee pool and initial prize
 // refunded, all idempotent), mark the scan resolved, and notify the creator to recreate on
 // civitai.red. Only a Completing/Completed challenge escapes the void — its pool is already in
-// payout. A yellow/non-user challenge stays live but has its rating raised to R. A clean scan just
+// payout. A yellow/non-user challenge stays live but has its rating raised to the detected level. A clean scan just
 // marks it Scanned.
 //
 // Idempotent: the cancel path relies on voidChallenge's own idempotency (a retried callback re-runs the
@@ -28,11 +29,14 @@ import { logToAxiom } from '~/server/logging/client';
 export async function applyChallengeNsfwEscalation({
   entityId,
   isNsfw,
+  level,
 }: {
   entityId: number;
   isNsfw: boolean;
+  level?: number | null;
 }): Promise<void> {
-  const challenge = await dbRead.challenge.findUnique({
+  // Primary: a moderator rating written just before this callback must be seen.
+  const challenge = await dbWrite.challenge.findUnique({
     where: { id: entityId },
     select: {
       allowedNsfwLevel: true,
@@ -41,9 +45,22 @@ export async function applyChallengeNsfwEscalation({
       createdById: true,
       collectionId: true,
       status: true,
+      moderatorNsfwLevel: true,
     },
   });
   if (!challenge) return;
+
+  // A resolved rating dispute is final for this challenge: no void, no raise.
+  if (challenge.moderatorNsfwLevel != null) {
+    await dbWrite.challenge.updateMany({
+      where: {
+        id: entityId,
+        ingestion: { in: [ChallengeIngestionStatus.Pending, ChallengeIngestionStatus.Error] },
+      },
+      data: { ingestion: ChallengeIngestionStatus.Scanned, scannedAt: new Date() },
+    });
+    return;
+  }
 
   const buzzType: ChallengeBuzzType = challenge.buzzType === 'green' ? 'green' : 'yellow';
   const escalation = computeNsfwEscalation({
@@ -51,6 +68,7 @@ export async function applyChallengeNsfwEscalation({
     buzzType,
     source: challenge.source,
     isNsfw,
+    level,
   });
 
   if (escalation.cancel) {
@@ -182,8 +200,9 @@ export async function applyChallengeNsfwEscalation({
       type: 'system-message',
       key: `challenge-nsfw-raised-${entityId}`,
       details: {
-        message:
-          "Your challenge's rating was raised to R based on its text, so it won't appear in safe-mode feeds.",
+        message: `Your challenge's rating was raised to ${getBrowsingLevelLabel(
+          escalation.nsfwLevel
+        )} based on its text, so it won't appear in safe-mode feeds.`,
         url: `/challenges/${entityId}`,
       },
     });

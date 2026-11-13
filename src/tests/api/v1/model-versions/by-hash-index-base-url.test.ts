@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 /**
  * Regression coverage for POST /api/v1/model-versions/by-hash — the batch
@@ -73,7 +74,16 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 // I/O behind the real `prepareModelVersionResponse`. The URL construction
 // itself (`createSerializedFileDownloadUrl`, `getPrimaryFile`) stays REAL — the
 // emitted string is the contract under test.
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: vi.fn(async () => []) }));
+// The metric-privacy read (`prepareModelVersionResponse`) is a Kysely statement; no row is a version
+// with no privacy inputs, as the Prisma `null` was.
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getModelVersionPrivacyRow: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: vi.fn(async () => []),
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: vi.fn(async () => []),
 }));
@@ -135,11 +145,20 @@ function modelVersion() {
     name: 'v1',
     baseModel: 'SD 1.5',
     status: 'Published',
+    availability: 'Public',
     nsfwLevel: 1,
     licensingFee: null,
     files: FILES.map((f) => ({ ...f })),
     metrics: [{ downloadCount: 5, thumbsUpCount: 2 }],
-    model: { name: 'Model 77', type: 'Checkpoint', nsfw: false, poi: false, mode: null },
+    model: {
+      name: 'Model 77',
+      type: 'Checkpoint',
+      nsfw: false,
+      poi: false,
+      mode: null,
+      availability: 'Public',
+      userId: 7,
+    },
   } as any;
 }
 

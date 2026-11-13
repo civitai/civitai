@@ -1,11 +1,18 @@
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
+import type { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
+import {
+  trainingDataOwnerView,
+  withoutEpochUrls,
+} from '~/server/services/training-data-restricted.service';
+import { isModelDeletedOrTakenDown } from '~/server/utils/model-withheld';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
   throwBadRequestError,
@@ -14,6 +21,7 @@ import {
   throwNotFoundError,
   throwRateLimitError,
 } from '~/server/utils/errorHandling';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -26,14 +34,16 @@ const logWebhook = (data: MixedObject) => {
   ).catch();
 };
 
-export const getModelData = async ({ input }: { input: GetByIdInput }) => {
+export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const model = await getModel({
       id: input.id,
       select: {
         id: true,
+        userId: true,
         name: true,
         status: true,
+        mode: true,
         type: true,
         uploadType: true,
         availability: true,
@@ -61,18 +71,23 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
         },
       },
     });
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    // The training wizard is the owner's; its dataset files carry their storage urls, so only the
+    // owner and moderators may read it. `userId` is used for that check and dropped from the
+    // response — adding it to the returned shape would change the public query type.
+    if (!model || (!ctx.user?.isModerator && ctx.user?.id !== model.userId))
+      throw throwNotFoundError(`No model with id ${input.id}`);
+    const { userId: _ownerId, mode: _mode, ...modelData } = model;
 
     // TODO(replica-toast): overlay is a workaround — the data-packet logical subscriber drops
     // TOASTed jsonb on UPDATE, leaving trainingResults empty. Remove once replication is fixed.
-    const fileIds = model.modelVersions.flatMap((v) => v.files.map((f) => f.id));
+    const fileIds = modelData.modelVersions.flatMap((v) => v.files.map((f) => f.id));
     if (fileIds.length) {
       const fresh = await dbWrite.modelFile.findMany({
         where: { id: { in: fileIds } },
         select: { id: true, metadata: true },
       });
       const metaById = new Map(fresh.map((f) => [f.id, f.metadata]));
-      for (const version of model.modelVersions) {
+      for (const version of modelData.modelVersions) {
         for (const file of version.files) {
           const m = metaById.get(file.id);
           if (m !== undefined) file.metadata = m;
@@ -80,7 +95,17 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
       }
     }
 
-    return model;
+    if (ctx.user?.isModerator) return modelData;
+    const withheld = isModelDeletedOrTakenDown(model);
+    return {
+      ...modelData,
+      modelVersions: modelData.modelVersions.map((v) => ({
+        ...v,
+        files: withheld
+          ? withoutEpochUrls(trainingDataOwnerView(v.files))
+          : trainingDataOwnerView(v.files),
+      })),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -150,7 +175,8 @@ const getWorkflowFromVersion = async (modelVersionId: number) => {
   // the addressing for a privileged gate release, so an owner could point the file a moderator is
   // reviewing at a different run and have the ruling land there. The tag is written by us at submit
   // time (training.orch.ts) and the reviewed user cannot set it, so it — not the metadata — is what
-  // says which version this workflow belongs to.
+  // says which version this workflow belongs to. Keep it even though modelFile writes now drop
+  // client trainingResults: files saved before that still carry whatever metadata they were given.
   if (!workflow.tags?.includes(`modelVersion:${modelVersionId}`)) {
     logWebhook({
       message: 'Workflow does not belong to this model version; refusing to touch its gate',
@@ -167,20 +193,23 @@ const moderateTrainingData = async ({
   approve,
   workflowId,
   status,
+  moderatorId,
 }: {
   modelVersionId: number;
   approve: boolean;
   workflowId: string;
   status?: WorkflowStatus;
+  moderatorId: number;
 }) => {
   if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
 
   try {
-    const response = await fetch(
+    const response = await outboundFetch(
       `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/workflows/${encodeURIComponent(
         workflowId
       )}/moderation-gate`,
       {
+        timeoutMs: 30_000,
         method: 'POST',
         body: JSON.stringify({ approved: approve }),
         headers: {
@@ -196,6 +225,20 @@ const moderateTrainingData = async ({
       // own database is the half that can still fail, and `webhookFailed` is how the caller hears.
       let webhookFailed = false;
 
+      // Same row the moderator app writes for a ruling there.
+      try {
+        await trackModActivity(moderatorId, {
+          entityType: 'modelVersion',
+          entityId: modelVersionId,
+          activity: approve ? 'trainingData:approve' : 'trainingData:deny',
+        });
+      } catch (e) {
+        logWebhook({
+          message: 'Gate released but the moderator activity was not recorded',
+          data: { modelVersionId, workflowId, important: true, error: (e as Error)?.message },
+        });
+      }
+
       if (!status) {
         webhookFailed = true;
         logWebhook({
@@ -204,22 +247,29 @@ const moderateTrainingData = async ({
         });
       } else {
         // The orchestrator does not reliably fire this itself, and without it an approved or denied
-        // run stays Paused in our database.
-        const hook = await fetch(
+        // run stays Paused in our database. A thrown fetch is the same half-done state as a refusal.
+        const hook = await outboundFetch(
           `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           {
+            // Our own webhook handler; generous so a slow but successful run is not reported failed.
+            timeoutMs: 120_000,
             method: 'POST',
             body: JSON.stringify({ workflowId, status }),
             headers: {
               'Content-Type': 'application/json',
             },
           }
-        );
-        if (!hook.ok) {
+        ).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+        if (hook instanceof Error || !hook.ok) {
           webhookFailed = true;
           logWebhook({
             message: 'Gate released but the training webhook was refused; version is still Paused',
-            data: { modelVersionId, workflowId, important: true, status: hook.status },
+            data: {
+              modelVersionId,
+              workflowId,
+              important: true,
+              ...(hook instanceof Error ? { error: hook.message } : { status: hook.status }),
+            },
           });
         }
       }
@@ -261,8 +311,20 @@ const moderateTrainingData = async ({
   }
 };
 
-export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
+export async function handleDenyTrainingData({
+  input,
+  moderatorId,
+}: {
+  input: GetByIdInput;
+  moderatorId: number;
+}) {
   const modelVersionId = input.id;
   const { workflowId, status } = await getWorkflowFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, workflowId, status, approve: false });
+  return await moderateTrainingData({
+    modelVersionId,
+    workflowId,
+    status,
+    approve: false,
+    moderatorId,
+  });
 }

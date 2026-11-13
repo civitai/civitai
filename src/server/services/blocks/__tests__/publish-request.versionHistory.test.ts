@@ -44,8 +44,8 @@ function historyRow(over: Partial<Record<string, unknown>> & { id: string }) {
     reviewedAt: new Date('2026-03-02T00:00:00Z'),
     rejectionReason: null,
     deployState: 'live',
-    submittedBy: { id: 7, username: 'author', image: null },
-    reviewedBy: { id: 9, username: 'mod', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
+    reviewedBy: { id: 9, username: 'mod', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -62,7 +62,7 @@ function queueRow(over: Partial<Record<string, unknown>> & { id: string; slug: s
     fileSummary: {},
     manifestDiffSummary: {},
     forgejoCommitSha: null,
-    submittedBy: { id: 7, username: 'author', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -172,8 +172,16 @@ describe('listVersionHistory — keyed on SLUG, newest-first, bounded', () => {
     // …and so are the fields the modal renders, including both user chips.
     for (const field of ['id', 'version', 'status', 'submittedAt', 'reviewedAt', 'rejectionReason'])
       expect(resolved[field], `${field} must be projected`).toBe(true);
-    expect(resolved.submittedBy).toEqual({ select: { id: true, username: true, image: true } });
-    expect(resolved.reviewedBy).toEqual({ select: { id: true, username: true, image: true } });
+    // 🔴 `deletedAt` IS PART OF BOTH CHIPS. `PriorVersionsModal` renders each of these
+    // through `UserAvatar`, which BRANCHES on `deletedAt` twice — `UserProfileLink`
+    // suppresses `linkToProfile` for a deleted account and `Username` renders "[deleted]".
+    // Without the field the value is `undefined` ⇒ falsy ⇒ a deleted user renders as a live,
+    // linked account. Asserted as an exact shape (not `toContain`) because the five
+    // `submittedBy` readers in this service must stay identical to each other; that parity
+    // rule lives in `src/server/services/blocks/__tests__/review-submitter-select-parity.test.ts`.
+    const CHIP = { select: { id: true, username: true, deletedAt: true, image: true } };
+    expect(resolved.submittedBy).toEqual(CHIP);
+    expect(resolved.reviewedBy).toEqual(CHIP);
     // No bundle pointers, no manifest blob: the modal is a list of dates and verdicts.
     expect(resolved.manifest).toBeUndefined();
     expect(resolved.bundleKey).toBeUndefined();
@@ -431,22 +439,35 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
     expect(result.items[0].playCount).toBe(0);
   });
 
-  it('🔴 ONE listing query per page, not one per row, and only for the rows RETURNED', async () => {
-    // The `limit + 1` probe row must not be joined — and the join must never become an
-    // N+1 on a 50-row mod queue.
-    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-      queueRow({ id: 'r1', slug: 'app-1' }),
-      queueRow({ id: 'r2', slug: 'app-2' }),
-      queueRow({ id: 'r3', slug: 'app-3' }), // the probe row at limit=2
-    ]);
-    const result = await listPendingRequests({ limit: 2 });
-    expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
-    expect(mockDbRead.appListing.findMany.mock.calls[0][0].where.slug.in).toEqual([
-      'app-1',
-      'app-2',
-    ]);
-    expect(result.items).toHaveLength(2);
-    expect(result.nextCursor).toBe('r2');
+  it('🔴 a FIXED number of listing queries per page, not one per row, and only for the rows RETURNED', async () => {
+    // The `limit + 1` probe row must not be joined — and the reads must never become an
+    // N+1 on a 50-row mod queue. Three per page: the slug join, plus the two re-rate
+    // lookups (draft transition, reset restore) the approve warning needs.
+    const page = (n: number) =>
+      Array.from({ length: n + 1 }, (_, i) =>
+        queueRow({ id: `r${i + 1}`, slug: `app-${i + 1}`, appBlockId: `blk-${i + 1}` })
+      );
+    const queriesFor = async (n: number) => {
+      mockDbRead.appListing.findMany.mockClear();
+      mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue(page(n));
+      const result = await listPendingRequests({ limit: n });
+      expect(result.items).toHaveLength(n);
+      return mockDbRead.appListing.findMany.mock.calls.map(
+        (c) => c[0].where as { slug?: { in: string[] }; OR?: unknown[] }
+      );
+    };
+
+    const one = await queriesFor(1);
+    const five = await queriesFor(5);
+    expect(one).toHaveLength(3);
+    expect(five).toHaveLength(3);
+
+    const join = five.find((w) => w.slug);
+    expect(join?.slug?.in).toEqual(['app-1', 'app-2', 'app-3', 'app-4', 'app-5']);
+    // Each re-rate lookup carries one clause per RETURNED row; the probe row is not in it.
+    const lookups = five.filter((w) => w.OR);
+    expect(lookups).toHaveLength(2);
+    for (const w of lookups) expect(w.OR).toHaveLength(5);
   });
 
   it('no listing query at all when the page is empty', async () => {
@@ -473,7 +494,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
           deployState: 'live',
           deployDetail: null,
           deployUpdatedAt: null,
-          reviewedBy: { id: 9, username: 'mod', image: null },
+          reviewedBy: { id: 9, username: 'mod', deletedAt: null, image: null },
         },
       ]);
       mockDbRead.appListing.findMany.mockResolvedValue([

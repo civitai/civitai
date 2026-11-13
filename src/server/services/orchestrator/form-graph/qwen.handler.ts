@@ -8,7 +8,7 @@ import type {
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import type {
   ImageGenStepTemplate,
   ComfyQwen21CreateImageGenInput,
@@ -18,7 +18,7 @@ import type {
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { qwen21DiffusionModel } from '~/shared/constants/qwen21.constants';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -98,7 +98,7 @@ export const createQwenInput = defineHandler<
       negativePrompt: data.negativePrompt,
       width: data.aspectRatio?.width,
       height: data.aspectRatio?.height,
-      promptExtend: 'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
+      enhancePrompt: 'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
       quantity,
       seed: data.seed,
     };

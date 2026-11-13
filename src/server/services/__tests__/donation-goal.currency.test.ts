@@ -74,3 +74,82 @@ describe('donateToGoal — the creator receives what the donor gave', () => {
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 });
+
+describe('donateToGoal — non-commercial base models', () => {
+  it.each(['Flux.2 Klein 9B', 'Flux.2 Klein 9B-base'])(
+    'refuses a donation to a %s version without charging anything',
+    async (baseModel) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({ baseModel });
+
+      await expect(
+        donateToGoal({ donationGoalId: GOAL_ID, amount: 500, userId: DONOR, buzzType: 'yellow' })
+      ).rejects.toThrow(
+        `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`
+      );
+      expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+      expect(mockDbRead.modelVersion.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 555 },
+          select: expect.objectContaining({ baseModel: true }),
+        })
+      );
+    }
+  );
+
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])(
+    'still takes a donation to a %s version (control)',
+    async (baseModel) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValue({ baseModel });
+
+      await donateToGoal({
+        donationGoalId: GOAL_ID,
+        amount: 500,
+        userId: DONOR,
+        buzzType: 'yellow',
+      });
+
+      expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    }
+  );
+});
+
+describe('donateToGoal — Green Buzz needs the model on civitai.com', () => {
+  const donate = (buzzType: 'green' | 'yellow') =>
+    donateToGoal({ donationGoalId: GOAL_ID, amount: 500, userId: DONOR, buzzType });
+  const faceless = { nsfw: true, nsfwLevel: 16, sfwName: null, sfwCoverImageId: null };
+
+  beforeEach(() => {
+    mockDbRead.modelVersion.findUnique.mockResolvedValue({ baseModel: 'SDXL 1.0', modelId: 9 });
+  });
+
+  it('refuses Green to a mature model without a .com face, before any Buzz moves', async () => {
+    mockDbWrite.model.findUniqueOrThrow.mockResolvedValue(faceless);
+
+    await expect(donate('green')).rejects.toThrow('not available with this currency');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.findUniqueOrThrow).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 9 } })
+    );
+  });
+
+  it('takes Green when the mature model has a .com face (control)', async () => {
+    mockDbWrite.model.findUniqueOrThrow.mockResolvedValue({
+      ...faceless,
+      nsfwLevel: 1 | 16,
+      sfwName: 'Safe title',
+      sfwCoverImageId: 3,
+    });
+
+    await donate('green');
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('still takes yellow for a mature model without a .com face', async () => {
+    mockDbWrite.model.findUniqueOrThrow.mockResolvedValue(faceless);
+
+    await donate('yellow');
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+  });
+});

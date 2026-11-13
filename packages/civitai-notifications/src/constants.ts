@@ -12,6 +12,7 @@ export const notificationCategories = [
   'Creator',
   'Referral',
   'System',
+  'Moderation',
   'Other',
 ] as const;
 
@@ -28,3 +29,19 @@ export const NotificationCategory = Object.fromEntries(
  * this to bump its unread badge without a poll.
  */
 export const newNotificationSignal = 'notification:new';
+
+/**
+ * Types that send email: the processors with `defaultEmail` (a main-app test pins the two). The
+ * fan-out worker has no registry, so it gates on this list.
+ */
+export const emailNotificationTypes: readonly string[] = [
+  'service-deal-requested',
+  'service-deal-accepted',
+  'service-deal-declined',
+  'service-deal-expired',
+  'service-deal-delivered',
+  'service-deal-revision-requested',
+  'service-deal-cancellation-requested',
+  'service-deal-completed',
+  'service-deal-paid-out',
+];

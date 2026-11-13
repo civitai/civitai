@@ -67,6 +67,7 @@ vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch:
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { updateUserHandler } from '~/server/controllers/user.controller';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
@@ -101,6 +102,7 @@ const replacePicture = (pictureId = NEW_PICTURE_ID) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
   mockGetUserById.mockResolvedValue({
     profilePictureId: OLD_PICTURE_ID,
     profilePicture: { userId: USER_ID },
@@ -238,5 +240,24 @@ describe('verifyAvatar shares the ingestion allowlist predicate', () => {
     mockUpdateUserById.mockClear();
     await setAvatar('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
     expect(mockUpdateUserById).toHaveBeenCalled();
+  });
+
+  it('keeps the current picture when the form re-sends its `user.image` fallback', async () => {
+    // The edit form shows `{ url: user.image }` when the read withholds the picture; saving any
+    // other field sends it back unchanged.
+    mockGetUserById.mockResolvedValue({
+      image: NEW_AVATAR,
+      profilePictureId: OLD_PICTURE_ID,
+      profilePicture: { userId: USER_ID },
+    });
+
+    await updateUserHandler({
+      ctx: { user: { id: USER_ID } },
+      input: { id: USER_ID, profilePicture: { url: NEW_AVATAR, type: 'image' } },
+    } as never);
+
+    const data = mockUpdateUserById.mock.calls[0]?.[0]?.data as { profilePicture?: unknown };
+    expect(data?.profilePicture).toBeUndefined();
+    expect(queueInsert()).toBeUndefined();
   });
 });

@@ -13,8 +13,8 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconCalendar,
   IconCalendarDue,
@@ -85,6 +85,8 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { stringToDate } from '~/utils/zod-helpers';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
+
+const sortedBaseModels = [...activeBaseModels].sort((a, b) => a.localeCompare(b));
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -192,7 +194,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     schema: formSchema,
     form,
     timeout: 1000,
-    key: `bounty_new`,
+    key: `bounty_${bounty?.id ?? 'new'}`,
     watch: ({ mode, name, type, currency, description, entryMode, unitAmount }) => ({
       mode,
       name,
@@ -407,7 +409,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                           label="Base model"
                           placeholder="Please select a base model"
                           withAsterisk
-                          data={[...activeBaseModels]}
+                          data={sortedBaseModels}
+                          searchable
                         />
                       )}
                     </Group>

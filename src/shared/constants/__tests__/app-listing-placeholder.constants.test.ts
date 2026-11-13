@@ -204,8 +204,8 @@ describe('listingPlaceholderGradient', () => {
  * component going back to its own hardcoded gradient, because a re-hardcoded
  * literal that happens to match still passes every value assertion. That is the
  * precise regression this whole module exists to prevent, and the store card /
- * detail hero have NO blocking test coverage of their own (their `.browser.test.tsx`
- * suites are report-only and assert nothing about the placeholder).
+ * detail hero have NO test coverage of the placeholder (their `.browser.test.tsx`
+ * suites assert nothing about it).
  *
  * So assert it structurally: these two components must derive their placeholder
  * from the shared helper and must NOT carry the old uniform `--mantine-color-dark-*`

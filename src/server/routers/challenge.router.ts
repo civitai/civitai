@@ -63,6 +63,7 @@ import {
   upsertUserChallenge,
   upsertChallengeEvent,
   rescanChallenge,
+  rejudgeChallenge,
   voidChallenge,
   getActiveJudges,
   getChallengeSystemConfig,
@@ -84,7 +85,7 @@ import {
   toggleChallengeNotify,
   getTrackedChallengeIds,
 } from '~/server/services/challenge-engagement.service';
-import { getJudgeCommentForImage } from '~/server/services/commentsv2.service';
+import { getJudgeCommentForImage } from '~/server/services/challenge-judge-review.service';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -108,7 +109,9 @@ export const challengeRouter = router({
   getDaily: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getDailyChallenges()),
+    .query(({ ctx }) =>
+      getDailyChallenges({ isGreen: ctx.features.isGreen, viewerId: ctx.user?.id })
+    ),
 
   // Current user's own challenges — entered or created — most-recent-activity first.
   getMyChallenges: protectedProcedure
@@ -300,6 +303,11 @@ export const challengeRouter = router({
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input, ctx }) => rescanChallenge({ id: input.id, moderatorId: ctx.user.id })),
 
+  rejudge: moderatorProcedure
+    .input(challengeQuickActionSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input, ctx }) => rejudgeChallenge({ id: input.id, moderatorId: ctx.user.id })),
+
   // Active judges for the challenge form dropdowns. Any authenticated user may call it; the service
   // returns the full list (with sensitive fields) to moderators and the public, SFW-selectable subset
   // to everyone else, based on the real ctx.user.isModerator.
@@ -344,14 +352,25 @@ export const challengeRouter = router({
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
+    .query(({ ctx }) =>
+      getActiveEvents(
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Public: Get single event by ID
   getEventById: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ id: z.number() }))
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeEventById(input.id)),
+    .query(({ input, ctx }) =>
+      getChallengeEventById(
+        input.id,
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Moderator: Get all challenge events
   getEvents: moderatorProcedure

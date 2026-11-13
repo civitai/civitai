@@ -1,4 +1,16 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -10,6 +22,18 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // The onsite drift warn is a dynamic import of the logging client; the canonical
 // mock keeps that graph out of this suite.
 import '~/__tests__/mocks/logging.mock';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
+
 const mockRead = dbMock.dbRead;
 const mockWrite = dbMock.dbWrite;
 
@@ -213,6 +237,20 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // The IMMEDIATE arm — unchanged assets must behave exactly as they did before.
 // ---------------------------------------------------------------------------
+
+describe('republishOwnListing — App Developer Terms', () => {
+  it('refuses an owner who has not accepted, before the listing goes live', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc).mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'Accept the App Developer Terms' })
+    );
+    wire({ recorded: baseline() });
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
 
 describe('republishOwnListing — assets UNCHANGED ⇒ immediate (no behaviour change)', () => {
   it('goes live, writes no re-review artifact, and reports `approved` with no reviewReason', async () => {
@@ -588,6 +626,14 @@ describe('republishOwnListing — composition with the gates that were already t
     const res = await republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
     expect(res.status).toBe('pending');
     expect(flipData()).toEqual({ status: 'pending', contentRating: 'x' });
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: APP_ID,
+      slug: SLUG,
+      before: 'g',
+      after: 'x',
+      actorUserId: OWNER,
+    });
   });
 
   it('the floor is RAISE-ONLY on the review arm as well (tame media never lowers `x`)', async () => {
@@ -622,13 +668,16 @@ describe('unpublishOwnListing — records the approved asset surface', () => {
       before: {
         status: 'approved',
         assets: {
-          v: 1,
+          v: 2,
           iconId: ICON_ID,
           coverId: COVER_ID,
           screenshots: [
             { imageId: SHOT_ID, caption: 'a demo' },
             { imageId: 44, caption: null },
           ],
+          // No civitai.red overrides table on this mock: recorded as none.
+          redIconId: null,
+          redCoverId: null,
         },
       },
     });
@@ -642,10 +691,12 @@ describe('unpublishOwnListing — records the approved asset surface', () => {
     await unpublishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER });
 
     expect(eventData().before.assets).toEqual({
-      v: 1,
+      v: 2,
       iconId: null,
       coverId: null,
       screenshots: [],
+      redIconId: null,
+      redCoverId: null,
     });
   });
 

@@ -1,3 +1,4 @@
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { challengeEndedMessage } from '~/components/Challenge/challenge-messages';
 import {
   Accordion,
@@ -11,19 +12,17 @@ import {
   Indicator,
   Loader,
   type MantineSize,
-  Menu,
   ScrollArea,
   Spoiler,
   Stack,
   Text,
-  Popover,
   Progress,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
@@ -31,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { Page } from '~/components/AppLayout/Page';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
@@ -41,6 +40,8 @@ import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { ChallengeNotifyToggle } from '~/components/Challenge/ChallengeNotifyToggle';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CONTEST_BANNED_MESSAGE } from '~/shared/constants/contest-ban.constants';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -66,6 +67,7 @@ import {
   IconDotsVertical,
   IconFilter,
   IconFlag,
+  IconGavel,
   IconGift,
   IconPencil,
   IconPhoto,
@@ -104,7 +106,11 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { SpotlightCard } from '~/components/SpotlightCard/SpotlightCard';
+import {
+  SpotlightDivider,
+  SpotlightGlow,
+  SpotlightSurface,
+} from '~/components/SpotlightCard/SpotlightBorderCard';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
@@ -135,9 +141,9 @@ import {
   getBackground,
   getShadow,
   PREVIEW_STATES,
+  SECTION_GLOWS,
 } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { ProgressLegendDot } from '~/components/Challenge/DynamicPrizeCard/ProgressLegendDot';
-import { GlowDivider } from '~/components/Challenge/DynamicPrizeCard/GlowDivider';
 import { distributePrizes } from '~/server/games/daily-challenge/challenge-pool';
 
 function useInjectKeyframes() {
@@ -255,6 +261,7 @@ const DEEP_LINK_TARGETS: Record<string, string[]> = {
 function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { data: challenge, isLoading } = useQueryChallenge(id);
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -287,6 +294,17 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     onSuccess: () => {
       showSuccessNotification({
         message: 'Rescan queued. The verdict will apply once the scan completes.',
+      });
+    },
+    onError: handleMutationError,
+  });
+
+  const rejudgeMutation = trpc.challenge.rejudge.useMutation({
+    onSuccess: ({ entries }) => {
+      showSuccessNotification({
+        message: entries
+          ? `${entries} entries queued for judging again.`
+          : 'No judged entries to re-judge.',
       });
     },
     onError: handleMutationError,
@@ -350,7 +368,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const handleRescan = () => {
     if (!challenge) return;
     // Only a live green user challenge is cancelled outright on an NSFW verdict
-    // (computeNsfwEscalation); everything else is just raised to R in place.
+    // (computeNsfwEscalation); everything else just has its rating raised in place.
     const warnOnNsfw =
       challenge.status === ChallengeStatus.Active &&
       challenge.source === ChallengeSource.User &&
@@ -379,6 +397,33 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         ),
         labels: { cancel: 'Cancel', confirm: 'Rescan' },
         onConfirm: () => rescanMutation.mutateAsync({ id }),
+      },
+    });
+  };
+
+  const handleRejudge = () => {
+    if (!challenge) return;
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Re-judge Entries',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Have the judge review every judged entry in{' '}
+              <strong>&ldquo;{challenge.title}&rdquo;</strong> again?
+            </Text>
+            <Text size="sm" c="dimmed">
+              Deletes the judge&apos;s comments, reactions and scores on those entries and resets
+              the rankings. The review job then judges each entry again over its next runs (about
+              one judge call per entry, plus ranking comparisons), and entrants get new comments. An
+              entry whose review keeps failing is dropped after 3 attempts.
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Re-judge' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => rejudgeMutation.mutateAsync({ id }),
       },
     });
   };
@@ -419,7 +464,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     const canSubmit =
       challenge.status === ChallengeStatus.Active &&
       !!challenge.collectionId &&
-      !currentUser?.muted;
+      !currentUser?.muted &&
+      !isContestBanned;
     if (wantsSubmit && canSubmit && challenge.collectionId)
       dialogStore.trigger({
         component: ChallengeSubmitModal,
@@ -427,7 +473,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       });
 
     return abortScroll;
-  }, [challenge, router, currentUser?.muted]);
+  }, [challenge, router, currentUser?.muted, isContestBanned]);
 
   if (isLoading) return <PageLoader />;
   if (!challenge) return <NotFound />;
@@ -475,9 +521,8 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
 
   return (
     <Gated
-      // Gate on the challenge's allowed rating combined with the cover image's REAL level, so a
-      // challenge whose declared rating is SFW but whose cover scanned NSFW still shows the
-      // MatureContentRedirect on the green (SFW) site instead of leaking the cover.
+      // Gate on the challenge's allowed rating combined with the cover image's real level. On the
+      // green site the server already omits a cover above the site's ceiling.
       contentNsfwLevel={challenge.allowedNsfwLevel | (challenge.coverImage?.nsfwLevel ?? 0)}
       // Yellow user challenges live on civitai.red regardless of rating — the server returns
       // them on green so this renders the redirect card instead of a 404 (inert on red).
@@ -577,6 +622,19 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                               onClick={handleEndAndPickWinners}
                             >
                               End & Pick Winners
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={
+                                rejudgeMutation.isPending ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconGavel size={14} />
+                                )
+                              }
+                              onClick={handleRejudge}
+                              disabled={rejudgeMutation.isPending}
+                            >
+                              Re-judge Entries
                             </Menu.Item>
                             <Menu.Item
                               leftSection={<IconX size={14} />}
@@ -715,6 +773,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               </>
             )}
           </Group>
+          <OwnerRatingControls entityType="Challenge" entityId={challenge.id} isOwner={isOwner} />
         </Stack>
 
         <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
@@ -751,7 +810,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <article>
                 <Stack gap={4}>
                   {challenge.description ? (
-                    <RenderHtml html={challenge.description} />
+                    <RenderHtml html={challenge.description} withMentions />
                   ) : (
                     <Text c="dimmed">No description provided.</Text>
                   )}
@@ -971,12 +1030,8 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     <Stack gap="md">
       {/* Combined Dynamic Prize Pool + Entries Card */}
       {isDynamicPool && (
-        <SpotlightCard
-          borderColor="transparent"
-          bg="transparent"
-          p={0}
-          style={{ overflow: 'hidden' }}
-        >
+        <SpotlightSurface className="overflow-hidden rounded-md">
+          <SpotlightGlow color="rgba(255,255,255,0.04)" />
           {/* TODO: REMOVE — preview state toggle (mod only) */}
           {currentUser?.isModerator && (
             <Group
@@ -1108,7 +1163,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               boxShadow: getShadow(cs, 'large'),
             }}
           >
-            <GlowDivider variant="teal" />
+            <SpotlightDivider overlay color={SECTION_GLOWS.teal} size={200} />
             <Stack gap="sm" p="md">
               <Group justify="space-between" align="center">
                 <Text size="sm" fw={700}>
@@ -1240,7 +1295,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 boxShadow: getShadow(cs, 'large'),
               }}
             >
-              <GlowDivider variant={hasUserEntries ? 'yellow' : 'gray'} />
+              <SpotlightDivider
+                overlay
+                color={SECTION_GLOWS[hasUserEntries ? 'yellow' : 'gray']}
+                size={200}
+              />
               <Group gap={8} wrap="nowrap">
                 <Button
                   onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
@@ -1262,7 +1321,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               </Group>
             </div>
           )}
-        </SpotlightCard>
+        </SpotlightSurface>
       )}
 
       {/* Action buttons - shown when NOT dynamic pool; hidden on mobile */}
@@ -1364,6 +1423,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               <Group justify="space-between">Judging</Group>
             </Accordion.Control>
             <Accordion.Panel>
+              <Text size="xs" c="dimmed" px="xs" pb={4}>
+                Only entries the judge scores can place. The highest scores make a shortlist, and a
+                final review of that shortlist decides the places, so a higher score doesn&apos;t
+                guarantee a place.
+              </Text>
               <div className="flex flex-col bg-gray-0 dark:bg-[#1f2023]">
                 {challenge.judgingCategories.map((category) => (
                   <div
@@ -1805,6 +1869,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 disableStoreFilters
                 judgeInfo={judgeInfo}
                 judgingCategories={challenge.judgingCategories}
+                hideHatTurf
               />
             )}
           </Stack>
@@ -1867,12 +1932,14 @@ function SubmitEntryButton({
   size?: MantineSize;
   fullWidth?: boolean;
 }) {
+  const isContestBanned = useIsContestBanned();
+  const blocked = isOwner || isContestBanned;
   const button = (
     <Button
       // `data-disabled` instead of `disabled` so the tooltip still receives hover events.
-      data-disabled={isOwner || undefined}
-      aria-disabled={isOwner || undefined}
-      onClick={isOwner ? (e: MouseEvent) => e.preventDefault() : onClick}
+      data-disabled={blocked || undefined}
+      aria-disabled={blocked || undefined}
+      onClick={blocked ? (e: MouseEvent) => e.preventDefault() : onClick}
       leftSection={<IconPhoto size={16} />}
       variant="light"
       color="blue"
@@ -1883,9 +1950,12 @@ function SubmitEntryButton({
     </Button>
   );
 
-  if (isOwner)
+  if (blocked)
     return (
-      <Tooltip label="You can't submit entries to your own challenge" withArrow>
+      <Tooltip
+        label={isOwner ? "You can't submit entries to your own challenge" : CONTEST_BANNED_MESSAGE}
+        withArrow
+      >
         {button}
       </Tooltip>
     );

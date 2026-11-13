@@ -135,6 +135,8 @@ export type PrivateRunAccess =
       allowed: true;
       audience: PrivateRunAudience;
       block: PrivateRunPageBlockResolution;
+      /** A restricted viewer may still run the app, but its token carries no spend scope. */
+      viewerMuted: boolean;
     }
   | { allowed: false; reason: PrivateRunRefusalReason };
 
@@ -266,6 +268,39 @@ export async function resolvePrivateRunAccess(args: {
   // the audit-only `appListing` relation is the cheapest single win (−1 per resolve). `block-approval.service.ts` deliberately avoids the same mechanism ten
   // lines from a near-identical select; if this surface ever gets real traffic, that is
   // the pattern to copy.
+  //
+  // 🔴🔴 OPERATOR RULING, 2026-10-01 — D4 BINDS PRE-APPROVAL ONLY. THIS IS A DECISION,
+  // NOT AN OVERSIGHT AND NOT A TODO.
+  //
+  // The `approved` refusal below is also the reason the W14 per-listing visibility feature's
+  // owner-invisibility guarantee STOPS AT THE APPROVAL BOUNDARY. A listing may be set to
+  // `visibility: 'moderators'` at any eligible status (see `maxVisibilityForStatus`). On a
+  // `draft`/`pending` listing a moderator's review run falls through to this predicate, is
+  // admitted, mints the verified `privateRun` claim, and every owner-invisibility rail fires
+  // — the analytics reads, the spend attribution, the author-fee payee resolver and the
+  // `blockRenders` writer skip. On an `approved` listing it CANNOT: the public path owns that
+  // status unconditionally, no claim is minted, and so:
+  //
+  //   🔴 A MODERATOR REVIEWING AN APPROVED LISTING SET TO `moderators` IS DEBITED BUZZ, AND
+  //      THE PUBLISHER IS CREDITED THE AUTHOR FEE. The run also appears in that owner's
+  //      analytics and spend attribution, exactly like any other run.
+  //
+  // Accepted on two grounds. The app is already APPROVED and publicly runnable by anyone
+  // holding its slug, so the run is genuinely indistinguishable from real usage — the level
+  // governs store DISCOVERY, not run access. And the alternative was to give the author-fee
+  // payee resolver a second arm that consults the listing's level, which puts a blocking
+  // listing read on the generation hot path; the readers on that path are fail-open by
+  // contract precisely so they can never take a generation down.
+  //
+  // Narrowing D2 instead — refusing `moderators` on an approved listing — was considered and
+  // REJECTED: the owner keeps free choice within the enum.
+  //
+  // 🔴 DO NOT "COMPLETE" THIS BY WIRING THE LISTING LEVEL INTO THE EXCLUSION RAILS. Those
+  // rails are deliberately AUDIENCE-BLIND: they key on this one verified claim and nothing
+  // else. Teaching any of them about `app_listings.visibility` reverses a ruling rather than
+  // fixing a bug, and it is guarded —
+  // `__tests__/app-listing-visibility.d4-ruling.test.ts` fails if a visibility symbol
+  // appears in any of them. Revisit the ruling first.
   const resolved = await BlockRegistry.resolvePrivateRunPageBlock(by, { db: pool });
   if (!resolved.ok) return { allowed: false, reason: resolved.reason };
   const block = resolved.block;
@@ -300,7 +335,7 @@ export async function resolvePrivateRunAccess(args: {
   // deliberate divergence from the caller's pool rather than being a claim about nothing.
   const viewerRow = await dbWrite.user.findUnique({
     where: { id: viewer.id },
-    select: { deletedAt: true, bannedAt: true },
+    select: { deletedAt: true, bannedAt: true, muted: true },
   });
   if (!viewerRow || viewerRow.deletedAt || viewerRow.bannedAt) {
     return { allowed: false, reason: 'viewer-ineligible' };
@@ -388,5 +423,5 @@ export async function resolvePrivateRunAccess(args: {
     return { allowed: false, reason: 'no-iframe-src' };
   }
 
-  return { allowed: true, audience, block };
+  return { allowed: true, audience, block, viewerMuted: viewerRow.muted };
 }

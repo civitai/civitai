@@ -13,6 +13,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
   checkBlockCatalogRateLimit,
+  checkBlockEstimateCellsRateLimit,
+  checkBlockSubmitRateLimit,
+  checkBlockSubmitUserRateLimit,
   BLOCK_CATALOG_RATE_LIMIT_MAX,
   BLOCK_CATALOG_RATE_LIMIT_WINDOW_SECONDS,
 } from '../block-catalog-rate-limit';
@@ -87,5 +90,146 @@ describe('checkBlockCatalogRateLimit', () => {
     mockRedis.ttl.mockRejectedValue(new Error('redis down'));
     const res = await checkBlockCatalogRateLimit('bki_test');
     expect(res).toEqual({ allowed: true });
+  });
+});
+
+/**
+ * The ESTIMATE-CELLS bucket: what `blocks.estimateWorkflowBatch` charges per CELL,
+ * on top of the one catalog token it charges per call.
+ *
+ * The ceiling and window are pinned as LITERALS (150 cells / 10 s) rather than read
+ * from the module's constants: an assertion built from the constant it checks
+ * moves with it and can never notice the number changing.
+ */
+describe('checkBlockEstimateCellsRateLimit', () => {
+  // The install alone — NOT the viewer — exactly like the catalog key above. A
+  // per-viewer key would let the install-wide total grow with the viewer count.
+  const CELLS_KEY = 'blocks:token-rate-limit:estimate-cells:page_apb_grid';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(10);
+  });
+
+  it('charges the bucket the CELL COUNT, on a key holding the install', async () => {
+    mockRedis.incrBy.mockResolvedValue(11);
+    const res = await checkBlockEstimateCellsRateLimit('page_apb_grid', 11);
+    expect(res).toEqual({ allowed: true });
+    expect(mockRedis.incrBy).toHaveBeenCalledTimes(1);
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(CELLS_KEY, 11);
+  });
+
+  it('arms a 10 s window on the first charge of a window', async () => {
+    // First charge of a fresh window: the counter comes back equal to the weight.
+    mockRedis.incrBy.mockResolvedValue(11);
+    await checkBlockEstimateCellsRateLimit('page_apb_grid', 11);
+    expect(mockRedis.expire).toHaveBeenCalledWith(CELLS_KEY, 10);
+  });
+
+  it('allows the 150th cell of a window and refuses the 151st', async () => {
+    mockRedis.incrBy.mockResolvedValue(150);
+    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 16)).toEqual({
+      allowed: true,
+    });
+    mockRedis.incrBy.mockResolvedValue(151);
+    mockRedis.ttl.mockResolvedValue(7);
+    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 1)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 7,
+    });
+  });
+
+  it('does not share a window with the catalog bucket the same call charges', async () => {
+    mockRedis.incrBy.mockResolvedValue(3);
+    await checkBlockEstimateCellsRateLimit('page_apb_grid', 3);
+    await checkBlockCatalogRateLimit('page_apb_grid');
+    expect(mockRedis.incrBy.mock.calls).toEqual([
+      ['blocks:token-rate-limit:estimate-cells:page_apb_grid', 3],
+      ['blocks:token-rate-limit:catalog:page_apb_grid', 1],
+    ]);
+  });
+
+  it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 16)).toEqual({
+      allowed: true,
+    });
+  });
+});
+
+describe('checkBlockSubmitRateLimit', () => {
+  const SUBMIT_KEY = 'blocks:token-rate-limit:submit:bki_test:user:42';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(10);
+  });
+
+  it('charges one call on a key holding the install AND the token subject', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(SUBMIT_KEY, 1);
+    expect(mockRedis.expire).toHaveBeenCalledWith(SUBMIT_KEY, 10);
+  });
+
+  it('allows twice the catalog ceiling a window and refuses one more', async () => {
+    mockRedis.incrBy.mockResolvedValue(2 * BLOCK_CATALOG_RATE_LIMIT_MAX);
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+    mockRedis.incrBy.mockResolvedValue(2 * BLOCK_CATALOG_RATE_LIMIT_MAX + 1);
+    mockRedis.ttl.mockResolvedValue(4);
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({
+      allowed: false,
+      retryAfterSeconds: 4,
+    });
+  });
+
+  it('two viewers of one install never share a window', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    await checkBlockSubmitRateLimit('bki_test', 'user:42');
+    await checkBlockSubmitRateLimit('bki_test', 'user:43');
+    expect(mockRedis.incrBy.mock.calls.map(([k]) => k)).toEqual([
+      SUBMIT_KEY,
+      'blocks:token-rate-limit:submit:bki_test:user:43',
+    ]);
+  });
+
+  it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkBlockSubmitRateLimit('bki_test', 'user:42')).toEqual({ allowed: true });
+  });
+});
+
+describe('checkBlockSubmitUserRateLimit', () => {
+  const USER_KEY = 'blocks:token-rate-limit:submit-user:user:42';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRedis.expire.mockResolvedValue(true);
+    mockRedis.ttl.mockResolvedValue(10);
+  });
+
+  it('charges one call on a key holding the subject alone, never the install', async () => {
+    mockRedis.incrBy.mockResolvedValue(1);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+    expect(mockRedis.incrBy).toHaveBeenCalledWith(USER_KEY, 1);
+    expect(mockRedis.expire).toHaveBeenCalledWith(USER_KEY, 10);
+  });
+
+  it('allows twice the per-install submit ceiling a window and refuses one more', async () => {
+    mockRedis.incrBy.mockResolvedValue(4 * BLOCK_CATALOG_RATE_LIMIT_MAX);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
+    mockRedis.incrBy.mockResolvedValue(4 * BLOCK_CATALOG_RATE_LIMIT_MAX + 1);
+    mockRedis.ttl.mockResolvedValue(6);
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({
+      allowed: false,
+      retryAfterSeconds: 6,
+    });
+  });
+
+  it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkBlockSubmitUserRateLimit('user:42')).toEqual({ allowed: true });
   });
 });

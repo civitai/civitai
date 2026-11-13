@@ -11,6 +11,10 @@ $borderRadius: 8px;
   }
 }
 
+.decorationOnly {
+  position: relative;
+}
+
 .border {
   border: var(--borderWidth) solid var(--border);
 }

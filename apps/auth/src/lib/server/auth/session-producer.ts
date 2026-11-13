@@ -1,3 +1,4 @@
+import { isRefusedModerationAccount } from './moderation-account';
 import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
@@ -5,6 +6,7 @@ import type { SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { getRedis, getSysRedis } from '../redis';
 import { shapeSessionUser } from './session-shape';
+import { SYSTEM_WORKLOAD_ROLE } from '../oauth/constants';
 
 // The auth hub is the SOLE PRODUCER of session-user data (docs/thin-session-token-design.md, "LOCKED
 // ARCHITECTURE"): query the user (+ profile picture + active subscriptions) + permissions, shape the rich
@@ -75,8 +77,23 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
           ])
       ).as('subscriptionRows'),
       jsonArrayFrom(
-        eb.selectFrom('UserRole').select(['UserRole.role']).whereRef('UserRole.userId', '=', 'User.id')
+        eb
+          .selectFrom('UserRole')
+          .select(['UserRole.role'])
+          .whereRef('UserRole.userId', '=', 'User.id')
       ).as('roleRows'),
+      // The app-builder grant: an APPROVED App Access Request (civitai `/apps/build` → Request
+      // access → a moderator approves). Read here, never from settings, so nothing the user can
+      // write reaches it. Declining an approved row revokes it; the decide path busts this cache.
+      eb
+        .exists(
+          eb
+            .selectFrom('AppAccessRequest')
+            .select('AppAccessRequest.id')
+            .whereRef('AppAccessRequest.userId', '=', 'User.id')
+            .where('AppAccessRequest.status', '=', 'approved')
+        )
+        .as('appBuilderApproved'),
       jsonObjectFrom(
         eb
           .selectFrom('UserMembershipOverride')
@@ -87,6 +104,8 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
     .executeTakeFirst();
 
   if (!row) return null;
+  // The account that owns workload clients is not a person and never has a session.
+  if (row.roleRows.some((r) => r.role === SYSTEM_WORKLOAD_ROLE)) return null;
 
   // 2. permissions — system-permissions sysRedis cache. Degraded-skip: never cache a permissions-less
   //    user (would strip moderator/beta privileges until the entry expires); re-derive next request.
@@ -143,6 +162,13 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
 // shared-redis consumer gets by reading the cache directly — without it, every isolated request would hit
 // the DB. A forced refresh is "bust the key → next read re-produces", not a flag here.
 export async function getOrProduceSessionUser(userId: number): Promise<SessionUser | null> {
+  const user = await readOrProduceSessionUser(userId);
+  // Every hub path that turns a token, a pending authorization or a user id into a user comes through here,
+  // so the shared moderation account resolves to no one.
+  return user && isRefusedModerationAccount(user, 'resolve') ? null : user;
+}
+
+async function readOrProduceSessionUser(userId: number): Promise<SessionUser | null> {
   const redis = getRedis();
   if (redis) {
     try {

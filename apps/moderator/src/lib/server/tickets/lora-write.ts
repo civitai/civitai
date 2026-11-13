@@ -1,0 +1,64 @@
+import { fail, type RequestEvent } from '@sveltejs/kit';
+import { z } from 'zod';
+import { TRAINING_MODELS_PATH } from '$lib/tickets/lora-panel';
+import { int4Id, parseForm } from '../query';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
+
+export type LoraWriteDeps = TicketActionDeps & {
+  /** The viewer's grant on a page, checked as the page's own action is. */
+  canAct: (user: App.Locals['user'], path: string) => boolean;
+  /** The model's owner, read live from the primary. Null for a missing or deleted model. */
+  modelOf: (modelId: number) => Promise<{ userId: number } | null>;
+  /** Sets the block in one conditional write; true when it changed, false when the model was already in that state. */
+  setCannotPublish: (modelId: number, value: boolean) => Promise<boolean>;
+};
+
+const input = z.object({ modelId: int4Id, cannotPublish: z.enum(['true', 'false']) });
+
+/**
+ * 🔴 GATED AS THE TRAINING MODELS PAGE'S OWN `toggleCannotPublish` IS: its page grant and nothing more
+ * (that action carries no `requiresGrant`), on the page's own path. The form names the state it wants and
+ * the write is conditional on the stored state differing: a stale card or a second agent cannot flip a
+ * block back, and the model must be the ticket user's own.
+ */
+export function createTicketLoraActions(deps: LoraWriteDeps) {
+  return {
+    loraSetPublishBlock: async (event: RequestEvent) => {
+      if (!deps.canAct(event.locals.user, TRAINING_MODELS_PATH))
+        return fail(403, { error: NOT_PERMITTED });
+      const ok = await checkTicketTarget(deps.linkedUser, event);
+      if (ok.refused) return ok.refused;
+
+      const parsed = parseForm(input, ok.form);
+      if (typeof parsed === 'string') return fail(400, { error: parsed });
+      const want = parsed.cannotPublish === 'true';
+
+      const model = await deps.modelOf(parsed.modelId);
+      if (!model) return fail(404, { error: 'Model not found.' });
+      if (model.userId !== ok.userId)
+        return fail(409, {
+          error: 'That model belongs to another account — nothing was changed.',
+        });
+
+      const changed = await deps.setCannotPublish(parsed.modelId, want);
+      if (!changed)
+        return fail(409, {
+          error: `Publishing is already ${
+            want ? 'blocked' : 'allowed'
+          } for that model — nothing was changed.`,
+        });
+
+      return addTicketNote(
+        deps.note,
+        event,
+        ok.ticketId,
+        `${want ? 'Blocked' : 'Allowed'} publishing of model ${parsed.modelId} (user ${ok.userId})`
+      );
+    },
+  };
+}

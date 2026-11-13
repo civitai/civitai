@@ -6,6 +6,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import SelectionBar from '$lib/components/SelectionBar.svelte';
+  import TipButton from '$lib/components/TipButton.svelte';
   import { LINK_CLASS, num, shortAge } from '$lib/format';
   import { clearPaging } from '$lib/paging';
   import { SelectionSet } from '@civitai/ui/hooks/selection-set.svelte.js';
@@ -105,22 +107,20 @@
     : 'No images pending ingestion.'}
 />
 
-{#if stuckView && selected.size > 0}
-  <!-- spacer so the fixed bar can't cover the last row / Next button -->
-  <div class="h-20"></div>
-  <div
-    class="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 px-4 py-3 backdrop-blur"
-  >
-    <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-3">
-      <span class="text-sm font-semibold">{selected.size} selected</span>
-      <button
-        onclick={() => selected.clear()}
-        class="text-xs text-muted-foreground hover:text-foreground">Clear</button
-      >
+{#if stuckView}
+  <SelectionBar count={selected.size} onclear={() => selected.clear()}>
+    {#snippet actions()}
       <form method="POST" action="?/rescan" use:enhance={submitRescan} class="ml-auto">
         <input type="hidden" name="imageIds" value={selectedIds} />
-        <Button type="submit" size="sm" disabled={submitting}>Rescan selected</Button>
+        <TipButton
+          tip="Queue the selected stuck images for another ingestion scan. Nothing is removed."
+          type="submit"
+          size="sm"
+          disabled={submitting}
+        >
+          Rescan selected
+        </TipButton>
       </form>
-    </div>
-  </div>
+    {/snippet}
+  </SelectionBar>
 {/if}

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
+import type * as TrpcModule from '~/utils/trpc';
 
 // React 18.3 exposes `act` on the `react` export, but our @types/react (18.0.14)
 // predates that typing. Use the runtime `React.act` (no test-utils deprecation
@@ -11,8 +12,11 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 // --- module mocks (must be declared before importing the hook) ---
 const queryMock = vi.fn<(input: { modelIds: number[] }) => Promise<Record<string, number[]>>>();
-vi.mock('~/utils/trpc', () => ({
-  trpcVanilla: { user: { getEngagedModelsByIds: { query: (input: { modelIds: number[] }) => queryMock(input) } } },
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpcVanilla: {
+    user: { getEngagedModelsByIds: { query: (input: { modelIds: number[] }) => queryMock(input) } },
+  },
 }));
 
 let currentUser: unknown = { id: 1 };
@@ -23,6 +27,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 import {
   __resetEngagedMembershipBatcher,
   ENGAGED_MEMBERSHIP_DEBOUNCE_MS,
+  ENGAGED_MEMBERSHIP_RETRY_MS,
   engagedMembershipBatcher,
   requestEngagedMembership,
   useEngagedModelsMembership,
@@ -35,6 +40,7 @@ import { applyNotifyToggled } from '~/store/engaged-models.optimistic';
 // beforeEach swaps in the deterministic test scheduler. The debounce-window
 // suite below restores this and drives it with fake timers.
 const productionSchedule = engagedMembershipBatcher.schedule;
+const productionScheduleRetry = engagedMembershipBatcher.scheduleRetry;
 
 // deterministic scheduler: capture the flush callback, fire it on demand.
 let scheduledFlush: (() => void) | null = null;
@@ -43,8 +49,19 @@ function runFlush() {
   scheduledFlush = null;
   cb?.();
 }
+// The single retry after a failed request, captured the same way.
+let scheduledRetry: (() => void) | null = null;
+function runRetry() {
+  const cb = scheduledRetry;
+  scheduledRetry = null;
+  cb?.();
+}
 /** let queued microtasks (the fetch .then) settle. */
-const settle = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+const settle = () =>
+  act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,8 +70,14 @@ beforeEach(() => {
   queryMock.mockReset();
   queryMock.mockResolvedValue({});
   currentUser = { id: 1 };
-  engagedMembershipBatcher.schedule = (cb) => { scheduledFlush = cb; };
+  engagedMembershipBatcher.schedule = (cb) => {
+    scheduledFlush = cb;
+  };
   engagedMembershipBatcher.fetch = (modelIds) => queryMock({ modelIds });
+  scheduledRetry = null;
+  engagedMembershipBatcher.scheduleRetry = (cb) => {
+    scheduledRetry = cb;
+  };
 });
 
 afterEach(() => {
@@ -99,9 +122,11 @@ describe('batcher', () => {
   });
 
   it('marks ids known-not-engaged after a failed fetch so a gated control is never permanently disabled (F2)', async () => {
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    queryMock.mockRejectedValueOnce(new Error('boom')).mockRejectedValueOnce(new Error('boom'));
     requestEngagedMembership([5]);
     runFlush();
+    await settle();
+    runRetry(); // the retry fails too
     await settle();
 
     // Fix 2: the errored ids become KNOWN (empty membership), not left unknown. A
@@ -119,14 +144,16 @@ describe('batcher', () => {
   });
 
   it('a failed fetch does NOT clobber an id the user mutated while it was in flight (F2 dirty-guard holds through the error path)', async () => {
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    queryMock.mockRejectedValueOnce(new Error('boom')).mockRejectedValueOnce(new Error('boom'));
     requestEngagedMembership([8]);
     runFlush(); // fetch issued; .then/.catch queued but not yet run
 
     // User turns Notify ON for model 8 WHILE that fetch is in flight.
     useEngagedModelsStore.getState().setMembership(8, 'Notify', true);
 
-    await settle(); // the rejection lands here → applyServerResult({}, [8])
+    await settle(); // the first rejection lands here → one retry is scheduled
+    runRetry();
+    await settle(); // the retry's rejection → applyServerResult({}, [8])
 
     const m = useEngagedModelsStore.getState().membership[8];
     expect(m?.has('Notify')).toBe(true); // the local mutation survived the error-path apply
@@ -364,7 +391,7 @@ describe('useEngagedModelMembership — unauthenticated (F1 login-funnel regress
     unmount();
   });
 
-  it("a logged-out notify control is NOT disabled → its click can reach LoginRedirect", () => {
+  it('a logged-out notify control is NOT disabled → its click can reach LoginRedirect', () => {
     currentUser = null;
     const { button, unmount } = renderControl(99);
     // The store is cold (no query ever fires for unauth), yet the button is enabled
@@ -383,13 +410,15 @@ describe('useEngagedModelMembership — unauthenticated (F1 login-funnel regress
 describe('useEngagedModelMembership — authed fetch error does not dead-lock the control (F2)', () => {
   it('authed control is disabled while the fetch is in flight, then ENABLED after the fetch errors', async () => {
     currentUser = { id: 1 };
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    queryMock.mockRejectedValueOnce(new Error('boom')).mockRejectedValueOnce(new Error('boom'));
     const { button, rerender, unmount } = renderControl(77);
 
     // In flight → unknown → disabled (correct: we don't know the toggle direction yet).
     expect(button().disabled).toBe(true);
 
     runFlush();
+    await settle();
+    runRetry();
     await settle();
     rerender();
 
@@ -454,11 +483,7 @@ function NotifyClickHarness({
     onPayload(payload);
   };
 
-  return React.createElement(
-    'button',
-    { type: 'button', disabled: !isKnown, onClick },
-    'notify'
-  );
+  return React.createElement('button', { type: 'button', disabled: !isKnown, onClick }, 'notify');
 }
 
 describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read errored', () => {
@@ -466,7 +491,7 @@ describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read
     currentUser = { id: 1 };
     const modelId = 55;
     // The by-ids read for this genuinely Notify-ON model ERRORS.
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    queryMock.mockRejectedValueOnce(new Error('boom')).mockRejectedValueOnce(new Error('boom'));
 
     let captured: NotifyPayload | undefined;
     const container = document.createElement('div');
@@ -482,6 +507,8 @@ describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read
     expect(button().disabled).toBe(true);
 
     runFlush();
+    await settle();
+    runRetry();
     await settle();
     act(() =>
       root.render(
@@ -517,6 +544,104 @@ describe('notify silent-unsubscribe fix — genuinely-ON model whose by-ids read
 });
 
 // ---------------------------------------------------------------------------
+// One request now covers a whole page of cards, so a failed request is retried once before its
+// ids fall back to known-not-engaged; and an answer requested before a sign-out never lands.
+// ---------------------------------------------------------------------------
+describe('batcher — failed request is retried once', () => {
+  it('a failure followed by a successful retry ends with the real engaged state', async () => {
+    queryMock
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ Recommended: [31], Notify: [31] });
+    requestEngagedMembership([31, 32]);
+    runFlush();
+    await settle();
+
+    // Waiting on the retry: still unknown, and still in flight, so a card mounting now adds nothing.
+    expect(useEngagedModelsStore.getState().queried.has(31)).toBe(false);
+    requestEngagedMembership([31]);
+    runFlush();
+    expect(queryMock).toHaveBeenCalledTimes(1);
+
+    runRetry();
+    await settle();
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(queryMock.mock.calls[1][0].modelIds).toEqual([31, 32]);
+    const s = useEngagedModelsStore.getState();
+    expect(s.membership[31]?.has('Recommended')).toBe(true);
+    expect(s.membership[31]?.has('Notify')).toBe(true);
+    expect(s.queried.has(32)).toBe(true);
+  });
+
+  it('retries ONCE: a request that keeps failing is asked for exactly twice', async () => {
+    queryMock.mockRejectedValue(new Error('down'));
+    requestEngagedMembership([41]);
+    runFlush();
+    await settle();
+
+    let retries = 0;
+    while (scheduledRetry && retries < 10) {
+      runRetry();
+      await settle();
+      retries++;
+    }
+    expect(retries).toBe(1);
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(useEngagedModelsStore.getState().queried.has(41)).toBe(true); // usable, not stuck
+  });
+
+  it('the retry asks only for ids that are still unknown', async () => {
+    queryMock.mockRejectedValueOnce(new Error('boom'));
+    requestEngagedMembership([51, 52, 53]);
+    runFlush();
+    await settle();
+
+    applyNotifyToggled(52, true); // the user acted on 52 during the backoff
+    runRetry();
+    await settle();
+
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    expect(queryMock.mock.calls[1][0].modelIds).toEqual([51, 53]);
+    expect(useEngagedModelsStore.getState().membership[52]?.has('Notify')).toBe(true);
+  });
+});
+
+describe('batcher — an answer requested before a reset (sign-out) is dropped', () => {
+  it('a response landing after the reset is not applied, and the ids can be asked again', async () => {
+    let answer!: (r: Record<string, number[]>) => void;
+    queryMock.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    requestEngagedMembership([61]);
+    runFlush();
+
+    useEngagedModelsStore.getState().reset(); // sign-out while the request is in flight
+    answer({ Recommended: [61] });
+    await settle();
+
+    const s = useEngagedModelsStore.getState();
+    expect(s.queried.has(61)).toBe(false);
+    expect(s.membership[61]).toBeUndefined();
+
+    // Not stranded "in flight" for the next viewer.
+    requestEngagedMembership([61]);
+    runFlush();
+    expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a retry scheduled before the reset does not fire', async () => {
+    queryMock.mockRejectedValueOnce(new Error('boom'));
+    requestEngagedMembership([71]);
+    runFlush();
+    await settle();
+
+    useEngagedModelsStore.getState().reset();
+    runRetry();
+    await settle();
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(useEngagedModelsStore.getState().queried.has(71)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Debounce window — exercises the REAL production scheduler (an ~80ms
 // setTimeout coalesce), driven with fake timers. This is the request-count
 // reduction this PR ships: ids arriving across many render ticks inside the
@@ -537,15 +662,12 @@ describe('debounce window (real ~80ms scheduler)', () => {
     // Outer beforeEach swapped in the synchronous test scheduler; restore the
     // real ~80ms setTimeout one and fake the clock so we can drive the window.
     engagedMembershipBatcher.schedule = productionSchedule;
+    engagedMembershipBatcher.scheduleRetry = productionScheduleRetry;
     vi.useFakeTimers();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it('window constant is the documented ~80ms', () => {
-    expect(ENGAGED_MEMBERSHIP_DEBOUNCE_MS).toBe(80);
   });
 
   it('coalesces ids arriving across MULTIPLE ticks within the window into ONE call (deduped union)', async () => {
@@ -624,9 +746,11 @@ describe('debounce window (real ~80ms scheduler)', () => {
   });
 
   it('a rejected fetch still resolves the ids (known-not-engaged) — no id left hung', async () => {
-    queryMock.mockRejectedValueOnce(new Error('boom'));
+    queryMock.mockRejectedValueOnce(new Error('boom')).mockRejectedValueOnce(new Error('boom'));
     requestEngagedMembership([21, 22]);
     vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    await drain();
+    vi.advanceTimersByTime(ENGAGED_MEMBERSHIP_RETRY_MS); // the single retry, which fails too
     await drain();
 
     const s = useEngagedModelsStore.getState();

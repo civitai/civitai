@@ -6,6 +6,8 @@ import type {
   Token,
   User,
 } from '@node-oauth/oauth2-server';
+import { isHttpError } from '@sveltejs/kit';
+import { AccessDeniedError } from '@node-oauth/oauth2-server';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pack } from 'msgpackr';
@@ -14,12 +16,12 @@ import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
-import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
-import { createOAuthTokenPair } from './token-helpers';
+import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL, SYSTEM_USER_ID } from './constants';
+import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
 import { firstPartyClientForOrigin, originOf } from './first-party';
-import { hasScope, scopeToString, stringToScope } from './scope';
+import { hasScope, isScopeGrantable, scopeToString, stringToScope } from './scope';
 import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 
 // Ported from the main app's src/server/oauth/model.ts. Every `prisma.*` call is rewritten to Kysely
@@ -184,6 +186,8 @@ export const oauthModel = {
     const data = {
       clientId: client.id,
       userId: user.id,
+      // On the code itself, so the hand-off knows an impersonation even when its context is lost.
+      ...((user as { impersonation?: boolean }).impersonation && { impersonation: true }),
       scope: scopeValue,
       redirectUri: code.redirectUri,
       codeChallenge: code.codeChallenge,
@@ -219,6 +223,7 @@ export const oauthModel = {
       codeChallenge?: string;
       codeChallengeMethod?: string;
       expiresAt: string;
+      impersonation?: boolean;
     }>(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode);
 
     if (!data) return false;
@@ -235,7 +240,7 @@ export const oauthModel = {
       codeChallenge: data.codeChallenge,
       codeChallengeMethod: data.codeChallengeMethod,
       client: client as Client,
-      user: { id: data.userId },
+      user: { id: data.userId, ...(data.impersonation && { impersonation: true }) },
     } as unknown as AuthorizationCode;
   },
 
@@ -254,19 +259,13 @@ export const oauthModel = {
   // ─── Tokens ─────────────────────────────────────────────────
 
   async saveToken(token: Token, client: Client, user: User): Promise<Token> {
-    const scope = stringToScope(token.scope as unknown as string);
-
-    const pair = await createOAuthTokenPair(user.id, client.id, scope);
-
-    return {
-      accessToken: pair.accessToken,
-      accessTokenExpiresAt: pair.accessTokenExpiresAt,
-      refreshToken: pair.refreshToken,
-      refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
-      scope: scopeToString(scope),
-      client,
-      user,
-    } as Token;
+    try {
+      return await issueToken(token, client, user);
+    } catch (err) {
+      // The library turns any non-OAuth error into a 503, which a client retries; a refusal is final.
+      if (isHttpError(err, 403)) throw new AccessDeniedError(err.body.message);
+      throw err;
+    }
   },
 
   async getAccessToken(accessToken: string): Promise<Token | false> {
@@ -341,34 +340,38 @@ export const oauthModel = {
     // For client_credentials grant, the "user" is the client owner
     const oauthClient = await db
       .selectFrom('OauthClient')
-      .select(['userId', 'grants'])
+      .select(['userId', 'grants', 'isConfidential', 'secret'])
       .where('id', '=', client.id)
       .executeTakeFirst();
 
     if (!oauthClient || !oauthClient.grants.includes('client_credentials')) {
       return false;
     }
+    // The grant authenticates the client by its secret, so only a confidential client holding one
+    // may use it.
+    if (!oauthClient.isConfidential || !oauthClient.secret) return false;
 
-    return { id: oauthClient.userId };
+    const user: ClientCredentialsUser = { id: oauthClient.userId, viaClientCredentials: true };
+    return user;
   },
 
   // ─── Scope Validation ──────────────────────────────────────
 
-  async validateScope(_user: User, client: Client, scope: string[]): Promise<string[] | false> {
-    // UserRead is always granted as a baseline (see createOAuthTokenPair).
-    // Force it into both the requested and allowed sets so it propagates to
-    // the issued token and never trips the allowed-scope check even for
-    // clients that didn't register UserRead in allowedScopes.
+  async validateScope(user: User, client: Client, scope: string[]): Promise<string[] | false> {
+    // UserRead is always granted as a baseline: force it into the requested set so it propagates to
+    // the issued token.
     const requestedScope = stringToScope(scope) | TokenScope.UserRead;
     // Default a MISSING ceiling to UserRead (read-only), NOT Full — the safer fallback for third-party
     // clients. First-party clients are unaffected: they carry an explicit `Full` ceiling (the synthesized
     // first-party client). The OauthClient.allowedScopes column is NOT NULL, so this fallback is unreachable
     // for real rows — it's purely fail-safe.
     const allowedScopes =
-      ((client as Client & { allowedScopes?: number }).allowedScopes ?? TokenScope.UserRead) |
-      TokenScope.UserRead;
+      (client as Client & { allowedScopes?: number }).allowedScopes ?? TokenScope.UserRead;
+    // The library does not pass the grant type here; the client_credentials grant is recognised by
+    // the user `getUserFromClient` returned.
+    const grant = isClientCredentialsUser(user) ? 'client_credentials' : 'user';
 
-    if (!hasScope(allowedScopes, requestedScope)) {
+    if (!isScopeGrantable(allowedScopes, requestedScope, grant)) {
       return false;
     }
 
@@ -382,6 +385,40 @@ export const oauthModel = {
   },
 };
 
+/** The client owner, as `getUserFromClient` returns it for the client_credentials grant. */
+type ClientCredentialsUser = { id: number; viaClientCredentials: true };
+
+function isClientCredentialsUser(user: User): user is User & ClientCredentialsUser {
+  return (user as Partial<ClientCredentialsUser>).viaClientCredentials === true;
+}
+
+async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
+  const scope = stringToScope(token.scope as unknown as string);
+
+  if (isClientCredentialsUser(user)) {
+    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
+    return {
+      accessToken: access.accessToken,
+      accessTokenExpiresAt: access.expiresAt,
+      scope: scopeToString(scope | TokenScope.UserRead),
+      client,
+      user,
+    } as Token;
+  }
+
+  const pair = await createOAuthTokenPair(user.id, client.id, scope);
+
+  return {
+    accessToken: pair.accessToken,
+    accessTokenExpiresAt: pair.accessTokenExpiresAt,
+    refreshToken: pair.refreshToken,
+    refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    scope: scopeToString(scope),
+    client,
+    user,
+  } as Token;
+}
+
 /**
  * Resolve a client to the lite shape ({ id, grants, redirectUris }) needed for code issuance + redirect_uri
  * validation, from the DB OR the first-party source seam. Single definition so the DB→first-party fallback
@@ -392,12 +429,33 @@ export async function resolveClientLite(
   clientId: string,
   redirectUri?: string
 ): Promise<
-  | { id: string; grants: string[]; redirectUris: string[]; isFirstParty: boolean; accessMode: string }
+  | {
+      id: string;
+      grants: string[];
+      redirectUris: string[];
+      isFirstParty: boolean;
+      accessMode: string;
+      /**
+       * No consent screen: first-party, or a confidential system app (owned by the civitai system account)
+       * staff marked `skipConsent`. A public
+       * app never skips it: with no secret, any program could start its sign-in, and consent is what stops one
+       * getting a token silently.
+       */
+      skipConsent: boolean;
+    }
   | undefined
 > {
   const dbClient = await db
     .selectFrom('OauthClient')
-    .select(['id', 'grants', 'redirectUris', 'accessMode'])
+    .select([
+      'id',
+      'grants',
+      'redirectUris',
+      'accessMode',
+      'skipConsent',
+      'isConfidential',
+      'userId',
+    ])
     .where('id', '=', clientId)
     .executeTakeFirst();
   if (dbClient) {
@@ -412,6 +470,8 @@ export async function resolveClientLite(
       redirectUris: dbClient.redirectUris,
       isFirstParty: false,
       accessMode: dbClient.accessMode,
+      skipConsent:
+        dbClient.skipConsent && dbClient.isConfidential && dbClient.userId === SYSTEM_USER_ID,
     };
   }
   // First-party: NO DB row, resolved purely from the redirect_uri ORIGIN (host checked against the registry),
@@ -427,6 +487,7 @@ export async function resolveClientLite(
         isFirstParty: true,
         // First-party (spoke) clients are never gated — they're our own login hosts.
         accessMode: 'open',
+        skipConsent: true,
       }
     : undefined;
 }

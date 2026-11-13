@@ -5,7 +5,8 @@
 }
 
 .sidebar {
-  display: block;
+  display: flex;
+  flex-direction: column;
   overflow: visible;
   transition: margin-left 500ms;
   position: sticky;
@@ -15,6 +16,29 @@
   @container (max-width: theme('screens.sm')) {
     display: none;
   }
+}
+
+.list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  // Mantine gives the last Card.Section margin-bottom: -card-padding, which the 0-padding card
+  // does not cancel; the list would end 16px below the border.
+  margin-bottom: 0;
+}
+
+.listScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.listViewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
 }
 
 .sidebarToggle {

@@ -1,12 +1,18 @@
 // Server half of the training writes: env trace mode + per-user signal callbacks, delegating to the
 // client-safe builders in $lib/train-core (shared with the web-component backend).
 import { env } from '$env/dynamic/private';
+import { logToAxiom, safeError } from './axiom';
 import { orchestratorClient } from './orchestrator';
 import { workflowSignalCallbacks } from './signals';
+import { requestTextCheck } from './text-check';
+import { getTrainingServiceStatus } from './service-status';
 import * as core from '$lib/train-core';
-import type { ContinueOpts, TrainingRunInput } from '$lib/train-core';
+import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
+import type { DatasetRating } from '$lib/dataset-rating';
+import { warmDatasetRating } from './dataset-rating';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
+export { MatureAckRequiredError } from '$lib/train-core';
 
 // Live NDJSON tracing is in production orchestrator-side, so it defaults ON; TRAINING_TRACE_MODE
 // (`events` | `logs` | `none`) remains the kill switch if the submit ever starts rejecting it.
@@ -14,38 +20,81 @@ const TRACE_MODE = env.TRAINING_TRACE_MODE ?? 'events';
 
 /** Submit a batch of training workflows (see `core.submitTrainingBatch` for the stop-at-first-failure /
  *  partial-return policy). Charges Buzz — the single write in the flow. The `userId` registers the
- *  orchestrator callback that pushes live `workflow-update` signals for each run. */
-export function submitTrainingBatch(
+ *  orchestrator callback that pushes live `workflow-update` signals for each run; `cookie` is the
+ *  caller's, forwarded to the main app's trigger word check. */
+export async function submitTrainingBatch(
   token: string,
   runs: TrainingRunInput[] | undefined,
-  userId: number
-): Promise<string[]> {
+  userId: number,
+  /** null in the dev-login preview, which has no session to send the check with. */
+  cookie: string | null,
+  /** From `datasetRatingFor`; undefined counts datasets from the upload rating. */
+  datasetRating?: DatasetRating
+): Promise<SubmittedBatch> {
   return core.submitTrainingBatch(orchestratorClient(token), runs, {
+    status: await getTrainingServiceStatus(),
+    checkText: requestTextCheck(cookie, userId),
+    datasetRating,
+    onMatureCount: datasetRating
+      ? ({ unratedKeys, ...count }) =>
+          void logToAxiom({
+            name: 'training-studio-dataset-rating',
+            type: 'info',
+            message: 'submit mature count',
+            userId,
+            ...count,
+            unrated: unratedKeys.length,
+          })
+      : undefined,
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
-    onRunError: (err) => console.warn('[training-studio] submitTraining failed', err),
+    onRunError: (err, runIndex) =>
+      void logToAxiom({
+        name: 'training-studio-submit',
+        type: 'error',
+        message: 'submitTraining failed',
+        userId,
+        runIndex,
+        runCount: runs?.length,
+        status: err instanceof core.TrainingSubmitError ? err.status : undefined,
+        reason: core.submitFailureReason(err),
+        ...(err instanceof core.TrainingSubmitError ? {} : { error: safeError(err) }),
+      }),
   });
 }
 
 /** "Keep training": submit a new run continuing from a checkpoint. Charges Buzz. Returns the new run id. */
-export function continueTraining(
+export async function continueTraining(
   token: string,
   userId: number,
-  opts: ContinueOpts
+  opts: ContinueOpts,
+  /** null in the dev-login preview, which has no session to send the check with. */
+  cookie: string | null,
+  datasetRating?: DatasetRating
 ): Promise<string> {
   return core.continueTraining(orchestratorClient(token), opts, {
+    status: await getTrainingServiceStatus(),
+    datasetRating,
+    checkText: requestTextCheck(cookie, userId),
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });
 }
 
 /** Price a "keep training" continuation without submitting (the same body, `whatif`). */
-export function continueTrainingWhatIf(
+export async function continueTrainingWhatIf(
   token: string,
   userId: number,
-  opts: ContinueOpts
-): Promise<{ cost: number | null; steps: number | undefined }> {
+  opts: ContinueOpts,
+  datasetRating?: DatasetRating
+): Promise<{ cost: number | null; steps: number | undefined; matureCount: number }> {
   return core.continueTrainingWhatIf(orchestratorClient(token), opts, {
+    status: await getTrainingServiceStatus(),
+    datasetRating,
+    // The quote is the continuation's Review: rate the source's unrated images before the submit.
+    onMatureCount: datasetRating
+      ? ({ unratedKeys }) => warmDatasetRating(token, userId, unratedKeys)
+      : undefined,
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });

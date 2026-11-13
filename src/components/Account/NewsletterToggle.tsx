@@ -1,4 +1,5 @@
-import { Stack, Switch, Group, Text, Popover } from '@mantine/core';
+import { Stack, Switch, Group, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';

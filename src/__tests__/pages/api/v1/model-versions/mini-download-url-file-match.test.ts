@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as FliptClient from '~/server/flipt/client';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * Regression coverage for `GET /api/v1/model-versions/mini/[id]`.
@@ -27,18 +29,33 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * not vary with the caller's preferences.
  */
 
+// As in production: civitai.red is a blue alias and the red primary.
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_BLUE = 'civitai.com';
+  process.env.SERVER_DOMAIN_BLUE_ALIASES = 'civitai.red';
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+});
+
 const {
   mockQueryRaw,
   mockResolveCanGenerateForVersions,
   mockGetShouldChargeForResources,
   mockGetFeaturedModels,
+  mockIsFlipt,
+  mockRefreshBlobs,
+  mockGetOrchestratorToken,
   currentUser,
+  serviceToken,
 } = vi.hoisted(() => ({
+  mockGetOrchestratorToken: vi.fn(),
+  mockIsFlipt: vi.fn(),
+  mockRefreshBlobs: vi.fn(),
   mockQueryRaw: vi.fn(),
   mockResolveCanGenerateForVersions: vi.fn(),
   mockGetShouldChargeForResources: vi.fn(),
   mockGetFeaturedModels: vi.fn(),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
+  serviceToken: { value: false },
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -49,6 +66,22 @@ vi.mock('~/server/db/client', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: mockResolveCanGenerateForVersions,
   getShouldChargeForResources: mockGetShouldChargeForResources,
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mockIsFlipt,
+}));
+
+vi.mock('~/server/services/orchestrator/refreshBlobs', () => ({
+  refreshBlobsService: mockRefreshBlobs,
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
+  getOrchestratorToken: mockGetOrchestratorToken,
+}));
+vi.mock('~/server/auth/orchestrator-service-token', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  matchesOrchestratorServiceToken: () => serviceToken.value,
 }));
 
 vi.mock('~/server/services/model.service', () => ({
@@ -65,7 +98,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
       handler(req, res, currentUser.value),
 }));
 
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -198,8 +231,13 @@ const versionRow = {
   publishedAt: new Date('2024-01-01T00:00:00Z'),
   modelId: 77,
   modelName: 'Test Model',
+  nsfwLevel: 1,
   baseModel: 'SD 1.5',
   status: 'Published',
+  modelStatus: 'Published',
+  modelMode: null as string | null,
+  modelAvailability: 'Public',
+  poi: false,
   type: 'Checkpoint',
   requireAuth: false,
   checkPermission: false,
@@ -227,6 +265,7 @@ const versionRow = {
 
 type Body = {
   air: string;
+  defaultFileId: number | null;
   size: number;
   fileType: string;
   fileName: string;
@@ -239,7 +278,8 @@ type Body = {
 async function run(
   files: object[],
   query: Record<string, string> = {},
-  versionOverrides: Partial<typeof versionRow> = {}
+  versionOverrides: Partial<typeof versionRow> = {},
+  host = 'civitai.com'
 ) {
   // Call 1 = the version row, call 2 = the version's ModelFile rows.
   // Deep-clone so a handler that mutates the rows it was handed cannot leak that
@@ -256,7 +296,7 @@ async function run(
   const req = {
     method: 'GET',
     query: { id: String(VERSION_ID), ...query },
-    headers: { host: 'civitai.com' },
+    headers: { host },
   } as unknown as NextApiRequest;
 
   const json = vi.fn().mockReturnThis();
@@ -297,12 +337,15 @@ function lastAirArgs() {
 beforeEach(() => {
   vi.clearAllMocks();
   currentUser.value = undefined;
+  serviceToken.value = false;
   mockQueryRaw.mockReset();
   mockResolveCanGenerateForVersions.mockResolvedValue(
     new Map([[VERSION_ID, { canGenerate: true }]])
   );
   mockGetShouldChargeForResources.mockResolvedValue({ 77: false });
   mockGetFeaturedModels.mockResolvedValue([]);
+  // Off, as in production until the ramp: every other test here pins the flag-off response.
+  mockIsFlipt.mockResolvedValue(false);
 });
 
 describe('createModelFileDownloadUrl', () => {
@@ -599,6 +642,55 @@ describe('GET /api/v1/model-versions/mini/[id] — the AIR handed to Air.stringi
     expect(lastAirArgs()?.modelFileId).toBe(String(GGUF.id));
     expect(urlFileId(supplied.body)).toBe(String(GGUF.id));
   });
+
+  it('names the default file whichever file was pinned, so consumers can recognise a pin to it', async () => {
+    const pinnedDefault = await run([SAFETENSOR, GGUF], { modelFileId: String(SAFETENSOR.id) });
+    expect(pinnedDefault.body.defaultFileId).toBe(SAFETENSOR.id);
+    const pinnedOther = await run([SAFETENSOR, GGUF], { modelFileId: String(GGUF.id) });
+    expect(pinnedOther.body.defaultFileId).toBe(SAFETENSOR.id);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — the epoch url of a taken-down or deleted model', () => {
+  // The epoch url is the orchestrator's own link to the weights, outside the download route, so a
+  // taken-down or deleted model's is withheld from everyone but moderators; the rest stays.
+  type Row = Partial<typeof versionRow>;
+  const takenDown = {
+    availability: 'Private',
+    modelStatus: 'Published',
+    modelMode: 'TakenDown',
+  } as Row;
+  const deleted = { availability: 'Private', modelStatus: 'Deleted', modelMode: null } as Row;
+
+  it.each([
+    ['an anonymous caller', 'taken down', undefined, takenDown],
+    ['its owner', 'taken down', { id: OWNER_ID }, takenDown],
+    ['its owner', 'deleted', { id: OWNER_ID }, deleted],
+  ])('is withheld from %s when %s, and the rest kept', async (_who, _state, user, row) => {
+    currentUser.value = user;
+    const { status, body } = await run([TRAINING_FILE], {}, row);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([]);
+    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(body.air).toEqual(expect.any(String));
+  });
+
+  it('is still given to a moderator', async () => {
+    currentUser.value = { id: 1, isModerator: true };
+    const { body } = await run([TRAINING_FILE], {}, takenDown);
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // The rows above are mocked, so this is what ties them to the real query.
+  it('reads the model status and mode in the version query', async () => {
+    await run([TRAINING_FILE], {}, takenDown);
+    const versionSql = (mockQueryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+
+    expect(versionSql).toMatch(/\bm\.mode as "modelMode"/);
+    expect(versionSql).toMatch(/\bm\.status as "modelStatus"/);
+  });
 });
 
 describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch path', () => {
@@ -621,16 +713,18 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     expect(body.hashes.SHA256).toBe(TRAINING_FILE.hashes.SHA256);
   });
 
-  it('an authenticated non-owner still gets the epoch url', async () => {
+  // Asked for by id, a file the caller may not see is answered as one that does not exist.
+  it('an authenticated non-owner asking for the training file by id gets the unknown-file 404', async () => {
     currentUser.value = { id: OTHER_USER_ID };
     const { status, body } = await run(
       [TRAINING_FILE, SAFETENSOR],
       { modelFileId: String(TRAINING_FILE.id) },
       { availability: 'Private' }
     );
-    expect(status).toBe(200);
-    expect(body.downloadUrls[0]).toBe(EPOCH_URL);
-    expect(body.fileName).toBe(TRAINING_FILE.name);
+    expect(status).toBe(404);
+    expect(body).toEqual({
+      error: `Model file ${TRAINING_FILE.id} not found in version ${VERSION_ID}`,
+    });
   });
 
   it('the epoch url is the orchestrator url, NOT a download-route url', async () => {
@@ -811,5 +905,668 @@ describe('evictable', () => {
     expect(byFileId.body.fileName).toBe(GGUF.name);
     expect(byDefault.body.evictable).toBe(false);
     expect(byFileId.body.evictable).toBe(false);
+  });
+
+  // Promotion pins a version WITHOUT writing NotEvictable, so the pin lifts when the auction job
+  // drops the version from CoveredCheckpoint. Setting the flag instead would outlive the promotion.
+  it('a promoted version is not evictable, and becomes evictable again once not promoted', async () => {
+    const promoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: true });
+    const demoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: false });
+    expect(promoted.body.evictable).toBe(false);
+    expect(demoted.body.evictable).toBe(true);
+  });
+});
+
+describe('additionalResourceCharge', () => {
+  // The orchestrator charges the additional-resource fee off this field, so the version's
+  // flags have to reach the charge decision, not just the response.
+  it('hands the version flags to the charge decision', async () => {
+    const versionFlags =
+      ModelVersionFlag.NoAdditionalResourceFee | ModelVersionFlag.GenerationDisabled;
+    const { status } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledWith([
+      {
+        modelType: versionRow.type,
+        modelId: versionRow.modelId,
+        fileSizeKB: SAFETENSOR.sizeKB,
+        versionFlags,
+      },
+    ]);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('reports the charge decision for the version (%s)', async (charge) => {
+    mockGetShouldChargeForResources.mockResolvedValue({ [versionRow.modelId]: charge });
+    const { body } = await run([SAFETENSOR]);
+    expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
+      charge
+    );
+  });
+});
+
+describe('payoutEnabled and tipsEnabled', () => {
+  const payouts = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { payoutEnabled, tipsEnabled } = body as Body & {
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { payoutEnabled, tipsEnabled };
+  };
+
+  it('an ordinary version gets both', async () => {
+    expect(await payouts({})).toEqual({ payoutEnabled: true, tipsEnabled: true });
+  });
+
+  it('a licensing fee turns off compensation but NOT tips', async () => {
+    expect(await payouts({ licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('an owner with DisablePayout gets neither', async () => {
+    expect(await payouts({ userFlags: 1 })).toEqual({ payoutEnabled: false, tipsEnabled: false });
+  });
+
+  it('DisablePayout wins over a licensing fee', async () => {
+    expect(await payouts({ userFlags: 1, licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a system-owned (-1) version gets no tips', async () => {
+    expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
+  });
+});
+
+describe('non-commercial base models: no fee, no comp, no tips', () => {
+  const NON_COMMERCIAL = [
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+    'Flux.1 Krea',
+    'Flux.1 Kontext',
+    'Flux.2 D',
+    'Stable Cascade',
+  ];
+  type Fee = { role: string; amount: number; recipientModelVersionId: number };
+  const charged = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { fees, payoutEnabled, tipsEnabled } = body as Body & {
+      fees: Fee[];
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { fees, payoutEnabled, tipsEnabled };
+  };
+  const OWN_FEE = { licensingFee: 5 as never, licensingFeeType: 'PerImageBuzz' as never };
+  const ROOT_FEE = { ...OWN_FEE, isLicensingRoot: true };
+  const SOURCE_FEE = {
+    licensingSourceVersionId: 900 as never,
+    sourceLicensingFee: 3 as never,
+    sourceLicensingFeeRecipientUserId: 31 as never,
+  };
+
+  const VARIANTS = {
+    'no fee': {},
+    'own fee': OWN_FEE,
+    'licensing-root fee': ROOT_FEE,
+    'lineage fee': { ...SOURCE_FEE, sourceBaseModel: 'SDXL 1.0' as never },
+  };
+  it.each(
+    NON_COMMERCIAL.flatMap((baseModel) =>
+      Object.entries(VARIANTS).map(([variant, fee]) => [baseModel, variant, fee] as const)
+    )
+  )('a %s version with %s sends no fee and turns comp and tips off', async (baseModel, _, fee) => {
+    expect(await charged({ baseModel, ...fee })).toEqual({
+      fees: [],
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a commercial licensing root that charges its fee still opts out of creator comp', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0', ...ROOT_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'baseModel',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a Flux.1 D version still charges its own fee and keeps tips (control)', async () => {
+    const { fees, tipsEnabled } = await charged({ baseModel: 'Flux.1 D', ...OWN_FEE });
+    expect(fees).toEqual([expect.objectContaining({ amount: 5 })]);
+    expect(tipsEnabled).toBe(true);
+  });
+
+  it('a Flux.1 D version without a fee keeps creator comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.1 D' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('a commercial version without a fee keeps creator comp and tips', async () => {
+    expect(await charged({ baseModel: 'SDXL 1.0' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+  });
+
+  it('drops a lineage fee owed to a non-commercial source version', async () => {
+    const { fees } = await charged({
+      baseModel: 'SDXL 1.0',
+      ...SOURCE_FEE,
+      ...OWN_FEE,
+      sourceBaseModel: 'Flux.2 Klein 9B' as never,
+    });
+    expect(fees.map((f) => f.role)).toEqual(['version']);
+  });
+
+  it('a Flux.2 Klein 4B version keeps its fee, comp and tips (control)', async () => {
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B', ...OWN_FEE })).toEqual({
+      fees: [
+        expect.objectContaining({
+          role: 'version',
+          amount: 5,
+          recipientModelVersionId: VERSION_ID,
+        }),
+      ],
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+    expect(await charged({ baseModel: 'Flux.2 Klein 4B' })).toEqual({
+      fees: [],
+      payoutEnabled: true,
+      tipsEnabled: true,
+    });
+    expect(
+      (
+        await charged({
+          baseModel: 'SDXL 1.0',
+          ...SOURCE_FEE,
+          sourceBaseModel: 'SDXL 1.0' as never,
+        })
+      ).fees
+    ).toEqual([
+      expect.objectContaining({ role: 'baseModel', amount: 3, recipientModelVersionId: 900 }),
+    ]);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — a mature training dataset', () => {
+  const DATASET = {
+    id: 404,
+    type: 'Training Data',
+    visibility: 'Public',
+    url: 'https://example.invalid/data.zip',
+    metadata: { nsfwLevel: 4, fullyRated: true },
+    sizeKB: 1024,
+    name: 'data.zip',
+    hashes: {},
+  };
+  // Call 3 = the listing check's read of the dataset row.
+  const fetchDataset = (host: string) => {
+    mockQueryRaw.mockReset();
+    const pending = run([SAFETENSOR, DATASET], { modelFileId: String(DATASET.id) }, {}, host);
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: DATASET.id, nsfwLevel: 4, fullyRated: true, restricted: false },
+    ]);
+    return pending;
+  };
+
+  it('is not offered on a host that is not red-capable', async () => {
+    const { status, body } = await fetchDataset('civitai.com');
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('hashes');
+  });
+
+  it('is offered on a red-capable host', async () => {
+    const { status, body } = await fetchDataset('civitai.red');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
+  });
+
+  it.each([
+    ['its owner', { id: OWNER_ID }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is still offered to %s on a host that is not red-capable', async (_, user) => {
+    currentUser.value = user;
+    const { status, body } = await fetchDataset('civitai.com');
+    expect(status).toBe(200);
+    expect(body.fileName).toBe(DATASET.name);
+  });
+});
+
+describe('content-hash download url (download-hash-urls flag)', () => {
+  const hashPath = (c = 'a', prefix = '/api') => `${prefix}/download/sha256/${c.repeat(64)}`;
+  /** The hash url's path, after checking it is on the same origin as the id url. */
+  const firstPath = (body: Body) => {
+    const [hash, id] = body.downloadUrls.map((u) => new URL(u));
+    expect(hash.origin).toBe(id.origin);
+    return hash.pathname;
+  };
+
+  it('flag off: the id url alone, exactly as before', async () => {
+    const { body } = await run([SAFETENSOR], { modelFileId: String(SAFETENSOR.id) });
+
+    expect(body.downloadUrls).toHaveLength(1);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('flag on: the lower-case sha256 url first, the id url as the fallback', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([SAFETENSOR], { modelFileId: String(SAFETENSOR.id) });
+
+    expect(body.downloadUrls).toHaveLength(2);
+    expect(firstPath(body)).toBe(hashPath());
+    expect(new URL(body.downloadUrls[1]).searchParams.get('fileId')).toBe(String(SAFETENSOR.id));
+    expect(body.hashes).toEqual(SAFETENSOR.hashes);
+  });
+
+  it('rolls out per file: the flag is asked about the file the response describes', async () => {
+    mockIsFlipt.mockImplementation(async (_flag: string, entityId: string) => entityId === '202');
+
+    expect((await run([SAFETENSOR, GGUF], { modelFileId: '101' })).body.downloadUrls).toHaveLength(
+      1
+    );
+    expect(firstPath((await run([SAFETENSOR, GGUF], { modelFileId: '202' })).body)).toBe(
+      hashPath('b')
+    );
+    expect(mockIsFlipt).toHaveBeenCalledWith('download-hash-urls', '202');
+  });
+
+  it("flag on, no file named: hashes the file the response describes, chosen by the caller's preferences", async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OTHER_USER_ID, filePreferences: GGUF_PREFERENCES };
+
+    const { body } = await run([SAFETENSOR, GGUF]);
+
+    expect(body.fileName).toBe(GGUF.name);
+    expect(firstPath(body)).toBe(hashPath('b'));
+    expect(mockIsFlipt).toHaveBeenCalledWith('download-hash-urls', String(GGUF.id));
+  });
+
+  it('flag on, api host: both urls drop /api/ for the api host', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([SAFETENSOR], { modelFileId: '101' }, {}, 'api.civitai.com');
+
+    expect(firstPath(body)).toBe(hashPath('a', ''));
+    expect(new URL(body.downloadUrls[1]).pathname).not.toContain('/api/');
+  });
+
+  it('flag on: a placeholder all-zero sha256 keeps the id url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([{ ...SAFETENSOR, hashes: { SHA256: '0'.repeat(64) } }], {
+      modelFileId: '101',
+    });
+
+    expect(body.downloadUrls).toHaveLength(1);
+  });
+
+  it.each([
+    ['a non-public file seen by its owner', [PRIVATE_MODEL], {}, true],
+    ['a generation-only version', [SAFETENSOR], { usageControl: 'Generation' }, false],
+    ['a private version seen by its owner', [SAFETENSOR], { availability: 'Private' }, true],
+    ['an unpublished version seen by its owner', [SAFETENSOR], { status: 'Draft' }, true],
+    ['an unpublished model seen by its owner', [SAFETENSOR], { modelStatus: 'Unpublished' }, true],
+    ['a private model seen by its owner', [SAFETENSOR], { modelAvailability: 'Private' }, true],
+    ['a POI model seen by its owner', [SAFETENSOR], { poi: true }, true],
+    ['an archived model', [SAFETENSOR], { modelMode: 'Archived' }, false],
+    ['a taken-down model', [SAFETENSOR], { modelMode: 'TakenDown' }, false],
+    [
+      'a file that failed its pickle scan',
+      [{ ...SAFETENSOR, pickleScanResult: 'Danger' }],
+      {},
+      false,
+    ],
+    [
+      'a file that failed its virus scan',
+      [{ ...SAFETENSOR, virusScanResult: 'Danger' }],
+      {},
+      false,
+    ],
+  ] as const)(
+    'flag on: %s keeps the id url alone, since the hash route would not serve it',
+    async (_, files, versionOverrides, asOwner) => {
+      mockIsFlipt.mockResolvedValue(true);
+      currentUser.value = asOwner ? { id: OWNER_ID } : { id: OTHER_USER_ID, isModerator: true };
+
+      const { status, body } = await run(
+        [...files],
+        { modelFileId: String(files[0].id) },
+        versionOverrides as Partial<typeof versionRow>
+      );
+
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toHaveLength(1);
+      expect(urlFileId(body)).toBe(String(files[0].id));
+    }
+  );
+
+  it("reads every column the hash route's terms need", async () => {
+    await run([SAFETENSOR], { modelFileId: '101' });
+    const statements = mockQueryRaw.mock.calls.map(([strings]) =>
+      (strings as TemplateStringsArray).join('?')
+    );
+    const selectOf = (from: string) =>
+      statements.find((sql) => sql.includes(from))?.split(new RegExp(`FROM\\s+${from}`))[0] ?? '';
+    const versionSelect = selectOf('"ModelVersion"');
+    const filesSelect = selectOf('"ModelFile"');
+
+    expect(versionSelect).toMatch(/\bm\.availability\s+as\s+"modelAvailability"/i);
+    expect(versionSelect).toMatch(/\bm\.poi\b/);
+    expect(filesSelect).toMatch(/\bmf\."pickleScanResult"/);
+    expect(filesSelect).toMatch(/\bmf\."virusScanResult"/);
+  });
+
+  it('flag on: a file with no sha256 keeps the id url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+
+    const { body } = await run([{ ...SAFETENSOR, hashes: {} }], { modelFileId: '101' });
+
+    expect(body.downloadUrls).toHaveLength(1);
+  });
+
+  it('flag on: the private training-epoch url is untouched', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OWNER_ID };
+
+    const { body } = await run(
+      [TRAINING_FILE],
+      { modelFileId: String(TRAINING_FILE.id) },
+      { availability: 'Private' }
+    );
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  // A public training file on a private version still takes the epoch arm, so only the epoch
+  // guards keep the hash url off it: the trainingResults check and the private-version term.
+  it('flag on: a public training file on a private version gets the epoch url alone', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    currentUser.value = { id: OWNER_ID };
+
+    const { body } = await run(
+      [PUBLIC_TRAINING_FILE],
+      { modelFileId: String(PUBLIC_TRAINING_FILE.id) },
+      { availability: 'Private' }
+    );
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — a stored epoch blob url is signed again', () => {
+  const BLOB_ID = '7FB5XC5NQWH0NCJRB6C5XVSY0.safetensors';
+  const blobUrl = (exp: string) =>
+    `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=stored&exp=${exp}`;
+  const EXPIRED = blobUrl('2026-11-04T11:06:26Z');
+  const FRESH = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=fresh&exp=2099-01-01T00:00:00Z`;
+  /** The archived Training Data placeholder a model scan names by id: its url is the dataset zip. */
+  const placeholder = (modelUrl: string) => ({
+    ...TRAINING_FILE,
+    id: 3350379,
+    type: 'Training Data',
+    url: 'https://backblaze.example/training-images.zip',
+    name: 'training_data.zip',
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: { version: 2, epochs: [{ epochNumber: 5, modelUrl }] },
+    },
+  });
+  // Call 3 = the listing check's read of the Training Data row.
+  const runPlaceholder = (modelUrl: string) => {
+    mockQueryRaw.mockReset();
+    const pending = run(
+      [SAFETENSOR, placeholder(modelUrl)],
+      { modelFileId: '3350379' },
+      { availability: 'Private' }
+    );
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+    ]);
+    return pending;
+  };
+
+  const CACHE_KEY = `packed:caches:epoch-blob-resigned-url:${OWNER_ID}:${BLOB_ID}`;
+  const cacheControl = (res: NextApiResponse) =>
+    (res.setHeader as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'Cache-Control'
+    )?.[1];
+
+  beforeEach(() => {
+    currentUser.value = { id: OWNER_ID };
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: FRESH }]);
+    mockGetOrchestratorToken.mockImplementation(async (userId: number) => `owner-token-${userId}`);
+    redisMock.redis.packed.get.mockResolvedValue(null);
+  });
+
+  it('serves a freshly signed url, never the stored one, for the file a scan names', async () => {
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith({
+      token: `owner-token-${OWNER_ID}`,
+      blobIds: [BLOB_ID],
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it('marks a freshly signed url private and uncacheable', async () => {
+    const { res } = await runPlaceholder(EXPIRED);
+
+    expect(cacheControl(res)).toBe('private, no-store');
+  });
+
+  it.each([
+    ['the refresh says nothing', { blobId: BLOB_ID, status: 'unknown' }],
+    ['the blob is missing', { blobId: BLOB_ID, status: 'gone', reason: 'missing' }],
+  ])('sets no cache header when it keeps the stored url (%s)', async (_, result) => {
+    mockRefreshBlobs.mockResolvedValue([result]);
+
+    const { res, body } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(body.downloadUrls).toEqual([blobUrl('2099-01-01T00:00:00Z')]);
+    expect(cacheControl(res)).toBeUndefined();
+  });
+
+  it('keeps a freshly signed url for five minutes, per owner and blob', async () => {
+    await runPlaceholder(EXPIRED);
+
+    expect(redisMock.redis.packed.get).toHaveBeenCalledWith(CACHE_KEY);
+    expect(redisMock.redis.packed.set).toHaveBeenCalledWith(CACHE_KEY, FRESH, { EX: 300 });
+  });
+
+  it('serves a cached signature without asking the orchestrator', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(FRESH);
+
+    const { res, body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(cacheControl(res)).toBe('private, no-store');
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+    expect(mockGetOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it('signs again when the cached signature is about to expire', async () => {
+    redisMock.redis.packed.get.mockResolvedValue(
+      blobUrl(new Date(Date.now() + 60_000).toISOString())
+    );
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['blocked', { blobId: BLOB_ID, status: 'gone', reason: 'blocked' }, 404],
+    ['missing', { blobId: BLOB_ID, status: 'gone', reason: 'missing' }, 404],
+    ['unknown', { blobId: BLOB_ID, status: 'unknown' }, 200],
+  ])('caches no %s answer, so the blob is asked about again', async (_, result, expected) => {
+    mockRefreshBlobs.mockResolvedValue([result]);
+
+    const { status } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(expected);
+    const writes = redisMock.redis.packed.set.mock.calls.filter(([key]) => key === CACHE_KEY);
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
+    ['the owner', { id: OWNER_ID }, false],
+    ['a moderator', { id: 1, isModerator: true }, true],
+  ])('only a moderator skips the per-pod token cache (%s)', async (_, user, bypassCache) => {
+    currentUser.value = user;
+
+    await runPlaceholder(EXPIRED);
+
+    expect(mockGetOrchestratorToken).toHaveBeenCalledWith(OWNER_ID, undefined, { bypassCache });
+  });
+
+  it.each([
+    ['the refresh rejects', () => mockRefreshBlobs.mockRejectedValue(new Error('down'))],
+    ['the token mint throws', () => mockGetOrchestratorToken.mockRejectedValue(new Error('no'))],
+    ['the cache read rejects', () => redisMock.redis.packed.get.mockRejectedValue(new Error('x'))],
+  ])('serves the stored url when %s', async (label, fail) => {
+    fail();
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    // A failed cache read is only a miss: the url is still signed again.
+    expect(body.downloadUrls).toEqual([label === 'the cache read rejects' ? FRESH : EXPIRED]);
+  });
+
+  it('serves the stored url when the refresh hangs, and aborts it', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      mockRefreshBlobs.mockImplementation((args: { signal: AbortSignal }) => {
+        signal = args.signal;
+        return new Promise(() => undefined);
+      });
+
+      const pending = runPlaceholder(EXPIRED);
+      await vi.advanceTimersByTimeAsync(3000);
+      const { status, body } = await pending;
+
+      expect(status).toBe(200);
+      expect(body.downloadUrls).toEqual([EXPIRED]);
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('signs again a stored url that has not expired yet', async () => {
+    const { body } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+  });
+
+  it('answers 404 for a blocked blob even while the stored url is valid', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'blocked' }]);
+
+    const { status } = await runPlaceholder(blobUrl('2099-01-01T00:00:00Z'));
+
+    expect(status).toBe(404);
+  });
+
+  it('serves a stored url that is still valid when the orchestrator cannot find the blob', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'missing' }]);
+    const valid = blobUrl('2099-01-01T00:00:00Z');
+
+    const { status, body } = await runPlaceholder(valid);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([valid]);
+  });
+
+  it('answers 404 when the orchestrator says the blob is gone and the stored url has expired', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'gone', reason: 'missing' }]);
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('downloadUrls');
+  });
+
+  it('serves the stored url when the refresh says nothing about the blob', async () => {
+    mockRefreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'unknown' }]);
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EXPIRED]);
+  });
+
+  it.each([
+    ['an anonymous caller', undefined],
+    ['a signed-in stranger', { id: OTHER_USER_ID }],
+  ])('neither serves nor signs it for %s asking by id', async (_, user) => {
+    currentUser.value = user;
+
+    const { status, body } = await runPlaceholder(EXPIRED);
+
+    expect(status).toBe(404);
+    expect(body).not.toHaveProperty('downloadUrls');
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('signs it again for the orchestrator service token with the gate off', async () => {
+    currentUser.value = undefined;
+    serviceToken.value = true;
+
+    const { body } = await runPlaceholder(EXPIRED);
+
+    expect(body.downloadUrls).toEqual([FRESH]);
+    expect(mockRefreshBlobs).toHaveBeenCalledTimes(1);
+    expect(mockRefreshBlobs).toHaveBeenCalledWith(
+      expect.objectContaining({ token: `owner-token-${OWNER_ID}` })
+    );
+  });
+
+  it('is not signed for a taken-down model, whose url is withheld', async () => {
+    mockQueryRaw.mockReset();
+    const pending = run(
+      [SAFETENSOR, placeholder(EXPIRED)],
+      { modelFileId: '3350379' },
+      { availability: 'Private', modelMode: 'TakenDown' }
+    );
+    mockQueryRaw.mockResolvedValueOnce([
+      { id: 3350379, nsfwLevel: 1, fullyRated: true, restricted: false },
+    ]);
+    const { body } = await pending;
+
+    expect(body.downloadUrls).toEqual([]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
+  });
+
+  it('leaves a job-asset epoch url alone, without asking the orchestrator', async () => {
+    const { body } = await run([TRAINING_FILE], {}, { availability: 'Private' });
+
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+    expect(mockRefreshBlobs).not.toHaveBeenCalled();
   });
 });

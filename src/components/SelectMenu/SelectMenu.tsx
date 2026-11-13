@@ -1,15 +1,23 @@
-import { Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
+import { Text, useMantineTheme } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import type { FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
+import { SheetOption } from '~/components/Drawer/SheetOption';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
+type SelectMenuOption<T extends string | number> = {
+  label: React.ReactNode;
+  value: T;
+  /** Options sharing a group follow one heading; the heading shows where the group starts. */
+  group?: { id: string; label: React.ReactNode };
+};
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
-  options: { label: React.ReactNode; value: T }[];
+  options: SelectMenuOption<T>[];
   onClick: (value: T) => void;
   value?: T;
   disabled?: boolean;
@@ -109,35 +117,24 @@ export function SelectMenuV2<T extends string | number>({
           closeButtonProps={{ 'aria-label': 'Close sort menu' }}
         >
           <div className="flex flex-col gap-2">
-            {options.map((option) => {
-              const active = option.value === value;
-
-              return (
-                <UnstyledButton
-                  key={option.value.toString()}
-                  className={clsx('rounded-md px-2.5 py-3', {
-                    ['bg-gray-0 dark:bg-dark-4']: active,
-                  })}
-                  onClick={() => {
-                    onClick(option.value);
-                    setOpened(false);
-                  }}
-                >
-                  <div className="flex justify-between">
-                    {/* `span`, because `label` is a ReactNode and callers pass rich
-                        ones: Text's default `p` then nests a p inside a p. */}
-                    <Text component="span" inline>
-                      {option.label}
-                    </Text>
-                    {active && (
-                      <Text c={theme.primaryColor} inline>
-                        <IconCheck size={16} color="currentColor" />
-                      </Text>
-                    )}
-                  </div>
-                </UnstyledButton>
-              );
-            })}
+            {options.map((option, i) => [
+              startsGroup(options, i) && (
+                <Text key={`group-${option.group?.id}`} size="xs" c="dimmed" fw={600} px={4} pt={4}>
+                  {option.group?.label}
+                </Text>
+              ),
+              <SheetOption
+                key={option.value.toString()}
+                role="menuitemradio"
+                selected={option.value === value}
+                onClick={() => {
+                  onClick(option.value);
+                  setOpened(false);
+                }}
+              >
+                {option.label}
+              </SheetOption>,
+            ])}
             {/* Rendered in BOTH branches: a caller's footer action disappearing on
                 touch is the half nobody tests. */}
             {children}
@@ -158,10 +155,13 @@ export function SelectMenuV2<T extends string | number>({
       <Menu.Target>{target}</Menu.Target>
       <Menu.Dropdown p={8}>
         <>
-          {options.map((option) => {
+          {options.map((option, i) => {
             const active = option.value === value;
 
-            return (
+            return [
+              startsGroup(options, i) && (
+                <Menu.Label key={`group-${option.group?.id}`}>{option.group?.label}</Menu.Label>
+              ),
               <Menu.Item
                 key={option.value.toString()}
                 onClick={() => onClick(option.value)}
@@ -175,8 +175,8 @@ export function SelectMenuV2<T extends string | number>({
                 }
               >
                 {option.label}
-              </Menu.Item>
-            );
+              </Menu.Item>,
+            ];
           })}
           {children}
         </>
@@ -184,3 +184,6 @@ export function SelectMenuV2<T extends string | number>({
     </Menu>
   );
 }
+
+const startsGroup = <T extends string | number>(options: SelectMenuOption<T>[], i: number) =>
+  !!options[i].group && options[i].group?.id !== options[i - 1]?.group?.id;

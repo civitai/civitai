@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  isUlidShaped,
   newAppBlockId,
   newAppListingModerationEventId,
   newAppListingReportId,
   newBlockInstanceId,
   newBlockUserSubscriptionId,
   newModelBlockInstallId,
+  newUlid,
 } from '../app-block-ids';
 
 describe('app-block-ids', () => {
@@ -52,5 +54,34 @@ describe('app-block-ids', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('isUlidShaped', () => {
+    it('accepts everything newUlid returns, including the same-millisecond increments', () => {
+      vi.useFakeTimers();
+      try {
+        // The two ends of the 48-bit timestamp, then a mid-range instant.
+        for (const time of [0, 2 ** 48 - 1, Date.UTC(2026, 4, 23)]) {
+          vi.setSystemTime(time);
+          for (let i = 0; i < 200; i++) expect(isUlidShaped(newUlid())).toBe(true);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects strings newUlid cannot return', () => {
+      const ulid = newUlid();
+      const head = ulid.slice(0, 25);
+      expect(isUlidShaped(head)).toBe(false);
+      expect(isUlidShaped(`${ulid}0`)).toBe(false);
+      expect(isUlidShaped(`${head}a`)).toBe(false);
+      for (const omitted of ['I', 'L', 'O', 'U'])
+        expect(isUlidShaped(`${head}${omitted}`)).toBe(false);
+      expect(isUlidShaped(`${head}:`)).toBe(false);
+      expect(isUlidShaped(newAppBlockId())).toBe(false);
+      expect(isUlidShaped(`${ulid}\n`)).toBe(false);
+      expect(isUlidShaped('')).toBe(false);
+    });
   });
 });

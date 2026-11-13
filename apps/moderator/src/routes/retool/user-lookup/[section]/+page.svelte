@@ -4,7 +4,10 @@
   import { fetchAccount } from '../user-account';
   import { fetchSignals } from '../signals';
   import AccountActionsPanel from '../AccountActionsPanel.svelte';
+  import { fetchAccountLinks } from '../account-links';
+  import AccountHistoryPanel from '../AccountHistoryPanel.svelte';
   import AddressesPanel from '../AddressesPanel.svelte';
+  import LinkedAccountsPanel from '../LinkedAccountsPanel.svelte';
   import BountiesPanel from '../BountiesPanel.svelte';
   import BuzzBalances from '../BuzzBalances.svelte';
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
@@ -21,7 +24,9 @@
   import AbuseFindingsPanel from '../AbuseFindingsPanel.svelte';
   import ModerationMemoryPanel from '../ModerationMemoryPanel.svelte';
   import NotificationsPanel from '../NotificationsPanel.svelte';
+  import MessageAsCivitai from '$lib/components/MessageAsCivitai.svelte';
   import PromptAuditPanel from '../PromptAuditPanel.svelte';
+  import PromptScansPanel from '../PromptScansPanel.svelte';
   import ReactionsPanel from '../ReactionsPanel.svelte';
   import ReportsPanel from '../ReportsPanel.svelte';
   import ReputationPanel from '../ReputationPanel.svelte';
@@ -29,11 +34,23 @@
   import ShopPanel from '../ShopPanel.svelte';
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
+  import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
+  import MembershipCancelPanel from '../MembershipCancelPanel.svelte';
+  import MembershipResyncPanel from '../MembershipResyncPanel.svelte';
+  import { page } from '$app/state';
+  import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
+  import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
+  import {
+    CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT,
+    CREATOR_SCORE_GRANT_MAX_AMOUNT,
+  } from '$lib/creator-score-grant';
   import PayoutsPanel from '../PayoutsPanel.svelte';
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
   import GenerationBanAction from '../GenerationBanAction.svelte';
+  import { workflowIdsParam } from '$lib/user-workflows-request';
 
   let { data }: { data: PageData } = $props();
 
@@ -48,6 +65,15 @@
   // panel ran the account endpoint — including the 744M-row reaction scan — once per panel.
   const account = $derived(browser && result ? fetchAccount(result.identity.id, version) : null);
   const signals = $derived(browser && result ? fetchSignals(result.identity.id, version) : null);
+  const links = $derived(
+    browser && result && section === 'basic' ? fetchAccountLinks(result.identity.id, version) : null
+  );
+
+  const showAllHref = $derived.by(() => {
+    const url = new URL(page.url);
+    url.searchParams.delete('workflows');
+    return url.pathname + url.search;
+  });
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
   // because it owns the promises. See form-state.svelte.ts.
@@ -75,8 +101,37 @@
       <!-- On the first screen because the enforcement history and the paying relationship are what it
            is read FOR; both were two clicks and a scroll away. -->
       <SubscriptionPanel subscription={result.subscription} />
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
+      {#if data.grants['user.membership.extend']}
+        <!-- `extendDays` / `extendReason` arrive on the assistant's proposal link; a person still
+             previews and confirms. -->
+        <MembershipExtendPanel
+          userId={result.identity.id}
+          initialDays={page.url.searchParams.get('extendDays') ?? ''}
+          initialReason={page.url.searchParams.get('extendReason') ?? ''}
+        />
+        <MembershipResyncPanel
+          userId={result.identity.id}
+          initialReason={page.url.searchParams.get('resyncReason') ?? ''}
+        />
+      {/if}
+      {#if data.grants['user.membership.cancel']}
+        <MembershipCancelPanel
+          userId={result.identity.id}
+          initialCancel={page.url.searchParams.get('cancelAtPeriodEnd') ?? ''}
+          initialReason={page.url.searchParams.get('cancelReason') ?? ''}
+        />
+      {/if}
+      {#if data.grants['user.membership.code']}
+        <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
+      {/if}
+      <ModerationMemoryPanel
+        userId={result.identity.id}
+        canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
+      <LinkedAccountsPanel {links} accountId={result.identity.id} />
       <AddressesPanel {signals} />
+      <AccountHistoryPanel {signals} />
       <!-- Folded in from its own tab: once avatar, bio and location moved onto this section, Socials
            held nothing but a link list, and a tab per list is a click that buys nothing. -->
       <SocialsPanel
@@ -106,7 +161,7 @@
       <BuzzBalances userId={result.identity.id} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         {#if data.grants['user.buzz.send']}
-          <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+          <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
             <BuzzTransactionPanel
               userId={result.identity.id}
               onSuccess={() => (version += 1)}
@@ -119,6 +174,10 @@
         </div>
       </div>
     {:else if section === 'prompts'}
+      <PromptScansPanel
+        userId={result.identity.id}
+        canView={!!data.grants['user.generations.view']}
+      />
       <PromptAuditPanel {signals} />
     {:else if section === 'shop'}
       <ShopPanel
@@ -126,6 +185,7 @@
         userId={result.identity.id}
         canAct={data.canAct}
         canGrantCosmetics={!!data.grants['user.cosmetics.grant']}
+        canGrantBoxes={!!data.grants['items.boxes.grant']}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'generation'}
@@ -146,12 +206,14 @@
             title="Generated media"
             open
             canView={!!data.grants['user.generations.view']}
+            workflowIds={workflowIdsParam(page.url.searchParams)}
+            {showAllHref}
             headerAction={data.grants['user.ban'] && !result.identity.bannedAt
               ? banAccount
               : undefined}
           />
         </div>
-        <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+        <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
           <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
         </div>
       </div>
@@ -160,15 +222,22 @@
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}
-      <!-- No `onSuccess`: the panel keeps its own rows in step, and a refresh here would discard them. -->
+      <!-- No `onSuccess`: the panel fetches its own pages and refetches the current one after a delete. -->
       <CommentsPanel
-        {account}
         userId={result.identity.id}
         canBulkAct={!!data.grants['user.comments.bulk']}
         civitaiUrl={data.civitaiUrl}
       />
     {:else if section === 'leaderboard' || section === 'score'}
       <ReputationPanel stats={result.stats} scores={result.scores} ranks={result.ranks} />
+      {#if data.grants['user.creatorScore.grant']}
+        <CreatorScoreGrantPanel
+          userId={result.identity.id}
+          maxAmount={data.grants['user.creatorScore.grantLarge']
+            ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
+            : CREATOR_SCORE_GRANT_MAX_AMOUNT}
+        />
+      {/if}
     {:else if section === 'reports'}
       <ReportsPanel
         userId={result.identity.id}
@@ -200,11 +269,20 @@
         <UserChatMessages userId={result.identity.id} />
       {/if}
     {:else if section === 'notes'}
-      <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
-    {:else if section === 'notifications'}
-      <NotificationsPanel
+      <ModerationMemoryPanel
         userId={result.identity.id}
         canAct={data.canAct}
+        canStrike={data.canStrike}
+      />
+    {:else if section === 'notifications'}
+      <MessageAsCivitai
+        userId={result.identity.id}
+        canAct={!!data.grants['user.message.asCivitai']}
+        action="?/messageAsCivitai"
+      />
+      <NotificationsPanel
+        userId={result.identity.id}
+        canAct={data.canStrike}
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'mutes'}
@@ -216,7 +294,12 @@
         canToggleModerator={!!data.grants['user.moderator.toggle']}
         canBan={!!data.grants['user.ban']}
         canPurge={!!data.grants['user.purge']}
+        canDelete={!!data.grants['user.deleteAccount']}
+        deleteHold={data.deleteHold}
       />
+      {#if data.grants['user.removeReactions']}
+        <ReactionErasurePanel userId={result.identity.id} username={result.identity.username} />
+      {/if}
     {/if}
   {/key}
 {/if}

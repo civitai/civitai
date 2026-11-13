@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Box, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Box, Group, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconArrowUpRight,
   IconBolt,
@@ -25,6 +26,7 @@ import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
 import { trpc } from '~/utils/trpc';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { pickModel3DPreviewFile } from '~/shared/orchestrator/model3d-output';
 import { getModel3DUrl } from '~/utils/string-helpers';
 
 /**
@@ -36,7 +38,7 @@ import { getModel3DUrl } from '~/utils/string-helpers';
  * - The gold thumbs-up is the "recommend" toggle (Model3DReview), mirroring the
  *   AI-model thumbs-up; the count comes from `Model3DMetric.recommendedCount`.
  * - "Preview" button overlays an inline GLB viewer (lazy-loaded three.js) over
- *   the thumbnail without leaving the feed. Resolves the primary file URL on
+ *   the thumbnail without leaving the feed. Resolves a viewable file URL on
  *   demand via `trpc.model3d.getFiles`.
  */
 
@@ -73,8 +75,8 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
     { id },
     { enabled: previewing, staleTime: 5 * 60_000 }
   );
-  const primaryFile = filesData?.files.find((f) => f.isPrimary) ?? filesData?.files[0] ?? null;
-  const previewUrl = primaryFile?.downloadUrl ?? primaryFile?.url ?? null;
+  const previewFile = pickModel3DPreviewFile(filesData?.files ?? []);
+  const previewUrl = previewFile?.downloadUrl ?? previewFile?.url ?? null;
 
   const downloadCount = metric?.downloadCount ?? 0;
   const commentCount = metric?.commentCount ?? 0;
@@ -284,11 +286,11 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
             // which is the "feed preview opens to a blank box" bug. The
             // wrapping Box's `inset={0}` already gives us a real pixel
             // height to chain off of. Variant picker is deliberately
-            // omitted on the feed card — only the base mesh is loaded
-            // via `primaryFile`, so there's no choice to expose.
+            // omitted on the feed card — it previews the one file
+            // `pickModel3DPreviewFile` chooses; the detail page offers the rest.
             <Model3DViewer
               url={previewUrl}
-              format={primaryFile?.format ?? 'glb'}
+              format={previewFile?.format ?? 'glb'}
               compact
               className="size-full"
             />

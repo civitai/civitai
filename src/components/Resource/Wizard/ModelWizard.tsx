@@ -1,16 +1,7 @@
-import {
-  Button,
-  Group,
-  LoadingOverlay,
-  Popover,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Button, Group, LoadingOverlay, Stack, Text, TextInput, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -32,10 +23,10 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { resolveTrainedFileName } from '~/utils/file-display-helpers';
 import { QS } from '~/utils/qs';
-import { sanitizeDownloadFilename } from '~/utils/string-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { TemplateSelect } from './TemplateSelect';
+import { TemplatePicker } from './TemplateSelect';
 import { useWizardAutoResume } from './useWizardAutoResume';
 import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
@@ -106,11 +97,21 @@ const CreateSteps = ({
   const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
 
-  const { data: templateFields, isInitialLoading: isTemplateLoading } =
-    trpc.model.getTemplateFields.useQuery(
-      { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
-      { enabled: !!templateId }
-    );
+  const {
+    data: templateFields,
+    isInitialLoading: isTemplateLoading,
+    error: templateError,
+  } = trpc.model.getTemplateFields.useQuery(
+    { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
+    { enabled: !!templateId }
+  );
+  useEffect(() => {
+    if (templateError)
+      showErrorNotification({
+        title: 'Could not load the template',
+        error: new Error(templateError.message),
+      });
+  }, [templateError]);
   const { data: bountyFields, isInitialLoading: isBountyLoading } =
     trpc.model.getModelTemplateFieldsFromBounty.useQuery(
       { id: bountyId as number },
@@ -338,7 +339,7 @@ const TrainSteps = ({
 
   const handleVersionNext = async () => {
     if (modelFile?.id) {
-      const next = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
+      const next = fileName.trim() ? sanitizeOverrideName(fileName, modelFile.name) : null;
       const current = modelFile.overrideName ?? null;
       if (next !== current) {
         try {
@@ -498,14 +499,13 @@ export function ModelWizard() {
   const step = isNumber(routeStep) && routeStep >= 1 && routeStep <= MAX_STEPS ? routeStep : 1;
 
   const isNew = router.pathname.includes('/create');
-  const [opened, setOpened] = useState(false);
   const isTransitioning = useIsChangingLocation();
 
   const {
     data: model,
     isInitialLoading: modelLoading,
     isError: modelError,
-  } = trpc.model.getById.useQuery({ id: Number(id) }, { enabled: !!id });
+  } = trpc.model.getById.useQuery({ id: Number(id), forEditor: true }, { enabled: !!id });
 
   const isTraining = model?.uploadType === ModelUploadType.Trained;
 
@@ -617,25 +617,7 @@ export function ModelWizard() {
                 />
               </Group>
               {isNew && !isTraining && currentUser?.username && (
-                <Popover
-                  opened={opened}
-                  width={400}
-                  position="bottom-end"
-                  onChange={setOpened}
-                  withArrow
-                >
-                  <Popover.Target>
-                    <Button variant="subtle" onClick={() => setOpened(true)}>
-                      {templateId ? 'Swap template' : 'Use a template'}
-                    </Button>
-                  </Popover.Target>
-                  <Popover.Dropdown p={4}>
-                    <TemplateSelect
-                      username={currentUser.username}
-                      onSelect={() => setOpened(false)}
-                    />
-                  </Popover.Dropdown>
-                </Popover>
+                <TemplatePicker username={currentUser.username} hasTemplate={!!templateId} />
               )}
             </Group>
           </Stack>

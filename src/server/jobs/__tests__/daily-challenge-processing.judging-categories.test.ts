@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ChallengeHelpers from '~/server/games/daily-challenge/challenge-helpers';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
 const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
 const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
 const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
@@ -64,7 +66,7 @@ vi.mock('~/server/events', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: mockIsFlipt };
 });
 
@@ -87,7 +89,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
   };
 });
 
-vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeHelpers>()),
   challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
   completeChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
@@ -106,10 +109,12 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock('~/server/games/daily-challenge/generative-content', () => ({
+  REVIEW_FALLBACK_MODEL: 'fallback-model',
   estimateBuzzCost: vi.fn().mockReturnValue(0),
   generateArticle: vi.fn(),
   generateCollectionDetails: vi.fn(),
@@ -122,8 +127,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -137,7 +142,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
   getChallengeBuzzType: vi.fn(async () => 'yellow'),
-  buildWinnerPayoutTransactions: vi.fn(() => []),
+  buildWinnerPrizes: vi.fn(() => []),
   reportPoolFundingShortfall: vi.fn(),
 }));
 
@@ -150,6 +155,7 @@ const { getJudgedEntries, pickWinnersForChallenge, reviewEntries } = await impor
 );
 const { FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { Prisma } = await import('@prisma/client');
 
 const VALID_CATEGORIES = [
   { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
@@ -411,7 +417,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     entryPrize: { buzz: 0, points: 0 },
   } as never;
 
-  function mockReviewSequence(source: string, judgingCategories: unknown) {
+  function mockReviewSequence(source: string, judgingCategories: unknown, entryFee = 0) {
     mockGetActiveChallenges.mockResolvedValue([activeChallenge]);
 
     // dbRead.$queryRaw call order inside reviewEntriesForChallenge (reviewCostType: 'None'
@@ -432,6 +438,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
           metadata: null,
           source,
           judgingCategories,
+          entryFee,
         },
       ]) // challengeRecord
       .mockResolvedValueOnce([]) // rejectedUsers
@@ -504,5 +511,30 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
 
     const arg = mockGenerateReview.mock.calls[0][0];
     expect(arg.categories).toBeUndefined();
+  });
+
+  // The recentEntries query is the second dbWrite.$queryRaw call (after userScoredCounts).
+  function recentEntriesSql() {
+    const [strings, ...values] = mockDbWriteQueryRaw.mock.calls[1] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    return Prisma.sql(strings, ...values).sql;
+  }
+
+  it('paid user challenge: an entry whose review failed on an earlier tick is selected again', async () => {
+    mockReviewSequence(ChallengeSource.User, VALID_CATEGORIES, 50);
+
+    await reviewEntries();
+
+    expect(recentEntriesSql()).not.toContain('"reviewedAt" >=');
+  });
+
+  it('free challenge: keeps the since-last-review window', async () => {
+    mockReviewSequence(ChallengeSource.System, VALID_CATEGORIES);
+
+    await reviewEntries();
+
+    expect(recentEntriesSql()).toContain('"reviewedAt" >=');
   });
 });

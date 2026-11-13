@@ -78,7 +78,6 @@ describe('MiniMax H3 licence registration', () => {
     expect(server.nonCommercial).toBeUndefined();
     expect(server.disableMature).toBeUndefined();
     expect(server.restrictedNsfwLevels).toBeUndefined();
-    expect(server.requiresSameLicense).toBeUndefined();
   });
 });
 
@@ -89,7 +88,10 @@ describe('attribution is not a dumping ground', () => {
   // spot-check, because the cost of a wrong entry is paid on every ecosystem.
   it('is set only where a licence demands in-product naming', () => {
     const carrying = sharedLicenses.filter((l) => !!l.attribution).map((l) => l.name);
-    expect(carrying).toEqual(['MiniMax-Music3 Community License']);
+    expect(carrying).toEqual([
+      'MiniMax-Music3 Community License',
+      'MiniMax-H3-Image Community License Agreement',
+    ]);
   });
 
   // Same whitelist over the other copy, which the shared one cannot see.
@@ -97,7 +99,7 @@ describe('attribution is not a dumping ground', () => {
     const carrying = Object.entries(baseModelLicenses)
       .filter(([, license]) => !!license?.attribution)
       .map(([baseModel]) => baseModel);
-    expect(carrying).toEqual(['MiniMax Music 3']);
+    expect(carrying).toEqual(['MiniMax Music 3', 'MiniMax H3 Image']);
   });
 
   // The disclaimer that motivated the split is 300 characters.

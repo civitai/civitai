@@ -65,7 +65,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 const { ModelVersionEarlyAccessPurchase } = await import('./ModelVersionEarlyAccessPurchase');
 
-const seedPermission = (acceptsBlueBuzz: boolean) =>
+const seedPermission = (acceptsBlueBuzz: boolean, baseModel = 'SDXL 1.0') =>
   mockPermission.mockReturnValue({
     isLoadingAccess: false,
     canDownload: false,
@@ -81,7 +81,7 @@ const seedPermission = (acceptsBlueBuzz: boolean) =>
         ...(acceptsBlueBuzz ? { acceptsBlueBuzz: true } : {}),
       },
     },
-    modelVersion: { canGenerate: true, model: { id: 1, type: 'Checkpoint' } },
+    modelVersion: { baseModel, canGenerate: true, model: { id: 1, type: 'Checkpoint' } },
   });
 
 beforeEach(() => {
@@ -155,4 +155,39 @@ describe('ModelVersionEarlyAccessPurchase — Blue Buzz opt-in', () => {
       payWithBlue: false,
     });
   });
+});
+
+describe('ModelVersionEarlyAccessPurchase — non-commercial base model', () => {
+  test.each(['Flux.2 Klein 9B', 'Flux.1 Krea', 'Flux.1 Kontext', 'Flux.2 D', 'Stable Cascade'])(
+    'a %s version says it is not commercially available and offers nothing to buy',
+    async (baseModel) => {
+      seedPermission(true, baseModel);
+      renderWithProviders(<ModelVersionEarlyAccessPurchase modelVersionId={1} />);
+
+      await expect
+        .element(page.getByText('Not commercially available at the moment'))
+        .toBeInTheDocument();
+      await expect
+        .element(
+          page.getByText(`Its base model, ${baseModel}, is licensed for non-commercial use only`, {
+            exact: false,
+          })
+        )
+        .toBeInTheDocument();
+      expect(page.getByTestId('buzz-button').elements()).toHaveLength(0);
+    }
+  );
+
+  test.each(['Flux.2 Klein 4B', 'Flux.1 D'])(
+    'a %s version still offers its purchase buttons (control)',
+    async (baseModel) => {
+      seedPermission(false, baseModel);
+      renderWithProviders(<ModelVersionEarlyAccessPurchase modelVersionId={1} />);
+
+      await expect
+        .element(page.getByRole('button', { name: 'Get Download Access' }))
+        .toBeInTheDocument();
+      expect(page.getByTestId('buzz-button').elements()).toHaveLength(2);
+    }
+  );
 });

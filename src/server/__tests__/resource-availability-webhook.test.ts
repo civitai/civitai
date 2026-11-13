@@ -16,7 +16,11 @@ dbMock.dbWrite.$queryRaw.mockImplementation(async () => [] as { id: number; mode
  */
 
 const { env, isFlipt, queueUpdate, bust, bustResidency } = vi.hoisted(() => ({
-  env: { WEBHOOK_TOKEN: 'shhh', LOGGING: '' },
+  env: {
+    WEBHOOK_TOKEN: 'shhh',
+    WEBHOOK_TOKEN_PREVIOUS: undefined as string | undefined,
+    LOGGING: '',
+  },
   isFlipt: vi.fn(async () => true),
   queueUpdate: vi.fn(async () => undefined),
   bust: vi.fn(async () => undefined),
@@ -92,6 +96,7 @@ describe('resource-availability webhook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     env.WEBHOOK_TOKEN = 'shhh';
+    env.WEBHOOK_TOKEN_PREVIOUS = undefined;
     isFlipt.mockResolvedValue(true);
     queryRaw.mockResolvedValue([]);
   });
@@ -104,6 +109,27 @@ describe('resource-availability webhook', () => {
     });
 
     expect(statusCode).toBe(401);
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('accepts WEBHOOK_TOKEN_PREVIOUS while it is set, and only then', async () => {
+    versionsExist(1144039);
+    const events = [{ air: air(1144039), workersAvailable: 3 }];
+
+    expect((await call(events, { secret: 'old' })).statusCode).toBe(401);
+    env.WEBHOOK_TOKEN_PREVIOUS = 'old';
+    expect((await call(events, { secret: 'old' })).statusCode).toBe(200);
+  });
+
+  it('refuses a whitespace-only secret as unset, even for a caller presenting the same value', async () => {
+    env.WEBHOOK_TOKEN = '  ';
+    versionsExist(1144039);
+
+    const { statusCode } = await call([{ air: air(1144039), workersAvailable: 3 }], {
+      secret: '  ',
+    });
+
+    expect(statusCode).toBe(503);
     expect(executeRaw).not.toHaveBeenCalled();
   });
 

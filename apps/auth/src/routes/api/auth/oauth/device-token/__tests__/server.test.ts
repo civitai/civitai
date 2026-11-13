@@ -48,7 +48,11 @@ vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
 vi.mock('$lib/server/oauth/token-helpers', () => ({ createOAuthTokenPair: h.createPair }));
 
+vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { token: vi.fn() } }));
+vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
+
 import { POST } from '../+server';
+import { POST as tokenPOST } from '../../token/+server';
 
 const CLI_SCOPE = TokenScope.UserRead | TokenScope.AppBlocksSubmit; // 33554433 (bit 25 set)
 
@@ -232,5 +236,56 @@ describe('device-token +server — the poll is bounded per sign-in, not per flee
     expect(res.status).toBe(429);
     expect(h.checkRateLimit).not.toHaveBeenCalledWith('device-token', 'attacker-supplied');
     expect(h.hGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('device-token +server — client_credentials-only scopes', () => {
+  it('refuses to mint AppStoreCatalogWrite even when the client ceiling carries it', async () => {
+    const scope = TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: scope.toString() });
+    h.clientRow = { allowedScopes: scope };
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.createPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('the device grant at /token (RFC 8628 §3.4)', () => {
+  it('mints the same token as /device-token, with Link desktop’s form body, outside the token bucket', async () => {
+    // The token endpoint's own per-IP bucket is exhausted; a device poll is charged to its own buckets.
+    h.checkRateLimit.mockImplementation(async (bucket) => bucket !== 'token');
+    h.hGet.mockResolvedValueOnce(approvedCode);
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+
+    const res = await tokenPOST({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          device_code: 'devcode',
+          client_id: 'civitai-cli',
+        }),
+      }),
+    } as never);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      access_token: 'civitai_access',
+      refresh_token: 'civitai_refresh',
+      scope: String(CLI_SCOPE),
+    });
+    expect(h.createPair).toHaveBeenCalledWith(7, 'civitai-cli', CLI_SCOPE);
+    // RFC 6749 §5.1: a token response must not be cached.
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 });

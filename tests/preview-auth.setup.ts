@@ -1,9 +1,15 @@
 import { test as setup } from '@playwright/test';
+import type { APIRequestContext } from '@playwright/test';
 import fs from 'fs';
+import { trpcMutation, trpcQuery } from './preview-trpc';
 import { EncryptJWT } from 'jose';
 import { hkdfSync } from 'node:crypto';
-import { v4 as uuid } from 'uuid';
-import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fixtures';
+import {
+  PREVIEW_SESSION_MAX_AGE_S,
+  PREVIEW_USERS,
+  type PreviewRole,
+  storageStatePath,
+} from './preview-fixtures';
 
 /**
  * Preview-environment auth setup.
@@ -16,17 +22,17 @@ import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fix
  * `testing-login` credentials provider and the `/testing/*` route.
  *
  * Instead we mint the LEGACY next-auth session cookie directly with the preview's
- * shared NEXTAUTH_SECRET — the same JWE the app's `decodeLegacySessionCookie`
- * reads, so parity is guaranteed.
+ * shared NEXTAUTH_SECRET — the same JWE the app's `decodePreviewSessionCookie`
+ * reads on a preview (IS_PREVIEW=true and DATABASE_ENVIRONMENT=non-production), so
+ * parity is guaranteed.
  *
  * IMPORTANT (post first-party-OAuth cutover): `getSessionUserById` now resolves a
  * user from the shared session cache then the centralized hub (auth.civitai.com),
  * which read the PRODUCTION identity store — they have NO row for these dev-clone-
  * only smoke users, so a minted cookie would resolve to a null session and every
- * authed request would loop to /login. `get-server-auth-session.ts` therefore has a
- * PREVIEW-ONLY fallback (gated on IS_PREVIEW) that trusts the rich `user` embedded
- * in this minted legacy cookie when the hub lookup misses — restoring the pre-cutover
- * "gate reads token.user straight from the cookie" behaviour for previews only.
+ * authed request would loop to /login. On a preview `get-server-auth-session.ts`
+ * therefore takes the rich `user` embedded in this minted cookie as the session,
+ * without asking the hub.
  * So the minted `user` object below (id + isModerator + tier + the profile fields)
  * IS the authoritative session user on a preview. The backing User rows (and the
  * backing User rows (and the gold subscription) are seeded into cnpg-cluster-dev
@@ -40,10 +46,9 @@ import { PREVIEW_USERS, type PreviewRole, storageStatePath } from './preview-fix
 const SECRET = process.env.NEXTAUTH_SECRET;
 const PREVIEW_URL = process.env.PREVIEW_URL;
 const COOKIE_NAME = '__Secure-civitai-token'; // libs/auth.ts — https preview => __Secure- prefix
-const MAX_AGE_S = 30 * 24 * 60 * 60;
 
 // Mint the LEGACY next-auth v4 session cookie (a `dir`/`A256GCM` JWE, HKDF-derived key) WITHOUT next-auth, which
-// is now removed. The app still ACCEPTS it via @civitai/auth's decodeLegacySessionCookie during the cutover, so
+// is now removed. A preview ACCEPTS it via src/server/auth/preview-session-cookie.ts (production does not), so
 // this mirrors that decoder's key derivation exactly.
 const ENC_INFO = 'NextAuth.js Generated Encryption Key';
 const derivedKey = (secret: string) => new Uint8Array(hkdfSync('sha256', secret, '', ENC_INFO, 32));
@@ -67,11 +72,11 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
     muted: false,
   };
 
-  const token = { user, sub: String(u.id), id: uuid(), signedAt: Date.now() };
+  const token = { user, sub: String(u.id), id: crypto.randomUUID(), signedAt: Date.now() };
   const value = await new EncryptJWT(token)
     .setProtectedHeader({ alg: 'dir', enc: 'A256GCM' })
     .setIssuedAt()
-    .setExpirationTime(Math.floor(Date.now() / 1000) + MAX_AGE_S)
+    .setExpirationTime(Math.floor(Date.now() / 1000) + PREVIEW_SESSION_MAX_AGE_S)
     .encrypt(derivedKey(SECRET as string));
 
   const { hostname } = new URL(PREVIEW_URL as string);
@@ -82,7 +87,7 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
         value,
         domain: hostname,
         path: '/',
-        expires: Math.floor(Date.now() / 1000) + MAX_AGE_S,
+        expires: Math.floor(Date.now() / 1000) + PREVIEW_SESSION_MAX_AGE_S,
         httpOnly: true,
         secure: true,
         sameSite: 'Lax' as const,
@@ -94,6 +99,33 @@ async function mintStorageState(role: PreviewRole): Promise<string> {
   fs.mkdirSync('tests/auth', { recursive: true });
   fs.writeFileSync(storageStatePath(role), JSON.stringify(storageState, null, 2));
   return value;
+}
+
+/**
+ * The apps specs author as `mod`, and authoring refuses anyone who has not accepted the current
+ * App Developer Terms. The version is read from the server so a terms bump needs no change here.
+ * Idempotent. Not fatal: a failure here would skip the whole suite, while the apps specs then fail
+ * on their own with the 403 that names the cause.
+ */
+async function acceptAppDeveloperTerms(request: APIRequestContext, jwt: string) {
+  const headers = { cookie: `${COOKIE_NAME}=${jwt}` };
+  try {
+    const status = await trpcQuery<{ version: string; acceptedAt: string | null }>(
+      request,
+      'appListings.getDeveloperTermsStatus',
+      undefined,
+      headers
+    );
+    if (status.acceptedAt) return;
+    await trpcMutation(
+      request,
+      'appListings.acceptDeveloperTerms',
+      { version: status.version },
+      headers
+    );
+  } catch (e) {
+    console.warn(`[preview-auth.setup] could not accept App Developer Terms for mod: ${e}`);
+  }
 }
 
 setup('mint preview sessions', async ({ request }) => {
@@ -152,6 +184,7 @@ setup('mint preview sessions', async ({ request }) => {
     for (const path of ['/moderator/rewards', '/moderator/suspicious-audit-matches']) {
       await request.get(path, { timeout: 60_000, headers }).catch(() => {});
     }
+    await acceptAppDeveloperTerms(request, mod);
   }
 
   // Best-effort search warm-up (NOT a blocking readiness gate). The image-search

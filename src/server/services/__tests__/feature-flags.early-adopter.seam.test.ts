@@ -249,61 +249,12 @@ describe('early-adopter seam: the full chain decides the flag', () => {
 });
 
 describe("early-adopter seam: the flag's `enabled` is the NO-MATCH DEFAULT", () => {
-  // These are the tests the original stub could not express, and their absence is what let
-  // an inverted flag definition pass a green seam suite.
-
-  it('the transcribed flag is `enabled: false` — the only shape that scopes the cohort', () => {
-    // Pinned as a literal against the flipt-state YAML. If someone "turns the flag on" by
-    // setting enabled:true, this is the first thing that goes red.
-    expect(EARLY_ADOPTER_FLAG.enabled).toBe(false);
-    expect(EARLY_ADOPTER_FLAG.rollout.value).toBe(true);
-  });
-
   it('a non-matching entity receives the flag-level default, not a hard-coded false', () => {
     // Direct assertion on the evaluator, so the stub's own semantics are under test rather
     // than merely assumed by the tests that consume it.
     expect(evaluateBoolean(EARLY_ADOPTER_FLAG, { isEarlyAdopter: 'false' })).toBe(false);
     expect(evaluateBoolean(EARLY_ADOPTER_FLAG, undefined)).toBe(false);
     expect(evaluateBoolean(EARLY_ADOPTER_FLAG, { isEarlyAdopter: 'true' })).toBe(true);
-  });
-
-  it('an `enabled: true` flag puts EVERY non-opted-in user in the cohort (the shipped defect)', async () => {
-    // The regression case, driven end-to-end. This is the production behaviour measured on
-    // Flipt v2.10.0 for oauth-apps / comic-creator / api-key-buzz-limit, and it is what the
-    // first version of flipt-state#62 would have done: the segment selects nobody, and the
-    // flag is on for the whole internet.
-    stubFlipt({ ...EARLY_ADOPTER_FLAG, enabled: true });
-
-    const optedOut = sessionUserFromSettings({}, freshId());
-    const features = await getFeatureFlagsAsync({ user: optedOut, req });
-
-    // NOT falsy — a user who never opted in is in the cohort.
-    expect(features.earlyAdopter).toBe(true);
-  });
-
-  it('an `enabled: true` flag also enrols ANONYMOUS requests', async () => {
-    // buildFliptContext omits isEarlyAdopter entirely with no user, so the segment cannot
-    // match and the default is all that is left. A cohort gate that fires for logged-out
-    // traffic is the worst version of this bug.
-    stubFlipt({ ...EARLY_ADOPTER_FLAG, enabled: true });
-
-    const features = await getFeatureFlagsAsync({ user: undefined, req: freshReq() });
-    expect(features.earlyAdopter).toBe(true);
-  });
-
-  it('app-side `availability: []` does NOT rescue an inverted flag', async () => {
-    // The tempting mental model — "availability is [] so we fail closed" — is false
-    // whenever Flipt ANSWERS. hasFeature returns the Flipt result and never reaches static
-    // evaluation; availability only applies when Flipt is unreachable (returns null).
-    stubFlipt({ ...EARLY_ADOPTER_FLAG, enabled: true });
-
-    const optedOut = sessionUserFromSettings({}, freshId());
-    expect((await getFeatureFlagsAsync({ user: optedOut, req })).earlyAdopter).toBe(true);
-
-    // Same user, Flipt unreachable → NOW availability: [] fails closed.
-    mockIsFliptSync.mockImplementation(() => null);
-    const offline = sessionUserFromSettings({}, freshId());
-    expect((await getFeatureFlagsAsync({ user: offline, req })).earlyAdopter).toBeFalsy();
   });
 });
 

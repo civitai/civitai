@@ -8,7 +8,7 @@ import { ImageSort } from '~/server/common/enums';
 import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
-import { runImageSearch } from '~/server/services/image-search.service';
+import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
@@ -17,7 +17,7 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -29,6 +29,7 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import {
@@ -162,7 +163,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
-    const session = await getServerAuthSession({ req, res });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
     // Handle pagination
     const {
@@ -216,16 +217,43 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+    // The range check comes first because Flags works on 32-bit integers and the level is unvalidated.
+    const withinSfw =
+      Number.isInteger(_browsingLevel) &&
+      _browsingLevel >= 0 &&
+      _browsingLevel <= sfwBrowsingLevelsFlag &&
+      Flags.hasFlag(sfwBrowsingLevelsFlag, _browsingLevel);
+    if (!withinSfw) res.setHeader('Cache-Control', 'private, no-store');
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's not at all.
+    if (data.modelId || data.modelVersionId || data.postId) {
+      // Loaded on demand: the model service's import graph is large and only this branch needs it.
+      const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+        '~/server/services/model.service'
+      );
+      // A taken-down model's images are withheld here from everyone, its owner included.
+      if (await isModelGalleryWithheld(data))
+        return res.status(200).json({ items: [], metadata: {} });
+      const heldLevel = await getHeldGalleryLevel(data);
+      if (heldLevel !== undefined) {
+        _browsingLevel = Flags.intersection(_browsingLevel, heldLevel);
+        // The search reads 0 as its default level, not as none, so an empty intersection is an empty page.
+        if (!_browsingLevel) return res.status(200).json({ items: [], metadata: {} });
+      }
+    }
 
     // Search + response shaping is shared with /api/v1/blocks/images via
     // runImageSearch. The PUBLIC endpoint passes its existing region/nsfw-derived
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
-    const { items, nextCursor } = await runImageSearch(
+    const { items: found, nextCursor } = await runImageSearch(
       { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
+    // Images picked by id name no model, so each is held by its own post's model.
+    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
 
     const metadata: Metadata = {
       nextCursor,

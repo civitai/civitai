@@ -19,6 +19,7 @@ export type PostsInfiniteState = {
   modelVersionId?: number; // not hooked up to service/schema yet
   tags?: number[];
   username?: string | null;
+  userId?: number;
   period?: MetricTimeframe;
   sort?: PostSort;
   collectionId?: number;
@@ -26,6 +27,7 @@ export type PostsInfiniteState = {
   scheduled?: boolean;
   followed?: boolean;
   pending?: boolean;
+  jumpTo?: string;
 };
 
 type PostsInfiniteProps = {
@@ -33,6 +35,7 @@ type PostsInfiniteProps = {
   showEof?: boolean;
   showAds?: boolean;
   disableStoreFilters?: boolean;
+  emptyMessage?: string;
 };
 
 export default function PostsInfinite(props: PostsInfiniteProps) {
@@ -48,6 +51,7 @@ function PostsInfiniteContent({
   showEof = false,
   showAds,
   disableStoreFilters,
+  emptyMessage,
 }: PostsInfiniteProps) {
   const postFilters = usePostFilters();
   const computedFilters = disableStoreFilters
@@ -120,7 +124,7 @@ function PostsInfiniteContent({
             No results found
           </Text>
           <Text align="center">
-            {"Try adjusting your search or filters to find what you're looking for"}
+            {emptyMessage ?? "Try adjusting your search or filters to find what you're looking for"}
           </Text>
         </Stack>
       )}

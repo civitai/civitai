@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -19,6 +20,8 @@ const mockDbWrite = dbMock.dbWrite;
 const { mockCacheBust } = vi.hoisted(() => ({ mockCacheBust: vi.fn() }));
 vi.mock('~/server/utils/cache-helpers', () => ({
   createCachedObject: () => ({ bust: mockCacheBust, fetch: vi.fn(), lookupFn: undefined }),
+  // resourceDataCache, reached through updateFile's cache bust; not exercised here.
+  createCachedArray: () => ({ bust: vi.fn(), fetch: vi.fn() }),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn() }));
 
@@ -52,10 +55,16 @@ function stubDeletableFile({
   type = 'Model',
   modelStatus = ModelStatus.Published,
   rows = [{ modelVersionId: VERSION_ID, modelId: MODEL_ID, url: FILE_URL }],
-}: { type?: string; modelStatus?: ModelStatus; rows?: unknown[] } = {}) {
+  trainingStatus = null,
+}: {
+  type?: string;
+  modelStatus?: ModelStatus;
+  rows?: unknown[];
+  trainingStatus?: string | null;
+} = {}) {
   mockDbWrite.modelFile.findFirst.mockResolvedValue({
     type,
-    modelVersion: { model: { status: modelStatus } },
+    modelVersion: { trainingStatus, model: { status: modelStatus } },
   });
   mockDbWrite.$queryRaw.mockResolvedValue(rows);
 }
@@ -175,5 +184,127 @@ describe('deleteFile — file_locations deregistration', () => {
 
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(mockDeregisterFileLocationsByFile).not.toHaveBeenCalled();
+  });
+});
+
+// The DELETE as Postgres receives it: the tagged template with its nested fragments composed.
+const deleteSql = () => {
+  const call = mockDbWrite.$queryRaw.mock.calls.at(-1) as unknown as [
+    TemplateStringsArray,
+    ...Prisma.Sql[]
+  ];
+  return Prisma.sql(call[0], ...call.slice(1));
+};
+
+// Decision (2026-10-18): a dataset under review or denied stays on record; only a moderator may
+// remove it.
+describe('deleteFile — a dataset awaiting an epoch pick, under review or denied', () => {
+  it.each(['Denied', 'Paused'])(
+    'refuses the owner on a %s run, and deletes nothing',
+    async (status) => {
+      stubDeletableFile({ type: 'Training Data', trainingStatus: status });
+
+      await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+        "Training data for a training run under review or denied can't be deleted."
+      );
+      expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+    }
+  );
+
+  // Without its dataset a finished run with no epoch picked is lost, even once another version of
+  // the model is published.
+  // The status can change between the check and the DELETE, so the DELETE carries it too; a NULL
+  // status must not make the condition NULL and drop the row.
+  it("repeats the check inside an owner's DELETE, NULL-safe", async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: null });
+
+    await deleteFile({ id: FILE_ID, userId: USER_ID });
+
+    const { sql, values } = deleteSql();
+    expect(sql.replace(/\s+/g, ' ')).toContain(
+      `AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (?,?,?,?,?))`
+    );
+    expect(values).toEqual([FILE_ID, 'Paused', 'Denied', 'Submitted', 'Processing', 'InReview']);
+  });
+
+  it("leaves a moderator's DELETE without the check", async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'Denied' });
+
+    await deleteFile({ id: FILE_ID, userId: USER_ID, isModerator: true });
+
+    expect(deleteSql().sql).not.toContain('COALESCE');
+  });
+
+  it('lets a moderator remove it', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'Denied' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID, isModerator: true })).resolves.toEqual({
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+    });
+    expect(mockDeleteModelFileObject).toHaveBeenCalledWith(FILE_URL);
+  });
+
+  it('still lets the owner delete training data of a run that was not denied', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'Failed' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).resolves.toEqual({
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+    });
+  });
+});
+
+// The model's Draft/Training status doesn't cover a run once the model is published: a finished
+// run InReview (or a new version training on a published model) still needs its dataset.
+describe('deleteFile — a dataset whose run is in progress or awaiting review', () => {
+  it.each(['Submitted', 'Processing'])(
+    'refuses the owner on a %s run of a published model, and deletes nothing',
+    async (status) => {
+      stubDeletableFile({
+        type: 'Training Data',
+        trainingStatus: status,
+        modelStatus: ModelStatus.Published,
+      });
+
+      await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+        "Training data can't be deleted while its training run is in progress or awaiting review."
+      );
+      expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses the owner on an InReview run of a published model, telling them to publish first', async () => {
+    stubDeletableFile({
+      type: 'Training Data',
+      trainingStatus: 'InReview',
+      modelStatus: ModelStatus.Published,
+    });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).rejects.toThrow(
+      "Training data for a training run that hasn't been published yet can't be deleted. Publish this version first."
+    );
+    expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator remove it', async () => {
+    stubDeletableFile({ type: 'Training Data', trainingStatus: 'InReview' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID, isModerator: true })).resolves.toEqual({
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+    });
+  });
+
+  it('still deletes a non-dataset file of an InReview version', async () => {
+    stubDeletableFile({ type: 'Model', trainingStatus: 'InReview' });
+
+    await expect(deleteFile({ id: FILE_ID, userId: USER_ID })).resolves.toEqual({
+      modelVersionId: VERSION_ID,
+      modelId: MODEL_ID,
+    });
   });
 });

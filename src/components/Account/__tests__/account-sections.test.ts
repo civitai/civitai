@@ -9,6 +9,7 @@ import {
   legacyAnchorSections,
   resolveAccountSection,
   resolveLegacyAnchor,
+  resolveLegacyAnchorRedirect,
   searchAccountSections,
 } from '~/components/Account/account-sections';
 
@@ -43,6 +44,7 @@ describe('account section registry', () => {
     // "tipalti" appears in no section label; without keyword search this returns nothing.
     expect(searchAccountSections('tipalti').map((s) => s.id)).toEqual(['billing']);
     expect(searchAccountSections('hidden tags').map((s) => s.id)).toEqual(['content']);
+    expect(searchAccountSections('rate limit').map((s) => s.id)).toEqual(['usage']);
     expect(searchAccountSections('zzzz')).toEqual([]);
   });
 });
@@ -54,6 +56,7 @@ describe('legacy anchor redirects', () => {
     '#manage-subscription': 'billing',
     '#strikes': 'profile',
     '#creator-score': 'profile',
+    '#creator-controls': 'creator',
     '#accounts': 'security',
     '#api-keys': 'security',
     '#notification-settings': 'notifications',
@@ -111,5 +114,39 @@ describe('legacy anchor redirects', () => {
     expect(found.size).toBeGreaterThan(0);
     const uncovered = [...found].filter((anchor) => !(anchor in legacyAnchorSections));
     expect(uncovered).toEqual([]);
+  });
+});
+
+describe('legacy anchor redirect target', () => {
+  it('keeps the fragment and the query when moving to the pane', () => {
+    expect(
+      resolveLegacyAnchorRedirect({
+        pathname: '/user/account',
+        search: '?ref=challenge',
+        hash: '#creator-score',
+      })
+    ).toEqual({
+      pathname: '/user/account/profile',
+      query: { ref: 'challenge' },
+      hash: 'creator-score',
+    });
+  });
+
+  // The redirected URL still carries the legacy hash. If this ever returns a target again, the
+  // layout replaces the route on every pass instead of once.
+  it('is a no-op once already on the pane the hash maps to', () => {
+    expect(
+      resolveLegacyAnchorRedirect({
+        pathname: '/user/account/profile',
+        search: '',
+        hash: '#creator-score',
+      })
+    ).toBeUndefined();
+  });
+
+  it('ignores a hash that is not a legacy anchor', () => {
+    expect(
+      resolveLegacyAnchorRedirect({ pathname: '/user/account', search: '', hash: '#nope' })
+    ).toBeUndefined();
   });
 });

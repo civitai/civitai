@@ -30,11 +30,8 @@ import { describe, expect, it } from 'vitest';
  *     asserts the item comes back `disabled` + reading "Reported" (browser project).
  *   - `__tests__/appListingReportView.test.ts` — the pure `reportTriggerState` rule.
  *
- * 🔴 AND THE SCOPE THAT MATTERS IN CI: the browser `component` suite is REPORT-ONLY
- * (it always exits 0, is not a required check, and is not published at all when the
- * preview deploy fails). This unit-project ledger BLOCKS. So in CI the live path's
- * wiring is pinned structurally, by this file, and behaviourally only by a suite that
- * cannot fail a build.
+ * 🔴 AND THE SCOPE THAT MATTERS IN CI: the live path's wiring is pinned structurally, by
+ * this file, and behaviourally by the browser suite (`Component tests`).
  *
  * 🔴 KNOWN LIMITS, stated rather than implied:
  *   1. Detection is per-FILE and syntactic. A site that mounts the modal through an

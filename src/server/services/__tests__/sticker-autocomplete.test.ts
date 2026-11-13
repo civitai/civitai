@@ -40,6 +40,13 @@ describe('stickerQueryAtCaret', () => {
     expect(at(':')).toBeNull();
   });
 
+  it('leaves one-character emoticons alone', () => {
+    // `:D` + Enter used to complete to the first `d` match (dog) and send it.
+    for (const emoticon of [':D', ':P', ':O', ':3', ':)', 'lol :D'])
+      expect(at(emoticon)).toBeNull();
+    expect(at(':do')).toEqual({ query: 'do', start: 0 });
+  });
+
   it('reads the token under the caret, not the last one in the message', () => {
     const text = ':fi and :he';
     // Caret parked right after `:fi`, with more text to its right.

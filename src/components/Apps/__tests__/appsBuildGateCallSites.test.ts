@@ -32,6 +32,11 @@ const SRC = path.resolve(__dirname, '../../..');
 /**
  * Every module that decides who reaches `/apps/build`. TWO, and it must stay two — the
  * whole point of the consolidation is that there is one rule with one implementation.
+ *
+ * Since `/apps/build` also hosts the App Assistant, both sites call `resolveAppsBuildPageMode`
+ * (which composes `canAccessAppsBuild` with `canAccessAppAssistant`) rather than
+ * `canAccessAppsBuild` directly. The exactness check counts importers of EITHER, so a third
+ * module reaching for the inner predicate is still a third gate.
  */
 const BUILD_GATE_SITES = [
   'components/Apps/useAppsNavSections.ts',
@@ -243,23 +248,23 @@ describe('the masker and the pattern (validate the instrument before reading its
 
 describe('🔒 both /apps/build gate sites route through the shared predicate', () => {
   for (const rel of BUILD_GATE_SITES) {
-    it(`${rel} imports AND calls canAccessAppsBuild`, () => {
+    it(`${rel} imports AND calls resolveAppsBuildPageMode`, () => {
       const raw = read(rel);
       // The import — so a call cannot be satisfied by a same-named local helper. Comments
       // stripped but strings kept: the module specifier IS a string.
       expect(
         flatten(raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' '))
       ).toMatch(
-        /import\s*\{[^}]*\bcanAccessAppsBuild\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/
+        /import\s*\{[^}]*\bresolveAppsBuildPageMode\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/
       );
       // …and a real invocation, not merely a mention in prose.
-      expect(stripNonCode(raw)).toMatch(/\bcanAccessAppsBuild\s*\(/);
+      expect(stripNonCode(raw)).toMatch(/\bresolveAppsBuildPageMode\s*\(/);
     });
   }
 
   it('🔴 the ledger is EXACT — it fails if a site is added OR silently reverted', () => {
     const importers = SCANNED.filter((f) =>
-      /import\s*\{[^}]*\bcanAccessAppsBuild\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/.test(
+      /import\s*\{[^}]*\b(?:canAccessAppsBuild|resolveAppsBuildPageMode)\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/.test(
         flatten(f.raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' '))
       )
     ).map((f) => f.rel);

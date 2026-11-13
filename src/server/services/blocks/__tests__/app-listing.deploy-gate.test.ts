@@ -56,7 +56,12 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
-import { getListingDetail, listAvailableListings } from '../app-listing.service';
+import * as AppListingService from '../app-listing.service';
+import {
+  getListingDetail,
+  getStoreVisibleListingSummary,
+  listAvailableListings,
+} from '../app-listing.service';
 
 /** Reconstruct the SQL string Prisma received (single Prisma.Sql arg). */
 function capturedSql(): string {
@@ -197,8 +202,18 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     // Without this, a read hardcoded to `null` would satisfy the degradation case below
     // and the guard would look tested while providing nothing.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    mockDbRead.appListing.findUnique.mockResolvedValueOnce({
-      sourceRepoUrl: 'https://github.com/civitai/cool-app',
+    // 🔴 KEYED ON THE REQUESTED `select`, NOT ON CALL ORDER. The `findUnique` delegate now
+    // serves THREE guarded manual-apply readers on this path (`source_repo_url`, the beta
+    // columns, and `visibility`), so a `mockResolvedValueOnce` answers whichever one happens
+    // to be issued first — and the detail read's level gate runs before the source-repo
+    // read. A call-order mock here silently handed the source-repo answer to the visibility
+    // reader and this positive control reported `null`, i.e. it would have gone green for a
+    // feature that was working and red for one that was.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select)
+        return { sourceRepoUrl: 'https://github.com/civitai/cool-app' };
+      return {};
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail?.sourceRepoUrl).toBe('https://github.com/civitai/cool-app');
@@ -210,9 +225,19 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     // moment the code deploys until a human runs the SQL. Here the column is read
     // separately and its absence costs exactly one field.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    mockDbRead.appListing.findUnique.mockRejectedValueOnce(
-      Object.assign(new Error('The column `source_repo_url` does not exist'), { code: 'P2022' })
-    );
+    // 🔴 SELECT-AWARE, NOT CALL-ORDERED. A `mockRejectedValueOnce` here rejected the FIRST
+    // `findUnique` on this path, which is now the visibility reader — so the case exercised
+    // the wrong guard's degradation while still passing, and would have gone green with the
+    // source-repo guard deleted. Reject only for the column this case is about.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select) {
+        throw Object.assign(new Error('The column `source_repo_url` does not exist'), {
+          code: 'P2022',
+        });
+      }
+      return {};
+    });
 
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
 
@@ -230,14 +255,27 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     // real outage into a quietly missing field, which is the opposite of the point.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
     const boom = Object.assign(new Error('Can’t reach database server'), { code: 'P1001' });
-    mockDbRead.appListing.findUnique.mockRejectedValueOnce(boom);
+    // Select-aware for the same reason as above: this case is about the SOURCE-REPO read
+    // propagating a non-column error, so only that read may throw.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select) throw boom;
+      return {};
+    });
 
     await expect(getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).rejects.toBe(boom);
   });
 
   it('the guarded read asks for THAT COLUMN ONLY, keyed on the row being projected', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    mockDbRead.appListing.findUnique.mockResolvedValueOnce({ sourceRepoUrl: null });
+    // Select-aware: the assertion below is about the ARGUMENTS of the source-repo read, so
+    // a call-ordered fake would answer the visibility read instead and leave this checking
+    // nothing about the column it names.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
+      return {};
+    });
     await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
       where: { id: 'apl_1' },
@@ -252,7 +290,23 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 'apl_1', sort_key: 'k' }]);
     mockDbRead.appListing.findMany.mockResolvedValueOnce([onsiteRow()]);
     await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
-    expect(mockDbRead.appListing.findUnique).not.toHaveBeenCalled();
+    // 🔴 NARROWED FROM "never called" TO "never called FOR THIS COLUMN", and the property
+    // is unchanged. The list path now issues exactly ONE `findUnique` — a single
+    // primary-key probe that matches nothing, asking whether the `visibility` column
+    // exists before the statement may name it. That is neither this column nor a per-row
+    // probe, so the N+1 and manual-apply-dependency claims this case makes still hold;
+    // `not.toHaveBeenCalled()` had stopped being a statement about `source_repo_url` at
+    // all. The per-row half is pinned explicitly below.
+    const repoProbes = mockDbRead.appListing.findUnique.mock.calls.filter((c) =>
+      Object.prototype.hasOwnProperty.call(
+        (c[0] as { select?: Record<string, unknown> })?.select ?? {},
+        'sourceRepoUrl'
+      )
+    );
+    expect(repoProbes).toEqual([]);
+    // And whatever the list path DOES probe, it probes a bounded number of times — never
+    // once per row, which is the N+1 this case exists to prevent.
+    expect(mockDbRead.appListing.findUnique.mock.calls.length).toBeLessThanOrEqual(1);
     const select = (
       mockDbRead.appListing.findMany.mock.calls.at(-1)?.[0] as {
         select?: Record<string, unknown>;
@@ -260,5 +314,208 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     )?.select;
     expect(select).toBeDefined();
     expect(select).not.toHaveProperty('sourceRepoUrl');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BROWSING LEVEL — an R or X app's detail page is served only on a red-capable host AND to a
+// viewer whose browsing level includes that rating's bit. G / PG / PG-13 apps are not gated by
+// the level (their images are filtered per viewer elsewhere). A missing level reads as PG.
+// ---------------------------------------------------------------------------
+
+describe("getListingDetail — R/X apps follow the viewer's browsing level", () => {
+  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16. Fixture levels are pairwise distinct.
+  const PG_ONLY = 1;
+  const PG_PG13_R = 7;
+  const PG_X = 9;
+  const EVERY_LEVEL = 31;
+
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  const detailFor = async (
+    contentRating: string,
+    opts: { redCapable: boolean; viewerBrowsingLevel?: number | null }
+  ) => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteRow({ contentRating }),
+      status: 'approved',
+    });
+    return getListingDetail({ slug: 'ext-app' }, { scope: 'full', ...opts });
+  };
+
+  it('🔴 a PG-only viewer on a red-capable host gets NOT_FOUND for an R app', async () => {
+    expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: PG_ONLY })).toBeNull();
+  });
+
+  it('an R-enabled viewer on a red-capable host is served the R app', async () => {
+    const detail = await detailFor('r', { redCapable: true, viewerBrowsingLevel: PG_PG13_R });
+    expect(detail?.id).toBe('apl_2');
+  });
+
+  it('🔴 X needs X: an R-enabled viewer gets no X app; an X-enabled one does, and no R app', async () => {
+    expect(await detailFor('x', { redCapable: true, viewerBrowsingLevel: PG_PG13_R })).toBeNull();
+    expect((await detailFor('x', { redCapable: true, viewerBrowsingLevel: PG_X }))?.id).toBe(
+      'apl_2'
+    );
+    expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: PG_X })).toBeNull();
+  });
+
+  it('a non-red host still hides an R app from a viewer with every level enabled', async () => {
+    expect(
+      await detailFor('r', { redCapable: false, viewerBrowsingLevel: EVERY_LEVEL })
+    ).toBeNull();
+  });
+
+  it('🔴 a missing browsing level reads as PG: no R app on a red-capable host', async () => {
+    expect(await detailFor('r', { redCapable: true })).toBeNull();
+    expect(await detailFor('r', { redCapable: true, viewerBrowsingLevel: null })).toBeNull();
+  });
+
+  it('a PG-13 app is still served to a PG-only or signed-out viewer, on either host', async () => {
+    for (const redCapable of [false, true]) {
+      for (const viewerBrowsingLevel of [PG_ONLY, undefined]) {
+        expect(
+          (await detailFor('pg13', { redCapable, viewerBrowsingLevel }))?.id,
+          `red=${redCapable} level=${viewerBrowsingLevel}`
+        ).toBe('apl_2');
+      }
+    }
+  });
+});
+
+/**
+ * The visibility summary behind the public fork list's parent check and fork-start's parent check:
+ * an R/X parent the viewer's level excludes reads as not visible (null), like a missing one. 🔴 The
+ * level is a REQUIRED argument — omitting it is a type error, and at runtime reads as PG.
+ */
+describe("getStoreVisibleListingSummary — R/X parents follow the viewer's browsing level", () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  const summaryFor = (contentRating: string, viewerBrowsingLevel: number | null | undefined) => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteRow({ contentRating }),
+      status: 'approved',
+    });
+    return getStoreVisibleListingSummary(
+      { id: 'apl_2' },
+      { redCapable: true, scope: 'full', viewerBrowsingLevel }
+    );
+  };
+
+  it('🔴 an R parent is not visible to a PG-only or signed-out viewer on a red-capable host', async () => {
+    expect(await summaryFor('r', 1)).toBeNull();
+    expect(await summaryFor('r', undefined)).toBeNull();
+  });
+
+  it('an R parent is visible to an R viewer; a PG parent to everyone', async () => {
+    expect((await summaryFor('r', 7))?.id).toBe('apl_2');
+    expect((await summaryFor('pg', undefined))?.id).toBe('apl_2');
+  });
+
+  it('🔴 the level cannot be omitted (type error), and an omitted one reads as PG', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteRow({ contentRating: 'r' }),
+      status: 'approved',
+    });
+    expect(
+      // @ts-expect-error -- `viewerBrowsingLevel` is required: no silent "site gate only" default.
+      await getStoreVisibleListingSummary({ id: 'apl_2' }, { redCapable: true, scope: 'full' })
+    ).toBeNull();
+  });
+});
+
+/**
+ * 🔴 THE HIDDEN STATE, NOT A 404. An R/X app the viewer's browsing level excludes still 404s
+ * through `getListingDetail` (so no name / description / media ever leaves), but the detail page
+ * asks `getListingHiddenByBrowsingLevel` why — and gets ONLY the rating back, to explain it. It
+ * answers null for anything else (visible, missing, or hidden for any other reason), so it is not
+ * an existence oracle beyond "an R/X app is here". Owners and moderators are not exempt.
+ */
+describe("getListingHiddenByBrowsingLevel — the detail page's hidden state", () => {
+  const hiddenFn = (AppListingService as Record<string, unknown>)
+    .getListingHiddenByBrowsingLevel as (
+    input: { slug: string },
+    opts: Record<string, unknown>
+  ) => Promise<unknown>;
+
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+    mockDbRead.$queryRaw.mockReset();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+  });
+
+  const withRow = (contentRating: string) =>
+    mockDbRead.appListing.findFirst.mockResolvedValue({
+      ...offsiteRow({ contentRating }),
+      status: 'approved',
+    });
+  const red = { redCapable: true, scope: 'full', floor: 'public' };
+
+  it('🔴 an R app to a PG-only or signed-out viewer on a red-capable host → only its rating', async () => {
+    withRow('r');
+    for (const viewerBrowsingLevel of [1, undefined]) {
+      const result = await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel });
+      expect(result).toEqual({ contentRating: 'r' });
+    }
+  });
+
+  // `getListingDetail` is the read that takes the viewer, so it is where an owner or moderator
+  // exemption could appear. The level-7 arm shows the same viewer and floor ARE served the app,
+  // so the level-1 null is the level's doing.
+  it('🔴 the OWNER and a MODERATOR are not exempt: served with R in their level, not without', async () => {
+    withRow('r');
+    const owner = { userId: 7, isModerator: false }; // the row's creator (offsiteRow user id 7)
+    const mod = { userId: 9001, isModerator: true };
+    for (const [viewer, floor] of [
+      [owner, 'public'],
+      [mod, 'moderators'],
+    ] as const) {
+      const detailAt = (viewerBrowsingLevel: number) =>
+        getListingDetail(
+          { slug: 'ext-app' },
+          { redCapable: true, scope: 'full', floor, viewer, viewerBrowsingLevel }
+        );
+      expect(await detailAt(1), `${floor} viewer, PG only`).toBeNull();
+      expect((await detailAt(7))?.id, `${floor} viewer, R enabled`).toBe('apl_2');
+    }
+  });
+
+  it('nothing is hidden for a viewer who may see it, or for a non-mature app', async () => {
+    withRow('r');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 7 })).toBeNull();
+    withRow('pg13');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 1 })).toBeNull();
+  });
+
+  it('off a red-capable host an R app is not "hidden", it is not there (the site gate 404s)', async () => {
+    withRow('r');
+    expect(
+      await hiddenFn({ slug: 'ext-app' }, { ...red, redCapable: false, viewerBrowsingLevel: 31 })
+    ).toBeNull();
+  });
+
+  it('X needs X: an X app is hidden from an R viewer, an R app from an X-only one', async () => {
+    withRow('x');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 7 })).toEqual({
+      contentRating: 'x',
+    });
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 9 })).toBeNull();
+    withRow('r');
+    expect(await hiddenFn({ slug: 'ext-app' }, { ...red, viewerBrowsingLevel: 9 })).toEqual({
+      contentRating: 'r',
+    });
+  });
+
+  it('a missing listing is null', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValue(null);
+    expect(await hiddenFn({ slug: 'nope' }, { ...red, viewerBrowsingLevel: 1 })).toBeNull();
   });
 });

@@ -48,3 +48,13 @@ export function tosReacceptanceOffer({
   if (muteReason !== STRIKE_MUTE_REASON) return false;
   return activePoints >= MUTE_POINTS && activePoints < REVIEW_MUTE_POINTS;
 }
+
+/**
+ * Whether the user is still muted after accepting. The modal's settings write releases the mute too
+ * and can win the row lock, in which case this call finds the account already unmuted.
+ */
+export function stillRestrictedAfterAcceptance(
+  result: { unmuted: boolean; reason?: string } | undefined
+): boolean {
+  return !result?.unmuted && result?.reason !== 'not-muted';
+}

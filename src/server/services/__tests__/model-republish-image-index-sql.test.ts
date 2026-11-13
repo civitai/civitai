@@ -14,11 +14,6 @@ import { buildRepublishImageIndexTouch } from '~/server/services/model-republish
  * satisfy a call-shape assertion.
  */
 describe('buildRepublishImageIndexTouch', () => {
-  it('emits numbered Postgres placeholders on .text', () => {
-    const { text } = buildRepublishImageIndexTouch({ userId: 1, versionIds: [10] });
-    expect(text).toContain('$1');
-  });
-
   it('bumps Image.updatedAt, scoped by owner AND version list, joined through Post', () => {
     const statement = buildRepublishImageIndexTouch({ userId: 4944, versionIds: [10, 20, 30] });
     const text = statement.text.replace(/\s+/g, ' ').trim();

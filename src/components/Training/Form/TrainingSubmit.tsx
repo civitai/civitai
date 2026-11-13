@@ -39,21 +39,24 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v2/FormFooter';
+import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/Generation/footer-parts';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
 import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
-import { blockedCustomModels } from '~/shared/constants/training.constants';
+import { isClassicTrainerRetired } from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvancedSettings';
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import {
+  isTrainingModelBlocked,
+  useTrainingServiceStatus,
+} from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -81,6 +84,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -256,7 +260,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   );
 
   const status = useTrainingServiceStatus();
-  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -532,6 +535,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         error: new Error(error.message),
         reason: error.message ?? 'An unexpected error occurred. Please try again later.',
         autoClose: false,
+        report: { area: ORCHESTRATION_FEEDBACK_AREA },
       });
 
       if (idx > 0) {
@@ -584,7 +588,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      if (blockedModels.includes(r.base)) {
+      if (isTrainingModelBlocked(status, r.base)) {
         showErrorNotification({
           error: new Error('This model has been blocked from training - please try another one.'),
           autoClose: false,
@@ -1603,9 +1607,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           <Button
             loading={awaitInvalidate || dryRunResult.isLoading}
             disabled={
-              blockedModels.includes(formBaseModel ?? '') ||
+              isTrainingModelBlocked(status, formBaseModel ?? '') ||
               !!unacknowledgedRun ||
               !status.available ||
+              isClassicTrainerRetired() ||
               !allLabeled ||
               awaitInvalidate ||
               confirmOpen ||

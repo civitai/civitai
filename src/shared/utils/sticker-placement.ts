@@ -117,6 +117,43 @@ export function stickerMaxScale(settings?: Record<string, unknown> | null) {
 
 export const STICKER_MAX_SCALE_KEY = 'maxScale';
 
+/** Re-applies the limit after dividing: `(m * w) / w` can land an ulp above `m`, and the server refuses anything strictly above. */
+export function capScaleFromWidth(width: number, boundsWidth: number, maxScale: number) {
+  return Math.min(width / boundsWidth, maxScale);
+}
+
+const SCALE_FLOAT_NOISE = 1e-9;
+
+/** Not a clamp: a draft really over the limit (creator lowered it mid-session) must reach the server and be refused, not quietly shrunk. */
+export function snapScaleOvershoot(scale: number, maxScale: number) {
+  return scale > maxScale && scale - maxScale < SCALE_FLOAT_NOISE ? maxScale : scale;
+}
+
+/** What an image can be, as far as stickers are concerned: audio is placed like an image. */
+export const STICKER_MEDIA_TYPES = ['image', 'video'] as const;
+export type StickerMediaType = (typeof STICKER_MEDIA_TYPES)[number];
+
+export const STICKER_MEDIA_TYPES_KEY = 'mediaTypes';
+
+/** The sticker media type of an `Image.type`. */
+export const stickerMediaTypeOf = (imageType: string | null | undefined): StickerMediaType =>
+  imageType === 'video' ? 'video' : 'image';
+
+/**
+ * Which media types the account lets stickers be placed on.
+ *
+ * Absent, empty or unreadable means both — the state every account was in before
+ * this setting existed, and the reason it needs no backfill. Like `stickerMaxScale`
+ * this reads JSON on a row that a hand-edit can reach without the schema, so an
+ * unreadable value falls back to open rather than quietly closing a creator's space.
+ */
+export function stickerMediaTypes(settings?: Record<string, unknown> | null) {
+  const stored = settings?.[STICKER_MEDIA_TYPES_KEY];
+  if (!Array.isArray(stored)) return [...STICKER_MEDIA_TYPES];
+  const known = STICKER_MEDIA_TYPES.filter((type) => stored.includes(type));
+  return known.length > 0 ? known : [...STICKER_MEDIA_TYPES];
+}
+
 /**
  * Written by the sticker create path, read by the owner-facing auto-accept
  * notification's SQL. Both sides take the spelling from here, because a rename

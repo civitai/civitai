@@ -30,10 +30,8 @@ import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-statu
 /**
  * `/apps/mine` view-model — the merged author table's partition, order and pagination.
  *
- * 🔴 THIS FILE IS IN THE **`unit`** PROJECT ON PURPOSE. The browser-mode `component`
- * project is report-only and gates nothing; `unit` is the tier whose verdict is read. The
- * rule this pins — which listing statuses are "inactive" — is pure logic, so it belongs
- * where it can actually block.
+ * 🔴 THIS FILE IS IN THE **`unit`** PROJECT ON PURPOSE. The rule this pins — which
+ * listing statuses are "inactive" — is pure logic, so it needs no browser.
  *
  * Every fixture below uses a status/kind pair that is DISTINCT from every other fixture's
  * and from any literal an assertion names, so a mutant that hardcodes one of those literals

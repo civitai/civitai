@@ -6,6 +6,7 @@ import {
   canAccessAppsBuild,
   hasAppsStoreAccess,
 } from '~/shared/utils/app-blocks-access';
+import { resolveAppsHomeAccess } from '~/components/Apps/resolveAppsHomeAccess';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { resolveActivityPageAccess } from '~/components/Apps/resolveActivityPageAccess';
 import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess';
@@ -15,8 +16,9 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * GATE ON THE PAGE IT POINTS AT — plus a structural check that binds the whole table.
  *
  * 🔴 SCOPE, STATED EXACTLY, BECAUSE AN EARLIER REVISION OF THIS HEADER CLAIMED "EVERY
- * SUB-NAV ROW" AND MEANT ONE. Three rows are pinned against their page:
- *   • Marketplace → `/apps`          vs `resolveAppsPageAccess`   (flag ⟺ flag)
+ * SUB-NAV ROW" AND MEANT ONE. Four rows are pinned against their page:
+ *   • My apps     → `/apps`          vs `resolveAppsHomeAccess`   (flag ⟺ not-404)
+ *   • Marketplace → `/apps/store`    vs `resolveAppsPageAccess`   (flag ⟺ flag)
  *   • Build       → `/apps/build`    vs `resolveBuildPageAccess`  (flag ⟺ flag)
  *   • Activity    → `/apps/activity` vs `canAccessAppsActivity`   (see below)
  *
@@ -56,8 +58,7 @@ import { resolveBuildPageAccess } from '~/components/Apps/resolveBuildPageAccess
  * 🔴 WHY A SOURCE SCAN AND AN `eval`, RATHER THAN A RENDER. `appsSections` is exported, but
  * it pulls `@tabler/icons-react` and the rail that renders it pulls React, Mantine and
  * tRPC, so importing either into the node `unit` project — the tier that actually blocks
- * — is not what this guard should depend on. The browser
- * tier that could mount it is report-only. `appsMenuEntry.test.ts` solves the identical
+ * — is not what this guard should depend on. `appsMenuEntry.test.ts` solves the identical
  * problem the identical way, for the same reason.
  *
  * 🔴 AND IT IS BEHAVIOURAL, NOT A SPELLING CHECK. The predicate is EXTRACTED from the real
@@ -101,7 +102,7 @@ type Row = { href: string; label: string; visible: string };
  * trailing `,\n` that closes the property.
  *
  * `href` is DERIVED from `path`, mirroring `getAppsSectionHref`: the empty segment is the
- * marketplace index (`/apps`), anything else is `/apps/<path>`. Duplicated here rather
+ * `/apps` index (the "My apps" home), anything else is `/apps/<path>`. Duplicated here rather
  * than imported because this is a node-tier SOURCE scan and the registry pulls
  * `@tabler/icons-react`; the POSITIVE CONTROL below is the fixture that keeps the two
  * spellings honest.
@@ -169,12 +170,19 @@ const ALL_SUMMARY: Summary = Object.fromEntries(
  * one (`canBuild` / `canSeeStore`). That is what lets the red be measured by running this
  * exact text at `origin/main`.
  */
-function context(opts: { store: boolean; author: boolean; getStarted: boolean }): Context {
+function context(opts: {
+  store: boolean;
+  author: boolean;
+  getStarted: boolean;
+  /** Defaults to signed in, so every pre-existing case reads exactly as before. */
+  signedIn?: boolean;
+}): Context {
   return {
     isAuthor: opts.author,
     canSeeStore: opts.store,
     canGetStarted: opts.getStarted,
     canBuild: opts.store && (opts.author || opts.getStarted),
+    isSignedIn: opts.signedIn ?? true,
   };
 }
 
@@ -245,10 +253,11 @@ describe('the extractor (validate the instrument before reading its verdict)', (
     ).toBe(true);
   });
 
-  it('the real table yields a plausible number of rows, Marketplace among them', () => {
+  it('the real table yields a plausible number of rows, My apps and Marketplace among them', () => {
     const rows = parseRows(code(read(SUBNAV)));
     expect(rows.length).toBeGreaterThanOrEqual(4);
     expect(rows.map((r) => r.href)).toContain('/apps');
+    expect(rows.map((r) => r.href)).toContain('/apps/store');
   });
 });
 
@@ -267,8 +276,10 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
    * predicate that merely happened to be false for the one cohort someone hand-picked
    * would not survive it.
    */
-  it('Marketplace is visible exactly when /apps admits the viewer', () => {
-    const row = rows.find((r) => r.href === '/apps');
+  it('Marketplace is visible exactly when /apps/store admits the viewer', () => {
+    // The store moved from `/apps` to `/apps/store` and kept its gate (`store.tsx` resolves
+    // `resolveAppsPageAccess`), so this is the same check against the row's new href.
+    const row = rows.find((r) => r.href === '/apps/store');
     expect(row, 'the Marketplace row is missing from appsSections').toBeDefined();
 
     for (const summary of [NO_SUMMARY, ALL_SUMMARY])
@@ -286,10 +297,45 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
             expect(
               pageAdmits,
               `store=${store} author=${author} getStarted=${getStarted}: the Marketplace TAB ` +
-                `is ${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps\` ` +
+                `is ${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps/store\` ` +
                 `${pageAdmits ? 'admits' : 'answers notFound for'} this viewer. A tab into a ` +
                 `404 is the #3899 / #4668 defect class; an unreachable page with no tab is ` +
                 `its mirror.`
+            ).toBe(tabVisible);
+          }
+  });
+
+  /**
+   * THE "My apps" ROW (`/apps`, the viewer's app home). Its page answers `notFound` with the
+   * store gate, REDIRECTS a signed-out viewer to the store, and otherwise RENDERS the home —
+   * so the tab must show exactly when the page RENDERS (`props`): never into a 404, and not
+   * as a redirect hop to the Marketplace entry beside it. Evaluated against the page's real
+   * resolver, for a signed-in viewer AND a signed-out one.
+   */
+  it('My apps is visible exactly when /apps RENDERS the home (store access AND signed in)', () => {
+    const row = rows.find((r) => r.href === '/apps');
+    expect(row, 'the My apps row is missing from appsSections').toBeDefined();
+    expect(row!.label).toBe('My apps');
+
+    for (const summary of [NO_SUMMARY, ALL_SUMMARY])
+      for (const store of [false, true])
+        for (const author of [false, true])
+          for (const user of [null, { id: 1 }]) {
+            const tabVisible = evaluate(
+              row!.visible,
+              summary,
+              context({ store, author, getStarted: false, signedIn: !!user })
+            );
+            const pageAnswers = resolveAppsHomeAccess({
+              features: { appListings: store },
+              user,
+              query: {},
+            });
+            expect(
+              'props' in pageAnswers,
+              `store=${store} author=${author} signedIn=${!!user}: the My apps TAB is ` +
+                `${tabVisible ? 'VISIBLE' : 'hidden'} while \`/apps\` answers ` +
+                `${JSON.stringify(pageAnswers)}.`
             ).toBe(tabVisible);
           }
   });
@@ -489,5 +535,17 @@ describe('🔴 no sub-nav row offers a page its own gate would refuse', () => {
         'Give the row the predicate its page enforces — see `canAccessAppsBuild` for the ' +
         'shared-predicate pattern.'
     ).toEqual([]);
+  });
+});
+
+// The App Assistant lives on `/apps/build` now (`/apps/assistant` 301s there); the page's matrix,
+// assistant included, is pinned in `src/tests/pages/apps/build-page.test.ts`, and the rail's Build
+// row for an assistant viewer in `AppsRailNav.storeGate.browser.test.tsx`.
+describe('App Assistant', () => {
+  const rows = parseRows(code(read(SUBNAV)));
+
+  it('has no row of its own — a row into `/apps/assistant` would be a link into a redirect', () => {
+    expect(rows.length).toBeGreaterThan(3); // control: the extractor found the table
+    expect(rows.filter((r) => r.href === '/apps/assistant')).toEqual([]);
   });
 });

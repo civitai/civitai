@@ -1,4 +1,5 @@
 import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
@@ -12,12 +13,11 @@ import {
   Group,
   Loader,
   LoadingOverlay,
-  Menu,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
@@ -25,6 +25,7 @@ import {
   IconCopyPlus,
   IconChevronDown,
   IconChevronUp,
+  IconArrowsExchange,
   IconDotsVertical,
   IconEye,
   IconEyeOff,
@@ -36,7 +37,7 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
@@ -44,7 +45,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
@@ -52,7 +52,15 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
+import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
+import { useReviewFocusStore } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
+import {
+  ResourceReviewCommentHint,
+  ResourceReviewThumbs,
+} from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewThumbs';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
 import {
@@ -62,6 +70,7 @@ import {
 import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import {
   DEFAULT_EDGE_IMAGE_WIDTH,
@@ -79,13 +88,19 @@ import {
   getGenerationBaseModelResourceOptions,
 } from '~/shared/constants/basemodel.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  ImageIngestionStatus,
+  MediaType,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
 import {
+  canAddManualResources,
   getManualResourceLimitError,
   getManualResourceUsage,
   manualResourceLimitMessages,
@@ -93,7 +108,14 @@ import {
 } from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
+import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { queryClient, trpc } from '~/utils/trpc';
+import {
+  spaceRowInput,
+  STICKER_PRICE_RANGE_INPUT,
+} from '~/components/Sticker/PlacementSpaceToggle';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import { isDefined } from '~/utils/type-guards';
 import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
@@ -125,6 +147,8 @@ type State = {
   needsReview: string | null;
   isMinor: boolean;
   onDelete: () => void;
+  /** Absent when the image cannot be moved out of this post. */
+  onMove?: () => void;
   onEditMetaClick: () => void;
   isDeleting: boolean;
   isUpdating: boolean;
@@ -142,6 +166,9 @@ const useAddedImageContext = () => {
 // #endregion
 
 export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
+  // Advanced Mode allows unrestricted mixing of base models; an empty list leaves the picker
+  // unfiltered, as it is before the image has any resource.
+  if (advancedMode) return [];
   const resourcesSorted = sortByModelTypes(resources);
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
@@ -151,9 +178,7 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
       if (isDefined(baseModel)) {
         const options =
           (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
-        // Advanced Mode allows unrestricted mixing of base models; keep Checkpoint available so a
-        // second one can be added.
-        return advancedMode ? options : options.filter((t) => t.type !== 'Checkpoint');
+        return options.filter((t) => t.type !== ModelType.Checkpoint);
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
@@ -179,9 +204,14 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
   return [];
 };
 
-const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
-  return type === MediaType.video || !isMadeOnSite(meta);
-};
+/** Moves models just added by hand to the top of the resource picker's "recently added" list. */
+export function rememberManuallyAddedModels(resources: Pick<ResourceHelper, 'modelId'>[]) {
+  const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
+  queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
+    if (!old) return;
+    return uniq([...resources.map((r) => r.modelId).filter(isDefined), ...old]);
+  });
+}
 
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
@@ -190,19 +220,23 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const storedImage = useImageStore(image);
   const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId] = usePostEditStore((state) => [
-    state.images,
-    state.updateImage,
-    state.setImages,
-    state.post?.id,
-  ]);
+  const [images, updateImage, setImages, postId, postPublishedAt, collectionId] = usePostEditStore(
+    (state) => [
+      state.images,
+      state.updateImage,
+      state.setImages,
+      state.post?.id,
+      state.post?.publishedAt,
+      state.collectionId,
+    ]
+  );
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
   const minor = image.minor ?? false;
   const otherImages = images
     .map((img) => (img.type === 'added' ? img.data : null))
     .filter(isDefined)
-    .filter((data) => data.id !== id && canAddFunc(data.type, data.meta));
+    .filter((data) => data.id !== id && canAddManualResources(data));
 
   const { generation } = useCurrentUserSettings();
   const advancedMode = generation?.advancedMode ?? false;
@@ -223,20 +257,22 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
-  const canAdd = canAddFunc(type, meta);
+  const canAdd = canAddManualResources({ type, meta });
   // #endregion
 
   // #region [delete image]
-  const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => {
-      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-      if (postId)
-        queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-          if (!old) return old;
+  const removeFromEditor = (id: number) => {
+    setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
+    if (postId)
+      queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+        if (!old) return old;
 
-          return { ...old, images: old.images?.filter((x) => x.id !== id) };
-        });
-    },
+        return { ...old, images: old.images?.filter((x) => x.id !== id) };
+      });
+  };
+
+  const deleteImageMutation = trpc.image.delete.useMutation({
+    onSuccess: (_, { id }) => removeFromEditor(id),
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
@@ -253,6 +289,30 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         },
       });
     else deleteImageMutation.mutate({ id: image.id });
+  };
+  // #endregion
+
+  // #region [move image]
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const { collection: contestCollection } = usePostContestCollectionDetails(
+    { id: postId ?? 0 },
+    { enabled: !!postId && !!collectionId }
+  );
+  const canMove =
+    isOwner &&
+    !!postId &&
+    id > 0 &&
+    isScanned &&
+    !needsReview &&
+    !contestCollection &&
+    !!postPublishedAt &&
+    new Date(postPublishedAt) <= new Date();
+  const handleMove = () => {
+    if (!postId) return;
+    dialogStore.trigger({
+      component: MoveImageToPostModal,
+      props: { fromPostId: postId, imageId: id, onMoved: () => removeFromEditor(id) },
+    });
   };
   // #endregion
 
@@ -287,12 +347,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         updateImage(id, (image) => {
           image.resourceHelper = image.resourceHelper.concat(resp);
         });
-
-        const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
-        queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
-          if (!old) return;
-          return uniq([...resp.map((r) => r.modelId).filter(isDefined), ...old]);
-        });
+        rememberManuallyAddedModels(resp);
       }
     },
     onError(error) {
@@ -311,7 +366,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   return (
     <AddedImageContext.Provider
       value={{
-        image,
+        image: { ...image, nsfwLevel },
         isBlocked,
         isPending,
         isScanned,
@@ -323,6 +378,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         needsReview: needsReview ?? null,
         isMinor,
         onDelete: handleDelete,
+        onMove: canMove ? handleMove : undefined,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isPending,
         isUpdating: updateImageMutation.isPending,
@@ -353,6 +409,9 @@ function Preview() {
   return (
     <div className="flex flex-col">
       <PostImage />
+      <div className="p-3 empty:hidden">
+        <StorylineCaption />
+      </div>
       {isBlocked && <TosViolationBanner />}
       <Accordion
         value={value}
@@ -483,6 +542,8 @@ const ResourceHeader = () => {
 const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
   const { image, canAdd, otherImages } = useAddedImageContext();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
+  const postId = usePostEditStore((state) => state.post?.id);
+  const ownerId = usePostEditStore((state) => state.post?.user.id);
 
   const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
 
@@ -584,13 +645,37 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
             <Text lineClamp={1}>{modelName}</Text>
             <Text span c="dimmed" size="sm" lineClamp={1}>
               {modelVersionName}
+              {postId && ownerId && (
+                <ResourceReviewCommentHint
+                  postId={postId}
+                  ownerId={ownerId}
+                  modelVersionId={modelVersionId}
+                />
+              )}
             </Text>
           </Stack>
-          <Badge color="gray" size="md" variant="filled">
+          <Badge color="gray" size="md" variant="filled" visibleFrom="sm">
             {getDisplayName(modelType ?? 'unknown')}
           </Badge>
         </Box>
       </Link>
+
+      {postId && ownerId && (
+        <ResourceReviewThumbs
+          postId={postId}
+          ownerId={ownerId}
+          modelVersionId={modelVersionId}
+          modelName={modelName}
+        />
+      )}
+      {postId && ownerId && (
+        <ResourceReviewEditButton
+          postId={postId}
+          ownerId={ownerId}
+          modelVersionId={modelVersionId}
+          modelName={modelName}
+        />
+      )}
 
       {!otherAvailableIDs.length ? (
         <></>
@@ -663,6 +748,16 @@ function EditDetail() {
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
+
+  // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
+  const reviewFocus = useReviewFocusStore((state) => state.target);
+  useEffect(() => {
+    if (reviewFocus?.imageId !== image.id) return;
+    const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
+    if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
+      setShowMoreResources(true);
+    useReviewFocusStore.setState({ target: null });
+  }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
@@ -745,6 +840,7 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {!showPreview && <StorylineCaption />}
               {/* Directly under the image. The wrapper is `flex-row-reverse`, so
                   this narrow column is the one on the RIGHT. Renders nothing
                   without remix provenance, which is the ordinary case. */}
@@ -1222,9 +1318,7 @@ function EditDetail() {
             className="rounded-lg p-2"
             classNames={{ message: 'flex items-center justify-center gap-2' }}
           >
-            <Text align="center">
-              This image is waiting for manual review and will receive a rating at a later time.
-            </Text>
+            <Text align="center">This image is waiting to be rated.</Text>
           </Alert>
         )}
         {/* #endregion */}
@@ -1233,11 +1327,41 @@ function EditDetail() {
   );
 }
 
+function StorylineCaption() {
+  const { image } = useAddedImageContext();
+  const post = usePostEditStore((state) => state.post);
+  if (!post) return null;
+  return <StorylineCaptionSlot post={post} image={image} />;
+}
+
+/**
+ * The menu's dropdown mounts only when it opens, so the sticker setting and the party-hat item
+ * would otherwise start loading at that moment and change the menu's size when they arrive. Warm
+ * them as the pointer, a touch or the keyboard reaches the button.
+ */
+function useWarmImageMenu(imageId: number, isOwner: boolean) {
+  const utils = trpc.useUtils();
+  const features = useFeatureFlags();
+  const hatEvent = isOwner ? getReleasedEventDecoration(CosmeticEntity.Image)?.event : undefined;
+  return () => {
+    if (imageId <= 0) return;
+    if (features.stickerPlacement) {
+      void utils.placement.getSpaceRow.prefetch(spaceRowInput('image', imageId));
+      void utils.placement.getPriceRange.prefetch(STICKER_PRICE_RANGE_INPUT);
+    }
+    if (hatEvent)
+      void utils.event.getAccess.prefetch({ event: hatEvent }, { staleTime: 5 * 60 * 1000 });
+  };
+}
+
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
-  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick, needsReview, isMinor } =
+  const { image, isBlocked, onDelete, onMove, isDeleting, onEditMetaClick, needsReview, isMinor } =
     useAddedImageContext();
   const { metadata, url, type, id, nsfwLevel, poi } = image;
+  // Only the owner can hat their images; a moderator editing this post would be refused.
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const warmMenu = useWarmImageMenu(id, isOwner);
   const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
   return (
     <div className={`relative`}>
@@ -1279,10 +1403,14 @@ function PostImage() {
           )}
         </div>
       )}
+      <ImageReactionCount
+        count={image.reactionCount}
+        className="pointer-events-none absolute bottom-2 left-2 z-20"
+      />
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
           <Menu.Target>
-            <LegacyActionIcon>
+            <LegacyActionIcon onPointerEnter={warmMenu} onTouchStart={warmMenu} onFocus={warmMenu}>
               <IconDotsVertical
                 color="#fff"
                 filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -1295,6 +1423,13 @@ function PostImage() {
                 Edit image
               </Menu.Item>
             )}
+            {!isBlocked && isOwner && image.id > 0 && (
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={image.id}
+                image={image}
+              />
+            )}
             {!isBlocked && image.id > 0 && (
               // Inside the menu rather than on the card: it is a setting, not an
               // action, and the card is already carrying every control the
@@ -1302,6 +1437,11 @@ function PostImage() {
               <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                 <PlacementSpaceToggle level="image" entityId={image.id} />
               </div>
+            )}
+            {!isBlocked && onMove && (
+              <Menu.Item leftSection={<IconArrowsExchange size={16} />} onClick={onMove}>
+                Move to another post
+              </Menu.Item>
             )}
             <Menu.Item
               color="red"

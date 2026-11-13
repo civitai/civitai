@@ -13,6 +13,24 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-review-nudge.mjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__.*[Gg][Ii][Tt][Hh][Uu][Bb].*__(create|update)_pull_request$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pr-review-nudge.mjs\""
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit",
         "hooks": [
           {
@@ -26,8 +44,5 @@
         ]
       }
     ]
-  },
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true
   }
 }

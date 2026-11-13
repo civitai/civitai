@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { ActionIcon, Popover, TextInput, Button, Text, Stack, Group } from '@mantine/core';
+import { ActionIcon, TextInput, Button, Text, Stack, Group } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconSearch, IconArrowsShuffle } from '@tabler/icons-react';
-import { Tooltip } from '@mantine/core';
 import { generationGraphStore, REMIX_WORKFLOW_OVERRIDES } from '~/store/generation-graph.store';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

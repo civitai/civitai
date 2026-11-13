@@ -13,10 +13,10 @@ const query = () =>
   }) as string;
 
 describe('model-flagged-minor — registration shape', () => {
-  it('is a non-toggleable System notification', () => {
+  it('is a toggleable Moderation notification', () => {
     expect(def).toBeTruthy();
-    expect(def.category).toBe('System');
-    expect(def.toggleable).toBe(false);
+    expect(def.category).toBe('Moderation');
+    expect(def.toggleable).not.toBe(false);
   });
 });
 

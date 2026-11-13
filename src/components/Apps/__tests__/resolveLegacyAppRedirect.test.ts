@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+import * as LegacyRedirect from '../resolveLegacyAppRedirect';
 import {
   approvedListingSlugQuery,
   resolveLegacyAppRedirect,
@@ -519,11 +520,49 @@ describe('approvedListingSlugQuery — the approved-only precondition', () => {
         status: 'approved',
         revisionOfId: null,
       },
-      select: { slug: true },
+      // `contentRating` is the input of the R/X gate (`legacyListingSlugForViewer`).
+      select: { slug: true, contentRating: true },
     });
   });
 
-  it('selects the slug and nothing else (no incidental data pulled into SSR)', () => {
-    expect(Object.keys(approvedListingSlugQuery('apb_x').select)).toEqual(['slug']);
+  it('selects the slug and the rating gate input, nothing else (no incidental data in SSR)', () => {
+    expect(Object.keys(approvedListingSlugQuery('apb_x').select)).toEqual([
+      'slug',
+      'contentRating',
+    ]);
+  });
+});
+
+/**
+ * 🔴 The legacy route must not reveal an R/X app — not even its slug in a `Location` header — to a
+ * viewer who may not see it: off a mature-capable site, or on one when their browsing level lacks
+ * that rating. `legacyListingSlugForViewer` is what the page's injected lookup returns through.
+ */
+describe('legacyListingSlugForViewer — the R/X gate on the legacy redirect', () => {
+  const slugFor = (LegacyRedirect as Record<string, unknown>).legacyListingSlugForViewer as (
+    row: { slug: string; contentRating: string | null } | null,
+    mature: { r: boolean; x: boolean }
+  ) => string | null;
+  const NONE = { r: false, x: false };
+  const R_ONLY = { r: true, x: false };
+  const X_ONLY = { r: false, x: true };
+
+  it('🔴 an R app is not redirected to for a viewer who may not see R', () => {
+    expect(slugFor({ slug: 'vitrine', contentRating: 'r' }, NONE)).toBeNull();
+    expect(slugFor({ slug: 'vitrine', contentRating: 'r' }, X_ONLY)).toBeNull();
+  });
+
+  it('🔴 X needs X', () => {
+    expect(slugFor({ slug: 'vitrine', contentRating: 'x' }, R_ONLY)).toBeNull();
+    expect(slugFor({ slug: 'vitrine', contentRating: 'x' }, X_ONLY)).toBe('vitrine');
+  });
+
+  it('a viewer who may see it is redirected; a PG-13 app is not gated by the level', () => {
+    expect(slugFor({ slug: 'vitrine', contentRating: 'r' }, R_ONLY)).toBe('vitrine');
+    expect(slugFor({ slug: 'other-app', contentRating: 'pg13' }, NONE)).toBe('other-app');
+  });
+
+  it('no listing → null', () => {
+    expect(slugFor(null, R_ONLY)).toBeNull();
   });
 });

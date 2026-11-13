@@ -17,8 +17,11 @@
 
 import { useMemo, useRef } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
-import { Badge, Input, Text, Tooltip } from '@mantine/core';
+import { Badge, Input, Text } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPhoto } from '@tabler/icons-react';
+import { COARSE_POINTER_QUERY } from '~/utils/phone-layout';
 import clsx from 'clsx';
 import classes from './ImageUploadMultipleInput.module.scss';
 import {
@@ -120,6 +123,7 @@ export function ImageUploadMultipleInput({
   metadataApply,
   ...inputWrapperProps
 }: ImageUploadMultipleInputProps) {
+  const coarsePointer = useMediaQuery(COARSE_POINTER_QUERY);
   const isSlotsMode = !!slots?.length;
   const isUrlInputLayout = layout === 'url-input' && !isSlotsMode;
   const completedImages = value?.filter((v) => !!v.url) ?? [];
@@ -158,7 +162,7 @@ export function ImageUploadMultipleInput({
   // Only wrap the label when there is an action to show. Mantine renders a label
   // element for any truthy `label`, and a JSX wrapper is always truthy — so wrapping
   // unconditionally puts an empty row on every image input that has no label, which
-  // is most of them (imagesNode has no default).
+  // is most of them (imagesDef has no default).
   const labelWithActions =
     showRecent || showClearAll ? (
       <div className="flex w-full items-center justify-between gap-3">
@@ -184,6 +188,7 @@ export function ImageUploadMultipleInput({
               size="xs"
               c="red"
               className="cursor-pointer border-0 bg-transparent p-0"
+              data-tap-area
               onClick={() => onChange?.([])}
             >
               Clear all
@@ -390,7 +395,11 @@ export function ImageUploadMultipleInput({
                   <div className="flex flex-col items-center justify-center gap-1 py-2">
                     <IconPhoto size={32} stroke={1.5} />
                     <Text size="sm" c="dimmed">
-                      {hasImages ? 'Add more images' : 'Drop images here or click to select'}
+                      {hasImages
+                        ? 'Add more images'
+                        : coarsePointer
+                        ? 'Tap to choose an image'
+                        : 'Drop images here or click to select'}
                     </Text>
                     {max > 1 && (
                       <Text size="xs" c="dimmed">

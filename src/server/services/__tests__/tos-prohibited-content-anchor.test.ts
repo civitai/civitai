@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { getTosMeta } from '~/server/services/content.service';
+import type { Context } from '~/server/createContext';
+import { getStaticContent, getTosMeta } from '~/server/services/content.service';
 import { TOS_PROHIBITED_CONTENT_ID } from '~/components/Markdown/rehype-tos-section-ids';
 
 /**
@@ -24,9 +25,9 @@ const tosFiles = readdirSync(CONTENT_ROOT).filter((f) => /^tos(\.[\w-]+)?\.md$/.
  * re-accept.
  */
 const ACCEPTED_IDENTITY: Record<string, string> = {
-  blue: 'b5db388c235f268791f1aaee484913af94544c6ce1b1b5b8487d5dc1307f8b4e',
-  red: 'b5db388c235f268791f1aaee484913af94544c6ce1b1b5b8487d5dc1307f8b4e', // no tos.red.md — falls back to tos.md
-  green: '978c839dea33653f13bce7440d91f4024e886e93557d4deb5718086c904ce0b5',
+  blue: '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  red: '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0', // no tos.red.md — falls back to tos.md
+  green: 'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 describe('ToS prohibited-content anchor', () => {
@@ -56,6 +57,25 @@ describe('ToS prohibited-content anchor', () => {
       ).toBeDefined();
     }
   });
+
+  // Legal asked for this rewrite WITHOUT re-acceptance: it drops a right Civitai reserved, so nobody
+  // has to agree to anything new. If a later edit to §5.8 does need a re-accept, change this test.
+  it.each(Object.keys(ACCEPTED_IDENTITY))(
+    '%s serves the 2026-10-22 §5.8 failed-renewal wording without re-acceptance',
+    async (domainColor) => {
+      const tos = await getStaticContent({
+        slug: ['tos'],
+        ctx: { domain: domainColor } as Context,
+      });
+      expect(tos.content).toContain(
+        'We will not delete your account or User Content because a renewal payment failed.'
+      );
+      expect(tos.content).not.toContain('reserves the right to delete your account');
+
+      const { hash } = await getTosMeta({ domainColor });
+      expect(hash).toBe(ACCEPTED_IDENTITY[domainColor]);
+    }
+  );
 
   it.each(Object.keys(ACCEPTED_IDENTITY))(
     '%s still advertises the identity users have accepted',

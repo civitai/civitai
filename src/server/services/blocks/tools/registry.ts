@@ -635,9 +635,24 @@ export function blockToolDeclarations(): Array<{
     function: {
       name: tool.name,
       description: tool.description,
-      // `io: 'input'` because this describes what the model SENDS; matches the
-      // call form already used elsewhere in the repo.
-      parameters: z.toJSONSchema(tool.argsSchema, { io: 'input', unrepresentable: 'any' }),
+      parameters: toolParameters(tool.argsSchema),
     },
   }));
+}
+
+/**
+ * The JSON Schema a tool's `parameters` carries: `z.toJSONSchema` of its `argsSchema`, without
+ * the `$schema` key. `io: 'input'` because this describes what the model SENDS.
+ *
+ * 🔴 `$schema` is dropped because it is a url: a block echoes these declarations into its chat
+ * step's `tools[]`, and the generation input gate reads a whole url in step params as an image
+ * input.
+ */
+export function toolParameters(argsSchema: z.ZodType): Record<string, unknown> {
+  const schema: Record<string, unknown> = z.toJSONSchema(argsSchema, {
+    io: 'input',
+    unrepresentable: 'any',
+  });
+  delete schema.$schema;
+  return schema;
 }

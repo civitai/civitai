@@ -7,18 +7,17 @@ import {
   Checkbox,
   Divider,
   Group,
-  HoverCard,
   Loader,
   Modal,
-  Popover,
   ScrollArea,
   Select,
   Stack,
   Switch,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { TRAINING_REVIEW_COPY } from '@civitai/shared/training-review';
+import { HoverCard, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue, useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -35,11 +34,9 @@ import {
   IconSearch,
   IconTrash,
   IconX,
-  IconBarbell,
   IconCurrencyDollar,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import React, { useMemo, useState } from 'react';
 import type { MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
@@ -49,6 +46,7 @@ import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { SwitchToTrainingStudioAlert } from '~/components/Training/TrainingStudioSwitch';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { TrainStatusMessage } from '~/components/Training/Wizard/TrainWizard';
 import {
@@ -67,7 +65,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { isAir, splitUppercase } from '~/utils/string-helpers';
 import { getAirModelLink } from '~/shared/utils/air';
-import { trainingModelInfo } from '~/utils/training';
+import { isHeldForTrainingReview, trainingModelInfo } from '~/utils/training';
 import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -113,6 +111,14 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
   refundInfo: RefundInfo | null;
   costInfo: CostInfo | null;
 };
+
+/** How a training status reads to its owner. */
+export const trainingStatusLabel = (status: TrainingStatus, heldForReview = false) =>
+  status === TrainingStatus.InReview
+    ? 'Ready'
+    : status === TrainingStatus.Paused && heldForReview
+    ? TRAINING_REVIEW_COPY.pendingLabel
+    : splitUppercase(status);
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -212,7 +218,6 @@ export default function UserTrainingModels() {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
-  const features = useFeatureFlags();
 
   // Fetch moderator-editable announcement
   const { data: announcement } = trpc.training.getAnnouncement.useQuery();
@@ -290,10 +295,16 @@ export default function UserTrainingModels() {
     onSuccess: async () => {
       await queryUtils.model.getMyTrainingModels.invalidate();
     },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to delete version', error: new Error(error.message) });
+    },
   });
   const deleteModelMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
       await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to delete model', error: new Error(error.message) });
     },
   });
   const recheckTrainingStatusMutation = trpc.modelVersion.recheckTrainingStatus.useMutation({
@@ -468,8 +479,12 @@ export default function UserTrainingModels() {
                 <HoverCard.Target>
                   <Badge color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}>
                     <Group gap={6} wrap="nowrap">
-                      {splitUppercase(
-                        mv.trainingStatus === TrainingStatus.InReview ? 'Ready' : mv.trainingStatus
+                      {trainingStatusLabel(
+                        mv.trainingStatus,
+                        isHeldForTrainingReview(
+                          mv.trainingStatus,
+                          thisFileMetadata?.trainingResults
+                        )
                       )}
                       {isRunning && <Loader size={12} />}
                     </Group>
@@ -718,7 +733,12 @@ export default function UserTrainingModels() {
           const isPaused = mv.trainingStatus === TrainingStatus.Paused;
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
           const isRunning = isSubmitted || isProcessing;
-          const isNotDeletable = isRunning || isPaused;
+          // A denied version stays on record, but a model's only version goes with the (soft-deleted) model.
+          const deletesVersion = mv.model._count.modelVersions > 1;
+          const isNotDeletable =
+            isRunning ||
+            isPaused ||
+            (deletesVersion && mv.trainingStatus === TrainingStatus.Denied);
 
           const epochsDone = epochsCompletedForRun(thisFileMetadata?.trainingResults ?? {});
           const hasFailedWithEpochs = isFailed && epochsDone > 0;
@@ -821,26 +841,15 @@ export default function UserTrainingModels() {
         </AlertWithIcon>
       )}
 
-      {/* Runs made in the new Training Studio never appear in this list (they live on the
-          orchestrator, not in this table) — without this pointer, anyone who tried the studio and
-          toggled it back off loses sight of those runs entirely. Flag-on users were routed to the
-          studio already; no banner needed. */}
-      {!features.trainingStudioUi && (
-        <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm">
-          <Text size="sm">
-            We&rsquo;ve built a new training experience — <b>Training Studio</b> (Beta). Runs made
-            there (or on{' '}
-            <Anchor href="https://training.civitai.com" target="_blank" rel="noreferrer">
-              training.civitai.com
-            </Anchor>
-            ) don&rsquo;t appear in this list. You can turn it on under{' '}
-            <Anchor component={Link} href="/user/account/preferences">
-              Settings → Preferences
-            </Anchor>
-            .
-          </Text>
-        </AlertWithIcon>
-      )}
+      {/* Runs made in the Training Studio live on the orchestrator, not in this table — without
+          this pointer, anyone who switched back loses sight of those runs entirely. */}
+      <SwitchToTrainingStudioAlert destination="/training-studio">
+        <b>Training Studio</b> is our new training experience. Runs made there (or on{' '}
+        <Anchor href="https://training.civitai.com" target="_blank" rel="noreferrer">
+          training.civitai.com
+        </Anchor>
+        ) don&rsquo;t appear in this list.
+      </SwitchToTrainingStudioAlert>
 
       {/* Filter Bar */}
       <Group gap="sm" wrap="wrap">
@@ -893,7 +902,7 @@ export default function UserTrainingModels() {
               {Object.values(TrainingStatus).map((s) => (
                 <Checkbox
                   key={s}
-                  label={s === TrainingStatus.InReview ? 'Ready' : splitUppercase(s)}
+                  label={trainingStatusLabel(s)}
                   checked={statusFilter.includes(s)}
                   onChange={(e) => {
                     if (e.currentTarget.checked) {

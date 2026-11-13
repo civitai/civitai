@@ -48,6 +48,9 @@ import { wasLastReviewARejection } from '../creator-shop.data';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
 dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
 );
@@ -177,6 +180,7 @@ describe('only a moderator can reopen a rejection', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action,
       rejectionReason: 'reopened on appeal',
     });
@@ -202,6 +206,7 @@ describe('only a moderator can reopen a rejection', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'request-changes',
       rejectionReason: 'reopened on appeal',
     });
@@ -238,6 +243,7 @@ describe('an item that was only sent back for changes still moves', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'request-changes',
       rejectionReason: 'one more pass please',
     });
@@ -246,14 +252,78 @@ describe('an item that was only sent back for changes still moves', () => {
     );
   });
 
-  it('can be restored from the archive', async () => {
+  it('can be restored from the archive, still waiting on its changes', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...item('Archived', [reviewed('request-changes', '2026-08-02T00:00:00.000Z')]),
+      rejectionReason: 'not a fit for the shop',
+    });
+    await unarchiveCreatorShopItem({ id: 42, userId: 11 });
+    const { data } = mocks.shopItemUpdate.mock.calls[0][0];
+    expect(data).toMatchObject({ status: 'RequestedChanges', archivedAt: null });
+    expect(data).not.toHaveProperty('reviewedAt');
+    expect(data).not.toHaveProperty('rejectionReason');
+  });
+
+  it('stays out of the review queue when listed again', async () => {
+    await setCreatorShopItemListed({ id: 42, userId: 11, listed: true });
+    const { data } = mocks.shopItemUpdate.mock.calls[0][0];
+    expect(data).toEqual({ listed: true });
+  });
+
+  it('cannot be resubmitted with nothing changed', async () => {
+    await expect(
+      updateCreatorShopItem({ id: 42, userId: 11, name: 'Golden Laurel' })
+    ).rejects.toThrow(/Make the requested changes/);
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// Controls for the block above: once the creator has resubmitted, or the item was never sent back,
+// listing and restoring still put it in front of a reviewer.
+describe('an item not waiting on changes re-enters review', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.shopItemUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
+      id: 42,
+      ...data,
+    }));
+  });
+
+  it('restores to PendingReview when the changes were already resubmitted', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(
-      item('Archived', [reviewed('request-changes', '2026-08-02T00:00:00.000Z')])
+      item('Archived', [
+        reviewed('request-changes', '2026-08-02T00:00:00.000Z'),
+        { at: '2026-08-03T00:00:00.000Z', userId: 11, kind: 'edited', status: 'PendingReview' },
+      ])
     );
     await unarchiveCreatorShopItem({ id: 42, userId: 11 });
-    expect(mocks.shopItemUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ status: 'PendingReview' }) })
+    expect(mocks.shopItemUpdate.mock.calls[0][0].data).toMatchObject({
+      status: 'PendingReview',
+      reviewedAt: null,
+      rejectionReason: null,
+    });
+  });
+
+  // A pack edit other than contents or price leaves it RequestedChanges; re-listing is how it
+  // gets back in front of a reviewer.
+  it('re-lists a sent-back item edited since into PendingReview', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      item('RequestedChanges', [
+        reviewed('request-changes', '2026-08-02T00:00:00.000Z'),
+        { at: '2026-08-03T00:00:00.000Z', userId: 11, kind: 'edited', status: 'RequestedChanges' },
+      ])
     );
+    await setCreatorShopItemListed({ id: 42, userId: 11, listed: true });
+    expect(mocks.shopItemUpdate.mock.calls[0][0].data).toMatchObject({ status: 'PendingReview' });
+  });
+
+  it('re-lists a published item into PendingReview', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(item('Published', []));
+    await setCreatorShopItemListed({ id: 42, userId: 11, listed: true });
+    expect(mocks.shopItemUpdate.mock.calls[0][0].data).toMatchObject({
+      listed: true,
+      status: 'PendingReview',
+    });
   });
 });
 

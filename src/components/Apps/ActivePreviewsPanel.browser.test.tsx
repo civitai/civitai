@@ -4,8 +4,8 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * Global "Active previews (N / cap)" panel — browser-mode render test
- * (report-only in Tekton). The panel was extracted from `src/pages/apps/review.tsx`
+ * Global "Active previews" panel — browser-mode render test
+ * (`Component tests` in CI). The panel was extracted from `src/pages/apps/review.tsx`
  * to `ActivePreviewsPanel.tsx` (mirrors the #3163 `OnsiteReviewModal` extraction)
  * so it is importable WITHOUT the page's `getServerSideProps` server graph — this
  * suite is the coverage that extraction unlocks. Asserts:
@@ -62,7 +62,10 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', () => {
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: (res: unknown, vars: unknown) => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: {
+      onSuccess?: (res: unknown, vars: unknown) => void;
+      onError?: (e: { message: string }) => void;
+    }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         void opts?.onSuccess?.(undefined, vars);
@@ -199,5 +202,25 @@ describe('ActivePreviewsPanel — the age cell uses the SHARED ladder, not a loc
     expect(page.getByText('9mo', { exact: true }).elements()).toHaveLength(1);
     expect(page.getByText('280d', { exact: true }).elements()).toHaveLength(0);
     expect(page.getByText('—', { exact: true }).elements()).toHaveLength(1);
+  });
+});
+
+describe('ActivePreviewsPanel — zero is SAID, not silence', () => {
+  test('🔴 no active previews → "0 active previews · 0 / N building", not an empty render', async () => {
+    mocks.data = { cap: 3, building: 0, active: [] };
+    renderWithProviders(<ActivePreviewsPanel />);
+    await expect
+      .element(page.getByTestId('apps-active-previews-empty'))
+      .toHaveTextContent('0 active previews · 0 / 3 building');
+    // …as one quiet line, not the full panel.
+    expect(page.getByRole('table').elements()).toHaveLength(0);
+  });
+
+  test('still nothing before the first load (no data yet is not "zero")', async () => {
+    mocks.data = undefined;
+    renderWithProviders(<ActivePreviewsPanel />);
+    // A tick for the render to commit, then: the panel chose to say nothing.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(page.getByTestId('apps-active-previews-empty').elements()).toHaveLength(0);
   });
 });

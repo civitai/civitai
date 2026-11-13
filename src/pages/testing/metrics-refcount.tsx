@@ -186,7 +186,7 @@ function ConsoleHelpReference() {
     <Card withBorder p="md">
       <Title order={4}>Console helpers</Title>
       <Text size="sm" c="dimmed" mb="sm">
-        Available on <Code>window.__signals</Code> in dev.
+        Available on <Code>window.__signals</Code>; <Code>__signals.help()</Code> lists the rest.
       </Text>
       <Code block>
         {`// inspect state

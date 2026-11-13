@@ -1,17 +1,7 @@
-import {
-  Badge,
-  Card,
-  Divider,
-  Group,
-  Select,
-  Stack,
-  Switch,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Badge, Card, Divider, Group, Select, Stack, Switch, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
+import { HatTurfOwnerToggle } from '~/components/HatTurf/HatTurfOwnerToggle';
 import { IconDiamond } from '@tabler/icons-react';
-import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
@@ -21,12 +11,18 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
 import {
-  type FeatureAccess,
   fliptGatedToggleableKeys,
   toggleableFeatures,
 } from '~/server/services/feature-flags.service';
+import {
+  HIDE_FROM_REACTION_LISTS_DESCRIPTION,
+  HIDE_FROM_REACTION_LISTS_LABEL,
+  SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION,
+  SHOW_PRE_LAUNCH_REACTIONS_LABEL,
+} from '~/shared/constants/reaction-privacy.constants';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { useToggleFeatureFlag } from '~/hooks/useToggleFeatureFlag';
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
@@ -76,6 +72,10 @@ export function SettingsCard() {
         <AutoplayGifsToggle />
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
+        <HatTurfOwnerToggle />
+
+        <Divider label="Privacy" mb={-12} />
+        <HideFromReactionListsToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -190,6 +190,7 @@ export function SettingsCard() {
         )}
 
         <Divider label="Features" />
+        <FitPostImagesToggle />
         <EarlyAdopterToggle />
         {normalizedToggleableFeatures.length > 0 && (
           <ToggleableFeatures data={normalizedToggleableFeatures} />
@@ -255,6 +256,34 @@ export function StickerMotionToggle() {
   );
 }
 
+export function HideFromReactionListsToggle() {
+  const { hideFromReactionLists, showPreLaunchReactions } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Stack id="hide-reaction-lists" gap="sm">
+      <Switch
+        name="hideFromReactionLists"
+        label={HIDE_FROM_REACTION_LISTS_LABEL}
+        description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
+        checked={hideFromReactionLists ?? false}
+        disabled={isPending}
+        onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+      <Switch
+        name="showPreLaunchReactions"
+        label={SHOW_PRE_LAUNCH_REACTIONS_LABEL}
+        description={SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION}
+        checked={showPreLaunchReactions ?? false}
+        disabled={isPending || !!hideFromReactionLists}
+        onChange={(e) => mutate({ showPreLaunchReactions: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+    </Stack>
+  );
+}
+
 export function HideBlueBuzzToggle() {
   const { hideBlueBuzzInHeader } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
@@ -267,6 +296,23 @@ export function HideBlueBuzzToggle() {
       checked={hideBlueBuzzInHeader ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function FitPostImagesToggle() {
+  const { fitPostImagesToScreen } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="fitPostImagesToScreen"
+      label="Fit post images to screen"
+      description="Shows each image in a post whole, sized to fit your screen, instead of at full width."
+      checked={fitPostImagesToScreen ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ fitPostImagesToScreen: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );
@@ -301,7 +347,6 @@ export function EarlyAdopterToggle() {
 
 export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
   const flags = useFeatureFlags();
-  const queryUtils = trpc.useUtils();
   // Flipt-gated toggles only exist for granted users: the overlay withholds the key for everyone
   // else, so its absence distinguishes "not granted" (hide the row) from "toggled off" (show it).
   const { data: userFeatures } = trpc.user.getFeatureFlags.useQuery(undefined, {
@@ -310,38 +355,12 @@ export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }
   });
   const visible = data.filter(
     (feature) =>
-      !fliptGatedToggleableKeys.has(feature.key) || (userFeatures && feature.key in userFeatures)
+      (!fliptGatedToggleableKeys.has(feature.key) ||
+        (userFeatures && feature.key in userFeatures)) &&
+      // A non-member who opted in would get a button that only leads to the supporter pitch.
+      (feature.key !== 'civitaiLinkNav' || flags.civitaiLink)
   );
-  const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
-    async onMutate(payload) {
-      await queryUtils.user.getFeatureFlags.cancel();
-      const prevData = queryUtils.user.getFeatureFlags.getData();
-
-      queryUtils.user.getFeatureFlags.setData(
-        undefined,
-        produce((old) => {
-          if (!old) return;
-          old[payload.feature] = payload.value ?? !old[payload.feature];
-        })
-      );
-
-      return { prevData };
-    },
-    async onSuccess() {
-      await queryUtils.user.getFeatureFlags.invalidate();
-    },
-    onError(_error, _payload, context) {
-      showErrorNotification({
-        title: 'Failed to toggle feature',
-        error: new Error('Something went wrong, please try again later.'),
-      });
-      queryUtils.user.getFeatureFlags.setData(undefined, context?.prevData);
-    },
-  });
-
-  function toggleFlag(key: keyof FeatureAccess, value: boolean) {
-    toggleFeatureFlagMutation.mutate({ feature: key, value });
-  }
+  const toggleFlag = useToggleFeatureFlag();
 
   return (
     <>

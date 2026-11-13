@@ -26,34 +26,28 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import {
+  TRANSACTION_TYPE_FILTER_OPTIONS,
+  filterTransactionsByDisplayType,
+  formatSignedAmount,
+  getServerTransactionType,
+  getTransactionBadgeLabel,
+  getTransactionDescription,
+  mergeWorkflowRefundsByPage,
+} from '~/utils/buzz-transaction-display';
 import { capitalize } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import type {
   BuzzTransactionDetails,
   GetUserBuzzTransactionsMultiSchema,
 } from '~/server/schema/buzz.schema';
-
-const transactionTypes = [
-  TransactionType[TransactionType.Tip],
-  TransactionType[TransactionType.Reward],
-  TransactionType[TransactionType.Generation],
-  TransactionType[TransactionType.Refund],
-  TransactionType[TransactionType.Training],
-  TransactionType[TransactionType.Purchase],
-  TransactionType[TransactionType.Bounty],
-  TransactionType[TransactionType.Sell],
-  TransactionType[TransactionType.Compensation],
-  TransactionType[TransactionType.Donation],
-  TransactionType[TransactionType.Bid],
-  TransactionType[TransactionType.Redeemable],
-];
 
 function safeJsonParse(body: string): { error?: string } {
   try {
@@ -104,9 +98,16 @@ export default function UserTransactions() {
       placeholderData: keepPreviousData,
     });
 
+  // The server filters by stored type, so the tip choice rides on Compensation and is narrowed here.
+  const [typeChoice, setTypeChoice] = useState<string | null>(null);
   const transactions = useMemo(
-    () => data?.pages.flatMap((page) => page.transactions) ?? [],
-    [data]
+    () =>
+      filterTransactionsByDisplayType(
+        // Per page, so a charge and refund split across pages stay two rows and nothing refetches.
+        mergeWorkflowRefundsByPage(data?.pages.map((page) => page.transactions) ?? []),
+        typeChoice
+      ),
+    [data, typeChoice]
   );
 
   const handleDateChange = (name: 'start' | 'end') => (value: Date | null) => {
@@ -240,16 +241,12 @@ export default function UserTransactions() {
             label="Type"
             name="type"
             placeholder="Select a type"
-            value={filters.type != null ? TransactionType[filters.type] : null}
-            data={transactionTypes}
-            onChange={(value) =>
-              value != null
-                ? setFilters((current) => ({
-                    ...current,
-                    type: TransactionType[value as keyof typeof TransactionType],
-                  }))
-                : setFilters((current) => ({ ...current, type: undefined }))
-            }
+            value={typeChoice}
+            data={TRANSACTION_TYPE_FILTER_OPTIONS}
+            onChange={(value) => {
+              setTypeChoice(value);
+              setFilters((current) => ({ ...current, type: getServerTransactionType(value) }));
+            }}
             clearable
           />
         </Group>
@@ -262,10 +259,12 @@ export default function UserTransactions() {
         ) : transactions.length ? (
           <Stack gap="md">
             {transactions.map((transaction, index) => {
-              const { amount, date, fromUser, toUser, details, type } = transaction;
-              let description = transaction.description ?? undefined;
+              const { amount, date, fromUser, toUser, details, type, workflowRefund } = transaction;
               const isDebit = amount < 0;
-              const accountType = isDebit ? transaction.fromAccountType : transaction.toAccountType;
+              // A merged workflow row is the charge, so its Buzz type is the debited side even when the
+              // refund nets it to zero or above.
+              const accountType =
+                isDebit || workflowRefund ? transaction.fromAccountType : transaction.toAccountType;
               // The bolt is colored by buzz type, never by direction: green already NAMES a buzz type,
               // so tinting credits green labelled every yellow gain as green buzz (CU 868kk3aw1).
               const spendType = buzzSpendTypes.find((t) => t === accountType);
@@ -273,9 +272,7 @@ export default function UserTransactions() {
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
                 : {};
-              if (label) {
-                description = description?.replace('Content', `A ${label.toLowerCase()}`);
-              }
+              const description = getTransactionDescription(transaction, label);
 
               return (
                 <Card key={`${index}-${date.toISOString()}`} withBorder>
@@ -283,7 +280,7 @@ export default function UserTransactions() {
                     <Group justify="space-between">
                       <Group gap={8}>
                         <Text fw="500">{formatDate(date)}</Text>
-                        <Badge>{TransactionType[type]}</Badge>
+                        <Badge>{getTransactionBadgeLabel(transaction)}</Badge>
                         {filters.accountTypes.length > 1 && (
                           <Badge variant="light" color={accountType}>
                             {capitalize(accountType)}
@@ -294,8 +291,7 @@ export default function UserTransactions() {
                         <Group gap={4}>
                           <CurrencyIcon currency="BUZZ" size={16} type={spendType} />
                           <Text style={{ fontVariantNumeric: 'tabular-nums' }} span>
-                            {isDebit ? '' : '+'}
-                            {amount.toLocaleString()}
+                            {formatSignedAmount(amount)}
                           </Text>
                         </Group>
                       </Text>
@@ -321,6 +317,15 @@ export default function UserTransactions() {
                       </Text>
                     )}
                     {description && <Text c="dimmed">{description}</Text>}
+                    {workflowRefund && (
+                      // Both gross legs stay visible so a net row can be reconciled against the
+                      // export, which still lists the charge and the refund separately.
+                      <Text c="dimmed" size="xs" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        Charged {Math.abs(workflowRefund.grossAmount).toLocaleString()}, refunded{' '}
+                        {workflowRefund.refundAmount.toLocaleString()} on{' '}
+                        {formatDate(workflowRefund.refundDate)}
+                      </Text>
+                    )}
                     {isImage && details?.entityId ? (
                       <RoutedDialogLink
                         name="imageDetail"

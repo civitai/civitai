@@ -49,9 +49,9 @@ import { AI_MODELS, extractUsage, type TokenUsage } from '~/server/services/ai/o
  *   consumer of this module had to change.
  *
  * 🔴 `allowFallbacks: false` IS GONE, and its replacement is `assertPinnedModel`.
- * The decisions endpoint's proven request shape is `{ model, state, questions }`
- * only; sending an unverified `provider` key to a strictly-validated alpha
- * endpoint risks exactly the 400 this rewrite exists to remove. So the model pin
+ * The endpoint validates the keys it DECLARES (`provider.zdr: 123` → 400) but
+ * silently ignores undeclared ones (a bogus top-level key → 200, measured
+ * 2026-10-03), so a 200 never proves a request key was honoured. So the model pin
  * is enforced on the RESPONSE instead: the vendor reports which build answered
  * (`typesafe/jev-1.13-20260917` for the pinned `typesafe/jev-1.13`), and a
  * response from anything that is not the pin or a dated build of it fails
@@ -77,6 +77,8 @@ export type JevChoiceQuestion = {
   type: 'choice';
   prompt: string;
   options: readonly string[];
+  /** Per-option text for the wire `criteria`; an option without one describes itself. */
+  optionDescriptions?: Readonly<Record<string, string>>;
 };
 export type JevScoreQuestion = {
   id: string;
@@ -325,8 +327,9 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
       }
       // 🔴 The argmax must APPEAR in its own distribution. Without this, a
       // `choice` the distribution omits passes every check above and then
-      // `reorderShortlistByDistribution` — which reads `distribution[key] ?? 0` —
-      // ranks the vendor's own pick LAST. Nothing leaks (the option set is ours),
+      // `combineStage3Answers` (`services/resource-intent-stage3.ts`) — which reads
+      // `distribution[key] ?? 0` — scores the vendor's own pick 0 for that call. Nothing
+      // leaks (the option set is ours),
       // but the ranking would silently contradict the answer. Membership in the
       // option set is already proven, so `hasOwnProperty` here is about the
       // distribution, not about prototype safety.
@@ -429,21 +432,14 @@ export function buildDecisionsQuestions(
           type: 'choice',
           instructions: question.prompt,
           // The vendor chooses among the KEYS, so the key set is the option set
-          // and that is the load-bearing half. Each option describes itself; the
-          // semantics live in `instructions`.
-          //
-          // ⚠️ `buildStage3Question` (`services/resource-intent.service.ts`) ALREADY
-          // computes exactly the per-option descriptions this slot wants — model
-          // name, version, type, base model — and smuggles them through `prompt` as
-          // numbered lines, because the old chat transport had only one text field.
-          // So the option→description map ships TWICE in one request, and at the
-          // 255-option cap the degenerate copy is a measurable fraction of the body.
-          // Moving them here is deliberately NOT done in this change: it alters what
-          // the model sees, so it alters ranking quality, and that is not gradeable
-          // from a recorded fixture. **Closing condition: do it when the study can
-          // A/B it against live calls**, and delete the numbered lines in the same
-          // edit or the vendor sees both.
-          criteria: Object.fromEntries(question.options.map((option) => [option, option])),
+          // and that is the load-bearing half. An option with no entry in
+          // `optionDescriptions` describes itself.
+          criteria: Object.fromEntries(
+            question.options.map((option) => [
+              option,
+              question.optionDescriptions?.[option] ?? option,
+            ])
+          ),
         };
         break;
       case 'score':
@@ -490,7 +486,11 @@ function assertPinnedModel(model: unknown): string {
 
 export async function askJev(
   request: JevRequest,
-  opts: { timeoutMs?: number } = {}
+  opts: {
+    timeoutMs?: number;
+    /** Sends `provider: { zdr: true }`, a declared key: OpenRouter routes only to zero-data-retention endpoints. */
+    zeroDataRetention?: boolean;
+  } = {}
 ): Promise<JevResponse> {
   if (request.questions.length === 0) {
     fail('malformed', 'a Jev request must carry at least one question');
@@ -512,6 +512,11 @@ export async function askJev(
       // `String(i)` plus `none`), and one caller away from being reachable.
       if (new Set(question.options).size !== question.options.length) {
         fail('malformed', `choice "${question.id}" has duplicate options`);
+      }
+      for (const key of Object.keys(question.optionDescriptions ?? {})) {
+        if (!question.options.includes(key)) {
+          fail('malformed', `choice "${question.id}" describes "${key}", which is not an option`);
+        }
       }
     }
     if (question.type === 'score') {
@@ -569,15 +574,14 @@ export async function askJev(
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        // 🔴 EXACTLY these three keys. The shape is the one proven by a 200;
-        // the endpoint validates strictly and this is an alpha API, so do not
-        // add `temperature` / `max_tokens` / `response_format` / `provider`
-        // here on the assumption that a chat parameter carries over. None of
-        // them has been observed to be accepted.
+        // 🔴 Add a key only after seeing the endpoint reject a wrong-typed value
+        // for it. An undeclared key is ignored with a 200, so a 200 alone shows
+        // nothing was honoured.
         body: JSON.stringify({
           model: AI_MODELS.JEV,
           state: request.state,
           questions: buildDecisionsQuestions(request.questions),
+          ...(opts.zeroDataRetention ? { provider: { zdr: true } } : {}),
         }),
         signal: abortController.signal,
       }),

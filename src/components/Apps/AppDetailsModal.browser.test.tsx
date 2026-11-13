@@ -2,6 +2,10 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import {
+  blockScopePermissions,
+  groupListingPermissions,
+} from '~/components/Apps/listingPermissions';
 import type * as TrpcMod from '~/utils/trpc';
 import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
 
@@ -183,18 +187,62 @@ describe('AppDetailsModal', () => {
     expect(page.getByText('by My App', { exact: false }).elements()).toHaveLength(0);
   });
 
-  test('open → renders the scopes section with each approved scope + its description', async () => {
+  test('open → renders each approved scope as its plain title + description, without its id', async () => {
     resolveDetail(makeDetail({ scopes: ['user:read:self', 'ai:write:budgeted'] }));
     renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
 
     // The section heading.
     await expect.element(page.getByText(/this app can/i)).toBeInTheDocument();
-    // Each scope id chip + friendly description.
-    await expect.element(page.getByText('user:read:self', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('See your username and account status')).toBeInTheDocument();
     await expect.element(
       page.getByText("Read the viewer's username and account status", { exact: false })
     ).toBeInTheDocument();
-    await expect.element(page.getByText('ai:write:budgeted', { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Run AI work with your Buzz')).toBeInTheDocument();
+    const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
+    expect(text).not.toContain('user:read:self');
+    expect(text).not.toContain('ai:write:budgeted');
+  });
+
+  // The details modal shows the same groups and order as the store listing, in plain language.
+  // Input order differs from the grouped order at every position, so a flat render cannot pass.
+  test('open → lists the scopes grouped and ordered like the store listing, dropping none', async () => {
+    const unknown = 'zz:not-a-real:scope';
+    const input = [
+      'models:read:self',
+      unknown,
+      'apps:storage:shared:write',
+      'user:read:self',
+      'ai:write:budgeted',
+    ];
+    const title: Record<string, string> = {
+      'ai:write:budgeted': 'Run AI work with your Buzz',
+      'apps:storage:shared:write': 'Post to community data',
+      'user:read:self': 'See your username and account status',
+      'models:read:self': 'See the model it sits on',
+      [unknown]: 'Zz not a real scope',
+    };
+    resolveDetail(makeDetail({ scopes: input }));
+    renderWithProviders(<AppDetailsModal opened onClose={onClose} block={makeBlock()} />);
+    await expect.element(page.getByText(/this app can/i)).toBeInTheDocument();
+
+    const text = document.querySelector('[role="dialog"]')?.textContent ?? '';
+    for (const scope of input) {
+      expect(text, `${scope}'s title`).toContain(title[scope]);
+      expect(text, `the raw id ${scope} reached the end user`).not.toContain(scope);
+    }
+    expect(text).not.toContain('(no description)');
+    const shown = [...input].sort((a, b) => text.indexOf(title[a]) - text.indexOf(title[b]));
+    expect(shown).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:shared:write',
+      'user:read:self',
+      'models:read:self',
+      unknown,
+    ]);
+    const grouped = groupListingPermissions(blockScopePermissions(input));
+    expect(shown).toEqual([...grouped.sensitive, ...grouped.other].map((p) => p.id));
+    expect(text).toContain('Sensitive permissions (2)');
+    expect(text).toContain('Other permissions (3)');
   });
 
   test('open + no scopes (RESOLVED empty) → graceful "does not request any permissions"', async () => {

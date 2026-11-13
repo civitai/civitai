@@ -13,7 +13,7 @@ import type {
  * Kept out of the component for the usual reason: the rules below are the ones a naive
  * re-merge gets wrong, and they are only provable without mounting a table if they are
  * functions. This module lives in the **`unit`** vitest project (`src/**\/*.test.ts`),
- * which is the tier that actually gates, unlike the browser-mode `component` project.
+ * which needs no browser.
  */
 
 /**
@@ -345,6 +345,11 @@ export function myAppListingHref(row: {
     status: row.status,
     lastModerationAction: row.lastModerationAction,
     capabilities: row.capabilities,
+    // Only `tabs[0]` is read, and `feedback` is pushed after `history`, which every set holds,
+    // so it can never be first: the value cannot change this href. `false` because this row does
+    // not load per-listing feedback existence (the row's own badge links to the tab directly).
+    // Pinned by "Feedback never moves the landing tab" in `appListingEditorTabs.test.ts`.
+    hasFeedback: false,
   });
   return listingEditHref(row.appListingId, tabs[0]);
 }

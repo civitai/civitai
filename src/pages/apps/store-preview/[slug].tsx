@@ -1,6 +1,9 @@
 import { Center, Loader } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { HiddenByBrowsingLevelNotice } from '~/components/Apps/HiddenByBrowsingLevelNotice';
+import { storePreviewView } from '~/components/Apps/appHiddenByBrowsingLevel';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
@@ -8,6 +11,7 @@ import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+import type { ListingSocialImage } from '~/server/services/blocks/listing-media-audience';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
@@ -28,13 +32,34 @@ import { trpc } from '~/utils/trpc';
  * CLIENT-SIDE via `appListings.getAppDetail` (itself dark behind the same flag +
  * approved-only, public-allowlist DTO). `deIndex` stays on. A missing /
  * non-approved slug 404s server-side → `NotFound`.
+ *
+ * The ONE thing read server-side is the `og:image` (`resolveListingPageSocialImage`): link
+ * unfurlers do not run the client query. It is a single image chosen under the detail read's own
+ * gates and the anonymous ceiling of this host, from the listing's own media only — never mature
+ * on any host, and never a civitai.red cover / icon override — carried with its level so
+ * `Meta`'s own safe-level check applies too.
+ *
+ * LAYOUT: the body is CENTRED in the apps body column (`align="center"`), like the site's
+ * other detail pages — the one route that opts out of the layout's shared left edge. See
+ * `align` on `AppsPageLayout`.
  */
-export const getServerSideProps = createServerSideProps({
+type PageProps = { socialImage: ListingSocialImage | null };
+
+export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
-  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
+  resolver: async (args) => {
+    const access = resolveAppsPageAccess({ features: args.features });
+    if ('notFound' in access) return access;
+    const { resolveListingPageSocialImage } = await import(
+      '~/server/services/blocks/listing-page-social-image'
+    );
+    // The resolver's own arguments, as they are: host, slug and session are read (and tested)
+    // in the helper.
+    return { props: { socialImage: await resolveListingPageSocialImage(args) } };
+  },
 });
 
-export default function AppStoreListingDetailPage() {
+export default function AppStoreListingDetailPage({ socialImage }: Partial<PageProps>) {
   const features = useFeatureFlags();
   const router = useRouter();
   const slug = typeof router.query.slug === 'string' ? router.query.slug : '';
@@ -50,21 +75,59 @@ export default function AppStoreListingDetailPage() {
     { slug },
     { enabled: !!canSeeStore && !!slug, retry: false }
   );
+  // Asked only once the detail read has failed: an R/X app the viewer's browsing level hides
+  // 404s above (none of it is sent) and this names just its rating, so the page explains why
+  // instead of showing NotFound.
+  const askHidden = !!canSeeStore && !!slug && !!error;
+  const hiddenQuery = trpc.appListings.getAppHiddenState.useQuery(
+    { slug },
+    { enabled: askHidden, retry: false }
+  );
+  const currentUser = useCurrentUser();
 
-  if (!canSeeStore) return <NotFound />;
-  if (error) return <NotFound />;
+  const view = storePreviewView({
+    canSeeStore: !!canSeeStore,
+    detail: data as ListingDetail | undefined,
+    detailError: error,
+    detailLoading: isLoading && !error,
+    hidden: hiddenQuery.isFetched ? hiddenQuery.data ?? null : undefined,
+    hiddenLoading: askHidden && !hiddenQuery.isFetched,
+  });
 
-  const detail = data as ListingDetail | undefined;
+  if (view.kind === 'not-found') return <NotFound />;
+  if (view.kind === 'hidden') {
+    return (
+      <>
+        <Meta title="App store preview — Civitai" deIndex />
+        <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']} align="center">
+          <HiddenByBrowsingLevelNotice
+            contentRating={view.contentRating}
+            signedIn={!!currentUser}
+          />
+        </AppsPageLayout>
+      </>
+    );
+  }
+
+  const detail = view.kind === 'detail' ? view.detail : undefined;
+  const title = detail ? `${detail.name} — App store preview` : 'App store preview — Civitai';
+  const description = detail?.tagline ?? 'Unified app store preview';
 
   return (
     <>
-      <Meta
-        title={detail ? `${detail.name} — App store preview` : 'App store preview — Civitai'}
-        description={detail?.tagline ?? 'Unified app store preview'}
-        deIndex
-      />
-      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']}>
-        {isLoading ? (
+      {socialImage ? (
+        <Meta
+          title={title}
+          description={description}
+          imageUrl={socialImage.url}
+          imageNsfwLevel={socialImage.nsfwLevel}
+          deIndex
+        />
+      ) : (
+        <Meta title={title} description={description} deIndex />
+      )}
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']} align="center">
+        {view.kind === 'loading' ? (
           <Center py="xl">
             <Loader />
           </Center>

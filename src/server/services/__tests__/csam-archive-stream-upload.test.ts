@@ -50,6 +50,36 @@ const csamBaseDir = await vi.hoisted(async () => {
   return nodePath.join(dirname, 'csam');
 });
 
+// CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
+const v3 = vi.hoisted(() => ({
+  comments: [] as { id: number; userId: number; content: string }[],
+  calls: [] as { table?: string; userId?: number; afterId?: number; take?: number }[],
+}));
+vi.mock('~/server/db/kyselyDb', () => {
+  type State = {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+  };
+  const query = (state: State): Record<string, unknown> => ({
+    selectAll: () => query(state),
+    orderBy: () => query(state),
+    where: (column: string, _op: string, value: number) =>
+      query({ ...state, [column === 'userId' ? 'userId' : 'afterId']: value }),
+    limit: (take: number) => query({ ...state, take }),
+    execute: async () => {
+      // A cursor that never advances fails here rather than hanging the test.
+      if (v3.calls.length > 50) throw new Error('CommentV3 scan did not end');
+      v3.calls.push(state);
+      return v3.comments
+        .filter(
+          (c) => c.userId === state.userId && (state.afterId === undefined || c.id > state.afterId)
+        )
+        .slice(0, state.take);
+    },
+  });
+  return { kyselyV3Read: { selectFrom: () => query({}) } };
+});
 vi.mock('~/env/other', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   isProd: true,
@@ -162,16 +192,46 @@ const { storedObjects, pendingUploads, FakeS3Client } = vi.hoisted(() => {
   return { storedObjects, pendingUploads, FakeS3Client };
 });
 
-vi.mock('@aws-sdk/client-s3', async (importOriginal) => ({
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   // Only the client is replaced. The command classes stay real, which is what lets the fake
   // dispatch on their constructor names and what keeps `Upload`'s own behaviour untouched.
-  ...(await importOriginal<Record<string, unknown>>()),
-  S3Client: FakeS3Client,
-}));
+  // `default` mirrors the rest: the package is pre-bundled for CJS interop, so consumers resolve
+  // through `default`, where the spread alone would hand them the real client.
+  const mocked = {
+    ...(await importOriginal<Record<string, unknown>>()),
+    S3Client: FakeS3Client,
+  };
+  return { ...mocked, default: mocked };
+});
 
 vi.mock('~/utils/file-utils', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
+}));
+
+// Stored originals are served by the same fake as edge blobs, keyed by `Image.url`, so one
+// fault-injection point covers both archive types.
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getImageUploadBackend: async () => ({
+    bucket: 'test-images',
+    backend: 'backblaze',
+    s3: {
+      send: async (command: { input: { Key: string } }) => {
+        const blob = (await mockFetchBlob(command.input.Key)) as {
+          type: string;
+          arrayBuffer: () => Promise<ArrayBuffer>;
+        } | null;
+        if (!blob) throw Object.assign(new Error('no such key'), { name: 'NoSuchKey' });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        return {
+          Body: { transformToByteArray: async () => bytes },
+          ContentType: blob.type,
+          ContentLength: bytes.length,
+        };
+      },
+    },
+  }),
 }));
 
 vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) => ({
@@ -200,7 +260,12 @@ let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 let mockIsFlipt: (...args: unknown[]) => unknown = async () => false;
 let recordedArchiveCalls: Array<[string, string, string]> = [];
 
-import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
+import {
+  archiveCsamDataForReport,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
+} from '~/server/services/csam.service-new';
+import type { CsamContextText } from '~/server/services/csam-context-text';
+import { contextWebPageIncidents } from '~/server/services/csam-context-text';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
@@ -288,8 +353,7 @@ function fakeBlob(index: number) {
   };
 }
 
-/** Name the service derives for image row `i` — `picture-<i>.jpeg` minus its extension, plus the blob's. */
-const entryNameForIndex = (index: number) => `picture-${index}.jpeg`;
+const entryNameForIndex = (index: number) => `${index + 1}.jpeg`;
 
 type InventoryEntry = { name: string; size: number; sha256: string };
 
@@ -304,7 +368,7 @@ async function zipInventory(bytes: Buffer): Promise<InventoryEntry[]> {
   const out: InventoryEntry[] = [];
   for (const name of Object.keys(zip.files).sort()) {
     const file = zip.files[name];
-    if (file.dir) continue;
+    if (file.dir || name === 'manifest.json') continue;
     const content = await file.async('nodebuffer');
     out.push({
       name,
@@ -324,6 +388,11 @@ function expectedInventory(): InventoryEntry[] {
   })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
+async function zipManifest(bytes: Buffer) {
+  const zip = await JSZip.loadAsync(bytes);
+  return JSON.parse(await zip.file('manifest.json')!.async('string'));
+}
+
 const report = {
   id: 4242,
   userId: 909090,
@@ -338,7 +407,7 @@ function seedDb(entryCount: number = ENTRY_COUNT) {
   const rows = Array.from({ length: entryCount }, (_, i) => ({
     id: i + 1,
     url: `image-uuid-${i}`,
-    name: entryNameForIndex(i),
+    name: `picture-${i}.jpeg`,
     type: 'image',
     width: 1024,
     userId: report.userId,
@@ -413,6 +482,9 @@ beforeEach(() => {
   storedObjects.clear();
   pendingUploads.clear();
   recordedArchiveCalls = [];
+  v3.calls = [];
+  // A regression to the edge copy must fail here, not reach the network.
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async (url: unknown) => {
     const match = /image-uuid-(\d+)/.exec(String(url));
     if (!match) return null;
@@ -486,6 +558,9 @@ describe('csam archive streaming upload', () => {
 
     // ---- The equivalence claim itself.
     expect(streamedInventory).toEqual(diskInventory);
+    const streamedManifest = await zipManifest(streamed.stored!.body);
+    expect(streamedManifest.images).toHaveLength(ENTRY_COUNT);
+    expect(streamedManifest).toEqual(await zipManifest(disk.stored!.body));
   });
 
   it('never opens a local write stream for the archive when streaming', async () => {
@@ -581,11 +656,10 @@ describe('csam archive streaming upload', () => {
     // branch dropping it is the only thing standing between the rollback path and a derived part
     // size. That makes this assertion reachable, which the images route does not.
     //
-    // Made OBSERVABLE by a large estimate over a small archive: `expectedBytes` counts every URL,
-    // while only the ones that actually fetch become entries. At ~1.4 MiB/entry x 30,000 URLs the
-    // derived part size is ~17 MiB — larger than the ~14 MiB archive — so a leaked estimate
-    // collapses the upload to a single part (or a one-shot `PutObject`, `partCount === 0`).
-    // The fixed 5 MiB geometry gives several parts instead.
+    // Made observable by a large estimate over a small archive: `expectedBytes` counts every URL, but
+    // only those that fetch become entries. A leaked estimate derives a part larger than the archive
+    // and collapses the upload to one part (or a one-shot `PutObject`, `partCount === 0`); the fixed
+    // 5 MiB geometry gives several parts.
     const REAL_URLS = ENTRY_COUNT;
     const TOTAL_URLS = 30_000;
     const urls = Array.from({ length: TOTAL_URLS }, (_, i) =>
@@ -598,7 +672,12 @@ describe('csam archive streaming upload', () => {
     ];
     mockIsFlipt = async () => false;
 
-    await archiveCsamDataForReport({ ...report, type: 'GeneratedImage' } as never);
+    // Past the give-up window, so the absent URLs are counted misses rather than failing the pass.
+    await archiveCsamDataForReport({
+      ...report,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
+    } as never);
 
     const stored = storedObjects.get('generated-images.zip');
     expect(
@@ -789,6 +868,78 @@ describe('csam archive streaming upload', () => {
 // catch the two call sites having their `success`/`error` arguments swapped, which no
 // module-level test can see.
 // ===============================================================================================
+describe('a supplemental report archive', () => {
+  it('keeps each unreviewed image it did not send, with its hash, and records one with no row', async () => {
+    seedDb(4);
+    await archiveCsamDataForReport({
+      ...report,
+      images: [{ id: 1 }],
+      details: {
+        supplemental: {
+          priorCsamReportId: 1,
+          priorReportNumbers: [77],
+          unreviewedImageIds: [2, 3, 99],
+        },
+      },
+    } as never);
+
+    const { images } = await zipManifest(storedObjects.get('images.zip')!.body);
+    const byId = new Map(images.map((entry: { imageId: number }) => [entry.imageId, entry]));
+    for (const imageId of [2, 3])
+      expect(byId.get(imageId)).toMatchObject({
+        preservedNotSent: true,
+        source: 'original',
+        sha256: createHash('sha256')
+          .update(entryBytes(imageId - 1))
+          .digest('hex'),
+      });
+    expect(byId.get(99)).toEqual({
+      imageId: 99,
+      source: 'missing',
+      reason: 'no image row',
+      preservedNotSent: true,
+    });
+    expect(byId.get(1)).not.toHaveProperty('preservedNotSent');
+    expect(byId.get(4)).not.toHaveProperty('preservedNotSent');
+  });
+});
+
+describe("a report's attached text", () => {
+  it('is archived in data.json as the page incidents it was sent as, with the snapshot', async () => {
+    seedDb(1);
+    const contextText = [
+      {
+        source: 'comment',
+        id: 11,
+        postId: 100,
+        authorId: 31,
+        authorIsReportedUser: false,
+        postedAt: '2026-10-03T14:05:00.000Z',
+        text: 'a & b <c> nul\u0000',
+        capturedAt: '2026-10-08T14:05:00.000Z',
+        capturedById: 5,
+      },
+    ] as CsamContextText[];
+    await archiveCsamDataForReport({ ...report, details: { contextText } } as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data.reportContext).toEqual({
+      webPageIncidents: contextWebPageIncidents(contextText),
+      contextText,
+    });
+    expect(data.reportContext.webPageIncidents[0].additionalInfo).toContain('a & b <c> nul\uFFFD');
+  });
+
+  it('is left out of data.json for a report with none', async () => {
+    seedDb(1);
+    await archiveCsamDataForReport(report as never);
+
+    const data = JSON.parse(storedObjects.get('data.json')!.body.toString('utf8'));
+    expect(data).not.toHaveProperty('reportContext');
+    expect(data).toHaveProperty('images');
+  });
+});
+
 describe('the service→counter seam', () => {
   it('🔴 records the STREAM path on a successful flag-ON archive', async () => {
     mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;

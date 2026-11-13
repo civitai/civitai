@@ -1,0 +1,888 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as FliptClient from '~/server/flipt/client';
+import type * as FeedPrimary from '~/server/services/feed-primary.service';
+import type * as FeedShadow from '~/server/services/feed-shadow.service';
+import type * as ImageService from '~/server/services/image.service';
+import type * as Capture from '~/server/services/feed-request-capture.service';
+import type * as Blocked from '~/server/services/blocked-browsing-tags.service';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as EdgeUrl from '~/client-utils/edge-url';
+import type * as Auth from '~/server/auth/get-server-auth-session';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
+import type * as Region from '~/server/utils/region-blocking';
+import type * as Meili from '~/server/meilisearch/client';
+import type * as DbHelpers from '~/server/db/db-helpers';
+import type * as PromClient from '~/server/prom/client';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
+
+const h = vi.hoisted(() => ({
+  degradeOn: vi.fn(() => false),
+  meiliOffCounted: [] as Array<Record<string, string>>,
+  flagsAsked: [] as string[],
+  available: vi.fn(() => true),
+  fetchFeedPrimary: vi.fn(),
+  hydrate: vi.fn(),
+  mapped: vi.fn(),
+  record: vi.fn(),
+  counted: [] as Array<Record<string, string>>,
+  enforce: vi.fn(),
+  hydrateQuery: vi.fn(),
+  hydrateObserved: new Error('hydrate query observed'),
+  // When set, the production hydrate runs through getAllImagesUncaptured to the raw query.
+  realHydrate: false,
+  rawQuery: vi.fn(),
+  // The replica's user-id-by-username read (a Kysely statement); a miss falls back to the primary
+  // through Prisma.
+  userIdByUsername: vi.fn(),
+}));
+
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  getUserIdByUsername: (...args: unknown[]) => h.userIdByUsername(...args),
+}));
+
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbHelpers>()),
+  queryWithTimeout: (...args: unknown[]) => h.rawQuery(...args),
+}));
+
+vi.mock('~/env/server', () => ({
+  env: new Proxy(
+    { LOGGING: [] as string[], TRPC_ORIGINS: [] as string[] } as Record<string, unknown>,
+    {
+      get: (target, prop) => {
+        if (prop in target) return target[prop as string];
+        if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
+          return 'https://test:test@localhost:5432/test';
+        if (
+          typeof prop === 'string' &&
+          /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
+        )
+          return 1;
+        return undefined;
+      },
+    }
+  ),
+}));
+vi.mock('../../../../../event-engine-common/services/metrics', () => ({
+  MetricService: class {
+    fetch = vi.fn();
+  },
+}));
+vi.mock('../../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
+vi.mock('../../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
+vi.mock('~/server/prom/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof PromClient>();
+  return {
+    ...actual,
+    registerCounterWithLabels: ((opts: { name: string }) =>
+      opts.name === 'feed_primary_requests_total'
+        ? { inc: (labels: Record<string, string>) => h.counted.push(labels) }
+        : opts.name === 'feed_primary_meili_off_total'
+        ? { inc: (labels: Record<string, string>) => h.meiliOffCounted.push(labels) }
+        : actual.registerCounterWithLabels(
+            opts as Parameters<typeof actual.registerCounterWithLabels>[0]
+          )) as typeof actual.registerCounterWithLabels,
+  };
+});
+
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof FliptClient>();
+  return {
+    ...actual,
+    getFliptBoolean: vi.fn(async (flag: string) => {
+      h.flagsAsked.push(flag);
+      return false;
+    }),
+    isFliptSync: (flag: string) =>
+      flag === 'feed-service-degrade' ? h.degradeOn() : actual.isFliptSync(flag as never),
+  };
+});
+vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeedPrimary>();
+  return {
+    ...actual,
+    feedPrimaryAvailable: () => h.available(),
+    fetchFeedPrimary: (...args: unknown[]) => h.fetchFeedPrimary(...args),
+    // Records the exact query getAllImagesUncaptured would receive, then stops before Postgres.
+    feedHydrateQuery: ((input, ids) => {
+      const query = actual.feedHydrateQuery(input, ids);
+      h.hydrateQuery(query);
+      if (h.realHydrate) return query;
+      throw h.hydrateObserved;
+    }) as typeof actual.feedHydrateQuery,
+    // The real paging, mapping and counting. The production hydrate closure runs up to the
+    // query it would load (above); the rows themselves come from h.hydrate.
+    serveFromFeed: ((input, deps) =>
+      actual.serveFromFeed(input, {
+        ...deps,
+        hydrate: async (ids: number[]) => {
+          if (h.realHydrate) return deps.hydrate(ids);
+          await deps.hydrate(ids).catch((e: unknown) => {
+            if (e !== h.hydrateObserved) throw e;
+          });
+          return h.hydrate(ids);
+        },
+      })) as typeof actual.serveFromFeed,
+  };
+});
+vi.mock('~/server/services/feed-shadow.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeedShadow>();
+  return {
+    ...actual,
+    mapSearchInputToFeedQuery: ((...args) => {
+      const mapping = actual.mapSearchInputToFeedQuery(...args);
+      h.mapped(mapping);
+      return mapping;
+    }) as typeof actual.mapSearchInputToFeedQuery,
+  };
+});
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  getAllImages: vi.fn(),
+}));
+vi.mock('~/server/services/feed-request-capture.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Capture>()),
+  feedRequestCapture: () => ({ record: h.record, flush: async () => undefined }),
+}));
+vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof Blocked>()),
+  enforceBlockedBrowsingTags: (...args: unknown[]) => h.enforce(...args),
+}));
+vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
+  ...(await importOriginal<typeof Auth>()),
+  getServerAuthSession: async () => null,
+}));
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
+  getFeatureFlags: () => ({ datapacketRead: false }),
+}));
+vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
+  ...(await importOriginal<typeof Region>()),
+  getRegion: () => 'US',
+  isRegionRestricted: () => false,
+}));
+vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof Meili>()),
+  buildSearchActor: () => 'test-actor',
+}));
+vi.mock('~/client-utils/edge-url', async (importOriginal) => ({
+  ...(await importOriginal<typeof EdgeUrl>()),
+  getEdgeUrl: (url: string) => `edge/${url}`,
+}));
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
+  PublicEndpoint: (handler: unknown) => handler,
+}));
+
+import handler from '~/pages/api/v1/images/index';
+import { runImageSearch } from '~/server/services/image-search.service';
+import {
+  getAllImagesIndex,
+  getImagesFromFeedServiceForRest,
+} from '~/server/services/image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  eventDecorationEntityCaches,
+  imageMetaCache,
+  imageResourcesCache,
+  tagIdsForImagesCache,
+} from '~/server/redis/caches';
+import {
+  BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
+} from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
+
+const FEED_CREATED_AT = '2026-01-01T00:00:00.000Z';
+const FEED_SORT_AT = '2026-03-01T12:00:00.000Z';
+const row = (id: number) => ({
+  id,
+  url: `uuid-${id}`,
+  hash: 'hash',
+  width: 512,
+  height: 768,
+  nsfwLevel: 1,
+  type: 'image',
+  createdAt: new Date(FEED_CREATED_AT),
+  sortAt: new Date(FEED_SORT_AT),
+  postId: 3,
+  stats: {},
+  user: { username: 'maker' },
+  baseModel: 'SDXL 1.0',
+  modelVersionIds: [],
+  tags: [],
+});
+
+type MockResponse = NextApiResponse & {
+  statusCode: number;
+  body: any;
+  headers: Record<string, string>;
+};
+async function get(query: Record<string, string>) {
+  const req = { method: 'GET', headers: {}, query } as unknown as NextApiRequest;
+  const res = {
+    statusCode: 200,
+    body: undefined as unknown,
+    headers: {} as Record<string, string>,
+    headersSent: false,
+    setHeader(name: string, value: string) {
+      res.headers[name.toLowerCase()] = value;
+      return res;
+    },
+    status(code: number) {
+      res.statusCode = code;
+      return res;
+    },
+    json(body: unknown) {
+      res.body = body;
+      return res;
+    },
+    end() {
+      return res;
+    },
+  };
+  await handler(req, res as unknown as NextApiResponse);
+  return res as unknown as MockResponse;
+}
+
+const feedQuery = (call = 0) =>
+  new URLSearchParams(h.fetchFeedPrimary.mock.calls[call]?.[0] as string);
+const nextPageQuery = (nextPage: string) =>
+  Object.fromEntries(new URL(nextPage).searchParams.entries());
+
+/** feed_primary_requests_total increments since the test began, one entry per label set. */
+async function counted() {
+  const totals = new Map<string, number>();
+  for (const labels of h.counted) {
+    const key = JSON.stringify(labels);
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+  }
+  return [...totals].map(([key, value]) => ({ ...JSON.parse(key), value }));
+}
+
+describe('/api/v1/images served by the feed service', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.flagsAsked.length = 0;
+    h.meiliOffCounted.length = 0;
+    h.available.mockReturnValue(true);
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.hydrate.mockImplementation(async (ids: number[]) => ids.map(row));
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    h.realHydrate = false;
+    h.userIdByUsername.mockResolvedValue(undefined);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    h.counted.length = 0;
+  });
+
+  it('serves the first page from the feed service, in the feed order', async () => {
+    const res = await get({});
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+    expect(res.body.metadata.nextCursor).toBe('feed:17:5');
+  });
+
+  it('nextPage carries the feed cursor, and following it continues on the feed service', async () => {
+    const first = await get({ limit: '2' });
+    const next = nextPageQuery(first.body.metadata.nextPage);
+    expect(next).toEqual({ limit: '2', cursor: 'feed:17:5' });
+
+    h.fetchFeedPrimary.mockResolvedValueOnce({
+      status: 200,
+      ms: 3,
+      ids: [4],
+      nextCursor: undefined,
+    });
+    const second = await get(next);
+    expect(second.statusCode).toBe(200);
+    expect(feedQuery(1).get('cursor')).toBe('17|5');
+    expect(second.body.items.map((i: { id: number }) => i.id)).toEqual([4]);
+    expect(second.body.metadata.nextPage).toBeUndefined();
+  });
+
+  it('continues a bare numeric cursor from that offset on the feed service', async () => {
+    await get({ cursor: '300' });
+    expect(feedQuery().get('offset')).toBe('300');
+  });
+
+  it('continues an offset|sortAt cursor on the feed service, as the offset inside the frozen set', async () => {
+    const res = await get({ cursor: '200|1788000000000', sort: 'Newest' });
+    expect(res.statusCode).toBe(200);
+    expect(feedQuery().get('offset')).toBe('200');
+    expect(feedQuery().get('before')).toBe('1788000000000');
+  });
+
+  it('ignores ?page= on the feed service, as the search path does, so feed health never decides the page', async () => {
+    await get({ limit: '10' });
+    await get({ page: '3', limit: '10' });
+    expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(2);
+    expect(feedQuery(0).get('limit')).toBe('10');
+    expect(feedQuery(1).toString()).toBe(feedQuery(0).toString());
+    expect(feedQuery(1).get('offset')).toBeNull();
+  });
+
+  describe('unreadable cursors', () => {
+    it('[invariant on the pre-change code] rejects an unreadable cursor at the endpoint before any branch', async () => {
+      const res = await get({ cursor: 'nope' });
+      expect(res.statusCode).toBe(400);
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+    });
+  });
+
+  it('steps past a first page whose every row was filtered out at hydrate, on the feed cursor', async () => {
+    h.hydrate.mockResolvedValue([]);
+    const res = await get({});
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(res.body.metadata.nextCursor).toBe('feed:17:5');
+    expect(await counted()).toEqual([
+      { outcome: 'error', reason: 'hydrate:empty', route: 'rest', value: 1 },
+    ]);
+  });
+
+  describe('when the feed does not serve', () => {
+    it('answers a shape the feed cannot express with an empty page', async () => {
+      const res = await get({ requiringMeta: 'true' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBeUndefined();
+      expect(h.meiliOffCounted).toEqual([
+        { answer: 'empty', reason: 'flag:requiringMeta', route: 'rest' },
+      ]);
+    });
+
+    it('is a retryable 503 on a feed timeout', async () => {
+      h.fetchFeedPrimary.mockRejectedValue(
+        Object.assign(new Error('slow'), { name: 'TimeoutError' })
+      );
+      const res = await get({});
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['retry-after']).toBe('2');
+      expect(h.meiliOffCounted).toEqual([
+        { answer: 'unavailable', reason: 'timeout', route: 'rest' },
+      ]);
+    });
+
+    describe('with feed-service-degrade on', () => {
+      beforeEach(() => {
+        h.degradeOn.mockReturnValue(true);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+      afterEach(() => {
+        h.degradeOn.mockReturnValue(false);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+
+      it('is a retryable 503 without calling the feed once the breaker is open', async () => {
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        for (let i = 0; i < 20; i++) expect((await get({})).statusCode).toBe(503);
+        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(20);
+        h.meiliOffCounted.length = 0;
+        const res = await get({});
+        expect(res.statusCode).toBe(503);
+        expect(res.headers['retry-after']).toBe('2');
+        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(20);
+        expect(h.meiliOffCounted).toEqual([
+          { answer: 'unavailable', reason: 'breaker', route: 'rest' },
+        ]);
+      });
+
+      it('serves the last good first page when the feed fails', async () => {
+        expect((await get({})).statusCode).toBe(200);
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        h.counted.length = 0;
+        const res = await get({});
+        expect(res.statusCode).toBe(200);
+        expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+        // The feed's failure is still counted as one, and the stale page is not recorded as a
+        // page the feed served.
+        expect(h.counted).toEqual([{ outcome: 'error', reason: 'fetch', route: 'rest' }]);
+        expect(h.record).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('refuses the Random sort, which the feed does not have', async () => {
+      const res = await get({ sort: 'Random' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe('Sort "Random" is not supported');
+    });
+
+    it('refuses an offset past the feed cap', async () => {
+      const res = await get({ cursor: '25000' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('answers limit=0 with an empty page', async () => {
+      const res = await get({ limit: '0' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+    });
+
+    it('takes a caller that does not opt in to the feed service, feed: cursors included', async () => {
+      const req = { headers: {} } as unknown as NextApiRequest;
+      const search = (cursor?: string) =>
+        runImageSearch(
+          { limit: 5, cursor, withMeta: false, withTags: false, data: { sort: 'Newest' } },
+          { browsingLevel: 1, req }
+        );
+      expect((await search()).items.map((i) => i.id)).toEqual([9, 5]);
+      expect((await search('feed:17:5')).items.map((i) => i.id)).toEqual([9, 5]);
+      expect(feedQuery(1).get('cursor')).toBe('17|5');
+    });
+  });
+
+  describe('a feed: cursor never restarts the scroll on the search path', () => {
+    it('is served by the feed service', async () => {
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(200);
+      expect(feedQuery().get('cursor')).toBe('17|5');
+      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+    });
+
+    it('is a 400 when the feed service is not configured [pre-change code 400d every feed: cursor]', async () => {
+      h.available.mockReturnValue(false);
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe(
+        'This cursor can no longer be continued; start again without it'
+      );
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+    });
+
+    const outage: Array<[string, () => void]> = [
+      [
+        'timeout',
+        () =>
+          h.fetchFeedPrimary.mockRejectedValue(
+            Object.assign(new Error('slow'), { name: 'TimeoutError' })
+          ),
+      ],
+      ['fetch error', () => h.fetchFeedPrimary.mockRejectedValue(new Error('refused'))],
+      ['hydrate:error', () => h.hydrate.mockRejectedValue(new Error('db down'))],
+      ...[500, 502, 599].map((status): [string, () => void] => [
+        `status:${status}`,
+        () => h.fetchFeedPrimary.mockResolvedValue({ status, ms: 3, ids: [] }),
+      ]),
+    ];
+    it.each(outage)('is a retryable 503 on %s', async (_reason, arrange) => {
+      arrange();
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['retry-after']).toBe('2');
+    });
+
+    it.each([400, 404, 499])(
+      'is a 400 when the feed service refuses the query (status:%i)',
+      async (status) => {
+        h.fetchFeedPrimary.mockResolvedValue({ status, ms: 3, ids: [] });
+        const res = await get({ cursor: 'feed:17:5' });
+        expect(res.statusCode).toBe(400);
+        expect(res.body.message).toBe('This cursor cannot be continued with these filters');
+      }
+    );
+
+    it('steps past a page whose every row was filtered out at hydrate (hydrate:empty)', async () => {
+      h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '18|3' });
+      h.hydrate.mockResolvedValue([]);
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBe('feed:18:3');
+    });
+
+    it('ends the scroll with an empty 200 when that filtered-out page was the last one', async () => {
+      h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5] });
+      h.hydrate.mockResolvedValue([]);
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBeUndefined();
+      expect(res.body.metadata.nextPage).toBeUndefined();
+    });
+
+    it('is a retryable 503, never a skipped page, when the hydrate query hits the statement timeout', async () => {
+      h.realHydrate = true;
+      h.rawQuery.mockRejectedValue(
+        Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+      );
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(h.rawQuery).toHaveBeenCalledTimes(1);
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['retry-after']).toBe('2');
+      expect(await counted()).toEqual([
+        { outcome: 'error', reason: 'hydrate:error', route: 'rest', value: 1 },
+      ]);
+    });
+
+    it('is a 400 when the request changed to a shape the feed cannot serve [pre-change code 400d every feed: cursor]', async () => {
+      const res = await get({ cursor: 'feed:17:5', requiringMeta: 'true' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe('This cursor cannot be continued with these filters');
+    });
+  });
+
+  describe('username', () => {
+    it('answers an unknown username with an empty 200, not a 404 and not the unscoped feed', async () => {
+      const res = await get({ username: 'nobodyhere' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBeUndefined();
+      expect(res.body.metadata.nextPage).toBeUndefined();
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+    });
+
+    it('scopes the feed to the creator a username names', async () => {
+      h.userIdByUsername.mockResolvedValue({ id: 7 });
+      await get({ username: 'someone' });
+      expect(feedQuery().get('userIds')).toBe('7');
+    });
+  });
+
+  describe('what a served page is filtered and hydrated with', () => {
+    it('runs browsing-tag enforcement on the request before asking the feed', async () => {
+      await get({ tags: '5,6', limit: '10' });
+      expect(h.enforce).toHaveBeenCalledTimes(1);
+      expect(h.enforce).toHaveBeenCalledWith(
+        expect.objectContaining({ tags: [5, 6], limit: 10, browsingLevel: 1 }),
+        { id: undefined, isModerator: undefined }
+      );
+    });
+
+    it('answers an enforcement-emptied request with an empty 200 and no feed call', async () => {
+      h.enforce.mockResolvedValue({ emptyResult: true });
+      const res = await get({ tags: '5' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBeUndefined();
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+    });
+
+    it('hydrates with the enforced tags, the maturity filters and the resolved creator', async () => {
+      h.userIdByUsername.mockResolvedValue({ id: 7 });
+      h.enforce.mockImplementation(
+        async (input: { tags?: number[]; excludedTagIds?: number[] }) => {
+          input.tags = [5];
+          input.excludedTagIds = [99];
+          return { emptyResult: false };
+        }
+      );
+      await get({ tags: '5,6', username: 'someone', browsingLevel: '3' });
+      expect(h.hydrateQuery).toHaveBeenCalledTimes(1);
+      const query = h.hydrateQuery.mock.calls[0][0];
+      expect(query).toMatchObject({
+        ids: [9, 5],
+        limit: 2,
+        period: 'AllTime',
+        tags: [5],
+        excludedTagIds: [99],
+        disableMinor: true,
+        disablePoi: true,
+        browsingLevel: 3,
+        userId: 7,
+      });
+      expect(query).not.toHaveProperty('cursor');
+    });
+  });
+
+  it('reports createdAt as the feed time on a feed-served page, as the search path does', async () => {
+    const res = await get({});
+    expect(res.body.items.map((i: { createdAt: Date }) => i.createdAt.toISOString())).toEqual([
+      FEED_SORT_AT,
+      FEED_SORT_AT,
+    ]);
+  });
+});
+
+/** The second argument each per-image cache's fetch was called with, per call. */
+function cacheFetchOptions() {
+  const spies = {
+    imageResources: vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({}),
+    tagIds: vi.spyOn(tagIdsForImagesCache, 'fetch').mockResolvedValue({}),
+    imageMeta: vi.spyOn(imageMetaCache, 'fetch').mockResolvedValue({}),
+  };
+  const options = (name: keyof typeof spies) => spies[name].mock.calls.map((call) => call[1]);
+  return { spies, options };
+}
+const rawRow = (id: number) => ({
+  ...row(id),
+  userId: 11,
+  type: 'image',
+  metadata: null,
+  meta: null,
+  hideMeta: false,
+  hasMeta: false,
+  publishedAt: new Date(FEED_CREATED_AT),
+});
+
+describe('per-image caches on a REST feed continuation page read through without writing back', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.available.mockReturnValue(true);
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    h.rawQuery.mockReset();
+    h.rawQuery.mockResolvedValue({ rows: [rawRow(9), rawRow(5)] });
+    h.realHydrate = true;
+  });
+  afterEach(() => {
+    h.realHydrate = false;
+    vi.restoreAllMocks();
+  });
+
+  it('passes writeBack:false to image-resources, tag-ids and image-meta on a feed: cursor page', async () => {
+    const { options } = cacheFetchOptions();
+    const res = await get({ cursor: 'feed:17:5', withMeta: 'true' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+    expect(options('imageResources')).toEqual([{ writeBack: false }]);
+    expect(options('tagIds')).toEqual([{ writeBack: false }]);
+    expect(options('imageMeta')).toEqual([{ writeBack: false }]);
+  });
+
+  it('keeps writing back on a feed-served first page', async () => {
+    const { options } = cacheFetchOptions();
+    const res = await get({ withMeta: 'true' });
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+    expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(1);
+    for (const name of ['imageResources', 'tagIds', 'imageMeta'] as const) {
+      expect(options(name)).toHaveLength(1);
+      expect(options(name)[0]?.writeBack).not.toBe(false);
+    }
+  });
+
+  it('[invariant on the pre-change code] the website feed hydrate keeps writing back', async () => {
+    const { options } = cacheFetchOptions();
+    const r = await getAllImagesIndex({
+      sort: 'Newest',
+      period: 'Week',
+      browsingLevel: 1,
+      limit: 100,
+      include: ['tagIds'],
+      includeBaseModel: true,
+      user: { id: 42, isModerator: false },
+    } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+    expect(r.source).toBe('feed');
+    expect(options('imageResources')).toHaveLength(1);
+    expect(options('tagIds')).toHaveLength(1);
+    for (const opts of [...options('imageResources'), ...options('tagIds')])
+      expect(opts?.writeBack).not.toBe(false);
+  });
+});
+
+describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
+  it('is SERVICE_UNAVAILABLE, counted as hydrate:error, when the hydrate query times out', async () => {
+    h.available.mockReturnValue(true);
+    h.counted.length = 0;
+    h.realHydrate = true;
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.rawQuery.mockReset();
+    h.rawQuery.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+    await expect(getAllImagesIndex(request(undefined))).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+    h.realHydrate = false;
+    expect(h.rawQuery).toHaveBeenCalledTimes(1);
+    expect(await counted()).toEqual([
+      { outcome: 'error', reason: 'hydrate:error', route: 'website', value: 1 },
+    ]);
+  });
+
+  it('[invariant on the pre-change code] answers an unknown username with NOT_FOUND', async () => {
+    h.userIdByUsername.mockResolvedValue(undefined);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    await expect(
+      getAllImagesIndex({ ...request(undefined), username: 'ghost' } as Parameters<
+        typeof getAllImagesIndex
+      >[0])
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
+  const request = (cursor: unknown) =>
+    ({
+      sort: 'Newest',
+      period: 'Week',
+      browsingLevel: 1,
+      limit: 100,
+      include: [],
+      user: { id: 42, isModerator: false },
+      cursor,
+    } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.available.mockReturnValue(true);
+    h.counted.length = 0;
+  });
+
+  it('steps past a page whose every row was filtered out at hydrate, on the feed cursor', async () => {
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.hydrate.mockResolvedValue([]);
+    const r = await getAllImagesIndex(request(undefined));
+    expect(r).toEqual({ items: [], nextCursor: 'feed:17:5', source: 'feed' });
+  });
+
+  it('answers a tag list of only impossible ids with an empty page, as the search index does', async () => {
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    const r = await getAllImagesIndex({
+      ...request(undefined),
+      tags: [0],
+    } as Parameters<typeof getAllImagesIndex>[0]);
+    expect(r).toEqual({ items: [], nextCursor: undefined, source: 'feed' });
+    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
+  describe('when the feed does not serve', () => {
+    beforeEach(() => {
+      h.meiliOffCounted.length = 0;
+      h.hydrate.mockImplementation(async (ids: number[]) => ids.map(row));
+      h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    });
+
+    it('drops the remix filters rather than leave the request to the search index', async () => {
+      const r = await getAllImagesIndex({
+        ...request(undefined),
+        remixesOnly: true,
+      } as Parameters<typeof getAllImagesIndex>[0]);
+      expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(1);
+      expect(r.items.map((i) => i.id)).toEqual([9, 5]);
+    });
+
+    it('answers a shape the feed cannot express with an empty page', async () => {
+      const r = await getAllImagesIndex({
+        ...request(undefined),
+        requiringMeta: true,
+      } as Parameters<typeof getAllImagesIndex>[0]);
+      expect(r).toEqual({ items: [], nextCursor: undefined, source: 'feed' });
+      expect(h.meiliOffCounted).toEqual([
+        { answer: 'empty', reason: 'flag:requiringMeta', route: 'website' },
+      ]);
+    });
+
+    it('is SERVICE_UNAVAILABLE on a feed timeout', async () => {
+      h.fetchFeedPrimary.mockRejectedValue(
+        Object.assign(new Error('slow'), { name: 'TimeoutError' })
+      );
+      await expect(getAllImagesIndex(request(undefined))).rejects.toMatchObject({
+        code: 'SERVICE_UNAVAILABLE',
+      });
+    });
+
+    describe('with feed-service-degrade on', () => {
+      const anonymous = () =>
+        ({ ...request(undefined), user: undefined } as Parameters<typeof getAllImagesIndex>[0]);
+      beforeEach(() => {
+        h.degradeOn.mockReturnValue(true);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+      afterEach(() => {
+        h.degradeOn.mockReturnValue(false);
+        delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
+      });
+
+      it('serves an anonymous visitor the last good page when the feed fails', async () => {
+        await getAllImagesIndex(anonymous());
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        const r = await getAllImagesIndex(anonymous());
+        expect(r.items.map((i) => i.id)).toEqual([9, 5]);
+        expect(r.source).toBe('feed');
+      });
+
+      it("never serves a signed-in viewer an anonymous visitor's page", async () => {
+        await getAllImagesIndex(anonymous());
+        h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        await expect(getAllImagesIndex(request(undefined))).rejects.toMatchObject({
+          code: 'SERVICE_UNAVAILABLE',
+        });
+      });
+    });
+  });
+
+  it('[invariant on the pre-change code] still answers DEEP_OFFSET and CURSOR_UNPARSED with a 400', async () => {
+    await expect(getAllImagesIndex(request('30000|1788000000000'))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    await expect(getAllImagesIndex(request('feed'))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+});
+
+// The website image feed is served by the feed service, which hydrates its rows through the same
+// query as the database path. Before launch the birthday decorations on those rows must reach only
+// a viewer the `birthday2026` flag is on for, so the viewer has to survive the hydrate query.
+describe('event decorations on a feed-served website page before launch', () => {
+  const VIEWER = { id: 42, isModerator: false };
+  const HAT = { type: 'hat', event: BIRTHDAY_2026_EVENT, url: 'hat.png', team: 'Blue' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000));
+    h.available.mockReturnValue(true);
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    h.rawQuery.mockReset();
+    h.rawQuery.mockResolvedValue({ rows: [rawRow(9), rawRow(5)] });
+    h.realHydrate = true;
+    cacheFetchOptions();
+    vi.spyOn(eventDecorationEntityCaches.Image, 'fetch').mockResolvedValue({
+      9: {
+        id: 1,
+        name: 'Party Hat',
+        type: 'ContentDecoration',
+        source: 'Purchase',
+        data: HAT,
+        claimKey: 'tx',
+      },
+    } as never);
+  });
+  afterEach(() => {
+    h.realHydrate = false;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const page = () =>
+    getAllImagesIndex({
+      sort: 'Newest',
+      period: 'Week',
+      browsingLevel: 1,
+      limit: 100,
+      include: ['tagIds'],
+      user: VIEWER,
+      // What image.getInfinite passes (image.controller.ts).
+      eventDecorationViewer: VIEWER,
+    } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+  const hats = (r: Awaited<ReturnType<typeof page>>) =>
+    Object.fromEntries(
+      (r.items as { id: number; eventDecoration?: { data?: unknown } | null }[]).map((i) => [
+        i.id,
+        i.eventDecoration?.data ?? null,
+      ])
+    );
+
+  it('shows the hat to a viewer the flag is on for', async () => {
+    testerFlag.reset({ testers: [VIEWER.id] });
+    const r = await page();
+    expect(r.source).toBe('feed');
+    expect(hats(r)).toEqual({ 9: HAT, 5: null });
+  });
+
+  it('shows no hat to a viewer the flag is off for', async () => {
+    testerFlag.reset({ testers: [] });
+    const r = await page();
+    expect(r.source).toBe('feed');
+    expect(hats(r)).toEqual({ 9: null, 5: null });
+  });
+});

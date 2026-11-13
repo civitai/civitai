@@ -1,0 +1,206 @@
+// The stand-in gift box, drawn in the team colour (--box) until a box has art of its own.
+.giftBox {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+
+  .body {
+    position: absolute;
+    left: 12%;
+    right: 12%;
+    bottom: 6%;
+    height: 56%;
+    border-radius: 8%;
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--box) 70%, white),
+      color-mix(in srgb, var(--box) 85%, black)
+    );
+    box-shadow: inset 0 -10px 0 rgba(0, 0, 0, 0.15);
+  }
+
+  .lid {
+    position: absolute;
+    left: 6%;
+    right: 6%;
+    top: 24%;
+    height: 20%;
+    border-radius: 8%;
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--box) 55%, white),
+      var(--box)
+    );
+    box-shadow: 0 4px 0 rgba(0, 0, 0, 0.18);
+    transform-origin: 20% 100%;
+  }
+
+  .ribbon {
+    position: absolute;
+    left: 46%;
+    width: 8%;
+    top: 24%;
+    bottom: 6%;
+    background: #ffd43b;
+  }
+
+  .bow {
+    position: absolute;
+    left: 50%;
+    top: 9%;
+    width: 44%;
+    height: 18%;
+    transform: translateX(-50%);
+
+    &::before,
+    &::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      width: 48%;
+      height: 100%;
+      border: 0.25em solid #ffd43b;
+      border-radius: 50% 50% 10% 50%;
+    }
+    &::before {
+      left: 0;
+      transform: rotate(-14deg);
+    }
+    &::after {
+      right: 0;
+      transform: scaleX(-1) rotate(-14deg);
+    }
+  }
+
+  .mark {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 14%;
+    text-align: center;
+    font-weight: 900;
+    font-size: 2.2em;
+    line-height: 1;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.2);
+  }
+}
+
+.shake {
+  animation: shake 0.5s ease-in-out 2;
+}
+
+.lidOff .lid {
+  animation: lidOff 0.45s forwards;
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(-7deg);
+  }
+  40% {
+    transform: rotate(6deg);
+  }
+  60% {
+    transform: rotate(-4deg);
+  }
+  80% {
+    transform: rotate(3deg);
+  }
+}
+
+@keyframes lidOff {
+  to {
+    transform: translate(-20%, -120%) rotate(-38deg);
+    opacity: 0;
+  }
+}
+
+// The modal content scrolls (the contents list can be hundreds of hats tall), so the open stage
+// sticks to the top of what is on screen and is only as tall as that scroll viewport.
+.stageView {
+  position: sticky;
+  top: 0;
+  height: calc(100dvh - 2 * var(--modal-y-offset, 0px));
+  max-height: 100%;
+
+  :global(.mantine-Modal-content[data-full-screen]) & {
+    height: 100dvh;
+  }
+}
+
+// The rarity's colour, a beat before the reward.
+.glow {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(320px, 80%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(40px);
+  background: var(--glow);
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
+
+  &[data-on='true'] {
+    opacity: 0.55;
+  }
+}
+
+.reveal {
+  animation: pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0.4) rotateY(90deg);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+
+  i {
+    position: absolute;
+    left: 50%;
+    top: 45%;
+    width: 8px;
+    height: 12px;
+    border-radius: 2px;
+    opacity: 0;
+    animation: fly 1s ease-out forwards;
+  }
+}
+
+@keyframes fly {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--x), var(--y)) rotate(540deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shake,
+  .lidOff .lid,
+  .reveal,
+  .burst i {
+    animation: none !important;
+  }
+}

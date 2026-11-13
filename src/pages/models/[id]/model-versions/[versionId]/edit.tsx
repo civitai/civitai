@@ -4,6 +4,8 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Page } from '~/components/AppLayout/Page';
+import { PageActionBar } from '~/components/AppLayout/PageActionBar';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -11,7 +13,7 @@ import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
-export default function ModelVersionEditPage() {
+function ModelVersionEditPage() {
   const router = useRouter();
   const modelId = Number(router.query.id);
   const modelVersionId = Number(router.query.versionId);
@@ -71,17 +73,20 @@ export default function ModelVersionEditPage() {
           onSubmit={handleClose}
         >
           {({ loading, canSave }) => (
-            <Group mt="xl" justify="flex-end">
+            <PageActionBar mt="xl">
               <Button variant="default" onClick={handleClose}>
                 Cancel
               </Button>
               <Button type="submit" loading={loading} disabled={!canSave}>
                 Save
               </Button>
-            </Group>
+            </PageActionBar>
           )}
         </ModelVersionUpsertForm>
       </Stack>
     </Container>
   );
 }
+
+// The save bar at the bottom of the form stands in for the app footer here.
+export default Page(ModelVersionEditPage, { footer: null });

@@ -26,6 +26,8 @@ const PROXY_TIMEOUT_MS = 15_000;
 
 // Only browser-navigation endpoints redirect; every other oauth path is an API call and is proxied.
 const REDIRECT_ENDPOINTS = new Set(['authorize']);
+// Only the hub's own device page calls these, on the hub; they are never served from this origin.
+const NOT_PROXIED = new Set(['device-approve', 'device-deny']);
 
 // Hop-by-hop headers must not cross the proxy boundary (RFC 7230 §6.1). content-length/encoding are
 // recomputed by fetch (request) / Next (response), so drop the inbound values.
@@ -54,6 +56,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const segments = req.query.path;
   const endpoint = (Array.isArray(segments) ? segments[0] : segments) ?? '';
   const target = `${HUB}${req.url}`;
+
+  if (NOT_PROXIED.has(endpoint)) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
 
   // Browser flow → redirect (308 preserves method + body; the browser follows transparently).
   if (REDIRECT_ENDPOINTS.has(endpoint)) {

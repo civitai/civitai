@@ -5,11 +5,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
-import {
-  BatchSpanProcessor,
-  ParentBasedSampler,
-  TraceIdRatioBasedSampler,
-} from '@opentelemetry/sdk-trace-node';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { logs } from '@opentelemetry/api-logs';
 import {
   createOtelLoggerProvider,
@@ -17,13 +13,20 @@ import {
   registerOtelShutdown,
 } from '@civitai/telemetry/otel-logs';
 import { setStructuredLogSink } from '~/server/logging/structured-log-sink';
+import { CredentialRedactingSpanProcessor } from '~/server/otel-redact-span-processor';
 import { trace } from '@opentelemetry/api';
-import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import {
+  buildOtelInstrumentations,
+  isHttpInstrumentationEnabled,
+} from '~/server/otel-instrumentations';
+import { buildHeadSampling } from '~/server/otel-root-presample';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
+import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
+import { startWarmupAndHealthMetricsLoop } from '~/server/health/start-after-warmup';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -47,6 +50,12 @@ if (pgDbWrite) {
     );
   }
 }
+
+// Hand the proxy's API policy to the standalone server (scripts/trpc-server/server.cjs), which
+// applies it before `/api/v1/` routes under its `api` profile because it never runs the proxy.
+// Sets one global and nothing else, so it is a no-op under Next. That server awaits register()
+// before its first request, so this is in place by then. See ~/server/middleware/standalone-api-policy.
+registerStandaloneApiPolicy();
 
 // Arm the on-demand, signal-triggered V8 CPU profiler. Zero steady-state
 // overhead; only does work when signalled. Independent of OTEL so it is
@@ -104,6 +113,36 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// The last-known Flipt flag state in sysRedis. DARK by default: while FLIPT_SNAPSHOT_MAX_AGE_MS is
+// unset or 0, no store is registered and nothing is read or written. Once it is set, the stored
+// state is read only when this pod cannot reach Flipt (so its default-on flags are not all OFF),
+// and pods with live state keep it current. Registered BEFORE the
+// block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
+// that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
+try {
+  (await import('~/server/flipt/snapshot-store')).registerFliptSnapshotStore();
+} catch (err) {
+  console.error('[instrumentation.node] flipt snapshot store not registered:', err);
+}
+
+// Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
+// it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
+// of this module's static graph; a failure here must never affect boot — both metrics then keep
+// their per-command prom-client calls. See @civitai/telemetry/redis-command-metrics.
+//  - The duration histogram's gate is re-read (cached, 5s) on every command, so it follows the flag.
+//  - The in-flight gauge's mode is LATCHED at the process's first Redis command inc/dec and never
+//    changes (a command inc'd on one path and dec'd on the other would skew it for good), so a flag
+//    flip reaches it only on restart. AWAITED, and placed before the warmer kick, so Flipt is
+//    initialized and the resolver installed before the server takes traffic and the first command
+//    latches the mode. Bounded by Flipt's own init timeout; fail-open (latches per-command).
+try {
+  const m = await import('~/server/prom/redis-command-metrics-gate');
+  m.registerRedisCommandMetricsBatchGate();
+  await m.armRedisInflightGaugeMode();
+} catch (err) {
+  console.error('[instrumentation.node] redis command metrics gate failed (fail-open):', err);
+}
+
 // Kick the in-process route warmer (fire-and-forget). Next standalone
 // lazy-require()s each route on first hit; the dependency-only readiness probe
 // marks a pod Ready while every hot route is still cold, so the first real
@@ -119,11 +158,19 @@ registerEventLoopWatchdog();
 // HTTP listener — the warmer needs that listener up to self-request, so
 // awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
 // never block or crash boot.
-void import('~/server/warmup')
-  .then((m) => m.runWarmup())
-  .catch((err) => {
-    console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  });
+//
+// The background dependency-health metrics loop starts once the pod is warm (the warm flag, which
+// also flips on the warmer's fail-open timeout and when warming is disabled), or after a hard cap,
+// so its checks never compete with warming for the loop thread. It does NOT wait on runWarmup()
+// resolving, which a hung warm request can delay indefinitely. If the warmer module fails to load,
+// it starts at once. It runs the same runHealthChecks() as the probes, for metrics only: nothing
+// reads its result, so it cannot change readiness. It runs in every process that runs this file,
+// which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
+// calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
+void startWarmupAndHealthMetricsLoop({
+  warmup: import('~/server/warmup'),
+  metricsLoop: import('~/server/health/metrics-loop'),
+});
 
 // Attach the OTel sink to the shared structured logger.
 //
@@ -182,18 +229,17 @@ if (!OTEL_ENABLED) {
     const parsedRatio = parseFloat(process.env.OTEL_TRACES_SAMPLE_RATIO ?? '');
     const sampleRatio =
       Number.isFinite(parsedRatio) && parsedRatio >= 0 && parsedRatio <= 1 ? parsedRatio : 0.1;
-    const ratioSampler = new TraceIdRatioBasedSampler(sampleRatio);
-    const sampler = new ParentBasedSampler({
-      root: ratioSampler,
-      // This is a PUBLIC API with no traceparent stripping at the edge, so an
-      // untrusted client could send `traceparent: ...-01` to force a sampled
-      // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
-      // would let any client defeat the sampling cap and re-saturate CPU — the
-      // exact failure this change prevents. Apply the ratio to remote parents
-      // too. Local parents still inherit, so intra-process traces stay coherent.
-      remoteParentSampled: ratioSampler,
-    });
+    // ParentBased over TraceIdRatio(sampleRatio), with the ratio applied to remote sampled parents
+    // too (see the comment in buildHeadSampling), plus root pre-sampling's id generator and HTTP
+    // ignore hook (`otel-root-presample` flag, default off — see ~/server/otel-root-presample).
+    // One function, so the hook and the sampler share one ratio sampler.
+    const headSampling = buildHeadSampling(sampleRatio);
     console.log(`[instrumentation.node] OTEL trace sampling ratio: ${sampleRatio}`);
+    console.log(
+      `[instrumentation.node] OTEL inbound HTTP instrumentation: ${
+        isHttpInstrumentationEnabled() ? 'on' : 'off (OTEL_HTTP_INSTRUMENTATION)'
+      }`
+    );
 
     // Trace exporter
     const traceExporter = new OTLPTraceExporter({
@@ -230,8 +276,9 @@ if (!OTEL_ENABLED) {
     // Create SDK with trace processor and auto-instrumentations
     const sdk = new NodeSDK({
       resource,
-      sampler,
-      spanProcessor: new BatchSpanProcessor(traceExporter),
+      sampler: headSampling.sampler,
+      idGenerator: headSampling.idGenerator,
+      spanProcessor: new CredentialRedactingSpanProcessor(new BatchSpanProcessor(traceExporter)),
       // RedisInstrumentation intentionally omitted: at ~5,400 redis ops/s it was
       // the highest-frequency span source (~4 spans/request) and the dominant
       // async_hooks context-propagation cost a CPU pin profile attributed to OTEL
@@ -253,29 +300,35 @@ if (!OTEL_ENABLED) {
       // Prometheus), and DB pool metrics are separate labeled gauges
       // (db/db-helpers.ts). So no dashboard depends on these spans. The custom
       // withSpan() instrumentation on specific hot calls is unaffected.
-      instrumentations: [
-        // HttpInstrumentation narrowed to INBOUND-only. It only ever patched Node
-        // core http/https, so the affected outbound spans are the core-http
-        // clients (S3 via @aws-sdk, ClickHouse, axios/signals) — NOT orchestrator
-        // or meilisearch, which use fetch/undici and were never auto-instrumented
-        // (their visibility comes from manual withSpan()). Each remaining outgoing
-        // client span is another async_hooks context.with + span alloc on the hot
-        // path — the structural cost head sampling can't remove.
-        // ignoreOutgoingRequestHook returning true for every outgoing request
-        // suppresses those client spans (and their traceparent injection) while
-        // keeping incoming server-request spans (the per-request root) intact.
-        // (instrumentation-http@0.213.0 also exposes
-        // disableOutgoingRequestInstrumentation, which skips patching outbound
-        // entirely; the ignore hook is used here to keep the path patched for
-        // future per-call allow-listing.) Tradeoff: lost cross-service trace
-        // linkage for S3/ClickHouse — observability-only; nothing in the app reads
-        // traceparent functionally. The custom withSpan() spans are unaffected.
-        new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true }),
-      ],
+      // HttpInstrumentation (inbound-only) unless OTEL_HTTP_INSTRUMENTATION=off. The choice,
+      // and what turning it off does and does not remove, is documented in
+      // ~/server/otel-instrumentations.
+      instrumentations: buildOtelInstrumentations(process.env, {
+        ignoreIncomingRequestHook: headSampling.ignoreIncomingRequestHook,
+      }),
     });
 
     sdk.start();
     console.log(`[instrumentation.node] OTEL SDK started - traces and logs -> ${OTEL_ENDPOINT}`);
+
+    // Arm withSpan's unsampled-parent shortcut (dark until the `otel-withspan-skip-unsampled`
+    // Flipt flag is on). Dynamic, like the warmer: keeps the Flipt client out of this module's
+    // static graph, and a failure here must never affect boot — withSpan simply keeps opening
+    // spans as before. See ~/server/utils/otel-withspan-gate.
+    void import('~/server/utils/otel-withspan-gate')
+      .then((m) => {
+        m.registerWithSpanSkipUnsampledGate();
+        console.log(
+          '[instrumentation.node] withSpan skip-unsampled gate armed (flag-controlled: otel-withspan-skip-unsampled)'
+        );
+        m.registerRootPresampleGate();
+        console.log(
+          '[instrumentation.node] root pre-sample gate armed (flag-controlled: otel-root-presample)'
+        );
+      })
+      .catch((err) => {
+        console.error('[instrumentation.node] withSpan gate registration failed (fail-open):', err);
+      });
 
     // Test span
     const testTracer = trace.getTracer('instrumentation-test');
@@ -297,11 +350,14 @@ if (!OTEL_ENABLED) {
     // The previous form listened on SIGTERM only and awaited NEITHER promise, so the
     // final batch raced process termination — immaterial while this pipeline carried one
     // record per boot, a real loss path the moment it carries traffic. registerOtelShutdown
-    // adds SIGINT, awaits both shutdowns, and is idempotent across a second signal.
+    // adds SIGINT, awaits the flush and both shutdowns, and is idempotent across signals.
     //
-    // The log line below is deliberate: whether the framework installs its own SIGTERM
-    // handler that exits before ours runs is NOT answerable by any test we can write, so
-    // its presence (or absence) in a terminating process's final output is the check.
+    // Both servers this runs in (Next's start-server and scripts/trpc-server/server.cjs)
+    // install their own SIGTERM/SIGINT handler that drains and then calls process.exit().
+    // On the signal registerOtelShutdown only flushes; it holds that exit while it shuts
+    // both down, for at most OTEL_SHUTDOWN_EXIT_HOLD_MS. The framework's graceful shutdown
+    // is unchanged, and records from before the signal and from the drain are exported.
+    // If the shutdown runs out the cap, it logs "telemetry flush still running" first.
     registerOtelShutdown([loggerProvider, sdk], {
       log: (message) => console.log(`[instrumentation.node] ${message}`),
       onError: (reason) => console.error('[instrumentation.node] OTEL shutdown error:', reason),

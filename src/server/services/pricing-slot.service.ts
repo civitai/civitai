@@ -5,16 +5,22 @@ import {
   capTierLabel,
   clearsLastPrice,
   exceedsAllowance,
+  feeAllowanceBoost,
+  gateConversionExceedsAllowance,
+  gateConversionMessage,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
   gatePrices,
   isAlreadyPriced,
   monthlyPricingAllowance,
-  pricingAllowanceMessage,
   pricingFloorMessage,
+  pricingLimitFor,
+  pricingLimitMessage,
   pricingMonthStart,
 } from '@civitai/buzz';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
@@ -32,10 +38,40 @@ export async function getCreatorScore(userId: number): Promise<number> {
 }
 
 /** Slots spent this calendar month. Index-only on (ownerId, createdAt) — no join. */
-export async function countPricingSlotsThisMonth(ownerId: number): Promise<number> {
-  return dbRead.pricingSlot.count({
+export async function countPricingSlotsThisMonth(
+  ownerId: number,
+  db: Pick<PrismaClient, 'pricingSlot'> = dbRead
+): Promise<number> {
+  return db.pricingSlot.count({
     where: { ownerId, createdAt: { gte: pricingMonthStart() } },
   });
+}
+
+/**
+ * Extra licensing-fee slots granted to this creator. Fails to 0: an outage costs a boosted creator
+ * their extra slots for its duration, never anyone their tier allowance.
+ */
+export async function getFeeAllowanceBoost(
+  userId: number,
+  now: Date = new Date()
+): Promise<number> {
+  return (await readFeeAllowanceBoost(userId, now)) ?? 0;
+}
+
+/** `null` when the grant list could not be read. */
+async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number | null> {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  try {
+    const granted = await withSysReadDeadline(
+      sysRedis.hGet<string>(REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST, String(userId))
+    );
+    return feeAllowanceBoost(granted, now);
+  } catch (error) {
+    logToAxiom({ type: 'error', name: 'fee-allowance-boost-read', error, userId }).catch(
+      () => undefined
+    );
+    return null;
+  }
 }
 
 /**
@@ -239,13 +275,18 @@ async function attemptRelease({ entityType, entityId, ownerId }: ReleaseArgs): P
 export type PricingWriteCheck = {
   userId: number;
   /**
-   * Whether the entity carries a price BEFORE this write. Editing an existing price is exempt from
-   * both rules, so this is the single thing that decides whether they apply at all. Callers get it
-   * from `isAlreadyPriced`.
+   * Whether the entity carries a price BEFORE this write. A priced entity skips the floor and the
+   * allowance; only a fee gaining a gate is still checked. Callers get it from `isAlreadyPriced`.
    */
   wasPriced: boolean;
   /** Whether it will carry one after. */
   willBePriced: boolean;
+  /** Whether this write leaves a permanent paid-access gate. Such a write gets no fee boost. */
+  addsGate: boolean;
+  /** Whether the entity carries a permanent paid-access gate BEFORE this write. */
+  hadGate: boolean;
+  /** Required for an existing entity: without it, a fee gaining a gate goes unchecked. */
+  entity?: { entityType: PricingSlotEntityType; entityId: number };
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is
    * three uncached queries against the primary, and the tier is only read once a write turns out to
@@ -273,11 +314,17 @@ export async function assertPricingAllowed({
   userId,
   wasPriced,
   willBePriced,
+  addsGate,
+  hadGate,
+  entity,
   tier,
   userMeta,
 }: PricingWriteCheck): Promise<PricingWriteOutcome> {
-  if (!willBePriced || wasPriced)
+  if (!willBePriced || wasPriced) {
+    if (wasPriced && addsGate && !hadGate && entity)
+      await assertGateConversionAllowed(userId, tier, entity);
     return { spendsSlot: false, releasesSlot: clearsLastPrice({ wasPriced, willBePriced }) };
+  }
 
   const score =
     userMeta !== undefined ? creatorScoreFromMeta(userMeta) : await getCreatorScore(userId);
@@ -285,14 +332,43 @@ export async function assertPricingAllowed({
     throw throwBadRequestError(pricingFloorMessage(score));
 
   const resolvedTier = typeof tier === 'function' ? await tier() : tier;
-  const limit = monthlyPricingAllowance(resolvedTier);
-  if (Number.isFinite(limit)) {
-    const used = await countPricingSlotsThisMonth(userId);
+  if (Number.isFinite(monthlyPricingAllowance(resolvedTier))) {
+    const [used, boost] = await Promise.all([
+      countPricingSlotsThisMonth(userId),
+      getFeeAllowanceBoost(userId),
+    ]);
+    const limit = pricingLimitFor({ tier: resolvedTier, boost, addsGate });
     if (exceedsAllowance(used, limit))
-      throw throwBadRequestError(pricingAllowanceMessage(used, limit, capTierLabel(resolvedTier)));
+      throw throwBadRequestError(
+        pricingLimitMessage({
+          used,
+          limit,
+          boost,
+          addsGate,
+          tierLabel: capTierLabel(resolvedTier),
+        })
+      );
   }
 
   return { spendsSlot: true, releasesSlot: false };
+}
+
+async function assertGateConversionAllowed(
+  userId: number,
+  tier: TierInput,
+  entity: { entityType: PricingSlotEntityType; entityId: number }
+): Promise<void> {
+  const boost = await readFeeAllowanceBoost(userId, new Date());
+  if (boost === 0) return;
+  const slot = await dbWrite.pricingSlot.findUnique({
+    where: { entityType_entityId: entity },
+    select: { createdAt: true },
+  });
+  const slotSpentThisMonth = slot != null && slot.createdAt >= pricingMonthStart();
+  const resolvedTier = typeof tier === 'function' ? await tier() : tier;
+  const used = await countPricingSlotsThisMonth(userId, dbWrite);
+  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost, slotSpentThisMonth }))
+    throw throwBadRequestError(gateConversionMessage(used, resolvedTier));
 }
 
 export type PricingSlotEntry = {

@@ -1,6 +1,5 @@
 import type { ChipProps, ButtonProps } from '@mantine/core';
 import {
-  Popover,
   Group,
   Indicator,
   Stack,
@@ -11,6 +10,7 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';

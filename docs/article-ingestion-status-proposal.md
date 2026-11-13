@@ -104,7 +104,7 @@ Call sites identified in the initial gotchas review:
 
 - `getArticles` (`src/server/services/article.service.ts:257`)
 - `getArticleById` (`src/server/services/article.service.ts:639`)
-- `getCivitaiNews`, `getCivitaiEvents`
+- `getCivitaiNews`, `getCivitaiEvents` (removed with the `/events` page; `/events` now redirects to `/articles`)
 - `sitemap-articles.xml`
 - `/api/og`
 - `articles.search-index.ts:175` — Meilisearch pull filter (scoped to `status = Published` today; add `ingestion = 'Scanned'`)

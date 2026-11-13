@@ -178,6 +178,17 @@ describe('POST /api/v1/blocks/shared-storage/append', () => {
     expect(b.res._status()).toBe(200);
   });
 
+  it('forwards `data` VERBATIM — object keys and format characters included — for the router to moderate', async () => {
+    // The `data` leaf moderation in `appendSharedRow` reads what this route hands it. If the body
+    // schema ever stripped unknown keys or normalised strings, the scan would read a different
+    // value from the one stored.
+    const value = { title: 't', data: { 'a k\u200Bey': ['lo\u200Bli', { nested: 1 }] } };
+    const { req, res } = createMocks({ body: { value } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockAppend).toHaveBeenCalledWith('tok_append', value);
+  });
+
   it('stashes the audit detail with the SERVER-generated key', async () => {
     const { req, res } = createMocks({ body: { value: VALUE } });
     await handler(req as never, res as never);

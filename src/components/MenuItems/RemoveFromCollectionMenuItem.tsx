@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconTrash } from '@tabler/icons-react';
 import { useMutateCollection } from '~/components/Collections/collection.utils';
 

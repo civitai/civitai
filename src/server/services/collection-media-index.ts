@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 
 // Removing a model or an image leaves every collection that showed it holding a stale
 // denormalized snapshot, and nothing about the removal reaches the collections index
@@ -223,6 +223,9 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
         WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."coverId" IN (${ids}))
       UNION
       SELECT ci."collectionId" FROM "CollectionItem" ci
+        WHERE ci."articleId" IN (SELECT a.id FROM "Article" a WHERE a."bannerId" IN (${ids}))
+      UNION
+      SELECT ci."collectionId" FROM "CollectionItem" ci
         WHERE ci."model3dId" IN (
           SELECT m3.id FROM "Model3D" m3 WHERE m3."thumbnailImageId" IN (${ids}))
       UNION
@@ -352,6 +355,92 @@ export async function getCollectionIdsForModelCascade({
     );
     return EMPTY;
   }
+}
+
+/**
+ * Collections whose document shows a model's images: its own item, and the items and covers drawn
+ * from any post on its versions, whoever posted it. A taken-down model's images leave every
+ * collection cover, and a restored model's come back, so entering or leaving TakenDown rebuilds
+ * these.
+ *
+ * Read from the replica: the images predate the mode change. Never throws: it runs after the mode
+ * change has committed, and a failure only leaves covers stale.
+ */
+export async function getCollectionIdsForModelImages({
+  modelId,
+  source = 'model-mode-change',
+  cap = DEFAULT_COLLECTION_CAP,
+  withCover,
+}: {
+  modelId: number;
+  source?: string;
+  cap?: number;
+  /** Whether the cover leg may run, when the caller has already checked; checked here otherwise. */
+  withCover?: boolean;
+}): Promise<CollectionsToRebuild & { failed?: boolean }> {
+  withCover ??= await isCoverLegUsable(source);
+  const modelImagesSql = Prisma.sql`
+    SELECT i.id FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE mv."modelId" = ${modelId}`;
+  const coverLeg = withCover
+    ? Prisma.sql`
+        UNION
+        SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${modelImagesSql})`
+    : Prisma.empty;
+  try {
+    const rows = await dbRead.$queryRaw<{ collectionId: number }[]>`
+      SELECT DISTINCT x."collectionId" FROM (
+        SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."modelId" = ${modelId}
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci
+          WHERE ci."postId" IN (
+            SELECT p.id FROM "Post" p
+            JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+            WHERE mv."modelId" = ${modelId})
+        UNION
+        SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${modelImagesSql})
+        ${coverLeg}
+      ) x
+      LIMIT ${cap + 1}
+    `;
+    return applyCap(rows, cap);
+  } catch (error) {
+    logFailure(
+      'collection-media-index-resolve-failed',
+      source,
+      `failed to resolve collections for model ${modelId}`,
+      error
+    );
+    return { ...EMPTY, failed: true };
+  }
+}
+
+/**
+ * Whether the model-images lookup's cover leg may run. Never throws: a failed check leaves the leg
+ * out. Leaving it out is logged, since those collections then stay stale until a full reindex.
+ */
+export async function isCoverLegUsable(source: string) {
+  let usable = false;
+  try {
+    usable = await coverIndexExists();
+  } catch (error) {
+    logFailure(
+      'collection-media-index-cover-probe-failed',
+      source,
+      `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
+      error
+    );
+  }
+  if (!usable)
+    logToAxiom({
+      type: 'warning',
+      name: 'collection-media-index-cover-leg-skipped',
+      message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is one of the model's images are not being re-indexed. Apply the migration that creates it.`,
+      source,
+    }).catch(() => undefined);
+  return usable;
 }
 
 /**

@@ -75,40 +75,65 @@ export const LongList = () => <Preview data={longMockData} />;
 # Check if Ladle is already running
 curl -s -o /dev/null -w "%{http_code}" http://localhost:61111/
 
-# If not running, start it (from project root or worktree root)
+# If not running, start it (from project root or worktree root), logging to a file
 cd <worktree-path>
-npx ladle serve --port 61111 &
+npx ladle serve --port 61111 > <scratch-dir>/ladle.log 2>&1 &
 # Wait for it to be ready (~3-5 seconds)
 ```
 
 Ladle auto-discovers stories matching `src/**/*.stories.tsx`.
+
+**Warm the cache before capturing.** Without `node_modules/.vite` (a fresh worktree, or after an
+install), Vite pre-bundles dependencies on the first request, and a story that imports the generator
+graph takes 25–30s to reach `load`, close enough to Playwright's 30s default `page.goto` timeout
+to exceed it on a busy machine. Vite then logs
+`optimized dependencies changed. reloading` and reloads the page. Don't work around the timeout with
+`waitUntil: 'commit'`: that captures the page mid-reload, where transient errors such as
+`Cannot access '<x>' before initialization` appear that a warm load doesn't have. Instead, open each
+story you will capture once in the browser session (step 3) with a long `goto` timeout, then wait until
+`ladle.log` stops growing for ~10s (it usually ends with `optimized dependencies changed. reloading`).
+A story whose imports no earlier story pulled in can trigger another optimize-and-reload, so warming
+with one story doesn't cover unrelated ones. A `curl` doesn't warm anything — Vite optimizes on the
+browser's module requests. Once warm, loads take well under a second.
 
 ### 3. Capture Screenshots
 
 Use the browser-automation skill to capture cropped, padded screenshots:
 
 ```bash
-# Create a browser session
-node ~/.claude/skills/browser-automation/cli.mjs session http://localhost:61111 --name ladle
+# Start the server and create a browser session on Ladle
+node .claude/skills/browser-automation/server.mjs &
+curl -X POST http://localhost:9222/sessions -d '{"name": "ladle", "url": "http://localhost:61111"}'
+```
 
-# Capture all story variants in dark and light themes
-node ~/.claude/skills/browser-automation/cli.mjs run "
-  const stories = [
-    { name: 'default', path: 'my-component--default' },
-    { name: 'empty', path: 'my-component--empty' },
-  ];
-  const themes = ['dark', 'light'];
-  const dir = '<session-screenshots-dir>';
+Put the capture code in a scratch file, e.g. `<scratch-dir>/capture.js`:
 
-  for (const theme of themes) {
-    for (const story of stories) {
-      await page.goto('http://localhost:61111/?story=' + story.path + '&theme=' + theme + '&mode=preview');
-      await page.waitForTimeout(800);
-      const wrapper = page.locator('.ladle-story-wrapper');
-      await wrapper.screenshot({ path: dir + '/crop-' + theme + '-' + story.name + '.png' });
-    }
+```js
+const stories = [
+  { name: 'default', path: 'my-component--default' },
+  { name: 'empty', path: 'my-component--empty' },
+];
+const themes = ['dark', 'light'];
+const dir = '<absolute-output-dir>';
+
+for (const theme of themes) {
+  for (const story of stories) {
+    // Run the warm-up in step 2 first: a cold load can reload mid-capture. The long timeout is a safety net.
+    await page.goto('http://localhost:61111/?story=' + story.path + '&theme=' + theme + '&mode=preview', {
+      timeout: 120_000,
+    });
+    const wrapper = page.locator('.ladle-story-wrapper');
+    await wrapper.waitFor({ timeout: 60_000 });
+    await page.waitForTimeout(800);
+    await wrapper.screenshot({ path: dir + '/crop-' + theme + '-' + story.name + '.png' });
   }
-" --label "Component preview screenshots" -s ladle
+}
+```
+
+Then run it as a chunk:
+
+```bash
+node -e "fetch('http://localhost:9222/chunk?session=ladle', { method: 'POST', body: JSON.stringify({ label: 'Component preview screenshots', code: require('fs').readFileSync(process.argv[1], 'utf8') }) }).then((r) => r.text()).then(console.log)" "<scratch-dir>/capture.js"
 ```
 
 **Story path format:** The story path is derived from the file name and export name:

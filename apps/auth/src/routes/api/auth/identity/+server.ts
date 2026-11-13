@@ -6,7 +6,8 @@ import {
   invalidateSessionUser,
   produceSessionUser,
 } from '$lib/server/auth/session-producer';
-import { SESSION_COOKIE } from '$lib/server/auth/session';
+import { readHubSession } from '$lib/server/auth/session';
+import { acceptHubSession } from '$lib/server/auth/lineage';
 import { sessions } from '$lib/server/auth/registry';
 import { isInternalRequest } from '$lib/server/auth/internal';
 
@@ -23,7 +24,7 @@ import { isInternalRequest } from '$lib/server/auth/internal';
 // token returns 401 — matching the resolver, which treats 401/404 as "no session".
 export const GET: RequestHandler = async ({ request, url, cookies }) => {
   // INTERNAL by-userId read-through (createSessionClient.getSessionUserById) — for consumer paths that start
-  // from a userId with no session token to present (API-key/bearer auth, the legacy-cookie fallback). Returns
+  // from a userId with no session token to present (API-key/bearer auth). Returns
   // ANY user's session to a holder of AUTH_INTERNAL_TOKEN, the SAME trust as the POST refresh below — no new
   // privilege. This is a READ (getOrProduce), not a bust. Branches before the token path on `?userId=`.
   const byId = url.searchParams.get('userId');
@@ -36,14 +37,15 @@ export const GET: RequestHandler = async ({ request, url, cookies }) => {
   }
 
   const authHeader = request.headers.get('authorization') ?? '';
-  const token = /^bearer /i.test(authHeader)
-    ? authHeader.slice(7).trim()
-    : cookies.get(SESSION_COOKIE);
+  const bearer = /^bearer /i.test(authHeader) ? authHeader.slice(7).trim() : undefined;
+  const token = bearer ?? readHubSession(cookies)?.value;
   if (!token) return json({ error: 'unauthorized' }, { status: 401 });
 
   const claims = await verifier.verifyToken(token).catch(() => null);
   const userId = Number(claims?.sub);
   if (!claims || !Number.isFinite(userId)) return json({ error: 'unauthorized' }, { status: 401 });
+  if (bearer === undefined && !(await acceptHubSession(claims)))
+    return json({ error: 'unauthorized' }, { status: 401 });
 
   const user = await getOrProduceSessionUser(userId);
   if (!user) return json({ error: 'not_found' }, { status: 404 });

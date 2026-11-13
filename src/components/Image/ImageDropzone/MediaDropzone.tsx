@@ -1,35 +1,54 @@
 import { Input, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
-import type { DropzoneProps } from '@mantine/dropzone';
+import type { DropzoneProps, FileRejection } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import type { DragEvent } from 'react';
+import { useState } from 'react';
+import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { constants, isOrchestratorUrl } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
+import { describeMediaRejection } from '~/components/Image/ImageDropzone/media-rejection';
+import { showErrorNotification } from '~/utils/notifications';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import { isAndroidDevice } from '~/utils/device-helpers';
+import { markInMemory, reportUnreadablePick, splitUnreadablePicks } from '~/utils/unreadable-pick';
 
 export function MediaDropzone({
   label,
   description,
   accept = IMAGE_MIME_TYPE,
   onDrop,
+  onReject,
   error,
+  unreadablePicks = 0,
+  pickLimit,
   ...dropzoneProps
-}: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop'> & {
+}: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop' | 'onReject'> & {
   label?: string;
   description?: React.ReactNode;
   accept?: string[];
   error?: Error;
+  /** Called after the rejection message is shown. */
+  onReject?: DropzoneProps['onReject'];
   onDrop: (args: { file: File; meta?: Record<string, unknown> }[]) => void;
+  /** Dropped files the consumer could not read later on; offered the same fallback. */
+  unreadablePicks?: number;
+  /**
+   * How many files of a pick the consumer can take. The rest are dropped before they are read, so
+   * no in-memory copy is taken of a file the consumer would discard.
+   */
+  pickLimit?: number;
 }) {
   // #region [state]
   const settings = useMediaUploadSettingsContext();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  // How many files of the last pick could not be read.
+  const [unreadableCount, setUnreadableCount] = useState(0);
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
   // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
   const fileExtensions = accept
@@ -44,7 +63,8 @@ export function MediaDropzone({
     const result = await mediaDropzoneData.getData(url);
     if (!result) return;
     const { file, data } = result;
-    onDrop([{ file, meta: data }]);
+    // Built in memory from the url, so a failed read of it is not the picker's doing.
+    onDrop([{ file: markInMemory(file), meta: data }]);
   };
   // #endregion
 
@@ -61,8 +81,39 @@ export function MediaDropzone({
       ? dayjs.duration(seconds, 'seconds').format(`mm [minutes (${seconds} seconds)]`)
       : `${seconds} seconds`;
 
-  function handleDrop(files: File[]) {
-    onDrop(files.map((file) => ({ file })));
+  function handleReject(rejections: FileRejection[]) {
+    const message = describeMediaRejection(rejections, {
+      extensions: fileExtensions,
+      video: allowsVideo
+        ? {
+            maxSize: maxVideoSize,
+            seconds,
+            maxDimension: settings?.maxVideoDimensions ?? constants.mediaUpload.maxVideoDimension,
+          }
+        : undefined,
+      maxSize: dropzoneProps.maxSize,
+      maxFiles: dropzoneProps.maxFiles,
+    });
+    if (message)
+      showErrorNotification({ title: "That file wasn't added", error: new Error(message) });
+    onReject?.(rejections);
+  }
+
+  async function handleDrop(picked: File[]) {
+    const files = pickLimit === undefined ? picked : picked.slice(0, Math.max(0, pickLimit));
+    const { readable, unreadable } = await splitUnreadablePicks(files, {
+      maxBytes: constants.mediaUpload.maxImageFileSize,
+    });
+    for (const { file } of unreadable) reportUnreadablePick(file, 'media');
+    setUnreadableCount(unreadable.length);
+    if (readable.length) onDrop(readable.map((file) => ({ file })));
+  }
+
+  // The Files chooser bypasses the dropzone's own limits: the alert refuses a file over `maxSize`,
+  // and the count is applied here.
+  function handleFallbackFiles(files: File[]) {
+    const { maxFiles } = dropzoneProps;
+    return handleDrop(maxFiles ? files.slice(0, maxFiles) : files);
   }
 
   // #region [render]
@@ -71,6 +122,7 @@ export function MediaDropzone({
       <Dropzone
         {...dropzoneProps}
         onDrop={handleDrop}
+        onReject={handleReject}
         onDropCapture={handleDropCapture}
         accept={accept}
         useFsAccessApi={!isAndroidDevice()}
@@ -122,6 +174,16 @@ export function MediaDropzone({
           </div>
         </div>
       </Dropzone>
+      {unreadableCount + unreadablePicks > 0 && (
+        <UnreadablePickAlert
+          accept={accept}
+          count={unreadableCount + unreadablePicks}
+          maxSize={dropzoneProps.maxSize}
+          multiple
+          disabled={dropzoneProps.disabled || dropzoneProps.loading}
+          onFiles={handleFallbackFiles}
+        />
+      )}
       {error && <Input.Error>{typeof error === 'string' ? error : error.message}</Input.Error>}
     </div>
   );

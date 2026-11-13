@@ -19,6 +19,7 @@ import {
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getWorkflow, queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isModelDeleted, isModelTakenDown } from '~/server/utils/model-version-gates';
 import type { TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { TrainingRunNameParts } from '~/shared/utils/training-file-names';
@@ -56,7 +57,7 @@ export async function getTrainingWorkflowOverlay({
   refs?: TrainingWorkflowRef[];
 }): Promise<TrainingWorkflowOverlay> {
   try {
-    const token = await getOrchestratorToken(userId, ctx);
+    const token = await getOrchestratorToken(userId, ctx, { allowRestricted: true });
     const fromDate = new Date(Date.now() - TRAINING_WORKFLOW_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     const { items } = await queryWorkflows({
@@ -166,10 +167,11 @@ export async function resolveTrainingRun({
     where: { id: modelVersionId },
     select: {
       id: true,
+      status: true,
       trainingStatus: true,
       trainingDetails: true,
       meta: true,
-      model: { select: { userId: true, name: true } },
+      model: { select: { userId: true, name: true, status: true, mode: true } },
       files: {
         where: { type: 'Training Data' },
         select: { id: true, type: true, metadata: true, sizeKB: true },
@@ -178,6 +180,10 @@ export async function resolveTrainingRun({
   });
   if (!version) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
   if (version.model.userId !== userId && !isModerator) throw throwAuthorizationError();
+  // A run's state carries its epochs, which are the model's weights: a deleted or taken-down
+  // model's are moderators-only, answered as if the version did not exist.
+  if ((isModelDeleted(version) || isModelTakenDown(version)) && !isModerator)
+    throw throwNotFoundError(`No model version with id ${modelVersionId}`);
 
   const run: TrainingRunNameParts = {
     modelName: version.model.name,
@@ -185,22 +191,12 @@ export async function resolveTrainingRun({
     architecture: trainingArchitectureKey(version.trainingDetails as TrainingDetailsObj | null),
   };
 
-  const file = pickBestTrainingFile(version.files);
-  const stored = ((file?.metadata as FileMetadata | null)?.trainingResults ??
-    null) as TrainingResultsV2 | null;
+  const { file, stored, workflowId } = resolveTrainingWorkflowId(version);
   const storedState: TrainingRunState = {
     source: 'stored',
     trainingStatus: version.trainingStatus,
     trainingResults: stored,
   };
-
-  const workflowId =
-    stored?.workflowId ??
-    // Written alongside the training results at submit. It lives on a small json column the
-    // TOAST-dropping replication bug cannot reach, so it is the one handle that survives a run
-    // whose stored results came back empty — which is exactly when this screen needs the
-    // orchestrator most.
-    ((version.meta as { trainingWorkflowId?: string } | null)?.trainingWorkflowId || undefined);
 
   if (!file || !workflowId) return { state: storedState, run };
 
@@ -222,6 +218,26 @@ export async function resolveTrainingRun({
     },
     run,
   };
+}
+
+/**
+ * The orchestrator workflow a model version was trained by, from its stored records. Read the
+ * version through `dbWrite` — see `resolveTrainingRun`.
+ */
+export function resolveTrainingWorkflowId<F extends { metadata: unknown }>(version: {
+  meta: unknown;
+  files: F[];
+}): { file: F | undefined; stored: TrainingResultsV2 | null; workflowId: string | undefined } {
+  const file = pickBestTrainingFile(version.files);
+  const stored = ((file?.metadata as FileMetadata | null)?.trainingResults ??
+    null) as TrainingResultsV2 | null;
+  const workflowId =
+    stored?.workflowId ??
+    // Written alongside the training results at submit. It lives on a small json column the
+    // TOAST-dropping replication bug cannot reach, so it is the one handle that survives a run
+    // whose stored results came back empty.
+    ((version.meta as { trainingWorkflowId?: string } | null)?.trainingWorkflowId || undefined);
+  return { file, stored, workflowId };
 }
 
 /** One workflow, derived, or null if it cannot be read — past retention, malformed, or upstream down. */
@@ -252,7 +268,7 @@ async function getTrainingWorkflowOverlayById({
   ctx: { req: NextApiRequest; res: NextApiResponse };
 }): Promise<TrainingWorkflowOverlay> {
   try {
-    const token = await getOrchestratorToken(userId, ctx);
+    const token = await getOrchestratorToken(userId, ctx, { allowRestricted: true });
     const workflow = await getWorkflow({ token, path: { workflowId } });
     if (!workflow.status) return emptyTrainingOverlay();
 

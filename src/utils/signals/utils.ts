@@ -103,7 +103,7 @@ export class EventEmitter<T extends Record<string, unknown>> {
   off<K extends keyof T>(event: K, cb: CallbackFunction<T[K]>) {
     if (!this.callbacks[event]) return;
     const index = this.callbacks[event].indexOf(cb);
-    this.callbacks[event].splice(index, 1);
+    if (index !== -1) this.callbacks[event].splice(index, 1);
   }
 
   emit<K extends keyof T>(event: K, args: T[K]) {

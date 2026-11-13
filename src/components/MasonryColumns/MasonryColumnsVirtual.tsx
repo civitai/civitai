@@ -1,7 +1,13 @@
 import React, { useCallback, useRef } from 'react';
 import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
-import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
+import {
+  MASONRY_GAP,
+  MASONRY_SPAN_MIN_RATIO,
+  useMasonryColumns,
+} from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
+import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import styles from './MasonryColumnsVirtual.module.scss';
 import type {
   MasonryRenderItemProps,
   MasonryAdjustHeightFn,
@@ -15,14 +21,6 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 
-// `contentVisibility: 'auto'` below implies `contain: paint`, which clips every
-// descendant to the item's border box no matter what `overflow` says — so a card's
-// corner badge gets sliced in half. Padding the item outward by this much (and
-// pulling its origin back by the same) gives that overflow somewhere to land while
-// leaving the card's own box untouched. Must stay <= half the 16px row/column gap,
-// or a later sibling's bleed paints over the badge and undoes the whole thing.
-const ITEM_BLEED = 8;
-
 type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;
@@ -33,6 +31,13 @@ type Props<TData> = {
   /** [lowerInterval, upperInterval] */
   withAds?: boolean;
   overscan?: number;
+  /**
+   * Let a landscape item cover two adjacent columns when there are three or more. The number is
+   * the cap on that wide item's total height.
+   */
+  spanLandscapeMaxHeight?: number;
+  /** More pages are coming, so a wide item waits for the items that could fill beside it. */
+  hasMore?: boolean;
 };
 
 export function MasonryColumnsVirtual<TData>({
@@ -44,6 +49,8 @@ export function MasonryColumnsVirtual<TData>({
   itemId,
   withAds,
   overscan,
+  spanLandscapeMaxHeight,
+  hasMore,
 }: Props<TData>) {
   const { columnCount, columnWidth } = useMasonryContext();
 
@@ -54,7 +61,10 @@ export function MasonryColumnsVirtual<TData>({
     imageDimensions,
     adjustHeight,
     maxItemHeight,
-    withAds
+    withAds,
+    spanLandscapeMaxHeight
+      ? { minRatio: MASONRY_SPAN_MIN_RATIO, maxHeight: spanLandscapeMaxHeight, holdTail: hasMore }
+      : undefined
   );
 
   // Measured here rather than per column: the columns are flush with this wrapper, and
@@ -73,6 +83,8 @@ export function MasonryColumnsVirtual<TData>({
           columnWidth={columnWidth}
           scrollMargin={scrollMargin}
           className={clsx(
+            // Only a spanning feed overlays one column on another.
+            spanLandscapeMaxHeight && styles.column,
             'flex max-w-[450px] flex-col gap-4',
             columnCount === 1 ? 'w-full' : 'w-[320px]'
           )}
@@ -107,6 +119,7 @@ function VirtualColumn<TData>({
   const getItemKey = useCallback(
     (i: number) => {
       const { data } = items[i];
+      if (!data) return i;
       if (data.type === 'data') return itemId?.(data.data) ?? i;
       return i;
     },
@@ -119,7 +132,7 @@ function VirtualColumn<TData>({
     estimateSize: (i) => items[i].height,
     overscan,
     getItemKey,
-    gap: 16,
+    gap: MASONRY_GAP,
     scrollMargin,
     initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
     // See MasonryGridVirtual for rationale — opts out of virtual-core's
@@ -137,35 +150,44 @@ function VirtualColumn<TData>({
         position: 'relative',
       }}
     >
-      {rowVirtualizer.getVirtualItems().map((item) => (
-        <div
-          key={`${item.index}_${item.key}`}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: -ITEM_BLEED,
-            width: `calc(100% + ${ITEM_BLEED * 2}px)`,
-            height: items[item.index].height + ITEM_BLEED * 2,
-            padding: ITEM_BLEED,
-            transform: `translateY(${
-              item.start - rowVirtualizer.options.scrollMargin - ITEM_BLEED
-            }px)`,
-            // Skip layout/paint for offscreen overscan rows; the explicit
-            // `height` above keeps layout space reserved so the virtualizer's
-            // scroll math stays correct.
-            contentVisibility: 'auto',
-            containIntrinsicSize: `0 ${items[item.index].height + ITEM_BLEED * 2}px`,
-          }}
-        >
-          <VirtualItem index={item.index} item={items[item.index]} {...rest} />
-        </div>
-      ))}
+      {rowVirtualizer.getVirtualItems().map((item) =>
+        items[item.index].spacer ? null : (
+          <div
+            key={`${item.index}_${item.key}`}
+            className={styles.item}
+            data-masonry-item
+            data-span={items[item.index].span}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: -ITEM_BLEED,
+              width: items[item.index].span
+                ? `calc(${items[item.index].span! * 100}% + ${
+                    MASONRY_GAP * (items[item.index].span! - 1) + ITEM_BLEED * 2
+                  }px)`
+                : `calc(100% + ${ITEM_BLEED * 2}px)`,
+              height: items[item.index].height + ITEM_BLEED * 2,
+              padding: ITEM_BLEED,
+              transform: `translateY(${
+                item.start - rowVirtualizer.options.scrollMargin - ITEM_BLEED
+              }px)`,
+              // Skip layout/paint for offscreen overscan rows; the explicit
+              // `height` above keeps layout space reserved so the virtualizer's
+              // scroll math stays correct.
+              contentVisibility: 'auto',
+              containIntrinsicSize: `0 ${items[item.index].height + ITEM_BLEED * 2}px`,
+            }}
+          >
+            <VirtualItem index={item.index} item={items[item.index]} {...rest} />
+          </div>
+        )
+      )}
     </div>
   );
 }
 
 function VirtualItem<TData>({
-  item: { height, data },
+  item: { height, data, span = 1 },
   render: RenderComponent,
   columnWidth,
   index,
@@ -175,6 +197,7 @@ function VirtualItem<TData>({
   columnWidth: number;
   index: number;
 }) {
+  if (!data) return null;
   switch (data.type) {
     case 'data':
       return (
@@ -182,7 +205,7 @@ function VirtualItem<TData>({
           // key={itemId?.(data.data) ?? index}
           index={index}
           data={data.data}
-          width={columnWidth}
+          width={columnWidth * span + MASONRY_GAP * (span - 1)}
           height={height}
         />
       );

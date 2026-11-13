@@ -42,8 +42,8 @@ import { describe, expect, it } from 'vitest';
  *   2. The second half of the relationship — "does caller identity reach the
  *      resolver" — is a question about the SOURCE of the handler and its callees.
  *      No runtime value can answer it.
- * Every router in `src/server/routers/index.ts` is also registered through
- * `lazy(() => import(…))`, so a runtime walk would have to await the whole server
+ * Every router in `src/server/routers/index.ts` is also registered as a lazy
+ * `() => import(…)` loader, so a runtime walk would have to await the whole server
  * graph (Prisma, Redis, Meilisearch, env) inside vitest to populate the map.
  *
  * Since it is a source parse, comments are stripped BEFORE any matching: a
@@ -352,8 +352,11 @@ export function findFunctionSource(file: string, name: string): string | null {
 // carry WHO is asking. `ctx.cache`, `ctx.req`, `ctx.ip` etc. are deliberately absent:
 // they are not caller identity. Keep this list in step with `Context` in
 // `src/server/createContext.ts` when a new identity-bearing field is added.
-const IDENTITY_EXPR_RE = /\bctx\s*\??\.\s*(user|features|session)\b/;
-const IDENTITY_EXPR_RE_G = /\bctx\s*\??\.\s*(user|features|session)\b/g;
+// `eventViewerOf(ctx)` / `eventUserOf(ctx)` are the session user, read through the credential.
+const IDENTITY_SOURCE =
+  '\\bctx\\s*\\??\\.\\s*(user|features|session)\\b|\\bevent(?:Viewer|User)Of\\(\\s*ctx\\s*\\)';
+const IDENTITY_EXPR_RE = new RegExp(IDENTITY_SOURCE);
+const IDENTITY_EXPR_RE_G = new RegExp(IDENTITY_SOURCE, 'g');
 
 export type IdentitySite = { expr: string; index: number };
 
@@ -361,7 +364,8 @@ export function identitySites(text: string): IdentitySite[] {
   const out: IdentitySite[] = [];
   IDENTITY_EXPR_RE_G.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = IDENTITY_EXPR_RE_G.exec(text))) out.push({ expr: `ctx.${m[1]}`, index: m.index });
+  while ((m = IDENTITY_EXPR_RE_G.exec(text)))
+    out.push({ expr: `ctx.${m[1] ?? 'user'}`, index: m.index });
   return out;
 }
 
@@ -550,10 +554,10 @@ export type Derived = {
 
 function routerKeyMap(): Record<string, string> {
   // Comment-aware for the same reason as the `edgeCacheIt(` scan: a commented-out
-  // `lazy()` registration is not a registered router and must not mint a key.
+  // registration is not a registered router and must not mint a key.
   const index = readSource(join(ROUTERS_DIR, 'index.ts'));
   const map: Record<string, string> = {};
-  const re = /(\w+):\s*lazy\(\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
+  const re = /(\w+):\s*\(\)\s*=>\s*import\(['"]([^'"]+)['"]\)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(index))) {
     const base = m[2].split('/').pop()!;
@@ -644,6 +648,14 @@ const isRisky = (d: Derived) => d.identity.length > 0 && !d.optOut;
 //     what would retire the entry. The mechanical content is the fact snapshot: the
 //     exact identity surface is pinned, so any change to how identity is used here
 //     — widening it, adding a field — turns the entry red and forces a re-read.
+//
+//   status 'gate-refuses-then-skips'
+//     A SAFETY claim for a callee that reads identity only to REFUSE: it answers
+//     yes or not-found, never a different body. Enforced mechanically: the callee
+//     calls `gate` before `sharedRead` (a refusal after the shared read would
+//     already have filled it), and the resolver sets `ctx.cache.skip = true` when
+//     `skipWhen(` holds, so a viewer-specific 200 never reaches the edge. A
+//     not-found is an error response and is never cached.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type LedgerEntry = {
@@ -654,26 +666,53 @@ type LedgerEntry = {
 } & (
   | { status: 'callee-ignores-identity'; why: string }
   | { status: 'accepted-variance'; why: string; closes: string }
+  | {
+      status: 'gate-refuses-then-skips';
+      why: string;
+      gate: string;
+      sharedRead: string;
+      skipWhen: string;
+    }
 );
 
 const LEDGER: Record<string, LedgerEntry> = {
-  'homeBlock.getHomeBlock': {
-    status: 'callee-ignores-identity',
+  'image.getResources': {
+    status: 'gate-refuses-then-skips',
     why:
-      'getHomeBlocksByIdHandler forwards `user: ctx.user` into getHomeBlockById, whose ' +
-      'parameter pattern destructures only `{ id, domain }` — the SessionUser is dropped at ' +
-      'the boundary and never reaches a query. (Its type still declares `user?: SessionUser` ' +
-      'with a comment claiming it is "passed down to getHomeBlockData"; that comment is stale, ' +
-      'which is exactly how this becomes a leak the day somebody tidies it up.) The stake is ' +
-      'wider than the edge header: getHomeBlockById returns via getHomeBlockCached, which ' +
-      'stores the result in Redis under a key of type:identifier:domain carrying no user ' +
-      'segment, so identity reaching that path would cross callers even with edgeCacheIt ' +
-      'removed. Note also that the ctx.cache.skip assigned in this handler is scoped to the ' +
-      'Announcement branch: since #4368 landed, edgeCacheIt re-reads `skip` after the resolver ' +
-      'so that assignment now takes effect, but it is conditional on the block TYPE, not on ' +
-      'the caller, so every other block type stays edge-cached and this entry still stands.',
+      'getImageResourcesHandler forwards `viewer: ctx.user` into getImageResources, which reads ' +
+      'it only in assertImageVisibleToViewer, BEFORE the resource query: the viewer gets the ' +
+      'same rows or not-found. An image a signed-out viewer may also open answers the same for ' +
+      'everyone and stays edge-cached; any other image answers 200 only to its owner or a ' +
+      'moderator, so the handler sets ctx.cache.skip when the same read says it is not ' +
+      'visibleSignedOut. ' +
+      'Behaviour is pinned by image-resources-visibility.behavior.test.ts.',
+    gate: 'assertImageVisibleToViewer(',
+    sharedRead: 'dbRead.$queryRaw',
+    skipWhen: '!visibleSignedOut',
     identity: ['ctx.user'],
-    forwards: ['getHomeBlockById|user|ignores'],
+    forwards: ['getImageResources|viewer|uses'],
+    directUses: 0,
+  },
+  'homeBlock.getHomeBlock': {
+    status: 'gate-refuses-then-skips',
+    why:
+      'getHomeBlocksByIdHandler forwards `viewer: ctx.user` into getHomeBlockById, which reads ' +
+      'it only to refuse a flag-gated row (metadata.featureFlag, or an Event row) the viewer ' +
+      'may not see, and does so BEFORE getHomeBlockCached: that Redis entry is keyed ' +
+      'type:identifier:domain with no user segment, so the body itself must stay ' +
+      'caller-independent. An ungated row answers the same for everyone and stays edge-cached; ' +
+      'a gated row answers 200 to some and not-found to others, so the handler sets ' +
+      'ctx.cache.skip for it (edgeCacheIt re-reads skip after the resolver, #4368). A Collection ' +
+      'row whose collection not everyone may read is refused the same way ' +
+      '(getCollectionBlockAudience, also before getHomeBlockCached); when it is served, the body ' +
+      'is still read with no user, outside the shared entry, and the handler skips the edge and ' +
+      'zeroes its TTLs. Behaviour is pinned by home-block-flag-gate.test.ts (T4, T5), ' +
+      'home-block-collection-audience.test.ts and the edge-cache-chain test (T6).',
+    gate: 'canViewHomeBlock(',
+    sharedRead: 'getHomeBlockCached(',
+    skipWhen: 'isHomeBlockGated(',
+    identity: ['ctx.user'],
+    forwards: ['getHomeBlockById|viewer|uses'],
     directUses: 0,
   },
   'leaderboard.getLeadboardLegends': {
@@ -858,6 +897,17 @@ describe('parsing primitives (instrument validation)', () => {
     expect(analyzeIdentityUse(assigned).directUses).toBe(1);
     // Nothing at all: the zero must be reachable AND distinguishable from the above.
     expect(analyzeIdentityUse('return getThing(input);')).toEqual({ forwards: [], directUses: 0 });
+  });
+
+  it('reads eventViewerOf(ctx) and eventUserOf(ctx) as the session user', () => {
+    expect(analyzeIdentityUse('getThing({ ...input, viewer: eventViewerOf(ctx) });')).toEqual({
+      forwards: [{ callee: 'getThing', prop: 'viewer', expr: 'ctx.user' }],
+      directUses: 0,
+    });
+    expect(analyzeIdentityUse('getThing({ user: eventUserOf(ctx), ...input });')).toEqual({
+      forwards: [{ callee: 'getThing', prop: 'user', expr: 'ctx.user' }],
+      directUses: 0,
+    });
   });
 
   it('calleeUsesProp distinguishes ignored / used / destructured-but-unused / unknown', () => {
@@ -1087,8 +1137,57 @@ describe('an edge-cached procedure must not vary its body by caller', () => {
     }
   });
 
-  it('at least one entry of each status exists (both branches are reachable)', () => {
+  it('a ‘gate-refuses-then-skips’ entry really refuses first and skips the edge', () => {
+    for (const [path, entry] of Object.entries(LEDGER)) {
+      if (entry.status !== 'gate-refuses-then-skips') continue;
+      const d = all.find((x) => x.path === path);
+      expect(d, `${path} is ledgered but is no longer derived`).toBeTruthy();
+      expect({ path, directUses: d!.directUses }).toEqual({ path, directUses: 0 });
+      expect(d!.forwards.length).toBeGreaterThan(0);
+      const handlerFile = join(ROUTERS_DIR, d!.file);
+      const handlerName = terminalResolver(
+        procedureBlocks(readSource(handlerFile)).find((b) => `${path}`.endsWith(`.${b.name}`))!
+          .block
+      )!.text;
+      const handlerImports = importMap(readSource(handlerFile), handlerFile);
+      const handlerSrc = functionBody(
+        findFunctionSource(handlerImports[handlerName], handlerName)!
+      );
+      // The skip must be conditioned on the gate predicate, not on something narrower.
+      const skipAt = handlerSrc.indexOf('ctx.cache.skip = true');
+      expect({ path, skipAt: skipAt > -1 }).toEqual({ path, skipAt: true });
+      expect({ path, skipWhen: handlerSrc.slice(0, skipAt).includes(entry.skipWhen) }).toEqual({
+        path,
+        skipWhen: true,
+      });
+      for (const fw of d!.forwards) {
+        const calleeImports = importMap(
+          readSource(handlerImports[handlerName]),
+          handlerImports[handlerName]
+        );
+        const body = functionBody(findFunctionSource(calleeImports[fw.callee], fw.callee)!);
+        const gateAt = body.indexOf(entry.gate);
+        const readAt = body.indexOf(entry.sharedRead);
+        expect({ path, callee: fw.callee, gateAt: gateAt > -1, readAt: readAt > -1 }).toEqual({
+          path,
+          callee: fw.callee,
+          gateAt: true,
+          readAt: true,
+        });
+        expect(
+          { path, callee: fw.callee, gateBeforeSharedRead: gateAt < readAt },
+          `${path}: ${fw.callee} must refuse before the shared read, or a refused row has already filled it`
+        ).toEqual({ path, callee: fw.callee, gateBeforeSharedRead: true });
+      }
+    }
+  });
+
+  it('at least one entry of each status exists (every branch is reachable)', () => {
     const statuses = new Set(Object.values(LEDGER).map((e) => e.status));
-    expect([...statuses].sort()).toEqual(['accepted-variance', 'callee-ignores-identity']);
+    expect([...statuses].sort()).toEqual([
+      'accepted-variance',
+      'callee-ignores-identity',
+      'gate-refuses-then-skips',
+    ]);
   });
 });

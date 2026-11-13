@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { grokVersionIds } from '~/shared/data-graph/generation/version-ids';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { grokVersionIds } from '~/shared/generation/version-ids';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
  * `checkpointDef`'s `filterVersionGroup` is the only thing hiding a gated model
@@ -22,8 +22,6 @@ const v2Hidden: GenerationCtx = {
   ...EXT,
   gateRules: [
     {
-      id: 'hide-grok-v2',
-      name: '',
       availableTo: 'moderators',
       presentation: 'hidden',
       ecosystems: [],

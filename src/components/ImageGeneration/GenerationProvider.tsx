@@ -1,7 +1,10 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
 
 import { produce } from 'immer';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  GENERATOR_QUEUE_INPUT,
+  useGetTextToImageRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
@@ -11,7 +14,7 @@ import {
   type WorkflowData,
   type NormalizedGeneratedImageResponse,
 } from '~/server/services/orchestrator';
-import type { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/orchestration-client';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { usePollableWorkflowIdsStore } from '~/components/ImageGeneration/utils/useGenerationSignalUpdate';
@@ -64,13 +67,23 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
   return useStore(store, selector);
 }
 
+/**
+ * The generator's queue state. One per generator: the mobile generator provides it around its
+ * header and form, and the form's own provider then defers to that one.
+ */
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
+  const outer = useContext(GenerationContext);
+  if (outer) return <>{children}</>;
+  return <GenerationStateProvider>{children}</GenerationStateProvider>;
+}
+
+function GenerationStateProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const opened = useGenerationPanelStore((state) => state.opened);
   // Bypass the user's marker / tag filter: the queue snackbar / canGenerate /
   // hasGeneratedImages need to reflect ALL in-flight and completed workflows,
   // not just those matching the currently-selected filter (e.g. "liked").
-  const { data: requests, isLoading } = useGetTextToImageRequests(undefined, {
+  const { data: requests, isLoading } = useGetTextToImageRequests(GENERATOR_QUEUE_INPUT, {
     enabled: opened,
     includeTags: false,
     ignoreFilters: true,

@@ -1,5 +1,6 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Input, CloseButton, Alert, ActionIcon, Tooltip } from '@mantine/core';
+import { Input, CloseButton, Alert, ActionIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconPalette } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';

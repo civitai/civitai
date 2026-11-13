@@ -23,6 +23,8 @@
     "noUncheckedIndexedAccess": false, // TODO swap to true
     "paths": {
       "~/*": ["./src/*"],
+      "@civitai/post-planner": ["./packages/civitai-post-planner/src/index"],
+      "@civitai/post-planner/*": ["./packages/civitai-post-planner/src/*"],
       "@civitai/db-schema": ["./packages/civitai-db-schema/src/index"],
       "@civitai/db-schema/*": ["./packages/civitai-db-schema/src/*"],
       "@civitai/db": ["./packages/civitai-db/src/index"],
@@ -40,7 +42,9 @@
       "@civitai/brand": ["./packages/civitai-brand/src/index"],
       "@civitai/brand/*": ["./packages/civitai-brand/src/*"],
       "@civitai/notifications": ["./packages/civitai-notifications/src/index"],
-      "@civitai/notifications/*": ["./packages/civitai-notifications/src/*"]
+      "@civitai/notifications/*": ["./packages/civitai-notifications/src/*"],
+      "@civitai/app-assistant": ["./packages/civitai-app-assistant/src/index"],
+      "@civitai/app-assistant/*": ["./packages/civitai-app-assistant/src/*"]
     },
     "noErrorTruncation": true,
     "plugins": [
@@ -71,6 +75,7 @@
     "scripts/**/*.tsx",
     "src",
     "packages/*/src",
+    // Excluded below, but kept: `tsconfig.tests.json` inherits this list and checks them.
     "tests",
     "test",
     ".next/types/**/*.ts"
@@ -80,11 +85,25 @@
     "./node_modules",
     "./node_modules/*",
     "src/pages/api/dev-local/*.ts",
-    "src/**/__tests__/**",
     "packages/civitai-ui",
 
-    // 🔴 `scripts/__tests__/**` is NOT typechecked, exactly as `src/**/__tests__/**`
-    // above is not. This is a DIRECTORY exclusion on purpose, and the reason is
+    // Test files are typechecked only by `scripts/ci/typecheck-tests-gate.mjs`
+    // (`tsconfig.tests.json`), never by `pnpm typecheck`. Keep these entries identical to
+    // `TEST_EXCLUDES` in `scripts/ci/typecheck-tests-compare.mjs`; the gate refuses to
+    // run when they differ.
+    "src/**/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/tests/**",
+    "src/test-utils/**",
+    "packages/*/src/**/__tests__/**",
+    "packages/*/src/**/*.test.ts",
+    "packages/*/src/**/*.test.tsx",
+    "tests/**",
+    "test/**",
+
+    // 🔴 `scripts/__tests__/**` is NOT typechecked by `pnpm typecheck`, like the test
+    // entries above; the scripts gate measures it. This is a DIRECTORY exclusion on purpose, and the reason is
     // structural rather than a backlog:
     //
     // That directory exists to test the untyped `.mjs` modules under

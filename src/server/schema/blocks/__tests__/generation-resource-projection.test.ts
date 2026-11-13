@@ -18,11 +18,17 @@ const fullResource = {
   name: 'v2.1', // versionName
   baseModel: 'Flux.1 D',
   strength: 0.8,
-  minStrength: -2,
-  maxStrength: 3,
+  settings: { strength: { min: -2, max: 3, default: 0.8 }, clipSkip: 2 },
   trainedWords: ['trigger1', 'trigger2'],
-  clipSkip: 2,
-  model: { id: 55, name: 'Cool LoRA', type: 'LORA', nsfw: true, minor: false, sfwOnly: false, userId: 9 },
+  model: {
+    id: 55,
+    name: 'Cool LoRA',
+    type: 'LORA',
+    nsfw: true,
+    minor: false,
+    sfwOnly: false,
+    userId: 9,
+  },
   // ── internals that MUST NOT leak ──
   hasAccess: true,
   availability: 'Private',
@@ -94,14 +100,50 @@ describe('projectSafeGenerationResource — widened public subset, no internals'
       name: 'v',
       baseModel: 'SD 1.5',
       strength: null,
-      minStrength: null,
-      maxStrength: null,
+      settings: null,
       trainedWords: null,
-      clipSkip: null,
       model: { id: 5, name: 'X', type: 'LORA' },
     });
     expect(out.strength).toBe(1);
     expect(out.trainedWords).toEqual([]);
     expect(out.clipSkip).toBeNull();
+  });
+
+  // The flat contract's defaults must hold per field, not only when the whole object is absent.
+  it('defaults each settings field on its own when the object is there but the field is not', () => {
+    const base = {
+      id: 6,
+      name: 'v',
+      baseModel: 'SD 1.5',
+      model: { id: 7, name: 'Y', type: 'LORA' },
+    };
+    const noStrength = projectSafeGenerationResource({ ...base, settings: { strength: null } });
+    expect([noStrength.strength, noStrength.minStrength, noStrength.maxStrength]).toEqual([
+      1, -1, 2,
+    ]);
+    const noClip = projectSafeGenerationResource({
+      ...base,
+      settings: { strength: { min: 0, max: 1, default: 0.5 }, clipSkip: null },
+    });
+    expect(noClip.clipSkip).toBeNull();
+    expect(noClip.minStrength).toBe(0);
+  });
+
+  it('a working strength wins over the version default, which wins over 1', () => {
+    const base = {
+      id: 8,
+      name: 'v',
+      baseModel: 'SD 1.5',
+      model: { id: 9, name: 'Z', type: 'LORA' },
+    };
+    const range = { min: 0, max: 1, default: 0.4 };
+    expect(
+      projectSafeGenerationResource({ ...base, strength: 0.9, settings: { strength: range } })
+        .strength
+    ).toBe(0.9);
+    expect(
+      projectSafeGenerationResource({ ...base, strength: null, settings: { strength: range } })
+        .strength
+    ).toBe(0.4);
   });
 });

@@ -80,6 +80,7 @@ export const useChatNewMessageSignal = () => {
           thisChat.messages = [
             {
               content: updated.content,
+              userId: updated.userId,
               contentType: updated.contentType,
               createdAt: new Date(updated.createdAt),
             },
@@ -90,6 +91,13 @@ export const useChatNewMessageSignal = () => {
       // - a conversation set to Nothing (or Mentions, unmentioned) still updates
       //   in place; it just does not announce itself
       if (!notify) return;
+
+      // - a message in a Request counts, silently, and only the server knows
+      //   whether its author is blocked or banned, so refetch rather than +1
+      if (myMember?.filteredAt) {
+        queryUtils.chat.getUnreadCount.invalidate();
+        return;
+      }
 
       // - increment the unread message count
       queryUtils.chat.getUnreadCount.setData(
@@ -241,12 +249,12 @@ export const useChatNewRoomSignal = () => {
     (updated: ChatCreateChat) => {
       if (!currentUser || !features.chat || updated.ownerId === currentUser.id) return;
 
-      // A filtered request is deliberately absent from the server's unread count.
-      // Incrementing it here anyway put it back in the header badge and rang the
-      // sound — the exact thing the filter exists to prevent.
+      // A request counts in the header badge but stays silent. Refetch rather than
+      // +1: the server leaves out a request from a blocked or banned sender.
       const myMember = updated.chatMembers?.find((cm) => cm.userId === currentUser.id);
       if (myMember?.filteredAt) {
         queryUtils.chat.getAllByUser.invalidate();
+        queryUtils.chat.getUnreadCount.invalidate();
         return;
       }
 

@@ -5,7 +5,6 @@ import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
-import { v4 as uuidv4 } from 'uuid';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   attachUploadSettlement,
@@ -31,6 +30,10 @@ type UploadResult = {
   id: string;
   objectUrl: string;
   type: MediaType;
+  width: number;
+  height: number;
+  hash?: string;
+  mimeType: string;
 };
 
 type UploadToCF = (
@@ -212,6 +215,10 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       id: resolvedId,
       objectUrl: imageData.objectUrl,
       type: imageData.type,
+      width: imageData.width,
+      height: imageData.height,
+      hash: imageData.hash,
+      mimeType: imageData.mimeType,
     };
   };
 
@@ -275,7 +282,7 @@ export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?
 
   return {
     file,
-    uuid: uuidv4(),
+    uuid: crypto.randomUUID(),
     status: blockedFor ? ('blocked' as TrackedFileStatus) : ('uploading' as TrackedFileStatus),
     message: blockedFor?.filter(isDefined).join(', '),
     height,

@@ -2,15 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import { getListingBadge } from '~/components/Apps/appListingCardView';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
-import { LISTING_FACET_LABELS } from '~/components/Apps/listingKindLabels';
+import {
+  LISTING_FACET_LABELS,
+  LISTING_REVIEWS_ANCHOR_ID,
+} from '~/components/Apps/listingKindLabels';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
  * The listing detail's "Details" accordion ROW MODEL (blocking `unit` project).
  *
- * The browser `component` project is not run by CI and loads no CSS, so nothing there
- * can be the gate for which rows exist, in what order, or which rows the `preview`
- * posture drops. That decision is pure, so it is pinned here.
+ * The browser `component` project loads no CSS, and which rows exist, in what order,
+ * and which rows the `preview` posture drops is a pure decision, so it is pinned here.
  *
  * `formatDate` is INJECTED throughout — a fixed marker rather than the real dayjs
  * formatter — so these assertions are about ORDER and OMISSION and cannot go red on a
@@ -28,10 +30,12 @@ function detail(over: Partial<ListingDetail> = {}): Input {
     category: 'utility',
     contentRating: 'pg',
     // 431 up / 68 down → 0.8637 across 499 reviews (the 0.8–0.95 band, <500 bucket).
-    // Distinct from `installCount` below and from every ladder constant.
+    // Distinct from `installCount` / `openCount` below and from every ladder constant.
     recommend: { recommendedCount: 431, notRecommendedCount: 68, recommendPct: 431 / 499 },
     reviewCount: 499,
+    // Pairwise distinct: a row reading the wrong count shows the wrong number.
     installCount: 4213,
+    openCount: 2718,
     updatedAt: FIXED_DATE,
     ...over,
   } as Input;
@@ -46,7 +50,7 @@ describe('buildListingDetailRows — order', () => {
       'category',
       'rating',
       'reviews',
-      'installs',
+      'plays',
       'updated',
     ]);
   });
@@ -72,8 +76,11 @@ describe('buildListingDetailRows — order', () => {
       value: 'Very Positive (499)',
       color: 'green',
     });
+    // 🔴 PLAYS — the card's number (`openCount`), under the card's word, not installs.
     // Thousands-separated, like every other public count on the site.
-    expect(by.installs).toMatchObject({ label: 'Installs', value: '4,213' });
+    expect(by.plays).toMatchObject({ label: 'Plays', value: '2,718' });
+    expect(rows.map((r) => r.label)).not.toContain('Installs');
+    expect(rows.map((r) => r.value)).not.toContain('4,213');
     // The injected formatter is what produced this — so the ROW is under test, not dayjs.
     expect(by.updated).toMatchObject({ label: 'Updated', value: `formatted:${FIXED_DATE}` });
   });
@@ -260,35 +267,43 @@ describe('buildListingDetailRows — a null field OMITS its row (never renders a
   it('a null category drops ONLY the category row', () => {
     const rows = keys(buildListingDetailRows(detail({ category: null }), { formatDate: fmt }));
     expect(rows).not.toContain('category');
-    expect(rows).toEqual(['kind', 'rating', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'rating', 'reviews', 'plays', 'updated']);
   });
 
   it('a null contentRating drops ONLY the rating row', () => {
     const rows = keys(buildListingDetailRows(detail({ contentRating: null }), { formatDate: fmt }));
     expect(rows).not.toContain('rating');
-    expect(rows).toEqual(['kind', 'category', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'category', 'reviews', 'plays', 'updated']);
   });
 
   it('both null → the three always-present rows remain', () => {
     const rows = keys(
       buildListingDetailRows(detail({ category: null, contentRating: null }), { formatDate: fmt })
     );
-    expect(rows).toEqual(['kind', 'reviews', 'installs', 'updated']);
+    expect(rows).toEqual(['kind', 'reviews', 'plays', 'updated']);
   });
 
-  it('a zero installCount still renders — 0 installs is a fact, not an absent field', () => {
-    const rows = buildListingDetailRows(detail({ installCount: 0 }), { formatDate: fmt });
-    expect(keys(rows)).toContain('installs');
-    expect(rows.find((r) => r.key === 'installs')?.value).toBe('0');
-    // 🔴 And the discriminator: `0` must NOT take the same path as `undefined` below.
-    // A `if (detail.installCount)` truthiness guard would drop this row, which is the
-    // most likely way the runtime guard gets written wrong.
-    expect(rows.find((r) => r.key === 'installs')?.value).not.toBe(undefined);
+  it('🔴 the plays row follows the CARD rule: none for 0 or an off-site null', () => {
+    // The store card shows no play count for `0` (operator rule) or for an off-site
+    // `null` (unmeasurable); the page must not show a number the card hides.
+    for (const openCount of [0, null]) {
+      const rows = buildListingDetailRows(detail({ openCount }), { formatDate: fmt });
+      expect(keys(rows), String(openCount)).toEqual([
+        'kind',
+        'category',
+        'rating',
+        'reviews',
+        'updated',
+      ]);
+    }
+    // Control: one play does render, so the omission above is the rule, not a dead row.
+    const one = buildListingDetailRows(detail({ openCount: 1 }), { formatDate: fmt });
+    expect(one.find((r) => r.key === 'plays')).toMatchObject({ label: 'Plays', value: '1' });
   });
 
   /**
    * 🔴 REGRESSION, not an invariant guard — this one was RED before the fix, on a real
-   * crash. `updatedAt` and `installCount` are declared REQUIRED on `ListingDetail`, but
+   * crash. `updatedAt` and the count (then `installCount`) are declared REQUIRED on `ListingDetail`, but
    * the moderator combined-review surface builds a `ListingDetail`-shaped object
    * DIRECTLY, through a cast, rather than via `projectListingDetail`. The first version
    * of this builder called `detail.installCount.toLocaleString()` unconditionally; on
@@ -301,15 +316,15 @@ describe('buildListingDetailRows — a null field OMITS its row (never renders a
   describe('🔴 a field that is ABSENT at runtime (a cast producer) omits its row, never throws', () => {
     it('POSITIVE CONTROL: both rows are present when the fields are supplied', () => {
       const rows = keys(buildListingDetailRows(detail(), { formatDate: fmt }));
-      expect(rows).toContain('installs');
+      expect(rows).toContain('plays');
       expect(rows).toContain('updated');
     });
 
-    it('a missing installCount omits the installs row instead of throwing', () => {
+    it('a missing openCount omits the plays row instead of throwing', () => {
       const cast = { ...detail() } as Record<string, unknown>;
-      delete cast.installCount;
+      delete cast.openCount;
       const rows = keys(buildListingDetailRows(cast as Input, { formatDate: fmt }));
-      expect(rows).not.toContain('installs');
+      expect(rows).not.toContain('plays');
       expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'updated']);
     });
 
@@ -320,12 +335,12 @@ describe('buildListingDetailRows — a null field OMITS its row (never renders a
       delete cast.updatedAt;
       const rows = keys(buildListingDetailRows(cast as Input, { formatDate: fmt }));
       expect(rows).not.toContain('updated');
-      expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'installs']);
+      expect(rows).toEqual(['kind', 'category', 'rating', 'reviews', 'plays']);
     });
 
     it('BOTH missing — the panel still builds, with the rows it can', () => {
       const cast = { ...detail() } as Record<string, unknown>;
-      delete cast.installCount;
+      delete cast.openCount;
       delete cast.updatedAt;
       expect(() => buildListingDetailRows(cast as Input, { formatDate: fmt })).not.toThrow();
       expect(keys(buildListingDetailRows(cast as Input, { formatDate: fmt }))).toEqual([
@@ -370,6 +385,23 @@ describe('buildListingDetailRows — the reviews row', () => {
     expect(rows.find((r) => r.key === 'reviews')?.value).toBe('No reviews yet');
   });
 
+  it('reviews present but no percentage (below the threshold) → the counts, never the ladder', () => {
+    // Below LISTING_RECOMMEND_PCT_MIN_REVIEWS the server sends `recommendPct: null` with
+    // reviews present. Before, one positive review read "Positive (1)" here.
+    const rows = buildListingDetailRows(
+      detail({
+        recommend: { recommendedCount: 2, notRecommendedCount: 1, recommendPct: null },
+        reviewCount: 3,
+      }),
+      { formatDate: fmt }
+    );
+    const reviews = rows.find((r) => r.key === 'reviews');
+    expect(reviews?.value).toBe('3 reviews · 2 recommend');
+    expect(reviews?.color).toBeUndefined();
+    // There ARE reviews to jump to, so the row links to them.
+    expect(reviews?.anchorId).toBe(LISTING_REVIEWS_ANCHOR_ID);
+  });
+
   it("a low rating carries the ladder's own colour, not a hardcoded green", () => {
     const rows = buildListingDetailRows(
       detail({
@@ -386,50 +418,36 @@ describe('buildListingDetailRows — the reviews row', () => {
 });
 
 describe('🔴 buildListingDetailRows — the `preview` posture', () => {
-  it('POSITIVE CONTROL: reviews, installs and updated ARE present in the live posture', () => {
+  it('POSITIVE CONTROL: reviews, plays and updated ARE present in the live posture', () => {
     // Same fixture, `preview` unset. Without this the omissions below are zeros from a
     // builder that might never emit those rows at all.
     const live = keys(buildListingDetailRows(detail(), { formatDate: fmt }));
     expect(live).toContain('reviews');
-    expect(live).toContain('installs');
+    expect(live).toContain('plays');
     expect(live).toContain('updated');
   });
 
-  it('preview OMITS reviews / installs / updated and keeps exactly the honest rows', () => {
+  it('preview OMITS reviews / plays / updated and keeps exactly the honest rows', () => {
     const rows = keys(buildListingDetailRows(detail(), { preview: true, formatDate: fmt }));
     expect(rows).not.toContain('reviews');
-    expect(rows).not.toContain('installs');
+    expect(rows).not.toContain('plays');
     expect(rows).not.toContain('updated');
     expect(rows).toEqual(['kind', 'category', 'rating']);
   });
 
   /**
-   * 🔴 INSTALLS — asserted on the ROW, not on a word.
-   *
-   * `buildListingStatChips` already returns NO chips in preview, with a docstring
-   * saying the reason is that a zero would read as a measured fact about an app nobody
-   * could yet have installed. The rail then rendered `Installs: 0` anyway. The rule is
-   * one rule; this pins that the rail obeys it too.
-   *
-   * The assertion is the ABSENCE OF THE ROW OBJECT plus the absence of any row whose
-   * rendered value is the zero string — not "the DOM does not contain '0'", which any
-   * other number on the page can spell.
+   * 🔴 PLAYS — asserted on the ROW, not on a word. A preview has no metric rollup, so
+   * `buildListingStatChips` returns no chips there; the rail obeys the same rule.
    */
-  it('🔴 preview renders NO installs row — not even the zero one', () => {
-    const zeroed = detail({ installCount: 0 });
-    // Control: with `preview` unset the zero really does render, so the omission below
-    // is about the posture and not about a builder that drops zeros generally.
-    const live = buildListingDetailRows(zeroed, { formatDate: fmt });
-    expect(live.find((r) => r.key === 'installs')).toMatchObject({
-      label: 'Installs',
-      value: '0',
-    });
+  it('🔴 preview renders NO plays row', () => {
+    const live = buildListingDetailRows(detail(), { formatDate: fmt });
+    expect(live.find((r) => r.key === 'plays')).toMatchObject({ label: 'Plays', value: '2,718' });
 
-    const rows = buildListingDetailRows(zeroed, { preview: true, formatDate: fmt });
-    expect(rows.find((r) => r.key === 'installs')).toBeUndefined();
+    const rows = buildListingDetailRows(detail(), { preview: true, formatDate: fmt });
+    expect(rows.find((r) => r.key === 'plays')).toBeUndefined();
     // …and no OTHER row smuggles the count in under a different key.
-    expect(rows.map((r) => r.value)).not.toContain('0');
-    expect(rows.map((r) => r.label)).not.toContain('Installs');
+    expect(rows.map((r) => r.value)).not.toContain('2,718');
+    expect(rows.map((r) => r.label)).not.toContain('Plays');
   });
 
   /**
@@ -497,7 +515,7 @@ describe('buildListingDetailRows — the SOURCE row', () => {
       'rating',
       'source',
       'reviews',
-      'installs',
+      'plays',
       'updated',
     ]);
     const row = rows.find((r) => r.key === 'source')!;
@@ -548,7 +566,7 @@ describe('buildListingDetailRows — the SOURCE row', () => {
     expect(keys(buildListingDetailRows(cast, { formatDate: fmt }))).not.toContain('source');
   });
 
-  it('🔴 SURVIVES the `preview` posture — unlike reviews / installs / updated', () => {
+  it('🔴 SURVIVES the `preview` posture — unlike reviews / plays / updated', () => {
     // Rule 2 omits a row when the PREVIEW POSTURE cannot supply it honestly (a shadow
     // has no reviews or installs; its "updated" date is really a submission time). None
     // of that applies to a link the shadow carries verbatim and that approving PUBLISHES
@@ -572,5 +590,96 @@ describe('buildListingDetailRows — the SOURCE row', () => {
     // silently become an outbound link.
     const rows = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt });
     expect(rows.filter((r) => r.href != null).map((r) => r.key)).toEqual(['source']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The CATEGORY row's store link and the RATING row's pill colour
+// ---------------------------------------------------------------------------
+
+const row = (rows: { key: string }[], key: string) =>
+  rows.find((r) => r.key === key) as ReturnType<typeof buildListingDetailRows>[number] | undefined;
+
+describe('buildListingDetailRows — category store link', () => {
+  it('a known category links to the store filtered to it', () => {
+    const rows = buildListingDetailRows(detail({ category: 'games' }), { formatDate: fmt });
+    expect(row(rows, 'category')?.storeHref).toBe('/apps/store?category=games');
+    // Not the OUTBOUND field — that one obliges target=_blank + noopener.
+    expect(row(rows, 'category')?.href).toBeUndefined();
+  });
+
+  it('no link for a category the store cannot filter by, nor in preview', () => {
+    const unknown = buildListingDetailRows(detail({ category: 'hats' }), { formatDate: fmt });
+    expect(row(unknown, 'category')?.value).toBe('hats');
+    expect(row(unknown, 'category')?.storeHref).toBeUndefined();
+    const preview = buildListingDetailRows(detail({ category: 'games' }), {
+      preview: true,
+      formatDate: fmt,
+    });
+    expect(row(preview, 'category')?.value).toBe('Games');
+    expect(row(preview, 'category')?.storeHref).toBeUndefined();
+  });
+
+  it('only the category row carries a storeHref', () => {
+    const rows = buildListingDetailRows(detail({ sourceRepoUrl: REPO }), { formatDate: fmt });
+    expect(rows.filter((r) => r.storeHref != null).map((r) => r.key)).toEqual(['category']);
+  });
+});
+
+describe('buildListingDetailRows — rating pill colour', () => {
+  // Literals per rung: the site's browsing-level colours (`nsfwLevelColors`), G sharing
+  // PG's ceiling. Pairwise the fixture covers four distinct colours plus the gray fallback.
+  it.each([
+    ['g', 'green'],
+    ['pg', 'green'],
+    ['pg13', 'yellow'],
+    ['r', 'orange'],
+    ['x', 'red'],
+    ['nc17', 'gray'],
+  ])('%s → %s', (rating, color) => {
+    const rows = buildListingDetailRows(detail({ contentRating: rating }), { formatDate: fmt });
+    expect(row(rows, 'rating')?.pillColor).toBe(color);
+  });
+
+  it('only the rating row carries a pill colour', () => {
+    const rows = buildListingDetailRows(detail(), { formatDate: fmt });
+    expect(rows.filter((r) => r.pillColor != null).map((r) => r.key)).toEqual(['rating']);
+  });
+});
+
+describe('🔴 buildListingDetailRows — the usage row is Plays on-site, Installs off-site', () => {
+  const OFFSITE = {
+    kind: 'offsite',
+    externalUrl: 'https://x.example',
+    connectClientId: null,
+  } as const;
+  const usageRows = (rows: { key: string; label: string; value: string }[]) =>
+    rows.filter((r) => r.key === 'plays' || r.key === 'installs');
+
+  it('on-site: "Plays 2,718", and no Installs row', () => {
+    const rows = buildListingDetailRows(detail(), { formatDate: fmt });
+    expect(usageRows(rows)).toEqual([{ key: 'plays', label: 'Plays', value: '2,718' }]);
+  });
+
+  it('🔴 off-site: "Installs 4,213", and no Plays row', () => {
+    const rows = buildListingDetailRows(detail({ kindData: OFFSITE, openCount: null }), {
+      formatDate: fmt,
+    });
+    expect(usageRows(rows)).toEqual([{ key: 'installs', label: 'Installs', value: '4,213' }]);
+    // In the same slot the plays row takes on-site.
+    expect(keys(rows)).toEqual(['kind', 'category', 'rating', 'reviews', 'installs', 'updated']);
+  });
+
+  it('off-site with zero installs has no usage row; preview never has one', () => {
+    const zero = buildListingDetailRows(
+      detail({ kindData: OFFSITE, openCount: null, installCount: 0 }),
+      { formatDate: fmt }
+    );
+    expect(usageRows(zero)).toEqual([]);
+    const preview = buildListingDetailRows(detail({ kindData: OFFSITE, openCount: null }), {
+      preview: true,
+      formatDate: fmt,
+    });
+    expect(usageRows(preview)).toEqual([]);
   });
 });

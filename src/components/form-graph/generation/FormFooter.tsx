@@ -3,20 +3,15 @@
  * `FormFooter` on the form-graph store: quantity input, submit button with
  * buzz-type selector, reset, priority alerts (missing fields, whatIf errors,
  * submit errors, insufficient buzz, BOGO), queue snackbar, prompt-block
- * handling, telemetry, and license attribution. The buzz selector and its
- * hooks are graph-free and imported from the v1 footer rather than copied.
+ * handling, telemetry, and license attribution. The buzz selector and its hooks are
+ * engine-free and imported from `~/components/Generation/footer-parts`.
  */
 
-import {
-  ActionIcon,
-  Alert,
-  Button,
-  Card,
-  NumberInput,
-  Popover,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { ReportProblemButton } from '~/components/Feedback/ReportProblemButton';
+import { ORCHESTRATION_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
+import { trackRecentEcosystem } from '~/store/recent-ecosystems.store';
+import { ActionIcon, Alert, Button, Card, NumberInput, Text, UnstyledButton } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -31,7 +26,6 @@ import { Controller, MultiController } from 'form-graph/react';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import {
   useGenerationContext,
   useGenerationContextStore,
@@ -51,23 +45,23 @@ import {
   useGenerateFromGraph,
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { useSelectedBuzzType } from '~/components/Generation/footer-parts';
 import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
 import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useGeneratorLayout, useMobileGenerator } from '~/hooks/useMobileGenerator';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
-import { StepWarningsNotification } from '~/components/generation_v2/FormFooter';
+import { StepWarningsNotification } from '~/components/Generation/footer-parts';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import {
   TrialAccessWarning,
   TrialBlockedAlert,
 } from '~/components/Generate/GenerationPaidAccessAlerts';
-import { parseTrialMessage } from '~/components/Generate/paid-access-gate';
+import { parseTrialMessage, type SelectedResources } from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
 import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import {
   ecosystemByKey,
   getBaseModelLicense,
@@ -82,9 +76,16 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
+import {
+  FLUX3_MATURE_SOURCE_MESSAGE,
+  MATURE_SOURCE_ALTERNATIVE,
+} from '~/shared/constants/mature-source.constants';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
-import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import {
+  hasPendingPromptMint,
+  remixProvenanceStore,
+  waitForPromptMint,
+} from '~/store/remix-provenance.store';
 import { isDefined } from '~/utils/type-guards';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
@@ -93,32 +94,33 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
-import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
-import { useSelectedResourceIds, type GenerationStore } from './store';
+import { hasTipEligibleSelection } from './creator-tip';
+import { FOOTER_RESET } from './footer-reset';
+import { CostPicker } from './CostPicker';
+import { QuantityPicker, TitleRowReset } from './MobileFooterParts';
+import { FooterStrips } from '~/components/generation_v2/FooterStrips';
+import { getMissingField, getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
+import {
+  useSelectedResourceIds,
+  type GenerationStore,
+  formStateKey,
+  useFormStateKey,
+} from './store';
+import { switchToMatureSourceAlternative, useFlux3MatureSource } from './useFlux3MatureSource';
+import { useGenerationLicense } from './useGenerationLicense';
 
 // =============================================================================
 // Cost (including tips)
 // =============================================================================
 
-interface ResourceSnapshot {
-  model?: { id: number };
-  resources?: { id: number }[];
-  vae?: { id: number };
-}
-
-/** Creator tips apply when any user-created resource is selected. */
-function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
-  const { model, resources, vae } = snapshot;
-  return !!(model?.id || (resources && resources.length > 0) || vae?.id);
-}
-
 function useTotalGenerationCost(store: GenerationStore) {
   const features = useFeatureFlags();
   const { creatorTip, civitaiTip } = useTipStore();
   const { data } = useWhatIfContext();
+  const { resources: resourceData } = useResourceDataContext();
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
-  const hasCreatorTip = getHasCreatorTip(snapshot);
+  const snapshot = store.getSnapshot().state as SelectedResources;
+  const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
   const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
@@ -128,15 +130,28 @@ function useTotalGenerationCost(store: GenerationStore) {
   return (data?.cost?.total ?? 0) + totalTip;
 }
 
-function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
-  const { isLoading, isError, refetch } = useWhatIfContext();
+export function ConnectedCostPicker({ store }: { store: GenerationStore }) {
+  const features = useFeatureFlags();
+  const { data, isLoading, isError, refetch, canEstimateCost, gateBlocked } = useWhatIfContext();
   const cost = useTotalGenerationCost(store);
+  const { resources: resourceData } = useResourceDataContext();
+  const hasCreatorTip = hasTipEligibleSelection(
+    store.getSnapshot().state as SelectedResources,
+    resourceData
+  );
   return (
-    <BuzzTypeSelector
+    <CostPicker
       cost={cost}
+      workflowCost={data?.cost ?? {}}
       loading={isLoading}
       error={isError}
+      // The whatIf query is disabled in both cases, so no estimate is coming. Its other disable
+      // reasons are transient (resources/images loading), hide this box (no user), or render a
+      // different footer (noSubmit workflows).
+      unavailable={!canEstimateCost || gateBlocked}
       onRetry={() => refetch()}
+      showCreatorTip={!!features.creatorComp && hasCreatorTip}
+      showCivitaiTip={!!features.creatorComp}
       tourTarget={GEN_BUZZ_KEY}
     />
   );
@@ -146,20 +161,72 @@ function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
 // Priority alerts
 // =============================================================================
 
+export function MatureSourceNotice({
+  store,
+  canSwitch,
+}: {
+  store: GenerationStore;
+  canSwitch: boolean;
+}) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      <div className="flex w-full flex-wrap items-center justify-between gap-2">
+        <Text size="sm">{FLUX3_MATURE_SOURCE_MESSAGE}</Text>
+        {canSwitch && (
+          <Button
+            variant="light"
+            color="yellow"
+            radius="xl"
+            size="compact-sm"
+            onClick={() => switchToMatureSourceAlternative(store)}
+          >
+            Switch to {MATURE_SOURCE_ALTERNATIVE.label}
+          </Button>
+        )}
+      </div>
+    </Notification>
+  );
+}
+
+/**
+ * Scrolls the form to the field a footer alert names, for fields that mark themselves with
+ * `data-generation-field`; the footer can be a long way below the field it is about.
+ */
+export function ShowFieldButton({ fieldKey }: { fieldKey: string }) {
+  const find = () => document.querySelector<HTMLElement>(`[data-generation-field="${fieldKey}"]`);
+  // Looked up after every render and again on the tap, not kept: the field can mount after the
+  // footer, and a workflow change remounts it.
+  const [present, setPresent] = useState(false);
+  useEffect(() => setPresent(!!find())); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!present) return null;
+  return (
+    <UnstyledButton
+      data-tap-area
+      className="ml-1 font-semibold text-blue-4 underline"
+      onClick={() => find()?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+    >
+      Show
+    </UnstyledButton>
+  );
+}
+
 function PriorityAlertSpace({
   store,
   submitError,
   onClearSubmitError,
-  missingFieldMessage,
-  snackbarRight,
+  missingField,
   forceInsufficientBuzz,
   onClearInsufficientBuzz,
 }: {
   store: GenerationStore;
   submitError?: string;
   onClearSubmitError: () => void;
-  missingFieldMessage?: string | null;
-  snackbarRight?: ReactNode;
+  missingField?: { key: string; message: string } | null;
   forceInsufficientBuzz?: boolean;
   onClearInsufficientBuzz?: () => void;
 }) {
@@ -181,6 +248,8 @@ function PriorityAlertSpace({
   const totalCost = useTotalGenerationCost(store);
   const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
+  const matureSource = useFlux3MatureSource(store);
+  const mobileGenerator = useMobileGenerator();
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const clientInsufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
@@ -215,7 +284,9 @@ function PriorityAlertSpace({
   // alert can win while `submitError` is still set, and restating the precedence here is how the
   // proactive warning would end up suppressed with nothing shown in its place.
   let showingTrialAlert = false;
-  if (missingFieldMessage) {
+  // A blocking alert is not folded to a strip in the mobile generator.
+  let blocking = true;
+  if (missingField) {
     priorityAlert = (
       <Notification
         icon={<IconAlertTriangle size={18} />}
@@ -223,9 +294,12 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-blue-8/20"
         withCloseButton={false}
       >
-        {missingFieldMessage}
+        {missingField.message}
+        <ShowFieldButton fieldKey={missingField.key} />
       </Notification>
     );
+  } else if (matureSource.blocked) {
+    priorityAlert = <MatureSourceNotice store={store} canSwitch={matureSource.canSwitch} />;
   } else if (blockingTrialMessage) {
     showingTrialAlert = true;
     priorityAlert = (
@@ -256,19 +330,24 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-red-8/20"
       >
         {submitError}
+        <ReportProblemButton
+          area={ORCHESTRATION_FEEDBACK_AREA}
+          title="Generation failed to submit"
+          message={submitError}
+        />
       </Notification>
     );
   } else if (insufficientBuzz) {
     const typeName = selectedType.charAt(0).toUpperCase() + selectedType.slice(1);
     priorityAlert = (
       <Notification
-        icon={<IconAlertTriangle size={18} />}
         color="yellow"
         className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
         withCloseButton={false}
       >
+        {/* The text wraps beside the button rather than the button dropping below it. */}
         <div className="flex w-full items-center justify-between gap-2">
-          <Text size="sm">
+          <Text size="sm" className="min-w-0">
             Not enough {typeName} Buzz
             {clientInsufficientBuzz
               ? ` (${abbreviateNumber(selectedBalance)}/${abbreviateNumber(totalCost)})`
@@ -289,6 +368,7 @@ function PriorityAlertSpace({
               color="yellow"
               radius="xl"
               size="compact-sm"
+              className="shrink-0"
               onClick={() => {
                 setBuzzType(alternativeType);
                 onClearInsufficientBuzz?.();
@@ -303,8 +383,10 @@ function PriorityAlertSpace({
     // Above the sdcpp branch because that one always assigns (its MultiController decides
     // internally whether to draw), so anything after it never renders.
   } else if (otherWarnings.length) {
+    blocking = false;
     priorityAlert = <StepWarningsNotification warnings={otherWarnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
+    blocking = false;
     priorityAlert = (
       <MultiController
         graph={generationHub}
@@ -346,14 +428,14 @@ function PriorityAlertSpace({
 
   return (
     <>
-      <QueueSnackbar right={snackbarRight} />
+      <QueueSnackbar mobile={mobileGenerator} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
       <DownloadWarning />
       {whatIfSettled && !showingTrialAlert && (
         <TrialAccessWarning selectedIds={selectedIds} remaining={trialRemaining} />
       )}
-      {priorityAlert}
+      {blocking && priorityAlert ? <div data-strip-full>{priorityAlert}</div> : priorityAlert}
     </>
   );
 }
@@ -376,20 +458,41 @@ function BaseModelWarnings() {
 // Submit button
 // =============================================================================
 
-function SubmitButton({
+const PREPARING_REMIX_LABEL = 'Preparing remix…';
+/** How long the button says "Submitted" after a generation goes through. */
+export const SUBMITTED_FLASH_MS = 1500;
+
+/** The form as it was last submitted: `key` is its `formStateKey`, `at` tells repeat submits apart. */
+export type LastSubmitted = { key: string; at: number };
+const REMIX_LINK_TIMEOUT_MESSAGE =
+  "Couldn't prepare the remix link in time; this generation won't count toward a free remix-gallery spot.";
+
+export function SubmitButton({
   store,
   isLoading: isSubmitting,
+  preparing,
   onSubmit,
+  lastSubmitted,
 }: {
   store: GenerationStore;
   isLoading?: boolean;
+  /** Waiting on the reuse-prompt remix link before submitting. */
+  preparing?: boolean;
   onSubmit?: () => void;
+  lastSubmitted?: LastSubmitted;
 }) {
   const { running, helpers, setBlockedTarget } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
-  const { isError, isLoading: isWhatIfLoading, canEstimateCost, gateBlocked } = useWhatIfContext();
+  const {
+    isError,
+    isLoading: isWhatIfLoading,
+    canEstimateCost,
+    gateBlocked,
+    download,
+    boostRequired,
+  } = useWhatIfContext();
   const totalCost = useTotalGenerationCost(store);
 
   const {
@@ -399,15 +502,21 @@ function SubmitButton({
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
 
   const submitBlocked =
     !canGenerate ||
+    matureSource.blocked ||
+    license.blocked ||
     gateBlocked ||
     isWhatIfLoading ||
     isBuzzLoading ||
     isError ||
     !canEstimateCost ||
-    insufficientBuzz;
+    insufficientBuzz ||
+    // A required boost not yet priced, or with nothing shown to download: the server refuses both.
+    (boostRequired && download?.boostFee == null);
 
   useEffect(() => {
     setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
@@ -419,6 +528,27 @@ function SubmitButton({
     onSubmit?.();
   };
 
+  // After a submit the button confirms it, then reads "Generate again" for as long as the form is
+  // what was submitted, so a second tap is a choice rather than a missed confirmation.
+  const formKey = useFormStateKey(store);
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (!lastSubmitted) return;
+    setFlash(true);
+    const timer = setTimeout(() => setFlash(false), SUBMITTED_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [lastSubmitted]);
+  const label = preparing ? (
+    PREPARING_REMIX_LABEL
+  ) : flash ? (
+    <span className="inline-flex items-center gap-1">
+      <IconCheck size={18} />
+      Submitted
+    </span>
+  ) : lastSubmitted?.key === formKey ? (
+    'Generate again'
+  ) : undefined;
+
   return (
     <GenerateButton
       type="button"
@@ -426,27 +556,11 @@ function SubmitButton({
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={submitBlocked}
+      disabled={submitBlocked || preparing}
       onClick={handleClick}
-    />
-  );
-}
-
-function CostBreakdown({ store }: { store: GenerationStore }) {
-  const features = useFeatureFlags();
-  const { data } = useWhatIfContext();
-
-  if (!features.creatorComp) return null;
-
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
-  const hasCreatorTip = getHasCreatorTip(snapshot);
-
-  return (
-    <GenerationCostPopover
-      width={300}
-      workflowCost={data?.cost ?? {}}
-      hideCreatorTip={!hasCreatorTip}
-    />
+    >
+      {label}
+    </GenerateButton>
   );
 }
 
@@ -456,6 +570,7 @@ function CostBreakdown({ store }: { store: GenerationStore }) {
 
 function QuantityField() {
   const [upsellOpened, setUpsellOpened] = useState(false);
+  const mobileGenerator = useMobileGenerator();
   return (
     <MultiController
       graph={generationHub}
@@ -467,16 +582,32 @@ function QuantityField() {
           <Controller
             graph={generationHub}
             name="quantity"
-            render={({ value, meta, onChange }) => (
-              <QuantityFieldInner
-                value={value}
-                meta={meta ?? { min: 1, max: 4, step: 1 }}
-                onChange={onChange}
-                batchesVideos={batchesVideos}
-                upsellOpened={upsellOpened}
-                setUpsellOpened={setUpsellOpened}
-              />
-            )}
+            render={({ value, meta, onChange }) => {
+              const bounds = meta ?? { min: 1, max: 4, step: 1 };
+              if (mobileGenerator)
+                return (
+                  <QuantityPicker
+                    value={value ?? bounds.min}
+                    min={bounds.min}
+                    max={bounds.max}
+                    step={bounds.step ?? 1}
+                    upsellMax={
+                      batchesVideos && bounds.max < VID_MAX_QUANTITY ? VID_MAX_QUANTITY : undefined
+                    }
+                    onChange={onChange}
+                  />
+                );
+              return (
+                <QuantityFieldInner
+                  value={value}
+                  meta={meta ?? { min: 1, max: 4, step: 1 }}
+                  onChange={onChange}
+                  batchesVideos={batchesVideos}
+                  upsellOpened={upsellOpened}
+                  setUpsellOpened={setUpsellOpened}
+                />
+              );
+            }}
           />
         );
       }}
@@ -759,10 +890,12 @@ export function FormFooter({
     setPreBoost,
     download,
   } = useWhatIfContext();
-  const isMobile = useIsMobile({ type: 'media' });
-  const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
+  const isMobile = useGeneratorLayout() !== 'desktop';
+  const mobileGenerator = useMobileGenerator();
+  const missingField = !canEstimateCost ? getMissingField(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
+  const [lastSubmitted, setLastSubmitted] = useState<LastSubmitted>();
   const [insufficientBuzzError, setInsufficientBuzzError] = useState(false);
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -800,21 +933,30 @@ export function FormFooter({
 
   const clearWarning = () => setPromptWarning(null);
 
+  const [preparingRemix, setPreparingRemix] = useState(false);
+  // A second click while the remix link is being prepared must not submit twice.
+  const preparingRemixRef = useRef(false);
+
+  // "Generate Anyway" on a flagged prompt submits without the Generate button.
+  const matureSource = useFlux3MatureSource(store);
+  const license = useGenerationLicense(store);
+
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
+    if (preparingRemixRef.current || matureSource.blocked || license.blocked) return;
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +
-    // rate-limited overlap collapses to isValid:false, matching the v1 footer
-    // (see generation_v2/FormFooter.tsx for the full ordering rationale)
+    // rate-limited overlap collapses to isValid:false
     const result = store.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
 
-    // See generation_v2/FormFooter.tsx — resolved against the form, not the store.
+    // Resolved against the form, not the store: the claim dies when the form no longer
+    // holds what the remix put there.
     const remixOfId = resolveRemixOfId(store.getSnapshot().state as RemixClaimFormState);
 
     if (!result.success) {
       try {
-        const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+        const submitSnapshot = store.getSnapshot().state as SelectedResources;
         trackAction({
           type: 'Generator_Submit',
           details: {
@@ -860,10 +1002,24 @@ export function FormFooter({
       return;
     }
 
+    // A reuse-prompt remix's token arrives when its mint answers, which can be well after the
+    // click; submitting before then would lose the free remix-gallery placement it is for.
+    if (hasPendingPromptMint(remixOfId)) {
+      preparingRemixRef.current = true;
+      setPreparingRemix(true);
+      try {
+        const { timedOut } = await waitForPromptMint(remixOfId);
+        if (timedOut) showWarningNotification({ message: REMIX_LINK_TIMEOUT_MESSAGE });
+      } finally {
+        preparingRemixRef.current = false;
+        setPreparingRemix(false);
+      }
+    }
+
     let externalId: string | undefined;
     try {
       externalId = crypto.randomUUID();
-      const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+      const submitSnapshot = store.getSnapshot().state as SelectedResources;
       trackAction({
         type: 'Generator_Submit',
         details: {
@@ -892,8 +1048,7 @@ export function FormFooter({
     });
 
     // The wire schema strips `canGenerate`, so re-check against the resource
-    // data store: drop resources the user can't actually use (v1 filters
-    // these off the snapshot, where the flag is still present).
+    // data store: drop resources the user can't actually use.
     // The not-yet-hydrated fallback below lets an unchecked resource through —
     // safe ONLY because the server re-rejects !canGenerate resources
     // (orchestration-new.service validateAndEnrichResources); this filter is
@@ -905,13 +1060,14 @@ export function FormFooter({
       );
     }
 
-    const snapshot = store.getSnapshot().state as ResourceSnapshot & {
+    const snapshot = store.getSnapshot().state as SelectedResources & {
       workflow?: string;
+      ecosystem?: string;
       images?: Array<{ url: string }>;
       video?: { url: string };
       snippets?: { seed?: number };
     };
-    const hasCreatorTip = getHasCreatorTip(snapshot);
+    const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
     const needsSourceMetadata = snapshot.workflow
       ? workflowConfigByKey.get(snapshot.workflow)?.enhancement === true
@@ -932,8 +1088,9 @@ export function FormFooter({
       }
     }
 
-    // Collected by CURRENT url, outside the `needsSourceMetadata` gate — see
-    // generation_v2/FormFooter.tsx for why both of those matter.
+    // Collected by CURRENT url, and outside the `needsSourceMetadata` gate: a token is
+    // keyed by the url the image has NOW, and a gated collection would skip the provenance
+    // on exactly the submissions that need it.
     const sourceProvenance = [
       ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
       // The reuse-prompt entry point's token. It seeds no source image, so the
@@ -1002,6 +1159,9 @@ export function FormFooter({
         store.set({ snippets: rest });
       }
 
+      if (snapshot.ecosystem) trackRecentEcosystem(snapshot.ecosystem);
+      // After the clean-up above, so what it cleared doesn't read as an edit.
+      setLastSubmitted({ key: formStateKey(store), at: Date.now() });
       onSubmitSuccess?.();
     };
 
@@ -1009,17 +1169,7 @@ export function FormFooter({
   };
 
   const handleReset = () => {
-    const snap = store.getSnapshot().state as { output?: string };
-    const outputType = (snap.output ?? 'image') as 'image' | 'video' | 'audio' | 'model3d';
-
-    // clear only THIS output's buckets (v1's clearStorageForOutput semantics)
-    // while preserving output preferences; other outputs' settings survive
-    store.prune(outputResetPredicate(outputType, { exclude: ['outputFormat', 'priority'] }));
-
-    if (outputType === 'video') store.set({ workflow: 'txt2vid' });
-    if (outputType === 'audio') store.set({ workflow: 'txt2music' });
-    if (outputType === 'model3d') store.set({ workflow: 'txt2model3d' });
-
+    store.reset(FOOTER_RESET);
     remixStore.clearRemix();
     clearWarning();
     setSubmitError(undefined);
@@ -1073,17 +1223,18 @@ export function FormFooter({
 
   return (
     <>
-      <PriorityAlertSpace
-        store={store}
-        submitError={submitError}
-        onClearSubmitError={() => setSubmitError(undefined)}
-        missingFieldMessage={missingFieldMessage}
-        snackbarRight={<CostBreakdown store={store} />}
-        forceInsufficientBuzz={insufficientBuzzError}
-        onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
-      />
+      <FooterStrips>
+        <PriorityAlertSpace
+          store={store}
+          submitError={submitError}
+          onClearSubmitError={() => setSubmitError(undefined)}
+          missingField={missingField}
+          forceInsufficientBuzz={insufficientBuzzError}
+          onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
+        />
 
-      <BlueBuzzMatureReminder />
+        <BlueBuzzMatureReminder />
+      </FooterStrips>
 
       {!membershipUpsell.needsAcknowledgment && (
         <div className="flex h-[52px] items-stretch gap-2">
@@ -1092,15 +1243,21 @@ export function FormFooter({
             <SubmitButton
               store={store}
               isLoading={generateMutation.isPending || isMinLoading}
+              preparing={preparingRemix}
               onSubmit={handleSubmit}
+              lastSubmitted={lastSubmitted}
             />
-            {currentUser && <ConnectedBuzzTypeSelector store={store} />}
+            {currentUser && <ConnectedCostPicker store={store} />}
           </Button.Group>
-          <Tooltip label="Reset">
-            <ActionIcon onClick={handleReset} variant="default" className="h-auto" size="xl">
-              <IconRestore size={16} />
-            </ActionIcon>
-          </Tooltip>
+          {mobileGenerator ? (
+            <TitleRowReset onReset={handleReset} />
+          ) : (
+            <Tooltip label="Reset">
+              <ActionIcon onClick={handleReset} variant="default" className="h-auto" size="xl">
+                <IconRestore size={16} />
+              </ActionIcon>
+            </Tooltip>
+          )}
         </div>
       )}
 

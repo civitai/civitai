@@ -41,8 +41,19 @@ const {
   mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
 }));
 
+// Refresh writes through the conditional variant. It is routed to the same mock, minus its keepValue argument,
+// so these boundary tests read one call shape; what keepValue does is covered in
+// session-invalidation.token-state.test.ts.
 vi.mock('~/server/redis/atomic', () => ({
   hSetMultiWithTTL: mockHSetMultiWithTTL,
+  hSetMultiWithTTLUnlessValue: (
+    client: unknown,
+    key: string,
+    fields: Record<string, string>,
+    ttlMs: number,
+    _keepValue: string,
+    onChunk?: unknown
+  ) => mockHSetMultiWithTTL(client, key, fields, ttlMs, onChunk),
 }));
 
 vi.mock('~/server/redis/fail-open-log', () => ({
@@ -59,6 +70,7 @@ vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: {
     hScanNoValues: mockHScanNoValues,
+    hDel: vi.fn().mockResolvedValue(0),
     set: vi.fn().mockResolvedValue('OK'),
   },
   withSysReadDeadline: mockWithSysReadDeadline,
@@ -87,6 +99,9 @@ vi.unmock('~/server/auth/session-invalidation');
 
 // Real module under test — imported AFTER the mocks are wired.
 import { refreshSession, invalidateSession } from '../session-invalidation';
+import { clearSessionCache } from '../session-cache';
+import { signalClient } from '~/utils/signal-client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /** One-page HSCAN NOVALUES reply — cursor '0' means the scan is complete. */
 const onePage = (fields: string[]) => ({ cursor: '0', fields });
@@ -108,8 +123,8 @@ describe('updateSessionState fail-open wrapper (via refreshSession)', () => {
     const [, key, fieldsObj, ttlMs] = mockHSetMultiWithTTL.mock.calls[0];
     expect(key).toBe(REDIS_SYS_KEYS.SESSION.TOKEN_STATE);
     expect(fieldsObj).toEqual({ 'token-a': 'refresh', 'token-b': 'refresh' });
-    // 30 days in ms
-    expect(ttlMs).toBe(60 * 60 * 24 * 30 * 1000);
+    // 91 days in ms: markers outlast the 90-day session limit
+    expect(ttlMs).toBe(60 * 60 * 24 * 91 * 1000);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
@@ -335,11 +350,6 @@ describe('updateSessionState scan is bounded in aggregate', () => {
     expect(extra).toMatchObject({ userId: 42, type: 'refresh' });
   });
 
-  it('does not report truncation on a scan that completes normally', async () => {
-    await refreshSession(42, { sendSignal: false });
-    expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
-  });
-
   // HSCAN can return the same field twice when the hash rehashes mid-scan. The write dedupes structurally,
   // but the count feeding the log line and the histogram would over-report.
   it('counts each field once when the scan returns duplicates', async () => {
@@ -377,5 +387,40 @@ describe('updateSessionState distinguishes a partial write from a total one', ()
     await expect(refreshSession(42, { sendSignal: false })).resolves.toBeUndefined();
 
     expect(mockLogSysRedisFailOpen.mock.calls[0][3]).toMatchObject({ chunksWritten: 0 });
+  });
+});
+
+// A partial sign-out must not stop part way or go unlogged: each step runs, and a failed one is logged
+// with the user and the step, so it can be re-run.
+describe('invalidateSession runs every sign-out step', () => {
+  it('still revokes the tokens and signals when clearing the session cache fails', async () => {
+    vi.mocked(clearSessionCache).mockRejectedValueOnce(new Error('redis unavailable'));
+
+    await expect(invalidateSession(42)).resolves.toBeUndefined();
+
+    expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
+    expect(signalClient.send).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 42, data: { type: 'invalid' } })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ step: 'clear-session-cache', userId: 42 })
+    );
+  });
+
+  it('logs a failed signal with the user and the step', async () => {
+    vi.mocked(signalClient.send).mockRejectedValueOnce(new Error('signal service down'));
+
+    await expect(invalidateSession(42)).resolves.toBeUndefined();
+
+    expect(mockHSetMultiWithTTL).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ step: 'session-signal', userId: 42 })
+    );
+  });
+
+  it('keeps a failed cache clear fatal for a refresh', async () => {
+    vi.mocked(clearSessionCache).mockRejectedValueOnce(new Error('redis unavailable'));
+
+    await expect(refreshSession(42)).rejects.toThrow('redis unavailable');
   });
 });

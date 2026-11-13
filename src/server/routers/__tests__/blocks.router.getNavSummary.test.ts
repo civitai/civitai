@@ -40,9 +40,16 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   emptyAnalytics: vi.fn(),
   resolveRange: vi.fn(),
 }));
-vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
-  getRevenueForOwner: vi.fn(),
-  getRecentAttributionsForOwner: vi.fn(),
+// 🔴 SPREAD, NOT A HAND-LISTED FACTORY. This suite tests nothing about revenue; it
+// mocks this module only because `blocks.router` imports it at module scope. A
+// factory naming individual exports therefore fails to LOAD the moment the router
+// gains one more import from here — in CI, in a file nobody was looking at, with a
+// green typecheck. It has already had to be edited once for exactly that reason.
+// `~/server/services/blocks/dev-tunnel.service` below is mocked this way for the
+// same stated reason.
+vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  getGoodsSalesForOwner: vi.fn(),
   emptyRevenue: vi.fn(),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -425,7 +432,7 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getNavSummary();
     expect(result.hasPendingInvites).toBe(true);
-    // …and an offer confers no capability, so "My apps" stays dark.
+    // …and an offer confers no capability, so "My builds" stays dark.
     expect(result.hasEditableApps).toBe(false);
   });
 
@@ -443,7 +450,7 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     expect(where.fromUserId).toBeUndefined();
   });
 
-  it('a PENDING seat does NOT light "My apps" — only "Invites"', async () => {
+  it('a PENDING seat does NOT light "My builds" — only "Invites"', async () => {
     // An unaccepted invite confers ZERO capability; offering an editor route for it
     // would be offering a page every child query refuses.
     mockDbRead.appCollaborator.findFirst.mockImplementation(
@@ -473,7 +480,7 @@ describe('getNavSummary — the collaborator-aware flags', () => {
     // attached `AppBlock` decide ownership on an OFF-SITE listing, where
     // `AppListing.userId` is canonical — so after `claimListing` or an off-site
     // `acceptTransfer` (both of which move only the column) the sub-nav offered the
-    // "My apps" route to the PREVIOUS owner and hid it from the rightful one. The third
+    // "My builds" route to the PREVIOUS owner and hid it from the rightful one. The third
     // branch is that fix, and this assertion is enumerated equality on purpose: it is the
     // structural half of "the tab and the page it opens cannot disagree", the other half
     // being `app-access.kind-aware-owner.test.ts`, which asserts both reads pass the

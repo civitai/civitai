@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as ImageUtils from '~/components/Image/image.utils';
 
@@ -65,41 +66,13 @@ const mocks = vi.hoisted(() => ({
 // file to load and collects zero tests without one failing assertion.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    useUtils: () => ({
-      placement: {
-        invalidate: vi.fn(),
-        /**
-         * 🔴 The fake honours `staleTime`, and that is the point rather than
-         * fidelity for its own sake.
-         *
-         * A fake that is fresh by construction cannot express the failure this
-         * handler exists to avoid. The client's global default is
-         * `staleTime: Infinity` and `fetchQuery` applies it, so a `.fetch()`
-         * without options resolves the CACHE — here, whatever the render is
-         * already showing — and never calls the procedure. Modelled by returning
-         * `mocks.visibility` in that case and the fresh value only when the call
-         * asks for it.
-         *
-         * Six review rounds passed over the missing option because the previous
-         * fake returned fresh data either way. This is the one line that makes
-         * every test below able to fail for the real reason.
-         */
-        getRemixGalleryVisibility: {
-          fetch: async (_input: unknown, opts?: { staleTime?: number }) =>
-            opts?.staleTime === 0 ? mocks.nextVisibility ?? mocks.visibility : mocks.visibility,
-          invalidate: vi.fn(),
-        },
-        getRemixGalleryFreeEligibility: {
-          fetch: async (_input: unknown, opts?: { staleTime?: number }) =>
-            opts?.staleTime === 0 ? mocks.nextEligibility ?? mocks.eligibility : mocks.eligibility,
-        },
+  trpc: makeTrpcProxy(
+    {
+      'placement.getRemixGalleryVisibility': {
+        useQuery: () => ({ data: mocks.visibility, isError: false }),
       },
-    }),
-    placement: {
-      getRemixGalleryVisibility: { useQuery: () => ({ data: mocks.visibility, isError: false }) },
-      getRemixGalleryFreeEligibility: { useQuery: () => ({ data: mocks.eligibility }) },
-      submitToRemixGallery: {
+      'placement.getRemixGalleryFreeEligibility': { useQuery: () => ({ data: mocks.eligibility }) },
+      'placement.submitToRemixGallery': {
         // Drives the real `onError` rather than exposing it, so the branch under
         // test is reached the way the mutation reaches it.
         useMutation: (opts: { onError: (e: { message: string }) => void | Promise<void> }) => ({
@@ -111,7 +84,41 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         }),
       },
     },
-  },
+    {
+      useUtils: () => ({
+        placement: {
+          invalidate: vi.fn(),
+          /**
+           * 🔴 The fake honours `staleTime`, and that is the point rather than
+           * fidelity for its own sake.
+           *
+           * A fake that is fresh by construction cannot express the failure this
+           * handler exists to avoid. The client's global default is
+           * `staleTime: Infinity` and `fetchQuery` applies it, so a `.fetch()`
+           * without options resolves the CACHE — here, whatever the render is
+           * already showing — and never calls the procedure. Modelled by returning
+           * `mocks.visibility` in that case and the fresh value only when the call
+           * asks for it.
+           *
+           * Six review rounds passed over the missing option because the previous
+           * fake returned fresh data either way. This is the one line that makes
+           * every test below able to fail for the real reason.
+           */
+          getRemixGalleryVisibility: {
+            fetch: async (_input: unknown, opts?: { staleTime?: number }) =>
+              opts?.staleTime === 0 ? mocks.nextVisibility ?? mocks.visibility : mocks.visibility,
+            invalidate: vi.fn(),
+          },
+          getRemixGalleryFreeEligibility: {
+            fetch: async (_input: unknown, opts?: { staleTime?: number }) =>
+              opts?.staleTime === 0
+                ? mocks.nextEligibility ?? mocks.eligibility
+                : mocks.eligibility,
+          },
+        },
+      }),
+    }
+  ),
 }));
 
 vi.mock('~/utils/notifications', () => ({
@@ -500,5 +507,54 @@ describe('the decline-fee note', () => {
     await page.getByRole('radio', { name: new RegExp(`${PRICE} Buzz`) }).click();
 
     await expect.element(page.getByText(/creator keeps 210 Buzz/i)).toBeInTheDocument();
+  });
+});
+
+describe('a remix free for your team', () => {
+  const waiverApplies = (remaining = 4) => {
+    mocks.eligibility = {
+      ...mocks.eligibility,
+      teamWaiver: { team: 'Pink', remaining, resetsAt: new Date('2026-11-04T00:00:00Z') },
+    };
+  };
+
+  test('submits team-waived, with no price and no Buzz button, and says why', async () => {
+    waiverApplies();
+    await openAndPick();
+
+    await expect.element(page.getByText(/Free for Team Pink/)).toBeVisible();
+    await page.getByRole('button', { name: /submit free for your team/i }).click();
+
+    expect(mocks.submit).toHaveBeenCalledTimes(1);
+    expect(mocks.submit).toHaveBeenCalledWith({
+      hostImageId: HOST,
+      imageId: MINE,
+      teamWaiver: true,
+    });
+    await expect.element(page.getByTestId('buzz-submit')).not.toBeInTheDocument();
+    // There is nothing left to choose, and the free placement is not spent.
+    await expect.element(page.getByRole('radio', { name: 'Free' })).not.toBeInTheDocument();
+  });
+
+  test("leaves the ordinary choice once the day's waivers are spent", async () => {
+    waiverApplies(0);
+    await openAndPick();
+
+    await expect.element(page.getByText(/used today's free team remixes/)).toBeVisible();
+    await expect
+      .element(page.getByRole('button', { name: /submit free for your team/i }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: /submit for free/i })).toBeVisible();
+  });
+
+  test('is not offered for an unverified remix', async () => {
+    waiverApplies();
+    mocks.eligibility = { ...mocks.eligibility, verifiedImageIds: [] };
+    await openAndPick();
+
+    await expect
+      .element(page.getByRole('button', { name: /submit free for your team/i }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText(/Free for Team/)).not.toBeInTheDocument();
   });
 });

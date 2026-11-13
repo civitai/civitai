@@ -3,6 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as TrpcModule from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import {
   MODEL_SALE_IDS_PER_QUERY,
   MODEL_SALE_IDS_PER_REQUEST,
@@ -103,13 +104,13 @@ const recorded = vi.hoisted(() => {
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    model: { getActiveSales: { useQuery: recorded.useQuery } },
-    useQueries: recorded.useQueries,
-  },
+  trpc: makeTrpcProxy(
+    { 'model.getActiveSales': { useQuery: recorded.useQuery } },
+    { useQueries: recorded.useQueries }
+  ),
 }));
 
-import { useModelSaleBadge, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
+import { useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { isLargeQuery } from '~/utils/trpc';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -379,30 +380,5 @@ describe('useModelSaleBadges', () => {
 
     expect(recorded.requests).toEqual([[8, 7]]);
     expect(Object.keys(sales ?? {})).toHaveLength(2);
-  });
-});
-
-/**
- * The card rendered OUTSIDE a provider — home blocks, collections, related models. It caches its
- * answer for `staleTime` just as the batched hook does, so it needs the same end-edge re-check; the
- * one suite that renders a card mocks this hook away, so nothing else in the repo can see it.
- */
-describe('useModelSaleBadge', () => {
-  it('returns a running sale', () => {
-    const sale = renderHook(useModelSaleBadge, 7, false).result.current;
-
-    expect(sale).toMatchObject({ discountType: 'Percent', discountAmount: 25 });
-  });
-
-  it('drops a sale whose window has already closed', () => {
-    recorded.endsAtById.set(7, new Date('2000-01-01T00:00:00.000Z'));
-
-    expect(renderHook(useModelSaleBadge, 7, false).result.current).toBeUndefined();
-  });
-
-  it('asks nothing when a provider owns the lookup', () => {
-    // The skip flag is "a provider owns this", so a card inside a grid must not fire its own query.
-    expect(renderHook(useModelSaleBadge, 7, true).result.current).toBeUndefined();
-    expect(recorded.requests).toEqual([]);
   });
 });

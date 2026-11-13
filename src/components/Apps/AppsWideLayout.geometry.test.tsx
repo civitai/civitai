@@ -74,8 +74,12 @@
 import { describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
-import { LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
+import {
+  LOADABLE_IMAGE_DATA_URI,
+  cascadeEvidence,
+  nextLayout,
+  renderAtViewport,
+} from '../../../test/geometry-setup';
 import { USERNAME_MAX_LENGTH } from '~/shared/zod/username.schema';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as BrowserSettingsMod from '~/providers/BrowserSettingsProvider';
@@ -92,7 +96,7 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * Every fixture below is named as a CONTENT WIDTH (736 / 1168 / 1408 / 2528) and every
  * number in the file is a function of that input: how a proportional `<colgroup>` spends
  * it, where a card grid steps, how tall a row gets when a column is squeezed. The rail
- * changes the INPUT (it takes 276px off the body on every `/apps/*` route); it does not
+ * changes the INPUT (it takes 292px off the body on every `/apps/*` route); it does not
  * change any of those mechanisms. Re-baselining ~40 measured literals to rail-reduced
  * widths would mean re-deriving each of them from the implementation that just changed —
  * and would delete this file's coverage at exactly the 1408 / 2528 content widths the
@@ -101,18 +105,18 @@ import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constan
  * So `useAppsNavSections` returns an EMPTY list, which is a real production state (the
  * `< 2 sections` collapse) and makes `AppsPageLayout` render no rail and give the body the
  * full container. The rail's own cost is pinned exactly once, where it belongs:
- * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures `bodyLeft − navLeft === 276`
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` measures `bodyLeft − navLeft === appsRailChromeWidth(false)`
  * on all 12 routes in both rail states, and `__tests__/appsRailGeometry.test.ts` pins the
  * constant it comes from.
  *
  * ⚠️ WHAT THAT LEAVES UNMEASURED, STATED RATHER THAN LEFT TO BE DISCOVERED: no test in
  * this file reads these TABLES at the content width a 1440 viewer with an OPEN rail
- * actually gets (1132). The `RAIL-OPEN` describe at the end of this file is a deliberate
- * PARTIAL answer and nothing more: it pins a PRECONDITION (the body really is 276px
+ * actually gets (1116). The `RAIL-OPEN` describe at the end of this file is a deliberate
+ * PARTIAL answer and nothing more: it pins a PRECONDITION (the body really is the rail's chrome
  * narrower) and one NON-degradation (the card list still steps to two columns at the new
  * `APPS_CARD_LIST_MIN_COLUMN`). ⚠️ AN EARLIER DRAFT OF THIS SENTENCE CLAIMED IT "records
  * the two degradations that width causes". It records none — there is no degradation
- * asserted anywhere in this file at 1132, and saying otherwise turned an admitted gap
+ * asserted anywhere in this file at 1116, and saying otherwise turned an admitted gap
  * into a false claim of coverage, which is worse than the gap. The one degradation this
  * change does cause at a narrowed width is the `/apps/build` table scrolling a viewport
  * step earlier, and it is recorded at `SUBMISSIONS_TABLE_MIN_WIDTH`, not here.
@@ -133,18 +137,11 @@ const navState = vi.hoisted(() => ({ sections: [] as unknown[] }));
  */
 const fixture = vi.hoisted(() => ({
   /**
-   * DELIBERATELY LONGER THAN ANY REAL BLOCK SCOPE, and asserted to be below against
-   * `BLOCK_SCOPE_TO_OAUTH_BIT` — the registry that DEFINES the population — rather than
-   * against a remembered list.
-   *
-   * 🔴 IT ALSO OVERSHOOTS THE CONTAINER, WHICH A MERELY-LONGER ID DOES NOT. A 47-char
-   * fixture was measured rendering on ONE line inside the 408px drawer,
-   * so the arm below could not see the badge's `white-space: nowrap` / `overflow: hidden` at
-   * all — it would have passed with the ellipsis intact. This id needs two lines at 408, so
-   * the wrap is the thing under test rather than an incidental fit.
+   * An over-long UNKNOWN scope: not in the registry, so the drawer shows its humanised fallback
+   * title, the longest row the drawer can be handed.
    */
   longScope: 'apps:diagnostics:telemetry:aggregate:write:self:secondary:partition',
-  /** The longest REAL scope that also carries a description, for the own-line arm. */
+  /** A real, consent-exempt scope, so its row carries the fixed-scope note. */
   describedScope: 'apps:storage:shared:write',
   /**
    * The one row in the drawer fixture that carries a real phase-3 REVOKE BUTTON.
@@ -152,8 +149,7 @@ const fixture = vi.hoisted(() => ({
    * `ai:write:budgeted` because it is consent-GATED (so the server would really list it in
    * `revokableScopes`), KNOWN to the scope registry (so `isKnownBlockScope` keeps it), and
    * SENSITIVE — which means its row also renders `SensitiveScopeBadge`, making it the widest
-   * badge row in the fixture and therefore the right one to hang a control off when the question
-   * is whether the control competes with the id for inline space at 408px.
+   * row in the fixture and therefore the right one to hang a control off at 408px.
    */
   revokableScope: 'ai:write:budgeted',
   /**
@@ -297,25 +293,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       ],
     },
     'blocks.listMyAppActivity': { pages: [{ items: [], nextCursor: null }] },
-    // `AppPermissionsActivityDrawer`'s scope section. One over-long id (the clipping arm)
-    // plus one real described id (the own-line arm).
+    // `AppPermissionsActivityDrawer`'s scope section: one over-long unknown scope, one
+    // consent-exempt scope and one revokable scope.
     'blocks.listMyScopeGrants': [
       {
         appBlockId: 'ab_9',
         slug: 'lighthouse',
         name: 'Lighthouse',
         origin: 'install',
-        // ORDER IS LOAD-BEARING: the grouping arm reads the gap from the described scope's
-        // description DOWN to the NEXT scope's id, so the described one has to come first.
-        // ⚠️ `fixture.revokableScope` is APPENDED, never inserted — the two arms above resolve
-        // `describedScope` then `longScope` as consecutive rows, and putting a third between them
-        // would silently change what `inter` measures.
         scopes: [fixture.describedScope, fixture.longScope, fixture.revokableScope],
         // 🔴 THE PHASE-3 CONSENT LAYER, WITHOUT WHICH THE DRAWER ARMS MEASURE THE WRONG TREE.
         // `ScopeConsentList` renders a per-scope affordance for every row — a control for a
         // revokable scope, an honest note for the rest — so a fixture carrying none of these
-        // fields would lay the drawer out with no consent row at all and the clipping arm would
-        // be reading a box no viewer gets. Exactly what the server sends:
+        // fields would lay the drawer out with no consent row at all and the arms would be
+        // reading a box no viewer gets. Exactly what the server sends:
         //   - `describedScope` (`apps:storage:shared:write`) is CONSENT-EXEMPT, so the server
         //     omits it from `revokableScopes` and it renders its `fixedScopeNote`.
         //   - `longScope` is not in the scope registry at all, so `isKnownBlockScope` excludes it
@@ -393,6 +384,7 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 }));
 
 const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
+const { appsRailChromeWidth } = await import('~/components/Apps/appsRailGeometry');
 const { AppsCardGrid, APPS_REVIEW_QUEUE_COLUMNS } = await import(
   '~/components/Apps/appsWideLayout'
 );
@@ -404,10 +396,6 @@ const { OffsiteReportsQueue } = await import('~/components/Apps/OffsiteReviewQue
 const { AppActivityPanel } = await import('~/components/Apps/AppActivityPanel');
 const { AppPermissionsActivityDrawer } = await import(
   '~/components/AppBlocks/AppPermissionsActivityDrawer'
-);
-const { BLOCK_SCOPE_TO_OAUTH_BIT } = await import('~/shared/constants/block-scope.constants');
-const { SCOPE_DESCRIPTIONS } = await import(
-  '~/server/services/blocks/scope-descriptions.constants'
 );
 
 /** The container's own content width at each fixture viewport, as literals. */
@@ -483,7 +471,7 @@ const ONSITE: OnsiteReviewRequest = {
   iconUrl: PIXEL,
   coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: SUBMITTER_USERNAME, image: null },
+  submittedBy: { id: 7, username: SUBMITTER_USERNAME, deletedAt: null, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -499,7 +487,7 @@ const OFFSITE: OffsiteReviewRequest = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
   playCount: 7,
   iconUrl: PIXEL,
   coverUrl: null,
@@ -1415,7 +1403,7 @@ describe('/apps/activity activity — the table that a ledger cannot help', () =
 /**
  * 🔴 THE MOUNT EVERY WIDTH ABOVE IS BLIND TO.
  *
- * `AppActivityPanel` and `BlockScopeList` have a second home: the run-frame
+ * `AppActivityPanel` and the permission list have a second home: the run-frame
  * "Permissions & activity" drawer, a Mantine `size="md"` `Drawer` — 27.5rem of content box
  * minus its body padding, i.e. ~408px — which can sit inside a 2560 viewport. The four
  * widths this file was written against are 768 / 1200 / 1440 / 2560, so the panel's
@@ -1428,22 +1416,15 @@ describe('/apps/activity activity — the table that a ledger cannot help', () =
  * fix driven by `@media` would pass a narrow-viewport test and leave the real drawer broken.
  * Reading these at the widest fixture is what makes them a claim about the CONTAINER.
  *
- * 🔴 AND EVERY ARM THAT PINS THE PRE-CHANGE BEHAVIOUR LEADS WITH A LOCATOR THAT EXISTS THERE.
- * An earlier revision resolved `[data-testid="app-activity-panel"]` /
- * `[data-testid="block-scope-list"]`, testids this change introduces — so four arms went red at
- * `origin/main` inside the `need()` helper, on a missing test hook, which is evidence about
- * nothing. Mantine's own `.mantine-Drawer-*` / `.mantine-Badge-root` static classes and plain
- * `table`/`tbody` are present either way, so each of those arms' FIRST failing read at base is a
- * geometry one: `'table'` vs `'block'`, `TR right=2568.48` against a 2544 edge, the id fitting one
- * line at 16px, the description sitting 18px ABOVE its id, and the phone page still a table.
+ * Arms pinning pre-change behaviour lead with a locator present at base (Mantine static classes,
+ * plain table/tbody), not a testid this change introduced, so the base-red failure is a geometry
+ * read.
  *
- * ⚠️ TWO THINGS THIS DOES NOT CLAIM, because an earlier revision claimed both and was wrong.
- * (a) `data-activity-cell` and the status pill's `sr-only` span are introduced by this change, so
- * an arm that LEADS with `stackedCell()` or with that span is red at base on a missing hook — put
- * a base-stable read first, as the phone arm now does. (b) The sr-only arm is not in the base-red
- * set at all, and does not need to be: it pins a property of the NEW rendering, not of the old
- * one. Read the base-red count off a fresh run rather than from a number in this comment — arms
- * have been added to this block twice since the first one was taken.
+ * ⚠️ TWO THINGS THIS DOES NOT CLAIM. (a) `data-activity-cell` and the status pill's `sr-only`
+ * span are introduced by this change, so an arm that LEADS with `stackedCell()` or with that span
+ * is red at base on a missing hook — put a base-stable read first, as the phone arm does. (b) The
+ * sr-only arm is not in the base-red set, and does not need to be: it pins a property of the NEW
+ * rendering, not of the old one. Read the base-red count off a fresh run, not from a number here.
  */
 describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewport', () => {
   const drawer = () => (
@@ -1502,29 +1483,6 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
         'scrollbar narrows the body and every width below is measured against the wrong box'
     ).toBeLessThanOrEqual(content.clientHeight);
   }
-
-  test('the fixture is over-long by the REGISTRY, not by memory', () => {
-    // 🔴 A POSITIVE CONTROL ON THE CLIPPING ARM, NOT COVERAGE OF EITHER COMPONENT — it renders
-    // nothing. `apps:storage:shared:write`, the longest id the app actually ships, fits the
-    // drawer unaided. With the wrap read in place a too-short fixture now makes that arm RED at
-    // the one-line height rather than falsely green, so what this buys is a legible failure:
-    // "the fixture stopped overshooting" instead of "the scope id fits on one line". `BLOCK_SCOPE_TO_OAUTH_BIT` is the registry every scope is
-    // declared in, so this is the authoritative population rather than a sample.
-    const realIds = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT);
-    expect(
-      realIds.length,
-      'the scope registry is empty — this control checks nothing'
-    ).toBeGreaterThan(5);
-    const longestReal = Math.max(...realIds.map((s) => s.length));
-    expect(
-      fixture.longScope.length,
-      `the fixture id is ${fixture.longScope.length} chars against a longest real id of ` +
-        `${longestReal} — it has to EXCEED the real population or it fits unaided`
-    ).toBeGreaterThan(longestReal);
-    // …and the own-line arm's scope must actually HAVE a description, or that arm measures
-    // the "(no description)" italic instead of the thing it is named for.
-    expect(SCOPE_DESCRIPTIONS[fixture.describedScope]).toBeTruthy();
-  });
 
   test('🔴 the drawer really is ~408px of container inside a 2560 window', async () => {
     // The PRECONDITION for reading anything below as a container claim. Without it, "the panel
@@ -1693,87 +1651,52 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     await cleanup();
   });
 
-  /**
-   * The LEAF element whose entire text is `scope` — i.e. Mantine's Badge label, which is where
-   * `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` lives.
-   *
-   * Located by TEXT so the arm can be watched fail on the pre-change component; `scopeBadge`
-   * then climbs to the Badge ROOT by its Mantine static class rather than by `parentElement`,
-   * because a future Badge that wraps its text in an inner span would make `parentElement` the
-   * label itself — a box that trivially contains its own child, i.e. the `h="auto"` assertion
-   * would pass with the clipping root unmeasured.
-   */
-  function scopeLabel(scope: string): HTMLElement {
-    const hits = Array.from(document.querySelectorAll<HTMLElement>('*')).filter(
-      (el) => el.children.length === 0 && el.textContent === scope
+  /** The drawer's plain-language row for one scope, and that row's title. */
+  function permissionRow(scope: string): HTMLElement {
+    return need<HTMLElement>(`.mantine-Drawer-body [data-permission-row="${scope}"]`);
+  }
+  function rowTitle(scope: string): HTMLElement {
+    const title = permissionRow(scope).querySelector<HTMLElement>(
+      '[data-testid="permission-title"]'
     );
-    if (hits.length !== 1) {
-      throw new Error(`expected exactly one leaf carrying "${scope}", found ${hits.length}`);
-    }
-    return hits[0];
+    if (!title) throw new Error(`the row for ${scope} has no title`);
+    return title;
   }
 
-  function scopeBadge(scope: string): HTMLElement {
-    const root = scopeLabel(scope).closest<HTMLElement>('.mantine-Badge-root');
-    if (!root) throw new Error(`the leaf carrying "${scope}" is not inside a Mantine Badge`);
-    return root;
-  }
-
-  /**
-   * Measured heights of a Mantine `Badge size="sm"` with the fix in place. The LABEL's one-line
-   * box is `--badge-lh` = `--badge-height-sm` − 2px = 16; the ROOT is the 18px `--badge-height-sm`
-   * (2px of transparent border under `border-box` on top of the 16px line).
-   */
-  const BADGE_LABEL_ONE_LINE = 16;
-  const BADGE_ROOT_ONE_LINE = 18;
-
-  test('🔴 the over-long scope id renders in FULL and is not clipped', async () => {
+  test('🔴 the drawer names permissions in plain language, inside the 408px container', async () => {
     await renderDrawer(WIDE);
-    // This arm reads the container's content edge too, so it needs the same precondition — a
-    // scrollbar here would fail it with a message about the scope id.
+    // A scrollbar would narrow the body and fail the edge read below for the wrong reason.
     assertDrawerDoesNotScroll();
-    const label = scopeLabel(fixture.longScope);
-    // `textContent` is the whole id whether or not it is ellipsised — CSS truncation is a
-    // RENDERING — so it is a sanity read on what is being measured, not the test.
-    expect(label.textContent).toBe(fixture.longScope);
-    // 🔴 TRUNCATION HAS TWO SHAPES AND EACH NEEDS ITS OWN READ — plus the direct one, which is
-    // only available on the label. Mantine's label carries `overflow: hidden`, so
-    // `scrollWidth > clientWidth` on THAT box is the canonical Chromium ellipsis detector; the
-    // cells in the overflow arm are `overflow: visible`, where Chromium reports nothing through
-    // it, which is why that arm cannot use this read and this one can.
+    // No scope id reaches the viewer, including the over-long unknown one.
+    const text = drawerBody().textContent ?? '';
+    for (const scope of [fixture.describedScope, fixture.longScope, fixture.revokableScope]) {
+      expect(text, `the raw id ${scope} is in the drawer`).not.toContain(scope);
+    }
+    // The over-long unknown scope's fallback title is its longest row; it wraps rather than
+    // painting past the drawer.
+    const title = rowTitle(fixture.longScope);
+    expect(title.textContent).toBe(
+      'Apps diagnostics telemetry aggregate write self secondary partition'
+    );
     expect(
-      label.scrollWidth,
-      `the scope id paints ${label.scrollWidth}px into ${label.clientWidth}px of label — ` +
-        "Mantine's Badge is ellipsising it"
-    ).toBeLessThanOrEqual(label.clientWidth + 0.5);
-    //
-    // (a) the label paints PAST the drawer. No mutant in the sweep reaches this today, because
-    // Mantine's own `overflow: hidden` clips instead — it fired at 2578.59 against a 2544.5 edge
-    // on a revision that also set `overflow: visible`, which is the shape a future "fix" for an
-    // ellipsis report would reintroduce.
-    expect(
-      px(label.getBoundingClientRect().right),
-      `the scope id paints past the drawer's ${px(drawerContent().right)} content edge`
+      px(title.getBoundingClientRect().right),
+      `the fallback title paints past the drawer's ${px(drawerContent().right)} content edge`
     ).toBeLessThanOrEqual(px(drawerContent().right) + 0.5);
-    // (b) the HEIGHT observable — the control on (a) and on the direct read above rather than a
-    // third detector: this id needs more than one line at 408px, so a fixture that stopped
-    // overshooting fails HERE with a legible message instead of making the other two vacuous. Measured, removing either `whitespace-normal` or `break-all` from the
-    // Badge's `classNames` fails here at the 16px one-line height. It is also the control that
-    // stops (a) being vacuous — with a 47-char fixture the whole arm passed with the ellipsis
-    // still in the component, because that id fit unaided.
+    // The edge read alone passes a clipped or ellipsised title, so also: nothing is cut off...
     expect(
-      px(label.getBoundingClientRect().height),
-      "the scope id fits on one line, which at this length means Mantine's Badge ellipsised it"
-    ).toBeGreaterThan(BADGE_LABEL_ONE_LINE * 1.5);
-    // …and the BADGE grew with it. Mantine pins the root to one line and clips, so without
-    // `h="auto"` the wrapped second line is cut off — a read no width assertion and no
-    // `scrollWidth` can see. Measured: the label runs to 196.19 inside a badge ending at 189.19.
-    const badge = scopeBadge(fixture.longScope);
+      title.scrollWidth,
+      `the fallback title is clipped: ${title.scrollWidth}px of content in ${title.clientWidth}px`
+    ).toBeLessThanOrEqual(title.clientWidth + 0.5);
+    // ...and it really wraps: taller than a one-line title in the same drawer, so this fixture
+    // exercises the wrap rather than happening to fit.
+    const oneLine = rowTitle(fixture.describedScope);
+    const oneLineHeight = oneLine.getBoundingClientRect().height;
+    expect(oneLineHeight, `"${oneLine.textContent}" has no height`).toBeGreaterThan(0);
     expect(
-      px(badge.getBoundingClientRect().bottom),
-      `the label runs to ${px(label.getBoundingClientRect().bottom)} while its badge ends at ` +
-        `${px(badge.getBoundingClientRect().bottom)}`
-    ).toBeGreaterThanOrEqual(px(label.getBoundingClientRect().bottom) - 0.5);
+      title.getBoundingClientRect().height,
+      `the fallback title is ${px(title.getBoundingClientRect().height)} tall, against ` +
+        `${px(oneLineHeight)} for the one-line "${oneLine.textContent}" — it did not wrap`
+    ).toBeGreaterThan(oneLineHeight * 1.5);
     await cleanup();
   });
 
@@ -1840,170 +1763,23 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     await cleanup();
   });
 
-  test('🔴 the description sits on its own line, and nearer its OWN id than the next one', async () => {
+  /** The revoke control and every consent note fit the 408px drawer, on every row. */
+  test('🔴 the revoke control and consent notes stay inside the 408px drawer', async () => {
     await renderDrawer(WIDE);
-    // Located by text, not by the list's testid, so this arm is red at base on GEOMETRY — at
-    // `origin/main` the description shares a `wrap="nowrap"` row with the badge, so its top is
-    // ABOVE the badge's bottom rather than below it.
-    const describedBadge = scopeBadge(fixture.describedScope);
-    const description = scopeLabel(SCOPE_DESCRIPTIONS[fixture.describedScope]);
-    const badgeBottom = describedBadge.getBoundingClientRect().bottom;
-    const intra = px(description.getBoundingClientRect().top - badgeBottom);
-    expect(
-      intra,
-      'the description is beside its id, not under it — the two fight over one axis and the ' +
-        'id loses'
-    ).toBeGreaterThanOrEqual(0);
-    // Guard the guard: a zero-height description would satisfy the above trivially.
-    expect(px(description.getBoundingClientRect().height)).toBeGreaterThan(8);
-
-    // 🔴 AND THE GROUPING IS UNAMBIGUOUS: the gap from a description UP to its own id must be
-    // smaller than the gap DOWN to the next scope's id. Two `Stack`s at 4/2 made that a 2px
-    // differential on a list whose entire purpose is which description belongs to which id.
-    //
-    // 🔴 `inter` IS MEASURED FROM THE PREVIOUS ROW'S **LAST CHILD**, NOT FROM THE DESCRIPTION —
-    // AND READING IT FROM THE DESCRIPTION MADE THIS ARM VACUOUS THE MOMENT PHASE 3 LANDED.
-    // Until then the description WAS the row's last child, so `nextBadge.top − description.bottom`
-    // really did measure the outer `Stack gap`. Phase 3's `ScopeConsentList` adds a THIRD child to
-    // every row (the revoke control, or an exempt note), and for this fixture's described scope
-    // that child is a two-line note sitting INSIDE the span being measured. `inter` then became
-    // ≈40px dominated by the note's own height — a quantity independent of either `Stack` gap — so
-    // collapsing the outer gap back to `2`, or even to `0`, still satisfied `inter > intra * 2`
-    // with an order of magnitude to spare. The arm was passing over a list with NO grouping cue at
-    // all, which is the exact defect it was written to reject. Found by the test-review lane.
-    //
-    // Reading from the last child restores the property: the span contains nothing but the outer
-    // gap again, whatever children a row grows in future.
-    const prevRow = description.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
-    if (!prevRow) throw new Error('the description is not inside a scope row');
-    const prevRowLastChild = prevRow.lastElementChild;
-    if (!prevRowLastChild) throw new Error('the scope row has no children');
-    // A POSITIVE CONTROL ON THE FIX: phase 3 must really have added a third child, or this arm has
-    // silently gone back to measuring from the description and the paragraph above is stale.
-    // `>= 3`, not `=== 3`: the exact count is an incidental quantity (a `revoked` or `revokable` row
-    // also has three children, and an `unknown` row has two), while the real guard is the
-    // `.not.toBe(description)` line below. An exact count would red on a safe change to the row's
-    // internals and its message would misdescribe the cause. Round-2 test-lane nit.
-    expect(
-      prevRow.children.length,
-      'the scope row has no consent child — re-read the comment above, this arm may be measuring ' +
-        'from the description again'
-    ).toBeGreaterThanOrEqual(3);
-    expect(prevRowLastChild, "the description is still the row's last child").not.toBe(description);
-    const nextBadge = scopeBadge(fixture.longScope);
-    const inter = px(
-      nextBadge.getBoundingClientRect().top - prevRowLastChild.getBoundingClientRect().bottom
-    );
-    // DOUBLE, not merely greater: the shape this rejects is the original 4/2 pair, where `inter`
-    // WAS larger than `intra` and the cue was still a 2px differential on a block that grows to
-    // ~36px as soon as an id wraps. A ratio is the weakest honest reading of "clearly nearer".
-    expect(
-      inter,
-      `a description sits ${intra}px from its own id and the row ends ${inter}px from the next ` +
-        'one — a differential under 2x is not a grouping cue, and the reader pairs it with either'
-    ).toBeGreaterThan(intra * 2);
-
-    // 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE, and labelled as one: a single-line badge
-    // is 18px at base AND with `h="auto"` (the root is sized by its 16px label plus 2px of
-    // border either way), so no mutation of this change can move it. What it pins is narrow and
-    // worth having anyway — a one-line badge is the same HEIGHT as before, so the badge half of
-    // the fix costs the other three call sites nothing per row. ⚠️ It says nothing about those
-    // sites overall: the restructure and the outer gap DO change them, by about a line per
-    // scope, and nothing measures their geometry.
-    expect(px(describedBadge.getBoundingClientRect().height)).toBe(BADGE_ROOT_ONE_LINE);
-    await cleanup();
-  });
-
-  /**
-   * 🔴 PHASE 3 — THE REVOKE CONTROL MUST NOT REINTRODUCE THE TRUNCATION PHASE 1 REMOVED.
-   *
-   * This is the arm the phase-3 change exists to be checked by, and the hazard is specific rather
-   * than general: the ONE place a control could have gone is inside `BlockScopeList`'s
-   * `wrap="nowrap"` badge `Group`, beside the id. That Group's items share a single inline axis and
-   * Mantine clamps the Badge root to the inline space left over, so a sibling button in there takes
-   * width directly from the scope id at 408px — which is the exact axis phase 1 bought back. The
-   * implementation puts the affordance on its OWN line beneath the description instead, and this
-   * arm is what makes that a measured property rather than an intention in a comment.
-   *
-   * ⚠️ IT IS NOT A DUPLICATE OF THE CLIPPING ARM ABOVE. That one reads the same box on a tree with
-   * NO consent layer; the fixture now carries one, so both arms run against the consent-bearing
-   * tree and this one adds the two reads that are only meaningful with a control present — the
-   * button really rendered, and it did not land on the id's row.
-   */
-  test('🔴 the revoke control does not narrow the scope id — still unclipped at 408px', async () => {
-    await renderDrawer(WIDE);
-    // Same precondition as every arm here: a scrollbar takes ~15px off the body's inner width and
-    // would fail this with a message about the scope id. It matters MORE now — the consent layer
-    // adds a row per scope, so the drawer is taller than the arms above were written against, and
-    // if that ever pushes it into scrolling this is where it says so.
     assertDrawerDoesNotScroll();
 
-    // (a) THE CONTROL IS ACTUALLY THERE. Without this the rest of the arm is vacuous: a drawer
-    // that rendered no button trivially does not narrow anything, and this file's own docblock
-    // warns that leading with a hook this change introduces makes an arm red at base for the wrong
-    // reason — so it is asserted HERE rather than in the locator that opens the arm.
+    // (a) THE CONTROL IS ACTUALLY THERE, on the one scope the fixture makes revokable, and in
+    // that scope's own row — otherwise the edge read below is vacuous.
     const control = need<HTMLElement>('.mantine-Drawer-body [data-testid="scope-revoke-button"]');
     expect(control.dataset.scope, 'the control is on the wrong scope').toBe(fixture.revokableScope);
-    // Exactly one, matching the single-entry `revokableScopes` — a control on an exempt row would
-    // be a lie, and the component tier asserts that by name. Here it keeps the geometry claim
-    // attributable to one box.
     expect(
       drawerBody().querySelectorAll('[data-testid="scope-revoke-button"]'),
       'more controls than the fixture makes revokable'
     ).toHaveLength(1);
+    expect(control.closest('[data-permission-row]')).toBe(permissionRow(fixture.revokableScope));
 
-    // (b) IT IS NOT ON THE BADGE'S ROW. The structural half of the hazard, read off the DOM rather
-    // than off geometry, because it is the thing that would CAUSE the narrowing: the control must
-    // not sit inside the `wrap="nowrap"` Group that holds the id.
-    //
-    // 🔴 ASSERTED AS AN IDENTITY AGAINST THE ROW, NOT AS A `querySelector` OFF
-    // `parentElement.parentElement`. The walk-and-look-for-a-badge form encoded an UNCHECKED DOM
-    // DEPTH — it is correct only while exactly one wrapper sits between the button and the row
-    // (today `ScopeConsentAction`'s `<Group>`). Remove that wrapper as a pure refactor AND move the
-    // node into the nowrap Group and the walk lands on the row `Stack`, where the badge is not a
-    // direct child — so the old `toBeNull()` passed and the exact hazard shipped. Add a wrapper and
-    // it lands one level too shallow, same result. Comparing against `controlRow` (which the
-    // previous version computed and then threw away) pins the depth itself. Found by the
-    // test-review lane.
-    const controlRow = control.closest<HTMLElement>('[data-testid="block-scope-list"] > *');
-    if (!controlRow) throw new Error('the revoke control is not inside a scope row');
-    // ⚠️ A `control.parentElement?.parentElement === controlRow` ASSERTION WAS HERE AND IS DELETED.
-    // Round 1 added it to replace a `querySelector` off the same walk, on the grounds that the walk
-    // encoded an unchecked DOM depth — which was true of the querySelector form. But as an identity
-    // check it buys ZERO additional hazard coverage: `controlRow` is derived from `control`, so it
-    // cannot catch a cross-row misplacement either, and the depth-independent read below already
-    // covers the whole hazard at any depth. What it WOULD do is red on the pure refactor of removing
-    // `ScopeConsentAction`'s wrapper `<Group>`. Reported by the round-2 test lane; a guard whose only
-    // effect is a false alarm on a safe change is worse than no guard.
-    // ⚠️ A THIRD ASSERTION STOOD HERE AND IS DELETED AS A TAUTOLOGY — `controlRow.contains(control)`.
-    // `controlRow` is `control.closest(...)`, which returns the element itself or an ancestor, and
-    // `Node.contains` is true for self and for descendants — so it was TRUE UNDER EVERY POSSIBLE DOM,
-    // including with the control moved into the badge group (the hazard) or into a DIFFERENT row. The
-    // only falsifiable branch (`closest` → null) is already consumed by the `throw` above it, which
-    // carries a different message. Round 2 replaced a useless depth check with a line that read as a
-    // row-identity guard and checked nothing at all; the round-3 test lane measured it in jsdom.
-    // The hazard is fully covered by the read below, which is depth-independent and genuinely
-    // falsifiable.
-    // The real check: the badge's own parent must not contain it.
-    const badgeGroup = scopeBadge(fixture.revokableScope).parentElement;
-    expect(badgeGroup, 'the badge has no parent Group').not.toBeNull();
-    expect(
-      badgeGroup!.contains(control),
-      "the revoke control shares the badge's nowrap Group — it will take inline width from the id"
-    ).toBe(false);
-
-    // ⚠️ THE OVER-LONG ID'S THREE CLIPPING READS ARE DELIBERATELY *NOT* REPEATED HERE. An earlier
-    // revision of this arm re-measured `scrollWidth`/height/right edge with a paragraph claiming
-    // *"that one reads the same box on a tree with NO consent layer"* — and the second half of that
-    // sentence defeated the first: this change adds the consent fields to the SHARED `DATA` row, so
-    // the pre-existing clipping arm above now runs against the consent-bearing tree too and those
-    // three reads were straight re-runs of it. The real content of this arm is (a) (b) (d) (e).
-    // Found by the test-review lane.
-
-    // (d) NOTHING IN THE CONSENT LAYER PAINTS OUTSIDE THE 408px CONTAINER. The affordances are new
-    // boxes at this width — a button, and the generic note, which is the longest sentence the
-    // vocabulary can put on a row — and a note that overflows is exactly the shape that reads as
-    // "the drawer is broken" without any id being clipped.
+    // (b) NOTHING IN THE CONSENT LAYER PAINTS OUTSIDE THE 408px CONTAINER — the generic note is
+    // the longest sentence the vocabulary can put on a row.
     const edge = px(drawerContent().right);
     const offenders = Array.from(
       drawerBody().querySelectorAll<HTMLElement>(
@@ -2015,11 +1791,8 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
       .map((el) => `${el.dataset.testid ?? el.tagName}@${px(el.getBoundingClientRect().right)}`);
     expect(offenders, `drawer content edge ${edge}`).toEqual([]);
 
-    // (e) EVERY ROW HAS AN AFFORDANCE OR AN EXPLANATION — no silent row. A count relationship, not
-    // a literal: it fails if the fixture grows a scope the consent layer says nothing about.
-    const rows = Array.from(
-      drawerBody().querySelectorAll<HTMLElement>('[data-testid="block-scope-list"] > *')
-    );
+    // (c) EVERY ROW HAS AN AFFORDANCE OR AN EXPLANATION — no silent row.
+    const rows = Array.from(drawerBody().querySelectorAll<HTMLElement>('[data-permission-row]'));
     expect(rows, 'the fixture rendered no scope rows').toHaveLength(3);
     const silent = rows.filter(
       (row) =>
@@ -2036,15 +1809,11 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
   });
 
   /**
-   * 🔴 THE STRIKE-THROUGH IS A COMPUTED STYLE, AND THIS IS THE ONLY TIER THAT CAN SEE IT.
-   * `line-through` is a Tailwind utility, and the `component` tier loads no Tailwind — so the
-   * component test asserting the CLASS is a claim about the class attribute, not about ink on the
-   * screen. If the utility ever stops being emitted (a dynamically-composed class name, a content-
-   * glob change, a move to an unscanned file) a withdrawn permission would render identically to a
-   * live one on both surfaces, and only this read would notice. Same argument the `sr-only` arm
-   * above makes for the status pill.
+   * The strike-through as a COMPUTED style in the real cascade. The title's `td` prop is an inline
+   * `text-decoration`, which the component tier also reads; this arm adds that nothing in the app
+   * stylesheets overrides it, and that a live row next to it stays unstruck.
    */
-  test('🔴 a REVOKED scope id is really struck through, not merely classed', async () => {
+  test('🔴 a REVOKED permission is really struck through, not merely flagged', async () => {
     // A LOCAL fixture override — the shared `DATA` row deliberately has an empty `revokedScopes`
     // so every arm above measures the ordinary case. Mutated IN PLACE (see `fixture.drawerRevoked`),
     // because `DATA` captured this array by reference, and restored in a `finally` so a failure
@@ -2052,16 +1821,15 @@ describe('🔴 THE PERMISSIONS DRAWER — a 408px container inside a 2560 viewpo
     fixture.drawerRevoked.push(fixture.revokableScope);
     try {
       await renderDrawer(WIDE);
-      const label = scopeLabel(fixture.revokableScope);
       expect(
-        getComputedStyle(label).textDecorationLine,
-        'the withdrawn scope id is not struck through — a revoked permission looks live'
+        getComputedStyle(rowTitle(fixture.revokableScope)).textDecorationLine,
+        'the withdrawn permission is not struck through — a revoked permission looks live'
       ).toContain('line-through');
       // The POSITIVE CONTROL on that read: a row that is NOT revoked must come back clean, or the
       // assertion above is satisfied by a stylesheet striking every badge in the list.
       expect(
-        getComputedStyle(scopeLabel(fixture.longScope)).textDecorationLine,
-        'a live scope id is struck through too — the strike is not keyed on the revoked row'
+        getComputedStyle(rowTitle(fixture.longScope)).textDecorationLine,
+        'a live permission is struck through too — the strike is not keyed on the revoked row'
       ).not.toContain('line-through');
       // …and the withdrawn row keeps its marker rather than only its styling.
       expect(
@@ -2267,9 +2035,9 @@ describe('/apps/activity — the space-between row keeps its control near its co
  * Everything above measures a wide-layout mechanism against a CONTENT WIDTH, with the rail
  * removed via the `< 2 sections` collapse so the four fixture widths keep meaning what
  * they say. That is the right scoping for those claims and the wrong scoping for one
- * question: what does a real viewer with an OPEN rail actually get? The rail takes 276px
- * off the body on every `/apps/*` route, so a 1440 monitor hands these components 1132 of
- * content and a 2560 one hands them 2252.
+ * question: what does a real viewer with an OPEN rail actually get? The rail takes 292px
+ * off the body on every `/apps/*` route, so a 1440 monitor hands these components 1116 of
+ * content and a 2560 one hands them 2236.
  *
  * This block measures that directly, at the one place it changes a PRODUCT outcome rather
  * than a pixel: the `/apps/activity` card list's column count, which is what
@@ -2278,7 +2046,7 @@ describe('/apps/activity — the space-between row keeps its control near its co
  * rail was open — the 640px content-to-control gap the constant exists to close reopened
  * on exactly the monitors it was written for.
  *
- * ⚠️ TWO ARMS, NOT A BATTERY. This does not re-measure the tables above at 1132; that
+ * ⚠️ TWO ARMS, NOT A BATTERY. This does not re-measure the tables above at 1116; that
  * remains genuinely uncovered, and the accepted consequence is recorded on
  * `SUBMISSIONS_TABLE_MIN_WIDTH` (the `/apps/build` table scrolls one viewport step
  * earlier).
@@ -2317,17 +2085,17 @@ describe('🔴 RAIL-OPEN — the content width a real /apps viewer gets', () => 
     }
   }
 
-  test('the rail really is open, and the body really is 276px narrower', async () => {
+  test('the rail really is open, and the body really is narrower by the rail chrome', async () => {
     // The precondition for the column assertions below. Without it, "one column at 1440"
     // would also be satisfied by a render in which the rail never appeared.
     const narrow = await renderWithRail(NARROW);
     expect(narrow.railShown, 'the rail did not render — the section stub did not take').toBe(true);
-    expect(narrow.bodyWidth).toBe(NARROW.content - 276);
+    expect(narrow.bodyWidth).toBe(NARROW.content - appsRailChromeWidth(false));
     await cleanup();
 
     const wide = await renderWithRail(WIDE);
     expect(wide.railShown).toBe(true);
-    expect(wide.bodyWidth).toBe(WIDE.content - 276);
+    expect(wide.bodyWidth).toBe(WIDE.content - appsRailChromeWidth(false));
     await cleanup();
   });
 

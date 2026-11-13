@@ -6,7 +6,7 @@ import {
   infiniteQuerySchema,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
@@ -80,11 +80,18 @@ export const saveCollectionItemInputSchema = collectionItemSchema
     { error: 'Please pass a valid item type.' }
   );
 
+export const BULK_SAVE_MAX_IMAGES = 100;
 export type BulkSaveCollectionItemsInput = z.infer<typeof bulkSaveCollectionItemsInput>;
 export const bulkSaveCollectionItemsInput = z
   .object({
     collectionId: z.coerce.number(),
-    imageIds: z.coerce.number().array().optional(),
+    imageIds: z.coerce
+      .number()
+      .array()
+      .max(BULK_SAVE_MAX_IMAGES, {
+        error: `You can add up to ${BULK_SAVE_MAX_IMAGES} images at a time`,
+      })
+      .optional(),
     articleIds: z.coerce.number().array().optional(),
     postIds: z.coerce.number().array().optional(),
     modelIds: z.coerce.number().array().optional(),
@@ -109,6 +116,9 @@ export const getAllUserCollectionsInputSchema = z
     // The model the picker is targeting. Active contests only surface when the user owns it —
     // you can only submit your own models — so this gates the includeActiveContests branch.
     contestModelId: z.number(),
+    // The "Save to collection" picker sets this to drop archived collections; management
+    // surfaces leave it off so the owner can still see and unarchive them.
+    excludeArchived: z.boolean(),
     // Attaches `pendingReviewCount` per collection, for the sidebar badges. Opt-in because the
     // picker in AddToCollectionModal calls this too and draws no badge — and because a caller that
     // renders inside the sidebar must pass the SAME value as the sidebar or the two split into
@@ -119,14 +129,22 @@ export const getAllUserCollectionsInputSchema = z
 
 // Declared here, not in the service, so the client can render the picker without pulling in
 // server-only AI deps.
-export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
+export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.6-flash'] as const;
+type AiReviewModel = (typeof AI_REVIEW_MODELS)[number];
+
+// A stored config outlives the model it names, and the review job skips a config that fails to
+// parse, so an unlisted model reads as the default.
+const aiReviewModelSchema = z.preprocess(
+  (value) => (AI_REVIEW_MODELS.includes(value as AiReviewModel) ? value : undefined),
+  z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0])
+);
 
 export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
 // Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
 // metadata, capping a Contest collection's metadata at the btree row limit (~2704 bytes).
 export const collectionAiReviewSchema = z.object({
   enabled: z.boolean().default(false),
-  model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
+  model: aiReviewModelSchema,
   prompt: z.string().trim().min(1).max(20000),
   // Bitmask of NsfwLevel flags. An item outside the mask is rejected without a vision call.
   allowedNsfwLevels: z
@@ -229,7 +247,7 @@ export const upsertCollectionInput = z
     id: z.number().optional(),
     name: z.string().max(30).nonempty(),
     description: z.string().max(300).nullish(),
-    image: imageSchema.nullish(),
+    image: imageReferenceInputSchema.nullish(),
     imageId: z.number().optional(),
     nsfw: z.boolean().optional(),
     read: z.enum(CollectionReadConfiguration).optional(),
@@ -240,6 +258,12 @@ export const upsertCollectionInput = z
     tags: z.array(tagSchema).nullish(),
   })
   .merge(collectionItemSchema);
+
+export type SetCollectionArchivedInput = z.infer<typeof setCollectionArchivedInput>;
+export const setCollectionArchivedInput = z.object({
+  id: z.number(),
+  archived: z.boolean(),
+});
 
 export type UpdateCollectionCoverImageInput = z.infer<typeof updateCollectionCoverImageInput>;
 export const updateCollectionCoverImageInput = z.object({
@@ -300,7 +324,7 @@ export const updateCollectionItemsStatusInput = z
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({
   collectionId: z.number(),
-  images: z.array(imageSchema).min(1, 'At least one image must be uploaded'),
+  images: z.array(imageInputSchema).min(1, 'At least one image must be uploaded'),
 });
 
 export type GetAllCollectionsInfiniteSchema = z.infer<typeof getAllCollectionsInfiniteSchema>;

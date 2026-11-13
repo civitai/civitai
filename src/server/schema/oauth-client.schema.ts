@@ -76,6 +76,16 @@ export function deriveAllowedOriginsFromRedirectUris(redirectUris: string[]): st
 /** Hostnames treated as loopback for redirect-URI port flexibility (RFC 8252 §7.3). */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
+/** May an app that skips the consent screen use this redirect URI? Only https to a host that isn't loopback. */
+export function isSkipConsentRedirectUri(uri: string): boolean {
+  try {
+    const url = new URL(uri);
+    return url.protocol === 'https:' && !LOOPBACK_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Does `provided` match one of the client's registered redirect URIs?
  *

@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'crypto';
 import { env } from '$env/dynamic/private';
+import { outboundTimeoutSignal } from './outbound-timeout';
 // Shared cross-app contract: the provider id set is defined once in @civitai/auth (the main app references the
 // same ids to render buttons + deep-link here). This file owns the hub-only OAuth config/secrets for each.
 import type { ProviderId } from '@civitai/auth';
 export type { ProviderId };
 
-// Minimal, dependency-free OAuth2 Authorization-Code + PKCE client. One generic flow drives
+// Minimal, dependency-free OAuth2 Authorization-Code client (PKCE unless a leg opts out; see usesPkce). One generic flow drives
 // every provider via a small config table. Secrets are read lazily from env, so a provider
 // simply "turns on" once its CLIENT_ID/SECRET are present (see listEnabledProviders).
 //
@@ -29,11 +30,11 @@ interface ProviderDef {
   userinfoUrl: string;
   scope: string;
   /** A server-defined EXTRA scope requested ONLY on explicit user intent (`?roles=true`), never at plain login.
-   *  Discord's `role_connections.write` (Linked Roles) lives here: requesting it at every login made the whole
-   *  authorize fail with `invalid_scope` unless the app had a Linked Roles verification URL configured, so it's
-   *  now incremental — only the /discord/link-role flow asks for it. Server-defined (not a raw query value) so
-   *  a client can't inject arbitrary scopes. */
+   *  Server-defined (not a raw query value) so a client can't inject arbitrary scopes. */
   incrementalScope?: string;
+  /** Send no PKCE on the incremental leg: Discord rejects `role_connections.write` with `invalid_scope` when the
+   *  authorize request carries a code_challenge. */
+  incrementalSkipsPkce?: boolean;
   /** Reddit wants HTTP Basic auth on the token endpoint + a User-Agent. */
   basicAuthTokenRequest?: boolean;
   userAgent?: string;
@@ -52,11 +53,10 @@ const PROVIDERS: Record<ProviderId, ProviderDef> = {
     authorizeUrl: 'https://discord.com/oauth2/authorize',
     tokenUrl: 'https://discord.com/api/oauth2/token',
     userinfoUrl: 'https://discord.com/api/users/@me',
-    // Plain login/connect requests only identify+email (always valid). `role_connections.write` (Linked Roles)
-    // is requested ON DEMAND via incrementalScope — only the /discord/link-role flow (`?roles=true`) asks for
-    // it, so a login no longer fails with `invalid_scope` when the Discord app has no Linked Roles config.
+    // role_connections.write is requested only on the explicit /discord/link-role flow; see incrementalScope.
     scope: 'identify email',
     incrementalScope: 'role_connections.write',
+    incrementalSkipsPkce: true,
     clientId: () => env.DISCORD_CLIENT_ID,
     clientSecret: () => env.DISCORD_CLIENT_SECRET,
     mapProfile: (p) => ({
@@ -250,12 +250,29 @@ export function createPkce() {
   return { codeVerifier, codeChallenge };
 }
 
+/** Flow cookie marking a leg started without PKCE; holds the provider id. */
+export const NO_PKCE_COOKIE = 'oauth_no_pkce';
+
+/** False only for the incremental-scope LINK leg of a provider with incrementalSkipsPkce. */
+export function usesPkce(
+  provider: ProviderDef,
+  leg: { incremental?: boolean; link?: boolean }
+): boolean {
+  return !(
+    leg.link &&
+    leg.incremental &&
+    provider.incrementalScope &&
+    provider.incrementalSkipsPkce
+  );
+}
+
 export function buildAuthorizeUrl(
   provider: ProviderDef,
   opts: {
     redirectUri: string;
     state: string;
-    codeChallenge: string;
+    /** Omitted on a leg that skips PKCE (see usesPkce). */
+    codeChallenge?: string | null;
     prompt?: string | null;
     /** Request the provider's server-defined incrementalScope too (e.g. Discord role_connections.write). */
     incremental?: boolean;
@@ -272,8 +289,10 @@ export function buildAuthorizeUrl(
       : provider.scope;
   url.searchParams.set('scope', scope);
   url.searchParams.set('state', opts.state);
-  url.searchParams.set('code_challenge', opts.codeChallenge);
-  url.searchParams.set('code_challenge_method', 'S256');
+  if (opts.codeChallenge) {
+    url.searchParams.set('code_challenge', opts.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+  }
   if (provider.id === 'reddit') url.searchParams.set('duration', 'temporary');
   // Forward an OIDC `prompt` (e.g. `select_account`) so the "add another account" flow can pick a DIFFERENT
   // identity on the provider instead of silently reusing the current provider session. Only Google honors
@@ -282,16 +301,20 @@ export function buildAuthorizeUrl(
   return url.toString();
 }
 
+/** Bound on each call to an OAuth provider during the callback, so a hung provider fails the sign-in
+ *  with an error instead of holding it for undici's 300 s header timeout. */
+const PROVIDER_FETCH_TIMEOUT_MS = 8_000;
+
 export async function exchangeCode(
   provider: ProviderDef,
-  opts: { code: string; redirectUri: string; codeVerifier: string }
+  opts: { code: string; redirectUri: string; codeVerifier?: string }
 ): Promise<{ accessToken: string; scope: string | null }> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code: opts.code,
     redirect_uri: opts.redirectUri,
-    code_verifier: opts.codeVerifier,
   });
+  if (opts.codeVerifier) body.set('code_verifier', opts.codeVerifier);
   const headers: Record<string, string> = {
     'content-type': 'application/x-www-form-urlencoded',
     accept: 'application/json',
@@ -307,7 +330,12 @@ export async function exchangeCode(
     body.set('client_secret', provider.clientSecret()!);
   }
 
-  const res = await fetch(provider.tokenUrl, { method: 'POST', headers, body });
+  const res = await fetch(provider.tokenUrl, {
+    method: 'POST',
+    headers,
+    body,
+    signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`[${provider.id}] token exchange failed: ${res.status}`);
   const json = (await res.json()) as { access_token?: string; scope?: string };
   if (!json.access_token) throw new Error(`[${provider.id}] no access_token in response`);
@@ -322,7 +350,10 @@ export async function fetchProfile(
 ): Promise<NormalizedProfile> {
   const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
   if (provider.userAgent) headers['user-agent'] = provider.userAgent;
-  const res = await fetch(provider.userinfoUrl, { headers });
+  const res = await fetch(provider.userinfoUrl, {
+    headers,
+    signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`[${provider.id}] userinfo failed: ${res.status}`);
   const json = (await res.json()) as Record<string, unknown>;
   const profile = provider.mapProfile(json);
@@ -332,7 +363,10 @@ export async function fetchProfile(
   // user with a private email would create a duplicate account instead of linking. Best-effort.
   if (provider.emailsUrl && !profile.email) {
     try {
-      const eRes = await fetch(provider.emailsUrl, { headers });
+      const eRes = await fetch(provider.emailsUrl, {
+        headers,
+        signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
+      });
       if (eRes.ok) {
         const emails = (await eRes.json()) as Array<{
           email: string;

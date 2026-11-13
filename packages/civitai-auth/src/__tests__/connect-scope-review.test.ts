@@ -23,7 +23,7 @@ describe('tokenScopeKeyByBit', () => {
   it('returns undefined for an unknown / non-single bit', () => {
     expect(tokenScopeKeyByBit(0)).toBeUndefined(); // None sentinel
     expect(tokenScopeKeyByBit(TokenScope.Full)).toBeUndefined(); // aggregate, not a single bit
-    expect(tokenScopeKeyByBit(1 << 30)).toBeUndefined(); // undefined bit
+    expect(tokenScopeKeyByBit(2 ** 31)).toBeUndefined(); // undefined bit
     expect(tokenScopeKeyByBit(TokenScope.UserRead | TokenScope.ModelsRead)).toBeUndefined(); // multi-bit
   });
 });

@@ -25,7 +25,7 @@ import { renderWithProviders } from '../../../test/component-setup';
  *     the exported `appsSections` (`apps-sections.ts`), so the visibility predicates can
  *     be driven directly here instead of through a presentational component's props;
  *   • the `< 2 sections ⇒ render nothing` COLLAPSE moved from the view into
- *     `AppsPageLayout`, because the layout also has to stop reserving the rail's 276px of
+ *     `AppsPageLayout`, because the layout also has to stop reserving the rail's 292px of
  *     horizontal chrome. So this file renders the REAL `AppsPageLayout` with the data
  *     hook stubbed, rather than a presentational view in isolation — which exercises the
  *     collapse where it now lives instead of re-implementing it in a fixture;
@@ -72,24 +72,45 @@ const ALL: AppsNavSummary = {
  * Sees the store, may reach `/apps/build`, and may AUTHOR (mod, or a non-mod holding
  * `appBlocksAuthor`) — today's live moderator / `app-dev-testers` shape.
  */
-const AUTHOR: AppsNavContext = { isAuthor: true, canBuild: true, canSeeStore: true };
+const AUTHOR: AppsNavContext = {
+  isAuthor: true,
+  canBuild: true,
+  canSeeStore: true,
+  isSignedIn: true,
+};
 /**
  * A store-visible NON-author who may still reach `/apps/build`: `canAccessAppsBuild`'s
  * `appBlocksGetStarted` disjunct. The cohort the recruiting pitch (state A) exists for.
  */
-const BUILDER: AppsNavContext = { isAuthor: false, canBuild: true, canSeeStore: true };
+const BUILDER: AppsNavContext = {
+  isAuthor: false,
+  canBuild: true,
+  canSeeStore: true,
+  isSignedIn: true,
+};
 /**
  * The widened store-visibility tester cohort: sees the store, cannot author and cannot
- * build (no `appBlocksGetStarted`). This is the LIVE `< 2` collapse cohort — Marketplace
- * is the only row that qualifies for them.
+ * build (no `appBlocksGetStarted`). This USED to be the live `< 2` collapse cohort
+ * (Marketplace alone); since `/apps` became the "My apps" home, store access lights two
+ * rows — My apps and Marketplace — so the rail renders for them.
  */
-const NOT_AUTHOR: AppsNavContext = { isAuthor: false, canBuild: false, canSeeStore: true };
+const NOT_AUTHOR: AppsNavContext = {
+  isAuthor: false,
+  canBuild: false,
+  canSeeStore: true,
+  isSignedIn: true,
+};
 /**
  * No store access at all. `canBuild` is `false` here BY CONSTRUCTION, not by choice:
  * `canAccessAppsBuild` ANDs `hasAppsStoreAccess`, so `{canBuild: true, canSeeStore:
  * false}` is a shape the container cannot produce.
  */
-const NO_STORE: AppsNavContext = { isAuthor: false, canBuild: false, canSeeStore: false };
+const NO_STORE: AppsNavContext = {
+  isAuthor: false,
+  canBuild: false,
+  canSeeStore: false,
+  isSignedIn: true,
+};
 
 /**
  * 🔴 THE DATA HOOK IS STUBBED; THE LAYOUT AND THE RAIL ARE REAL. That split is what lets
@@ -162,39 +183,49 @@ function renderedSections(): string[] {
   return Array.from(nav.querySelectorAll('a')).map((el) => (el.textContent ?? '').trim());
 }
 
-/** The group HEADINGS currently in the rail, in DOM order. */
+/**
+ * The group HEADINGS currently in the rail, in DOM order.
+ *
+ * ⚠️ SELECTED BY `data-apps-chrome="rail-group-heading"`, NOT BY "every non-anchor child
+ * of the nav". The older form was a claim about DEPTH as well as about headings: the first
+ * group's heading now shares a row with the rail's collapse toggle, so it sits one level
+ * down inside a wrapper and the structural filter would have reported the WRAPPER (whose
+ * text happens to match, so it would have kept passing while measuring a different node).
+ */
 function renderedGroups(): string[] {
   const nav = navEl();
   if (!nav) return [];
-  return Array.from(nav.children)
-    .filter((el) => el.tagName.toLowerCase() !== 'a')
+  return Array.from(nav.querySelectorAll('[data-apps-chrome="rail-group-heading"]'))
     .map((el) => (el.textContent ?? '').trim())
     .filter(Boolean);
 }
 
 describe('the rail renders the conditional section set', () => {
-  test('Build + Marketplace are present for an author with an all-false summary', async () => {
+  test('My apps + Build + Marketplace are present for an author with an all-false summary', async () => {
     await renderNav(NONE, AUTHOR, '/apps');
+    await expect.element(link('My apps')).toBeInTheDocument();
     await expect.element(link('Marketplace')).toBeInTheDocument();
     await expect.element(link('Build')).toBeInTheDocument();
   });
 
   /**
    * 🔴 THE RETIRED-LABEL GUARD. "Build apps", "Create" and "My apps" were three separate
-   * rows until the `/apps/build` consolidation folded them into one. A partial revert —
+   * rows until the `/apps/build` consolidation folded them into one. ("My apps" has since
+   * come BACK as a different row — the viewer's app home at `/apps` — so it is no longer a
+   * retired label; the home row's href is pinned below instead.) A partial revert —
    * re-adding any one of those rows beside the new "Build" — is the most likely way this
    * table regresses, and every other test in this file would stay green through it
    * (they assert what IS rendered, never what is not). Asserted against the FULLEST
    * context + summary the registry can be given, so a re-added row cannot hide behind an
    * unlucky fixture.
    */
-  test('🔴 the retired entries are gone: no Build apps / Create / My apps / My submissions', async () => {
+  test('🔴 the retired entries are gone: no Build apps / Create / My submissions', async () => {
     await renderNav(ALL, AUTHOR, '/apps');
     // Positive control first: the rail IS rendered and fully populated, so the absences
     // below are observations rather than a consequence of an empty container.
     await expect.element(link('Build')).toBeInTheDocument();
     await expect.element(link('Review')).toBeInTheDocument();
-    for (const retired of ['Build apps', 'Create', 'My apps', 'My submissions', 'Submit']) {
+    for (const retired of ['Build apps', 'Create', 'My submissions', 'Submit']) {
       expect(renderedSections(), `an entry named "${retired}" is still rendered`).not.toContain(
         retired
       );
@@ -216,13 +247,13 @@ describe('the rail renders the conditional section set', () => {
   test('with an all-false summary the conditional entries are hidden', async () => {
     await renderNav(NONE, AUTHOR, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
   test('Activity shows when hasInstalls', async () => {
     await renderNav({ ...NONE, hasInstalls: true }, AUTHOR, '/apps');
     await expect.element(link('Activity')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace', 'Build']);
   });
 
   /**
@@ -247,7 +278,7 @@ describe('the rail renders the conditional section set', () => {
     await expect.element(link('Activity')).toBeInTheDocument();
     // …and it is the ONLY conditional entry this summary lights, so the pass cannot be a
     // row that became unconditional.
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace']);
   });
 
   test('NEGATIVE CONTROL: neither installs nor activity ⇒ no Activity entry', async () => {
@@ -273,12 +304,11 @@ describe('the rail renders the conditional section set', () => {
    */
   test('🔴 hasSubmissions / hasEditableApps light NO entry (the Build row must not read them)', async () => {
     await renderNav({ ...NONE, hasSubmissions: true, hasEditableApps: true }, NOT_AUTHOR, '/apps');
-    // This viewer qualifies for Marketplace alone, so the `< 2` collapse removes the rail
-    // — which is itself the assertion: neither summary flag added an entry. The barrier
-    // makes that absence a real observation; the next test is its positive control.
-    await awaitCommit();
-    expect(renderedSections()).toEqual([]);
-    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+    // This viewer qualifies for the two store rows only (My apps + Marketplace), so the
+    // pinned literal is itself the assertion: neither summary flag added an entry. The next
+    // test is its positive control.
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
   });
 
   test('POSITIVE CONTROL: a summary flag that IS wired (hasInstalls) does light an entry', async () => {
@@ -290,37 +320,38 @@ describe('the rail renders the conditional section set', () => {
     await expect.element(link('Activity')).toBeInTheDocument();
     // …and STILL no entry from the two unwired flags, so the pinned literal catches a
     // mutant that wires either of them in.
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace']);
   });
 
   test('Revenue shows ONLY when hasApprovedApps', async () => {
     await renderNav({ ...NONE, hasApprovedApps: true }, AUTHOR, '/apps');
     await expect.element(link('Revenue')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Revenue', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Revenue', 'Marketplace', 'Build']);
   });
 
   test('Review shows ONLY when isReviewer', async () => {
     await renderNav({ ...NONE, isReviewer: true }, AUTHOR, '/apps');
     await expect.element(link('Review')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build', 'Review']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build', 'Review']);
   });
 
   test('an all-true summary + a full-capability viewer shows every entry, in registry order', async () => {
     await renderNav(ALL, AUTHOR, '/apps');
     await expect.element(link('Review')).toBeInTheDocument();
     // Pinned as an ORDERED literal, not a presence loop: order is a real property of this
-    // nav (discovery → manage → revenue → build → moderate) and a presence loop cannot
-    // see a row that moved.
+    // nav (home → manage → revenue → discovery → build → moderate) and a presence loop
+    // cannot see a row that moved.
     //
     // 🔴 `Build` SITS SECOND-TO-LAST, and this literal is what makes that a checked fact
     // rather than a claim in a comment. It is the narrowest-audience entry here, so
     // leading with it put the smallest cohort's destination in the position that reads as
     // "what this nav is for".
     expect(renderedSections()).toEqual([
-      'Marketplace',
+      'My apps',
       'Activity',
       'Invites',
       'Revenue',
+      'Marketplace',
       'Build',
       'Review',
     ]);
@@ -341,7 +372,7 @@ describe('the rail renders the conditional section set', () => {
   test('the three summary-driven entries are independent of isAuthor/canBuild', async () => {
     await renderNav(ALL, NOT_AUTHOR, '/apps');
     await expect.element(link('Review')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Review']);
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Revenue', 'Marketplace', 'Review']);
   });
 });
 
@@ -359,15 +390,15 @@ describe('the rail groups sections, and never renders an empty group', () => {
   test('a full-capability viewer sees all four groups, in registry order', async () => {
     await renderNav(ALL, AUTHOR, '/apps');
     await expect.element(link('Review')).toBeInTheDocument();
-    expect(renderedGroups()).toEqual(['Discover', 'Yours', 'Build', 'Moderate']);
+    expect(renderedGroups()).toEqual(['Yours', 'Discover', 'Build', 'Moderate']);
   });
 
   test('🔴 a group with no visible section renders NO heading', async () => {
-    // Marketplace + Build only: `Yours` and `Moderate` have nothing in them.
+    // My apps + Marketplace + Build only: `Moderate` has nothing in it.
     await renderNav(NONE, AUTHOR, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
-    expect(renderedGroups()).toEqual(['Discover', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
+    expect(renderedGroups()).toEqual(['Yours', 'Discover', 'Build']);
   });
 });
 
@@ -381,9 +412,8 @@ describe('the rail groups sections, and never renders an empty group', () => {
  */
 describe('Build is gated on canBuild', () => {
   test('Build is HIDDEN for a store-visible viewer who cannot build', async () => {
-    // Give the viewer an install so the rail still has two entries and renders —
-    // otherwise the `< 2` collapse would remove the whole nav and this assertion would
-    // pass for the WRONG reason (see the dedicated collapse tests below).
+    // The install is kept from when Marketplace alone could not clear the `< 2` floor; it
+    // still proves Build stays hidden beside a summary-lit row.
     await renderNav({ ...NONE, hasInstalls: true }, NOT_AUTHOR, '/apps');
     await expect.element(link('Marketplace')).toBeInTheDocument();
     await expect.element(link('Activity')).toBeInTheDocument();
@@ -411,7 +441,26 @@ describe('Build is gated on canBuild', () => {
     // "simplified" to `c.isAuthor`.
     await renderNav(NONE, BUILDER, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
+  });
+});
+
+describe('the App Assistant has no row of its own — it lives on Build', () => {
+  test('a full author sees Build and no App Assistant entry, and nothing links to /apps/assistant', async () => {
+    // `/apps/assistant` 301s to `/apps/build`, which renders the workspace itself. A row of its
+    // own would be a link into a redirect.
+    await renderNav(ALL, AUTHOR, '/apps');
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual([
+      'My apps',
+      'Activity',
+      'Invites',
+      'Revenue',
+      'Marketplace',
+      'Build',
+      'Review',
+    ]);
+    expect(document.querySelector('a[href^="/apps/assistant"]')).toBeNull();
   });
 });
 
@@ -449,95 +498,117 @@ describe('Marketplace is gated on canSeeStore', () => {
   test('🔴 DISCRIMINATING CONTROL: the same viewer WITH canSeeStore does get Marketplace', async () => {
     await renderNav(TWO_SUMMARY_SECTIONS, NOT_AUTHOR, '/apps');
     await expect.element(link('Marketplace')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Review']);
-    expect(link('Marketplace').element().getAttribute('href')).toBe('/apps');
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace', 'Review']);
+    expect(link('Marketplace').element().getAttribute('href')).toBe('/apps/store');
+    expect(link('My apps').element().getAttribute('href')).toBe('/apps');
   });
 });
 
 /**
- * 🔴 THE `< 2` COLLAPSE, AND THE COHORT THAT STILL REACHES IT.
+ * 🔴 THE `< 2` COLLAPSE, AFTER THE HOME/STORE SPLIT.
  *
- *   store-visible (`canSeeStore: true`) · NOT an author · no `appBlocksGetStarted`
- *   (⇒ `canBuild: false`) · empty summary  ⇒  Marketplace ALONE ⇒ no rail.
+ * It used to be reached by a store-visible non-author with an empty summary and no
+ * `canBuild` — Marketplace alone. `/apps` is now that viewer's "My apps" home, gated on the
+ * SAME store access, so they hold two entries and the rail renders. The floor now bites
+ * only a viewer with ONE summary-driven entry and no store access.
  *
- * 🔴 IT IS ASSERTED HERE AGAINST THE REAL `AppsPageLayout`, WHICH IS WHERE THE RULE NOW
- * LIVES. As a tab strip the collapse saved a row's height; as a rail it saves 276px of
- * every apps page's WIDTH, which is a bigger claim and a worse regression to miss.
- *
- * ⚠️ THE SHAPE IS REAL; THE COHORT THIS USED TO NAME IS NOT. An earlier version said
- * "`app-dev-testers` with the kill switch off", which the Flipt state refutes:
- * `app-blocks-author` rolls out to `app-dev-testers`, so such a member IS an author. The
- * shape is reachable through the store flags that do NOT imply authorship
- * (`app-listings-public-external` rolls out to `testers`). No replacement cohort claim is
- * made here — the segment sets live in `civitai/flipt-state`, not in this repo.
+ * 🔴 IT IS ASSERTED HERE AGAINST THE REAL `AppsPageLayout`, WHICH IS WHERE THE RULE LIVES.
+ * As a rail it saves 292px of every apps page's WIDTH, a regression worth catching.
  */
-describe('the collapse, and the canBuild gate that keeps it live', () => {
-  test('🔴 a store-visible non-author with an EMPTY summary and no canBuild renders NO rail', async () => {
+describe('the collapse, and what clears it', () => {
+  test('🔴 a store-visible non-author with an EMPTY summary now gets a rail: My apps + Marketplace', async () => {
     await renderNav(NONE, NOT_AUTHOR, '/apps');
+    await expect
+      .element(page.getByRole('navigation', { name: 'App sections' }))
+      .toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
+  });
+
+  test('🔴 a SIGNED-OUT store-visible non-author gets Marketplace alone, so NO rail', async () => {
+    await renderNav(NONE, { ...NOT_AUTHOR, isSignedIn: false }, '/apps/store');
+    await awaitCommit(); // without this the assertions below cannot fail — see RENDER_BARRIER
+    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+    expect(renderedSections()).toEqual([]);
+  });
+
+  test('POSITIVE CONTROL: the SAME viewer signed in gets My apps + Marketplace', async () => {
+    await renderNav(NONE, { ...NOT_AUTHOR, isSignedIn: true }, '/apps/store');
+    await expect.element(link('My apps')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
+  });
+
+  test('🔴 ONE qualifying entry (no store access, one summary row) still renders NO rail', async () => {
+    await renderNav({ ...NONE, hasInstalls: true }, NO_STORE, '/apps/activity');
     await awaitCommit(); // without this the assertions below cannot fail — see RENDER_BARRIER
     expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
     expect(renderedSections()).toEqual([]);
   });
 
   test('🔴 …and the page BODY still renders (the collapse removes chrome, not content)', async () => {
-    // The rail-specific half of the collapse: as a tab strip, hiding the bar could not
-    // affect the body. As a rail it decides the body's WIDTH, so "renders nothing" has to
-    // mean the chrome only.
-    await renderNav(NONE, NOT_AUTHOR, '/apps');
+    // As a rail the collapse decides the body's WIDTH, so "renders nothing" has to mean
+    // the chrome only.
+    await renderNav({ ...NONE, hasInstalls: true }, NO_STORE, '/apps/activity');
     await awaitCommit();
     expect(document.querySelector('[data-apps-chrome="rail"]')).toBeNull();
     expect(document.querySelector('[data-apps-chrome="drawer-trigger"]')).toBeNull();
   });
 
-  test('🔴 canBuild is what brings the rail back for that same viewer', async () => {
-    // Identical summary and identical `isAuthor`/`canSeeStore` — ONLY `canBuild` moves.
-    // That is what makes the pair attribute the rail to the build capability rather than
-    // to some other difference between two fixtures.
-    await renderNav(NONE, BUILDER, '/apps');
+  test('POSITIVE CONTROL: a second summary row brings the rail back for that same viewer', async () => {
+    await renderNav({ ...NONE, hasInstalls: true, isReviewer: true }, NO_STORE, '/apps/activity');
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['Activity', 'Review']);
+  });
+
+  test('canBuild adds Build for the same store-visible viewer', async () => {
+    // Identical summary and identical `isAuthor`/`canSeeStore` — ONLY `canBuild` moves.
+    await renderNav(NONE, BUILDER, '/apps');
+    await expect.element(link('Build')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
   test('the Build entry points at /apps/build, NOT the retired /apps/get-started', async () => {
     await renderNav(NONE, BUILDER, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
     // `/apps/get-started` is deleted and 301s to `/apps/build`; an entry still pointing at
-    // it would send every click through a redirect (and would be dead the day the
-    // redirect is retired). Read from the RENDERED anchors, so a row that kept the old
-    // href under any label is caught.
+    // it would send every click through a redirect. Read from the RENDERED anchors, so a
+    // row that kept the old href under any label is caught.
     const hrefs = Array.from(navEl()!.querySelectorAll('a')).map((el) => el.getAttribute('href'));
-    expect(hrefs).toEqual(['/apps', '/apps/build']); // non-empty: the check below can fail
+    expect(hrefs).toEqual(['/apps', '/apps/store', '/apps/build']); // non-empty: the check below can fail
     expect(hrefs).not.toContain('/apps/get-started');
   });
 
-  test('🔴 Build sits SECOND-TO-LAST, before Review — not first', async () => {
+  test('🔴 My apps leads; Build sits SECOND-TO-LAST, before Review — not first', async () => {
     await renderNav(ALL, AUTHOR, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
     const sections = renderedSections();
-    expect(sections[0]).toBe('Marketplace');
+    expect(sections[0]).toBe('My apps');
     expect(sections[sections.length - 2]).toBe('Build');
     expect(sections[sections.length - 1]).toBe('Review');
   });
 
-  test('a summary flag alone brings the rail back (one install, no canBuild)', async () => {
+  test('a summary flag adds its row beside the two store rows (one install, no canBuild)', async () => {
     await renderNav({ ...NONE, hasInstalls: true }, NOT_AUTHOR, '/apps');
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity']);
+    expect(renderedSections()).toEqual(['My apps', 'Activity', 'Marketplace']);
   });
 
-  // 🔴 NEGATIVE CONTROL for the counts above. Every assertion in this block is
-  // "the rail IS there with these entries", and a reader wired to nothing would satisfy
-  // none of them — but a `visible` predicate that had silently become `() => true`
-  // for a conditional entry would satisfy all of them too. This one fails in that
-  // case: a non-author must still NOT get Invites, however full their summary is.
+  // 🔴 NEGATIVE CONTROL for the counts above: a non-author must still NOT get Invites,
+  // however full their summary is, so a conditional row that became `() => true` fails.
   test('NEGATIVE CONTROL: the conditional entries are still conditional', async () => {
     await renderNav(ALL, BUILDER, '/apps');
     await expect.element(link('Build')).toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Activity', 'Revenue', 'Build', 'Review']);
+    expect(renderedSections()).toEqual([
+      'My apps',
+      'Activity',
+      'Revenue',
+      'Marketplace',
+      'Build',
+      'Review',
+    ]);
   });
 });
 
@@ -593,17 +664,33 @@ describe('the active entry reflects the current route', () => {
     expect(current('Activity')).toBe('page');
   });
 
-  test('/apps (Marketplace) is NOT current on a child route — exact-match guard', async () => {
+  test('/apps (My apps) is NOT current on a child route — exact-match guard', async () => {
     await renderNav({ ...NONE, hasInstalls: true }, AUTHOR, '/apps/activity');
     await expect.element(link('Activity')).toBeInTheDocument();
+    expect(current('My apps')).toBeNull();
     expect(current('Marketplace')).toBeNull();
   });
 
-  test('Marketplace IS current on the exact /apps route', async () => {
+  test('🔴 My apps — and ONLY My apps — is current on the exact /apps route', async () => {
     await renderNav(NONE, AUTHOR, '/apps');
+    await expect.element(link('My apps')).toBeInTheDocument();
+    expect(current('My apps')).toBe('page');
+    expect(current('Marketplace')).toBeNull();
+    expect(current('Build')).toBeNull();
+  });
+
+  test('🔴 Marketplace is current on /apps/store, and My apps is not', async () => {
+    await renderNav(NONE, AUTHOR, '/apps/store');
     await expect.element(link('Marketplace')).toBeInTheDocument();
     expect(current('Marketplace')).toBe('page');
-    expect(current('Build')).toBeNull();
+    expect(current('My apps')).toBeNull();
+  });
+
+  test('🔴 a store DETAIL page lights neither My apps nor Marketplace', async () => {
+    await renderNav(NONE, AUTHOR, '/apps/store-preview/[slug]');
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(current('Marketplace')).toBeNull();
+    expect(current('My apps')).toBeNull();
   });
 
   test('the Build entry is current on /apps/build (and Marketplace is not)', async () => {
@@ -611,6 +698,7 @@ describe('the active entry reflects the current route', () => {
     await expect.element(link('Build')).toBeInTheDocument();
     expect(current('Build')).toBe('page');
     expect(current('Marketplace')).toBeNull();
+    expect(current('My apps')).toBeNull();
   });
 
   /**
@@ -623,7 +711,15 @@ describe('the active entry reflects the current route', () => {
   test('🔴 on /apps/submit — which has no entry any more — nothing is current', async () => {
     await renderNav(ALL, AUTHOR, '/apps/submit');
     await expect.element(link('Build')).toBeInTheDocument(); // the rail IS rendered
-    for (const name of ['Build', 'Marketplace', 'Activity', 'Invites', 'Revenue', 'Review']) {
+    for (const name of [
+      'My apps',
+      'Build',
+      'Marketplace',
+      'Activity',
+      'Invites',
+      'Revenue',
+      'Review',
+    ]) {
       expect(current(name), `${name} is current`).toBeNull();
     }
   });
@@ -636,16 +732,17 @@ describe('the active entry reflects the current route', () => {
     await expect.element(link('Activity')).toBeInTheDocument();
     expect(renderedSections()).not.toContain('Build');
     expect(current('Activity')).toBe('page');
-    for (const name of ['Marketplace', 'Revenue', 'Review']) {
+    for (const name of ['My apps', 'Marketplace', 'Revenue', 'Review']) {
       expect(current(name)).toBeNull();
     }
   });
 
-  test('with Build hidden, /apps still lights Marketplace', async () => {
+  test('with Build hidden, /apps still lights My apps', async () => {
     await renderNav({ ...NONE, hasInstalls: true }, NOT_AUTHOR, '/apps');
-    await expect.element(link('Marketplace')).toBeInTheDocument();
+    await expect.element(link('My apps')).toBeInTheDocument();
     expect(renderedSections()).not.toContain('Build');
-    expect(current('Marketplace')).toBe('page');
+    expect(current('My apps')).toBe('page');
+    expect(current('Marketplace')).toBeNull();
     expect(current('Activity')).toBeNull();
   });
 });
@@ -658,7 +755,8 @@ describe('every visible entry navigates to its route', () => {
     await renderNav(ALL, AUTHOR, '/apps');
     const cases: Array<[string, string]> = [
       ['Build', '/apps/build'],
-      ['Marketplace', '/apps'],
+      ['My apps', '/apps'],
+      ['Marketplace', '/apps/store'],
       ['Activity', '/apps/activity'],
       // The collaborator inbox: `appCollaborators.listMyPendingInvites`. Owner-INDEPENDENT
       // — an invitee who owns nothing reaches every other entry's page empty.
@@ -670,7 +768,7 @@ describe('every visible entry navigates to its route', () => {
       await expect.element(link(name)).toBeInTheDocument();
       expect(link(name).element().getAttribute('href')).toBe(href);
     }
-    // The set is CLOSED: exactly these six, so a re-added retired row (whose href would
+    // The set is CLOSED: exactly these seven, so a re-added retired row (whose href would
     // not be in `cases`) fails here rather than being silently ignored by the loop.
     expect(renderedSections()).toHaveLength(cases.length);
   });
@@ -682,9 +780,10 @@ describe('isActiveAppsRoute / activeAppsSection (route-matching helpers)', () =>
     return s ? getAppsSectionHref(s) : null;
   };
 
-  test('/apps matches ONLY the exact marketplace route', () => {
+  test('/apps matches ONLY the exact home route', () => {
     expect(isActiveAppsRoute('/apps', '/apps')).toBe(true);
     expect(isActiveAppsRoute('/apps', '/apps/activity')).toBe(false);
+    expect(isActiveAppsRoute('/apps', '/apps/store')).toBe(false);
     expect(isActiveAppsRoute('/apps', '/apps/run/foo')).toBe(false);
   });
 
@@ -697,6 +796,8 @@ describe('isActiveAppsRoute / activeAppsSection (route-matching helpers)', () =>
 
   test('activeAppsSection resolves the active href, or null when none matches', () => {
     expect(activeHref('/apps')).toBe('/apps');
+    expect(activeHref('/apps/store')).toBe('/apps/store');
+    expect(activeHref('/apps/store-preview/[slug]')).toBeNull();
     expect(activeHref('/apps/build')).toBe('/apps/build');
     expect(activeHref('/apps/revenue')).toBe('/apps/revenue');
     // A deep /apps/* route with no corresponding section → nothing active.
@@ -761,26 +862,25 @@ describe('Invites is gated on the author capability', () => {
     // see (a BUILDER differs from both of those fixtures).
     await renderNav({ ...NONE, hasPendingInvites: true }, BUILDER, '/apps');
     await expect.element(link('Build')).toBeInTheDocument(); // the rail IS rendered
-    expect(renderedSections()).toEqual(['Marketplace', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace', 'Build']);
   });
 
-  test('a NON-author invitee gets no rail at all (1 qualifying section ⇒ hidden)', async () => {
-    // Marketplace alone survives the author gate and the `< 2` collapse then hides the
-    // rail — so the two rules compose to the right end state rather than merely not
-    // crashing.
+  test('a NON-author invitee gets the two store rows and NO Invites', async () => {
+    // Only My apps + Marketplace survive the author gate — so the two rules compose to the
+    // right end state rather than merely not crashing.
     await renderNav({ ...NONE, hasPendingInvites: true }, NOT_AUTHOR, '/apps');
-    await awaitCommit();
-    expect(page.getByRole('navigation', { name: 'App sections' }).elements()).toHaveLength(0);
+    await expect.element(link('Marketplace')).toBeInTheDocument();
+    expect(renderedSections()).toEqual(['My apps', 'Marketplace']);
   });
 
-  test('an AUTHOR invitee DOES get the rail: Marketplace + Invites + Build', async () => {
+  test('an AUTHOR invitee DOES get Invites: My apps + Invites + Marketplace + Build', async () => {
     // The positive control for the case above — without it, "the rail is hidden" would
     // pass on a rail that is hidden for everyone.
     await renderNav({ ...NONE, hasPendingInvites: true }, AUTHOR, '/apps');
     await expect
       .element(page.getByRole('navigation', { name: 'App sections' }))
       .toBeInTheDocument();
-    expect(renderedSections()).toEqual(['Marketplace', 'Invites', 'Build']);
+    expect(renderedSections()).toEqual(['My apps', 'Invites', 'Marketplace', 'Build']);
   });
 });
 
@@ -854,6 +954,6 @@ describe('the narrow-viewport drawer', () => {
     const drawerNav = navs[1] as HTMLElement;
     expect(
       Array.from(drawerNav.querySelectorAll('a')).map((a) => (a.textContent ?? '').trim())
-    ).toEqual(['Marketplace', 'Activity', 'Invites', 'Revenue', 'Build', 'Review']);
+    ).toEqual(['My apps', 'Activity', 'Invites', 'Revenue', 'Marketplace', 'Build', 'Review']);
   });
 });

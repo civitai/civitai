@@ -7,6 +7,10 @@ import remarkGfm from 'remark-gfm';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
+import {
+  LEGACY_APPEAL_SLUG,
+  siteAppealPathFromQuery,
+} from '~/components/SiteAppeal/site-appeal-href';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { removeTags } from '~/utils/string-helpers';
@@ -23,7 +27,9 @@ function sanitizeSlug(slug: string | string[] | undefined): string[] {
 
 export const getServerSideProps = createServerSideProps<{ slug?: string[] }>({
   useSSG: true,
-  resolver: async ({ ctx, ssg }) => {
+  // The appeal form's flag is per user, so the redirect below needs the session on client navigation too.
+  useSession: true,
+  resolver: async ({ ctx, ssg, features }) => {
     let { slug } = ctx.params ?? {};
     if (!slug) return { notFound: true };
     if (!Array.isArray(slug)) slug = [slug];
@@ -31,6 +37,12 @@ export const getServerSideProps = createServerSideProps<{ slug?: string[] }>({
     // Sanitize slug to prevent directory traversal
     const sanitizedSlugArray = sanitizeSlug(slug);
     if (sanitizedSlugArray.length === 0) return { notFound: true };
+
+    // The old appeal form, for everyone the on-site one is enabled for. A deep link's
+    // `category` and `id` carry over.
+    if (sanitizedSlugArray.join('/') === LEGACY_APPEAL_SLUG && features?.siteAppealForm) {
+      return { redirect: { destination: siteAppealPathFromQuery(ctx.query), permanent: false } };
+    }
 
     try {
       if (ssg) await ssg.content.get.prefetch({ slug: sanitizedSlugArray });

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 
 // Unit tests for getModelEarlyAccessRefundRequirement and the refundEarlyAccess gate in
 // unpublishModelById. model.service.ts has a very large import graph, so most of its transitive
@@ -69,7 +72,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -183,8 +185,11 @@ function setupRefundData({
   ]);
 }
 
-function setupModelStatus(status: string) {
-  mockTx.model.findUniqueOrThrow.mockResolvedValue({ status });
+// The row unpublishModelById reads under its lock, first in its transaction.
+function setupModelStatus(status: string, meta: Record<string, unknown> | null = {}) {
+  mockTx.$queryRaw.mockImplementation(async (strings: string[]) =>
+    strings.join('').includes('FROM "Model" WHERE id') ? [{ status, meta }] : []
+  );
 }
 
 function setupUnpublishWrites({
@@ -459,6 +464,169 @@ describe('getModelEarlyAccessRefundRequirement', () => {
     expect(result.purchases).toHaveLength(1);
     expect(result.exemptBuyerCount).toBe(0);
   });
+
+  it('refunds a recent download on a row whose generation purchase is past the window', async () => {
+    setupRefundData({
+      accessRows: [generationThenDownload()],
+      amounts: { 'tx-gen': 200, 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([
+      {
+        modelVersionId: VERSION_ID,
+        buyerId: BUYER_ID,
+        buzzTransactionIds: ['tx-dl'],
+        narrow: {
+          revokePermissions: 2,
+          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+        },
+      },
+    ]);
+    expect(result.totalBuzz).toBe(500);
+    expect(result.exemptBuyerCount).toBe(1);
+  });
+
+  it('refunds a recent generation purchase on a row whose download purchase is past the window', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: {
+            'download-buzzTransactionId': 'tx-dl',
+            'generation-buzzTransactionId': 'tx-gen',
+            'generation-purchasedAt': boughtRecently().toISOString(),
+          },
+          addedAt: boughtLongAgo(),
+        },
+      ],
+      amounts: { 'tx-gen': 200, 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    // The kept download also grants generation, so refunding generation revokes no permission.
+    expect(result.purchases).toEqual([
+      {
+        modelVersionId: VERSION_ID,
+        buyerId: BUYER_ID,
+        buzzTransactionIds: ['tx-gen'],
+        narrow: {
+          revokePermissions: 0,
+          removeKeys: ['generation-buzzTransactionId', 'generation-purchasedAt'],
+        },
+      },
+    ]);
+    expect(result.totalBuzz).toBe(200);
+  });
+
+  it('keeps a gift when every purchase on its row is refunded', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { giftLinkId: 4, 'gift-permissions': 1, 'download-buzzTransactionId': 'tx-dl' },
+          addedAt: boughtRecently(),
+        },
+      ],
+      amounts: { 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    // Both of the refunded download's bits are named; the write keeps the gift's generation bit.
+    expect(result.purchases).toEqual([
+      {
+        modelVersionId: VERSION_ID,
+        buyerId: BUYER_ID,
+        buzzTransactionIds: ['tx-dl'],
+        narrow: {
+          revokePermissions: 3,
+          removeKeys: ['download-buzzTransactionId', 'download-purchasedAt'],
+        },
+      },
+    ]);
+    expect(result.exemptBuyerCount).toBe(0);
+  });
+
+  it('narrows, rather than deletes, a gift row that did not record what the gift granted', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: { giftLinkId: 4, 'download-buzzTransactionId': 'tx-dl' },
+          addedAt: boughtRecently(),
+        },
+      ],
+      amounts: { 'tx-dl': 500 },
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases[0].narrow?.revokePermissions).toBe(3);
+  });
+
+  it.each([
+    ['refunds it when the row is recent', boughtRecently(), 1, 0],
+    ['exempts it when the row is old', boughtLongAgo(), 0, 1],
+  ])(
+    'dates a purchase with an unreadable purchasedAt by the row: %s',
+    async (_n, addedAt, refunded, exempt) => {
+      setupRefundData({
+        accessRows: [
+          {
+            accessToId: VERSION_ID,
+            accessorId: BUYER_ID,
+            meta: { 'download-buzzTransactionId': 'tx-1', 'download-purchasedAt': 'not a date' },
+            addedAt,
+          },
+        ],
+      });
+
+      const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+      expect(result.purchases).toHaveLength(refunded);
+      expect(result.exemptBuyerCount).toBe(exempt);
+    }
+  );
+
+  it('dates each purchase by its own key, not the row, when both are recorded', async () => {
+    setupRefundData({
+      accessRows: [
+        {
+          accessToId: VERSION_ID,
+          accessorId: BUYER_ID,
+          meta: {
+            'generation-buzzTransactionId': 'tx-gen',
+            'generation-purchasedAt': boughtLongAgo().toISOString(),
+            'download-buzzTransactionId': 'tx-dl',
+            'download-purchasedAt': boughtLongAgo().toISOString(),
+          },
+          addedAt: boughtRecently(),
+        },
+      ],
+    });
+
+    const result = await getModelEarlyAccessRefundRequirement({ id: MODEL_ID });
+
+    expect(result.purchases).toEqual([]);
+    expect(result.exemptBuyerCount).toBe(1);
+  });
+});
+
+const generationThenDownload = (): AccessRow => ({
+  accessToId: VERSION_ID,
+  accessorId: BUYER_ID,
+  meta: {
+    'generation-buzzTransactionId': 'tx-gen',
+    'download-buzzTransactionId': 'tx-dl',
+    'download-purchasedAt': boughtRecently().toISOString(),
+  },
+  addedAt: boughtLongAgo(),
 });
 
 describe('unpublishModelById — early access refund gate', () => {
@@ -519,6 +687,25 @@ describe('unpublishModelById — early access refund gate', () => {
     });
     expect(mockDbWrite.entityAccess.delete).not.toHaveBeenCalled();
     expect(mockTx.model.update).toHaveBeenCalled();
+  });
+
+  it('keeps the old generation purchase when it refunds only the recent download', async () => {
+    setupRefundData({
+      accessRows: [generationThenDownload()],
+      amounts: { 'tx-gen': 200, 'tx-dl': 500 },
+    });
+    setupUnpublishWrites();
+    mockGetUserBuzzAccountByAccountTypes.mockResolvedValue({ yellow: 1000 });
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, refundEarlyAccess: true });
+
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'tx-dl' })
+    );
+    // Narrowed, not deleted: the generation purchase was paid for and not refunded. What the
+    // narrowing writes is pinned on Postgres in model-early-access-refund.pglite.test.ts.
+    expect(mockDbWrite.entityAccess.deleteMany).not.toHaveBeenCalled();
   });
 
   it('refuses to refund from an owner account that cannot cover the total', async () => {
@@ -603,7 +790,7 @@ describe('unpublishModelById — early access refund gate', () => {
   // statuses. These read the SQL itself, because the two properties that matter — that meta is
   // MERGED rather than replaced, and that the WHERE picks the transitioning rows — live entirely in
   // the static template segments. An assertion on the interpolated payload is byte-identical under
-  // `meta = COALESCE(meta,'{}') || payload` and under `meta = payload`, which is the bug this code
+  // `meta = meta || payload` and under `meta = payload`, which is the bug this code
   // exists to prevent.
   // The take-down is the first $executeRaw in the transaction; the Post metadata update is the
   // second. Found by its SQL rather than by position, so reordering cannot silently repoint these.
@@ -611,9 +798,37 @@ describe('unpublishModelById — early access refund gate', () => {
     mockTx.$executeRaw.mock.calls.find(([strings]) =>
       (strings as unknown as string[]).join('').includes('UPDATE "ModelVersion"')
     );
-  const takeDownSql = () =>
-    ((takeDownCall()?.[0] ?? []) as unknown as string[]).join('?').replace(/\s+/g, ' ');
-  const takeDownParams = () => takeDownCall()?.slice(1) ?? [];
+  // Prisma.sql inlines a nested fragment (the meta merge base) and keeps only the bound values.
+  const takeDown = () => {
+    const call = takeDownCall();
+    return call ? Prisma.sql(call[0] as unknown as string[], ...call.slice(1)) : Prisma.empty;
+  };
+  const takeDownSql = () => takeDown().sql.replace(/\s+/g, ' ');
+  const takeDownParams = () => takeDown().values;
+
+  // Every take-down path calls this, the moderator app's included, so the record is ended here.
+  it("ends a content wipe's removal record on a violation take-down", async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+    const record = {
+      removedWithOwner: true,
+      statusBeforeRemoval: 'Published',
+      versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+    };
+
+    setupModelStatus(KEPT_MODEL_STATUS, { commentsLocked: true, ...record });
+
+    await unpublishModelById({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      reason: 'duplicate',
+    });
+
+    const meta = mockTx.model.update.mock.calls[0][0].data.meta as Record<string, unknown>;
+    expect(meta).toMatchObject({ commentsLocked: true, unpublishedReason: 'duplicate' });
+    for (const key of Object.keys(record)) expect(meta).not.toHaveProperty(key);
+  });
 
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
     setupRefundData({ accessRows: [] });
@@ -628,7 +843,7 @@ describe('unpublishModelById — early access refund gate', () => {
     });
 
     expect(takeDownSql()).toContain(
-      `SET "status" = ?::"ModelStatus", "meta" = COALESCE("meta", '{}'::jsonb) ||`
+      `SET "status" = ?::"ModelStatus", "meta" = ${asJsonbObject('"meta"')} ||`
     );
     // Every key the notification and the audit trail read, not just the one that is easiest to find.
     expect(JSON.parse(takeDownParams()[1] as string)).toEqual({
@@ -687,7 +902,7 @@ describe('unpublishModelById — early access refund gate', () => {
       setupUnpublishWrites();
       setupModelStatus('UnpublishedViolation');
 
-      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: {} });
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
       expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('UnpublishedViolation');
     });
@@ -697,15 +912,15 @@ describe('unpublishModelById — early access refund gate', () => {
       // largest bucket in prod; and refreshing unpublishedAt re-fires the take-down notification.
       setupRefundData({ accessRows: [] });
       setupUnpublishWrites();
-      setupModelStatus('UnpublishedViolation');
       const moderatorRecord = {
         unpublishedReason: 'other',
         customMessage: 'Reviewed by a human',
         unpublishedAt: '2020-01-01T00:00:00.000Z',
         unpublishedBy: 999,
       };
+      setupModelStatus('UnpublishedViolation', { ...moderatorRecord });
 
-      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID, meta: { ...moderatorRecord } });
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
       expect(mockTx.model.update.mock.calls[0][0].data.meta).toEqual(moderatorRecord);
     });
@@ -731,13 +946,12 @@ describe('unpublishModelById — early access refund gate', () => {
     it('does not escalate a published model carrying a stale reason in meta', async () => {
       setupRefundData({ accessRows: [] });
       setupUnpublishWrites();
-      setupModelStatus('Published');
-
-      await unpublishModelById({
-        id: MODEL_ID,
-        userId: OWNER_ID,
-        meta: { unpublishedReason: 'duplicate', customMessage: 'from a previous take-down' },
+      setupModelStatus('Published', {
+        unpublishedReason: 'duplicate',
+        customMessage: 'from a previous take-down',
       });
+
+      await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
       expect(mockTx.model.update.mock.calls[0][0].data.status).toBe('Unpublished');
     });

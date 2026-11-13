@@ -148,7 +148,7 @@ TypeScript **5.9.2** satisfies tRPC v11's **≥5.7.2** requirement. No React or 
 
 ### Phase 0 — De-risk cycles up front (do before touching versions)
 Independent of the upgrade; pure win and required before Phase 3.
-- Run dev/build with `CIRCULAR_DEPENDENCY_PLUGIN=true` (already wired in `next.config.mjs`).
+- Map cycles with a standalone tool such as `npx madge --circular --extensions ts,tsx src`; the `circular-dependency-plugin` block is gone from `next.config.mjs`.
 - Catalog every reported cycle. Fix by extracting shared leaf values (constants/enums/schemas)
   into zero-import leaf modules and importing leaf schemas from source, not via big-module
   re-exports — the exact patterns in the notes doc §1.
@@ -224,10 +224,16 @@ their named exports (the `lazy()` overload accepts `() => Promise<TRouter>`). **
 clean**: `lazy()` preserves the `AppRouter` type inference via `DecorateCreateRouterOptions`'
 `Lazy<Router<…>>` branch, so the client types don't collapse.
 
+**Since then:** each entry is a bare `() => import('<path>').then((m) => m.<router>)` loader in a
+`routers` map that `lazyRouters()` wraps in `lazy()`, and `AppRouter` is **declared** from that map
+rather than inferred from `router({...})`: inferring it built every router's types at once, so any
+`trpc.x` call or `RouterOutput` alias cost the editor all of them. Adding a router is one line in
+`routers`.
+
 ### Cycle audit (the documented hazard)
 Lazy loading reorders module evaluation and can surface latent circular deps as runtime
-`TypeError: Cannot read properties of undefined`. The existing `circular-dependency-plugin` block
-in `next.config.mjs` only scans the **client** bundle (`!options.isServer`), so it would miss the
+`TypeError: Cannot read properties of undefined`. The former (commented-out, since removed)
+`circular-dependency-plugin` block in `next.config.mjs` only scanned the **client** bundle, so it would miss the
 **server** cycles that matter here. A static audit (12 agents, all 92 routers) found **11 unique
 import cycles**; **86 routers are cycle-free**.
 
@@ -243,7 +249,7 @@ The other 9 (medium/low: `stripe↔buzz↔user`, `research.router↔research.web
 `image.service↔{post,report,collection,cosmetic,new-order,tagsOnImageNew}.service`) are all
 function-body-only cycles — harmless now, but **latent hazards**: if any of those modules later
 adds module-scope code that reads a cross-import, it will throw under lazy eval. The fix pattern is
-the established one ([version-ids.ts](../src/shared/data-graph/generation/version-ids.ts)): extract
+the established one ([version-ids.ts](../src/shared/generation/version-ids.ts)): extract
 the shared value into a zero-import leaf module. **Not applied** — out of scope for the lazy
 conversion and unnecessary for correctness.
 

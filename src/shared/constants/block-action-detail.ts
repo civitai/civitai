@@ -50,7 +50,10 @@ export type BlockActionCode =
   // `tip`: both spend the viewer's Buzz, but the counterparty is the app owner
   // rather than another user, and the row names a `goodId` rather than a
   // `toUserId`.
-  | 'goods.purchase';
+  | 'goods.purchase'
+  // An app setting or clearing the viewer's reaction on an image (`blocks.setReactionFromApp`).
+  // Written only when the reaction actually changed — a no-op set writes nothing.
+  | 'reaction.set';
 
 export type BlockActionDetail = {
   /** Stable action code (see BlockActionCode). Free-form on the wire for fwd-compat. */
@@ -125,6 +128,12 @@ export type BlockActionDetail = {
    */
   variant?: string;
   /**
+   * The orchestrator `$type` of every step, in order, for a `kind: 'workflow'`
+   * submit. App-supplied text, like `step` on the pass-through arm; treat it as
+   * untrusted if anything starts to display it. Absent on every other row.
+   */
+  steps?: string[];
+  /**
    * Number of images in a `post.create`. Bounded by construction
    * (`BLOCK_POST_MAX_IMAGES`), server-counted, never a client claim.
    */
@@ -143,6 +152,10 @@ export type BlockActionDetail = {
    * `goods:purchase:self` for every purchase and `endpoint` is the route name.
    */
   goodId?: string;
+  /** The reaction a `reaction.set` targeted (`Like` / `Heart` / `Laugh` / `Cry`). */
+  reaction?: string;
+  /** For a `reaction.set`: true when the app ADDED the reaction, false when it removed it. */
+  reacted?: boolean;
 };
 
 /**
@@ -301,6 +314,14 @@ export function describeBlockAction(
       const amt = typeof detail.amount === 'number' ? ` for ${formatBuzz(detail.amount)}` : '';
       const what = detail.goodId ? `"${detail.goodId}"` : 'an item';
       return `Bought ${what} from this app${amt}`;
+    }
+    case 'reaction.set': {
+      // `describeSubject` names the image from `entityType`/`entityId`.
+      const what = detail.reaction ? `a ${detail.reaction} reaction` : 'a reaction';
+      const failed = detail.outcome === 'failed' ? ' — failed' : '';
+      return detail.reacted === false
+        ? `Removed ${what}${describeSubject(detail, names)}${failed}`
+        : `Added ${what}${describeSubject(detail, names)}${failed}`;
     }
     default:
       // Unknown / forward-compat action code — safe generic line.

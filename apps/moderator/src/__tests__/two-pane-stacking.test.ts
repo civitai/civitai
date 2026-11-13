@@ -29,10 +29,7 @@ const read = (p: string) => stripComments(readFileSync(path.resolve(dir, '..', p
 
 const LAYOUTS = [
   { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte' },
-  {
-    name: 'audit/generator-restrictions',
-    file: 'routes/audit/generator-restrictions/+page.svelte',
-  },
+  { name: 'retool/chat-audit', file: 'routes/retool/chat-audit/[tab]/+layout.svelte' },
 ] as const;
 
 /** Tailwind v4 defaults; this app overrides no `--breakpoint-*`. */

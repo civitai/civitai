@@ -249,7 +249,11 @@ describe('splitPassThroughStepOutput', () => {
   // output — measured as a surviving mutant before this test existed.
   it('does NOT strip an object with `available` but no identity field', () => {
     const capacity = { available: true, queueDepth: 3 };
-    expect(splitPassThroughStepOutput({ capacity })).toEqual({ media: [], rest: { capacity } });
+    expect(splitPassThroughStepOutput({ capacity })).toEqual({
+      media: [],
+      rest: { capacity },
+      model3d: [],
+    });
   });
 
   // 🔴 AN ARRAY INSIDE AN ARRAY. Every other array fixture here holds objects or
@@ -309,10 +313,11 @@ describe('splitPassThroughStepOutput', () => {
   it('strips a whole-value blob that produced NO media', () => {
     expect(
       splitPassThroughStepOutput({ id: 'b', available: false, url: BLOB_URL, tier: 'm' })
-    ).toEqual({ media: [], rest: {} });
+    ).toEqual({ media: [], rest: {}, model3d: [] });
     expect(splitPassThroughStepOutput([{ url: BLOB_URL, available: false }])).toEqual({
       media: [],
       rest: [],
+      model3d: [],
     });
   });
 
@@ -322,8 +327,12 @@ describe('splitPassThroughStepOutput', () => {
   // "a dropped blob cannot ride out through `rest`" claim was false.
   it('strips a blob whose `url` key is ABSENT', () => {
     const blocked = { type: 'image', id: 'b', available: false, blockedReason: 'csam-policy' };
-    expect(splitPassThroughStepOutput({ blob: blocked })).toEqual({ media: [], rest: {} });
-    expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {} });
+    expect(splitPassThroughStepOutput({ blob: blocked })).toEqual({
+      media: [],
+      rest: {},
+      model3d: [],
+    });
+    expect(splitPassThroughStepOutput(blocked)).toEqual({ media: [], rest: {}, model3d: [] });
     expect(JSON.stringify(splitPassThroughStepOutput({ blob: blocked }).rest)).not.toContain(
       'csam-policy'
     );
@@ -333,8 +342,16 @@ describe('splitPassThroughStepOutput', () => {
     expect(
       splitPassThroughStepOutput({ blob: { url: BLOB_URL, available: true } }).media
     ).toHaveLength(1);
-    expect(splitPassThroughStepOutput('just text')).toEqual({ media: [], rest: 'just text' });
-    expect(splitPassThroughStepOutput(undefined)).toEqual({ media: [], rest: undefined });
+    expect(splitPassThroughStepOutput('just text')).toEqual({
+      media: [],
+      rest: 'just text',
+      model3d: [],
+    });
+    expect(splitPassThroughStepOutput(undefined)).toEqual({
+      media: [],
+      rest: undefined,
+      model3d: [],
+    });
   });
 });
 
@@ -613,5 +630,111 @@ describe('the gated read over an Image row a pass-through publish would produce'
     });
     expect(images).toEqual([{ imageId: PUBLISHED_ID, status: 'hidden' }]);
     expect(JSON.stringify(images)).not.toContain(row.url);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3D OUTPUT LABELS — additive. `mediaFromBlobs` flattens every `Model3dBlob` to a bare
+// url, so a `polyGen` job's GLB / FBX / rigged / animated variants used to arrive as an
+// undifferentiated list. `model3dOutputs` keeps `format` (the blob's own field) and
+// `variant` (its output key path) BESIDE the unchanged `imageUrls` / `images`.
+//
+// 🔴 EVERY FORMAT IN THE FIXTURE IS DISTINCT from every other, and from every variant,
+// so a mutant that swaps a format between blobs, labels by key name, or hardcodes one
+// format cannot pass. The values are the `@civitai/orchestration-client` `Model3dBlob` shape:
+// `type: 'model3d'` plus `format`.
+describe('3D output labels (Model3dBlob format + variant)', () => {
+  const u = (s: string) => `https://blobs.example/3d/${s}`;
+  const m3d = (s: string, format: string, extra: Record<string, unknown> = {}) => ({
+    id: `blob_${s}`,
+    type: 'model3d',
+    format,
+    url: u(s),
+    available: true,
+    ...extra,
+  });
+  const POLYGEN_OUTPUT = {
+    model: m3d('a', 'glb'),
+    fbxModel: m3d('b', 'fbx'),
+    // An IMAGE blob beside them: lifted to media, never labelled.
+    thumbnail: { id: 'blob_t', type: 'image', url: u('t'), available: true },
+    riggedModel: m3d('c', 'usdz'),
+    riggedFbxModel: m3d('d', 'obj'),
+    // Not available → dropped from media, so it gains no label either.
+    animatedModel: m3d('e', 'gltf', { available: false }),
+    animatedFbxModel: m3d('f', 'stl'),
+    basicAnimations: {
+      walkingModel: m3d('g', 'ply'),
+      runningArmatureModel: m3d('h', '3mf'),
+    },
+  };
+  const EXPECTED_LABELS = [
+    { url: u('a'), format: 'glb', variant: 'model' },
+    { url: u('b'), format: 'fbx', variant: 'fbxModel' },
+    { url: u('c'), format: 'usdz', variant: 'riggedModel' },
+    { url: u('d'), format: 'obj', variant: 'riggedFbxModel' },
+    { url: u('f'), format: 'stl', variant: 'animatedFbxModel' },
+    { url: u('g'), format: 'ply', variant: 'basicAnimations.walkingModel' },
+    { url: u('h'), format: '3mf', variant: 'basicAnimations.runningArmatureModel' },
+  ];
+  // What `imageUrls` held BEFORE labels existed: every available blob, in walk order.
+  const EXPECTED_URLS = ['a', 'b', 't', 'c', 'd', 'f', 'g', 'h'].map(u);
+
+  function polyGenWorkflow(output: unknown = POLYGEN_OUTPUT) {
+    return {
+      id: 'wf_3d',
+      status: 'succeeded',
+      createdAt: '2026-10-12T00:00:00Z',
+      cost: { total: 1040 },
+      steps: [{ $type: 'polyGen', name: BLOCK_STEP_NAME, output }],
+    };
+  }
+
+  it('the split labels each 3D model by its own format and its key path', () => {
+    const { media, model3d } = splitPassThroughStepOutput(POLYGEN_OUTPUT);
+    expect(media.map((m) => m.url)).toEqual(EXPECTED_URLS);
+    expect(model3d).toEqual(EXPECTED_LABELS);
+  });
+
+  it('labels an array member by its index segment, and a bare blob output with ""', () => {
+    expect(
+      splitPassThroughStepOutput({ models: [{ note: 'x' }, m3d('i', 'glb')] }).model3d
+    ).toEqual([{ url: u('i'), format: 'glb', variant: 'models.1' }]);
+    expect(splitPassThroughStepOutput(m3d('j', 'fbx')).model3d).toEqual([
+      { url: u('j'), format: 'fbx', variant: '' },
+    ]);
+  });
+
+  it('keys on the blob’s own discriminator: no `model3d` type or no format → no label', () => {
+    const { media, model3d } = splitPassThroughStepOutput({
+      notA3d: { id: 'k', type: 'image', format: 'glb', url: u('k'), available: true },
+      noFormat: { id: 'l', type: 'model3d', url: u('l'), available: true },
+    });
+    // Both still lifted to media exactly as before…
+    expect(media.map((m) => m.url)).toEqual([u('k'), u('l')]);
+    // …and neither is labelled.
+    expect(model3d).toEqual([]);
+  });
+
+  it('the snapshot carries the labels; `imageUrls` is unchanged', () => {
+    const snap = snapshotFromWorkflow(polyGenWorkflow() as never);
+    expect(snap.imageUrls).toEqual(EXPECTED_URLS);
+    expect(snap.model3dOutputs).toEqual(EXPECTED_LABELS);
+    // Every label points at a url the existing channel already carries.
+    for (const label of snap.model3dOutputs ?? []) expect(snap.imageUrls).toContain(label.url);
+  });
+
+  it('the app-queue projection carries them too; `images` is unchanged', () => {
+    const wf = projectAppWorkflow(polyGenWorkflow() as never);
+    expect(wf.images.map((i) => i.url)).toEqual(EXPECTED_URLS);
+    expect(wf.model3dOutputs).toEqual(EXPECTED_LABELS);
+  });
+
+  it('a workflow with no 3D output has NO new key — existing snapshots are byte-identical', () => {
+    const plain = workflowWithPassThroughStep({
+      blobs: [{ url: BLOB_URL, available: true, width: 10, height: 20, nsfwLevel: 'pg' }],
+    });
+    expect('model3dOutputs' in snapshotFromWorkflow(plain as never)).toBe(false);
+    expect('model3dOutputs' in projectAppWorkflow(plain as never)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { Blob as OrchestratorBlob } from '@civitai/client';
+import type { Blob as OrchestratorBlob } from '@civitai/orchestration-client';
 import {
   applyCaptionPostProcess,
   applyTagPostProcess,

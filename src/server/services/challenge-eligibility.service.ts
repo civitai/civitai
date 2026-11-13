@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import {
+  describeActiveLimitsByTier,
   getChallengeActiveLimit,
   CHALLENGE_MIN_CREATOR_SCORE,
   CHALLENGE_CREATE_DAILY_LIMIT,
@@ -115,7 +116,7 @@ export async function assertUnderDailyCreateLimit(
 
   if (recentCount >= CHALLENGE_CREATE_DAILY_LIMIT)
     throw forbidden(
-      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges per day. Please try again later.`
+      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges in any 24 hours. Please try again later.`
     );
   return { limit: CHALLENGE_CREATE_DAILY_LIMIT, recentCount };
 }
@@ -132,7 +133,9 @@ export async function assertUnderActiveChallengeLimit(
   const limit = getChallengeActiveLimit(subscription?.tier);
   if (activeCount >= limit)
     throw forbidden(
-      `You've reached your limit of ${limit} active challenge(s) for your membership tier.`
+      `You've reached your limit of ${limit} challenge${
+        limit === 1 ? '' : 's'
+      } running at once for your membership tier (${describeActiveLimitsByTier()}).`
     );
   return { limit, activeCount };
 }

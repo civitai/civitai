@@ -1,4 +1,5 @@
 import type {
+  AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
@@ -6,13 +7,47 @@ import type {
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+
+/** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
+ *  app; the embedded element can't evaluate Flipt itself. A gate missing from this map is hidden
+ *  in the embed for everyone. */
+export const studioModelFlagFeatures = {
+  'ming-training': 'mingTraining',
+  'qwen21-training': 'qwen21Training',
+  'yue2-training': 'yue2Training',
+  'flux3-klein-training': 'flux3KleinTraining',
+  'moss-image-training': 'mossImageTraining',
+  'flux2-klein-training': 'fluxTwoKleinTraining',
+  'flux2-klein-edit-training': 'flux2KleinEditTraining',
+  'training-studio-audio-training': 'trainingStudioAudioTraining',
+  'krea2-training': 'krea2Training',
+  'boogu-training': 'booguTraining',
+  'mageflow-training': 'mageflowTraining',
+  'ernie-training': 'ernieTraining',
+  'hidream-o1-training': 'hidreamO1Training',
+  'anima-training': 'animaTraining',
+  'minimaxh3-training': 'minimaxh3Training',
+  'zimage-turbo-training': 'zimageturboTraining',
+  'ltx25-training': 'ltx25Training',
+  'ltx23-training': 'ltx23Training',
+} as const satisfies Record<string, FeatureFlagKey>;
+
+export function enabledStudioModelFlags(
+  features: Partial<Record<FeatureFlagKey, boolean>>
+): string[] {
+  return Object.entries(studioModelFlagFeatures)
+    .filter(([, feature]) => features[feature])
+    .map(([flagKey]) => flagKey);
+}
 
 /** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
  *  definition behind the training-results Generate affordances and the Training Studio embed's
@@ -50,6 +85,8 @@ export const trainingBaseModelTypesImage = [
   'ideogram4',
   'ming',
   'qwen21',
+  'mossimage',
+  'flux3klein',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -102,6 +139,26 @@ export const aiToolkitBatchMax = (baseType: TrainingBaseModelType): number => {
   return 1;
 };
 
+// LoRA file size per unit of network dim, in MB, from the median size of published trainings. Size is
+// linear in dim but the per-dim cost depends on the architecture, so only measured types are listed.
+// Same figures as the Training Studio's LORA_MB_PER_DIM.
+const loraMbPerDim: Partial<Record<TrainingBaseModelType, number>> = {
+  sdxl: 6.8,
+  flux: 10.25,
+  sd15: 1.125,
+};
+
+/** "At dim 32 the file is about 218MB (≈6.8MB per dim)." for a measured base type, else null. */
+export const networkDimSizeHint = (
+  baseType: TrainingBaseModelType,
+  dim: number | undefined
+): string | null => {
+  const mbPerDim = loraMbPerDim[baseType];
+  if (!mbPerDim || !dim || !Number.isFinite(dim) || dim <= 0) return null;
+  const perDim = Math.round(mbPerDim * 10) / 10;
+  return `At dim ${dim} the file is about ${Math.round(dim * mbPerDim)}MB (≈${perDim}MB per dim).`;
+};
+
 export const engineTypes = [
   'kohya',
   'rapid',
@@ -117,6 +174,28 @@ export type OptimizerTypes = (typeof optimizerTypes)[number];
 
 export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
 export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
+
+// AI-Toolkit's own (lowercase) enums — the single source for the submit, whatif and stored-params
+// schemas, so an optimizer can't be accepted by one and rejected or defaulted by another.
+export const aiToolkitLrSchedulerTypes = [
+  'constant',
+  'constant_with_warmup',
+  'cosine',
+  'linear',
+  'step',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['lrScheduler']>[];
+export const aiToolkitOptimizerTypes = [
+  'adamw',
+  'adamw8bit',
+  'adam8bit',
+  'lion',
+  'lion8bit',
+  'adafactor',
+  'adagrad',
+  'prodigy',
+  'prodigy8bit',
+  'automagic',
+] as const satisfies readonly NonNullable<AiToolkitTrainingInput['optimizerType']>[];
 
 export const trainingModelInfo: {
   [key in TrainingDetailsBaseModelList]: {
@@ -417,6 +496,8 @@ export const trainingModelInfo: {
     air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
     baseModel: 'Ideogram 4.0',
     isNew: true,
+    // Not licensed for on-site training. Kept so existing LoRAs still resolve.
+    disabled: true,
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
@@ -439,6 +520,40 @@ export const trainingModelInfo: {
     baseModel: 'Flux.2 Klein 9B-base',
     isNew: false,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
+  },
+  // Training Studio only: listed so its runs can be published as a model page, never trainable here.
+  mossimage_base: {
+    label: 'Base',
+    pretty: 'MOSS Image Base',
+    type: 'mossimage',
+    description: 'OpenMOSS MOSS Image base model.',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+    baseModel: 'MOSS Image',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'mossImage', modelVariant: 'base' },
+  },
+  mossimage_sft: {
+    label: 'SFT',
+    pretty: 'MOSS Image SFT',
+    type: 'mossimage',
+    description: 'OpenMOSS MOSS Image SFT model.',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+    baseModel: 'MOSS Image',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'mossImage', modelVariant: 'sft' },
+  },
+  flux3klein: {
+    label: 'Base',
+    pretty: 'Flux.3 Klein',
+    type: 'flux3klein',
+    description: 'Flux.3 Klein base model.',
+    air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+    baseModel: 'Flux.3 Klein-base',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'flux3klein' },
   },
   //
   ltx2: {
@@ -538,7 +653,7 @@ export const trainingModelInfo: {
     type: 'acestep15',
     description: 'ACE-Step 1.5 audio diffusion model for music generation training.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864864',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15' },
   },
@@ -548,7 +663,7 @@ export const trainingModelInfo: {
     type: 'acestep15xl',
     description: 'ACE-Step 1.5 XL Base 4B audio diffusion model.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864892',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'base' },
   },
@@ -558,7 +673,7 @@ export const trainingModelInfo: {
     type: 'acestep15xl',
     description: 'ACE-Step 1.5 XL SFT (supervised fine-tuned) 4B audio diffusion model.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864917',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'sft' },
   },
@@ -575,6 +690,14 @@ export const trainingModelInfo: {
 
 export const rapidEta = 5;
 
+/** The image and video entries a training-data zip is read for. */
+export function isTrainingMediaEntry(zname: string) {
+  if (zname.endsWith('/') || zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE'))
+    return false;
+  const mimeType = getMimeTypeFromExt(getFileExtension(zname));
+  return !!mimeType && !!MEDIA_TYPE[mimeType];
+}
+
 export async function unzipTrainingData<T = void>(
   zData: JSZip,
   cb: (args: { imgBlob: Blob; filename: string; fileExt: string }) => Promise<T> | T
@@ -582,12 +705,9 @@ export async function unzipTrainingData<T = void>(
   return (
     await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
-        if (zf.dir) return;
-        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+        if (zf.dir || !isTrainingMediaEntry(zname)) return;
 
         const fileExt = getFileExtension(zname);
-        const mimeType = getMimeTypeFromExt(fileExt);
-        if (!MEDIA_TYPE[mimeType as any]) return;
         const imgBlob = await zf.async('blob');
         return cb({ imgBlob, filename: zname, fileExt });
       })
@@ -727,8 +847,8 @@ export function getAiToolkitModelVariant(
 
 /**
  * Map from TrainingBaseModelType to the per-model AI Toolkit feature flag key.
- * Only includes models where AI Toolkit is optional — mandatory models (qwen, zimage,
- * flux2klein, ltx2) are already gated by their own training feature flags.
+ * Only includes models where AI Toolkit is optional — mandatory models are gated by their own
+ * rollout flags (trainingRolloutFlagByType).
  */
 const aiToolkitFlagByBaseType: Partial<Record<TrainingBaseModelType, string>> = {
   sd15: 'aiToolkitSd15',
@@ -825,9 +945,92 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
   return mandatoryTypes.includes(baseType);
 };
 
+/**
+ * True when every catalog entry for this base type, or for this AI Toolkit ecosystem, is disabled.
+ * The form hides such a type entirely, but a custom-model run names an AIR rather than a catalog key,
+ * so the per-key `disabled` check alone would let it through.
+ */
+export const isRetiredTrainingTarget = ({
+  baseModelType,
+  ecosystem,
+}: {
+  baseModelType: string;
+  ecosystem?: string;
+}): boolean => {
+  const entries = Object.values(trainingModelInfo);
+  const allDisabled = (matching: typeof entries) =>
+    matching.length > 0 && matching.every((v) => v.disabled === true);
+  return (
+    allDisabled(entries.filter((v) => v.type === baseModelType)) ||
+    (!!ecosystem && allDisabled(entries.filter((v) => v.aiToolkit?.ecosystem === ecosystem)))
+  );
+};
+
 export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolean => {
   return (trainingBaseModelTypesAudio as readonly string[]).includes(baseType);
 };
+
+/**
+ * The rollout flag of each AI Toolkit-mandatory base type. isAiToolkitEnabled passes those types
+ * whatever the flags say, so every submit path enforces these through trainingRolloutRefusal. The
+ * ACE-Step types have no flag of their own; audioTraining gates them with every audio type.
+ */
+export const trainingRolloutFlagByType = {
+  qwen: 'qwenTraining',
+  ernie: 'ernieTraining',
+  flux2klein: 'fluxTwoKleinTraining',
+  ltx2: 'ltx2Training',
+  ltx23: 'ltx23Training',
+  ltx25: 'ltx25Training',
+  minimaxh3: 'minimaxh3Training',
+  'hidream-o1': 'hidreamO1Training',
+  anima: 'animaTraining',
+  boogu: 'booguTraining',
+  krea2: 'krea2Training',
+  mageflow: 'mageflowTraining',
+  ideogram4: 'ideogram4Training',
+  ming: 'mingTraining',
+  qwen21: 'qwen21Training',
+  yue2: 'yue2Training',
+} as const satisfies Partial<Record<TrainingBaseModelType, FeatureFlagKey>>;
+
+// ZImage is one base type with two catalog entries under two flags, told apart by ecosystem.
+const trainingRolloutFlagByEcosystem: Record<string, FeatureFlagKey> = {
+  zimageturbo: 'zimageturboTraining',
+  zimagebase: 'zimagebaseTraining',
+};
+
+/**
+ * Why a run may not be submitted under the user's rollout flags, or null when it may. `types` is
+ * every base type the run trains: the caller-written baseModelType alone can be anything, so pass
+ * the catalog entry's type and the type of the params' AI Toolkit ecosystem with it.
+ */
+export function trainingRolloutRefusal(
+  { types, ecosystem }: { types: readonly TrainingBaseModelType[]; ecosystem?: string },
+  features: Partial<Record<string, boolean>>
+): string | null {
+  const notEnabled = (name: string | undefined) =>
+    `${name ?? 'This base model'} training is not currently enabled.`;
+  const prettyOf = (
+    match: (info: (typeof trainingModelInfo)[keyof typeof trainingModelInfo]) => boolean
+  ) => Object.values(trainingModelInfo).find(match)?.pretty;
+
+  if (types.some(isAudioTrainingBaseType) && !features.audioTraining)
+    return 'Audio training is not currently enabled.';
+  for (const type of types) {
+    if (type === 'zimage') {
+      if (!features.zimageturboTraining && !features.zimagebaseTraining)
+        return notEnabled(prettyOf((info) => info.type === type));
+      continue;
+    }
+    const flag = (trainingRolloutFlagByType as Partial<Record<string, FeatureFlagKey>>)[type];
+    if (flag && !features[flag]) return notEnabled(prettyOf((info) => info.type === type));
+  }
+  const ecosystemFlag = ecosystem ? trainingRolloutFlagByEcosystem[ecosystem] : undefined;
+  if (ecosystemFlag && !features[ecosystemFlag])
+    return notEnabled(prettyOf((info) => info.aiToolkit?.ecosystem === ecosystem));
+  return null;
+}
 
 // Get default engine for base type
 // Pass features to enable feature-flag-driven defaults (e.g. aiToolkitDefaultSd)
@@ -871,8 +1074,7 @@ export const getDefaultEngine = (
   }
   // When Kohya is disabled via Flipt, pick best available fallback
   if (features && !features.kohyaTraining) {
-    // Flux defaults to rapid (its primary non-Kohya engine)
-    if (baseType === 'flux') return 'rapid';
+    if (baseType === 'flux') return isAiToolkitEnabled('flux', features) ? 'ai-toolkit' : 'rapid';
     // For other models, use AI Toolkit if available
     if (isAiToolkitEnabled(baseType, features)) return 'ai-toolkit';
     // Last resort — ai-toolkit even if not flagged (better than broken kohya)
@@ -1034,3 +1236,13 @@ export const formatTrainingValidationError = (
     .filter((line, i, arr) => arr.findIndex((l) => l.message === line.message) === i);
   return lines.length > 0 ? lines : null;
 };
+
+export function isHeldForTrainingReview(
+  status: TrainingStatus | null | undefined,
+  trainingResults: unknown
+): boolean {
+  return (
+    status === TrainingStatus.Paused &&
+    (trainingResults as { heldForReview?: unknown } | null | undefined)?.heldForReview === true
+  );
+}

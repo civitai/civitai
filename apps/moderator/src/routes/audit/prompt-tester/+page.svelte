@@ -5,11 +5,12 @@
   import PromptSegments from '$lib/components/PromptSegments.svelte';
   import { HIGHLIGHT_LEGEND, HIGHLIGHT_MARK } from '$lib/prompt-highlight';
   import type { PromptSegment } from '@civitai/mod-utils/prompt-audit';
-  import type { ActionData } from './$types';
+  import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
-  let { form }: { form: ActionData } = $props();
-  let input = $state('');
+  let { form, data }: { form: ActionData; data: PageData } = $props();
+  // svelte-ignore state_referenced_locally
+  let input = $state(data.prefill);
 
   const passed = $derived((form?.results ?? []).filter((r) => !r.includesInappropriate));
   const flagged = $derived((form?.results ?? []).filter((r) => r.includesInappropriate));

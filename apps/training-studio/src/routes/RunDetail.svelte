@@ -13,9 +13,9 @@
     publishUrl,
   } from '$lib/host';
   import { loraBlobAir } from '$lib/train-core';
+  import { publishShareChoice } from '$lib/publish-url-core';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { locationHref } from '$lib/actions/locationHref';
-  import JSZip from 'jszip';
   import { onSignal } from '$lib/signals';
   import { WORKFLOW_UPDATE_SIGNAL } from '$lib/signal-events';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -42,20 +42,31 @@
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
   import LossGraph from '$lib/components/LossGraph.svelte';
+  import RunLog from '$lib/components/RunLog.svelte';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import ReviewStatusPanel from '$lib/components/ReviewStatusPanel.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
   import {
+    editPairCount,
+    epochWeightsFileName,
+    namedDownloadUrl,
     overallProgressPct,
+    runFileStem,
+    type ArchiveKind,
     type TrainingDetail,
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
   import { mediaCount } from '$lib/data/trainingModels';
-  import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
-  import { extOfAir, extOfMime } from '$lib/media';
+  import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
+  import { extOfAir } from '$lib/media';
+  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
-  import { RETENTION_DAYS } from '$lib/orchestrator-core';
+  import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
@@ -89,13 +100,16 @@
   // terminal (ready/published/failed) → it will never arrive.
   const samplesPending = $derived(d.state === 'training');
 
-  // Live updates while training: re-read the run every few seconds so new epochs/samples stream in.
-  // Each tick re-arms after the refetch settles — success or failure, so one bad refetch can't end
-  // polling — and stops once the run leaves 'training' (this effect re-runs and the guard fails) or
-  // the component unmounts.
+  // Live updates while a run is training or held for review: re-read it so new epochs/samples stream
+  // in, and so a held run moves on by itself once reviewed. Every few seconds while training; once a
+  // minute while held, since a hold can last hours. Each tick re-arms after the refetch settles —
+  // success or failure, so one bad refetch can't end polling — and polling stops once the run is in
+  // neither state (this effect re-runs and the guard fails) or the component unmounts.
   const POLL_MS = 5000;
+  const REVIEW_POLL_MS = 60_000;
   $effect(() => {
-    if (!browser || d.state !== 'training') return;
+    if (!browser || (d.state !== 'training' && d.state !== 'review')) return;
+    const every = d.state === 'review' ? REVIEW_POLL_MS : POLL_MS;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
@@ -104,9 +118,9 @@
       } catch {
         // transient refetch failure — keep polling
       }
-      if (!stopped) timer = setTimeout(tick, POLL_MS);
+      if (!stopped) timer = setTimeout(tick, every);
     };
-    timer = setTimeout(tick, POLL_MS);
+    timer = setTimeout(tick, every);
     return () => {
       stopped = true;
       clearTimeout(timer);
@@ -275,23 +289,12 @@
     return directDatasetUrl(air) ?? datasetSrcs[air] ?? null;
   }
 
-  // The blob's own extension (the air ends in one, e.g. `…-0.png`), falling back to the fetched
-  // mime — both answered by $lib/media's one table, which the Data step's zip IMPORT reads too, so
-  // a downloaded zip's names always round-trip.
-  function fileExt(air: string, mime: string): string {
+  // The air ends in the blob's own extension (`…-0.png`); anything longer isn't one, so the fetched
+  // mime decides.
+  function airExt(air: string): string | undefined {
     const fromAir = extOfAir(air);
-    if (fromAir && fromAir.length <= 4) return fromAir;
-    return extOfMime(mime) ?? 'png';
+    return fromAir && fromAir.length <= 4 ? fromAir : undefined;
   }
-  function saveBlob(blob: Blob, fileName: string) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   async function fetchDatasetBlob(air: string): Promise<Blob> {
     const direct = directDatasetUrl(air);
     if (!direct) return backend().datasetBlob(air, d.workflowId);
@@ -300,8 +303,9 @@
     return res.blob();
   }
 
-  // Download the training data as a standard LoRA-layout zip: each image plus a same-named .txt caption,
-  // so it round-trips with the Data step's "Import .zip" and works in other trainers.
+  const pairDataset = $derived(isPairDataset(d.dataset));
+  const pairCount = $derived(editPairCount(d.dataset));
+
   let downloading = $state(false);
   let downloadError = $state('');
   async function downloadDataset() {
@@ -309,57 +313,72 @@
     downloading = true;
     downloadError = '';
     try {
-      const zip = new JSZip();
       const pad = Math.max(2, String(d.dataset.length).length);
-      let fetched = 0;
-      await Promise.all(
-        d.dataset.map(async (item, i) => {
-          let blob: Blob;
-          try {
-            blob = await fetchDatasetBlob(item.air);
-          } catch {
-            return;
-          }
-          fetched += 1;
-          const base = String(i + 1).padStart(pad, '0');
-          zip.file(`${base}.${fileExt(item.air, blob.type)}`, blob);
-          if (item.caption.trim()) zip.file(`${base}.txt`, item.caption.trim());
-        })
+      const { blob } = await buildDatasetZip(
+        d.dataset.map((item, i) => ({
+          // An edit run keeps its control_1/ + main/ layout, which the edit Data step imports as pairs.
+          base: item.path?.replace(/\.[^./]+$/, '') ?? String(i + 1).padStart(pad, '0'),
+          ext: (item.path && extOfAir(item.path)) || airExt(item.air),
+          caption: item.caption,
+          load: () => fetchDatasetBlob(item.air),
+        }))
       );
-      // An all-skips zip would download EMPTY and read as success.
-      if (fetched === 0) {
+      if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
         return;
       }
-      saveBlob(await zip.generateAsync({ type: 'blob' }), `${slugify(d.name, 'dataset')}-dataset.zip`);
+      saveBlob(blob, `${slugify(d.name, 'dataset')}-dataset.zip`);
     } finally {
       downloading = false;
     }
   }
 
-  let archiving = $state(false);
+  let archiving = $state<ArchiveKind | null>(null);
   let archiveError = $state('');
+  // Set when one kind had to be split into several zips: browsers block all but the first of several
+  // scripted opens, so each part is offered as its own link instead.
+  let archiveParts = $state<EpochArchive[]>([]);
   // A blob KEY, not a URL: a legacy run's epochs download one by one from signed URLs but name no
   // blob the archive could include.
   const archivableEpochs = $derived(d.epochs.filter((e) => e.modelKey).length);
-  async function downloadAllCheckpoints() {
+  const hasSamples = $derived(
+    archivableEpochs > 0 && d.epochs.some((e) => e.samples.some((s) => s !== null))
+  );
+  async function downloadArchive(kind: ArchiveKind) {
     if (archiving) return;
-    archiving = true;
+    archiving = kind;
     archiveError = '';
+    archiveParts = [];
+    // A /[id]→/[id'] navigation reuses this component; a result for the run we left must not land here.
+    const runId = d.workflowId;
     try {
-      const { url } = await backend().epochArchive(d.workflowId);
-      const a = document.createElement('a');
-      a.href = url;
-      // New tab: an attachment response downloads there; a failed one can't replace the run page.
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.click();
+      const parts = await backend().epochArchive(runId, kind);
+      if (runId !== d.workflowId) return;
+      if (parts.length === 1) {
+        const a = document.createElement('a');
+        a.href = parts[0].url;
+        // New tab: an attachment response downloads there; a failed one can't replace the run page.
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.click();
+      } else {
+        archiveParts = parts;
+      }
     } catch (e) {
-      archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
+      if (runId === d.workflowId)
+        archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
     } finally {
-      archiving = false;
+      if (runId === d.workflowId) archiving = null;
     }
   }
+
+  // Epoch weights download as `<run>-<base>-epoch-NN…`, not by their opaque blob id.
+  const fileStem = $derived(runFileStem(d.name, d.base));
+  const maxEpoch = $derived(Math.max(0, ...d.epochs.map((e) => e.number)));
+  const weightsHref = (e: TrainingDetailEpoch) =>
+    e.modelUrl
+      ? namedDownloadUrl(e.modelUrl, epochWeightsFileName(fileStem, e.number, maxEpoch, e.modelKey))
+      : undefined;
 
   function downloadSettings() {
     saveBlob(
@@ -370,7 +389,7 @@
 
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
   async function reuseDataset() {
-    handoffReuse(await toReuseItems(d.dataset, d.workflowId));
+    handoffReuse(toReuseItems(d.dataset, d.workflowId, d.sourceImages));
   }
 
   // Only an explicit host `false` gates — absent means the host has no membership knowledge and
@@ -444,7 +463,7 @@
   const continueQuoteKey = $derived.by(() => {
     const epochs = Number(furtherEpochs) || 0;
     if (!browser || !runComplete || quoteFromEpoch === null || epochs < 1) return null;
-    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}`;
+    return `${workflowIdKey}#${quoteFromEpoch}#${epochs}#${buzzMode.value}#${buzzMode.blueFirst}`;
   });
   $effect(() => {
     // A stale "could not price" must not linger after the panel closes or the input empties.
@@ -457,12 +476,14 @@
         const q = await backend().continueQuote(
           workflowIdKey,
           quoteFromEpoch!,
-          Number(furtherEpochs) || 0
+          Number(furtherEpochs) || 0,
+          buzzMode.currencies
         );
         quoteError = '';
         return {
           cost: q.cost,
           eta: q.steps ? Math.max(1, Math.round((q.steps / 2000) * 18)) : null,
+          matureCount: q.matureCount ?? 0,
         };
       } catch (err) {
         quoteError = err instanceof Error ? err.message : 'Could not price this';
@@ -472,21 +493,51 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
+  // A mature dataset's continuation is charged in Yellow (beyond a member's Blue) only once the user
+  // ticks this; the server refuses the submit without it. Changing the price or epochs un-ticks it.
+  // The submit's own check can find mature images the quote's missed; its refusal sets this.
+  let refusedFurther = $state<{ run: string; count: number } | null>(null);
+  const furtherMature = $derived(
+    Math.max(
+      quote?.matureCount ?? 0,
+      refusedFurther?.run === workflowIdKey ? refusedFurther.count : 0
+    )
+  );
+  const furtherSpend = $derived(
+    quote?.cost != null
+      ? nonBlueSpend(quote.cost, buzzMode.value, {
+          mature: furtherMature > 0,
+          member: hostConfig().isPaidMember === true,
+        })
+      : null
+  );
+  // The run id is in the key so a tick never carries over to another run with the same price.
+  const furtherAckKey = $derived.by(() => {
+    const key = matureAckKey(quote?.cost, furtherSpend?.amount, furtherMature);
+    return key && `${workflowIdKey}:${key}`;
+  });
+  let furtherAckedFor = $state<string | null>(null);
+  const furtherAckMissing = $derived(matureAckMissing(furtherAckedFor, furtherAckKey));
+
   async function doTrainFurther() {
     // Never submit without a shown price — the confirm cost the user sees must be the one that gets charged.
-    if (!publishTarget || continuing || quote == null) return;
+    if (!publishTarget || continuing || quote?.cost == null || furtherAckMissing) return;
     continuing = true;
     continueError = '';
     try {
       const id = await backend().continueRun(
         d.workflowId,
         publishTarget.number,
-        Number(furtherEpochs) || 5
+        Number(furtherEpochs) || 5,
+        buzzMode.currencies,
+        furtherAckKey !== null
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      confirming = false;
+      if (err instanceof MatureAckRequiredError)
+        refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      else confirming = false;
     } finally {
       continuing = false;
     }
@@ -500,11 +551,30 @@
   const featured = $derived(newestFirst.find((e) => e.id === selectedId) ?? recommended);
 
   const publishEpoch = $derived(featured?.modelUrl ? featured : publishTarget);
+  let ownRights = $state(false);
+  let shareDataset = $state(false);
+  let shareTouched = $state(false);
   const publishLink = $derived.by(() => {
     const toUrl = publishUrl();
     if (!toUrl || !publishEpoch) return null;
-    return hostLink(toUrl({ workflowId: d.workflowId, epoch: publishEpoch.number }));
+    return hostLink(
+      toUrl({
+        workflowId: d.workflowId,
+        epoch: publishEpoch.number,
+        ...publishShareChoice(shareTouched, ownRights, shareDataset),
+      })
+    );
   });
+  const dataPolicyUrl = $derived(hostConfig().dataPolicyUrl);
+  function setOwnRights(next: boolean) {
+    shareTouched = true;
+    ownRights = next;
+    if (!next) shareDataset = false;
+  }
+  function setShareDataset(next: boolean) {
+    shareTouched = true;
+    shareDataset = next;
+  }
 
   // Independent of `publishTarget` so the link outlives the checkpoints' blob retention.
   const modelLink = $derived.by(() => {
@@ -512,6 +582,17 @@
     if (!toUrl || d.modelId == null) return null;
     return hostLink(toUrl({ modelId: d.modelId }));
   });
+  // The run keeps its modelId after the owner deletes the model, so ask once per id (a primitive,
+  // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
+  // settles on the server: SSR and hydration both render the pending branch.
+  const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const modelLive = $derived(
+    runModelId == null
+      ? null
+      : browser
+        ? backend().modelLive(runModelId)
+        : new Promise<boolean>(() => {})
+  );
 
   let mode = $state<'epoch' | 'compare'>('epoch');
   // A single-epoch continuation still has ancestors worth comparing against, so lineage alone
@@ -539,9 +620,26 @@
     // The quote itself blanks via debouncedQuote (workflowIdKey is part of its key).
     quoteError = '';
     downloadError = '';
+    archiving = null;
+    archiveError = '';
+    archiveParts = [];
     showLineage = false;
+    furtherAckedFor = null;
+    ownRights = false;
+    shareDataset = false;
+    shareTouched = false;
   });
 </script>
+
+<!-- An edit run's samples are only readable next to the image they were rendered from. -->
+{#snippet sourceThumb(index: number)}
+  {@const url = d.sourceImages?.[index]}
+  {#if url}
+    <a href={url} target="_blank" rel="noopener noreferrer" class="shrink-0" title="Input image">
+      <img src={url} alt="Input for sample {index + 1}" class="size-10 rounded border border-dark-4 object-cover" />
+    </a>
+  {/if}
+{/snippet}
 
 <!-- The one place the Generate affordance decides gated vs in-place action vs deep link — a render
      site that skipped the gate would silently un-gate non-members. When the host says this user
@@ -585,8 +683,8 @@
   </a>
 
   <header class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <div class="flex flex-wrap items-start gap-4">
-      <div class="min-w-0 flex-1">
+    <div class="flex flex-wrap items-start gap-x-4 gap-y-2">
+      <div class="min-w-0 flex-1 max-sm:basis-full">
         {#if renaming}
           <form class="flex flex-wrap items-center gap-2" onsubmit={saveRename} use:focusInput>
             <Input
@@ -606,14 +704,16 @@
           {/if}
         {:else}
           <div class="flex items-center gap-2">
-            <h1 class="m-0 truncate text-2xl font-semibold text-white">{d.name}</h1>
+            <h1 class="m-0 break-words text-xl font-semibold text-white sm:truncate sm:text-2xl">{d.name}</h1>
             <button
               type="button"
               aria-label="Rename training"
               onclick={startRename}
               class="shrink-0 rounded p-1 text-sm font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
-              <IconPencil size={14} stroke={2} class="mr-1 inline" />Rename
+              <IconPencil size={14} stroke={2} class="inline sm:mr-1" /><span
+                class="sr-only sm:not-sr-only">Rename</span
+              >
             </button>
           </div>
         {/if}
@@ -635,7 +735,8 @@
           </p>
         {/if}
       </div>
-      <RunStateBadge state={d.state} />
+      <!-- Below sm the badge sits above the title so the name gets the full row. -->
+      <RunStateBadge state={d.state} class="max-sm:order-first" />
     </div>
 
     <dl class="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-dark-4 pt-4 font-mono text-xs">
@@ -692,14 +793,23 @@
       </div>
     </dl>
     <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
-      <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
+      <span class="w-full font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-auto">Download</span>
       {#if archivableEpochs > 0}
-        <Button size="sm" variant="outline" disabled={archiving} onclick={downloadAllCheckpoints}
-          title="One zip with every ready checkpoint's weights and sample images">
+        <Button size="sm" variant="outline" disabled={archiving !== null}
+          onclick={() => downloadArchive('weights')}
+          title="One zip with every ready checkpoint's weights">
           <IconPackages size={14} stroke={2} />
-          {archiving
+          {archiving === 'weights'
             ? 'Building archive…'
             : `All ${archivableEpochs} checkpoint${archivableEpochs === 1 ? '' : 's'} (.zip)`}
+        </Button>
+      {/if}
+      {#if hasSamples}
+        <Button size="sm" variant="ghost" disabled={archiving !== null}
+          onclick={() => downloadArchive('samples')}
+          title="Every checkpoint's sample images">
+          <IconPhoto size={14} stroke={2} />
+          {archiving === 'samples' ? 'Building archive…' : 'Samples (.zip)'}
         </Button>
       {/if}
       <Button size="sm" variant="ghost" onclick={downloadSettings} title="The run's effective training configuration as JSON">
@@ -707,6 +817,16 @@
       </Button>
       {#if archiveError}
         <span class="font-mono text-xs text-red-400">{archiveError}</span>
+      {/if}
+      {#if archiveParts.length}
+        <span class="basis-full font-mono text-xs text-dark-2">
+          Too many files for one zip — download each part:
+          {#each archiveParts as part, i (part.url)}
+            <a href={part.url} target="_blank" rel="noopener" class="ml-2 text-primary hover:underline"
+              >{i + 1} of {archiveParts.length}</a
+            >
+          {/each}
+        </span>
       {/if}
     </div>
   </header>
@@ -748,7 +868,25 @@
     {/key}
   {/if}
 
-  {#if d.state === 'failed'}
+  {#if d.state !== 'training' && d.traces.length}
+    {#key d.workflowId}
+      <RunLog traces={d.traces} name={d.name} />
+    {/key}
+  {/if}
+
+  {#if d.state === 'review' || d.state === 'rejected' || d.state === 'unreviewed'}
+    <ReviewStatusPanel
+      kind={d.state}
+      workflowId={d.workflowId}
+      heldSince={d.heldSince}
+    >
+      {#if d.state === 'unreviewed' && d.dataset.length}
+        <Button class="mt-4" variant="outline" onclick={reuseDataset}>
+          <IconRepeat size={14} stroke={2} class="mr-1.5 inline" />Try again with this dataset
+        </Button>
+      {/if}
+    </ReviewStatusPanel>
+  {:else if d.state === 'failed'}
     <div class="rounded-xl border border-red-500/20 bg-red-500/5 p-8 text-center">
       <IconAlertTriangle size={32} stroke={1.75} class="mx-auto text-red-400" />
       <h2 class="mt-3 text-base font-semibold text-white">This training didn't complete</h2>
@@ -844,9 +982,10 @@
 
             {#each promptLabels as prompt, r (r)}
               <div
-                class="flex items-center pr-2 text-xs leading-relaxed text-dark-2"
+                class="flex items-center gap-2 pr-2 text-xs leading-relaxed text-dark-2"
                 title={prompt}
               >
+                {@render sourceThumb(r)}
                 <span class="line-clamp-4">{prompt}</span>
               </div>
               {#each ancestorCols as col (`${col.run.workflowId}:${col.epoch.id}`)}
@@ -940,7 +1079,7 @@
           </div>
           {#if featured.modelUrl}
             {@const gen = epochGenerateLink(featured)}
-            <div class="ml-auto flex flex-wrap items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2 sm:ml-auto">
               {#if gen}
                 {@render epochGenerate(
                   gen,
@@ -950,7 +1089,7 @@
                 )}
               {/if}
               <a
-                href={featured.modelUrl}
+                href={weightsHref(featured)}
                 download
                 class="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
               >
@@ -989,8 +1128,9 @@
               {:else}
                 <SampleImage isVideo={d.isVideo} isAudio={d.media === 'audio'} url={null} pending={samplesPending} />
               {/if}
-              <figcaption class="text-xs leading-relaxed text-dark-2" title={prompt}>
-                {prompt}
+              <figcaption class="flex items-start gap-2 text-xs leading-relaxed text-dark-2" title={prompt}>
+                {@render sourceThumb(i)}
+                <span>{prompt}</span>
               </figcaption>
             </figure>
           {/each}
@@ -1114,7 +1254,10 @@
                 class="w-20"
               />
               {#if confirming}
-                <Button onclick={doTrainFurther} disabled={continuing || quote == null}>
+                <Button
+                  onclick={doTrainFurther}
+                  disabled={continuing || quote?.cost == null || furtherAckMissing}
+                >
                   {#if continuing}Starting…{:else}Confirm{#if quote?.cost != null}
                       <span class="ml-1 inline-flex items-center"
                         >— <IconBoltFilled size={13} stroke={2} class="mx-0.5 inline" />{quote.cost.toLocaleString()}</span
@@ -1127,11 +1270,12 @@
                 <Button onclick={() => (confirming = true)}>Train further</Button>
               {/if}
             </div>
+            <BlueFirstNote />
             <div class="font-mono text-xs text-dark-2">
               {#if quoteError}
                 <span class="text-red-400">{quoteError}</span>
               {:else if quote?.cost != null}
-                {@const spend = nonBlueSpend(quote.cost, buzzMode.value)}
+                {@const spend = furtherSpend}
                 Costs <span class="text-buzz"
                   ><IconBoltFilled size={10} stroke={2} class="mb-px inline" />{quote.cost.toLocaleString()}</span
                 >{#if quote.eta} · ~{quote.eta} min{/if} · spends Buzz on confirm{#if spend}
@@ -1141,10 +1285,41 @@
                       ? 'Green'
                       : 'Yellow'}</span
                   >{/if}
+              {:else if quote}
+                <span class="text-red-400">Could not price this</span>
               {:else}
                 pricing…
               {/if}
             </div>
+            {#if furtherAckKey}
+              <div
+                class="flex max-w-sm items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
+              >
+                <Checkbox
+                  id="ack-further-mature"
+                  bind:checked={
+                    () => furtherAckedFor === furtherAckKey,
+                    (v) => (furtherAckedFor = v ? furtherAckKey : null)
+                  }
+                  class="mt-0.5 shrink-0"
+                />
+                <label for="ack-further-mature" class="cursor-pointer">
+                  {furtherMature}
+                  {furtherMature === 1 ? 'image in this dataset is' : 'images in this dataset are'} rated
+                  <strong>mature</strong>.
+                  {#if furtherSpend}
+                    I understand {furtherSpend.uncertain ? 'up to ' : ''}<strong
+                      >{furtherSpend.amount.toLocaleString()} Yellow Buzz</strong
+                    > will be charged.
+                  {:else if buzzMode.blueFirst}
+                    I understand anything beyond my <span class="text-blue-400">Blue</span> Buzz is
+                    charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {:else}
+                    I understand it is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+                  {/if}
+                </label>
+              </div>
+            {/if}
           </div>
         </div>
         {#if continueError}
@@ -1153,55 +1328,92 @@
       </div>
     {/if}
 
-    {#if publishUrl() || modelLink}
-      <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
-        {#if d.state === 'published'}
-          <!-- State first, link second: a published run must never fall through to a Publish CTA —
-               older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
-          {#if modelLink}
-            <Button size="sm" {...modelLink}>
-              <IconExternalLink size={14} stroke={2} />View your model page
+    {#snippet publishPanel(link: ReturnType<typeof hostLink> | null)}
+      {#if publishUrl() || link}
+        <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
+          {#if d.state === 'published'}
+            <!-- State first, link second: a published run must never fall through to a Publish CTA —
+                 older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
+            {#if link}
+              <Button size="sm" {...link}>
+                <IconExternalLink size={14} stroke={2} />View your model page
+              </Button>
+            {/if}
+            <p class="m-0 font-mono text-xs text-dark-2">
+              This run was published as a model on Civitai.
+            </p>
+          {:else if publishLink && publishEpoch}
+            <div class="flex w-full flex-col gap-2 border-b border-dark-4 pb-3">
+              <label class="inline-flex items-center gap-2 text-sm text-dark-0">
+                <Checkbox bind:checked={() => ownRights, setOwnRights} />
+                I have the right, or the rightholder’s explicit permission, to redistribute these files
+              </label>
+              <label
+                class="inline-flex items-center gap-2 text-sm {ownRights ? 'text-dark-0' : 'text-dark-2'}"
+              >
+                <Checkbox bind:checked={() => shareDataset, setShareDataset} disabled={!ownRights} />
+                Share my dataset with the published model
+              </label>
+              <p class="m-0 text-xs text-dark-2">
+                Shared datasets can be downloaded from the model page once it's published.
+                {#if dataPolicyUrl}
+                  See the <a
+                    href={dataPolicyUrl}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-blue-400 underline">dataset storage policy</a
+                  >.
+                {/if}
+              </p>
+            </div>
+            <Button size="sm" {...publishLink}>
+              <IconUpload size={14} stroke={2} />Publish a model page
             </Button>
-          {/if}
-          <p class="m-0 font-mono text-xs text-dark-2">
-            This run was published as a model on Civitai.
-          </p>
-        {:else if publishLink && publishEpoch}
-          <Button size="sm" {...publishLink}>
-            <IconUpload size={14} stroke={2} />Publish a model page
-          </Button>
-          {#if modelLink}
-            <Button size="sm" variant="outline" {...modelLink}>
+            {#if link}
+              <Button size="sm" variant="outline" {...link}>
+                <IconExternalLink size={14} stroke={2} />View draft
+              </Button>
+              <p class="m-0 font-mono text-xs text-dark-2">
+                You already have a draft model page for this run — publishing picks up where you left
+                off, or open the draft directly.
+              </p>
+            {:else}
+              <p class="m-0 font-mono text-xs text-dark-2">
+                Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
+                recommended
+                  ? ' (recommended)'
+                  : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+              </p>
+            {/if}
+          {:else if link}
+            <!-- A draft exists but there's nothing to publish from here — the weights expired, or
+                 this host has no publish surface. The draft link must not hide behind either. -->
+            <Button size="sm" variant="outline" {...link}>
               <IconExternalLink size={14} stroke={2} />View draft
             </Button>
             <p class="m-0 font-mono text-xs text-dark-2">
-              You already have a draft model page for this run — publishing picks up where you left
-              off, or open the draft directly.
+              You have a draft model page for this run on Civitai.
             </p>
           {:else}
+            <Button size="sm" disabled>Publish a model page</Button>
             <p class="m-0 font-mono text-xs text-dark-2">
-              Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
-              recommended
-                ? ' (recommended)'
-                : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+              Available once a checkpoint with downloadable weights is ready.
             </p>
           {/if}
-        {:else if modelLink}
-          <!-- A draft exists but there's nothing to publish from here — the weights expired, or
-               this host has no publish surface. The draft link must not hide behind either. -->
-          <Button size="sm" variant="outline" {...modelLink}>
-            <IconExternalLink size={14} stroke={2} />View draft
-          </Button>
-          <p class="m-0 font-mono text-xs text-dark-2">
-            You have a draft model page for this run on Civitai.
-          </p>
-        {:else}
-          <Button size="sm" disabled>Publish a model page</Button>
-          <p class="m-0 font-mono text-xs text-dark-2">
-            Available once a checkpoint with downloadable weights is ready.
-          </p>
-        {/if}
-      </div>
+        </div>
+      {/if}
+    {/snippet}
+    <!-- Pending or a failed check keeps the link: hiding a real draft is worse than a stale one. -->
+    {#if modelLive}
+      {#await modelLive}
+        {@render publishPanel(modelLink)}
+      {:then live}
+        {@render publishPanel(live ? modelLink : null)}
+      {:catch}
+        {@render publishPanel(modelLink)}
+      {/await}
+    {:else}
+      {@render publishPanel(modelLink)}
     {/if}
   {/if}
 
@@ -1210,21 +1422,23 @@
          there are no epochs yet), collapsed once finished. -->
     <details open={d.state === 'training'} class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
       <summary
-        class="flex cursor-pointer select-none items-center gap-2 px-5 py-3 text-sm font-semibold text-dark-0 hover:bg-dark-5/40 [&::-webkit-details-marker]:hidden"
+        class="flex cursor-pointer select-none flex-wrap items-center gap-x-2 gap-y-2.5 whitespace-nowrap px-5 py-3 text-sm font-semibold text-dark-0 hover:bg-dark-5/40 [&::-webkit-details-marker]:hidden"
       >
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
         <span class="font-mono text-xs font-normal text-dark-2">
-          {mediaCount(d.dataset.length, d.media)}
+          {pairDataset
+            ? `${pairCount} ${pairCount === 1 ? 'pair' : 'pairs'}`
+            : mediaCount(d.dataset.length, d.media)}
         </span>
-        <span class="ml-auto flex items-center gap-1.5">
+        <span class="ml-auto flex items-center gap-1.5 max-sm:grid max-sm:w-full max-sm:grid-cols-2 max-sm:gap-2">
           <button
             type="button"
             onclick={(e) => {
               e.preventDefault();
               void reuseDataset();
             }}
-            class="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            class="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-primary transition-colors max-sm:border max-sm:border-primary/40 max-sm:py-2 max-sm:text-sm hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             title="Start a new training with this dataset"
           >
             <IconRepeat size={13} stroke={2} />Train again
@@ -1236,13 +1450,13 @@
               void downloadDataset();
             }}
             disabled={downloading}
-            class="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-dark-1 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
+            class="inline-flex items-center justify-center gap-1 rounded px-2 py-1 text-[12px] font-medium text-dark-1 transition-colors max-sm:border max-sm:border-dark-4 max-sm:py-2 max-sm:text-sm hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
             title="Download images + captions as a .zip"
           >
             <IconArchive size={13} stroke={2} />{downloading ? 'Zipping…' : 'Download'}
           </button>
           {#if downloadError}
-            <span class="font-mono text-xs text-red-400">{downloadError}</span>
+            <span class="whitespace-normal font-mono text-xs text-red-400 max-sm:col-span-2">{downloadError}</span>
           {/if}
         </span>
       </summary>

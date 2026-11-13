@@ -48,6 +48,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 
 type Bundlable = PackMemberPricing & {
   name: string;
@@ -270,7 +271,7 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
         return;
       }
-      await submitPack.mutateAsync({
+      const submission = {
         name,
         description: description || null,
         memberCosmeticIds,
@@ -282,7 +283,12 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         // Only claimed when artwork was actually supplied.
         rightsAffirmed: !imageId ? undefined : true,
         quotedFee: packFee,
-      });
+      };
+      // One key per submission: see useSubmitCreatorShopForm. Changed content is a new submission.
+      await withPaymentIntentKey(
+        submissionIntent('creator-shop-pack', submission),
+        (idempotencyKey) => submitPack.mutateAsync({ ...submission, idempotencyKey })
+      );
     }
     dialog.onClose();
   };

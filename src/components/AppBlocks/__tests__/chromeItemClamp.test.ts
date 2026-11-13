@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
  * A PUBLISHER-CONTROLLED LABEL IN THE APP-BLOCK CHROME MUST BE HELD TO ONE LINE.
  * Node `unit` project — the tier that EXECUTES this assertion (report-only on a
  * pull request, an honest verdict on a push to `main`). The rendered proof lives in
- * `AppBlockChromeRecentsClamp.browser.test.tsx`, in the REPORT-ONLY browser tier.
+ * `AppBlockChromeRecentsClamp.browser.test.tsx`, in the browser tier (`Component tests`).
  * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this repo,
  * so this is a signal a reviewer must read, not a door that stays shut.
  *

@@ -1,6 +1,8 @@
-import { Card, Group, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Card, Group, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconInfoCircle, IconKey } from '@tabler/icons-react';
 import { ConnectScopeRow } from '~/components/Apps/ConnectScopeRow';
+import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import {
   isSensitiveTokenScope,
   tokenScopeMaskToList,
@@ -71,7 +73,7 @@ export function ConnectScopesPanel({
                 <Group gap={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitiveScopes.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitiveScopes.length})
                   </Text>
                   <Tooltip
                     multiline
@@ -94,7 +96,7 @@ export function ConnectScopesPanel({
             <Group gap={6}>
               <IconKey size={14} />
               <Text size="sm" fw={600}>
-                Permissions ({normalScopes.length})
+                {PERMISSION_GROUP_LABELS.other} ({normalScopes.length})
               </Text>
             </Group>
             {normalScopes.length === 0 ? (

@@ -29,6 +29,12 @@ const mockDbRead = dbMock.dbRead;
 const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
 const mockImageResourceNewFindMany = mockDbRead.imageResourceNew.findMany;
 
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparked: vi.fn(),
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+  onStorySparkPostsRestored: vi.fn(),
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 // @civitai/db's index re-exports ./kysely, whose top-level `import 'kysely'` is not
@@ -263,6 +269,8 @@ describe('validateContestCollectionEntry — creator block gate', () => {
     expect(mockAmIBlockedByUser).toHaveBeenCalledWith({
       userId: USER_ID,
       targetUserId: CREATOR_ID,
+      // An entry is a write: the gate confirms a cache "not blocked" on the primary.
+      confirmOnPrimary: true,
     });
     expect(mockChargeEntryFees).not.toHaveBeenCalled();
   });

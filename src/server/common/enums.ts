@@ -1,6 +1,7 @@
 export enum UploadType {
   Image = 'image',
   TrainingImages = 'training-images',
+  // A B2 lifecycle rule hides this prefix 7 days after upload; never use it for anything durable.
   TrainingImagesTemp = 'training-images-temp',
   Model = 'model',
   Default = 'default',
@@ -9,6 +10,7 @@ export enum UploadType {
 export type UploadTypeUnion = `${UploadType}`;
 
 export enum ModelSort {
+  Hot = 'Hot',
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
@@ -36,16 +38,6 @@ export enum ReviewSort {
 export enum ReviewFilter {
   NSFW = 'nsfw',
   IncludesImages = 'includes-images',
-}
-
-export enum QuestionSort {
-  Newest = 'Newest',
-  MostLiked = 'Most Liked',
-}
-
-export enum QuestionStatus {
-  Answered = 'Answered',
-  Unanswered = 'Unanswered',
 }
 
 export enum ImageSort {
@@ -108,11 +100,6 @@ export enum ImageScanType {
   SpineRating = 9,
 }
 
-// export enum CommentV2Sort {
-//   Newest = 'Newest',
-//   Oldest = 'Oldest',
-// }
-
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',
   MostReactions = 'Most Reactions',
@@ -165,6 +152,8 @@ export enum SignalMessages {
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
+  /** Also sent for a remix-app workflow's steps, so the remix tray need not watch every generation. */
+  RemixAppUpdate = 'orchestrator:remix-app-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ResourceLoadUpdate = 'resource-load:update',
@@ -189,6 +178,12 @@ export enum SignalMessages {
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
   ContestScoreRunUpdate = 'contest-score:run-update',
+  EventPointsHat = 'event-points:hat',
+  EventPointsTeams = 'event-points:teams',
+  EventPointsOwner = 'event-points:owner',
+  // To one user only: their own live total, while they watch it (watch.ts selfWatchMember).
+  EventPointsSelf = 'event-points:self',
+  EventPointsTurf = 'event-points:turf',
 }
 
 export enum BountySort {
@@ -239,6 +234,7 @@ export enum ViolationType {
   RealisticMinorNsfw = 'realisticMinorNsfw',
   AnimatedMinorNsfw = 'animatedMinorNsfw',
   SchoolNsfw = 'schoolNsfw',
+  MinorViolence = 'minorViolence',
   Bestiality = 'bestiality',
   SexualViolence = 'sexualViolence',
   MindAlteredNsfw = 'mindAlteredNsfw',
@@ -362,6 +358,7 @@ export enum BanReasonCode {
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
+  Chargeback = 'Chargeback',
   Other = 'Other',
 }
 
@@ -427,6 +424,11 @@ export enum BlocklistType {
   // "spread"). Suppresses a substring match from the profanity filter rather than
   // being blanked from the text — different matcher to the two phrase lists above.
   ProfanityBenignWord = 'ProfanityBenignWord',
+  // Brand names that flag an App Block whose name or slug contains one, whatever its listing
+  // says — read by the agent review's impersonation check (and by the same check on an approved
+  // app's listing edit). Edited by moderators at /moderator/blocklists; an empty list fails
+  // that check rather than passing it.
+  AppProtectedBrandTerm = 'AppProtectedBrandTerm',
 }
 
 export enum ToolSort {
@@ -450,6 +452,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  EventPoints = 'event-points', // with :event:hat:topicId, :event:owner:topicId, or :event:teams
   ContestScore = 'contest-score', // with :collectionId
 }
 

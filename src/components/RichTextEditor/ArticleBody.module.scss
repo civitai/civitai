@@ -1,0 +1,142 @@
+// div.articleBody <el> is (0,1,2), so it beats the shared .htmlRenderer <el> rules without
+// depending on stylesheet order.
+div.articleBody {
+  font-size: 17px;
+  line-height: 1.65;
+
+  @media (min-width: 768px) {
+    font-size: 18px;
+  }
+
+  p {
+    margin: 0 0 1.2em;
+  }
+
+  p:last-of-type {
+    margin-bottom: 0;
+  }
+
+  p:empty {
+    margin: 0;
+    height: 0.6em;
+  }
+
+  :is(h1, h2, h3, h4) {
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    scroll-margin-top: 72px;
+  }
+
+  // The shared hidden ::before reserves space under the fixed navbar; scroll-margin-top does that here.
+  :is(h1, h2, h3)::before {
+    display: none;
+  }
+
+  h1 {
+    font-size: 2em;
+    line-height: 1.2;
+    margin: 2.2em 0 0.6em;
+  }
+
+  h2 {
+    font-size: 1.6em;
+    line-height: 1.25;
+    margin: 1.8em 0 0.5em;
+  }
+
+  h3 {
+    font-size: 1.3em;
+    line-height: 1.3;
+    margin: 1.7em 0 0.4em;
+    font-weight: 650;
+  }
+
+  h4 {
+    font-size: 1.1em;
+    line-height: 1.4;
+    margin: 1.5em 0 0.3em;
+    font-weight: 650;
+  }
+
+  :is(h1, h2, h3, h4):first-child {
+    margin-top: 0;
+  }
+
+  // margin-block only: the shorthand would reset the auto inline margins that centre the capped column
+  :is(ul, ol):not([data-type='taskList']) {
+    margin-block: 0 1.2em;
+    padding-inline-start: 1.4em;
+  }
+
+  li {
+    margin: 0 0 0.4em;
+
+    > p {
+      margin: 0;
+    }
+
+    > :is(ul, ol) {
+      margin: 0.4em 0 0;
+    }
+
+    &::marker {
+      color: var(--mantine-color-dimmed);
+    }
+  }
+
+  blockquote {
+    font-size: 1em;
+    background: none;
+    border-radius: 0;
+    margin: 1.6em 0;
+    padding: 0.1em 0 0.1em 1.1em;
+    border-left: 3px solid light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+    color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+
+    p:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  a {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+  }
+
+  code {
+    font-size: 1em;
+    padding: 0.15em 0.4em;
+  }
+
+  pre code {
+    padding: 0;
+  }
+
+  pre {
+    font-size: 0.85em;
+    line-height: 1.6;
+    padding: 1em 1.1em;
+    margin: 1.6em 0;
+    border-radius: var(--mantine-radius-md);
+  }
+
+  // Block only: margin-inline centres a sized image (RichTextEditorComponent.module.scss).
+  img,
+  video {
+    margin-block: 1.6em;
+    border-radius: var(--mantine-radius-md);
+  }
+
+  hr {
+    height: 1px;
+    margin: 2.5em 0;
+    background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  }
+
+  table {
+    margin: 1.6em 0;
+    font-size: 0.9em;
+  }
+}

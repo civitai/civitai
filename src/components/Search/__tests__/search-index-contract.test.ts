@@ -4,7 +4,6 @@ import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.p
 import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
 import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
 import { ComicsSearchIndexSortBy } from '~/components/Search/parsers/comic.parser';
-import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { ToolsSearchIndexSortBy } from '~/components/Search/parsers/tool.parser';
 import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
@@ -19,26 +18,32 @@ import {
   sortableAttributesByIndex,
 } from '~/server/search-index/sortable-attributes';
 
-const searchIndexKeys = Object.keys(searchIndexMap) as SearchIndexKey[];
+// Image search answers from the semantic search, not a Meilisearch index, so it declares no
+// attributes for these contracts to check.
+const meiliIndexKeys: SearchIndexKey[] = (Object.keys(searchIndexMap) as SearchIndexKey[]).filter(
+  (key) => key !== 'images'
+);
+const declaredFilterable: Record<string, readonly string[]> = filterableAttributesByIndex;
 
 describe('BROWSING_LEVEL_ATTRIBUTE', () => {
-  it.each(Object.entries(BROWSING_LEVEL_ATTRIBUTE) as [SearchIndexKey, string][])(
-    '"%s" filters on an attribute its index actually declares',
-    (key, attribute) => {
-      const indexName = searchIndexMap[key];
-      const filterable = filterableAttributesByIndex[indexName];
+  it.each(
+    (Object.entries(BROWSING_LEVEL_ATTRIBUTE) as [SearchIndexKey, string][]).filter(([key]) =>
+      meiliIndexKeys.includes(key)
+    )
+  )('"%s" filters on an attribute its index actually declares', (key, attribute) => {
+    const indexName = searchIndexMap[key];
+    const filterable = declaredFilterable[indexName];
 
-      expect(
-        filterable,
-        `"${key}" search filters on ${attribute}, but ${indexName} does not declare it filterable — Meilisearch answers 400 invalid_search_filter and the whole search fails`
-      ).toContain(attribute);
-    }
-  );
+    expect(
+      filterable,
+      `"${key}" search filters on ${attribute}, but ${indexName} does not declare it filterable — Meilisearch answers 400 invalid_search_filter and the whole search fails`
+    ).toContain(attribute);
+  });
 
   it('covers every index that can filter on a browsing level', () => {
-    const unmapped = searchIndexKeys.filter(
+    const unmapped = meiliIndexKeys.filter(
       (key) =>
-        filterableAttributesByIndex[searchIndexMap[key]].includes('nsfwLevel') &&
+        declaredFilterable[searchIndexMap[key]].includes('nsfwLevel') &&
         !BROWSING_LEVEL_ATTRIBUTE[key]
     );
 
@@ -47,11 +52,13 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
 });
 
 describe('queryFilters', () => {
-  const tokenAttributes = Object.entries(queryFilters).flatMap(([key, config]) =>
-    Object.keys(config?.filters ?? {}).map(
-      (attribute) => [key, attribute] as [SearchIndexKey, string]
-    )
-  );
+  const tokenAttributes = Object.entries(queryFilters)
+    .filter(([key]) => meiliIndexKeys.includes(key as SearchIndexKey))
+    .flatMap(([key, config]) =>
+      Object.keys(config?.filters ?? {}).map(
+        (attribute) => [key, attribute] as [SearchIndexKey, string]
+      )
+    );
 
   it.each(tokenAttributes)(
     '"%s" builds its %s token filter on an attribute its index actually declares',
@@ -59,7 +66,7 @@ describe('queryFilters', () => {
       const indexName = searchIndexMap[key];
 
       expect(
-        filterableAttributesByIndex[indexName],
+        declaredFilterable[indexName],
         `"${key}" autocomplete turns a search token into \`${attribute} = ...\`, but ${indexName} does not declare ${attribute} filterable — Meilisearch answers 400 invalid_search_filter and the dropdown goes empty`
       ).toContain(attribute);
     }
@@ -89,7 +96,6 @@ describe('search sort options', () => {
     [searchIndexMap.bounties]: BountiesSearchIndexSortBy,
     [searchIndexMap.collections]: CollectionsSearchIndexSortBy,
     [searchIndexMap.comics]: ComicsSearchIndexSortBy,
-    [searchIndexMap.images]: ImagesSearchIndexSortBy,
     [searchIndexMap.models]: ModelSearchIndexSortBy,
     [searchIndexMap.tools]: ToolsSearchIndexSortBy,
     [searchIndexMap.users]: UsersSearchIndexSortBy,
@@ -105,7 +111,7 @@ describe('search sort options', () => {
 
   it('covers a sort option from every index', () => {
     expect(Object.keys(sortOptionsByIndex).sort()).toEqual(
-      Object.values(searchIndexMap).slice().sort()
+      meiliIndexKeys.map((key) => searchIndexMap[key]).sort()
     );
     expect(sortedAttributes.length).toBeGreaterThan(0);
   });
@@ -128,10 +134,34 @@ describe('the models index sort contract', () => {
   // pointing the client at the new name in the same release leaves the client asking for something
   // the live index has never heard of, and every sorted model search 400s until someone runs a
   // reset. Update these two lists only together with a reset that has actually shipped.
-  it('declares exactly the sortable attributes the live models index is provisioned with', () => {
+  // `insight.qualityScore` was added to this list AHEAD of the reset that provisions it, which the
+  // sibling comment above permits for an ADDITION. Checked 2026-10-06: the production models
+  // index's sortable list now equals this list exactly, `insight.qualityScore` included, and its
+  // filterable list carries `insight.qualityScore`, `insight.role` and `insight.styleFamily` — so
+  // in production the reset HAS shipped. Other environments are not covered by that check: until
+  // `search-index-sync-models-reset` has run in one, its index has never heard of the attribute,
+  // and any client that sorts on it gets `Attribute ... is not sortable` and the query 400s.
+  //
+  // Today no client sorts on it. 🔴 The first client that does must check the target
+  // environment's index has it before shipping.
+  //
+  // ⚠ `sortMetrics` is a separate attribute still waiting on a reset, for a different
+  // reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared
+  // nowhere yet, so the client still sorts on `metrics.*`). An earlier version of this comment
+  // claimed "nothing else in either repo records this", which was wrong.
+  //
+  // ⚠ There is deliberately NO machine-readable pending-set here. One was tried and removed in the
+  // same PR that added it: every assertion it could make was either already made by the
+  // whole-list `toEqual` below (deleting the attribute fails that), or vacuous once the set was
+  // emptied (`[].every(...)` is `true`). Nothing in this repo can observe whether the reset has
+  // actually run, so no guard at this level can distinguish "provisioned" from "still pending" —
+  // which is precisely what such a set would have to read to be worth anything.
+  it('declares exactly the sortable attributes the models index is provisioned with', () => {
     expect(modelsSortableAttributes.slice().sort()).toEqual([
       'createdAt',
       'id',
+      // Provisioned in production (checked 2026-10-06); other environments — see above.
+      'insight.qualityScore',
       'metrics.collectedCount',
       'metrics.commentCount',
       'metrics.downloadCount',

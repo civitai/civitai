@@ -13,8 +13,10 @@ import {
   isTerminal as isTerminalStatus,
   laneConcurrencyArgs,
   parseMaxWorkersFlag,
+  parseRunTimeoutFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { daemonFetch } from './scripts/daemon-http.mjs';
 import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +76,7 @@ const DAEMON_URL = resolveDaemonUrl();
 async function daemonRequest(path, options = {}) {
   const url = `${DAEMON_URL}${path}`;
   try {
-    const response = await fetch(url, {
+    const response = await daemonFetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });
@@ -680,6 +682,17 @@ async function cmdTest(sub, rest) {
           process.exit(1);
         }
       }
+      const timeoutAt = rest.findIndex((a) => /^--run-timeout(=|$)/.test(a));
+      if (timeoutAt !== -1) {
+        const inline = rest[timeoutAt].split('=')[1];
+        const raw = inline !== undefined ? inline : rest[timeoutAt + 1];
+        try {
+          body.runTimeoutMs = parseRunTimeoutFlag(raw);
+        } catch (err) {
+          console.error(err.message);
+          process.exit(1);
+        }
+      }
       result = Object.keys(body).length
         ? await daemonRequest('/test-runs/config', { method: 'POST', body: JSON.stringify(body) })
         : await daemonRequest('/test-runs/config');
@@ -925,8 +938,19 @@ async function cmdUnwedge(rest) {
 
 async function cmdWorktree(rest) {
   const [action, ...tail] = rest;
-  const { cmdStale, cmdRemove } = await import('./scripts/worktree.mjs');
+  const { cmdStale, cmdRemove, cmdCreate, parseNewArgs } = await import('./scripts/worktree.mjs');
 
+  if (action === 'env') {
+    const { cmdSkillEnv } = await import('./scripts/skill-env.mjs');
+    cmdSkillEnv(projectRoot, tail);
+    return;
+  }
+
+  if (action === 'new') {
+    const { name, branch, ...opts } = parseNewArgs(tail);
+    await cmdCreate(projectRoot, name, branch, opts);
+    return;
+  }
   if (action === 'stale') {
     await cmdStale(projectRoot, daemonRequest);
     return;
@@ -945,7 +969,7 @@ async function cmdWorktree(rest) {
     );
     return;
   }
-  console.error('Usage: wt <stale|rm>');
+  console.error('Usage: wt <new|stale|rm|env>');
   process.exit(1);
 }
 
@@ -1040,8 +1064,8 @@ Commands:
   list                List all sessions
   start [worktree] [--app name] [--prod a,b] [--dev a,b]
                       Start a dev server (default: the main app, current directory).
-                      --app moderator|creator-studio starts that app from the same
-                      worktree instead, on its preferred port or the next free one.
+                      --app moderator|creator-studio|training-studio starts that app from the
+                      same worktree instead, on its preferred port or the next free one.
                       Every env group defaults to dev; --prod moves named groups
                       (or "all") to production for this start only. See SKILL.md.
   probe [route]       Request a route with a hard timeout and say WHY it was slow.
@@ -1059,7 +1083,7 @@ Commands:
                       Restart a session or an app
   rgb [subcmd]        RGB proxy control (status|start|stop|restart|logs)
   auth [subcmd]       Auth hub control (status|start|stop|restart|logs)
-  app                 List running apps and what is available (moderator, creator-studio)
+  app                 List running apps and what is available
   app <name> [subcmd] [worktree]
                       App control (status|start|stop|restart|logs).
                       Defaults to the current directory's worktree, not the
@@ -1072,6 +1096,8 @@ Commands:
   test config [n]     Show or set the UNIT lane's concurrency (0 pauses that lane;
                       --typecheck n does the same for the typecheck lane)
                       [--max-workers <n>|none] also caps each run's vitest pool
+                      [--run-timeout <min>] kills a run older than this (default 60;
+                      reaches runs already running)
                       [--typecheck <n>] sets the typecheck lane's limit
                       [--typecheck-apps <n>] sets the app-typecheck lane's limit
                       [--component <n>] sets the component (browser) lane's limit

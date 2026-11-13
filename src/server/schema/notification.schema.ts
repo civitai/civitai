@@ -1,10 +1,22 @@
 import * as z from 'zod';
+import { CURSOR_MAX_DATE, CURSOR_MIN_DATE, parseNotificationCursor } from '@civitai/notifications';
 import { NotificationCategory } from '~/server/common/enums';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
 export const getUserNotificationsSchema = getAllQuerySchema.extend({
-  cursor: z.date(),
+  // A Date is a cursor issued before the keyset cursor, still held by an open tab.
+  cursor: z.union([
+    z.date().min(CURSOR_MIN_DATE).max(CURSOR_MAX_DATE),
+    z.string().transform((value, ctx) => {
+      const cursor = parseNotificationCursor(value);
+      if (!cursor) {
+        ctx.addIssue({ code: 'custom', message: 'Invalid cursor' });
+        return z.NEVER;
+      }
+      return cursor;
+    }),
+  ]),
   unread: z.boolean().default(false),
   category: z.enum(NotificationCategory).nullish(),
 });
@@ -50,12 +62,21 @@ export const togglePushSettingInput = z.object({
 });
 export type TogglePushSettingInput = z.infer<typeof togglePushSettingInput>;
 
+export const toggleEmailSettingInput = z.object({
+  type: z.string().array().min(1),
+  enabled: z.boolean(),
+});
+export type ToggleEmailSettingInput = z.infer<typeof toggleEmailSettingInput>;
+
 export const markReadNotificationInput = z.object({
   id: z.coerce.bigint().optional(),
   all: z.boolean().optional(),
   category: z.enum(NotificationCategory).nullish(),
 });
 export type MarkReadNotificationInput = z.infer<typeof markReadNotificationInput>;
+
+export const markImageMilestonesReadInput = z.object({ imageId: z.number().int().positive() });
+export type MarkImageMilestonesReadInput = z.infer<typeof markImageMilestonesReadInput>;
 
 export type NotificationSingleRow = z.infer<typeof notificationSingleRow>;
 export const notificationSingleRow = z.object({

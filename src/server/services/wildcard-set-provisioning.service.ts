@@ -6,6 +6,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { submitWildcardSetAudit } from '~/server/services/wildcard-category-audit.service';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { WILDCARD_CATEGORY_NAME } from '~/utils/prompt-helpers';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 // `Wildcards` is the model-type enum value used elsewhere (see ModelType in
 // prisma/schema.full.prisma and TrainedWords.tsx). We intentionally hold it
@@ -128,7 +129,7 @@ export function normalizeNestedRefs(line: string): string {
  * conflate "S3 hiccup" with "this zip is structurally broken."
  */
 async function downloadPrimaryFileBytes(url: string): Promise<ArrayBuffer> {
-  const response = await fetch(url);
+  const response = await outboundFetch(url, { timeoutMs: 120_000 });
   if (!response.ok) {
     throw new Error(`download failed: ${response.status} ${response.statusText}`);
   }
@@ -710,7 +711,10 @@ export async function importWildcardModelVersion(
   //    so streaming isn't worth the complexity here.
   let downloadInfo;
   try {
-    downloadInfo = await resolveDownloadUrl(primary.id, primary.url, primary.name);
+    downloadInfo = await resolveDownloadUrl(primary.id, primary.url, primary.name, {
+      caller: 'wildcard',
+      actor: 'internal',
+    });
   } catch (e) {
     return {
       status: 'failed',

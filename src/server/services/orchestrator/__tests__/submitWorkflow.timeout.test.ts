@@ -9,7 +9,7 @@ const { mockSubmitWorkflow } = vi.hoisted(() => ({
   mockSubmitWorkflow: vi.fn(),
 }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // unused-by-these-tests named exports referenced at module load
   addWorkflowTag: vi.fn(),
@@ -29,10 +29,7 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 
 vi.mock('~/env/other', () => ({ isDev: false, isProd: true }));
 
-import {
-  submitWorkflow,
-  submitWorkflowWithRetry,
-} from '~/server/services/orchestrator/workflows';
+import { submitWorkflow, submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,7 +44,7 @@ afterEach(() => {
 const timeoutError = () =>
   Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
 
-// The REAL `@civitai/client` shape on a fetch failure / fired AbortSignal.timeout.
+// The REAL `@civitai/orchestration-client` shape on a fetch failure / fired AbortSignal.timeout.
 // `createOrchestratorClient` does NOT set `throwOnError`, so the client RESOLVES with
 // `{ error, response: undefined }` — it does NOT reject. Tests that mock the abort path
 // MUST use this shape, not `mockRejectedValue`, or they exercise a branch the real
@@ -115,7 +112,7 @@ describe('submitWorkflowWithRetry — per-attempt timeout', () => {
   });
 });
 
-describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouched', () => {
+describe('submitWorkflow — per-attempt timeout → 503', () => {
   // Backoff uses real setTimeout; skip it deterministically with fake timers so the
   // ~2s of real backoff doesn't slow the suite.
   const runWithFakeTimers = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -173,19 +170,19 @@ describe('submitWorkflow — whatIf per-attempt timeout → 503, generate untouc
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(3);
   });
 
-  it('passes a per-attempt signal ONLY for whatIf, never for generate', async () => {
+  // Generate used to be deliberately unbounded; it is now bounded too (30s per attempt, 60s
+  // overall — see submitWorkflow.submit-deadline.test.ts), so both paths pass a signal.
+  it('passes a per-attempt signal for whatIf and for generate', async () => {
     mockSubmitWorkflow.mockResolvedValue(okResult());
 
-    // whatIf → bounded
     await submitWorkflow({ token: 'tok', body: {} as any, query: { whatif: true } as any });
     expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
 
     mockSubmitWorkflow.mockClear();
 
-    // generate (no whatif) → NO signal, behavior unchanged
     await submitWorkflow({ token: 'tok', body: {} as any, query: {} as any });
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
-    expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeUndefined();
+    expect(mockSubmitWorkflow.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
   });
 
   it('generate path: a final network throw propagates raw (→500), NOT remapped to 503 by the timeout branch', async () => {

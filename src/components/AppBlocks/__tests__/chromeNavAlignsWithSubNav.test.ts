@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { appsRunBackTarget } from '~/shared/utils/apps-run-origin';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -7,7 +8,7 @@ import { describe, expect, it } from 'vitest';
  * destinations the way the STORE draws them. Node `unit` project — the tier that
  * EXECUTES this assertion (report-only on a pull request, an honest verdict on a
  * push to `main`). The behavioural companion in
- * `AppBlockChromePlatformNav.browser.test.tsx` is in the REPORT-ONLY browser tier.
+ * `AppBlockChromePlatformNav.browser.test.tsx` is in the browser tier (`Component tests`).
  * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this
  * repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
@@ -80,6 +81,14 @@ function code(src: string): string {
 }
 
 type NavEntry = { href: string; label: string; icon: string };
+
+/**
+ * The ROUTE a chrome href opens — its path without the query. A subnav row is a route; a chrome
+ * item may add a query to it (`/apps/build?view=apps`, "My apps", which an author holding the App
+ * Assistant needs to reach their list rather than the assistant). The route-membership and glyph
+ * rules compare routes; the ledgers below pin the full href, query included.
+ */
+const routeOf = (href: string) => href.split('?')[0];
 
 /**
  * The `appsSections` registry as `{href, label, icon}` rows.
@@ -406,7 +415,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
 
     for (const item of nav) {
-      const store = bySubNavHref.get(item.href);
+      const store = bySubNavHref.get(routeOf(item.href));
       expect(
         store,
         `the chrome platform nav offers \`${item.href}\`, which the store subnav does not list. ` +
@@ -460,7 +469,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
   it('🔴 the subnav rows deliberately ABSENT from the chrome are exactly these', () => {
     const subnav = parseSubNav(code(read(SUBNAV)));
     const nav = parsePlatformNav(code(read(CHROME)));
-    const inChrome = new Set(nav.map((e) => e.href));
+    const inChrome = new Set(nav.map((e) => routeOf(e.href)));
 
     // 🔴 PARSE CONTROLS, NOT LEDGERS — and the floors are deliberately far below the
     // live counts (8 and 4). Pinned ON those counts they MASK the ledger they were
@@ -491,24 +500,30 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       // direction this ledger is meant to make visible.
       '/apps/invites',
       '/apps/revenue',
+      // `/apps/assistant` LEFT THIS LIST BY BEING DELETED FROM THE SUBNAV: it 301s to
+      // `/apps/build`, which the chrome already carries.
     ]);
   });
 
-  it('the four shared destinations are the expected ones, drawn with the expected glyphs', () => {
+  it('the five shared destinations are the expected ones, drawn with the expected glyphs', () => {
     // The relationship test above is the real guard; this one names the resolved
     // values so a failure reads as a diff rather than sending you to two files.
     // It is NOT redundant coverage — it is what makes the other test's message
     // actionable, and it fails if the SHARED SET changes rather than just an icon.
     const nav = parsePlatformNav(code(read(CHROME)));
+    // 🔴 "My apps" is the `/apps` HOME (the viewer's launcher), leading as it does in the
+    // store rail; the author's app list is "My builds" (owner decision), so no two items
+    // share a label.
     expect(nav).toEqual([
-      { href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' },
+      { href: '/apps', label: 'My apps', icon: 'IconApps' },
+      { href: '/apps/store', label: 'Marketplace', icon: 'IconBuildingStore' },
       { href: '/apps/activity', label: 'App activity', icon: 'IconPlugConnected' },
-      { href: '/apps/build', label: 'My apps', icon: 'IconCode' },
+      { href: '/apps/build?view=apps', label: 'My builds', icon: 'IconCode' },
       { href: '/apps/review', label: 'Review', icon: 'IconGavel' },
     ]);
   });
 
-  it('the marketplace LABEL is shared verbatim; the other three stay chrome-specific', () => {
+  it('the marketplace and home LABELS are shared verbatim; the other three stay chrome-specific', () => {
     const subnav = parseSubNav(code(read(SUBNAV)));
     const nav = parsePlatformNav(code(read(CHROME)));
     const navByHref = new Map(nav.map((e) => [e.href, e]));
@@ -517,10 +532,13 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // "Apps home" named a destination the store itself stopped calling that. This
     // one label must track the subnav.
     expect(
-      navByHref.get('/apps')?.label,
-      'the chrome and the subnav must call `/apps` the same thing'
-    ).toBe(subByHref.get('/apps')?.label);
-    expect(navByHref.get('/apps')?.label).toBe('Marketplace');
+      navByHref.get('/apps/store')?.label,
+      'the chrome and the subnav must call `/apps/store` the same thing'
+    ).toBe(subByHref.get('/apps/store')?.label);
+    expect(navByHref.get('/apps/store')?.label).toBe('Marketplace');
+    // …and so is the home's: the chrome and the rail call `/apps` "My apps".
+    expect(navByHref.get('/apps')?.label).toBe(subByHref.get('/apps')?.label);
+    expect(navByHref.get('/apps')?.label).toBe('My apps');
 
     // 🔴 THE OTHER THREE DELIBERATELY DIFFER, so this pins the chrome's own copy
     // rather than asserting equality. The subnav's tabs sit under an "Apps"
@@ -528,7 +546,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // stand alone in a dropdown over a running app and need the noun. Asserting
     // equality here would force a wrong "fix" in one file or the other.
     expect(navByHref.get('/apps/activity')?.label).toBe('App activity');
-    expect(navByHref.get('/apps/build')?.label).toBe('My apps');
+    expect(navByHref.get('/apps/build?view=apps')?.label).toBe('My builds');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
     expect(subByHref.get('/apps/activity')?.label).toBe('Activity');
   });
@@ -560,7 +578,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // (a) Every route the chrome links to is a route the store actually has.
     for (const link of links) {
       expect(
-        bySubNavHref.get(link.href),
+        bySubNavHref.get(routeOf(link.href)),
         `the chrome links to \`${link.href}\` ("${link.label}"), which the store subnav does ` +
           'not list. Either it belongs in `appsSections`, or the chrome is inventing a ' +
           'destination the store has no tab for — decide deliberately.'
@@ -578,9 +596,11 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
       expect(
         link.icon,
         `same-route icon drift: "${link.label}" links to \`${link.href}\` with \`${link.icon}\`, ` +
-          `but the store subnav draws that route with \`${bySubNavHref.get(link.href)?.icon}\`. ` +
+          `but the store subnav draws that route with \`${
+            bySubNavHref.get(routeOf(link.href))?.icon
+          }\`. ` +
           'One route must not wear two glyphs in one bar.'
-      ).toBe(bySubNavHref.get(link.href)?.icon);
+      ).toBe(bySubNavHref.get(routeOf(link.href))?.icon);
     }
 
     // (c) The pair that actually collided, named explicitly so the regression is
@@ -647,7 +667,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     //
     // SORTED, so a re-ORDER cannot report a route change that did not happen — this rule
     // is about the SET, and the platform-nav slice's own `toEqual` is what governs order
-    // there. DUPLICATES KEPT: `/apps` and `/apps/activity` each legitimately appear more
+    // there. DUPLICATES KEPT: `/apps/store` and `/apps/activity` each legitimately appear more
     // than once, and collapsing to a Set would hide an extra item hung on a listed route.
     expect(
       links.map((l) => l.href).sort(),
@@ -662,17 +682,24 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
         'excluding it; adding it ungated is not. Removing one deletes a door out of a ' +
         'running app. Update this list deliberately, WITH the reason.'
     ).toEqual([
-      '/apps', // Marketplace — platform nav
-      '/apps', // the compact back chevron — `<ActionIcon component={Link}>`, no leftSection
-      '/apps', // the breadcrumb's first crumb — `<Anchor component={Link}>`, no leftSection
+      '/apps', // My apps — platform nav (the viewer's launcher home)
       // 🔴 REPOINTED TWICE, AND THE SORT POSITION MOVED BOTH TIMES — the list is
       // `.sort()`ed, so neither move is a second change to review. `/apps/mine` →
       // `/apps/build` (301) sorted it before `/apps/installed`; `/apps/installed` →
       // `/apps/activity` (301) then sorted the pair back before it ('a' < 'b').
       '/apps/activity', // App activity — platform nav
       '/apps/activity', // Manage apps — ⋮ overflow; the pair (c) governs their labels
-      '/apps/build', // My apps — platform nav; the store calls this row "Build"
+      // `?view=apps`: bare `/apps/build` opens the App Assistant for an author who holds it.
+      '/apps/build?view=apps', // My builds — platform nav; the store calls this row "Build"
       '/apps/review', // Review — platform nav, moderator-gated
+      // The store door, repointed from `/apps` when the store moved to `/apps/store`
+      // (`/apps` became the viewer's "My apps" home). The sort moved it to the end.
+      '/apps/store', // Marketplace — platform nav
+      // 🔴 NOT LISTED: the compact back chevron and the breadcrumb's first crumb. Their href
+      // is no longer a literal — it is `back.href`, from `appsRunBackTarget(launchOrigin)`:
+      // `/apps` after a launch from the My apps home, `/apps/store` otherwise. Both values are
+      // doors already in this set, and the pair is pinned (values AND the two call sites) by
+      // the "the breadcrumb's first crumb…" test below and by `apps-run-origin.test.ts`.
     ]);
   });
 
@@ -727,7 +754,7 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     ).toEqual([]);
   });
 
-  it('the breadcrumb’s first crumb reads "Marketplace" and still links to /apps', () => {
+  it('the breadcrumb’s first crumb and the back chevron read ONE target: Marketplace (/apps/store), or My apps (/apps) after a home launch', () => {
     const src = code(read(CHROME));
     const anchor = 'data-testid="app-block-breadcrumb-apps"';
     const at = src.indexOf(anchor);
@@ -745,14 +772,25 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     // different element, this string moves with it.
     const region = src.slice(at, src.indexOf('</Anchor>', at));
     const label = region.slice(region.indexOf('>') + 1).trim();
-    expect(
-      label,
-      'the leading breadcrumb crumb must name `/apps` the way the store does ("Marketplace"), ' +
-        'not "Apps" — a trail that names the page differently from the page’s own tab reads ' +
-        'as leading somewhere else.'
-    ).toBe('Marketplace');
-
+    // The crumb's text and href both come from ONE resolved target (`back`), so the label
+    // and the destination cannot disagree; what `back` says is pinned below and, per
+    // origin, in `apps-run-origin.test.ts` and the chrome's browser suites.
+    expect(label, 'the leading crumb must render the resolved back target’s label').toBe(
+      '{back.label}'
+    );
     // …and it is still the LINK, not restyled into text.
-    expect(src.slice(Math.max(0, at - 400), at)).toContain('href="/apps"');
+    expect(src.slice(Math.max(0, at - 400), at)).toContain('href={back.href}');
+    // The mobile back chevron reads the SAME target.
+    const chevronAt = src.indexOf('data-testid="app-block-back"');
+    expect(chevronAt).toBeGreaterThan(-1);
+    const chevron = src.slice(Math.max(0, chevronAt - 400), chevronAt);
+    expect(chevron).toContain('href={back.href}');
+    expect(chevron).toContain('aria-label={`Back to ${back.label}`}');
+
+    // Without a home launch the target is the store, named the way the store names itself
+    // ("Marketplace", not "Apps") — a trail that names the page differently from the page’s
+    // own tab reads as leading somewhere else.
+    expect(appsRunBackTarget('store')).toEqual({ href: '/apps/store', label: 'Marketplace' });
+    expect(appsRunBackTarget('home')).toEqual({ href: '/apps', label: 'My apps' });
   });
 });

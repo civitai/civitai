@@ -1,5 +1,5 @@
 import type { ActionIconProps, MenuItemProps, MenuProps } from '@mantine/core';
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff, IconPencil } from '@tabler/icons-react';
 import Link from 'next/link';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';

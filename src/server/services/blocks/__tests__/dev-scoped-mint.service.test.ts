@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *   - the SPEND ceiling is TWO required predicates: `ai:write:budgeted` survives
  *     only when `spendEntitled && spendRequested` (#3703 step 1),
  *   - `user:read:self` is force-granted, output deduped + sorted,
- *   - the budget clamps to the LOWER dev cap,
+ *   - the budget clamps to the dev cap,
  *   - the signed token is self-bound (userId), forced-SFW, dev:true, page ctx.
  */
 
@@ -45,6 +45,7 @@ import {
   signDevScopedPageToken,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
+import { BUZZ_BUDGET_CAP, BUZZ_BUDGET_DEFAULT } from '~/shared/constants/block-scope.constants';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 
 // AIServicesWrite OAuth bit — models:read:self carries a DIFFERENT bit, so a
@@ -364,11 +365,7 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     // ONLY the render-only survivors (+ the unconditional user:read:self grant).
-    expect(granted).toEqual([
-      'collections:read:self',
-      'models:read:self',
-      'user:read:self',
-    ]);
+    expect(granted).toEqual(['collections:read:self', 'models:read:self', 'user:read:self']);
     // None of the withheld scopes can EVER reach the review JWT.
     for (const withheld of [
       'media:read:owned', // removed decorative scope — unknown → stripped
@@ -529,7 +526,7 @@ describe('resolveDevBuzzBudget', () => {
   it('returns undefined when ai:write:budgeted was not granted', () => {
     expect(resolveDevBuzzBudget(['user:read:self'])).toBeUndefined();
   });
-  it('clamps a requested budget to the LOWER dev cap', () => {
+  it('clamps a requested budget to the dev cap', () => {
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], 100000)).toBe(DEV_BUZZ_BUDGET_CAP);
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], 10)).toBe(10);
   });
@@ -537,10 +534,25 @@ describe('resolveDevBuzzBudget', () => {
     expect(resolveDevBuzzBudget(['ai:write:budgeted'])).toBe(DEV_BUZZ_BUDGET_DEFAULT);
   });
 
-  // Fix 2 (dogfood follow-up): a recipe/app whose manifest budget exceeds the flat
-  // 50 default must be dev-testable without a manual budget request.
+  // Literals, so a change to either constant has to be made here on purpose. 6301
+  // overshoots the cap without being a multiple of it.
+  it.each([
+    [5000, 5000],
+    [5001, 5000],
+    [6301, 5000],
+  ])('a requested or manifest budget of %i resolves to %i', (declared, resolved) => {
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], declared)).toBe(resolved);
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, declared)).toBe(resolved);
+  });
+  it('resolves to 1000 when nothing declares a budget', () => {
+    expect(resolveDevBuzzBudget(['ai:write:budgeted'])).toBe(1000);
+  });
+  it('the dev cap and default are the install-token ones', () => {
+    expect(DEV_BUZZ_BUDGET_CAP).toBe(BUZZ_BUDGET_CAP);
+    expect(DEV_BUZZ_BUDGET_DEFAULT).toBe(BUZZ_BUDGET_DEFAULT);
+  });
+
   it('DEFAULTS to the resolved app manifest budget when present (no explicit request)', () => {
-    // manifest page.buzzBudgetPerGen = 180 (> the flat 50 default) → 180.
     expect(resolveDevBuzzBudget(['ai:write:budgeted'], undefined, 180)).toBe(180);
   });
   it('clamps a manifest default above the CAP to DEV_BUZZ_BUDGET_CAP', () => {

@@ -70,10 +70,25 @@ beforeEach(() => {
   h.rows = {
     OauthClient: { allowedScopes: REQUESTED, accessMode: 'open' },
     OauthConsent: { scope: REQUESTED },
+    User: { muted: false, bannedAt: null },
   };
 });
 
 describe('oauth/app-token +server', () => {
+  it('mints nothing for the remix apps client, whose row the seed migration inserts', async () => {
+    // Even with a consent row: each of its two guards refuses on its own.
+    const remixClient = { allowedScopes: 0, accessMode: 'disabled' };
+    h.rows.OauthClient = remixClient;
+    expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(403);
+    h.rows.OauthClient = { ...remixClient, accessMode: 'open' };
+    const res = await call({ ...body, clientId: 'civitai-remix-apps' });
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+    // POSITIVE CONTROL: with scopes and access, the same request mints.
+    h.rows.OauthClient = { allowedScopes: REQUESTED, accessMode: 'open' };
+    expect((await call({ ...body, clientId: 'civitai-remix-apps' })).status).toBe(200);
+  });
+
   it('requires the internal token', async () => {
     h.isInternalRequest.mockReturnValue(false);
     const res = await call(body);
@@ -140,5 +155,19 @@ describe('oauth/app-token +server', () => {
     expect(h.logOAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'token.issued', metadata: { grant_type: 'app_token' } })
     );
+  });
+});
+
+describe('oauth/app-token +server — client_credentials-only scopes', () => {
+  it('400 invalid_scope for AppStoreCatalogWrite, even with a ceiling and consent carrying it', async () => {
+    const scope = TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+    h.rows = {
+      OauthClient: { allowedScopes: scope, accessMode: 'open' },
+      OauthConsent: { scope },
+    };
+    const res = await call({ ...body, scope });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
   });
 });

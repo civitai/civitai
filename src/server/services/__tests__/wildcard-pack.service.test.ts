@@ -10,11 +10,9 @@ import type { SessionUser } from '~/types/session';
 // maturity math (getServerBrowsingLevel + Flags + allowMatureContentForCeiling)
 // run, since that's the security-relevant logic.
 
-const { getFileForModelVersionMock } = vi.hoisted(
-  () => ({
-    getFileForModelVersionMock: vi.fn(),
-  })
-);
+const { getFileForModelVersionMock } = vi.hoisted(() => ({
+  getFileForModelVersionMock: vi.fn(),
+}));
 vi.mock('~/server/services/file.service', () => ({
   getFileForModelVersion: getFileForModelVersionMock,
 }));
@@ -115,7 +113,12 @@ describe('resolveWildcardPackForUser — download gate (getFileForModelVersion i
     modelVersionFindFirst.mockResolvedValue(wildcardVersion());
     getFileForModelVersionMock.mockResolvedValue(successGate);
     await resolveWildcardPackForUser({ modelVersionId: 100, user: sfwUser, canViewNsfw: false });
-    expect(getFileForModelVersionMock).toHaveBeenCalledWith({ modelVersionId: 100, user: sfwUser });
+    expect(getFileForModelVersionMock).toHaveBeenCalledWith({
+      modelVersionId: 100,
+      user: sfwUser,
+      attribution: { caller: 'wildcard', actor: 'user' },
+      redCapable: false,
+    });
   });
 });
 
@@ -152,6 +155,37 @@ describe('resolveWildcardPackForUser — maturity ceiling', () => {
       canViewNsfw: false,
     });
     expect(res.maturity).toEqual({ browsingLevel: sfwBrowsingLevelsFlag, sfwOnly: true });
+  });
+});
+
+describe('resolveWildcardPackForUser — a mature model', () => {
+  // Answers with the model's nsfw only when the resolver selects it.
+  const matureModel = () =>
+    modelVersionFindFirst.mockImplementation((async (args: {
+      select: { model: { select: Record<string, boolean> } };
+    }) => {
+      const row = wildcardVersion({ nsfwLevel: NsfwLevel.PG });
+      return args.select.model.select.nsfw ? { ...row, model: { ...row.model, nsfw: true } } : row;
+    }) as never);
+
+  it('FORBIDs it on a SFW ceiling even when its version is rated PG, without signing', async () => {
+    matureModel();
+    getFileForModelVersionMock.mockResolvedValue(successGate);
+    await expect(
+      resolveWildcardPackForUser({ modelVersionId: 100, user: sfwUser, canViewNsfw: false })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(getFileForModelVersionMock).not.toHaveBeenCalled();
+  });
+
+  it('serves it to a user whose ceiling allows mature content', async () => {
+    matureModel();
+    getFileForModelVersionMock.mockResolvedValue(successGate);
+    const res = await resolveWildcardPackForUser({
+      modelVersionId: 100,
+      user: matureUser,
+      canViewNsfw: true,
+    });
+    expect(res.signedUrl).toBe(successGate.url);
   });
 });
 

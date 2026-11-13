@@ -1,15 +1,6 @@
 import type { ButtonProps, ComboboxItem, PopoverProps } from '@mantine/core';
-import {
-  Button,
-  Divider,
-  Group,
-  Indicator,
-  Popover,
-  ScrollArea,
-  Select,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Button, Divider, Group, Indicator, ScrollArea, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter, IconX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
@@ -17,9 +8,11 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
-import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
+import { overMobileSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
@@ -28,7 +21,7 @@ import {
   ecosystems,
   getEcosystemSupport,
 } from '~/shared/constants/basemodel.constants';
-import { workflowConfigsArray } from '~/shared/data-graph/generation/config/workflows';
+import { workflowConfigsArray } from '~/shared/generation/config/workflows';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { titleCase } from '~/utils/string-helpers';
 
@@ -103,6 +96,7 @@ export function DumbMarkerFiltersDropdown({
   isFeed,
   text,
   hideMediaTypes = false,
+  iconOnly,
   ...buttonProps
 }: Props & {
   filters: Partial<GenerationFilterSchema>;
@@ -145,11 +139,20 @@ export function DumbMarkerFiltersDropdown({
   // The bottom sheet's body is the scroll container, so an unportalled dropdown is
   // clipped by it — and a portalled one then has to clear the sheet in turn.
   const overlayProps = mobile
-    ? { withinPortal: true, zIndex: mobileMenuSheetZIndex + 1 }
+    ? { withinPortal: true, zIndex: overMobileSheetZIndex }
     : { withinPortal: false };
 
+  // In the mobile generator these open as sheets, where search waits for a tap; a dropdown with
+  // search raises the keyboard on every open, so it has none on touch.
+  const searchable = useGeneratorLayout() === 'mobile' || !isMobileDevice();
+
   const button = (
-    <FilterButton icon={IconFilter} active={opened} onClick={() => setOpened((o) => !o)}>
+    <FilterButton
+      icon={IconFilter}
+      active={opened}
+      iconOnly={iconOnly}
+      onClick={() => setOpened((o) => !o)}
+    >
       Filters
     </FilterButton>
   );
@@ -227,24 +230,26 @@ export function DumbMarkerFiltersDropdown({
 
       {/* Base Model Filter */}
       <Divider label="Ecosystem" className="text-sm font-bold" />
-      <Select
+      <SheetSelect
+        sheetTitle="Ecosystem"
         data={ecosystemSelectData}
         value={filters.baseModel ?? null}
         onChange={(value) => setFilters({ baseModel: value ?? undefined })}
         placeholder="All Models"
-        searchable={!isMobileDevice()}
+        searchable={searchable}
         clearable
         comboboxProps={overlayProps}
       />
 
       {/* Workflow Filter */}
       <Divider label="Workflow" className="text-sm font-bold" />
-      <Select
+      <SheetSelect
+        sheetTitle="Workflow"
         data={workflowSelectData}
         value={filters.processType ?? null}
         onChange={(value) => setFilters({ processType: value ?? undefined })}
         placeholder="All Workflows"
-        searchable={!isMobileDevice()}
+        searchable={searchable}
         clearable
         comboboxProps={overlayProps}
       />
@@ -328,4 +333,6 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   isFeed?: boolean;
   text?: ReactNode;
   hideMediaTypes?: boolean;
+  /** Only the filter icon, for a tight row. */
+  iconOnly?: boolean;
 };

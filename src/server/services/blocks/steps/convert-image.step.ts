@@ -8,7 +8,7 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // Tranche 1, entry 1 — `convertImage`.
 //
 // WHY THIS ONE QUALIFIES (the four bars, checked against the orchestrator's own
-// generated types in `@civitai/client`):
+// generated types in `@civitai/orchestration-client`):
 //
 //  1. A GENUINE STANDALONE `$type`. `ConvertImageStep` / `ConvertImageStepTemplate`
 //     with `$type: 'convertImage'` are first-class in the generated client, and
@@ -147,7 +147,7 @@ export type ConvertImageStepParams = z.infer<typeof convertImageParamsSchema>;
  * The orchestrator's completed-step shape for `convertImage`.
  *
  * 🔴 SINGULAR `blob`, not `images` and not `blobs` — `ConvertImageOutput` in
- * `@civitai/client` is `{ blob?: ImageBlob }`, and `product-badge.service.ts`
+ * `@civitai/orchestration-client` is `{ blob?: ImageBlob }`, and `product-badge.service.ts`
  * reads `step.output.blob.url`. This is the whole reason output extraction had
  * to become a registry field: both `workflow.service` extractors were blind to
  * this step in TWO independent ways (the `$type` was not in their allowlist, and
@@ -162,7 +162,7 @@ export type ConvertImageStepParams = z.infer<typeof convertImageParamsSchema>;
  * 🔴 EXPORTED SO IT CAN BE ANCHORED TO THE GENERATED CONTRACT. `extractOutput`
  * takes `unknown` and reaches this shape through a cast, so nothing at the call
  * site links it to the orchestrator's own types. `type-contract.ts` asserts that
- * a real `ConvertImageStep` from `@civitai/client` satisfies it and that every
+ * a real `ConvertImageStep` from `@civitai/orchestration-client` satisfies it and that every
  * key it reads exists on the generated `ConvertImageOutput` / `ImageBlob` — which
  * moves the anchor for THIS entry off the author and onto a type Civitai does not
  * hand-write.

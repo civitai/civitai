@@ -8,7 +8,29 @@ import { kyselyWrite } from '~/server/db/kyselyDb';
 const SUPER_ROLE = 'moderator:admin';
 
 /** Grant ids this module can check; declared in `apps/moderator/src/lib/permissions.ts`. */
-export type ModeratorGrantId = 'user.deleteAccount';
+export type ModeratorGrantId =
+  | 'user.deleteAccount'
+  | 'user.personalDataExport.queue'
+  | 'user.personalDataExport.release'
+  | 'user.purge'
+  | 'user.removeReactions'
+  | 'user.membership.code'
+  | 'user.membership.gift'
+  | 'user.membership.extend'
+  | 'user.membership.cancel'
+  | 'user.creatorScore.grant'
+  | 'user.creatorScore.grantLarge'
+  | 'user.creatorProgram.ban'
+  | 'creatorServices.resolveDispute'
+  | 'creatorServices.reviewDispute'
+  | 'image.removal.confirm'
+  | 'csam.report.file'
+  | 'user.ban'
+  | 'user.strike'
+  | 'user.message.asCivitai'
+  | 'labelStore.submitPrediction'
+  | 'apps.buzz.refund'
+  | 'apps.buzz.refund.large';
 
 export async function hasModeratorGrant(
   user: { roles?: string[] },

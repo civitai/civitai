@@ -2,22 +2,20 @@ import type { ContainerProps } from '@mantine/core';
 import {
   ActionIcon,
   AspectRatio,
+  Badge,
   Box,
   Button,
   Center,
   Divider,
   Group,
-  HoverCard,
-  Menu,
-  Popover,
   Progress,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -40,7 +38,11 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  BrowsingLevelProvider,
+  useBrowsingLevelContext,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { viewerCollectionCap } from '~/components/BrowsingLevel/resolve-browsing-level';
 import { Model3DsInfinite } from '~/components/Model3D/Infinite/Model3DsInfinite';
 import {
   contestCollectionReactionsHidden,
@@ -59,6 +61,7 @@ import {
   resolveImageCollectionSort,
   toSortMenuOptions,
 } from '~/components/Collections/collection-sort';
+import { useRememberCollectionFilters } from '~/components/Collections/useRememberCollectionFilters';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
 import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
@@ -87,12 +90,16 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import type { ImageSort } from '~/server/common/enums';
+import { ArticleSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
   Availability,
@@ -112,6 +119,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
+import { isViewer } from '~/utils/is-viewer';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -126,6 +134,11 @@ const ModelCollection = ({
 }) => {
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'models',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestModelSorts) : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
@@ -139,6 +152,7 @@ const ModelCollection = ({
         status: undefined,
         earlyAccess: undefined,
         hidePaid: undefined,
+        onSale: undefined,
         view: undefined,
         supportsGeneration: undefined,
         followed: undefined,
@@ -225,6 +239,11 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
+  useRememberCollectionFilters({
+    type: 'images',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = resolveImageCollectionSort({
     querySort: query.sort,
     isContest: isContestCollection,
@@ -297,8 +316,8 @@ const ImageCollection = ({
           permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.isModerator ||
-          currentUser?.id === (image.userId ?? image.user?.id) ||
-          currentUser?.id === image.collectionItemAddedById;
+          isViewer(currentUser, image.userId ?? image.user?.id) ||
+          isViewer(currentUser, image.collectionItemAddedById);
         return (
           <>
             {canRemove && (
@@ -371,7 +390,12 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
+            <ImagesInfinite
+              filters={filters}
+              disableStoreFilters
+              collectionId={collection.id}
+              hideHatTurf={collectionHidesHatTurf(collection)}
+            />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -382,6 +406,11 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'posts',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
@@ -434,6 +463,11 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const { replace, query } = useArticleQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
+  useRememberCollectionFilters({
+    type: 'articles',
+    collectionId: collection.id,
+    isContest: isContestCollection,
+  });
   const sort = isContestCollection
     ? getRandom(contestArticleSorts)
     : query.sort ?? ArticleSort.Newest;
@@ -516,6 +550,8 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
+  const { userBrowsingLevel } = useBrowsingLevelContext();
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
@@ -647,26 +683,30 @@ export function Collection({
 
   if (!collection) return null;
 
+  const bypassRating =
+    permissions?.manage ||
+    currentUser?.id === collection.user.id ||
+    (currentUser?.isModerator ?? false);
+  const collectionCap = viewerCollectionCap(
+    collection.metadata.forcedBrowsingLevel,
+    userBrowsingLevel,
+    bypassRating
+  );
+
   return (
     /* 🔴 `forcedBrowsingLevel`, not `browsingLevel`. This is a policy ceiling —
-       the same value `Gated` below treats as a gate, bypassed only for mods and
-       owners — and the override slot it used to sit in is one any component may
+       the collection's level, which `Gated` below treats as a gate, bypassed only
+       for mods and owners — and the override slot it used to sit in is one any component may
        decline to read. `useViewerBrowsingLevelDebounced` does exactly that by
        design, so as an override this cap silently stopped applying to the remix
        gallery and to avatars. Caps are intersected by the provider, so this
        cannot lift the domain cap either. */
-    <BrowsingLevelProvider
-      forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
-    >
+    <BrowsingLevelProvider forcedBrowsingLevel={collectionCap}>
       <BrowsingSettingsAddonsProvider>
         <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
           nsfw={collection.nsfw ?? undefined}
-          bypassRating={
-            permissions?.manage ||
-            currentUser?.id === collection.user.id ||
-            (currentUser?.isModerator ?? false)
-          }
+          bypassRating={bypassRating}
           suppressAds={collection.read !== 'Public'}
           meta={{
             title: `${collection.name}${
@@ -730,6 +770,11 @@ export function Collection({
                         <Title order={1} lineClamp={1} className={classes.title}>
                           {collection?.name ?? 'Loading...'}
                         </Title>
+                        {collection?.archivedAt && (
+                          <Badge color="gray" variant="light" radius="sm">
+                            Archived
+                          </Badge>
+                        )}
                         {submissionPeriod}
                       </Group>
                       {collection?.description && (
@@ -762,6 +807,13 @@ export function Collection({
                     </IconBadge> */}
                       </Group>
                     )}
+                    {collection && (
+                      <OwnerRatingControls
+                        entityType="Collection"
+                        entityId={collection.id}
+                        isOwner={!!permissions?.isOwner}
+                      />
+                    )}
                   </Stack>
                   {collection && permissions && (
                     <Stack>
@@ -777,21 +829,16 @@ export function Collection({
                         [CollectionType.Image, CollectionType.Post].some(
                           (x) => x === collection.type
                         ) ? (
-                          <HoverCard
-                            width={300}
-                            disabled={!currentUser?.meta?.contestBanDetails}
-                            withArrow
-                            withinPortal
-                          >
+                          <HoverCard width={300} disabled={!isContestBanned} withArrow withinPortal>
                             <HoverCard.Target>
                               {/* Required div to display hovercard even when button is disabled */}
                               <div>
                                 <Button
                                   color="blue"
                                   radius="xl"
-                                  disabled={!!currentUser?.meta?.contestBanDetails}
+                                  disabled={isContestBanned}
                                   onClick={() => {
-                                    if (currentUser?.meta?.contestBanDetails) {
+                                    if (isContestBanned) {
                                       return;
                                     }
 
@@ -815,7 +862,7 @@ export function Collection({
                               </div>
                             </HoverCard.Target>
                             <HoverCard.Dropdown px="md" py={8}>
-                              {currentUser?.meta?.contestBanDetails && (
+                              {isContestBanned && (
                                 <Text>
                                   Due to breaking the rules in the past, you are ineligible for
                                   participation in this event.

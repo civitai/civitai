@@ -1,4 +1,5 @@
-import { Badge, Button, Menu, Text, Popover } from '@mantine/core';
+import { Badge, Button, Text } from '@mantine/core';
+import { Menu, Popover } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBrush, IconChevronDown } from '@tabler/icons-react';
 import type { MouseEventHandler } from 'react';
@@ -104,7 +105,8 @@ export function CreateMenu() {
         <Popover.Target>
           <CreateMenuButtons disabled onMouseEnter={open} onMouseLeave={close} onClick={open} />
         </Popover.Target>
-        <Popover.Dropdown maw={300}>
+        {/* Held open under the pointer: the notice can carry a button. */}
+        <Popover.Dropdown maw={300} onMouseEnter={open} onMouseLeave={close}>
           <Text size="sm">
             <GenerationMutedNotice />
           </Text>

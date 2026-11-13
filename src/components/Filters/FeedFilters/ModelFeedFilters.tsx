@@ -1,11 +1,13 @@
 import type { GroupProps } from '@mantine/core';
-import { ActionIcon, Button, Group, Popover } from '@mantine/core';
+import { ActionIcon, Button, Group } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconExclamationMark } from '@tabler/icons-react';
 
 import { SortFilter } from '~/components/Filters';
 import classes from '~/components/Filters/FeedFilters/FeedFilters.module.scss';
-import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
-import { useModelQueryParams } from '~/components/Model/model.utils';
+import { DumbModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
+import { useModelBrowseFilters, useModelQueryParams } from '~/components/Model/model.utils';
+import type { ModelSort } from '~/server/common/enums';
 import type { PeriodMode } from '~/server/schema/base.schema';
 import { FollowedFilter } from '~/components/Filters/FollowedFilter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -14,6 +16,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 export function ModelFeedFilters({ ...groupProps }: GroupProps) {
   const currentUser = useCurrentUser();
   const { set, ...queryFilters } = useModelQueryParams();
+  const { filters, setFilters } = useModelBrowseFilters();
   const { favorites, query } = queryFilters;
   const periodMode = query || favorites ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
@@ -36,8 +39,19 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
         </Popover>
       )}
       {currentUser && <FollowedFilter type="models" variant="button" />}
-      <SortFilter type="models" />
-      <ModelFiltersDropdown w="100%" size="compact-sm" isFeed />
+      <SortFilter
+        type="models"
+        value={filters.sort}
+        onChange={(sort) => setFilters({ sort: sort as ModelSort })}
+      />
+      <DumbModelFiltersDropdown
+        w="100%"
+        size="compact-sm"
+        isFeed
+        showPublishedRange
+        filters={filters}
+        setFilters={setFilters}
+      />
     </Group>
   );
 }

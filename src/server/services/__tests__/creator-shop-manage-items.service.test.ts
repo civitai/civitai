@@ -55,6 +55,15 @@ describe('getCreatorShopManageItems', () => {
     ]);
   });
 
+  it('leaves out mystery box listings, which no pack or item editor can manage', async () => {
+    dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValue([]);
+    await getCreatorShopManageItems({ userId: 11 });
+    expect(dbMock.dbRead.cosmeticShopItem.findMany.mock.calls[0][0].where).toEqual({
+      addedById: 11,
+      itemDefinitionId: null,
+    });
+  });
+
   it('never asks Prisma for the whole-table purchase aggregate', async () => {
     dbMock.dbRead.cosmeticShopItem.findMany.mockResolvedValue([]);
     await getCreatorShopManageItems({ userId: 11 });

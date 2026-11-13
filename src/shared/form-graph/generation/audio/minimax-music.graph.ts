@@ -5,14 +5,12 @@ import { SEED, enumDef, sliderDef, textDef } from '../defs';
 import { familyScope, type FamilyExt } from '../shared';
 
 /**
- * MiniMax Music 3, ported from `minimax-music-graph.ts`. Simple mode is a
+ * MiniMax Music 3. Simple mode is a
  * single prompt (the handler drafts caption + lyrics via chatCompletion);
  * custom mode writes both directly — the step input requires BOTH, so unlike
  * ACE the lyrics are required. cfg/steps/topK deliberately absent (the
  * orchestrator's defaults stand).
  */
-
-// ---- copied from minimax-music-graph.ts, which dies with the data-graph engine
 
 export type MinimaxMusicMode = 'simple' | 'custom';
 
@@ -30,8 +28,6 @@ const MINIMAX_MUSIC_MAX_DURATION = 300;
 const MINIMAX_MUSIC_DEFAULT_DURATION = 60;
 
 const MAX_CAPTION_LENGTH = 2000;
-
-// ---- end of minimax-music-graph.ts copies -----------------------------------
 
 type MinimaxMusicExt = FamilyExt & { minimaxMusicMode?: MinimaxMusicMode };
 

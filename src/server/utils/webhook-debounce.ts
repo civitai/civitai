@@ -103,13 +103,16 @@ export async function fanOutArticleImageUpdates(imageId: number): Promise<void> 
       where: { imageId, entityType: ImageConnectionType.Article },
       select: { entityId: true },
     }),
-    // Cover images live on `Article.coverId` and are NOT duplicated into
+    // Cover and banner images live on `Article` and are NOT duplicated into
     // `ImageConnection`, so fan-out must query them separately. Without this,
-    // a cover scan that resolves to R/X/XXX/Blocked never triggers
+    // a cover or banner scan that resolves to R/X/XXX/Blocked never triggers
     // `updateArticleNsfwLevels`, leaving `Article.nsfwLevel` pinned to the
     // author-declared `userNsfwLevel` — the exact drift that lets PG-rated
     // articles keep NSFW covers in the public feed.
-    dbRead.article.findMany({ where: { coverId: imageId }, select: { id: true } }),
+    dbRead.article.findMany({
+      where: { OR: [{ coverId: imageId }, { bannerId: imageId }] },
+      select: { id: true },
+    }),
   ]);
 
   const articleIds = new Set<number>([

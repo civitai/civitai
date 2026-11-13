@@ -44,14 +44,8 @@ function sourceAspectRatio(image: { width?: number | null; height?: number | nul
  * generations in a 24h prod sample carried any provenance at all. A blank
  * sidebar here is the ordinary answer, not a broken query.
  *
- * 🔴 `image.get` per id, NOT `useQueryImages({ ids })`, and that is not a style
- * preference. `ids` is absent from `requiresImageDbPath`, so an ids-only feed
- * query routes to the search index — where `ids` is commented out of the
- * destructure and silently ignored. Measured against this dev server on
- * 2026-08-27: asking for `ids: [140383933]` returned image `12097475`. Not an
- * error and not an empty list — a real image from the global feed, wearing the
- * caption "remixed from". Anyone moving this back to the feed helper must first
- * assert on the returned IDS, never on the count.
+ * 🔴 `image.get` per id. If this moves to the feed helper, assert on the returned ids,
+ * never the count: the search index ignores ids (see `requiresImageDbPath`).
  *
  * What actually gates a source tile, stated precisely because an earlier version
  * of this comment overclaimed it twice:
@@ -95,7 +89,8 @@ export const ImageRemixOfDetails = ({ imageId }: { imageId: number }) => {
   // exactly one source, max and average both 1. And 0.1% of images carry it at
   // all, so 999 detail views in 1000 fan out to nothing.
   const queries = trpc.useQueries((t) => remixOfIds.map((id) => t.image.get({ id })));
-  const sources = queries.map((query) => query.data).filter((data) => !!data);
+  // A source whose media this viewer may not receive comes back with a null `url`.
+  const sources = queries.flatMap(({ data }) => (data?.url ? [{ ...data, url: data.url }] : []));
   const isLoading = queries.some((query) => query.isLoading);
 
   // Deliberately WITHOUT `allowLowerLevels`, which the pre-2025 version of this

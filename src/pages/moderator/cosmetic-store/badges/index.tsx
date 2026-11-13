@@ -17,8 +17,8 @@ import {
   TextInput,
   Title,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { DatePickerInput } from '@mantine/dates';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import {

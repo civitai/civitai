@@ -15,8 +15,8 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   // refuses the other two their holders.
   const userId = requireUserIdParam(locals, params, [
     '/retool/user-lookup',
-    '/retool/user-reports',
-    '/retool/post-reports',
+    '/reports/user',
+    '/reports/post',
   ]);
 
   const statuses = (url.searchParams.get('status') ?? '')

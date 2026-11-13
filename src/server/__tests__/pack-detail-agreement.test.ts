@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { shopPurchaseClaimFake } from '~/test-utils/shopPurchaseClaimFake';
 
 /**
  * The quote and the charge, against the same fixture.
@@ -19,6 +20,8 @@ const componentGroupBy = vi.fn();
 const ownedFindMany = vi.fn();
 const spend = vi.fn();
 
+const claims = shopPurchaseClaimFake();
+
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     cosmeticShopItem: {
@@ -32,6 +35,9 @@ vi.mock('~/server/db/client', () => ({
   },
   dbWrite: {
     userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
+    cosmeticShopPurchaseClaim: {
+      create: (...a: Parameters<typeof claims.delegate.create>) => claims.delegate.create(...a),
+    },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         $executeRaw: vi.fn(),
@@ -42,6 +48,7 @@ vi.mock('~/server/db/client', () => ({
         userCosmeticShopPurchases: { create: vi.fn() },
         userCosmeticShopPurchaseCosmetic: { createMany: vi.fn() },
         cosmeticShopItem: { update: vi.fn() },
+        cosmeticShopPurchaseClaim: claims.txDelegate,
       }),
     userCosmeticShopPurchases: { update: vi.fn() },
   },
@@ -59,6 +66,10 @@ vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
 const { getPackDetail } = await import('~/server/services/creator-shop-pack.service');
 const { getPackMembers, purchaseCosmeticPack } = await import(
   '~/server/services/cosmetic-pack.service'
+);
+const { purchaseCosmeticShopItem } = await import('~/server/services/cosmetic-shop.service');
+const { getPackPurchaseBlockers } = await import(
+  '~/components/CosmeticShop/pack-purchase-blockers'
 );
 
 const PACK_ID = 6001;
@@ -96,7 +107,7 @@ beforeEach(() => {
     status: CosmeticShopItemStatus.Published,
     listed: true,
     availableQuantity: null,
-    meta: { purchases: 0 },
+    meta: { purchases: 0, packMemberCount: memberRows.length },
     addedById: LISTER,
     members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
     _count: { purchases: 0 },
@@ -272,7 +283,7 @@ describe('the sold count is the purchase rows, not the meta counter', () => {
       availableQuantity: 20,
       // The two disagree, and by more than an off-by-one: a fixture where they
       // agree passes under either derivation and tests nothing.
-      meta: { purchases: 0 },
+      meta: { purchases: 0, packMemberCount: memberRows.length },
       addedById: LISTER,
       members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
       _count: { purchases: 20 },
@@ -312,12 +323,124 @@ describe('the sold count is the purchase rows, not the meta counter', () => {
       status: CosmeticShopItemStatus.Published,
       listed: true,
       availableQuantity: 20,
-      meta: { purchases: 13 },
+      meta: { purchases: 13, packMemberCount: memberRows.length },
       addedById: LISTER,
       members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
       _count: { purchases: 4 },
     });
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(detail.meta.purchases).toBe(4);
+  });
+});
+
+/**
+ * Deleting a member Cosmetic cascades its join row away, so the pack's own rows
+ * shrink with it and only `meta.packMemberCount` still says what was sold. Each
+ * case drives the shop entry point, `purchaseCosmeticShopItem`, because the
+ * caller is where the build-time count is read.
+ */
+describe('a pack that lost members since it was built', () => {
+  const lostMembers = ({
+    survivors,
+    packMemberCount,
+  }: {
+    survivors: typeof memberRows;
+    packMemberCount: number | undefined;
+  }) => {
+    shopItemFindUnique.mockResolvedValue({
+      id: PACK_ID,
+      cosmeticId: null,
+      cosmetic: null,
+      title: 'A pack',
+      description: null,
+      unitAmount: PRICE,
+      status: CosmeticShopItemStatus.Published,
+      listed: true,
+      availableQuantity: null,
+      availableFrom: null,
+      availableTo: null,
+      meta: packMemberCount === undefined ? { purchases: 0 } : { purchases: 0, packMemberCount },
+      addedById: LISTER,
+      members: survivors.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
+      _count: { purchases: 0, members: survivors.length },
+    });
+    packMemberFindMany.mockResolvedValue(
+      survivors.map((row) => ({ ...row, cosmetic: cosmeticFor(row.cosmeticId) }))
+    );
+  };
+  const buy = () =>
+    purchaseCosmeticShopItem({
+      userId: BUYER,
+      shopItemId: PACK_ID,
+      packsEnabled: true,
+      stickersEnabled: true,
+    });
+  const foreignOnly = memberRows.filter((m) => m.cosmeticId === FOREIGN_MEMBER);
+
+  // 868m87aqu. With the count gone the old caller fell back to the join rows,
+  // which agree with the shrunken pack: the buyer was charged the full PRICE for
+  // one member of two.
+  it('refuses a short pack with no recorded count instead of charging full price', async () => {
+    lostMembers({ survivors: foreignOnly, packMemberCount: undefined });
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('refuses a short pack against its recorded count', async () => {
+    lostMembers({ survivors: foreignOnly, packMemberCount: memberRows.length });
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  // The positive control for the two above: the same entry point, fixture and
+  // buyer do reach the charge when nothing is missing.
+  it('charges a whole pack through the same entry point', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: memberRows.length });
+    await buy();
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect(spend.mock.calls[0][0].amount).toBe(PRICE);
+  });
+
+  // 868m87ay0, and its partial form: the detail counted the missing members
+  // from the join rows too, so it reported none missing and the button stayed
+  // priced and enabled on a purchase the server refuses.
+  it.each([
+    { name: 'an emptied pack', survivors: [] as typeof memberRows, missing: memberRows.length },
+    { name: 'a partly emptied pack', survivors: foreignOnly, missing: 1 },
+  ])('blocks purchase of $name in the detail, as the purchase refuses it', async (c) => {
+    lostMembers({ survivors: c.survivors, packMemberCount: memberRows.length });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(c.missing);
+    expect(getPackPurchaseBlockers(detail)).toMatchObject({ unavailable: true, blocked: true });
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('blocks purchase of a pack with no recorded count in the detail too', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: undefined });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(getPackPurchaseBlockers(detail).blocked).toBe(true);
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  // TO WHOEVER IS SIMPLIFYING packMembersMissing TO `count - deliverable`: a
+  // recorded count BELOW what resolves is a stale meta write-back (the purchases
+  // bump re-writes meta it read before a concurrent membership edit). It must
+  // refuse like a short pack; a one-sided difference goes negative and sells it.
+  it('refuses a pack that resolves more members than it recorded', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: 1 });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(1);
+    expect(getPackPurchaseBlockers(detail).blocked).toBe(true);
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('leaves purchase of a whole pack unblocked', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: memberRows.length });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(0);
+    expect(getPackPurchaseBlockers(detail).blocked).toBe(false);
   });
 });

@@ -34,6 +34,14 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
     procedures: ['getArea', 'create'],
     why: 'Both, together: the router already requires that whoever sees the prompt can submit.',
   },
+  'app-feedback.router.ts': {
+    procedures: ['create'],
+    why: 'Private app feedback, same posture as feedback.create: its eligibility query is not email-gated, so the submit must not be either.',
+  },
+  'platform-feedback.router.ts': {
+    procedures: ['create', 'getStatus'],
+    why: 'Developer-platform feedback sent with an API token, same posture as feedback.create: reporting a broken tool, and reading that report back, must not depend on a verified email.',
+  },
   'user.router.ts': {
     procedures: ['updateBrowsingMode'],
     why: 'A browsing preference, not a content action.',
@@ -47,11 +55,11 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
  */
 const MUST_STAY_GUARDED: Record<string, string[]> = {
   'post.router.ts': ['create', 'createWithImages', 'addImage'],
-  'commentv2.router.ts': ['upsert'],
-  'comment.router.ts': ['upsert'],
+  'commentv3.router.ts': ['create', 'update'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
   'orchestrator.router.ts': ['iterateGenerate'],
+  'remix-app.router.ts': ['run'],
 };
 
 /**
@@ -70,30 +78,54 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  * `MUST_STAY_GUARDED` and the alias ban both key on names at CALL SITES, and a downgrade does not
  * have to touch one. `comicProtectedProcedure = protectedProcedure.use(...)` carries **56** bindings;
  * editing that single line moves all 56 at once and no name changes anywhere, so every name-based
- * check stays green. This is the list that cannot grow with the codebase — 15 definitions against
- * 1,142 bindings — which is what makes maintaining it by hand reasonable where a call-site list is not.
+ * check stays green. This is the list that cannot grow with the codebase — 18 definitions against
+ * 1,240 `name: <…>Procedure` bindings, both re-measured at this commit — which is what makes
+ * maintaining it by hand reasonable where a call-site list is not. (Those two figures read 15 and
+ * 1,142 before this commit and no longer reproduced; the 56 above still does, exactly.)
  *
  * A red here is not automatically a bug. It means a procedure's effective gate moved, and someone has
  * to say whether that was intended. Update the value in the same commit that moves it, or don't move it.
  */
 const DERIVED_BASES: Record<string, string> = {
+  appStorageProcedure: 'publicProcedure',
+  // `app-storage.router.ts`: reading and deleting the caller's OWN app data, never creating content.
+  appStorageUserProcedure: 'protectedProcedure',
   auctionProcedure: 'protectedProcedure',
   blurbProcedure: 'protectedProcedure',
   blurbWriteProcedure: 'guardedProcedure',
   buzzMembershipProcedure: 'protectedProcedure',
   buzzProcedure: 'protectedProcedure',
   cashManagementProcedure: 'moderatorProcedure',
+  comicGenerationProcedure: 'comicProtectedProcedure',
   comicGuardedProcedure: 'guardedProcedure',
   comicModeratorProcedure: 'moderatorProcedure',
   comicProtectedProcedure: 'protectedProcedure',
   comicPublicProcedure: 'publicProcedure',
+  // `csam.router.ts`: moderators with CSAM reporting access.
+  csamProcedure: 'moderatorProcedure',
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
+  orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
+  postIntentProcedure: 'guardedProcedure',
   promotionProcedure: 'protectedProcedure',
+  // `remix-app.router.ts`: `list` and `quote` only read; `run` is on `guardedProcedure` itself.
+  // `remix-app.router.ts` `admin.*`: mod-only edits of the remix app rows, and a mod's own test run.
+  remixAppAdminProcedure: 'moderatorProcedure',
+  remixAppProcedure: 'protectedProcedure',
+  // `semantic-image-search.router.ts`: read-only image search, open to signed-out visitors.
+  semanticSearchProcedure: 'publicProcedure',
+  servicesGuardedProcedure: 'guardedProcedure',
+  servicesProcedure: 'protectedProcedure',
+  sharedStorageProcedure: 'publicProcedure',
+  // `app-hibernation.router.ts`: listing, waking and deleting the caller's OWN sleeping apps.
+  sleepingAppsProcedure: 'protectedProcedure',
+  storylineMemberProcedure: 'protectedProcedure',
+  storylineReadProcedure: 'publicProcedure',
+  storylineWriteProcedure: 'guardedProcedure',
 };
 
 const stripComments = (s: string) =>

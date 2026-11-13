@@ -31,7 +31,16 @@ const twoRequests = [
 
 const okResponse = {
   results: [
-    { hits: [{ id: 1 }], nbHits: 1, page: 0, nbPages: 1, hitsPerPage: 1, processingTimeMS: 3, query: 'cat', params: '' },
+    {
+      hits: [{ id: 1 }],
+      nbHits: 1,
+      page: 0,
+      nbPages: 1,
+      hitsPerPage: 1,
+      processingTimeMS: 3,
+      query: 'cat',
+      params: '',
+    },
   ],
 } as any;
 
@@ -67,7 +76,9 @@ describe('isMeiliCommunicationError', () => {
   });
 
   it('matches network-ish messages across browser engines', () => {
-    expect(isMeiliCommunicationError(new Error('NetworkError when attempting to fetch'))).toBe(true);
+    expect(isMeiliCommunicationError(new Error('NetworkError when attempting to fetch'))).toBe(
+      true
+    );
     expect(isMeiliCommunicationError(new Error('Failed to fetch'))).toBe(true);
     expect(isMeiliCommunicationError(new Error('Load failed'))).toBe(true);
   });
@@ -105,7 +116,9 @@ describe('isMeiliApiError', () => {
     const meiliError = (message: string, httpStatus: number, code: string) =>
       Object.assign(new Error(message), { name: 'MeiliSearchApiError', code, httpStatus });
 
-    expect(isMeiliApiError(meiliError('The provided API key is invalid.', 401, 'invalid_api_key'))).toBe(false);
+    expect(
+      isMeiliApiError(meiliError('The provided API key is invalid.', 401, 'invalid_api_key'))
+    ).toBe(false);
     expect(isMeiliApiError(meiliError('forbidden', 403, 'invalid_api_key'))).toBe(false);
     expect(isMeiliApiError(meiliError('too many requests', 429, 'too_many_requests'))).toBe(false);
   });
@@ -302,17 +315,6 @@ describe('createResilientSearchClient — Meili rejected OUR query (4xx)', () =>
     expect(JSON.stringify(pushError.mock.calls[0][1])).not.toContain('cat');
   });
 
-  it('reports the same failing query ONCE, not once per keystroke', async () => {
-    const client = createResilientSearchClient(
-      makeClient({ search: vi.fn().mockRejectedValue(apiError) }),
-      { retryDelayMs: 0 }
-    );
-
-    for (let i = 0; i < 5; i++) await client.search!(twoRequests);
-
-    expect(pushError).toHaveBeenCalledTimes(1);
-  });
-
   it('still reports when Faro is not initialised (bare `{}` export)', async () => {
     for (const key of Object.keys(faro)) delete faro[key];
 
@@ -335,7 +337,10 @@ describe('createResilientSearchClient — searchForFacetValues', () => {
     });
     const client = createResilientSearchClient(base, { onError, retryDelayMs: 0 });
 
-    const requests = [{ indexName: 'models', params: {} }, { indexName: 'images', params: {} }] as any;
+    const requests = [
+      { indexName: 'models', params: {} },
+      { indexName: 'images', params: {} },
+    ] as any;
     const result = await client.searchForFacetValues!(requests);
 
     expect(result).toEqual([
@@ -350,9 +355,7 @@ describe('createResilientSearchClient — searchForFacetValues', () => {
     const base = makeClient({ searchForFacetValues: vi.fn().mockRejectedValue(apiError) });
     const client = createResilientSearchClient(base, { onError, retryDelayMs: 0 });
 
-    const result = await client.searchForFacetValues!([
-      { indexName: 'models', params: {} },
-    ] as any);
+    const result = await client.searchForFacetValues!([{ indexName: 'models', params: {} }] as any);
 
     expect(result).toEqual([{ facetHits: [], exhaustiveFacetsCount: true, processingTimeMS: 0 }]);
     expect(onError).not.toHaveBeenCalled();

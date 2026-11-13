@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   cookieDomainForHost,
   postLoginMarkerCookie,
@@ -10,6 +10,7 @@ import {
   clearLoginRetryCookie,
   clearPostLoginMarker,
   hasAnyLegacyCookie,
+  setSessionCookie,
 } from '../civ-cookie';
 
 // Parse a Set-Cookie string into trimmed attribute tokens for order-independent assertions.
@@ -89,6 +90,11 @@ describe('clearAllSessionCookies — cross-scope session-cookie wipe', () => {
     expect(cleared.some((c) => c.startsWith(`${LOGIN_RETRY_COOKIE}=`) && has(c, 'Max-Age=0'))).toBe(
       true
     );
+  });
+
+  it('expires the host-only device id too, so a retry starts on a clean device', () => {
+    const cleared = clearAllSessionCookies('civitai.com');
+    expect(cleared).toContain('__Host-civ-device=; Path=/; Max-Age=0; SameSite=Lax; Secure');
   });
 
   it('clears only host-only scopes on localhost (no Domain emitted)', () => {
@@ -201,5 +207,53 @@ describe('clearLegacyCookies — full legacy next-auth de-crud (session + ancill
 
   it('on localhost emits only host-only clears (no Domain)', () => {
     expect(clearLegacyCookies('localhost').every((c) => domainOf(c) === undefined)).toBe(true);
+  });
+});
+
+describe('setSessionCookie — a write expires the other slot it finds', () => {
+  const ORIGINAL_ENV = { ...process.env };
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+  });
+  const write = (requestCookies: Record<string, string>, slot?: 'host' | 'shared') => {
+    process.env.NEXT_PUBLIC_BASE_URL = 'https://civitai.com';
+    const headers: Record<string, unknown> = {};
+    const res = {
+      getHeader: (n: string) => headers[n],
+      setHeader: (n: string, v: unknown) => {
+        headers[n] = v;
+      },
+    };
+    setSessionCookie(res as never, 'tok', {
+      host: 'civitai.com',
+      deviceCookie: 'D1',
+      slot,
+      requestCookies,
+    });
+    return headers['Set-Cookie'] as string[];
+  };
+  const expired = (all: string[], name: string) =>
+    all.filter((c) => c.startsWith(`${name}=;`) && has(c, 'Max-Age=0'));
+
+  it('a host-only write expires the shared session and device names host-only', () => {
+    const all = write({ '__Secure-civ-token': 'a', '__Secure-civ-device': 'D0' }, 'host');
+    expect(all[0]).toMatch(/^__Host-civ-token=tok;/);
+    for (const name of ['__Secure-civ-token', '__Secure-civ-device']) {
+      const [c] = expired(all, name);
+      expect(c).toBeDefined();
+      expect(domainOf(c)).toBeUndefined();
+      expect(has(c, 'Secure')).toBe(true);
+    }
+  });
+
+  it('a shared write expires a host-only session the request carries', () => {
+    const all = write({ '__Host-civ-token': 'a' }, 'shared');
+    expect(domainOf(all[0])).toBe('civitai.com');
+    expect(expired(all, '__Host-civ-token')).toHaveLength(1);
+    expect(expired(all, '__Host-civ-device')).toHaveLength(0);
+  });
+
+  it('expires nothing the request does not carry', () => {
+    expect(write({}, 'host').filter((c) => has(c, 'Max-Age=0'))).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingWorkflowOverlay } from '~/server/services/orchestrator/training/workflow-state';
 import {

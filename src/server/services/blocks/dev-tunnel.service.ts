@@ -1,5 +1,5 @@
 import { env } from '~/env/server';
-import { sAddWithExpireGe } from '~/server/redis/atomic';
+import { delIfValue } from '~/server/redis/atomic';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { newBlockInstanceId } from '~/server/utils/app-block-ids';
 import {
@@ -16,8 +16,10 @@ import {
   normalizeSshPublicKey,
 } from '~/server/services/blocks/dev-tunnel-session';
 import {
+  recordDevTunnelDnsGc,
   recordDevTunnelMint,
   recordDevTunnelTeardown,
+  type DevTunnelDnsGcOutcome,
   type DevTunnelTeardownReason,
 } from '~/server/prom/dev-tunnel.metrics';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -91,6 +93,27 @@ const userBlockKey = (userId: number, blockId: string) =>
  */
 const userTunnelIndexKey = (userId: number) => `${SYS_PREFIX}:user-index:${userId}` as const;
 const spendKey = (sessionId: string) => `${SYS_PREFIX}:spend:${sessionId}` as const;
+/**
+ * A caller's own key for one start (`StartDevTunnelParams.clientKey`): the session that start
+ * opened, so a caller that gave up on its answer can still close it (`cancelDevTunnelStart`).
+ */
+const clientStartKey = (userId: number, clientKey: string) =>
+  `${SYS_PREFIX}:client-start:${userId}:${clientKey}` as const;
+const clientCancelledKey = (userId: number, clientKey: string) =>
+  `${SYS_PREFIX}:client-cancelled:${userId}:${clientKey}` as const;
+/**
+ * How long a start's client key is remembered: well past the moment a caller gives up on a start
+ * (`RUNNER_DEV_TUNNEL_START_DEADLINE_MS` here, the runner's start timeout there), and nowhere near
+ * the life of a tunnel.
+ */
+export const DEV_TUNNEL_CLIENT_KEY_SECONDS = 15 * 60;
+/**
+ * How long `/api/internal/app-assistant/dev-tunnel/start` takes, at most, to answer; past it, it
+ * answers `unavailable` and cancels its own start (`cancelDevTunnelStart`). Mirrored as
+ * `CIVITAI_START_DEADLINE_MS` in apps/assistant-runner/src/app-assistant/dev-tunnel.ts; keep them
+ * in step.
+ */
+export const RUNNER_DEV_TUNNEL_START_DEADLINE_MS = 185_000;
 
 /** Label every rendered k8s object carries so the reaper + teardown can sweep by
  *  selector and never touch a live app (live apps carry no dev-tunnel label). */
@@ -243,8 +266,9 @@ export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
   // routes (`<slug>.civit.ai`). Without them the host is NXDOMAIN and the browser can't
   // load the tunnel. Gated on ingressTarget (the Traefik LB IP, from env) so the origin
   // IP is not committed here; unset ⇒ no annotations ⇒ no record.
-  // ⚠️ NOT auto-cleaned: the civit.ai external-dns is `policy: upsert-only`, so deleting
-  // the route does NOT remove the record (orphan-DNS GC is a tracked follow-up).
+  // ⚠️ external-dns is `policy: upsert-only`, so deleting the route does NOT remove the
+  // record — teardown/reap remove it themselves via `deleteDevTunnelDns` (called from
+  // `deleteDevTunnelRoute`; outcome counted in `civitai_app_dev_tunnel_dns_gc_total`).
   const externalDnsAnnotations = opts.ingressTarget
     ? {
         'external-dns.alpha.kubernetes.io/hostname': opts.host,
@@ -602,22 +626,24 @@ async function resolveCfZoneId(
   return null;
 }
 
-/** List the CF record ids (any type) whose name is exactly `name`. */
+/** List the CF record ids (any type) whose name is exactly `name`. Returns null
+ *  when the LIST itself failed — distinct from `[]` (listed fine, nothing there),
+ *  so a broken lookup is not counted as "already gone". */
 async function listCfRecordIds(
   zoneId: string,
   name: string,
   token: string,
   fetchImpl: typeof fetch
-): Promise<string[]> {
+): Promise<string[] | null> {
   const res = await cfFetch(
     `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}`,
     token,
     { method: 'GET' },
     fetchImpl
   );
-  if (!res.ok) return [];
+  if (!res.ok) return null;
   const body = (await res.json()) as CfEnvelope<Array<{ id?: string }>>;
-  if (!body?.success || !Array.isArray(body.result)) return [];
+  if (!body?.success || !Array.isArray(body.result)) return null;
   return body.result
     .map((r) => r?.id)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
@@ -631,29 +657,53 @@ async function listCfRecordIds(
  * deleting both names covers the A record + both TXT formats). No-op when
  * unconfigured; refuses any host that isn't a well-formed `dev-<16hex>.…`; NEVER
  * throws. `fetchImpl` is injected for testing (defaults to global fetch).
+ *
+ * Every call records exactly ONE `civitai_app_dev_tunnel_dns_gc_total{outcome}`:
+ * `skipped` (unconfigured / zone unresolvable), `refused` (host failed the guard),
+ * `deleted` (≥1 record, every DELETE ok), `none_found` (zone resolved, both LISTs
+ * succeeded and matched nothing), `failed` (a LIST or DELETE failed, or a throw).
  */
 export async function deleteDevTunnelDns(
   host: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
+  let outcome: DevTunnelDnsGcOutcome = 'failed';
   try {
     const token = env.APPS_DEV_TUNNEL_CF_API_TOKEN;
-    if (!token) return; // feature off — records linger as before
+    if (!token) {
+      outcome = 'skipped'; // feature off — records linger as before
+      return;
+    }
     if (!host || typeof host !== 'string' || !DEV_HOST_PREFIX_REGEX.test(host)) {
       // SAFETY: never touch a name that isn't a well-formed ephemeral dev host.
+      outcome = 'refused';
       // eslint-disable-next-line no-console
       console.warn(JSON.stringify({ event: 'app-blocks.dev-tunnel.dns-gc.refused', host }));
       return;
     }
     const zoneId = await resolveCfZoneId(registrableDomain(host), token, fetchImpl);
-    if (!zoneId) return;
+    if (!zoneId) {
+      outcome = 'skipped';
+      return;
+    }
     // The A record and BOTH external-dns TXT-registry name forms.
     const ids = new Set<string>();
+    let allOk = true;
     for (const name of [host, `a-${host}`]) {
-      for (const id of await listCfRecordIds(zoneId, name, token, fetchImpl)) ids.add(id);
+      const found = await listCfRecordIds(zoneId, name, token, fetchImpl);
+      if (found === null) {
+        allOk = false;
+        continue;
+      }
+      for (const id of found) ids.add(id);
     }
     for (const id of ids) {
-      await cfFetch(`/zones/${zoneId}/dns_records/${id}`, token, { method: 'DELETE' }, fetchImpl)
+      const ok = await cfFetch(
+        `/zones/${zoneId}/dns_records/${id}`,
+        token,
+        { method: 'DELETE' },
+        fetchImpl
+      )
         .then((r) => {
           if (!r.ok) {
             // eslint-disable-next-line no-console
@@ -666,13 +716,15 @@ export async function deleteDevTunnelDns(
               })
             );
           }
+          return r.ok;
         })
-        .catch(() => {
-          /* best-effort per-record delete */
-        });
+        .catch(() => false /* best-effort per-record delete */);
+      if (!ok) allOk = false;
     }
+    outcome = !allOk ? 'failed' : ids.size > 0 ? 'deleted' : 'none_found';
   } catch (e) {
     // Best-effort — a CF hiccup must NEVER break teardown/reap.
+    outcome = 'failed';
     // eslint-disable-next-line no-console
     console.warn(
       JSON.stringify({
@@ -681,6 +733,14 @@ export async function deleteDevTunnelDns(
         error: (e as Error)?.message,
       })
     );
+  } finally {
+    // Guarded here as well as inside the recorder: a throw from `finally` would
+    // replace the return and break this function's never-throws contract.
+    try {
+      recordDevTunnelDnsGc(outcome);
+    } catch {
+      /* never throw from telemetry */
+    }
   }
 }
 
@@ -756,6 +816,12 @@ export type StartDevTunnelParams = {
    *  the tunnel allowlist and re-gated at the mint. Omitted/absent → read-only. */
   declaredScopes?: string[];
   declaredAuth?: DevTunnelDeclaredAuth;
+  /**
+   * The caller's own key for this start (App Assistant's runner sends one). A start cancelled under
+   * it (`cancelDevTunnelStart`), before or while it runs, opens nothing or closes what it opened,
+   * and throws `DEV_TUNNEL_START_CANCELLED`.
+   */
+  clientKey?: string;
 };
 
 export type StartDevTunnelResult = {
@@ -771,6 +837,26 @@ export type StartDevTunnelResult = {
   sshHostPublicKey: string;
 };
 
+/** What `startDevTunnel` throws for a public key that does not parse — the one caller mistake it
+ *  throws on; every other throw is the route render failing. */
+export const INVALID_SSH_PUBLIC_KEY = 'invalid SSH public key';
+/** What `startDevTunnel` throws for a start its caller cancelled (`cancelDevTunnelStart`). */
+export const DEV_TUNNEL_START_CANCELLED = 'dev tunnel start cancelled';
+
+/**
+ * Whether the start under `clientKey` was already cancelled when it began: an early way out, so
+ * a cancelled start renders nothing. Not the check that decides: the script that lists a tunnel
+ * re-reads the mark as it writes (`LIST_DEV_TUNNEL`), so a mark this cannot read counts as none.
+ */
+async function isStartCancelled(userId: number, clientKey: string): Promise<boolean> {
+  try {
+    const mark = await withSysReadDeadline(sysRedis.get(clientCancelledKey(userId, clientKey)));
+    return mark !== null && mark !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Mint a dev-tunnel credential + host, render the ephemeral Traefik route, and
  * persist the session state in Redis. Enforces ONE active tunnel per (user,
@@ -782,9 +868,12 @@ export type StartDevTunnelResult = {
  */
 export async function startDevTunnel(params: StartDevTunnelParams): Promise<StartDevTunnelResult> {
   const normalizedKey = normalizeSshPublicKey(params.sshPublicKey);
-  if (!normalizedKey) throw new Error('invalid SSH public key');
+  if (!normalizedKey) throw new Error(INVALID_SSH_PUBLIC_KEY);
   const fingerprint = fingerprintSshPublicKey(normalizedKey);
-  if (!fingerprint) throw new Error('invalid SSH public key');
+  if (!fingerprint) throw new Error(INVALID_SSH_PUBLIC_KEY);
+  const { clientKey } = params;
+  if (clientKey && (await isStartCancelled(params.userId, clientKey)))
+    throw new Error(DEV_TUNNEL_START_CANCELLED);
 
   // Tear down any existing tunnel for this (user, block) so a re-run doesn't
   // orphan a route/credential.
@@ -843,47 +932,45 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   // failed mint leaves nothing behind.
   await renderDevTunnelRoute(host, sessionId);
 
-  // Persist the index + records, all with the hard-TTL EX so they self-expire.
-  await Promise.all([
+  // Every write settles before any failure is acted on, so the teardown below runs after the
+  // last of them: a credential the sish authz accepts must not outlive a start that failed.
+  const persisted = await Promise.allSettled([
     sysRedis.set(credKey(fingerprint), JSON.stringify(credential), { EX: DEV_TUNNEL_HARD_SECONDS }),
     sysRedis.set(sessionKey(sessionId), JSON.stringify(session), { EX: DEV_TUNNEL_HARD_SECONDS }),
     sysRedis.set(hostKey(host), sessionId, { EX: DEV_TUNNEL_HARD_SECONDS }),
-    sysRedis.set(userBlockKey(params.userId, params.blockId), sessionId, {
-      EX: DEV_TUNNEL_HARD_SECONDS,
-    }),
+    ...(clientKey
+      ? [
+          sysRedis.set(clientStartKey(params.userId, clientKey), sessionId, {
+            EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+          }),
+        ]
+      : []),
   ]);
-
-  // Best-effort, and deliberately AFTER the state above: the index only makes a ban
-  // able to find this tunnel, so any failure here must degrade revocation COVERAGE
-  // rather than fail a developer's tunnel start.
-  //
-  // 🔴 ONE ATOMIC EVAL, NOT `sAdd` + `expire`. This was written as that pair inside a
-  // single swallowing catch, which `sAddWithExpireGe`'s own docblock calls racy: a
-  // failure between the two — a sentinel failover is the documented case on this exact
-  // client, see `packages/civitai-redis/src/sys-inflight.ts` — lands the SADD and drops
-  // the EXPIRE, leaving a TTL-LESS set that then accumulates every blockId this user
-  // ever tunnels. Every later ban would emit `page_ephemeral-<blockId>` for all of them,
-  // and the index's own TTL guarantee below would be false. The EVAL form makes
-  // "member added, no TTL" unreachable, and its EXPIRE is a FLOOR (GE) so a concurrent
-  // start cannot shorten the set beneath a member that needs it.
-  //
-  // 🔴 try/catch, NOT a trailing `.catch()`. A rejected promise is only one of the ways
-  // this can fail — if the client ever lacks the method, the CALL throws synchronously
-  // and a `.catch()` attached to its result never runs, so the throw escapes and takes
-  // the tunnel start with it. That is the opposite of what this block is for, and it is
-  // the shape that broke the dev-tunnel suite the moment these lines were added.
-  try {
-    await sAddWithExpireGe(
-      sysRedis,
-      userTunnelIndexKey(params.userId),
-      params.blockId,
-      DEV_TUNNEL_HARD_SECONDS
-    );
-  } catch {
-    // A ban may not be able to see this tunnel; the tunnel itself is unaffected.
+  // Counted before any teardown below, which decrements the same gauge.
+  recordDevTunnelMint();
+  const failed = persisted.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed) {
+    await teardownSession(session, 'stop');
+    throw failed.reason;
   }
 
-  recordDevTunnelMint();
+  // The (user, block) pointer and the ban index are written by ONE script that writes neither
+  // once this start is cancelled: a check and a write made apart let a cancel land between them.
+  // This start records its session under its key and THEN runs the script; a cancel sets the
+  // mark and THEN reads the key, so at least one of the two sees the other's write.
+  let listed: boolean;
+  try {
+    listed = await listDevTunnel(session, clientKey);
+  } catch {
+    // Fail CLOSED: an unlisted tunnel is invisible to a ban, and the caller can retry a start.
+    await teardownSession(session, 'stop');
+    throw new Error('dev tunnel could not be listed');
+  }
+  if (!listed) {
+    await teardownSession(session, 'stop');
+    throw new Error(DEV_TUNNEL_START_CANCELLED);
+  }
+
   // eslint-disable-next-line no-console
   console.log(
     JSON.stringify({
@@ -910,6 +997,58 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
   };
 }
 
+/**
+ * Writes the (user, block) pointer and adds the block to the user's ban index (with a TTL floor),
+ * unless the start's cancel mark (KEYS[3], when given) exists: then it writes nothing. 1 when it
+ * wrote, 0 when cancelled.
+ *
+ * The index's SADD and its TTL floor are in this one script, never a SADD + EXPIRE pair: the pair
+ * could land the SADD and drop the EXPIRE on a failover, leaving a TTL-less set that every later
+ * ban would emit a `page_ephemeral-<blockId>` marker for. The floor (GE) means a concurrent start
+ * cannot shorten the set beneath a member that needs it.
+ */
+const LIST_DEV_TUNNEL = `
+  if KEYS[3] and redis.call('EXISTS', KEYS[3]) == 1 then return 0 end
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+  redis.call('SADD', KEYS[2], ARGV[3])
+  if redis.call('TTL', KEYS[2]) < tonumber(ARGV[2]) then redis.call('EXPIRE', KEYS[2], ARGV[2]) end
+  return 1
+`;
+
+/** `LIST_DEV_TUNNEL` for a session: false when its start was cancelled. Throws on a Redis error. */
+async function listDevTunnel(
+  session: DevTunnelSessionRecord,
+  clientKey?: string
+): Promise<boolean> {
+  const reply = await sysRedis.eval(LIST_DEV_TUNNEL, {
+    keys: [
+      userBlockKey(session.userId, session.blockId),
+      userTunnelIndexKey(session.userId),
+      ...(clientKey ? [clientCancelledKey(session.userId, clientKey)] : []),
+    ],
+    arguments: [session.sessionId, String(DEV_TUNNEL_HARD_SECONDS), session.blockId],
+  });
+  return Number(reply) === 1;
+}
+
+/**
+ * Removes the session's (user, block) pointer, but only while it still names this session: another
+ * start of the same app may have taken it since (a newer, live tunnel). True when it was this
+ * session's and is now gone; false when it named another session, was already gone, or could not
+ * be read (left alone: a pointer to a closed session reads as no tunnel).
+ */
+async function releaseUserBlockPointer(session: DevTunnelSessionRecord): Promise<boolean> {
+  try {
+    return await delIfValue(
+      sysRedis,
+      userBlockKey(session.userId, session.blockId),
+      session.sessionId
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Delete all state + the route for a session (used by stop + reap). Best-effort;
  *  never throws. `reason` labels the teardown metric. */
 async function teardownSession(
@@ -917,20 +1056,23 @@ async function teardownSession(
   reason: DevTunnelTeardownReason
 ): Promise<void> {
   await deleteDevTunnelRoute(session.sessionId).catch(() => {});
-  await Promise.all([
+  const [ownedPointer] = await Promise.all([
+    releaseUserBlockPointer(session),
     sysRedis.del(credKey(session.fingerprint)).catch(() => {}),
     sysRedis.del(sessionKey(session.sessionId)).catch(() => {}),
     sysRedis.del(hostKey(session.host)).catch(() => {}),
-    sysRedis.del(userBlockKey(session.userId, session.blockId)).catch(() => {}),
     sysRedis.del(spendKey(session.sessionId)).catch(() => {}),
   ]);
-  // Same reasoning as the add site: a try/catch, so a MISSING method (a synchronous
-  // throw) is swallowed as well as a rejection. An index write must never break teardown.
-  try {
-    await sysRedis.sRem(userTunnelIndexKey(session.userId), session.blockId);
-  } catch {
-    // The member ages out with the index's TTL.
-  }
+  // The block leaves the ban index only with its own pointer: one naming another session is a
+  // newer live tunnel of the same app, which a ban must still find.
+  // A try/catch, not a trailing `.catch()`: it also swallows a synchronous throw (a client without
+  // the method), and an index write must never break teardown.
+  if (ownedPointer)
+    try {
+      await sysRedis.sRem(userTunnelIndexKey(session.userId), session.blockId);
+    } catch {
+      // best-effort
+    }
   recordDevTunnelTeardown(reason);
   // eslint-disable-next-line no-console
   console.log(
@@ -949,10 +1091,53 @@ async function teardownSession(
  *  a caller can never tear down another author's tunnel). Returns true if a
  *  session was found + torn down. */
 export async function stopDevTunnel(userId: number, sessionId: string): Promise<boolean> {
-  const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
-  if (!session || session.userId !== userId) return false;
-  await teardownSession(session, 'stop');
-  return true;
+  return (await stopOwnDevTunnel(userId, sessionId)) === 'stopped';
+}
+
+/**
+ * `stopDevTunnel`, telling a session that is not there (or not `userId`'s) apart from one that
+ * could not be READ just now — which `stopDevTunnel` reports as `false`, i.e. "nothing to close".
+ * For a caller that retries (App Assistant's server runner): `unavailable` means nothing was
+ * closed and the tunnel may still be live, so ask again.
+ */
+export async function stopOwnDevTunnel(
+  userId: number,
+  sessionId: string
+): Promise<'stopped' | 'not_found' | 'unavailable'> {
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return 'unavailable';
+  if (read.status === 'absent' || read.session.userId !== userId) return 'not_found';
+  await teardownSession(read.session, 'stop');
+  return 'stopped';
+}
+
+/**
+ * Cancels `userId`'s start under `clientKey`, whether it is still running, has finished, or never
+ * came: a running one closes what it opens (`startDevTunnel`), and a finished one's tunnel is
+ * closed here. For a caller that gave up on a start's answer (it timed out, or its reply ended),
+ * which so never learned the session id. Idempotent; `unavailable` means the cancel could not be
+ * recorded, so a start still running may yet open a tunnel: ask again.
+ */
+export async function cancelDevTunnelStart(
+  userId: number,
+  clientKey: string
+): Promise<'stopped' | 'not_found' | 'unavailable'> {
+  // The mark first, then the read: the order `startDevTunnel` relies on (see its end).
+  try {
+    await sysRedis.set(clientCancelledKey(userId, clientKey), '1', {
+      EX: DEV_TUNNEL_CLIENT_KEY_SECONDS,
+    });
+  } catch {
+    return 'unavailable';
+  }
+  let sessionId: unknown;
+  try {
+    sessionId = await withSysReadDeadline(sysRedis.get(clientStartKey(userId, clientKey)));
+  } catch {
+    return 'unavailable';
+  }
+  if (!sessionId || typeof sessionId !== 'string') return 'not_found';
+  return stopOwnDevTunnel(userId, sessionId);
 }
 
 /** Stop whatever active tunnel exists for a (user, block) pair (used by
@@ -1027,16 +1212,104 @@ export async function touchDevTunnelActivity(host: string): Promise<void> {
     if (!sessionId || typeof sessionId !== 'string') return;
     const session = await readJson<DevTunnelSessionRecord>(sessionKey(sessionId));
     if (!session) return;
-    const now = nowSec();
-    const remaining = session.hardExpiresAt - now;
-    // Past the hard cap → do NOT re-persist (would resurrect an expired session /
-    // set a non-positive EX). Let the reaper + hard-TTL collect it.
-    if (remaining <= 0) return;
-    const updated: DevTunnelSessionRecord = { ...session, lastActivityAt: now };
-    await sysRedis.set(sessionKey(sessionId), JSON.stringify(updated), { EX: remaining });
+    await stampSessionActivity(session);
   } catch {
     /* best-effort idle refresh — never throw into the gate */
   }
+}
+
+/**
+ * Stamp `lastActivityAt = now` on a session the caller has already read, WITHOUT extending the
+ * hard-TTL: the EX is the time REMAINING until `hardExpiresAt`, so activity can never push a tunnel
+ * past its 8h cap. Returns the stamp, or null past the hard cap (not re-persisted: that would
+ * resurrect an expired session / set a non-positive EX; the reaper + hard-TTL collect it).
+ *
+ * `XX`: only overwrites a key that still exists, so a stamp racing a teardown (which deletes the
+ * key between our read and this write) cannot resurrect the record of a stopped tunnel.
+ */
+async function stampSessionActivity(session: DevTunnelSessionRecord): Promise<number | null> {
+  const now = nowSec();
+  const remaining = session.hardExpiresAt - now;
+  if (remaining <= 0) return null;
+  const updated: DevTunnelSessionRecord = { ...session, lastActivityAt: now };
+  const written = await sysRedis.set(sessionKey(session.sessionId), JSON.stringify(updated), {
+    EX: remaining,
+    XX: true,
+  });
+  return written === null ? null : now;
+}
+
+export type DevTunnelKeepAlive =
+  | { status: 'kept'; lastActivityAt: number; hardExpiresAt: number }
+  /** No such session, it is not `userId`'s, or it is past its hard cap — one answer for all
+   *  three, so a caller learns nothing about a session that is not its own. */
+  | { status: 'not_found' }
+  /** The session could not be read just now (Redis error): nothing was changed; ask again. */
+  | { status: 'unavailable' };
+
+/**
+ * Keep `userId`'s tunnel `sessionId` from idling out: the same idle stamp a browser visit makes
+ * (`touchDevTunnelActivity`), for a caller with no browser on the tunnel — App Assistant's server
+ * runner, while a run is in progress. Never extends the 8h hard cap. Once the calls stop, the
+ * normal idle window (DEV_TUNNEL_IDLE_SECONDS) runs from the last one.
+ *
+ * Ownership-checked like `stopDevTunnel`: a caller can never keep another author's tunnel alive.
+ */
+export async function keepAliveDevTunnel(
+  userId: number,
+  sessionId: string
+): Promise<DevTunnelKeepAlive> {
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return { status: 'unavailable' };
+  if (read.status === 'absent') return { status: 'not_found' };
+  const session = read.session;
+  if (session.userId !== userId) return { status: 'not_found' };
+  let stamped: number | null;
+  try {
+    stamped = await stampSessionActivity(session);
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (stamped === null) return { status: 'not_found' };
+  return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
+}
+
+/**
+ * Keep `userId`'s tunnel at `host` from idling out, whoever opened it: a run, the page's Restart
+ * preview, or the browser. The same stamp as `keepAliveDevTunnel`, for a caller that does not hold
+ * the tunnel's id because it did not open it, but can see which host the app's sandbox is connected
+ * to right now (the runner reads it from the sandbox's own `tunnel_status`), so only a tunnel that
+ * is actually being served is kept.
+ *
+ * Ownership-checked like `keepAliveDevTunnel`: the record the host names must be `userId`'s and
+ * still be at that host. `not_found` covers no such tunnel, another author's, and one past its
+ * hard cap, so a caller learns nothing about a tunnel that is not its own.
+ */
+export async function keepAliveDevTunnelAtHost(
+  userId: number,
+  host: string
+): Promise<DevTunnelKeepAlive> {
+  if (!isValidDevHost(host, env.APPS_DOMAIN)) return { status: 'not_found' };
+  let sessionId: unknown;
+  try {
+    sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (!sessionId || typeof sessionId !== 'string') return { status: 'not_found' };
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return { status: 'unavailable' };
+  if (read.status === 'absent') return { status: 'not_found' };
+  const session = read.session;
+  if (session.userId !== userId || session.host !== host) return { status: 'not_found' };
+  let stamped: number | null;
+  try {
+    stamped = await stampSessionActivity(session);
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (stamped === null) return { status: 'not_found' };
+  return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
 }
 
 // ---------------------------------------------------------------------------
@@ -1154,9 +1427,10 @@ export async function chargeDevSessionOverage(sessionId: string, costBuzz: numbe
 // Reaper (server-authoritative — NOT CLI-dependent)
 // ---------------------------------------------------------------------------
 
-/** A reaper session read that distinguishes a genuine ABSENCE (reap) from a
+/** A session read that distinguishes a genuine ABSENCE (reap) from a
  *  transient read ERROR (skip) — `readJson` collapses both to null, which would
- *  let a Redis blip reap a LIVE route. */
+ *  let a Redis blip reap a LIVE route. Also read by `keepAliveDevTunnel`, which
+ *  must not answer "no such tunnel" to a blip. */
 type ReaperRead =
   | { status: 'ok'; session: DevTunnelSessionRecord }
   | { status: 'absent' }

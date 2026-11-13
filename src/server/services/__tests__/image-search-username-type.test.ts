@@ -36,7 +36,7 @@ const legacySearch = vi.fn(async () => ({ items: [] as unknown[], nextCursor: un
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: (...args: unknown[]) => legacySearch(...(args as [])),
   getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  getImagesFromFeedSearch: (...args: unknown[]) => feedSearch(...(args as [])),
+  getImagesFromFeedServiceForRest: (...args: unknown[]) => feedSearch(...(args as [])),
 }));
 
 import { runImageSearch } from '../image-search.service';
@@ -105,15 +105,6 @@ describe('runImageSearch: the published type of `username`', () => {
     const username = await usernameFromFeed(2428023993);
     expect(username).toBe('2428023993');
     expect(typeof username).toBe('string');
-  });
-
-  it('CANNOT restore a name the cache already destroyed — this belt is not the fix', async () => {
-    // `0222` reached the wire as `222` because the cache decoded the stored text
-    // as a number. Casting at this boundary produces a well-typed 200 carrying a
-    // name that matches no account, which is why the cache fix is the real one.
-    const username = await usernameFromFeed(222);
-    expect(username).toBe('222');
-    expect(username).not.toBe('0222');
   });
 
   it('leaves an ordinary string untouched', async () => {

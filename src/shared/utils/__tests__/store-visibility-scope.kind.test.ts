@@ -7,6 +7,10 @@ import {
   type StoreListingKind,
   type StoreVisibilityScope,
 } from '~/shared/utils/store-visibility-scope';
+import {
+  resolveClientStoreScope,
+  type AppsStoreFeatureFlags,
+} from '~/shared/utils/app-blocks-access';
 
 /**
  * `scopeAdmitsListingKind` — the ONE scope→kind rule.
@@ -89,6 +93,16 @@ describe('the properties call sites actually rely on', () => {
     // `app-listings` OR `app-blocks-enabled`. The function takes neither — it takes
     // the resolved scope, which is the whole correction. A signature that accepted a
     // flag name could not express "offsite yes, onsite no" at all.
-    expect(scopeAdmitsListingKind.length).toBe(2);
+    const admits = (features: AppsStoreFeatureFlags) =>
+      ALL_KINDS.filter((k) => scopeAdmitsListingKind(resolveClientStoreScope(features), k));
+
+    expect(admits({ appListingsPublicExternal: true })).toEqual(['offsite']);
+    expect(admits({ appListings: true })).toEqual(['onsite', 'offsite']);
+    expect(admits({ appBlocks: true })).toEqual(['onsite', 'offsite']);
+    expect(admits({ appListings: true, appListingsPublicExternal: true })).toEqual([
+      'onsite',
+      'offsite',
+    ]);
+    expect(admits({})).toEqual([]);
   });
 });

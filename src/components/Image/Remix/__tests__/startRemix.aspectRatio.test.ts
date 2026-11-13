@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as GenerationGraphStore from '~/store/generation-graph.store';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 const setData = vi.fn();
@@ -70,13 +70,48 @@ describe('the seeded ratio survives the generation graph', () => {
     await startRemix({ kind: 'edit', image: image({ nsfwLevel: 4 }) });
     const { params } = setData.mock.calls[0][0];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const graph = generationGraph as any;
-    graph.init({ workflow: params.workflow, ecosystem: params.ecosystem }, ext);
-    graph.set(params);
+    const store = generationHub.createStore({
+      ext,
+      defaults: { workflow: params.workflow, ecosystem: params.ecosystem },
+    } as never);
+    store.set(params);
 
-    const { aspectRatio } = graph.getSnapshot();
+    const { aspectRatio } = store.getState() as { aspectRatio: { value: string } };
     expect(aspectRatio).toMatchObject(SOURCE);
     expect(aspectRatio.value).not.toBe('1:1');
+  });
+});
+
+describe('startRemix on a video', () => {
+  it('seeds a still of frame 0, never the mp4, with the video ratio', async () => {
+    await startRemix({ kind: 'video', image: image({ type: MediaType.video, nsfwLevel: 1 }) });
+
+    const params = setData.mock.calls[0][0].params;
+    expect(params.images[0].url).toContain('anim=false');
+    expect(params.images[0].url).toContain('transcode=true');
+    expect(params.images[0].url).toMatch(/\.jpeg$/);
+    expect(params.images[0].url).not.toContain('original=true');
+    expect(params.aspectRatio).toEqual({ value: '832:1216', ...SOURCE });
+  });
+
+  it.each([
+    [720, 800],
+    [4000, 1800],
+  ])(
+    'a %ipx-wide video requests a %ipx still (next CDN width, capped at 1800)',
+    async (width, requested) => {
+      await startRemix({
+        kind: 'video',
+        image: image({ type: MediaType.video, nsfwLevel: 1, width, height: 500 }),
+      });
+
+      expect(setData.mock.calls[0][0].params.images[0].url).toContain(`width=${requested}/`);
+    }
+  );
+
+  it('still seeds the original for an image', async () => {
+    await startRemix({ kind: 'video', image: image({ nsfwLevel: 1 }) });
+
+    expect(setData.mock.calls[0][0].params.images[0].url).toContain('original=true');
   });
 });

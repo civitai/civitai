@@ -16,6 +16,13 @@ export type ResourceSelectOptions = {
     partialSupport?: string[];
   }[];
   excludeIds?: number[];
+  /** Pins the picker to turbo variants; the chip is then not offered. */
+  turboOnly?: boolean;
+  /**
+   * Hides turbo variants, where another control owns them; the chip is then not offered.
+   * Filtered client-side: a Meilisearch negation would hide models that mix turbo and plain versions.
+   */
+  excludeTurbo?: boolean;
 };
 
 const selectSources = ['generation', 'training', 'addResource', 'modelVersion', 'auction'] as const;
@@ -25,6 +32,7 @@ export type ResourceFilter = {
   types: ModelType[];
   baseModels: BaseModel[];
   loadedOnly: boolean;
+  turboOnly: boolean;
 } & ModelPricingFilter;
 
 export const resourceSelectTabs = [
@@ -51,6 +59,7 @@ export type SelectableVersion = {
   canGenerate?: boolean;
   canGenerateNext?: boolean;
   generatorLoaded?: boolean;
+  turbo?: boolean;
 };
 
 /**
@@ -66,6 +75,8 @@ export function selectableVersions<V extends SelectableVersion>(
     member,
     isCheckpoint,
     loadedOnly,
+    turboOnly,
+    excludeTurbo,
     skipBaseModel,
     modelBaseModels,
     excludedIds,
@@ -77,6 +88,8 @@ export function selectableVersions<V extends SelectableVersion>(
     member?: boolean;
     isCheckpoint?: boolean;
     loadedOnly?: boolean;
+    turboOnly?: boolean;
+    excludeTurbo?: boolean;
     skipBaseModel: boolean;
     modelBaseModels: string[];
     excludedIds: number[];
@@ -93,12 +106,24 @@ export function selectableVersions<V extends SelectableVersion>(
           })
         : true) &&
       (!loadedOnly || !!version.generatorLoaded) &&
+      (!turboOnly || !!version.turbo) &&
+      (!excludeTurbo || !version.turbo) &&
       (skipBaseModel ||
         modelBaseModels.length === 0 ||
         modelBaseModels.includes(version.baseModel)) &&
       !excludedIds.includes(version.id)
   );
 }
+
+/** Whether a page of hits needs its versions re-checked client-side; false passes the page through whole. */
+export const needsVersionFilter = (f: {
+  canGenerate?: boolean;
+  resources: readonly unknown[];
+  loadedOnly: boolean;
+  turboOnly: boolean;
+  excludeTurbo: boolean;
+}): boolean =>
+  !!f.canGenerate || f.resources.length > 0 || f.loadedOnly || f.turboOnly || f.excludeTurbo;
 
 /** The chip asks a generate-price question, which is the wrong one for the other picker sources. */
 export const showsPricingFilter = (selectSource: ResourceSelectSource): boolean =>
@@ -111,9 +136,12 @@ export const showsPricingFilter = (selectSource: ResourceSelectSource): boolean 
  * one that satisfied the base-model clause, nor the first. Compatibility outranks price: a free
  * version this ecosystem cannot use is not a resource the viewer can generate with.
  *
- * With no pricing filter this returns 0 — the short-circuit lives HERE rather than at the call site so
- * a test can reach it. Re-selecting on compatibility alone would change which version an untouched
- * picker opens on, which is the one thing this must never do.
+ * With no pricing filter this returns the `preferred` version, else 0 — the short-circuit lives HERE
+ * rather than at the call site so a test can reach it. Re-selecting on compatibility alone would
+ * change which version an untouched picker opens on, which is the one thing this must never do.
+ *
+ * `preferred` is the version the caller knows is meant (the featured one); it wins whenever it is
+ * compatible and the pricing filter allows it.
  */
 export function pickInitialVersionIndex<T>(
   versions: T[],
@@ -121,17 +149,38 @@ export function pickInitialVersionIndex<T>(
     filter,
     satisfiesFilter,
     isCompatible,
+    preferred,
   }: {
     filter: ModelPricingFilter;
     satisfiesFilter: (version: T) => boolean;
     isCompatible: (version: T) => boolean;
+    preferred?: (version: T) => boolean;
   }
 ): number {
-  if (!hasPricingFilter(filter)) return 0;
-  const preferred = versions.findIndex((v) => isCompatible(v) && satisfiesFilter(v));
-  if (preferred >= 0) return preferred;
+  const meant = preferred ? versions.findIndex((v) => preferred(v) && isCompatible(v)) : -1;
+  if (!hasPricingFilter(filter)) return Math.max(meant, 0);
+  if (meant >= 0 && satisfiesFilter(versions[meant])) return meant;
+  const both = versions.findIndex((v) => isCompatible(v) && satisfiesFilter(v));
+  if (both >= 0) return both;
   const compatible = versions.findIndex(isCompatible);
   return compatible >= 0 ? compatible : 0;
+}
+
+/**
+ * The image a picker card shows for its selected version. The search doc carries a cover for the
+ * newest version of each base model, but `images[0]` is the model's primary cover: keep it while it
+ * belongs to the selected version's base model (the creator's pick), else show that version's own.
+ */
+export function pickVersionCover<I extends { modelVersionId?: number | null }>(
+  images: I[],
+  versions: { id: number; baseModel: string }[],
+  selected: { id: number; baseModel: string } | undefined
+): I | undefined {
+  const primary = images[0];
+  if (!primary || !selected) return primary;
+  const primaryBaseModel = versions.find((v) => v.id === primary.modelVersionId)?.baseModel;
+  if (primaryBaseModel === selected.baseModel) return primary;
+  return images.find((image) => image.modelVersionId === selected.id) ?? primary;
 }
 
 /**
@@ -163,6 +212,7 @@ export const toResourceSelectFilterInput = (filters: ResourceFilter) => ({
   filterBaseModels: filters.baseModels,
   hidePaid: filters.hidePaid,
   filterLoaded: filters.loadedOnly,
+  filterTurbo: filters.turboOnly,
 });
 
 export const resourceSort = {

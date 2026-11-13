@@ -24,24 +24,16 @@ beforeEach(() => {
 });
 
 describe('creating a crucible — Buzz type', () => {
-  it("uses the creator's pick, even off that currency's site", async () => {
-    await create({ buzzType: 'green' }, false);
-    expect(chargedIn()).toBe('green');
-
+  // The creator pays setup and seed in the site's currency; there is no per-crucible choice.
+  it("charges the creator in the site's currency, whatever the request names", async () => {
     await create({ buzzType: 'yellow' }, true);
-    expect(chargedIn()).toBe('yellow');
-  });
-
-  it("falls back to the site's currency when none is picked", async () => {
-    await create({}, true);
     expect(chargedIn()).toBe('green');
 
-    await create({}, false);
+    await create({ buzzType: 'green' }, false);
     expect(chargedIn()).toBe('yellow');
   });
 
-  it('accepts only green or yellow', () => {
-    expect(createCrucibleInputBaseSchema.shape.buzzType.safeParse('green').success).toBe(true);
-    expect(createCrucibleInputBaseSchema.shape.buzzType.safeParse('blue').success).toBe(false);
+  it('no longer accepts a Buzz type on the input', () => {
+    expect('buzzType' in createCrucibleInputBaseSchema.shape).toBe(false);
   });
 });

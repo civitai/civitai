@@ -79,6 +79,8 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: vi.fn().mockResolvedValue(undefined),
+  // The route counts a download through a sysRedis read whose fail-open logs with this.
+  safeError: (e: Error) => ({ message: e.message }),
 }));
 
 vi.mock('~/server/redis/client', () => {
@@ -156,6 +158,9 @@ beforeEach(() => {
   mockGetFileForModelVersion.mockResolvedValue({
     status: 'success',
     url: 'https://example.invalid/model.safetensors',
+    // Read by the route's sampled url-expiry log before it redirects.
+    urlExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    sizeKB: 1024,
     metadata: {},
     isDownloadable: true,
     published: true,

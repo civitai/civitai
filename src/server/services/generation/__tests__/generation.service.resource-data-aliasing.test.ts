@@ -82,9 +82,6 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: {} }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
-vi.mock('~/server/services/orchestrator/ecosystems/wan.handler', () => ({
-  wanBaseModelGroupIdMap: {},
-}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   // Only reached for resources needing substitutes; returns no candidate versions.
@@ -326,5 +323,79 @@ describe('getResourceData — preview image honours the viewer browsing level', 
 
   it('no preview when nothing is within the level', async () => {
     expect(await previewFor([X_VIDEO, BLOCKED], 1 | 2)).toBeUndefined();
+  });
+});
+
+describe('getResourceData — tipsEnabled from the owner flags in the cached row', () => {
+  async function resourceFor(
+    owner: { userId: number; userFlags?: number | null },
+    user: typeof MOD | typeof ANON = MOD
+  ) {
+    const row = dbRow();
+    queryRawMock.mockResolvedValue([{ ...row, model: { ...row.model, ...owner } }]);
+    const [resource] = await getResourceData([VERSION_ID], { user });
+    return resource;
+  }
+
+  it('is true for an ordinary creator', async () => {
+    expect((await resourceFor({ userId: 777, userFlags: 0 })).tipsEnabled).toBe(true);
+  });
+
+  it('is false when the owner has DisablePayout', async () => {
+    expect((await resourceFor({ userId: 777, userFlags: 1 })).tipsEnabled).toBe(false);
+  });
+
+  it('is false for a system-owned (-1) version', async () => {
+    expect((await resourceFor({ userId: -1, userFlags: 0 })).tipsEnabled).toBe(false);
+  });
+
+  it('treats a cache entry without owner flags as eligible', async () => {
+    expect((await resourceFor({ userId: 777 })).tipsEnabled).toBe(true);
+  });
+
+  // Both branches of the model rebuild: the moderator can generate with this row, the anonymous
+  // caller cannot.
+  it('does not send the owner flags to a caller who can generate', async () => {
+    const resource = await resourceFor({ userId: 777, userFlags: 1 }, MOD);
+    expect(resource.canGenerate).toBe(true);
+    expect(resource.model).not.toHaveProperty('userFlags');
+  });
+
+  it('does not send the owner flags to a caller who cannot generate', async () => {
+    const resource = await resourceFor({ userId: 777, userFlags: 1 }, ANON);
+    expect(resource.canGenerate).toBe(false);
+    expect(resource.model).not.toHaveProperty('userFlags');
+  });
+});
+
+describe('getResourceData — non-commercial base models', () => {
+  async function resourceFor(
+    over: { baseModel: string; hasAccess?: boolean },
+    user: typeof MOD | typeof ANON = MOD
+  ) {
+    queryRawMock.mockResolvedValue([{ ...dbRow(), ...over }]);
+    const [resource] = await getResourceData([VERSION_ID], { user });
+    return resource;
+  }
+
+  it.each([
+    'Flux.2 Klein 9B',
+    'Flux.2 Klein 9B-base',
+    'Flux.3 Klein',
+    'Flux.3 Klein-base',
+    'Ideogram 4.0',
+    'Qwen 2.1',
+  ])('a %s version takes no tips', async (baseModel) => {
+    expect((await resourceFor({ baseModel })).tipsEnabled).toBe(false);
+  });
+
+  it.each(['Flux.2 Klein 4B', 'SDXL 1.0'])('a %s version still takes tips', async (baseModel) => {
+    expect((await resourceFor({ baseModel })).tipsEnabled).toBe(true);
+  });
+
+  it('a past buyer of a Flux.2 Klein 9B version keeps access', async () => {
+    expect(
+      (await resourceFor({ baseModel: 'Flux.2 Klein 9B', hasAccess: true }, ANON)).hasAccess
+    ).toBe(true);
   });
 });

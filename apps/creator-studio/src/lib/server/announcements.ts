@@ -1,9 +1,14 @@
 import type { SessionUser } from '@civitai/auth';
 import { dbRead } from '$lib/server/db';
 import { callMainApp, type MainAppResult } from '$lib/server/main-app';
-import { getFlipt, fliptContext } from '$lib/server/flipt';
-import { toDomainArray, type AnnouncementAllowance } from '$lib/announcements';
-import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
+import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
+import {
+  toAnnouncementLinks,
+  toDomainArray,
+  type AnnouncementAllowance,
+  type AnnouncementLink,
+} from '$lib/announcements';
+import { allowanceSchema, toSaveBody, type AnnouncementForm } from './announcements-schema';
 
 // Announcement writes go through the MAIN APP, not kysely: the allowance check, the creator/sitewide
 // boundary and the cover `Image` row are all owned there, and duplicating any of them here would put a
@@ -11,23 +16,9 @@ import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
 
 export const ANNOUNCEMENTS_FLAG = 'creator-announcements';
 
-/**
- * 🔴 Must stay the same key AND the same Flipt-down posture as the main app's
- * `creatorAnnouncements` feature flag (availability ['mod'] + fliptKey). One flag drives both apps;
- * an app that fails to a different answer produces the half-visible state the single flag exists to
- * prevent.
- *
- * The fallback keys on a null EVALUATION, not on the client being absent: `isEnabledSync` returns
- * null for an unreachable client and for a flag that does not exist yet, which is the normal state
- * of a feature that ships dark. `isEnabled` would collapse both to false and lock moderators out of
- * a page the main app is already showing them.
- */
-export async function announcementsEnabled(user: SessionUser): Promise<boolean> {
-  const flipt = getFlipt();
-  await flipt.ensureInitialized();
-
-  const evaluated = flipt.isEnabledSync(ANNOUNCEMENTS_FLAG, String(user.id), fliptContext(user));
-  return evaluated ?? user.isModerator === true;
+// 🔴 Must stay the main app's `creatorAnnouncements` fliptKey.
+export function announcementsEnabled(user: SessionUser): Promise<boolean> {
+  return modFallbackFlagEnabled(ANNOUNCEMENTS_FLAG, user);
 }
 
 export type AnnouncementRow = {
@@ -44,11 +35,8 @@ export type AnnouncementRow = {
   /** A slot was spent on this announcement — deleting it does not give the slot back. */
   spentSlot: boolean;
   coverNsfwLevel: number | null;
-  link: string | null;
-  linkText: string | null;
+  links: AnnouncementLink[];
 };
-
-type AnnouncementMetadata = { actions?: { link?: string; linkText?: string }[] } | null;
 
 /** The caller's own announcements. Owner-scoped and never `userId is null`, so a platform row is unreachable. */
 export async function getMyAnnouncements(userId: number): Promise<AnnouncementRow[]> {
@@ -82,25 +70,21 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
     .limit(50)
     .execute();
 
-  return rows.map((row) => {
-    const action = (row.metadata as AnnouncementMetadata)?.actions?.[0];
-    return {
-      id: row.id,
-      title: row.title,
-      content: row.content,
-      domain: toDomainArray(row.domain),
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-      disabled: row.disabled,
-      profileOnly: row.profileOnly,
-      createdAt: row.createdAt,
-      spentSlot: row.spentSlot === true,
-      coverUrl: row.coverUrl ?? null,
-      coverNsfwLevel: row.coverNsfwLevel ?? null,
-      link: action?.link ?? null,
-      linkText: action?.linkText ?? null,
-    };
-  });
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    domain: toDomainArray(row.domain),
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    disabled: row.disabled,
+    profileOnly: row.profileOnly,
+    createdAt: row.createdAt,
+    spentSlot: row.spentSlot === true,
+    coverUrl: row.coverUrl ?? null,
+    coverNsfwLevel: row.coverNsfwLevel ?? null,
+    links: toAnnouncementLinks(row.metadata),
+  }));
 }
 
 const ENDPOINT = '/api/v1/announcements';
@@ -123,30 +107,7 @@ export async function getAllowance(cookie: string): Promise<MainAppResult<Announ
 export function saveAnnouncement(cookie: string, form: AnnouncementForm) {
   return callMainApp<{ id: number }>(ENDPOINT, cookie, {
     method: 'POST',
-    body: {
-      id: form.id,
-      title: form.title,
-      content: form.content,
-      domain: form.domain,
-      profileOnly: form.profileOnly,
-      startsAt: form.startsAt?.toISOString() ?? null,
-      endsAt: form.endsAt?.toISOString() ?? null,
-      ...(form.linkUrl && form.linkText
-        ? { action: { link: form.linkUrl, linkText: form.linkText } }
-        : {}),
-      // A key, never an `Image` id: the server mints the row so the cover gets ingested and scanned.
-      ...(form.coverKey
-        ? {
-            coverImage: {
-              url: form.coverKey,
-              width: form.coverWidth,
-              height: form.coverHeight,
-              mimeType: form.coverMimeType,
-              sizeKB: form.coverSizeKB,
-            },
-          }
-        : {}),
-    },
+    body: toSaveBody(form),
   });
 }
 

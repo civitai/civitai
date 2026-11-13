@@ -14,9 +14,12 @@ import { fluxKontext } from './flux-kontext.graph';
 import { flux2 } from './flux2.graph';
 import { flux3 } from './flux3.graph';
 import { flux2Klein } from './flux2-klein.graph';
+import { flux3Klein } from './flux3-klein.graph';
+import { mossImage } from './moss-image.graph';
 import { boogu } from './boogu.graph';
 import { krea2 } from './krea2.graph';
-import { imagen4 } from './imagen4.graph';
+import { krea3 } from './krea3.graph';
+import { minimaxH3Image, MINIMAX_H3_IMAGE_MAX_QUANTITY } from './minimax-h3-image.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
 import { ming } from './ming.graph';
@@ -41,8 +44,7 @@ import { zimage } from './zimage.graph';
 /**
  * The IMAGE hub: ecosystem selection scoped to image output, the image-only
  * family dispatch (a keyed branch whose table types each arm) and the two
- * fields the oracle declares AFTER its family discriminator because they read
- * family state (`enhancedCompatibility` reads the model; `quantity` reads
+ * fields declared AFTER the family discriminator because they read family state (`enhancedCompatibility` reads the model; `quantity` reads
  * both). Workflow and the output/input computeds live on the root
  * (`../hub.graph.ts`).
  */
@@ -62,14 +64,9 @@ export const imageHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'SDXL';
 
     return {
-      ...ecosystemFieldSchemas(
-        _ext.workflow,
-        hiddenEcosystems,
-        ecosystemStates.map((e) => e.key),
-        usableEcosystems
-      ),
+      ...ecosystemFieldSchemas(_ext.workflow, hiddenEcosystems, ecosystemStates, usableEcosystems),
       default: defaultValue,
-      // v1 stores the ecosystem selection per OUTPUT type
+      // The ecosystem selection is stored per OUTPUT type.
       scope: 'image',
       meta: {
         compatibleEcosystems,
@@ -91,9 +88,12 @@ export const imageHub = defineGraph<RootCtx>()
       [['Flux2'], flux2],
       [['Flux3'], flux3],
       [['Flux2Klein_9B', 'Flux2Klein_9B_base', 'Flux2Klein_4B', 'Flux2Klein_4B_base'], flux2Klein],
+      [['Flux3Klein', 'Flux3Klein_base'], flux3Klein],
+      [['MossImage'], mossImage],
       [['Boogu'], boogu],
       [['Krea2'], krea2],
-      [['Imagen4'], imagen4],
+      [['Krea3'], krea3],
+      [['MiniMaxH3Image'], minimaxH3Image],
       [['PonyV7'], ponyV7],
       [['Reve'], reve],
       [['MuseImage'], museImage],
@@ -114,9 +114,8 @@ export const imageHub = defineGraph<RootCtx>()
       [['Grok'], grokImage],
     ] as const)
   )
-  // Both read the family's DERIVED ecosystem where one exists (v1 reads its
-  // conflated key after the checkpoint effect has moved it); families without
-  // a derivation declare nothing and the selection stands.
+  // Both read the family's DERIVED ecosystem where one exists; families without a
+  // derivation declare nothing and the selection stands.
   .field('enhancedCompatibility', ({ model, effectiveEcosystem, ecosystem, _ext }) =>
     _ext.workflow === 'txt2img' &&
     supportsEnhancedCompatibility(effectiveEcosystem ?? ecosystem, model?.id)
@@ -135,11 +134,22 @@ export const imageHub = defineGraph<RootCtx>()
     // Scoped to image rather than bare: video keeps its own (see video/hub.graph.ts),
     // and a scoped read falls back to the bare key, so a bare image value
     // would leak into video.
+    //
+    // 🔴 FALLS THROUGH to the def's own `correct`. Overriding it outright covered the
+    // floor and silently dropped the CEILING: `max` is the user's own
+    // `limits.maxQuantity`, so a quantity written by a trusted ingestion from a wider
+    // entitlement stayed above it and dead-submitted.
+    // MiniMax H3 Image takes at most 4 per request, below the paid tiers' limits.
+    const max =
+      ecosystem === 'MiniMaxH3Image'
+        ? Math.min(_ext.limits.maxQuantity, MINIMAX_H3_IMAGE_MAX_QUANTITY)
+        : _ext.limits.maxQuantity;
+    const base = quantityDef({ max, step });
     return {
-      ...quantityDef({ max: _ext.limits.maxQuantity, step }),
+      ...base,
       scope: rootScope('image'),
       correct: (v: number) =>
-        v < step ? { value: step, reason: 'quantity_step_floor' } : undefined,
+        v < step ? { value: step, reason: 'quantity_step_floor' } : base.correct?.(v),
     };
   })
   // interactive model picks reconcile selectors the same way the parse boundary does

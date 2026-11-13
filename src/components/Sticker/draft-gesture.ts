@@ -31,7 +31,7 @@
  */
 export type Gesture = { draftId: string; pointerId: number } & (
   | { mode: 'move'; offsetX: number; offsetY: number }
-  | { mode: 'rotate' }
+  | { mode: 'rotate'; knobBelow?: boolean }
   | { mode: 'resize'; anchorX: number; anchorY: number; sx: number; sy: number; aspect: number }
 );
 
@@ -61,7 +61,55 @@ export const KNOB_OFFSET = 0.22;
  * was. Wrapping maps that quadrant onto -180..-90, which is the same rotation
  * and is inside the clamp.
  */
-export function knobRotation(dx: number, dy: number) {
-  const degrees = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+export function knobRotation(dx: number, dy: number, knobBelow = false) {
+  // A knob hanging below points the other way: the sticker turns to put its top opposite the pointer.
+  const degrees = (Math.atan2(dy, dx) * 180) / Math.PI + (knobBelow ? -90 : 90);
   return ((((degrees + 180) % 360) + 360) % 360) - 180;
+}
+
+/**
+ * How far inside the clip the knob above has to be before a knob hung below comes back up, so it
+ * does not swap back and forth at the edge.
+ */
+const KNOB_RETURN_MARGIN = 24;
+
+/**
+ * Whether the rotate knob hangs below the sticker instead of above it: only where above would put
+ * it past the clipping edge, so it could not be grabbed, and below would not. Once below it comes
+ * back up when above fits with KNOB_RETURN_MARGIN to spare, or when below stops fitting.
+ */
+export function knobBelowFor({
+  centre,
+  height,
+  rotation,
+  knobOffset,
+  clip,
+  current,
+}: {
+  /** The sticker's centre on screen. */
+  centre: { x: number; y: number };
+  /** The sticker's unrotated height in px. */
+  height: number;
+  /** Degrees, ±180. */
+  rotation: number;
+  knobOffset: number;
+  /** The box that clips the sticker, on screen. */
+  clip: { top: number; bottom: number; left: number; right: number };
+  current: boolean;
+}) {
+  // The knob's outer edge, straight up (or down) the sticker's own axis.
+  const reach = height / 2 + knobOffset * height;
+  const fits = (side: 1 | -1, margin = 0) => {
+    const tip = rotate(0, side * reach, rotation);
+    const x = centre.x + tip.x;
+    const y = centre.y + tip.y;
+    return (
+      x >= clip.left + margin &&
+      x <= clip.right - margin &&
+      y >= clip.top + margin &&
+      y <= clip.bottom - margin
+    );
+  };
+  if (!fits(1)) return false;
+  return current ? !fits(-1, KNOB_RETURN_MARGIN) : !fits(-1);
 }

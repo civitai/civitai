@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const findMany = dbMock.dbWrite.userCosmetic.findMany;
@@ -14,8 +14,12 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+const showcase = vi.hoisted(() => ({ refreshShowcaseHats: vi.fn() }));
+vi.mock('~/server/events/showcase-hat', () => showcase);
 
-const { revokeCosmeticsFromUsers } = await import('~/server/services/cosmetic.service');
+const { revokeCosmeticsFromUsers, unassignCosmetic } = await import(
+  '~/server/services/cosmetic.service'
+);
 
 const USERS = [11, 12];
 const COSMETICS = [301, 302];
@@ -54,5 +58,51 @@ describe('revokeCosmeticsFromUsers claim scoping', () => {
     expect(revoked).toBe(0);
     expect(deleteMany).not.toHaveBeenCalled();
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+// A revoked cosmetic the user was wearing still shows on their search document (search results,
+// user pickers) until the users index re-pulls them, which it does only for queued ids.
+describe('revoking or unassigning a worn cosmetic queues the wearer', () => {
+  const WEARER = 11;
+  const wearersOnly = (async (args: { where: { equippedToId?: unknown } }) =>
+    args.where.equippedToId === null ? [{ userId: WEARER }] : []) as never;
+
+  it('revokeCosmeticsFromUsers queues the users who were wearing it, and only them', async () => {
+    findMany.mockImplementation(wearersOnly);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await revokeCosmeticsFromUsers({ userIds: USERS, cosmeticIds: COSMETICS });
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([WEARER]);
+  });
+
+  it('unassignCosmetic queues the users who were wearing it, and only them', async () => {
+    findMany.mockImplementation(wearersOnly);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await unassignCosmetic({ cosmeticId: COSMETICS[0], userIds: USERS });
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([WEARER]);
+  });
+});
+
+// A showcased hat need not be placed on anything, so the placed holdings the removal re-derives do
+// not name its owner: every owner who lost a holding is refreshed, or the hat stays up to an hour.
+describe('removing a holding refreshes the showcase hat', () => {
+  it('unassignCosmetic refreshes every owner, placed or not', async () => {
+    await unassignCosmetic({ cosmeticId: COSMETICS[0], userIds: USERS });
+
+    expect(showcase.refreshShowcaseHats).toHaveBeenCalledWith(USERS);
+  });
+
+  it('revokeCosmeticsFromUsers refreshes every owner, placed or not', async () => {
+    await revokeCosmeticsFromUsers({ userIds: USERS, cosmeticIds: COSMETICS });
+
+    expect(showcase.refreshShowcaseHats.mock.calls.flat(2).sort()).toEqual(USERS);
   });
 });

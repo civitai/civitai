@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProtectedContext } from '~/server/createContext';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 const {
   mockToggleReaction,
@@ -23,12 +24,18 @@ const {
         postId: 42,
         resourceHelper: [],
       })),
-      findUniqueOrThrow: vi.fn(async () => ({ postId: 42 })),
     },
     imageReaction: { count: vi.fn(async () => 5) },
   },
 }));
 
+// The handler's two image reads, through Kysely: the access check's post and the tracker event's
+// owner and level.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImagePostId: vi.fn(async () => ({ postId: 42 })),
+  getImageNsfwLevelAndOwner: vi.fn(async () => ({ nsfwLevel: 1, userId: 99 })),
+}));
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
 vi.mock('~/server/utils/metric-helpers', () => ({ updateEntityMetric: mockUpdateEntityMetric }));
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
@@ -53,6 +60,7 @@ vi.mock('~/server/services/metric-excluded-users.service', () => ({
 }));
 
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
+import { encouragementReward, goodContentReward } from '~/server/rewards';
 
 const input = { entityType: 'image', entityId: 1, reaction: 'Like' } as const;
 
@@ -95,6 +103,32 @@ describe('toggleReactionHandler — a delete that removed nothing', () => {
     expect(mockUpdateEntityMetric).toHaveBeenCalledWith(
       expect.objectContaining({ metricType: 'ReactionLike', amount: -1 })
     );
+  });
+});
+
+describe('toggleReactionHandler — a toggle the reverse-toggle guard ignored', () => {
+  it('emits no tracker event, metric, reward or notification', async () => {
+    mockToggleReaction.mockResolvedValue('ignored');
+    mockNotificationExists.mockResolvedValue(false);
+    const ctx = makeCtx();
+
+    const result = await toggleReactionHandler({ ctx, input });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result).toBe('ignored');
+    expect(ctx.track.reaction).not.toHaveBeenCalled();
+    expect(mockUpdateEntityMetric).not.toHaveBeenCalled();
+    expect(encouragementReward.apply).not.toHaveBeenCalled();
+    expect(goodContentReward.apply).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  // API-key callers reach this handler over tRPC; they keep the result set they have today.
+  it('reports noop to an API-key caller', async () => {
+    mockToggleReaction.mockResolvedValue('ignored');
+    const ctx = Object.assign(makeCtx(), { apiKeyId: 12 });
+
+    expect(await toggleReactionHandler({ ctx, input })).toBe('noop');
   });
 });
 

@@ -286,7 +286,7 @@ Establish the service-porting rhythm on the cheapest pages (Postgres, plus alrea
 
 ### `cosmetic.service.ts`  ·  used by: cosmetics/grant  ·  *Postgres*  ·  ✅ migrated (spoke Kysely)
 - [x] `getPaginatedCosmetics` — ported to `apps/moderator/src/lib/server/cosmetics.service.ts` (main-app copy kept: shared with the cosmetic shop / cosmetic-store pages)
-- [x] `grantCosmeticsToUsers` — ported (raw `ON CONFLICT DO NOTHING`); main-app `grantCosmeticsToUsers` + `cosmetic.grantToUsers` removed as orphaned. `grantCosmetics` helper kept (payments/referrals use it).
+- [x] `grantCosmeticsToUsers` — ported (raw `ON CONFLICT DO NOTHING`); main-app `grantCosmeticsToUsers` + `cosmetic.grantToUsers` removed as orphaned. `grantCosmetics` helper kept (payments/referrals use it). One transaction per user under the item holder lock; a user whose lock is busy is skipped and returned in `busyUserIds` (the page names them and leaves only them selected), and granting them again is safe.
 
 ---
 

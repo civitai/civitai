@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { SvelteSet } from 'svelte/reactivity';
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -10,6 +11,8 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
+  import SelectionBar from '$lib/components/SelectionBar.svelte';
+  import TipButton from '$lib/components/TipButton.svelte';
   import { VIOLATION_TYPES, VIOLATION_LABELS } from '$lib/violations';
   import { IMAGE_FLAG_VALUES } from '$lib/image-flags';
   import { TOS_REASONS, type CannedReason } from '$lib/moderation-reasons';
@@ -21,29 +24,39 @@
     submitting,
     owners = [],
     notify = true,
+    strike = true,
     flags = true,
     blockedIds,
     maxSelection,
+    bare = false,
+    keepOffScreen = false,
   }: {
     selected: SvelteSet<string | number>;
     /** Every id currently on screen, for the select-all helpers. */
     selectable: (string | number)[];
     onSubmit: SubmitFunction;
     submitting: boolean;
-    /**
-     * The accounts the selection spans. Named rather than counted because the caller's own owner list
-     * may be scoped to one page while the selection is not, and a strike is offered from here.
-     */
+    /** The accounts the selection spans, named rather than counted because a strike is offered from
+     *  here. */
     owners?: { id: number; username: string | null; bannedAt?: Date | null }[];
     notify?: boolean;
+    /** Offer "strike the owners" with a removal. False without `user.strike`, which the server checks
+     *  again. */
+    strike?: boolean;
     flags?: boolean;
     /** Which selected ids are known to be blocked, so Restore can warn about the rest. */
     blockedIds?: Set<string | number>;
     /** The action's id cap, when the caller has one. Submitting past it is refused server-side. */
     maxSelection?: number;
+    /** No box of its own, for a host that folds the bar into its own toolbar card. */
+    bare?: boolean;
+    /** Keep ids the moderator paged past, so one removal can span pages. Only for a host with no
+     *  client-side filter and one subject per page set; it must clear the selection on a batch change
+     *  itself and pass `blockedIds` covering every page shown. */
+    keepOffScreen?: boolean;
   } = $props();
 
-  // Scopes the strike checkbox's `for`/`id` pair — this bar is mounted on three routes.
+  // Scopes the strike checkbox's `for`/`id` pair — this bar is mounted on four routes.
   const uid = $props.id();
 
   const ids = $derived([...selected].join(','));
@@ -53,12 +66,20 @@
   const unblockedSelected = $derived(
     blockedIds ? [...selected].filter((id) => !blockedIds.has(id)).length : 0
   );
-  // The removal posts ids, not what is on screen, and a selection outlives the screen two ways:
-  // a client-side filter hides an image, or the moderator pages past it.
-  const hiddenSelected = $derived.by(() => {
-    const visible = new Set(selectable);
-    return [...selected].filter((id) => !visible.has(id)).length;
+  // 🔴 The removal posts ids, so by default an id that leaves `selectable` (a client-side filter, a
+  // page turn) leaves the selection: a bulk action must not reach images nobody is looking at. `.pre`
+  // so the count and "Remove N" never show a frame of what left.
+  const visible = $derived(new Set(selectable));
+  $effect.pre(() => {
+    if (keepOffScreen) return;
+    const onScreen = visible;
+    untrack(() => {
+      for (const id of [...selected]) if (!onScreen.has(id)) selected.delete(id);
+    });
   });
+  const offScreen = $derived(
+    keepOffScreen ? [...selected].filter((id) => !visible.has(id)).length : 0
+  );
 
   let tosReason = $state<string | null>(null);
   let reason = $state('');
@@ -108,26 +129,32 @@
   };
 </script>
 
+{#snippet summary()}
+  <p class="text-sm text-dark-2">
+    {#if count === 0}
+      Select images to act on them.
+    {:else}
+      <span class="font-semibold text-white">{num(count)}</span> selected
+      {#if ownerCount > 1}
+        <span class="text-amber-300">· spanning {ownerCount} accounts</span>
+      {/if}
+      {#if offScreen > 0}
+        <span class="text-amber-300">· {num(offScreen)} on other pages</span>
+      {/if}
+    {/if}
+  </p>
+{/snippet}
+
 <section
-  class={cn(
-    'mb-4 rounded-xl border p-5',
-    count > 0 ? 'border-blue-500/40 bg-blue-500/5' : 'border-dark-4 bg-dark-6'
-  )}
+  class={bare
+    ? undefined
+    : cn(
+        'mb-4 rounded-xl border p-5',
+        count > 0 ? 'border-blue-500/40 bg-blue-500/5' : 'border-dark-4 bg-dark-6'
+      )}
 >
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <p class="text-sm text-dark-2">
-      {#if count === 0}
-        Select images to act on them.
-      {:else}
-        <span class="font-semibold text-white">{num(count)}</span> selected
-        {#if ownerCount > 1}
-          <span class="text-amber-300">· spanning {ownerCount} accounts</span>
-        {/if}
-        {#if hiddenSelected > 0}
-          <span class="text-amber-300">· {num(hiddenSelected)} selected but not on screen</span>
-        {/if}
-      {/if}
-    </p>
+    {@render summary()}
 
     <div class="flex flex-wrap gap-2">
       {#if selectable.length > 0}
@@ -137,43 +164,66 @@
         {#if selectable.length > 100}
           <Button size="sm" variant="outline" onclick={() => selectAll(100)}>Select 100</Button>
         {/if}
-        {#if selectable.length > 50}
-          <Button size="sm" variant="outline" onclick={() => selectAll(50)}>Select 50</Button>
-        {/if}
       {/if}
       {#if count > 0}
         <Button size="sm" variant="outline" onclick={() => selected.clear()}>Unselect all</Button>
       {/if}
     </div>
   </div>
+</section>
 
+<SelectionBar {count} onclear={() => selected.clear()} {summary}>
   {#if overCap}
-    <p class="mt-3 rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
+    <p class="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
       {num(count)} selected — one action takes {num(maxSelection ?? 0)}. Unselect
       {num(count - (maxSelection ?? 0))} before acting.
     </p>
   {/if}
 
-  {#if count > 0 && !overCap && !confirming && !notifying && !flagging}
-    <div class="mt-3 flex flex-wrap gap-2">
-      <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
+  {#if !overCap && !confirming && !notifying && !flagging}
+    <div class="flex flex-wrap gap-2">
+      <TipButton
+        tip="Take the selected images down. You pick a reason, and can message the owners, next."
+        size="sm"
+        variant="destructive"
+        onclick={() => (confirming = 'remove')}
+      >
         Remove selected
-      </Button>
+      </TipButton>
       <!-- Confirmed like Remove. It sits next to a destructive button and is itself destructive in a
            way that reads as safe: restore clears needsReview, poi and blockedFor, republishes at
            `ingestion = 'Scanned'` and disables the review tags, with no record of the prior values. -->
-      <Button size="sm" onclick={() => (confirming = 'restore')}>Restore selected</Button>
+      <TipButton
+        tip="Republish the selected images and clear their review, POI and block flags. The old values are not kept. Confirmed next."
+        size="sm"
+        onclick={() => (confirming = 'restore')}
+      >
+        Restore selected
+      </TipButton>
       {#if notify}
-        <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
+        <TipButton
+          tip="Send one notification to each affected account. You write the message next."
+          size="sm"
+          onclick={() => (notifying = true)}
+        >
+          Notify owners
+        </TipButton>
       {/if}
       {#if flags}
-        <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
+        <TipButton
+          tip="Set or clear the POI and minor flags on the selected images."
+          size="sm"
+          variant="outline"
+          onclick={() => (flagging = !flagging)}
+        >
+          Flags
+        </TipButton>
       {/if}
     </div>
   {/if}
 
   {#if confirming === 'remove'}
-    <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/remove" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
         <p class="mb-2 text-sm text-white">
@@ -250,19 +300,21 @@
              gap — 4px onto the bottom edge of the reason Input above, which stretches to fill its
              row. `mt-1.5` (6px) puts the edge exactly flush with the gap. Tied to that `mb-2`: change
              the spacing above and this has to move with it. -->
-        <div class="mb-2 flex items-start gap-2 text-sm text-white" data-touch-target>
-          <Checkbox
-            id="strike-owners-{uid}"
-            name="strikeOwners"
-            value="1"
-            bind:checked={strikeOwners}
-            class="mt-1.5"
-          />
-          <Label for="strike-owners-{uid}" class="text-sm leading-snug font-normal text-white">
-            Strike {ownerCount > 1 ? `all ${ownerCount} owners` : "the owner's account"} — the reason
-            above is sent as the strike's description.
-          </Label>
-        </div>
+        {#if strike}
+          <div class="mb-2 flex items-start gap-2 text-sm text-white" data-touch-target>
+            <Checkbox
+              id="strike-owners-{uid}"
+              name="strikeOwners"
+              value="1"
+              bind:checked={strikeOwners}
+              class="mt-1.5"
+            />
+            <Label for="strike-owners-{uid}" class="text-sm leading-snug font-normal text-white">
+              Strike {ownerCount > 1 ? `all ${ownerCount} owners` : "the owner's account"} — the reason
+              above is sent as the strike's description.
+            </Label>
+          </div>
+        {/if}
         {#if strikeNeedsReason}
           <p class="mb-2 text-xs text-amber-200">
             A strike needs a reason: pick one above, or write the message the user should be sent.
@@ -294,7 +346,7 @@
   {/if}
 
   {#if confirming === 'restore'}
-    <form method="POST" action="?/restore" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/restore" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
         <p class="mb-2 text-sm text-white">
@@ -323,7 +375,7 @@
   {/if}
 
   {#if flagging}
-    <form method="POST" action="?/setFlag" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/setFlag" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <p class="mb-2 text-xs text-dark-2">
         POI marks a real person; minor marks a depicted minor. Setting either restricts the image.
@@ -352,7 +404,7 @@
   {/if}
 
   {#if notifying}
-    <form method="POST" action="?/notifyOwners" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/notifyOwners" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <p class="mb-2 text-xs text-dark-2">One notification per affected account, not per image.</p>
       <Textarea name="message" rows={2} placeholder="What should these users be told?" required />
@@ -364,4 +416,4 @@
       </div>
     </form>
   {/if}
-</section>
+</SelectionBar>

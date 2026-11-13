@@ -23,7 +23,7 @@ drained (5→4). Success is **isolation + node-drain**, not raw CPU reduction.
   - `orchestrator.ping` — **protected**; verifies the incoming `__Secure-civ-token` / `Bearer` token
     LOCALLY via `@civitai/auth` (ES256/JWKS + injected sysRedis revocation, fail-open) and returns `{ userId }`.
 - Wired-but-unused clients (construct + connect-config, no features on them yet): `@civitai/db` (Prisma via
-  the shared pooler), `@civitai/redis` (cache + sysRedis), `@civitai/client` (external orchestrator SDK).
+  the shared pooler), `@civitai/redis` (cache + sysRedis), `@civitai/orchestration-client` (external orchestrator SDK).
 
 ## What P0 deliberately does NOT do
 

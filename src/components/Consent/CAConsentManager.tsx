@@ -1,7 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ConsentBanner } from './ConsentBanner';
 import { ThirdPartyConsentContext } from './consent.context';
-import { CONSENT_COOKIE, CONSENT_COOKIE_MAX_AGE, type ConsentDecision } from './consent.utils';
+import {
+  initialConsentDecision,
+  requiredConsentContext,
+  writeConsentCookie,
+  type ConsentDecision,
+} from './consent.utils';
 
 type Props = {
   children: React.ReactNode;
@@ -10,38 +15,22 @@ type Props = {
 };
 
 export function CAConsentManager({ children, initialConsent, loggedIn }: Props) {
-  // Cookie takes precedence over logged-in implicit consent: a user who
-  // explicitly rejected before signing in stays rejected. Logged-in users
-  // without an explicit cookie decision are treated as having accepted via
-  // the Terms of Service (§ 8.7 discloses third-party analytics/advertising).
-  const effectiveInitial: ConsentDecision | null = initialConsent ?? (loggedIn ? 'accepted' : null);
-  const [consent, setConsent] = useState<ConsentDecision | null>(effectiveInitial);
+  const [consent, setConsent] = useState<ConsentDecision | null>(() =>
+    initialConsentDecision(initialConsent, loggedIn)
+  );
 
   const persist = useCallback((value: ConsentDecision) => {
-    if (typeof document !== 'undefined') {
-      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-      document.cookie = `${CONSENT_COOKIE}=${value}; Path=/; Max-Age=${CONSENT_COOKIE_MAX_AGE}; SameSite=Lax${secure}`;
-    }
+    writeConsentCookie(value);
     setConsent(value);
   }, []);
 
   const reset = useCallback(() => {
-    if (typeof document !== 'undefined') {
-      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-      document.cookie = `${CONSENT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
-    }
+    writeConsentCookie(null);
     setConsent(null);
   }, []);
 
   const value = useMemo(
-    () => ({
-      consent,
-      required: true,
-      allowed: consent === 'accepted',
-      accept: () => persist('accepted'),
-      reject: () => persist('rejected'),
-      reset,
-    }),
+    () => requiredConsentContext(consent, persist, reset),
     [consent, persist, reset]
   );
 

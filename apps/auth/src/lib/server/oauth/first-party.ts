@@ -89,19 +89,14 @@ export function originOf(url: string | undefined): string | undefined {
 }
 
 /**
- * Resolve the first-party client for a spoke ORIGIN, if its host is authorized (exact / subdomain-wildcard /
- * dev-loopback). Returns a per-origin client with an exact callback, or undefined.
+ * Resolve the first-party client for a spoke ORIGIN, if it is https and its host is authorized (exact /
+ * subdomain-wildcard), or it is a dev-loopback host. Returns a per-origin client with an exact callback, or
+ * undefined.
  */
 export async function firstPartyClientForOrigin(
   origin: string
 ): Promise<FirstPartyClient | undefined> {
-  let hostname: string;
-  try {
-    hostname = new URL(origin).hostname.toLowerCase();
-  } catch {
-    return undefined;
-  }
-  return (await spokeDomains.matchesHost(hostname)) ? clientForOrigin(origin) : undefined;
+  return (await spokeDomains.matchesOrigin(origin)) ? clientForOrigin(origin) : undefined;
 }
 
 /** Is this origin an authorized first-party login host? (Gates consent-skip + the session exchange.) */

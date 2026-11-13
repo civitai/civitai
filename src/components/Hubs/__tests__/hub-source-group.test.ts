@@ -2,8 +2,9 @@
 import { act, createElement } from 'react';
 import type { ReactElement } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `addToGroup` holds two decisions that exist nowhere else: the cap is spent on a NEW
 // tag but not on one being MOVED into the group, and a tag held on the other side of
@@ -63,14 +64,24 @@ import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 // No JSX on purpose: the `unit` project's include is `*.test.ts`, so a `.tsx` test
 // file is collected by NOTHING and reports zero tests rather than failing.
+// Unmounted after each test: an open Popover leaves a Mantine transition timer that
+// otherwise fires after the file ends, when happy-dom is gone ("window is not defined").
+const roots: Root[] = [];
+
 function render(element: ReactElement) {
   const container = document.createElement('div');
   document.body.appendChild(container);
+  const root = createRoot(container);
+  roots.push(root);
   act(() => {
-    createRoot(container).render(createElement(MantineProvider, null, element));
+    root.render(createElement(MantineProvider, null, element));
   });
   return container;
 }
+
+afterEach(() => {
+  act(() => roots.splice(0).forEach((root) => root.unmount()));
+});
 
 const source = (over: Partial<HubSourceValue> & Pick<HubSourceValue, 'targetId'>): HubSourceValue =>
   ({

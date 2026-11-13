@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
-  SDXL_FULL_AR,
+  SDXL_FULL_AR_4MP,
+  optionFallback,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -19,11 +20,9 @@ import {
 } from '../shared';
 
 /**
- * Ideogram family, ported from `ideogram-graph.ts`. 4.0 and 4.5 share one ecosystem;
+ * Ideogram family. 4.0 and 4.5 share one ecosystem;
  * the model version id picks the branch. 4.0 has no negative prompt, sampler or scheduler.
  */
-
-// ---- copied from ideogram-graph.ts, which dies with the data-graph engine ---
 
 export type IdeogramVersion = 'v4.0' | 'v4.5';
 
@@ -32,12 +31,8 @@ export const ideogramVersionIds = {
   'v4.5': 3375798,
 } as const;
 
-const ideogramTxt2ImgVersionOptions = [
-  { label: 'v4.0', value: ideogramVersionIds['v4.0'] },
-  { label: 'v4.5', value: ideogramVersionIds['v4.5'] },
-];
-
-const ideogramImg2ImgVersionOptions = [{ label: 'v4.5', value: ideogramVersionIds['v4.5'] }];
+// 4.0 is off for generation (supportOverrides); its branch stays so past 4.0 runs still resolve.
+const ideogramVersionOptions = [{ label: 'v4.5', value: ideogramVersionIds['v4.5'] }];
 
 /** fal accepts only an explicit list of custom sizes; these are its ~4MP entries. */
 const ideogram45AspectRatios = [
@@ -59,15 +54,13 @@ const ideogram45PriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 const ideogram45QualityOptions = ['high', 'medium', 'low'] as const;
 type Ideogram45Quality = (typeof ideogram45QualityOptions)[number];
 
-// ---- end of ideogram-graph.ts copies ----------------------------------------
-
 const ideogramVersionOf = versionModeOf<IdeogramVersion>(ideogramVersionIds, 'v4.0');
 
 type IdeogramVersionExt = FamilyExt & { model?: ResourceData | number };
 
 const ideogram4 = defineGraph<IdeogramVersionExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_4MP)
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 4 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 25 }));
 
@@ -86,6 +79,7 @@ const ideogram45 = defineGraph<IdeogramVersionExt>()
     input: z.enum(ideogram45QualityOptions).optional(),
     output: z.enum(ideogram45QualityOptions),
     default: 'medium' as Ideogram45Quality,
+    correct: optionFallback(ideogram45QualityOptions, 'medium' as Ideogram45Quality),
     meta: {
       options: ideogram45QualityOptions.map((q) => ({
         label: q.charAt(0).toUpperCase() + q.slice(1),
@@ -98,7 +92,7 @@ const ideogram45 = defineGraph<IdeogramVersionExt>()
     _ext.workflow.startsWith('txt') ? boolDef(false) : null
   );
 
-/** Tagged: v1's `ideogramVersion` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `ideogramVersion`. */
 const versions = branch(
   'ideogramVersion',
   (ext: IdeogramVersionExt) => ideogramVersionOf(ext.model),
@@ -107,13 +101,12 @@ const versions = branch(
 
 export const ideogram = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) => {
-    const isEdit = _ext.workflow.startsWith('img2img:edit');
     return checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
-      versions: { options: isEdit ? ideogramImg2ImgVersionOptions : ideogramTxt2ImgVersionOptions },
-      defaultModelId: isEdit ? ideogramVersionIds['v4.5'] : ideogramVersionIds['v4.0'],
+      versions: { options: ideogramVersionOptions },
+      defaultModelId: ideogramVersionIds['v4.5'],
     });
   })
   .use(versions)

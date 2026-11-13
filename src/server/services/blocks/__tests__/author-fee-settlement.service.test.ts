@@ -126,6 +126,8 @@ describe('settleBlockAuthorFees', () => {
     // Without it a settlement-only run stays green while the member is renumbered
     // or deleted.
     expect(tx.type).toBe(28);
+    // The bankable-earnings predicate finds this credit by its description prefix.
+    expect(tx.description).toMatch(/^App author fee \(\d{4}-\d{2}-\d{2}\)$/);
     expect(result.rowsSettled).toBe(2);
     expect(result.buzzMinted).toBe(17);
   });

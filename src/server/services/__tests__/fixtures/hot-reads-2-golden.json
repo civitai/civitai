@@ -1,0 +1,881 @@
+{
+  "model:3101": {
+    "id": 3101,
+    "name": "Full model",
+    "description": "<p>about</p>",
+    "sfwName": "Safe name",
+    "sfwDescription": "safe about",
+    "coverImageId": 9101,
+    "sfwCoverImageId": 9102,
+    "poi": false,
+    "minor": false,
+    "sfwOnly": true,
+    "isOfficial": true,
+    "nsfwLevel": 28,
+    "nsfw": true,
+    "type": "Checkpoint",
+    "uploadType": "Trained",
+    "updatedAt": {
+      "$date": "2026-04-05T06:07:08.912Z"
+    },
+    "deletedAt": null,
+    "deletedBy": null,
+    "status": "Published",
+    "checkpointType": "Merge",
+    "allowNoCredit": false,
+    "allowCommercialUse": ["Image", "RentCivit", "Sell"],
+    "allowDerivatives": false,
+    "allowDifferentLicense": true,
+    "licenses": [
+      {
+        "id": 6101,
+        "name": "License A",
+        "url": "https://example.com/license-a"
+      },
+      {
+        "id": 6102,
+        "name": "License B",
+        "url": "https://example.com/license-b"
+      }
+    ],
+    "publishedAt": {
+      "$date": "2026-04-01T01:02:03.456Z"
+    },
+    "locked": true,
+    "meta": {
+      "commentsLocked": false,
+      "imageModeration": true
+    },
+    "mode": null,
+    "availability": "EarlyAccess",
+    "lockedProperties": ["name", "description"],
+    "reportStats": {
+      "ownershipProcessing": 2
+    },
+    "user": {
+      "id": 1101,
+      "image": "avatar.png",
+      "username": "creator",
+      "deletedAt": null,
+      "rank": {
+        "leaderboardRank": 9
+      }
+    },
+    "modelVersions": [
+      {
+        "id": 4102,
+        "modelId": 3101,
+        "name": "v-empty",
+        "description": null,
+        "steps": null,
+        "epochs": null,
+        "clipSkip": null,
+        "createdAt": {
+          "$date": "2026-04-04T00:00:00.444Z"
+        },
+        "updatedAt": {
+          "$date": "2026-04-05T00:00:00.555Z"
+        },
+        "trainedWords": [],
+        "trainingStatus": null,
+        "trainingDetails": null,
+        "flags": 0,
+        "inaccurate": false,
+        "baseModel": "Flux.1 D",
+        "baseModelType": "Inpainting",
+        "availability": "Public",
+        "status": "Draft",
+        "publishedAt": null,
+        "meta": {},
+        "settings": null,
+        "requireAuth": false,
+        "nsfwLevel": 0,
+        "uploadType": "Created",
+        "usageControl": "Download",
+        "licensingFee": null,
+        "generatorLoaded": false,
+        "metrics": [],
+        "files": [],
+        "generationCoverage": null,
+        "recommendedResources": []
+      },
+      {
+        "id": 4103,
+        "modelId": 3101,
+        "name": "v-trained",
+        "description": "trained",
+        "steps": 200,
+        "epochs": 4,
+        "clipSkip": null,
+        "createdAt": {
+          "$date": "2026-04-06T00:00:00.666Z"
+        },
+        "updatedAt": {
+          "$date": "2026-04-07T00:00:00.777Z"
+        },
+        "trainedWords": ["gamma"],
+        "trainingStatus": "Approved",
+        "trainingDetails": {
+          "type": "Character",
+          "params": {
+            "epochs": 4
+          }
+        },
+        "flags": 1,
+        "inaccurate": false,
+        "baseModel": "SD 1.5",
+        "baseModelType": "Standard",
+        "availability": "Private",
+        "status": "Training",
+        "publishedAt": null,
+        "meta": {},
+        "settings": null,
+        "requireAuth": false,
+        "nsfwLevel": 1,
+        "uploadType": "Trained",
+        "usageControl": "InternalGeneration",
+        "licensingFee": {
+          "$decimal": "0.05"
+        },
+        "generatorLoaded": false,
+        "metrics": [],
+        "files": [],
+        "generationCoverage": {
+          "covered": true,
+          "coveredNext": false
+        },
+        "recommendedResources": []
+      },
+      {
+        "id": 4101,
+        "modelId": 3101,
+        "name": "v-full",
+        "description": "full version",
+        "steps": 1000,
+        "epochs": 10,
+        "clipSkip": 2,
+        "createdAt": {
+          "$date": "2026-04-01T00:00:00.111Z"
+        },
+        "updatedAt": {
+          "$date": "2026-04-02T00:00:00.222Z"
+        },
+        "trainedWords": ["alpha", "beta"],
+        "trainingStatus": null,
+        "trainingDetails": null,
+        "flags": 5,
+        "inaccurate": true,
+        "baseModel": "SDXL 1.0",
+        "baseModelType": "Standard",
+        "availability": "EarlyAccess",
+        "status": "Published",
+        "publishedAt": {
+          "$date": "2026-04-03T00:00:00.333Z"
+        },
+        "meta": {
+          "earlyAccessConfig": {
+            "timeframe": 3
+          }
+        },
+        "settings": {
+          "strength": 0.7
+        },
+        "requireAuth": true,
+        "nsfwLevel": 4,
+        "uploadType": "Created",
+        "usageControl": "Generation",
+        "licensingFee": {
+          "$decimal": "12.5"
+        },
+        "generatorLoaded": true,
+        "metrics": [
+          {
+            "generationCount": 52,
+            "downloadCount": 51,
+            "thumbsUpCount": 53,
+            "thumbsDownCount": 54,
+            "earnedAmount": 55
+          }
+        ],
+        "files": [
+          {
+            "id": 5101,
+            "url": "https://files/a",
+            "sizeKB": 1.25,
+            "name": "a.yaml",
+            "overrideName": null,
+            "type": "Config",
+            "visibility": "Sensitive",
+            "metadata": null,
+            "pickleScanResult": "Pending",
+            "pickleScanMessage": null,
+            "virusScanResult": "Danger",
+            "virusScanMessage": "flagged",
+            "scannedAt": null,
+            "modelVersionId": 4101,
+            "hashes": []
+          },
+          {
+            "id": 5102,
+            "url": "https://files/b",
+            "sizeKB": 2048.5,
+            "name": "b.safetensors",
+            "overrideName": "renamed.safetensors",
+            "type": "Model",
+            "visibility": "Public",
+            "metadata": {
+              "fp": "fp16",
+              "size": "pruned"
+            },
+            "pickleScanResult": "Success",
+            "pickleScanMessage": "clean",
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": {
+              "$date": "2026-04-10T10:11:12.131Z"
+            },
+            "modelVersionId": 4101,
+            "hashes": [
+              {
+                "type": "AutoV2",
+                "hash": "ABCDEF01"
+              },
+              {
+                "type": "SHA256",
+                "hash": "ABCDEF0123"
+              }
+            ]
+          }
+        ],
+        "generationCoverage": {
+          "covered": true,
+          "coveredNext": true
+        },
+        "recommendedResources": [
+          {
+            "id": 9201,
+            "resource": {
+              "id": 4104
+            },
+            "settings": {
+              "strength": 0.5,
+              "isLinkedComponent": false
+            }
+          },
+          {
+            "id": 9202,
+            "resource": {
+              "id": 4103
+            },
+            "settings": null
+          }
+        ]
+      }
+    ],
+    "metrics": [
+      {
+        "downloadCount": 41,
+        "thumbsUpCount": 47,
+        "thumbsDownCount": 48,
+        "imageCount": 44,
+        "collectedCount": 43,
+        "tippedAmountCount": 45,
+        "generationCount": 46,
+        "commentCount": 42
+      }
+    ]
+  },
+  "model:3102": {
+    "id": 3102,
+    "name": "Bare model",
+    "description": null,
+    "sfwName": null,
+    "sfwDescription": null,
+    "coverImageId": null,
+    "sfwCoverImageId": null,
+    "poi": false,
+    "minor": false,
+    "sfwOnly": false,
+    "isOfficial": false,
+    "nsfwLevel": 0,
+    "nsfw": false,
+    "type": "LORA",
+    "uploadType": "Created",
+    "updatedAt": {
+      "$date": "2026-04-06T06:07:08.912Z"
+    },
+    "deletedAt": {
+      "$date": "2026-04-07T00:00:00.000Z"
+    },
+    "deletedBy": 1102,
+    "status": "Draft",
+    "checkpointType": null,
+    "allowNoCredit": true,
+    "allowCommercialUse": [],
+    "allowDerivatives": true,
+    "allowDifferentLicense": false,
+    "licenses": [],
+    "publishedAt": null,
+    "locked": false,
+    "meta": {},
+    "mode": null,
+    "availability": "Public",
+    "lockedProperties": [],
+    "reportStats": null,
+    "user": {
+      "id": 1102,
+      "image": null,
+      "username": "bare",
+      "deletedAt": null,
+      "rank": null
+    },
+    "modelVersions": [],
+    "metrics": []
+  },
+  "model:3103": {
+    "id": 3103,
+    "name": "Deleted user model",
+    "description": null,
+    "sfwName": null,
+    "sfwDescription": null,
+    "coverImageId": null,
+    "sfwCoverImageId": null,
+    "poi": false,
+    "minor": false,
+    "sfwOnly": false,
+    "isOfficial": false,
+    "nsfwLevel": 1,
+    "nsfw": false,
+    "type": "VAE",
+    "uploadType": "Created",
+    "updatedAt": {
+      "$date": "2026-04-08T06:07:08.912Z"
+    },
+    "deletedAt": null,
+    "deletedBy": null,
+    "status": "Published",
+    "checkpointType": null,
+    "allowNoCredit": true,
+    "allowCommercialUse": ["None"],
+    "allowDerivatives": true,
+    "allowDifferentLicense": true,
+    "licenses": [
+      {
+        "id": 6101,
+        "name": "License A",
+        "url": "https://example.com/license-a"
+      }
+    ],
+    "publishedAt": null,
+    "locked": false,
+    "meta": {},
+    "mode": "TakenDown",
+    "availability": "Public",
+    "lockedProperties": [],
+    "reportStats": null,
+    "user": {
+      "id": 1104,
+      "image": null,
+      "username": "gone",
+      "deletedAt": {
+        "$date": "2026-02-03T04:05:06.789Z"
+      },
+      "rank": null
+    },
+    "modelVersions": [
+      {
+        "id": 4104,
+        "modelId": 3103,
+        "name": "v-other",
+        "description": null,
+        "steps": null,
+        "epochs": null,
+        "clipSkip": null,
+        "createdAt": {
+          "$date": "2026-04-08T00:00:00.888Z"
+        },
+        "updatedAt": {
+          "$date": "2026-04-09T00:00:00.999Z"
+        },
+        "trainedWords": [],
+        "trainingStatus": null,
+        "trainingDetails": null,
+        "flags": 0,
+        "inaccurate": false,
+        "baseModel": "SD 1.5",
+        "baseModelType": "Standard",
+        "availability": "Public",
+        "status": "Published",
+        "publishedAt": null,
+        "meta": {},
+        "settings": null,
+        "requireAuth": false,
+        "nsfwLevel": 1,
+        "uploadType": "Created",
+        "usageControl": "Download",
+        "licensingFee": null,
+        "generatorLoaded": false,
+        "metrics": [
+          {
+            "generationCount": 62,
+            "downloadCount": 61,
+            "thumbsUpCount": 63,
+            "thumbsDownCount": 64,
+            "earnedAmount": 65
+          }
+        ],
+        "files": [
+          {
+            "id": 5105,
+            "url": "https://files/x",
+            "sizeKB": 5,
+            "name": "other.ckpt",
+            "overrideName": null,
+            "type": "Model",
+            "visibility": "Private",
+            "metadata": null,
+            "pickleScanResult": "Success",
+            "pickleScanMessage": null,
+            "virusScanResult": "Success",
+            "virusScanMessage": null,
+            "scannedAt": null,
+            "modelVersionId": 4104,
+            "hashes": [
+              {
+                "type": "BLAKE3",
+                "hash": "OTHER"
+              }
+            ]
+          }
+        ],
+        "generationCoverage": null,
+        "recommendedResources": [
+          {
+            "id": 9203,
+            "resource": {
+              "id": 4101
+            },
+            "settings": {}
+          }
+        ]
+      }
+    ],
+    "metrics": []
+  },
+  "model:3999": null,
+  "creator:by id, every relation filled": {
+    "user": {
+      "id": 1101,
+      "image": "avatar.png",
+      "username": "creator",
+      "muted": true,
+      "bannedAt": {
+        "$date": "2026-01-02T03:04:05.678Z"
+      },
+      "deletedAt": null,
+      "createdAt": {
+        "$date": "2025-05-06T07:08:09.123Z"
+      },
+      "publicSettings": {
+        "showcase": [1, 2]
+      },
+      "settings": {
+        "creatorShop": {
+          "enabled": true
+        }
+      },
+      "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
+      "links": [
+        {
+          "url": "https://example.com/a",
+          "type": "Sponsorship"
+        },
+        {
+          "url": "https://example.com/b",
+          "type": "Social"
+        }
+      ],
+      "stats": {
+        "downloadCountAllTime": 41,
+        "thumbsUpCountAllTime": 47,
+        "followerCountAllTime": 34,
+        "reactionCountAllTime": 36,
+        "uploadCountAllTime": 31,
+        "generationCountAllTime": 46
+      },
+      "rank": {
+        "leaderboardRank": 9,
+        "leaderboardId": "overall",
+        "leaderboardTitle": "Top creator",
+        "leaderboardCosmetic": "gold-frame"
+      },
+      "cosmetics": [
+        {
+          "data": {
+            "lights": 3
+          },
+          "cosmetic": {
+            "id": 7101,
+            "name": "Badge A",
+            "description": "first",
+            "type": "Badge",
+            "source": "Event",
+            "data": {
+              "url": "a.png"
+            }
+          }
+        },
+        {
+          "data": null,
+          "cosmetic": {
+            "id": 7102,
+            "name": "Plate B",
+            "description": null,
+            "type": "NamePlate",
+            "source": "Purchase",
+            "data": {
+              "color": "red"
+            }
+          }
+        }
+      ],
+      "profilePicture": {
+        "id": 2101,
+        "name": null,
+        "url": "picture.png",
+        "nsfwLevel": 1,
+        "hash": "Uabc",
+        "userId": 1101,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 640,
+        "height": 480,
+        "metadata": {
+          "size": 1234
+        }
+      }
+    },
+    "modelCount": 1
+  },
+  "creator:by username": {
+    "user": {
+      "id": 1101,
+      "image": "avatar.png",
+      "username": "creator",
+      "muted": true,
+      "bannedAt": {
+        "$date": "2026-01-02T03:04:05.678Z"
+      },
+      "deletedAt": null,
+      "createdAt": {
+        "$date": "2025-05-06T07:08:09.123Z"
+      },
+      "publicSettings": {
+        "showcase": [1, 2]
+      },
+      "settings": {
+        "creatorShop": {
+          "enabled": true
+        }
+      },
+      "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
+      "links": [
+        {
+          "url": "https://example.com/a",
+          "type": "Sponsorship"
+        },
+        {
+          "url": "https://example.com/b",
+          "type": "Social"
+        }
+      ],
+      "stats": {
+        "downloadCountAllTime": 41,
+        "thumbsUpCountAllTime": 47,
+        "followerCountAllTime": 34,
+        "reactionCountAllTime": 36,
+        "uploadCountAllTime": 31,
+        "generationCountAllTime": 46
+      },
+      "rank": {
+        "leaderboardRank": 9,
+        "leaderboardId": "overall",
+        "leaderboardTitle": "Top creator",
+        "leaderboardCosmetic": "gold-frame"
+      },
+      "cosmetics": [
+        {
+          "data": {
+            "lights": 3
+          },
+          "cosmetic": {
+            "id": 7101,
+            "name": "Badge A",
+            "description": "first",
+            "type": "Badge",
+            "source": "Event",
+            "data": {
+              "url": "a.png"
+            }
+          }
+        },
+        {
+          "data": null,
+          "cosmetic": {
+            "id": 7102,
+            "name": "Plate B",
+            "description": null,
+            "type": "NamePlate",
+            "source": "Purchase",
+            "data": {
+              "color": "red"
+            }
+          }
+        }
+      ],
+      "profilePicture": {
+        "id": 2101,
+        "name": null,
+        "url": "picture.png",
+        "nsfwLevel": 1,
+        "hash": "Uabc",
+        "userId": 1101,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 640,
+        "height": 480,
+        "metadata": {
+          "size": 1234
+        }
+      }
+    },
+    "modelCount": 1
+  },
+  "creator:by id and username together": {
+    "user": {
+      "id": 1101,
+      "image": "avatar.png",
+      "username": "creator",
+      "muted": true,
+      "bannedAt": {
+        "$date": "2026-01-02T03:04:05.678Z"
+      },
+      "deletedAt": null,
+      "createdAt": {
+        "$date": "2025-05-06T07:08:09.123Z"
+      },
+      "publicSettings": {
+        "showcase": [1, 2]
+      },
+      "settings": {
+        "creatorShop": {
+          "enabled": true
+        }
+      },
+      "excludeFromLeaderboards": true,
+      "excludeFromEventPoints": true,
+      "links": [
+        {
+          "url": "https://example.com/a",
+          "type": "Sponsorship"
+        },
+        {
+          "url": "https://example.com/b",
+          "type": "Social"
+        }
+      ],
+      "stats": {
+        "downloadCountAllTime": 41,
+        "thumbsUpCountAllTime": 47,
+        "followerCountAllTime": 34,
+        "reactionCountAllTime": 36,
+        "uploadCountAllTime": 31,
+        "generationCountAllTime": 46
+      },
+      "rank": {
+        "leaderboardRank": 9,
+        "leaderboardId": "overall",
+        "leaderboardTitle": "Top creator",
+        "leaderboardCosmetic": "gold-frame"
+      },
+      "cosmetics": [
+        {
+          "data": {
+            "lights": 3
+          },
+          "cosmetic": {
+            "id": 7101,
+            "name": "Badge A",
+            "description": "first",
+            "type": "Badge",
+            "source": "Event",
+            "data": {
+              "url": "a.png"
+            }
+          }
+        },
+        {
+          "data": null,
+          "cosmetic": {
+            "id": 7102,
+            "name": "Plate B",
+            "description": null,
+            "type": "NamePlate",
+            "source": "Purchase",
+            "data": {
+              "color": "red"
+            }
+          }
+        }
+      ],
+      "profilePicture": {
+        "id": 2101,
+        "name": null,
+        "url": "picture.png",
+        "nsfwLevel": 1,
+        "hash": "Uabc",
+        "userId": 1101,
+        "ingestion": "Scanned",
+        "type": "image",
+        "width": 640,
+        "height": 480,
+        "metadata": {
+          "size": 1234
+        }
+      }
+    },
+    "modelCount": 1
+  },
+  "creator:by id with a mismatched username": null,
+  "creator:a user with no relations": {
+    "user": {
+      "id": 1102,
+      "image": null,
+      "username": "bare",
+      "muted": false,
+      "bannedAt": null,
+      "deletedAt": null,
+      "createdAt": {
+        "$date": "2024-03-04T05:06:07.891Z"
+      },
+      "publicSettings": null,
+      "settings": null,
+      "excludeFromLeaderboards": false,
+      "excludeFromEventPoints": false,
+      "links": [
+        {
+          "url": "https://example.com/bare",
+          "type": "Other"
+        }
+      ],
+      "stats": null,
+      "rank": null,
+      "cosmetics": [],
+      "profilePicture": null
+    },
+    "modelCount": 0
+  },
+  "creator:a user with no username": null,
+  "creator:a deleted user": null,
+  "creator:the system user by id": null,
+  "creator:the system user by username": null,
+  "creator:a missing user": null,
+  "creator:an explicitly undefined username": {
+    "user": {
+      "id": 1102,
+      "image": null,
+      "username": "bare",
+      "muted": false,
+      "bannedAt": null,
+      "deletedAt": null,
+      "createdAt": {
+        "$date": "2024-03-04T05:06:07.891Z"
+      },
+      "publicSettings": null,
+      "settings": null,
+      "excludeFromLeaderboards": false,
+      "excludeFromEventPoints": false,
+      "links": [
+        {
+          "url": "https://example.com/bare",
+          "type": "Other"
+        }
+      ],
+      "stats": null,
+      "rank": null,
+      "cosmetics": [],
+      "profilePicture": null
+    },
+    "modelCount": 0
+  },
+  "tags:several images, one untagged": [
+    {
+      "imageId": 2101,
+      "tagId": 9811,
+      "tagName": "tie-a",
+      "tagType": "Moderation",
+      "score": 9,
+      "upVotes": 2,
+      "downVotes": 0,
+      "tagNsfwLevel": 16,
+      "automated": false,
+      "needsReview": false,
+      "concrete": true,
+      "lastUpvote": {
+        "$date": "2026-05-07T07:08:09.202Z"
+      },
+      "source": "Hive"
+    },
+    {
+      "imageId": 2101,
+      "tagId": 9812,
+      "tagName": "tie-b",
+      "tagType": "UserGenerated",
+      "score": 9,
+      "upVotes": 1,
+      "downVotes": 1,
+      "tagNsfwLevel": 4,
+      "automated": false,
+      "needsReview": true,
+      "concrete": true,
+      "lastUpvote": {
+        "$date": "2026-05-06T07:08:09.101Z"
+      },
+      "source": "User"
+    },
+    {
+      "imageId": 2102,
+      "tagId": 9814,
+      "tagName": "only",
+      "tagType": "System",
+      "score": 7,
+      "upVotes": 0,
+      "downVotes": 0,
+      "tagNsfwLevel": 2,
+      "automated": true,
+      "needsReview": false,
+      "concrete": true,
+      "lastUpvote": null,
+      "source": "Computed"
+    },
+    {
+      "imageId": 2101,
+      "tagId": 9813,
+      "tagName": "low",
+      "tagType": "Label",
+      "score": 5,
+      "upVotes": 0,
+      "downVotes": 0,
+      "tagNsfwLevel": 1,
+      "automated": true,
+      "needsReview": false,
+      "concrete": true,
+      "lastUpvote": null,
+      "source": "WD14"
+    }
+  ],
+  "tags:an untagged image": [],
+  "tags:no images": []
+}

@@ -1,0 +1,91 @@
+/**
+ * The `/apps/review` queue table, and its PHONE layout.
+ *
+ * Below Mantine's `sm` breakpoint (48em) the table was wider than the screen: the Review
+ * button sat off to the right behind a sideways scroll and the Kind / Version cells were
+ * squeezed to "A.." and a one-pixel semver. Here each row becomes a CARD instead — icon +
+ * name, kind, version and age on one wrapping line, the decision chips, then a full-width
+ * Review button — so every row's action is on screen without scrolling sideways.
+ *
+ * 🔴 CSS, NOT A SECOND COMPONENT. One DOM serves both layouts, so there is no JS breakpoint
+ * for the server and the client to disagree about (`no-ssr-divergent-media-query`), no
+ * duplicated row tree for tests to find twice, and the desktop table and its column ledger
+ * (`APPS_REVIEW_QUEUE_COLUMNS`) are untouched above the breakpoint.
+ *
+ * The classes are applied in `UnifiedReviewList.tsx`.
+ */
+
+@media (max-width: 47.99em) {
+  .table {
+    display: block;
+    width: 100%;
+  }
+
+  /* The column ledger and the header row describe the TABLE layout; a card has neither. */
+  .table colgroup,
+  .table thead {
+    display: none;
+  }
+
+  .table tbody {
+    display: block;
+  }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: var(--mantine-spacing-sm);
+    border-bottom: 1px solid var(--mantine-color-default-border);
+  }
+
+  .row > td {
+    display: block;
+    padding: 0 !important;
+    border: 0 !important;
+    min-width: 0;
+  }
+
+  /* Line 1: icon + name, full width. */
+  .cellApp {
+    order: 1;
+    flex: 1 1 100%;
+  }
+
+  /* Line 2: kind · version · age. */
+  .cellKind {
+    order: 2;
+  }
+
+  .cellVersion {
+    order: 3;
+  }
+
+  .cellAge {
+    order: 4;
+  }
+
+  /* The submitter is one tap away on the review itself; the card keeps to what decides. */
+  .cellSubmitter,
+  .cellPlays {
+    display: none !important;
+  }
+
+  /* Line 3: the decision chips, then the deploy chip on the Approved tab. */
+  .cellSignals,
+  .cellDeploy {
+    order: 5;
+    flex: 1 1 100%;
+  }
+
+  /* Line 4: the action, full width. */
+  .cellAction {
+    order: 6;
+    flex: 1 1 100%;
+  }
+
+  .actionButton {
+    width: 100%;
+  }
+}

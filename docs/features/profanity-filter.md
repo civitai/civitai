@@ -16,9 +16,6 @@ const filter = createProfanityFilter({
   replacementStyle: 'grawlix', // 'asterisk', 'grawlix', or 'remove'
 });
 
-// Check for profanity
-filter.isProfane('some text');
-
 // Clean text
 filter.clean('bad words');
 
@@ -37,13 +34,14 @@ import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 
 const { hasProfanity, matches, cleanedText } = useCheckProfanity(text, {
   enabled: true,
-  replacementStyle: 'asterisk'
+  replacementStyle: 'asterisk',
 });
 ```
 
 ## Components
 
 Automatically integrated in:
+
 - `BlurText` - Filters text when `blurNsfw` is enabled
 - Search queries - Blocks profane searches in green domain
 - Model/Article/Bounty creation - Auto-marks as NSFW if profanity detected
@@ -51,6 +49,7 @@ Automatically integrated in:
 ## Word Lists and Pattern Matching
 
 ### Blocked Words List
+
 - **Location**: `packages/civitai-mod-utils/src/profanity/lists/blocked-words.json`, imported as `@civitai/mod-utils/profanity/lists`
 - **Content**: Comprehensive list of inappropriate terms, slurs, and NSFW content
 - **Format**: JSON array of strings, supports [obscenity patterns](https://github.com/jo3-l/obscenity/blob/main/docs/guide/patterns.md) like `|word` for word boundaries
@@ -78,20 +77,23 @@ Three sources feed the whitelist, and they do not combine the same way:
   before excusing it. The constant records which tokens, why, and what was rejected.
 
 **Integration**: JSON / moderator entries are mapped onto the profane substrings they contain at
-filter init (`createWhitelistMappings`); all three sources land in `whitelistSet`, which **only
-`analyze()` consults**. `clean()` censors the matcher's raw matches with no whitelist at all, so
-`RenderHtml` still asterisks shipped whitelist entries such as `fukushima` and `futari`.
+filter init (`createWhitelistMappings`); all three sources land in `whitelistSet`, which both
+`analyze()` and `clean()` consult (via `excludeWhitelisted`), so rendered output and moderation
+verdicts agree: `RenderHtml` leaves `fukushima` and `futari` intact. Only a match whose full
+surrounding word is whitelisted is spared, so `fukushimafuck` is still censored.
 
 ### Pattern Generation
+
 - **Obscenity Patterns**: Leverages obscenity's pattern system for phrase matching and leetspeak detection
 - **Minimum Length**: `extendWithCustomDataset` drops `blocked-words.json` entries shorter than 3
-  characters — measured *with* pipe boundary markers, so `|ab|` counts as 4 (and today no entry is
+  characters — measured _with_ pipe boundary markers, so `|ab|` counts as 4 (and today no entry is
   short enough for this to fire). It does **not** bound obscenity's built-in `englishDataset`, which
   is added wholesale and does carry 2-character patterns. Short-token false positives therefore come
   from upstream and are handled by `LIBRARY_OVERMATCH_TOKENS`, not here.
 - **Caching**: Processed word lists are cached for performance
 
 ### How It Works
+
 1. **Initialization**: `blocked-words.json` is cleaned and deduplicated, then added to obscenity's English dataset as patterns
 2. **Whitelist Mapping**: Legitimate words containing profane substrings are automatically whitelisted
 3. **Pattern Matching**: Obscenity creates regex patterns that handle leetspeak and variations

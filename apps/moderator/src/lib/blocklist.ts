@@ -10,6 +10,7 @@ export const BLOCKLIST_TYPES = [
   'PromptBenignPhrase',
   'NegativeBenignPhrase',
   'ProfanityBenignWord',
+  'AppProtectedBrandTerm',
 ] as const;
 
 export type BlocklistType = (typeof BLOCKLIST_TYPES)[number];
@@ -55,8 +56,16 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     'Same as Prompt Benign Phrase, but matched against the negative prompt — e.g. "mature content". Use for boilerplate negatives that trip the minor audit.' +
     PHRASE_GAP_RULE,
   ProfanityBenignWord:
-    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry, not a phrase. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.' +
+    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry — an entry with a space or punctuation in it can never match, so it is refused. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.' +
     ' A few tokens are also exempt in code regardless of this list, because' +
     " obscenity's own patterns match them more broadly than the word they stand for (see LIBRARY_OVERMATCH_TOKENS)." +
     ' That exemption covers flagging, not the censoring of already-published text, and cannot be changed from here.',
+  AppProtectedBrandTerm:
+    'Brand, product and company names that flag an app. The agent review flags a submission whose' +
+    ' name or slug contains one (look-alike spellings included) and sends it to the normal review' +
+    ' queue for a person to decide. A listing that calls itself unofficial or not affiliated is' +
+    " still flagged. The same check badges an approved app's listing edit that changes its name," +
+    ' icon or cover. Enter the name as people write it, one per entry. An EMPTY list does not pass' +
+    ' submissions: it marks every impersonation check incomplete, so nothing reaches the fast lane' +
+    ' until this list has entries.',
 };

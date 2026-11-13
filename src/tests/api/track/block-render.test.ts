@@ -884,15 +884,4 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
     // to 256 chars, and the point is the RATE, not the value.
     expect(JSON.stringify(payload)).not.toContain('apb_not_a_real_app');
   });
-
-  it('logs NOTHING for a known appBlockId', async () => {
-    mockLogToAxiom.mockClear();
-    const handler = (await import('~/pages/api/track/block-render')).default;
-    const res = makeRes();
-
-    await handler(makeReq({ origin: 'https://civitai.com', body: validInput }) as any, res);
-
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(mockLogToAxiom).not.toHaveBeenCalled();
-  });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
 /**
  * PR1 of the `user.getEngagedModels` freeze-fix — the additive, per-visible-set membership
@@ -11,10 +12,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * modelIds), keyed by engagement type, so the response is bounded by |modelIds| × (#types).
  *
  * Both reads are mocked over one in-memory fixture that applies the real filters, so the tests
- * exercise the service's shaping AND that it passes the correct, bounded filters down. They sit at
- * two different seams because the two reads now take different paths: the engagement read goes
- * through `@civitai/db-queries` (Kysely over the app's own pg pool, off the Prisma query engine),
- * while `getResourceReviewsByUserId` is still Prisma via `~/server/db/client`.
+ * exercise the service's shaping AND that it passes the correct, bounded filters down. Both go
+ * through `@civitai/db-queries` (Kysely over the app's own pg pool, off the Prisma query engine):
+ * the engagement read (`listModelEngagements`) and `getResourceReviewsByUserId`'s review read
+ * (`listUserRecommendedReviews`), each mocked at that seam.
  */
 
 // Model id fixtures (kept in sync with the hoisted mock below — plain numbers, safe to duplicate).
@@ -28,7 +29,7 @@ const E = 105; // Recommended only (outside input)
 const F = 106; // resource review but recommended:false (must never appear)
 const Z = 999; // in input but user has NO engagement
 
-const { listModelEngagementsMock, reviewRowsFixture } = vi.hoisted(() => {
+const { listModelEngagementsMock, listUserRecommendedReviewsMock } = vi.hoisted(() => {
   const U = 1;
   const OU = 2;
   type EngRow = { userId: number; modelId: number; type: string };
@@ -50,8 +51,6 @@ const { listModelEngagementsMock, reviewRowsFixture } = vi.hoisted(() => {
     { userId: OU, modelId: 101, modelVersionId: 1004, recommended: true },
   ];
 
-  const inArr = (where: any, field: string) => where?.[field]?.in as number[] | undefined;
-
   return {
     // The engagement read is served by the Kysely query function, not Prisma. Same in-memory
     // fixture and same filtering, applied to the ported signature `(db, { userId, modelIds })`.
@@ -63,15 +62,25 @@ const { listModelEngagementsMock, reviewRowsFixture } = vi.hoisted(() => {
           .map((r) => ({ modelId: r.modelId, type: r.type }));
       }
     ),
-    reviewRowsFixture: (where: any) =>
-      reviewRows
-        .filter(
-          (r) =>
-            r.userId === where.userId &&
-            (where.recommended === undefined || r.recommended === where.recommended) &&
-            (!inArr(where, 'modelId') || inArr(where, 'modelId')!.includes(r.modelId))
-        )
-        .map((r) => ({ modelId: r.modelId, modelVersionId: r.modelVersionId })),
+    // The review read, likewise the Kysely query function: `(db, { userId, recommended, modelIds })`.
+    listUserRecommendedReviewsMock: vi.fn(
+      async (
+        _db: unknown,
+        {
+          userId,
+          recommended,
+          modelIds,
+        }: { userId: number; recommended?: boolean; modelIds?: number[] }
+      ) =>
+        reviewRows
+          .filter(
+            (r) =>
+              r.userId === userId &&
+              (recommended === undefined || r.recommended === recommended) &&
+              (!modelIds || modelIds.includes(r.modelId))
+          )
+          .map((r) => ({ modelId: r.modelId, modelVersionId: r.modelVersionId }))
+    ),
   };
 });
 
@@ -79,6 +88,10 @@ const { listModelEngagementsMock, reviewRowsFixture } = vi.hoisted(() => {
 // Prisma query engine. Mocked at that seam so these tests keep exercising the service's shaping
 // and the bounded filters it passes down.
 vi.mock('@civitai/db-queries/model', () => ({ listModelEngagements: listModelEngagementsMock }));
+vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads6>()),
+  listUserRecommendedReviews: listUserRecommendedReviewsMock,
+}));
 // user.service reaches into user-preferences.service at import time; stub the surface
 // (matches the proven recipe in engagement-toggle.idempotent.service.test.ts).
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -106,12 +119,12 @@ import { getResourceReviewsByUserId } from '~/server/services/resourceReview.ser
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDb = dbMock.dbRead;
-mockDb.resourceReview.findMany.mockImplementation(async ({ where }: any) =>
-  reviewRowsFixture(where)
-);
-// Kept only to prove the engagement read NO LONGER goes through Prisma.
+// Kept only to prove the engagement and review reads NO LONGER go through Prisma.
 mockDb.modelEngagement.findMany.mockImplementation(async () => {
   throw new Error('modelEngagement.findMany must not be called — ported to Kysely');
+});
+mockDb.resourceReview.findMany.mockImplementation(async () => {
+  throw new Error('resourceReview.findMany must not be called — ported to Kysely');
 });
 
 const WRONG_TIER =
@@ -152,7 +165,7 @@ describe('getUserEngagedModelsByIds — membership is scoped to (engagements ∩
     expect(allIds).not.toContain(Z);
   });
 
-  it('passes the bounded modelId filter down to both reads (Kysely + Prisma)', async () => {
+  it('passes the bounded modelId filter down to both reads', async () => {
     await getUserEngagedModelsByIds({ id: USER, modelIds: [A, B, Z] });
     // The client is pinned with `toBe`, not `expect.anything()` and not
     // `toHaveBeenCalledWith(kyselyRead, …)`: the client argument is the only thing left pinning
@@ -165,13 +178,16 @@ describe('getUserEngagedModelsByIds — membership is scoped to (engagements ∩
       userId: USER,
       modelIds: [A, B, Z],
     });
-    // The engagement read no longer touches the Prisma engine.
+    expect(listUserRecommendedReviewsMock).toHaveBeenCalledTimes(1);
+    expect(listUserRecommendedReviewsMock.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(listUserRecommendedReviewsMock.mock.calls[0][1]).toEqual({
+      userId: USER,
+      recommended: true,
+      modelIds: [A, B, Z],
+    });
+    // Neither read touches the Prisma engine.
     expect(mockDb.modelEngagement.findMany).not.toHaveBeenCalled();
-    expect(mockDb.resourceReview.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: USER, recommended: true, modelId: { in: [A, B, Z] } },
-      })
-    );
+    expect(mockDb.resourceReview.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -186,26 +202,7 @@ describe('getUserEngagedModelsByIds — read-tier seam', () => {
   });
 });
 
-describe('getUserEngagedModelsByIds — per-type correctness', () => {
-  it('a Hide model shows under Hide and not under Favorite', async () => {
-    const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [B] });
-    expect(res.Hide).toContain(B);
-    expect(res.Favorite ?? []).not.toContain(B);
-  });
-
-  it('a model engaged as multiple types appears under each type', async () => {
-    const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [B] });
-    expect(res.Hide).toContain(B);
-    expect(res.Notify).toContain(B);
-  });
-});
-
 describe('getUserEngagedModelsByIds — Recommended path', () => {
-  it('a recommended model in the input set appears under Recommended', async () => {
-    const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [A] });
-    expect(res.Recommended).toEqual([A]);
-  });
-
   it('a recommended model OUTSIDE the input set does not appear', async () => {
     const res = await getUserEngagedModelsByIds({ id: USER, modelIds: [A, B] });
     expect(res.Recommended).not.toContain(E);
@@ -261,10 +258,10 @@ describe('getUserEngagedModelsByIds — freeze-safety bound', () => {
       async (_db: unknown, { modelIds: ids }: { userId: number; modelIds: number[] }) =>
         bigEng.filter((r) => ids.includes(r.modelId))
     );
-    mockDb.resourceReview.findMany.mockImplementationOnce(async ({ where }: any) => {
-      const ids = where.modelId.in as number[];
-      return bigRev.filter((r) => ids.includes(r.modelId));
-    });
+    listUserRecommendedReviewsMock.mockImplementationOnce(
+      async (_db: unknown, { modelIds: ids }: { userId: number; modelIds?: number[] }) =>
+        bigRev.filter((r) => ids!.includes(r.modelId))
+    );
 
     const res = await getUserEngagedModelsByIds({ id: USER, modelIds });
     const total = Object.values(res).reduce((n, arr) => n + arr.length, 0);
@@ -277,15 +274,16 @@ describe('getUserEngagedModelsByIds — freeze-safety bound', () => {
 describe('getResourceReviewsByUserId — modelIds extension (backward-compatible)', () => {
   it('default (no modelIds) omits the modelId filter — preserves whole-history behavior', async () => {
     await getResourceReviewsByUserId({ userId: USER, recommended: true });
-    const call = mockDb.resourceReview.findMany.mock.calls.at(-1)?.[0];
-    expect(call.where).toEqual({ userId: USER, recommended: true });
-    expect(call.where).not.toHaveProperty('modelId');
+    const [db, filter] = listUserRecommendedReviewsMock.mock.calls.at(-1)!;
+    expect(db, WRONG_TIER).toBe(kyselyRead);
+    expect(filter).toEqual({ userId: USER, recommended: true });
+    expect(filter.modelIds).toBeUndefined();
   });
 
   it('with modelIds adds a bounded modelId: { in } filter', async () => {
     await getResourceReviewsByUserId({ userId: USER, recommended: true, modelIds: [A, E] });
-    const call = mockDb.resourceReview.findMany.mock.calls.at(-1)?.[0];
-    expect(call.where).toEqual({ userId: USER, recommended: true, modelId: { in: [A, E] } });
+    const [, filter] = listUserRecommendedReviewsMock.mock.calls.at(-1)!;
+    expect(filter).toEqual({ userId: USER, recommended: true, modelIds: [A, E] });
   });
 
   it('filters the returned rows to the input set when modelIds is passed', async () => {

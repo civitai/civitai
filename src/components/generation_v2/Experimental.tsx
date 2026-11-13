@@ -16,22 +16,23 @@
  * in the footer — see `shared/generation/messages.ts`.
  */
 
-import { Alert, Popover, Text, ThemeIcon } from '@mantine/core';
+import { Alert, Text, ThemeIcon } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconFlask } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
-import { experimentalTargets, gateMessage } from '~/shared/data-graph/generation/gates';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
+import { experimentalTargets, gateMessage } from '~/shared/generation/gates';
 import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import {
   resolveExperimental,
   resolveExperimentalMatches,
   type ExperimentalMatch,
   type ExperimentalTarget,
-} from '~/shared/data-graph/generation/experimental';
+} from '~/shared/generation/experimental';
 import { setExperimentalRules, useExperimentalRulesStore } from '~/store/experimental-rules.store';
 
 // =============================================================================

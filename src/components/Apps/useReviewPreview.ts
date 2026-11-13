@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { pickReviewIframeSrc } from '~/components/Apps/reviewIframeSrc';
+import { isReviewPreviewBuilding } from '~/shared/constants/app-review-preview.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -33,7 +34,9 @@ export function useReviewPreview(publishRequestId: string) {
         // react-query v5: the callback receives the Query; the data is at
         // query.state.data (matches the my-submissions.tsx idiom).
         const s = query.state.data?.state;
-        if (s === 'preview-building' || s === 'preview-deploying') return 3000;
+        if (isReviewPreviewBuilding(s)) return 3000;
+        // Queued for a platform build slot: poll until the build starts.
+        if (s === 'preview-queued') return 10000;
         // Keep a SLOW poll alive while the preview is live — it detects
         // approve/reject/teardown state changes. getReviewStatus mints a fresh
         // `?mr=<token>` previewUrl (120s TTL) on every poll, but the IFRAME src is
@@ -43,7 +46,7 @@ export function useReviewPreview(publishRequestId: string) {
         // (which would wipe in-progress interaction). A 60s poll < 120s TTL still
         // guarantees a fresh token is always available when a swap is due.
         if (s === 'preview-live') return 60000;
-        return false; // failed or none → stop polling
+        return false; // failed, expired or none → stop polling
       },
     }
   );
@@ -57,7 +60,7 @@ export function useReviewPreview(publishRequestId: string) {
   // iframe never mounts with an expired token. Fall back to the bare host URL
   // (e.g. while building) only for stabilization input.
   const url = statusQuery.data?.previewUrl ?? detail?.url;
-  const inProgress = state === 'preview-building' || state === 'preview-deploying';
+  const inProgress = isReviewPreviewBuilding(state);
   const isLive = state === 'preview-live';
   const isFailed = state === 'preview-failed';
 
@@ -75,8 +78,14 @@ export function useReviewPreview(publishRequestId: string) {
   // not the latest poll's. Clear when the preview leaves the live state.
   iframeSrcRef.current = stableIframeSrc || undefined;
 
+  // When the row last changed preview state — the "elapsed" anchor for the building copy.
+  const updatedAtRaw = (statusQuery.data as { updatedAt?: Date | string | null } | undefined)
+    ?.updatedAt;
+  const updatedAt = updatedAtRaw ? new Date(updatedAtRaw) : null;
+
   return {
     state,
+    updatedAt,
     detail,
     isLive,
     inProgress,

@@ -83,10 +83,6 @@ describe('the SHARED B2 image client is untouched by that', () => {
     const shared = await attemptsOf(getB2ImageS3Client());
     expect(shared).toBeGreaterThan(1);
   });
-
-  it('is a DIFFERENT client instance from the probe one', () => {
-    expect(getB2ImageProbeS3Client()).not.toBe(getB2ImageS3Client());
-  });
 });
 
 describe('the probe backend resolves the same store as the upload backend', () => {

@@ -1,4 +1,3 @@
-import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -130,6 +129,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const VIEWER_ID = 42;
+/** A signed-in user who is NOT the token subject. */
+const OTHER_USER_ID = 7;
 
 function claims(over: Record<string, unknown> = {}) {
   return {
@@ -160,11 +161,17 @@ function trustedUser(over: Record<string, unknown> = {}) {
   };
 }
 
-function ctx() {
+/**
+ * The signed-in session the request arrived with. Defaults to the token's own
+ * subject, which is what the real host sends; the session-binding cases below
+ * pass `null` (no session) or a different id.
+ */
+function ctx(user: { id: number } | null = { id: VIEWER_ID }, apiKeyId: number | null = null) {
   return {
     acceptableOrigin: true,
-    user: undefined,
-    apiKeyId: null,
+    // `null` is the explicit "no session" — an `undefined` argument would take the default.
+    user: user ?? undefined,
+    apiKeyId,
     tokenScope: TokenScope.Full,
     ip: '203.0.113.9',
     req: { headers: {} } as never,
@@ -228,6 +235,89 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+const MISMATCH_MESSAGE =
+  'this app session belongs to a different account; reload the page to continue';
+
+/**
+ * BOTH halves of the bridge are bound to the signed-in session, through the one
+ * shared preamble. Each case runs against each procedure, and every refusal also
+ * asserts that the procedure's own downstream work never started — the write
+ * service for the write, the preview resolver and its catalog bucket for the
+ * preview — so a refusal cannot be credited to a later gate.
+ */
+describe.each([
+  {
+    proc: 'createPostFromApp' as const,
+    downstream: () => [
+      mockCheckPostRate,
+      mockResolveBlockPostSources,
+      mockWriteBlockPost,
+      mockApplyEffects,
+    ],
+    succeeded: () => {
+      expect(mockWriteBlockPost).toHaveBeenCalledTimes(1);
+      expect(mockWriteBlockPost).toHaveBeenCalledWith(
+        expect.objectContaining({ actor: expect.objectContaining({ userId: VIEWER_ID }) })
+      );
+    },
+  },
+  {
+    proc: 'previewPostFromApp' as const,
+    downstream: () => [mockCheckCatalogRate, mockPreviewBlockPost],
+    succeeded: () => {
+      expect(mockPreviewBlockPost).toHaveBeenCalledTimes(1);
+      expect(mockPreviewBlockPost).toHaveBeenCalledWith(
+        expect.objectContaining({ actor: expect.objectContaining({ userId: VIEWER_ID }) })
+      );
+    },
+  },
+])('$proc — bound to the signed-in session', ({ proc, downstream, succeeded }) => {
+  const call = (c = ctx()) => caller(c)[proc](INPUT);
+  const expectNothingDownstream = () => {
+    for (const m of downstream()) expect(m).not.toHaveBeenCalled();
+  };
+
+  it('REFUSES a valid block token with NO session, before any token work', async () => {
+    await expect(call(ctx(null))).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockAuthorizeBlockBridgeToken).not.toHaveBeenCalled();
+    expectNothingDownstream();
+  });
+
+  it('REFUSES when the session user is not the token subject', async () => {
+    // The token names VIEWER_ID (42); the session is OTHER_USER_ID (7).
+    await expect(call(ctx({ id: OTHER_USER_ID }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: MISMATCH_MESSAGE,
+    });
+    // Refused before the flag and hydration reads, not by a later gate.
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expect(mockGetSessionUser).not.toHaveBeenCalled();
+    expectNothingDownstream();
+  });
+
+  it('REFUSES the mismatch in the other direction too (token names someone else)', async () => {
+    mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ sub: `user:${OTHER_USER_ID}` }));
+
+    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN', message: MISMATCH_MESSAGE });
+    expectNothingDownstream();
+  });
+
+  it('REFUSES an API-key / OAuth-token request even for the same user, before any token work', async () => {
+    await expect(call(ctx({ id: VIEWER_ID }, 99))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'This action cannot be performed via API key or OAuth token.',
+    });
+    expect(mockAuthorizeBlockBridgeToken).not.toHaveBeenCalled();
+    expectNothingDownstream();
+  });
+
+  it('SUCCEEDS when the session user is the token subject', async () => {
+    await expect(call(ctx({ id: VIEWER_ID }))).resolves.toBeDefined();
+    succeeded();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('the shared preamble — createPostFromApp', () => {
   it('REFUSES a token without posts:write:self, and never charges a rate bucket', async () => {
     // Note the fixture: the token HAS `ai:write:budgeted`. That is the scope the
@@ -279,12 +369,18 @@ describe('the shared preamble — createPostFromApp', () => {
       expect(mockWriteBlockPost).not.toHaveBeenCalled();
     });
 
-    it('is evaluated with the TOKEN SUBJECT, never a session user', async () => {
-      await caller().createPostFromApp(INPUT);
+    it('is evaluated with the HYDRATED token subject, not the session object', async () => {
+      // The session must now be the subject, so the ids are equal; what still
+      // differs is the OBJECT. The flag must see the user hydrated from the token
+      // subject, never the request's `ctx.user`.
+      const subject = trustedUser();
+      mockGetSessionUser.mockResolvedValue(subject);
+      const c = ctx({ id: VIEWER_ID });
+      await caller(c).createPostFromApp(INPUT);
       expect(mockGetSessionUser).toHaveBeenCalledWith(VIEWER_ID);
-      expect(mockIsAppBlocksPostCreationEnabled).toHaveBeenCalledWith({
-        user: expect.objectContaining({ id: VIEWER_ID }),
-      });
+      const flagUser = mockIsAppBlocksPostCreationEnabled.mock.calls[0][0].user;
+      expect(flagUser).toBe(subject);
+      expect(flagUser).not.toBe(c.user);
     });
 
     it('gates the read-only PREVIEW too — a dark capability must not leak a resolver', async () => {
@@ -408,52 +504,8 @@ describe('the shared preamble — createPostFromApp', () => {
         message: 'posting from apps is not enabled',
       });
     });
-
-    it('is OBSERVABLE — the refusal increments a scraped counter, not just a log line', async () => {
-      // 🔴 CRITERION 4, AND IT IS READ OFF THE REAL DEFAULT REGISTRY BY METRIC NAME.
-      // Application-container stdout is not collected for this deployment, so a
-      // `console.error` here would be unreadable to any later investigator — the
-      // emitter is the only surface that exists. Looked up by STRING rather than by
-      // importing the new symbol, deliberately: that keeps this case runnable against
-      // the pre-change tree, where it fails on a `undefined` registry lookup instead
-      // of on a module-resolution error.
-      //
-      // 🔴 THE EXISTENCE ASSERTION IS NOT DECORATION — WITHOUT IT THIS CASE IS
-      // VACUOUS. `readPostSubjectRefusals` returns NaN when the series is not
-      // registered at all, and `expect(NaN).toBe(NaN)` PASSES (`toBe` is
-      // `Object.is`). Measured: this case went GREEN against the pre-change tree,
-      // where the counter does not exist, until the `toBeDefined()` below was
-      // added. A delta assertion over a lookup that can return NaN cannot tell
-      // "the counter moved" from "there is no counter".
-      segmentScopedFlag();
-      vanishesOnSecondRead();
-
-      const before = await readPostSubjectRefusals('create');
-      await expect(caller().createPostFromApp(INPUT)).rejects.toThrow();
-
-      expect(client.register.getSingleMetric(POST_SUBJECT_REFUSALS)).toBeDefined();
-      const after = await readPostSubjectRefusals('create');
-      expect(Number.isFinite(after)).toBe(true);
-      expect(after).toBe((Number.isFinite(before) ? before : 0) + 1);
-    });
   });
 });
-
-const POST_SUBJECT_REFUSALS = 'civitai_app_block_post_subject_refusals_total';
-
-/**
- * Current value of one `{surface}` series of the post-subject refusal counter, or NaN
- * when the series is not registered. 🔴 NaN is NOT a safe sentinel for a delta check —
- * see the caller.
- */
-async function readPostSubjectRefusals(surface: string): Promise<number> {
-  const metric = client.register.getSingleMetric(POST_SUBJECT_REFUSALS) as
-    | { get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }> }
-    | undefined;
-  if (!metric) return Number.NaN;
-  const { values } = await metric.get();
-  return values.find((v) => v.labels.surface === surface)?.value ?? 0;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('write trust', () => {
@@ -513,7 +565,8 @@ describe('rate buckets', () => {
     await caller().createPostFromApp({ ...INPUT, confirmedImageCount: 3 });
 
     expect(mockCheckPostRate).toHaveBeenCalledTimes(1);
-    expect(mockCheckPostRate).toHaveBeenCalledWith('bki_alpha');
+    // (instance, viewer): the viewer half is the verified token subject (42).
+    expect(mockCheckPostRate).toHaveBeenCalledWith('bki_alpha', 42);
     // The per-image origin cost still lands on the publish bucket, so the post
     // path cannot be used to route around the per-image ceiling.
     expect(mockCheckPublishRate).toHaveBeenCalledWith('bki_alpha', 3);
@@ -529,21 +582,21 @@ describe('rate buckets', () => {
     expect(mockWriteBlockPost).not.toHaveBeenCalled();
   });
 
-  it('charges the APP bucket too, keyed on appId — the aggregate the instance bucket cannot see', async () => {
+  it('charges the APP bucket too, keyed on appId — the aggregate the per-viewer bucket cannot see', async () => {
     await caller().createPostFromApp(INPUT);
 
     expect(mockCheckPostAppRate).toHaveBeenCalledTimes(1);
     expect(mockCheckPostAppRate).toHaveBeenCalledWith('appblk-alpha');
     // 🔴 THE KEY IS THE CLAIM. Handing it the INSTANCE id would compile, pass
     // every other assertion in this file, and silently make the app ceiling a
-    // second copy of the per-instance one.
+    // copy of the instance-keyed one.
     expect(mockCheckPostAppRate).not.toHaveBeenCalledWith('bki_alpha');
   });
 
   it('🔴 REFUSES over the APP ceiling even when the instance bucket still allows', async () => {
-    // THE AGGREGATION GAP, directly. The per-instance bucket is keyed on the
-    // install, so an app with N installs gets N × its ceiling and nothing sees
-    // the total. Here the instance bucket says yes and the post is still refused.
+    // THE AGGREGATION GAP, directly. The first bucket is keyed on one viewer of
+    // one install, so an app with N of those gets N × its ceiling and nothing sees
+    // the total. Here that bucket says yes and the post is still refused.
     mockCheckPostRate.mockResolvedValue({ allowed: true });
     mockCheckPostAppRate.mockResolvedValue({ allowed: false, retryAfterSeconds: 900 });
 

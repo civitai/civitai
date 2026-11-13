@@ -14,6 +14,13 @@ import { promisify } from 'util';
  * of tensors → multi-MB `tensors[]`; the safetensors header read is capped at 64 MiB,
  * measured ~36 ms compress / ~5 ms decompress) does NOT block the Node event loop. The
  * call sites in redis/client.ts set/get are already async and simply `await` these.
+ * Off-loop is not free, though: the threadpool's CPU is still the app's CPU.
+ *
+ * WINDOW SIZED TO THE VALUE: at brotli's default 22-bit (4 MiB) window, a one-shot compress spends
+ * most of its CPU in the kernel under musl (the node:24-alpine base) — several times the CPU of a
+ * window sized to the input, at the same ratio. The encoder allocates its window per call.
+ * Do not drop BROTLI_PARAM_LGWIN; see packedBrotliWindowBits. Decoding stays compatible: the decoder
+ * reads the window from each stream's header, so values written with the old window still decode.
  *
  * On-disk format for a compressed value is a single SENTINEL prefix byte (0x01 = brotli)
  * followed by the brotli stream of the msgpack-packed Buffer.
@@ -30,9 +37,10 @@ import { promisify } from 'util';
  *   - `fetchThroughCache` — always the `{ data, cachedAt }` WRAPPER OBJECT.
  *   - `createCachedArray` / `createCachedObject` (`compress: true`) — every value it
  *     writes is a record: `{ ...result, cachedAt }`, the negative marker
- *     `{ [idKey]: id, notFound: true, cachedAt }`, and the debounce marker
- *     `{ [idKey]: id, debounce: true }`. `lookupFn` is typed `T extends object`, so a
- *     scalar cannot reach the write path.
+ *     `{ [idKey]: id, notFound: true, cachedAt }` (fetch writes it uncompressed;
+ *     invalidate() rewrites it compressed), and the debounce marker
+ *     `{ [idKey]: id, debounce: true }`.
+ *     `lookupFn` is typed `T extends object`, so a scalar cannot reach the write path.
  *
  * Do NOT enable `compress` for a caller that stores a bare scalar (a positive-fixint
  * 0x01 would be ambiguous with the sentinel).
@@ -84,6 +92,21 @@ const brotliDecompress = promisify(zlib.brotliDecompress);
 export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) => void;
 
 /**
+ * Brotli window (log2 bytes) about as large as the input, clamped to brotli's minimum and to its
+ * DEFAULT (22) rather than its maximum (24), so values of 4 MiB and up keep the window they always
+ * had. A larger window buys no extra matches. Smaller values get a smaller window than before: same
+ * ratio, far less compress CPU on musl for small values; decode of a ~358 KiB value measured
+ * slightly slower on musl.
+ */
+export function packedBrotliWindowBits(byteLength: number): number {
+  const { BROTLI_MIN_WINDOW_BITS, BROTLI_DEFAULT_WINDOW } = zlib.constants;
+  return Math.min(
+    BROTLI_DEFAULT_WINDOW,
+    Math.max(BROTLI_MIN_WINDOW_BITS, Math.ceil(Math.log2(byteLength + 1)))
+  );
+}
+
+/**
  * Brotli-compress an already-msgpack-packed Buffer and prepend the sentinel byte.
  *
  * `onTiming` (optional) receives the elapsed time of the compress call as this caller sees it —
@@ -96,6 +119,7 @@ export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer
     params: {
       [zlib.constants.BROTLI_PARAM_QUALITY]: PACKED_BROTLI_QUALITY,
       [zlib.constants.BROTLI_PARAM_SIZE_HINT]: packed.length,
+      [zlib.constants.BROTLI_PARAM_LGWIN]: packedBrotliWindowBits(packed.length),
     },
   });
   onTiming?.('compress', (performance.now() - startedAt) / 1000);
@@ -104,14 +128,14 @@ export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer
 
 /**
  * Return the raw msgpack Buffer to feed to `unpack()`, transparently handling both the
- * brotli-sentinel-prefixed (new) and raw-msgpack (legacy) on-disk formats.
+ * brotli-sentinel-prefixed and raw-msgpack on-disk formats.
  *
  * Only the compress-aware read path calls this — see the SENTINEL SCOPE note above for
  * why the first-byte sentinel check is collision-free there.
  *
  * `onTiming` (optional) is called ONLY when a brotli-decompress actually ran, and records elapsed
  * time as this caller sees it — threadpool queue wait AND event-loop delay included; see
- * PackedCodecTimer. The legacy
+ * PackedCodecTimer. The
  * raw-msgpack passthrough deliberately records NOTHING: it is a sentinel check and a return,
  * not a codec call, and mixing those near-zero samples into the `decompress` histogram would
  * drag the quantiles toward "the cost of not decompressing" — a number that answers no

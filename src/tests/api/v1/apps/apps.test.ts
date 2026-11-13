@@ -35,6 +35,7 @@ const {
   mockGetNextPage,
   mockIsHostForColor,
   mockIsFlipt,
+  mockFeatures,
 } = vi.hoisted(() => ({
   mockResolveScope: vi.fn(),
   mockList: vi.fn(),
@@ -43,6 +44,7 @@ const {
   mockGetNextPage: vi.fn(),
   mockIsHostForColor: vi.fn(),
   mockIsFlipt: vi.fn(),
+  mockFeatures: vi.fn(),
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -67,6 +69,8 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
 }));
 vi.mock('~/server/utils/server-domain', () => ({
   isHostForColor: mockIsHostForColor,
+  // The consolidated red-host test, driven by the same mock as `isHostForColor`.
+  isRedCapableHost: (host: string | null | undefined) => !!host && mockIsHostForColor(host, 'red'),
 }));
 // The public-catalog KILL SWITCH is a Flipt flag, so the flag client is the seam.
 // Spread the real module (rather than replacing it) so this stays honest if the
@@ -76,6 +80,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: mockIsFlipt,
 }));
 
+// The request's feature flags decide the viewer's browsing level (`canViewNsfw`).
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsService>()),
+  getFeatureFlagsLazy: mockFeatures,
+}));
+
+import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import type * as FliptClient from '~/server/flipt/client';
 import listHandler from '~/pages/api/v1/apps/index';
 import detailHandler from '~/pages/api/v1/apps/[slug]';
@@ -148,6 +159,7 @@ beforeEach(() => {
   mockIsFlipt.mockResolvedValue(false);
   mockList.mockResolvedValue({ items: [card('a'), card('b')], nextCursor: undefined });
   mockDetail.mockResolvedValue(detail('a'));
+  mockFeatures.mockReturnValue({ canViewNsfw: true });
 });
 
 describe('GET /api/v1/apps (list)', () => {
@@ -194,6 +206,19 @@ describe('GET /api/v1/apps (list)', () => {
     expect((shut.res._json() as { items: unknown[] }).items).toEqual([]);
     // Withheld means SHORT-CIRCUITED, not "the service returned nothing".
     expect(mockList).toHaveBeenCalledTimes(1);
+  });
+
+  // Sub-listings are a store-grid feature; the public catalog never asks for them, whoever
+  // calls, so its body is unchanged by the feature.
+  it.each([
+    ['anonymous', undefined],
+    ['a moderator', MOD],
+  ])('never asks the service for sub-listings (%s)', async (_label, user) => {
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, user);
+    expect(res._status()).toBe(200);
+    const [, opts] = mockList.mock.calls[0];
+    expect(opts.includeSubListings).toBeFalsy();
   });
 
   it('a mod (full scope) gets the catalog — service called WITH the resolved scope', async () => {
@@ -453,5 +478,71 @@ describe('GET /api/v1/apps/{slug} — sourceRepoUrl parity', () => {
     const body = res._json() as Record<string, unknown>;
     expect(body.code).toBe('NOT_FOUND');
     expect(body).not.toHaveProperty('sourceRepoUrl');
+  });
+});
+
+describe('🔴 the viewer-scoped `restrictedAudience` and the undocumented `isOfficial` never cross the public REST boundary', () => {
+  // The service always reads these endpoints as an anonymous, floor-`public` viewer, so the
+  // field could only ever be `null` here — and serving it would change a hand-documented
+  // contract for nothing. Fed a NON-null value on purpose: a handler that forgot to strip it
+  // would publish exactly that, and a `null` input could not tell "stripped" from "passed
+  // through". `isOfficial` is fed `true` for the same reason: `false` cannot tell "stripped"
+  // from "served". It is tRPC-only and absent from the hand-documented REST contract.
+  it('list: every item is served WITHOUT the key, and the rest of the card is untouched', async () => {
+    mockList.mockResolvedValueOnce({
+      items: [{ ...card('a'), restrictedAudience: 'testers', isOfficial: true }],
+      nextCursor: undefined,
+    });
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, undefined);
+    const [item] = (res._json() as { items: Record<string, unknown>[] }).items;
+    expect(item).not.toHaveProperty('restrictedAudience');
+    expect(item).not.toHaveProperty('isOfficial');
+    expect(item).toEqual(card('a'));
+  });
+
+  it('detail: served WITHOUT the key, and the rest of the detail is untouched', async () => {
+    mockDetail.mockResolvedValueOnce({
+      ...detail('a'),
+      restrictedAudience: 'moderators',
+      isOfficial: true,
+    });
+    const { req, res } = createMocks({ query: { slug: 'a' } });
+    await (detailHandler as unknown as Handler)(req, res, MOD);
+    expect(res._status()).toBe(200);
+    expect(res._json()).not.toHaveProperty('restrictedAudience');
+    expect(res._json()).not.toHaveProperty('isOfficial');
+    expect(res._json()).toEqual(detail('a'));
+  });
+});
+
+/**
+ * 🔴 The public catalog follows the CALLER's browsing level, like the `/apps` page: the handler
+ * must hand the service the request's level, or the service's PG-only default would decide for
+ * every caller. NsfwLevel bits: PG=1, PG13=2, R=4.
+ */
+describe("GET /api/v1/apps — the caller's browsing level", () => {
+  const R_VIEWER = { id: 9, isModerator: false, showNsfw: true, browsingLevel: 7 };
+
+  it('an anonymous caller on a red host is passed a PG-only level (list + detail)', async () => {
+    mockIsHostForColor.mockReturnValue(true);
+    const list = createMocks();
+    await (listHandler as unknown as Handler)(list.req, list.res, undefined);
+    expect(mockList.mock.calls[0][1]).toMatchObject({ viewerBrowsingLevel: 1 });
+
+    const one = createMocks({ query: { slug: 'a' } });
+    await (detailHandler as unknown as Handler)(one.req, one.res, undefined);
+    expect(mockDetail.mock.calls[0][1]).toMatchObject({ viewerBrowsingLevel: 1 });
+  });
+
+  it('a signed-in caller who enabled R is passed their own level (list + detail)', async () => {
+    mockIsHostForColor.mockReturnValue(true);
+    const list = createMocks();
+    await (listHandler as unknown as Handler)(list.req, list.res, R_VIEWER);
+    expect(mockList.mock.calls[0][1]).toMatchObject({ viewerBrowsingLevel: 7 });
+
+    const one = createMocks({ query: { slug: 'a' } });
+    await (detailHandler as unknown as Handler)(one.req, one.res, R_VIEWER);
+    expect(mockDetail.mock.calls[0][1]).toMatchObject({ viewerBrowsingLevel: 7 });
   });
 });

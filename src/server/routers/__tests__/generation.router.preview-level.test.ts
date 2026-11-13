@@ -25,9 +25,13 @@ vi.mock('~/server/services/generation/generation.service', () => ({
   setSelfHostedGenerationStatus: vi.fn(),
   toggleGenerationDisabled: vi.fn(),
   setEvictable: vi.fn(),
+  setAdditionalResourceFeeWaived: vi.fn(),
 }));
 vi.mock('~/server/services/wildcard-pack.service', () => ({
   resolveWildcardPackForUser: vi.fn(),
+}));
+vi.mock('~/server/services/resource-file.service', () => ({
+  resolveResourceFileForUser: vi.fn(),
 }));
 vi.mock('~/server/services/orchestrator/comfy/comfy.utils', () => ({
   getWorkflowDefinitions: vi.fn(),
@@ -52,15 +56,18 @@ const SFW = 1 | 2;
 const ALL_SELECTABLE = 1 | 2 | 4 | 8 | 16;
 const nsfwUser = { id: 5, showNsfw: true, browsingLevel: ALL_SELECTABLE };
 
+const req = { headers: {} };
+const cache = { edgeTTL: 0 };
+
 function callerFor(user: typeof nsfwUser | undefined, canViewNsfw: boolean | undefined) {
   return generationRouter.createCaller({
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req,
     res: { setHeader: () => undefined },
-    cache: { edgeTTL: 0 },
+    cache,
     features: { canViewNsfw },
     track: { action: vi.fn(() => Promise.resolve(true)) },
   } as never);
@@ -96,5 +103,16 @@ describe('generation router passes the viewer preview level', () => {
     await callerFor(user, canViewNsfw).resolveImageMeta({ metadata: {} });
     expect(mockResolveImageMeta).toHaveBeenCalledTimes(1);
     expect(mockResolveImageMeta.mock.calls[0][0].browsingLevel).toBe(expected);
+  });
+});
+
+describe('generation router passes the media viewer', () => {
+  it('passes the request context, so source media follow the caller', async () => {
+    await callerFor(nsfwUser, true).getGenerationData({ type: 'image', id: 1 });
+    const { mediaViewer } = mockGetGenerationData.mock.calls[0][0];
+    expect(mediaViewer.user).toBe(nsfwUser);
+    expect(mediaViewer.features).toEqual({ canViewNsfw: true });
+    expect(mediaViewer.req).toBe(req);
+    expect(mediaViewer.cache).toBe(cache);
   });
 });

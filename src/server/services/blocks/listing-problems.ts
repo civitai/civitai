@@ -2,20 +2,34 @@ import {
   checkListingAssetsComplete,
   type MissingAsset,
 } from '~/server/services/blocks/app-listing-assets.service';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import { listingAssetAudience } from '~/shared/utils/listing-media-split';
+import { FLOOR_PROBLEM_CODE, type FloorAsset } from '~/shared/utils/listing-publish-floor';
+import {
+  assetRating,
+  declaredListingRating,
+  MATURE_STORE_HOST,
+  SFW_STORE_HOST,
+  summarizeListingRating,
+} from '~/shared/utils/listing-rating-display';
 
 /**
  * Advisory "listing completeness" surface for /apps/my-submissions.
  *
- * PURE + unit-tested. Given the subset of an `AppListing`'s asset ids + key text
- * fields, it enumerates the row's PROBLEMS — missing assets (icon / cover /
- * screenshots, delegated to the shared {@link checkListingAssetsComplete} gate)
- * PLUS empty key fields (description / tagline / category). `name` is always
+ * PURE + unit-tested. Given a listing's asset ids, key text fields, scan states, status
+ * and ratings, it enumerates the row's PROBLEMS — missing assets (icon / cover /
+ * screenshots, delegated to the shared {@link checkListingAssetsComplete} gate), empty
+ * key fields (description / tagline / category), blocked or still-scanning media, and a
+ * rating raised above the declared one that hides an approved listing from the SFW store. `name` is always
  * filled from the manifest so it is intentionally NOT checked.
  *
- * This is a heads-up for the developer, NOT a hard gate — nothing here blocks
- * publish/approve; it only drives the warning icon + popover on the submissions
- * list. Both the on-site (`listMyPublishRequests`) and off-site
- * (`listMySubmissions`) procs project the needed fields and call this per row.
+ * This function only REPORTS; the gates are elsewhere. Its `blocking` problems mirror
+ * real server gates — missing icon / cover is the publish floor (`checkListingMeetsFloor`;
+ * the paths it does not gate are listed in `listing-publish-floor.ts`), and a blocked
+ * image is the scan-clean go-live gate — while `advisory` ones never block. It drives the
+ * warning icon + popover on the submissions list (grouped by severity) and the listing
+ * readiness a submit answers with (`submitVersion`). Every caller builds its input with
+ * {@link listingProblemInput}, so the same listing reports the same problems everywhere.
  *
  * 🔴 KIND-AWARE. `empty-description` / `empty-tagline` / `empty-category` name a
  * DIFFERENT remedy on an on-site listing than on an off-site one, because on-site
@@ -30,6 +44,8 @@ export type ListingAssetScan = {
   kind: 'icon' | 'cover' | 'screenshot';
   /** `scanned` (clean), `pending` (still scanning), `blocked` (prohibited content). */
   status: 'scanned' | 'pending' | 'blocked';
+  /** The image's detected level; feeds the civitai.com media problems. Absent ⇒ none of those. */
+  nsfwLevel?: number | null;
 };
 
 /**
@@ -84,6 +100,27 @@ export type ListingProblemInput = {
    * scan-dimension behavior, so existing callers are unchanged.
    */
   assetScans?: ListingAssetScan[];
+  /** Lifecycle status; only an `approved` listing is in the store to be hidden from it. */
+  status: string;
+  /** The rating the listing row carries — what the store gates on. */
+  contentRating: string | null;
+  /**
+   * The rating the author declared, from `declaredListingRating`; `null` when the
+   * listing has no separate declaration.
+   */
+  declaredContentRating: string | null;
+  /**
+   * The listing's public source-repository link. `undefined` = UNKNOWN (the column could not be
+   * read, or the caller has no read for it) ⇒ no `no-source-repo` nudge; `null` = none set.
+   * Optional so a direct caller that knows nothing about links reports nothing about them.
+   */
+  sourceRepoUrl?: string | null;
+  /**
+   * The listing's issue-tracker / support link, on the same tri-state terms. 🔴 `undefined`
+   * while the manual-apply column is unavailable, so an author is never nudged to set a link the
+   * environment cannot store yet.
+   */
+  issueTrackerUrl?: string | null;
 };
 
 export type ListingProblemCode =
@@ -94,14 +131,19 @@ export type ListingProblemCode =
   | 'empty-tagline'
   | 'empty-category'
   | 'blocked-media'
-  | 'scanning-media';
+  | 'scanning-media'
+  | 'hidden-mature-rating'
+  | 'sfw-slot-mature'
+  | 'no-source-repo'
+  | 'no-issue-tracker';
 
 /**
  * A problem's severity relative to the publish FLOOR (icon + cover):
- *   - `blocking`  — below the floor; the listing CANNOT publish until fixed
- *                   (missing icon / cover).
- *   - `advisory`  — recommended but optional; does NOT block publish (missing
- *                   screenshots, empty description / tagline / category).
+ *   - `blocking`  — the listing CANNOT publish until fixed (missing icon / cover,
+ *                   or a blocked asset).
+ *   - `advisory`  — does NOT block publish: recommended-but-optional items (missing
+ *                   screenshots, empty description / tagline / category), a
+ *                   still-scanning asset, and the hidden-rating notice.
  */
 export type ListingProblemSeverity = 'blocking' | 'advisory';
 
@@ -120,12 +162,12 @@ export type ListingProblemsResult = { problems: ListingProblem[] };
  */
 const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
   icon: {
-    code: 'missing-icon',
+    code: FLOOR_PROBLEM_CODE.icon,
     label: 'Missing icon (required before publishing)',
     severity: 'blocking',
   },
   cover: {
-    code: 'missing-cover',
+    code: FLOOR_PROBLEM_CODE.cover,
     label: 'Missing cover image (required before publishing)',
     severity: 'blocking',
   },
@@ -135,6 +177,100 @@ const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
     severity: 'advisory',
   },
 };
+
+/** The floor problems for `missing` floor assets, as {@link computeListingProblems} words them. */
+export function floorProblems(missing: readonly FloorAsset[]): ListingProblem[] {
+  return missing.map((asset) => ASSET_PROBLEM[asset]);
+}
+
+/**
+ * The listing columns {@link listingProblemInput} reads, as the author surfaces select them
+ * (the screenshot count is the `_count` filtered to live images).
+ */
+export type ListingProblemRow = {
+  iconId?: number | null;
+  coverId?: number | null;
+  description?: string | null;
+  tagline?: string | null;
+  category?: string | null;
+  status: string;
+  contentRating?: string | null;
+  _count?: { screenshots?: number } | null;
+};
+
+/**
+ * The ONE listing row → {@link ListingProblemInput} mapping. Every surface that reports
+ * listing problems (`/apps/mine`, My submissions, the submit's readiness) builds its input
+ * here, so none can drop a dimension the others report. `assetScans` is required for that
+ * reason: a caller that has none must say so with `[]`.
+ */
+export function listingProblemInput(
+  row: ListingProblemRow,
+  ctx: {
+    kind: ListingProblemKind;
+    /** The rating the app declares (on-site: the app row, or the submitted manifest). */
+    appRating: string | null | undefined;
+    assetScans: ListingAssetScan[];
+    /**
+     * The trust links, from a GUARDED read (see {@link ListingProblemLinks}). REQUIRED so every
+     * surface that reports problems says what it knows about them; `{}` means "unknown" and
+     * reports no link nudge.
+     */
+    links: ListingProblemLinks;
+  }
+): ListingProblemInput {
+  return {
+    kind: ctx.kind,
+    iconId: row.iconId ?? null,
+    coverId: row.coverId ?? null,
+    screenshotCount: row._count?.screenshots ?? 0,
+    description: row.description ?? null,
+    tagline: row.tagline ?? null,
+    category: row.category ?? null,
+    assetScans: ctx.assetScans,
+    status: row.status,
+    contentRating: row.contentRating ?? null,
+    declaredContentRating: declaredListingRating({
+      kind: ctx.kind,
+      appRating: ctx.appRating,
+      listingRating: row.contentRating,
+    }),
+    sourceRepoUrl: ctx.links.sourceRepoUrl,
+    issueTrackerUrl: ctx.links.issueTrackerUrl,
+  };
+}
+
+/**
+ * What a problems surface knows about a listing's two trust links. Each is `undefined` when
+ * UNKNOWN (column absent, read failed, listing missing from a batch read) — which reports no
+ * nudge — and `null` when known to be unset.
+ */
+export type ListingProblemLinks = {
+  sourceRepoUrl?: string | null;
+  issueTrackerUrl?: string | null;
+};
+
+/**
+ * Build {@link ListingProblemLinks} for one listing from the two guarded batch reads. A listing
+ * ABSENT from a map stays `undefined` (unknown), never `null` — an empty map is how both reads
+ * report a missing column.
+ */
+export function listingProblemLinksFrom(
+  listingId: string,
+  maps: {
+    sourceRepoUrls: ReadonlyMap<string, string | null>;
+    issueTrackerUrls: ReadonlyMap<string, string | null>;
+  }
+): ListingProblemLinks {
+  return {
+    sourceRepoUrl: maps.sourceRepoUrls.has(listingId)
+      ? maps.sourceRepoUrls.get(listingId) ?? null
+      : undefined,
+    issueTrackerUrl: maps.issueTrackerUrls.has(listingId)
+      ? maps.issueTrackerUrls.get(listingId) ?? null
+      : undefined,
+  };
+}
 
 /**
  * The three EMPTY-TEXT problems, per listing kind — the kind-aware half of this
@@ -191,6 +327,31 @@ const ASSET_PROBLEM: Record<MissingAsset, ListingProblem> = {
  * `block-registry.marketplace-meta.test.ts` (that `setMarketplaceMeta` writes only the
  * block) — if that ever changes, this wording should be revisited.
  */
+/**
+ * The two TRUST-LINK nudges, per kind. ADVISORY ONLY — a listing publishes without either; the
+ * nudge exists because a public source repo and a place to report problems make a listing more
+ * trustworthy. Kind-aware for the reason {@link TEXT_PROBLEM} gives: an on-site listing's links
+ * are manifest-governed (`repository` / `bugs` in `block.manifest.json`, synced on approve),
+ * an off-site one's are the listing form's fields.
+ */
+const LINK_PROBLEM: Record<
+  ListingProblemKind,
+  Record<'no-source-repo' | 'no-issue-tracker', string>
+> = {
+  offsite: {
+    'no-source-repo':
+      'No source repository link (recommended, optional) — add one under Source repository in your listing details',
+    'no-issue-tracker':
+      'No issue tracker link (recommended, optional) — add one under Issue tracker in your listing details',
+  },
+  onsite: {
+    'no-source-repo':
+      'No source repository link (recommended, optional) — set "repository" in block.manifest.json and resubmit',
+    'no-issue-tracker':
+      'No issue tracker link (recommended, optional) — set "bugs" in block.manifest.json and resubmit',
+  },
+};
+
 const TEXT_PROBLEM: Record<
   ListingProblemKind,
   Record<'empty-description' | 'empty-tagline' | 'empty-category', string>
@@ -219,10 +380,11 @@ function isEmpty(value: string | null | undefined): boolean {
 }
 
 /**
- * Enumerate a listing's advisory problems. Never throws. Order is stable:
- * assets first (icon → cover → screenshots, from the shared gate), then the
- * empty text fields (description → tagline → category). An all-complete listing
- * returns `{ problems: [] }`.
+ * Enumerate a listing's advisory problems. Never throws. Order is stable: assets
+ * (icon → cover → screenshots, from the shared gate), empty text fields (description →
+ * tagline → category), media scans (blocked, then pending), the hidden-rating notice,
+ * then the civitai.com media problems (icon → cover). Returns
+ * `{ problems: [] }` when none apply.
  */
 export function computeListingProblems(listing: ListingProblemInput): ListingProblemsResult {
   const problems: ListingProblem[] = [];
@@ -292,5 +454,87 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
       severity: 'advisory',
     });
 
+  const hidden = hiddenMatureRatingLabel(listing);
+  if (hidden) problems.push({ code: 'hidden-mature-rating', label: hidden, severity: 'advisory' });
+
+  problems.push(...comMediaProblems(listing, scans));
+
+  // Trust-link nudges, LAST and always advisory. Only for a link KNOWN to be unset (`null`);
+  // `undefined` means the surface could not read it (e.g. the manual-apply column is absent),
+  // and an unknown is never reported as missing.
+  const links = listing.kind === 'onsite' ? LINK_PROBLEM.onsite : LINK_PROBLEM.offsite;
+  if (
+    listing.sourceRepoUrl === null ||
+    (typeof listing.sourceRepoUrl === 'string' && isEmpty(listing.sourceRepoUrl))
+  )
+    problems.push({ code: 'no-source-repo', label: links['no-source-repo'], severity: 'advisory' });
+  if (
+    listing.issueTrackerUrl === null ||
+    (typeof listing.issueTrackerUrl === 'string' && isEmpty(listing.issueTrackerUrl))
+  )
+    problems.push({
+      code: 'no-issue-tracker',
+      label: links['no-issue-tracker'],
+      severity: 'advisory',
+    });
+
   return { problems };
+}
+
+/**
+ * A live listing still shown on civitai.com whose icon or cover is rated above what
+ * civitai.com shows for its rating: the store there falls back past it (a placeholder icon,
+ * another image as cover), and only civitai.red shows it. Advisory — the listing stays listed
+ * either way. Screenshots above the rating raise nothing: they are hidden per image on
+ * civitai.com and nothing stands in for them.
+ */
+function comMediaProblems(
+  listing: ListingProblemInput,
+  scans: ListingAssetScan[]
+): ListingProblem[] {
+  if (listing.status !== 'approved') return [];
+  const { current } = summarizeListingRating({
+    declaredRating: listing.declaredContentRating,
+    listingRating: listing.contentRating,
+  });
+  if (current.hiddenOnSfw) return [];
+  const redOnly = scans.filter(
+    (s) => listingAssetAudience(s.nsfwLevel, listing.contentRating) === 'red-only'
+  );
+  const out: ListingProblem[] = [];
+  for (const kind of ['icon', 'cover'] as const) {
+    const asset = redOnly.find((s) => s.kind === kind);
+    if (!asset) continue;
+    const rating = assetRating(asset.nsfwLevel);
+    out.push({
+      code: 'sfw-slot-mature',
+      label: `Your ${kind} is rated ${
+        rating ? offsiteContentRatingLabel(rating) : 'higher'
+      }, above this listing's rating, so ${SFW_STORE_HOST} shows ${
+        kind === 'icon' ? 'a placeholder' : 'another image'
+      } instead (${MATURE_STORE_HOST} still shows it). Replace it with an image within the listing's rating.`,
+      severity: 'advisory',
+    });
+  }
+  return out;
+}
+
+/**
+ * The label for an approved listing that a rating ABOVE what its author declared hides
+ * from the SFW store. A listing declared mature is hidden by the author's own choice and
+ * has nothing to fix, so it is not a problem (the CLI's `app doctor` has no remedy for it).
+ */
+function hiddenMatureRatingLabel(listing: ListingProblemInput): string | null {
+  if (listing.status !== 'approved') return null;
+  const { current, declared } = summarizeListingRating({
+    declaredRating: listing.declaredContentRating,
+    listingRating: listing.contentRating,
+  });
+  if (!current.hiddenOnSfw || !current.raised || current.rating == null || declared == null)
+    return null;
+  return `Rated ${offsiteContentRatingLabel(
+    current.rating
+  )} — hidden on ${SFW_STORE_HOST} (visible on ${MATURE_STORE_HOST}). You declared ${offsiteContentRatingLabel(
+    declared
+  )}; a listing is rated at least as high as its most mature store image — check its images`;
 }

@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import type { Workflow } from '@civitai/client';
+import type { Workflow } from '@civitai/orchestration-client';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
@@ -30,10 +30,9 @@ import {
 //
 // 🔴 WHY THE AUDIT RUNS HERE AND NOT IN THE BLOCK. A block is untrusted,
 // sandboxed, third-party code. It can decline to call an audit, or call it and
-// ignore the verdict, and `extModeration.moderatePrompt` being fail-soft does
-// not make the call optional — fail-soft describes what happens when the
-// moderation SERVICE is unavailable, not who is allowed to skip it. An audit the
-// caller can skip is not a control. This mirrors the rule the block-token mint
+// ignore the verdict, and what the audit does when the moderation SERVICE is
+// unavailable (see below) says nothing about who is allowed to skip it. An
+// audit the caller can skip is not a control. This mirrors the rule the block-token mint
 // already states for maturity: the host derives the constraint from a claim IT
 // minted and never from anything the block sends
 // (`src/pages/api/v1/block-tokens/index.ts`).
@@ -43,11 +42,14 @@ import {
 // `textToImage` (`blocks.router.ts`, the txt2img submit branch) and
 // `customComfy` (`submitCustomComfyWorkflow`) already put their audit in.
 //
-// 🔴 FAIL-SOFT SEMANTICS ARE `auditPromptServer`'s, NOT OURS. It already
-// swallows an `extModeration` outage internally (`.catch(… flagged: false)`) and
-// throws a BAD_REQUEST when a prompt is actually flagged. This module adds NO
-// try/catch around it: wrapping one would turn a flagged prompt into a silent
-// pass, and matching the existing kinds exactly is the requirement.
+// 🔴 OUTAGE SEMANTICS ARE `auditPromptServer`'s, NOT OURS. It throws a
+// BAD_REQUEST when a prompt is actually flagged, and a retry-able 503 when the
+// check cannot run: its own reads failing, or the external classifier
+// unavailable for a prompt its verdict would otherwise let through
+// (PROMPT_CHECK_FAIL_CLOSED; off restores the pass-through on the word lists
+// alone). This module adds NO try/catch around it: wrapping one would turn a
+// flagged prompt, or an unchecked one, into a silent pass, and matching the
+// existing kinds exactly is the requirement.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔴 TWO PHASES, AND THE TABLE IS KEYED BY THEM. READ THIS BEFORE ADDING A
@@ -241,7 +243,8 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
 
         // 🔴 FAIL CLOSED ON "NOTHING TO AUDIT", per request.
         //
-        // `auditPromptServer` RETURNS EARLY on an empty prompt. Passing it one would
+        // `auditPromptServer` audits no prompt text on an empty prompt (it returns early
+        // unless a negative prompt is present). Passing it one would
         // therefore be a declared moderation posture that runs, audits nothing, and
         // reports success — indistinguishable from a clean audit at every call site.
         // The registry's load-time probe proves the entry produces text for its

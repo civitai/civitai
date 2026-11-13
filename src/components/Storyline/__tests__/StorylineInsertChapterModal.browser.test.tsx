@@ -1,0 +1,279 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { renderWithProviders } from '../../../../test/component-setup';
+import type * as QueriesMod from '~/components/Storyline/storyline.queries';
+import type * as TrpcMod from '~/utils/trpc';
+import StorylineContinueModal from '~/components/Storyline/continue/StorylineContinueModal';
+
+const mocks = vi.hoisted(() => ({
+  insert: vi.fn(),
+  addOwn: vi.fn(),
+  addAtEnd: vi.fn(),
+  link: vi.fn(),
+  refusal: null as string | null,
+  invalidate: vi.fn(),
+  currentUser: { id: 10, username: 'owner' } as {
+    id: number;
+    username: string;
+    isModerator?: boolean;
+  },
+  postsOf: undefined as string | undefined,
+}));
+
+const { forPosts } = vi.hoisted(() => ({
+  forPosts: (input: { postIds: number[] }) => ({
+    data: input.postIds.includes(502) ? { 502: { storylineId: 2, depth: 1 } } : {},
+    isLoading: false,
+  }),
+}));
+
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  const { useState } = await import('react');
+  const mutation = (spy: (input: unknown) => void) => ({
+    useMutation: () => {
+      const [error, setError] = useState<{ message: string } | null>(null);
+      return {
+        isPending: false,
+        error,
+        mutate: (input: unknown, options?: { onSuccess?: () => void; onError?: () => void }) => {
+          spy(input);
+          if (mocks.refusal) {
+            setError({ message: mocks.refusal });
+            options?.onError?.();
+          } else options?.onSuccess?.();
+        },
+      };
+    },
+  });
+  return {
+    ...(await importOriginal<typeof TrpcMod>()),
+    trpc: makeTrpcProxy(
+      {
+        // The parent chapter's membership, then which of the owner's posts are chapters already.
+        'storyline.getById': {
+          useQuery: () => ({
+            data: {
+              id: 2,
+              userId: 10,
+              user: { id: 10, username: 'owner' },
+              status: 'Ongoing',
+              maxNsfwLevel: 4,
+              collaborators: [],
+              coverImage: null,
+              title: 'The Patch',
+            },
+            isLoading: false,
+          }),
+        },
+        'storyline.getForPosts': { useQuery: forPosts },
+        'post.getInfinite': {
+          useInfiniteQuery: (input: { username?: string }) => {
+            mocks.postsOf = input.username;
+            return {
+              data: {
+                pages: [
+                  {
+                    nextCursor: undefined,
+                    items: [
+                      {
+                        id: 900,
+                        title: 'My new post',
+                        nsfwLevel: 1,
+                        publishedAt: new Date(),
+                        imageCount: 1,
+                        user: { id: 10 },
+                        images: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+              isLoading: false,
+              isError: false,
+            };
+          },
+        },
+        'post.get': {
+          useQuery: () => ({
+            data: { id: 502, title: 'Chapter two', user: { id: 10, username: 'owner' } },
+          }),
+        },
+        'storyline.insertChapter': mutation(mocks.insert),
+        'storyline.addChapter': mutation(mocks.addOwn),
+        'storyline.addChapterAtEnd': mutation(mocks.addAtEnd),
+        'storyline.linkChapter': mutation(mocks.link),
+        'storyline.getLinkTargets': {
+          useQuery: () => ({
+            data: [
+              {
+                chapterId: 300,
+                depth: 2,
+                firstImage: null,
+                tombstone: null,
+                post: { id: 3000, title: 'Over the river' },
+              },
+            ],
+            isLoading: false,
+            isError: false,
+          }),
+        },
+      },
+      {
+        useUtils: () => ({ storyline: { invalidate: mocks.invalidate } }),
+        useQueries: (build: (t: unknown) => unknown[]) =>
+          build({ storyline: { getForPosts: forPosts } }),
+      }
+    ),
+  };
+});
+vi.mock('~/components/Dialog/DialogProvider', () => ({
+  useDialogContext: () => ({ opened: true, onClose: vi.fn(), zIndex: 300 }),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => mocks.currentUser,
+}));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ storylines: true }),
+}));
+vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof QueriesMod>()),
+  useStorylineContinueTerms: () => ({
+    data: { open: false, closedReason: null, price: 0 },
+    isLoading: false,
+    unavailable: false,
+  }),
+}));
+vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
+
+beforeEach(() => {
+  for (const fn of [mocks.insert, mocks.addOwn, mocks.addAtEnd, mocks.link, mocks.invalidate])
+    fn.mockReset();
+  mocks.refusal = null;
+  mocks.currentUser = { id: 10, username: 'owner' };
+});
+
+const open = (insertBeforeChapterId?: number) =>
+  renderWithProviders(
+    <StorylineContinueModal
+      parentPostId={502}
+      parentChapterId={104}
+      insertBeforeChapterId={insertBeforeChapterId}
+    />
+  );
+
+describe('inserting a chapter from the map', () => {
+  test('picking a post inserts it between the two chapters', async () => {
+    open(121);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Insert chapter' }).click();
+
+    expect(mocks.insert).toHaveBeenCalledWith({
+      storylineId: 2,
+      parentChapterId: 104,
+      childChapterId: 121,
+      postId: 900,
+    });
+    expect(mocks.addOwn).not.toHaveBeenCalled();
+    await expect.element(page.getByText('Inserted into your storyline.')).toBeVisible();
+  });
+
+  test("a moderator inserts one of the owner's posts, not their own", async () => {
+    mocks.currentUser = { id: 99, username: 'mod', isModerator: true };
+    open(121);
+    const ownersPost = page.getByRole('radio', { name: /My new post/ });
+    await expect.element(ownersPost).toBeVisible();
+    await ownersPost.click();
+    await page.getByRole('button', { name: 'Insert chapter' }).click();
+
+    expect(mocks.postsOf).toBe('owner');
+    expect(mocks.insert).toHaveBeenCalledWith({
+      storylineId: 2,
+      parentChapterId: 104,
+      childChapterId: 121,
+      postId: 900,
+    });
+  });
+
+  test("the server's refusal is shown and the dialog stays", async () => {
+    mocks.refusal = "A chapter cannot be inserted before a contributor's chapter";
+    open(121);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Insert chapter' }).click();
+
+    await expect
+      .element(page.getByText("A chapter cannot be inserted before a contributor's chapter"))
+      .toBeVisible();
+    expect(page.getByText('Inserted into your storyline.').query()).toBeNull();
+    await expect.element(page.getByRole('button', { name: 'Insert chapter' })).toBeVisible();
+  });
+
+  test('without an insert point it still adds after the parent', async () => {
+    open();
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    expect(mocks.addOwn).toHaveBeenCalledWith({ parentChapterId: 104, postId: 900 });
+    expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.addAtEnd).not.toHaveBeenCalled();
+  });
+});
+
+// The end-of-chapter card's main-path "use a post": the end the card read (104) may no longer be
+// the end, so the server finds it when it adds the post.
+describe('adding at the end of the main path', () => {
+  test('sends the storyline, never the chapter the card read as the end', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    expect(mocks.addAtEnd).toHaveBeenCalledWith({ storylineId: 2, postId: 900 });
+    expect(mocks.addOwn).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByText('Added to your storyline as the next chapter.'))
+      .toBeVisible();
+  });
+
+  test("the server's refusal is shown and the dialog stays", async () => {
+    mocks.refusal = 'This storyline is complete';
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByRole('radio', { name: /My new post/ }).click();
+    await page.getByRole('button', { name: 'Add chapter' }).click();
+
+    await expect.element(page.getByText('This storyline is complete')).toBeVisible();
+    expect(page.getByText('Added to your storyline as the next chapter.').query()).toBeNull();
+  });
+});
+
+// The same card's "Join an existing chapter": the server refuses it if 104 is no longer the end.
+describe('joining at the end of the main path', () => {
+  test('sends the end check with the chapter the card read', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByText('Join an existing chapter').click();
+    await page.getByRole('radio', { name: 'Over the river' }).click();
+    await page.getByRole('button', { name: 'Join this chapter' }).click();
+
+    expect(mocks.link).toHaveBeenCalledWith({ parentChapterId: 104, chapterId: 300, atEnd: true });
+  });
+
+  test('a refusal is shown, and the storyline is read again so the card shows the new end', async () => {
+    mocks.refusal = 'The story has a new last chapter since you opened this.';
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} atEnd />);
+    await page.getByText('Join an existing chapter').click();
+    await page.getByRole('radio', { name: 'Over the river' }).click();
+    await page.getByRole('button', { name: 'Join this chapter' }).click();
+
+    await expect.element(page.getByText(mocks.refusal)).toBeVisible();
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+  });
+
+  // Joins from anywhere else are branches by choice, and must not be checked against the end.
+  test('sends no end check when the modal was not opened at the end', async () => {
+    renderWithProviders(<StorylineContinueModal parentPostId={502} parentChapterId={104} />);
+    await page.getByText('Join an existing chapter').click();
+    await page.getByRole('radio', { name: 'Over the river' }).click();
+    await page.getByRole('button', { name: 'Join this chapter' }).click();
+
+    expect(mocks.link).toHaveBeenCalledWith({ parentChapterId: 104, chapterId: 300, atEnd: false });
+  });
+});

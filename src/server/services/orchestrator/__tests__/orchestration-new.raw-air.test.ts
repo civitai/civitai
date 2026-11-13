@@ -65,7 +65,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
 import type * as PromptAuditingMod from '~/server/services/orchestrator/promptAuditing';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -76,6 +76,7 @@ import {
   generateFromGraph,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { nanoBananaVersionIds } from '~/shared/form-graph/generation/image/nano-banana.graph';
 import { rawAirResourceId } from '~/shared/utils/air';
 
 const USER_ID = 5;
@@ -379,7 +380,7 @@ describe('ownership-fetch caching', () => {
  * raw-AIR validation reject with "not supported on this generation path"
  * before `getWorkflow` is ever reached, so the assertion below goes red.
  * The submissions themselves die later in step assembly (the shared
- * `@civitai/client` mock has no TimeSpan constructor) — irrelevant here.
+ * `@civitai/orchestration-client` mock has no TimeSpan constructor) — irrelevant here.
  */
 describe('orchestratorToken threading at the service boundary', () => {
   const externalCtx = (): GenerationCtx => ({
@@ -482,5 +483,105 @@ describe('read path: formatGenerationResponse2 keeps raw-AIR resources', () => {
     const calls = vi.mocked(getResourceData).mock.calls;
     expect(calls).toHaveLength(1);
     expect((calls[0][0] as Array<{ id: number }>).map((r) => r.id)).toEqual([999]);
+  });
+});
+
+// Not raw-AIR, but this is the suite that runs the real step builder. The client reads output uses
+// from the workflow key saved at submit (`output-uses.ts`).
+describe('createWorkflowStepsFromGraph — workflow key', () => {
+  const build = (data: Record<string, unknown>) =>
+    createWorkflowStepsFromGraph({
+      data: {
+        images: [
+          {
+            url: 'https://orchestration.civitai.com/v2/consumer/blobs/p.jpg',
+            width: 1024,
+            height: 1024,
+          },
+        ],
+        quantity: 1,
+        ...data,
+      } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    });
+
+  it('saves the avatar workflow key', async () => {
+    const { workflowMetadata } = await build({
+      workflow: 'img2img:avatar',
+      avatarStyle: 'art-nouveau',
+      avatarReference: 'mara',
+      model: { id: nanoBananaVersionIds.v2, model: { type: 'Checkpoint' } },
+    });
+    expect(workflowMetadata).toMatchObject({ params: { workflow: 'img2img:avatar' } });
+  });
+});
+
+describe('read path: formatGenerationResponse2 weights the hydrated resources', () => {
+  const lora = (id: number, strengthDefault: number) =>
+    ({
+      id,
+      name: `lora-${id}`,
+      baseModel: 'SDXL 1.0',
+      canGenerate: true,
+      hasAccess: true,
+      trainedWords: [],
+      settings: { strength: { min: -1, max: 2, default: strengthDefault } },
+      model: { id: id * 10, name: `M${id}`, type: 'LORA' },
+      air: `urn:air:sdxl:lora:civitai:${id * 10}@${id}`,
+    } as never);
+
+  it('keeps the stored weight and falls back to the version default', async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([lora(701, 0.9), lora(702, 0.6)]);
+    const [formatted] = await formatGenerationResponse2([
+      {
+        id: 'wf-read-2',
+        status: 'succeeded',
+        createdAt: new Date().toISOString(),
+        metadata: {
+          params: { prompt: 'test', ecosystem: 'SDXL', workflow: 'txt2img' },
+          resources: [
+            { id: 701, model: { type: 'LORA' }, strength: 0.4 },
+            { id: 702, model: { type: 'LORA' } },
+          ],
+        },
+        steps: [],
+      } as never,
+    ]);
+    const weights = Object.fromEntries(
+      (formatted.metadata?.resources ?? []).map((r) => [r.id, r.strength])
+    );
+    expect(weights).toEqual({ 701: 0.4, 702: 0.6 });
+  });
+  it('weights resources stored on the step the same way', async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([lora(701, 0.9), lora(702, 0.6)]);
+    const [formatted] = await formatGenerationResponse2([
+      {
+        id: 'wf-read-3',
+        status: 'succeeded',
+        createdAt: new Date().toISOString(),
+        metadata: {},
+        steps: [
+          {
+            $type: 'textToImage',
+            name: '$0',
+            status: 'succeeded',
+            input: {},
+            output: {},
+            metadata: {
+              params: { prompt: 'test', ecosystem: 'SDXL', workflow: 'txt2img' },
+              resources: [
+                { id: 701, model: { type: 'LORA' }, strength: 0.4 },
+                { id: 702, model: { type: 'LORA' } },
+              ],
+            },
+          },
+        ],
+      } as never,
+    ]);
+    const weights = Object.fromEntries(
+      (formatted.steps[0]?.metadata?.resources ?? []).map((r) => [r.id, r.strength])
+    );
+    expect(weights).toEqual({ 701: 0.4, 702: 0.6 });
   });
 });

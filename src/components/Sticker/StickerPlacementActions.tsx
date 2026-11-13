@@ -1,4 +1,5 @@
-import { Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import { Button, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconMessage } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
@@ -106,6 +107,7 @@ export function StickerPlacementActions({
       color="green"
       disabled={disabled}
       fullWidth={stacked}
+      className={stacked ? 'max-sm:min-h-9 max-sm:flex-1' : undefined}
       onClick={() => (asksAboutNote ? setApproving((open) => !open) : approve())}
     >
       Approve{placementIds.length > 1 ? ` ${placementIds.length}` : ''}
@@ -113,7 +115,11 @@ export function StickerPlacementActions({
   );
 
   return (
-    <Group gap={4} wrap="nowrap" className={clsx(stacked && 'flex-col items-stretch')}>
+    <Group
+      gap={4}
+      wrap="nowrap"
+      className={clsx(stacked && 'flex-col items-stretch max-sm:basis-full max-sm:flex-row')}
+    >
       {asksAboutNote ? (
         <Popover opened={approving} onChange={setApproving} withArrow position="top" width={280}>
           <Popover.Target>{approveButton}</Popover.Target>
@@ -139,6 +145,7 @@ export function StickerPlacementActions({
             size={size}
             color="red"
             fullWidth={stacked}
+            className={stacked ? 'max-sm:min-h-9 max-sm:flex-1' : undefined}
             // Filled, not light. `light` is a tinted background at low contrast,
             // which sits on top of arbitrary artwork on the image overlay and
             // becomes unreadable against anything busy or red.

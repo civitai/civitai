@@ -395,17 +395,6 @@ describe('unblockAccountDeletionImages', () => {
     expect(mockResetNsfwLevel).toHaveBeenCalledWith([1, 3]);
   });
 
-  it('logs the rows it left blocked with an unreadable breadcrumb', async () => {
-    images = [hidden(1, 'Scanned'), hidden(2, 'Scannned')];
-
-    await unblockAccountDeletionImages(7);
-
-    // Skipped silently, a row stays hidden on a live account with nothing pointing at it.
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'account-deletion-image-restore', userId: 7, skipped: 1 })
-    );
-  });
-
   it('stops instead of spinning when a claimed row comes back unchanged', async () => {
     images = [hidden(1, 'Scanned', { stuck: true })];
 

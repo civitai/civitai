@@ -1,16 +1,5 @@
-import {
-  Badge,
-  Button,
-  Card,
-  Center,
-  Group,
-  Loader,
-  Menu,
-  Popover,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Badge, Button, Card, Center, Group, Loader, Text, Title } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCopy, IconDotsVertical, IconPencil, IconShare3, IconTrash } from '@tabler/icons-react';

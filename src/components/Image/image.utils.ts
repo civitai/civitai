@@ -5,27 +5,29 @@ import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
-import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import type { BaseDataTypeMap } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { baseModels } from '~/shared/constants/basemodel.constants';
-import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
-import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { isViewer, isViewerUsername } from '~/utils/is-viewer';
+import { imagesQueryParamSchema } from '~/components/Image/image-query-params';
 
-const imageSections = ['images', 'reactions'] as const;
-export type ImageSections = (typeof imageSections)[number];
+export {
+  imagesQueryParamSchema,
+  parseImageQueryParams,
+  hasImageDetailQueryFilters,
+} from '~/components/Image/image-query-params';
+export type { ImageSections, ImagesQueryParamSchema } from '~/components/Image/image-query-params';
 
 // Dev helper: simulate a transient search failure on the client so the retry UI
 // can be tested without touching the backend. Enable via browser console:
@@ -46,65 +48,6 @@ function useDebugSearchRetry(pagesLoaded: number) {
   return { delayMs: parsed, active: true };
 }
 
-// output is input to getInfiniteImagesSchema
-export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
-export const imagesQueryParamSchema = z
-  .object({
-    baseModels: z
-      .union([z.enum(baseModels).array(), z.enum(baseModels)])
-      .transform((val) => (Array.isArray(val) ? val : [val]))
-      .optional(),
-    collectionId: numericString(),
-    collectionTagId: numericString(),
-    hubId: numericString(),
-    hideAutoResources: booleanString(),
-    hideManualResources: booleanString(),
-    followed: booleanString(),
-    newCreators: booleanString(),
-    fromPlatform: booleanString(),
-    hidden: booleanString(),
-    includeBaseModel: booleanString(),
-    limit: numericString(),
-    modelId: numericString(),
-    modelVersionId: numericString(),
-    notPublished: booleanString(),
-    publishedOnly: booleanString(),
-    pendingReviewOnly: booleanString(),
-    period: z.enum(MetricTimeframe),
-    periodMode: z.enum(['stats', 'published']).optional(),
-    postId: numericString(),
-    prioritizedUserIds: numericStringArray(),
-    reactions: z.preprocess(
-      (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.enum(ReviewReactions))
-    ),
-    scheduled: booleanString(),
-    section: z.enum(imageSections),
-    sort: z.enum(ImageSort),
-    tags: numericStringArray(),
-    techniques: numericStringArray(),
-    tools: numericStringArray(),
-    types: z
-      .union([z.array(z.enum(MediaType)), z.enum(MediaType)])
-      .transform((val) => (Array.isArray(val) ? val : [val]))
-      .optional(),
-    userId: numericString(),
-    username: z.coerce.string().transform(postgresSlugify),
-    view: z.enum(['categories', 'feed']),
-    withMeta: booleanString().optional(),
-    requiringMeta: booleanString(),
-    remixOfId: numericString(),
-    includePG13: booleanString().optional(),
-    poiOnly: booleanString(),
-    minorOnly: booleanString(),
-    disablePoi: booleanString(),
-    disableMinor: booleanString(),
-    remixesOnly: booleanString(),
-    nonRemixesOnly: booleanString(),
-    hideChallenges: booleanString(),
-  })
-  .partial();
-
 /**
  * The pair that routes an own-content submit picker off the search index.
  *
@@ -123,50 +66,6 @@ export const imagesQueryParamSchema = z
  */
 export const ownContentPickerFilters = (userId: number | undefined) =>
   ({ userId, publishedOnly: true } as const);
-
-/**
- * Read `imagesQueryParamSchema` off a router query WITHOUT throwing.
- *
- * 🔴 This must never become a bare `.parse`. `postId` (and every other
- * `numericString` key) rejects anything `Number()` turns into NaN, so a single
- * junk param made the whole schema throw — and a throw in a page's render is a
- * 500, not a degraded page. `/images/[imageId]?postId=null` returned 500 on prod
- * for exactly that reason: the `image-reaction-milestone` notification
- * interpolated a null `postId` into the literal string `null`, and 25,135 images
- * on prod have a null `postId` (article covers, mainly).
- *
- * The emitter is fixed too, and that fix IS retroactive for in-app notifications:
- * the URL is not stored, it is recomputed at render by `getNotificationMessage`
- * from the stored `details` JSON, so old rows re-render with the corrected link.
- * The read side still has to survive junk on its own, because a URL already copied
- * out of the app — shared, bookmarked, crawled, or baked into an email by the
- * external notifications service — is beyond the emitter's reach, and because
- * `?postId=abc` from any source hits the same throw.
- *
- * Dropping the whole filter object is consistent with `useZodRouteParams`, which
- * has always done this same `safeParse`-then-`{}` over this same schema and query.
- * Note what that costs: zod object parsing is all-or-nothing, so one junk key
- * discards the valid ones beside it. That is a known coarse edge, not a claim that
- * per-key recovery would be wrong.
- *
- * The optional `schema` is for `ImageDetailModal`, which parses a variant
- * (`.omit({ tags: true })`) off the SAME `useBrowserRouter` query. `removeEmpty`
- * there drops null *values*, not the string `'null'`, so the junk reaches the
- * parse either way — the modal is the next thing a user touches after landing on
- * one of these links, and it threw for the same reason the page did.
- */
-export function parseImageQueryParams(query: Record<string, unknown>): ImagesQueryParamSchema;
-export function parseImageQueryParams<TSchema extends z.ZodObject>(
-  query: Record<string, unknown>,
-  schema: TSchema
-): Partial<z.infer<TSchema>>;
-export function parseImageQueryParams(
-  query: Record<string, unknown>,
-  schema: z.ZodObject = imagesQueryParamSchema
-) {
-  const result = schema.safeParse(query);
-  return result.success ? result.data : {};
-}
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
@@ -205,6 +104,41 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
+export function isViewingOwnImages(
+  currentUser: { id: number; username?: string | null } | null | undefined,
+  filters: { username?: string; userId?: number }
+) {
+  return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
+}
+
+/**
+ * An image feed's infinite pages as one list: the duplicates offset paging drift leaves across pages
+ * dropped, then the viewer's hidden preferences applied. Shared by the feed and the feed's search.
+ */
+export function useFeedImageItems<TItem extends BaseDataTypeMap['images'][number]>(
+  pages: ({ items: TItem[] } | undefined)[] | undefined,
+  options: { showHidden?: boolean; disabled?: boolean; isRefetching?: boolean }
+) {
+  const flatData = useMemo(() => {
+    const seenIds = new Set<number>();
+    const deduped: TItem[] = [];
+    for (const item of pages?.flatMap((page) => page?.items ?? []) ?? []) {
+      if (seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      deduped.push(item);
+    }
+    return deduped;
+  }, [pages]);
+  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: flatData,
+    showHidden: options.showHidden,
+    disabled: options.disabled,
+    isRefetching: options.isRefetching,
+  });
+  return { flatData, items, loadingPreferences, hiddenCount };
+}
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
@@ -220,13 +154,7 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  // `!!currentUser` guards against `filters.userId === currentUser?.id` being
-  // `undefined === undefined` for anonymous users, which treats them as the owner.
-  const isOwnImages =
-    !!currentUser &&
-    ((!!filters.username &&
-      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
-      filters.userId === currentUser.id);
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
     ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),
@@ -260,25 +188,7 @@ export const useQueryImages = (
     }
   );
 
-  // Deduplicate items to prevent duplicates from offset pagination drift
-  const flatData = useMemo(() => {
-    const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
-
-    // Track IDs within this render to filter duplicates that appear across pages
-    const seenIds = new Set<number>();
-    const dedupedItems: typeof allItems = [];
-    for (const item of allItems) {
-      if (!seenIds.has(item.id)) {
-        seenIds.add(item.id);
-        dedupedItems.push(item);
-      }
-    }
-
-    return dedupedItems;
-  }, [data]);
-  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
-    type: 'images',
-    data: flatData,
+  const { flatData, items, loadingPreferences, hiddenCount } = useFeedImageItems(data?.pages, {
     showHidden: !!filters.hidden,
     disabled: !applyHiddenPreferences,
     isRefetching: rest.isRefetching,

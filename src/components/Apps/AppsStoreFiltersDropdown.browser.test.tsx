@@ -5,15 +5,13 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type { AppsStoreFilters } from '~/components/Apps/appsStoreQueryParams';
 
 /**
- * `/apps` store FILTERS DROPDOWN — the collapsed `[⚙ Filters ②]` control that
- * replaced two full-width rows of toggles.
+ * `/apps` store FILTERS DROPDOWN — the collapsed `[Filters ②]` control with chips, an Apply /
+ * Reset footer and Clear all filters.
  *
- * What's under test is the PANEL BEHAVIOUR: that the two control groups really
- * are inside the dropdown (not just rendered somewhere), that selecting either
- * one emits the right patch, that the count `Indicator` tracks exactly those two
- * controls, that Clear all resets both AND the count, and that the mobile drawer
- * path renders. The count ARITHMETIC is pinned in the blocking node suite
- * (`__tests__/appsStoreQueryParams.test.ts`) — this is the wiring.
+ * What's under test is the PANEL BEHAVIOUR: the chips really are inside the dropdown, edits are
+ * STAGED (nothing is emitted until Apply), no "All" chip exists (nothing starts checked), the count
+ * previews the pending edit, and the mobile drawer renders. The count ARITHMETIC is pinned in the
+ * blocking node suite (`__tests__/appsStoreQueryParams.test.ts`) — this is the wiring.
  */
 
 const mocks = vi.hoisted(() => ({ mobile: false, isClient: true }));
@@ -48,75 +46,112 @@ beforeEach(() => {
   mocks.isClient = true;
 });
 
+const chip = (name: string) => page.getByRole('checkbox', { name, exact: true });
+const apply = () => page.getByRole('button', { name: 'Apply filters' });
+const resetBtn = () => page.getByRole('button', { name: 'Reset', exact: true });
+const clearAll = () => page.getByRole('button', { name: 'Clear all filters' });
+
 describe('AppsStoreFiltersDropdown — the panel', () => {
-  test('the toggles are COLLAPSED behind the button until it is clicked', async () => {
+  test('the chips are COLLAPSED behind the button until it is clicked', async () => {
     setup({ kind: 'all', category: null });
     await expect.element(trigger()).toBeInTheDocument();
-    // The whole point of the change: two rows of toggles are no longer occupying
-    // the page above the grid.
     expect(panel().elements()).toHaveLength(0);
-    expect(page.getByRole('button', { name: 'All apps' }).elements()).toHaveLength(0);
-
     await userEvent.click(trigger());
     await expect.element(panel()).toBeInTheDocument();
   });
 
-  test('the panel holds BOTH groups — Type and Category — with their labels', async () => {
+  test('the panel holds BOTH groups — Type and Category — as chips, with no "All" chip', async () => {
     setup({ kind: 'all', category: null });
     await userEvent.click(trigger());
-    await expect.element(panel()).toBeInTheDocument();
     await expect.element(page.getByText('Type')).toBeInTheDocument();
     await expect.element(page.getByText('Category')).toBeInTheDocument();
-    // Both groups keep their `role="group"` + `aria-label` from the extracted
-    // components, so the panel is navigable by group, not as a flat button soup.
     await expect
       .element(page.getByRole('group', { name: 'Filter by app kind' }))
       .toBeInTheDocument();
     await expect
       .element(page.getByRole('group', { name: 'Filter by category' }))
       .toBeInTheDocument();
+    await expect.element(chip('Embedded')).toBeInTheDocument();
+    await expect.element(chip('Generation')).toBeInTheDocument();
+    expect(page.getByText('All apps').elements()).toHaveLength(0);
+    expect(page.getByText('All categories').elements()).toHaveLength(0);
   });
 
-  test('selecting a kind emits ONLY the kind patch', async () => {
-    const { onChange } = setup({ kind: 'all', category: null });
+  test('with no filter set, NO chip is checked (nothing checked shows everything)', async () => {
+    setup({ kind: 'all', category: null });
     await userEvent.click(trigger());
-    await userEvent.click(page.getByRole('button', { name: 'Embedded' }));
-    expect(onChange).toHaveBeenCalledWith({ kind: 'onsite' });
+    await expect.element(chip('Embedded')).not.toBeChecked();
+    await expect.element(chip('Standalone')).not.toBeChecked();
+    await expect.element(chip('Generation')).not.toBeChecked();
+    await expect.element(chip('Games')).not.toBeChecked();
   });
 
-  test('selecting a category emits ONLY the category patch', async () => {
-    const { onChange } = setup({ kind: 'all', category: null });
-    await userEvent.click(trigger());
-    await userEvent.click(page.getByRole('button', { name: 'Generation' }));
-    expect(onChange).toHaveBeenCalledWith({ category: 'generation' });
-  });
-
-  test('re-clicking the ACTIVE category clears it (single-select toggle survives the move)', async () => {
-    const { onChange } = setup({ kind: 'all', category: 'generation' });
-    await userEvent.click(trigger());
-    await userEvent.click(page.getByRole('button', { name: 'Generation' }));
-    expect(onChange).toHaveBeenCalledWith({ category: null });
-  });
-
-  test('the active selections are reflected as pressed inside the panel', async () => {
+  test('a set filter shows only its own chips on', async () => {
     setup({ kind: 'offsite', category: 'games' });
     await userEvent.click(trigger());
-    await expect
-      .element(page.getByRole('button', { name: 'Standalone' }))
-      .toHaveAttribute('aria-pressed', 'true');
-    await expect
-      .element(page.getByRole('button', { name: 'Games' }))
-      .toHaveAttribute('aria-pressed', 'true');
-    await expect
-      .element(page.getByRole('button', { name: 'All apps' }))
-      .toHaveAttribute('aria-pressed', 'false');
+    await expect.element(chip('Standalone')).toBeChecked();
+    await expect.element(chip('Games')).toBeChecked();
+    await expect.element(chip('Embedded')).not.toBeChecked();
+    await expect.element(chip('Generation')).not.toBeChecked();
+  });
+
+  test('edits are STAGED: nothing is emitted until Apply, then one patch with both fields', async () => {
+    const { onChange } = setup({ kind: 'all', category: null });
+    await userEvent.click(trigger());
+    await userEvent.click(chip('Embedded'));
+    await userEvent.click(chip('Generation'));
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.click(apply());
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ kind: 'onsite', category: 'generation' });
+  });
+
+  test('Apply closes the panel', async () => {
+    setup({ kind: 'all', category: null });
+    await userEvent.click(trigger());
+    await userEvent.click(chip('Embedded'));
+    await userEvent.click(apply());
+    await vi.waitFor(() => expect(panel().elements()).toHaveLength(0));
+  });
+
+  test('turning off the LAST kind chip goes back to all (a filter matching nothing is never offered)', async () => {
+    const { onChange } = setup({ kind: 'offsite', category: null });
+    await userEvent.click(trigger());
+    await userEvent.click(chip('Standalone'));
+    await expect.element(chip('Embedded')).not.toBeChecked();
+    await expect.element(chip('Standalone')).not.toBeChecked();
+    await userEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ kind: 'all', category: null });
+  });
+
+  test('re-clicking the ACTIVE category goes back to all categories', async () => {
+    const { onChange } = setup({ kind: 'all', category: 'generation' });
+    await userEvent.click(trigger());
+    await userEvent.click(chip('Generation'));
+    await expect.element(chip('Generation')).not.toBeChecked();
+    await expect.element(chip('Games')).not.toBeChecked();
+    await userEvent.click(apply());
+    expect(onChange).toHaveBeenCalledWith({ kind: 'all', category: null });
+  });
+
+  test('Apply and Reset are disabled until something changes; Reset discards the edit', async () => {
+    const { onChange } = setup({ kind: 'all', category: null });
+    await userEvent.click(trigger());
+    await expect.element(apply()).toBeDisabled();
+    await expect.element(resetBtn()).toBeDisabled();
+    await userEvent.click(chip('Generation'));
+    await expect.element(apply()).toBeEnabled();
+    await userEvent.click(resetBtn());
+    await expect.element(chip('Generation')).not.toBeChecked();
+    await expect.element(apply()).toBeDisabled();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
 /**
- * The count badge. `AdaptiveFiltersDropdown` renders it as a Mantine `Indicator`
- * whose `label` is the number and which is `disabled` (i.e. renders no dot at
- * all) at 0 — so "shows 0" means "no badge is present", not "a badge reading 0".
+ * The count badge. `AdaptiveFiltersDropdown` renders it as a Mantine `Indicator` whose `label` is
+ * the number and which is `disabled` (renders no dot) at 0, so "shows 0" means "no badge", not
+ * "a badge reading 0". While the panel is open it previews the pending edit.
  */
 describe('AppsStoreFiltersDropdown — the Indicator count', () => {
   function badgeText() {
@@ -147,32 +182,39 @@ describe('AppsStoreFiltersDropdown — the Indicator count', () => {
     await expect.element(trigger()).toBeInTheDocument();
     expect(badgeText()).toBe('2');
   });
-});
 
-describe('AppsStoreFiltersDropdown — Clear all', () => {
-  test('resets BOTH controls in one patch — and therefore the count', async () => {
-    const { onChange } = setup({ kind: 'offsite', category: 'games' });
-    await userEvent.click(trigger());
-    await userEvent.click(page.getByTestId('apps-store-filters-clear'));
-    // One patch, not two: a two-call reset would write the URL twice and push a
-    // spurious history entry between them.
-    expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith({ kind: 'all', category: null });
-  });
-
-  test('is DISABLED when there is nothing to clear (not a silent no-op)', async () => {
+  test('the badge previews the pending edit before Apply', async () => {
     setup({ kind: 'all', category: null });
     await userEvent.click(trigger());
-    await expect.element(page.getByTestId('apps-store-filters-clear')).toBeDisabled();
+    expect(badgeText()).toBeNull();
+    await userEvent.click(chip('Generation'));
+    expect(badgeText()).toBe('1');
+  });
+});
+
+describe('AppsStoreFiltersDropdown — Clear all filters', () => {
+  test('resets BOTH controls in one patch, and closes the panel', async () => {
+    const { onChange } = setup({ kind: 'offsite', category: 'games' });
+    await userEvent.click(trigger());
+    await userEvent.click(clearAll());
+    // One patch, not two: a two-call reset would write the URL twice and push a spurious history
+    // entry between them.
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith({ kind: 'all', category: null });
+    await vi.waitFor(() => expect(panel().elements()).toHaveLength(0));
+  });
+
+  test('is ABSENT when nothing is filtered (not a silent no-op)', async () => {
+    setup({ kind: 'all', category: null });
+    await userEvent.click(trigger());
+    await expect.element(panel()).toBeInTheDocument();
+    expect(clearAll().elements()).toHaveLength(0);
   });
 
   test('does NOT touch the search box — it is outside this panel', async () => {
     const { onChange } = setup({ kind: 'onsite', category: null });
     await userEvent.click(trigger());
-    await userEvent.click(page.getByTestId('apps-store-filters-clear'));
-    // Wiping text the viewer can still see, from a control they cannot see, is
-    // the surprise this omission avoids. The empty state's "Clear filters" is the
-    // broader reset that DOES clear search.
+    await userEvent.click(clearAll());
     expect(onChange.mock.calls[0][0]).not.toHaveProperty('query');
   });
 });
@@ -185,7 +227,7 @@ describe('AppsStoreFiltersDropdown — mobile', () => {
     // Mantine's Drawer is a dialog; the popover path is not.
     await expect.element(page.getByRole('dialog')).toBeInTheDocument();
     await expect.element(panel()).toBeInTheDocument();
-    await expect.element(page.getByRole('button', { name: 'All apps' })).toBeInTheDocument();
-    await expect.element(page.getByRole('button', { name: 'Generation' })).toBeInTheDocument();
+    await expect.element(chip('Embedded')).toBeInTheDocument();
+    await expect.element(chip('Generation')).toBeInTheDocument();
   });
 });

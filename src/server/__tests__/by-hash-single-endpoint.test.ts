@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 // Focused test for src/pages/api/v1/model-versions/by-hash/[hash].ts.
-// Kept in src/server/__tests__ (NOT under src/pages) per CLAUDE.md.
+// Kept in src/server/__tests__ (NOT under src/pages) per .claude/rules/testing.md.
 
 const { mockResDetails } = vi.hoisted(() => ({
   mockResDetails: vi.fn().mockResolvedValue(undefined),
@@ -28,8 +28,9 @@ const mockFindFirst = dbMock.dbRead.modelFile.findFirst;
 const HASH = 'a'.repeat(64);
 
 const runRequest = (query: Record<string, string>) => {
-  const req = { method: 'GET', query } as unknown as NextApiRequest;
+  const req = { method: 'GET', query, headers: {} } as unknown as NextApiRequest;
   const res = {
+    setHeader: vi.fn().mockReturnThis(),
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
   } as unknown as NextApiResponse;
@@ -66,6 +67,11 @@ describe('by-hash/[hash] endpoint', () => {
     const { promise } = runRequest({ hash: HASH });
     await promise;
 
-    expect(mockResDetails).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+    expect(mockResDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      null,
+      expect.any(Function)
+    );
   });
 });

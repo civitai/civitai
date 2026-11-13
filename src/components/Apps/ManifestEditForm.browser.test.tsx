@@ -4,7 +4,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * ManifestEditForm — browser-mode render test (report-only in Tekton).
+ * ManifestEditForm — browser-mode render test (`Component tests` in CI).
  *
  * Covers the per-scope justification authoring surface: a Textarea is rendered
  * for each declared scope (seeded from the stored manifest's
@@ -16,6 +16,12 @@ import { renderWithProviders } from '../../../test/component-setup';
 const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   invalidate: vi.fn().mockResolvedValue(undefined),
+  termsAccepted: true,
+}));
+
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => mocks.termsAccepted,
 }));
 
 vi.mock('~/utils/notifications', () => ({
@@ -61,6 +67,38 @@ const BASE_MANIFEST = {
 beforeEach(() => {
   mocks.mutate.mockClear();
   mocks.invalidate.mockClear();
+  mocks.termsAccepted = true;
+});
+
+describe('ManifestEditForm — App Developer Terms', () => {
+  test('Save stays disabled until the terms are accepted', async () => {
+    mocks.termsAccepted = false;
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await expect
+      .element(page.getByRole('button', { name: 'Save & submit for review' }))
+      .toBeDisabled();
+  });
+
+  test('CONTROL: the same form with the terms accepted can be saved', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await expect
+      .element(page.getByRole('button', { name: 'Save & submit for review' }))
+      .toBeEnabled();
+  });
 });
 
 describe('ManifestEditForm — per-scope justification authoring', () => {

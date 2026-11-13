@@ -29,8 +29,13 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: mockArticlesQueueUpdate },
   collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
+}));
+vi.mock('~/server/search-index/articles.search-index', () => ({
+  articlesSearchIndex: { queueUpdate: mockArticlesQueueUpdate },
+}));
+vi.mock('~/server/search-index/collections.search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
 }));
 
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';

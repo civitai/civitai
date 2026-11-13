@@ -1,5 +1,6 @@
 import type { ActionIconProps, ButtonProps } from '@mantine/core';
-import { Button, Group, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconGavel } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
@@ -79,8 +80,7 @@ export const BidModelButton = ({
     setSelectedModel({
       ...entityData,
       strength: -1,
-      minStrength: -1,
-      maxStrength: -1,
+      settings: { strength: { min: -1, max: -1, default: -1 } },
       trainedWords: [],
       canGenerate: true,
       hasAccess: true,

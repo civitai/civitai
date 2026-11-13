@@ -385,6 +385,10 @@ model, excluding `EcosystemCheckpoints` and `ExternalGeneration`:
 | 15 smaller base models | 201 | 2 |
 | **total** | **738** | **8** |
 
+MiniMax H3 was unlocked after this measurement (2026-11). Its 47 rows are no longer withheld by the
+locked-ecosystem rule, but their stored answers stay false until the post-deploy re-queue in
+[paid-model-loading.md](paid-model-loading.md) re-evaluates them.
+
 Of the 738, **zero** are covered under the live rule — no `EcosystemCheckpoints` row, no auction
 winner, none reachable by the `ext` branch. Every one of them became generatable only through the
 staged expansion, so narrowing it restores the answer the live rule already gives and costs nothing
@@ -392,10 +396,16 @@ that worked before. Eight had already been loaded — free at today's pricing, s
 than anyone's Buzz.
 
 That is worth stating precisely, because several of the 738 look official and are not:
-`wan2.1_t2v_1.3B_fp16` (1500646), `Hunyuan Video 720_cfgdistill_bf16` (1313562) and
-`Lightricks LTXV 2b 0.9.1` (1182093) are all CivitaiOfficial or vendor uploads. Each is a **sibling**
-of the version its ecosystem actually runs — Hunyuan's `EcosystemCheckpoints` row is the fp8 build
-(1314512), not the bf16 one — and each already read `covered = false`. 1500646 appears in
+`wan2.1_t2v_1.3B_fp16` (1500646) and `Lightricks LTXV 2b 0.9.1` (1182093) are CivitaiOfficial or
+vendor uploads. Each is a **sibling** of the version its ecosystem actually runs, and each already
+read `covered = false`.
+
+🔴 **Hunyuan was the exception, and the measurement got it wrong.** The handler named no model, so
+the orchestrator ran its own default, `720_cfgdistill_bf16` (1313562), while the site's default and
+`EcosystemCheckpoints` row were the fp8 build (1314512), which never ran a job. bf16 was covered only
+as a top weekly earner in `CoveredCheckpoint`. When it dropped out, around 2026-09-24, every Hunyuan
+submit failed with "not enabled for generation". Fixed 2026-10-08: bf16 has its own
+`EcosystemCheckpoints` row, is the ecosystem default, and the handler sends its AIR. 1500646 appears in
 `wanBaseModelGroupIdMap`, which `getMetaResources` uses to attribute the implied Wan checkpoint on an
 image; that is a display path and was already operating against an uncovered version.
 
@@ -434,10 +444,13 @@ equally covered and equally unusable, so a new base model would have fixed none 
   through a fixed id→variant map and ignores anything else, so its community checkpoints stay
   over-covered. Closing that needs a list of handlers that hardcode their model, which is not
   derivable from the constants. Open.
-* **Over-shoots harmlessly.** `minimax.handler.ts` and `ltx.handler.ts` *do* pass the selected
-  version's AIR, but their ecosystems are locked, so the graph never gives them a custom one. If
-  either ecosystem is unlocked later, eligibility follows on the next request — the list is read
-  from the constants. `qwen21DiffusionModel` is the shape that needs no exclusion at all: it
+* **Over-shoots harmlessly.** `ltx.handler.ts` *does* pass the selected version's AIR, but its
+  ecosystem is locked, so the graph never gives it a custom one. If it is unlocked later, eligibility
+  follows on the next request — the list is read from the constants. MiniMax H3 was unlocked this
+  way (2026-11): `minimax.handler.ts` passes the selected AIR and `minimaxVariantOf` routes any
+  non-official checkpoint to the comfy build, so its community checkpoints are judged by the same
+  coverage rule as any unlocked ecosystem's, instead of being held to the live column.
+  `qwen21DiffusionModel` is the shape that needs no exclusion at all: it
   forwards the selected version's AIR as `diffusionModel` whenever it is not the ecosystem default,
   so unlocking Qwen 2.1 would work.
 

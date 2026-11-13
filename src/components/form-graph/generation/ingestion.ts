@@ -5,7 +5,7 @@ import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
 } from '~/components/generation_v2/CompatibilityConfirmModal';
-import { toResourceData } from '~/components/generation_v2/GenerationFormProvider';
+import { toResourceData } from '~/components/Generation/form-helpers';
 import {
   decodeGenerationHandoff,
   GENERATION_HANDOFF_PARAM,
@@ -23,10 +23,11 @@ import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-s
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   workflowConfigByKey,
+  getRequiredFeatureFlagForWorkflow,
   isWorkflowAvailable,
   getEcosystemsForWorkflow,
-} from '~/shared/data-graph/generation/config/workflows';
-import type { ResourceData, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
+} from '~/shared/generation/config/workflows';
+import type { ResourceData, SnippetsNodeValue } from '~/shared/generation/values';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { showErrorNotification } from '~/utils/notifications';
 import {
@@ -37,14 +38,23 @@ import {
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import type { GenerationStore } from './store';
+import { REMIX_RESET } from './remix-reset';
+import { migrateModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import {
+  AVATAR_DEEP_LINK_PARAMS,
+  avatarDeepLinkFields,
+} from '~/shared/generation/avatar-deep-link';
+import {
+  GENERATOR_DEEP_LINK_PARAMS,
+  generatorDeepLinkFields,
+  type GeneratorDeepLinkFields,
+} from '~/shared/generation/generator-deep-link';
 
 /**
  * The new lane's ingestion: everything that pushes data INTO the generator
  * from outside — Remix buttons site-wide, preset apply, the cross-domain
- * `?gen=` handoff, wildcard loads, image append. A transcription of v1
- * GenerationFormProvider's state machine onto the form-graph store: same
- * run-types, same policies, `graph.reset/set/getSnapshot` becoming
- * `store.reset/set/getSnapshot().state`. The one storage read (append's
+ * `?gen=` handoff, wildcard loads, image append. The one storage read (append's
  * per-workflow images) goes through the store's own intent record instead of
  * v1's per-workflow localStorage keys.
  */
@@ -78,7 +88,7 @@ export function useGenerationIngestion(store: GenerationStore) {
   // purpose: model pages use the same param to pick a version, and the panel
   // mounts there too — without the guard, opening a model page would yank the
   // generator open. Yields to a `?gen=` handoff, which has already queued
-  // data by the time this runs.
+  // data by the time this runs. May also carry form fields (`&resolution=2k&thinkingMode=ultra`).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!window.location.pathname.startsWith('/generate')) return;
@@ -87,7 +97,10 @@ export function useGenerationIngestion(store: GenerationStore) {
     const raw = url.searchParams.get('modelVersionId');
     if (!raw) return;
 
+    const fields = generatorDeepLinkFields(url.searchParams);
+
     url.searchParams.delete('modelVersionId');
+    for (const param of GENERATOR_DEEP_LINK_PARAMS) url.searchParams.delete(param);
     window.history.replaceState(null, '', url.pathname + url.search + url.hash);
 
     if (useGenerationGraphStore.getState().data) return;
@@ -95,7 +108,16 @@ export function useGenerationIngestion(store: GenerationStore) {
     const id = Number(raw);
     if (!Number.isInteger(id) || id <= 0) return;
 
-    generationGraphPanel.open({ type: 'modelVersion', id });
+    if (!Object.keys(fields).length) {
+      generationGraphPanel.open({ type: 'modelVersion', id });
+      return;
+    }
+    void openWithDeepLinkFields(
+      store,
+      () => generationGraphPanel.open({ type: 'modelVersion', id }),
+      fields
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a one-shot read of the landing URL
   }, []);
 
   // `/generate?air=…&workflowId=…&name=…` deep link — the Training Studio's
@@ -133,6 +155,34 @@ export function useGenerationIngestion(store: GenerationStore) {
     seedRawAirResource({ air, workflowId, name });
   }, [features.generationAirResources]);
 
+  // `/generate?workflow=…` deep link for landing pages (avatar may also carry style and starter).
+  // Strips the params before applying, like the links above, and yields to already-queued data.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const workflow = url.searchParams.get('workflow');
+    if (!workflow) return;
+
+    const avatarFields = workflow === AVATAR_WORKFLOW ? avatarDeepLinkFields(url.searchParams) : {};
+
+    url.searchParams.delete('workflow');
+    for (const param of AVATAR_DEEP_LINK_PARAMS) url.searchParams.delete(param);
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (useGenerationGraphStore.getState().data) return;
+    if (!workflowConfigByKey.has(workflow)) return;
+    const flag = getRequiredFeatureFlagForWorkflow(workflow);
+    if (flag && features[flag as keyof typeof features] !== true) return;
+
+    store.set({ workflow });
+    // After the workflow, so the avatar fields exist to receive the values.
+    if (Object.keys(avatarFields).length) store.set(avatarFields);
+    generationGraphPanel.setView('generate');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a one-shot read of the landing URL
+  }, [store]);
+
   // Sync generation graph store data into the form
   // - Remix/Replay: full override (reset + set)
   // - Run/Patch: partial update (set only)
@@ -153,11 +203,47 @@ export function useGenerationIngestion(store: GenerationStore) {
   }, [store]);
 }
 
+/**
+ * Opens the generator on a model, then sets the link's fields. Only once the model has landed, so
+ * a load that fails, or that another open replaces while in flight, leaves the form as it was.
+ */
+export async function openWithDeepLinkFields(
+  store: GenerationStore,
+  open: () => Promise<void>,
+  fields: GeneratorDeepLinkFields,
+  openSequence = () => useGenerationGraphStore.getState().openSequence
+) {
+  const pending = open();
+  const sequence = openSequence();
+  try {
+    await pending;
+  } catch {
+    return;
+  }
+  if (openSequence() !== sequence) return;
+  store.set(fields);
+}
+
 type GenerationData = NonNullable<ReturnType<typeof useGenerationGraphStore.getState>['data']>;
 
 /** The run-type policy, pure over the store — exported for the parity tests. */
 export function applyGenerationData(store: GenerationStore, data: GenerationData) {
   const state = () => store.getSnapshot().state as Record<string, unknown>;
+
+  // 🔴 A null param means "clear", and the only write that CLEARS is `undefined` — the
+  // store deletes that key's intent, where a null is stored verbatim as a trusted value
+  // and then fails the output schema, killing the submit button. QueueItem replays send
+  // `seed: null`, txt2img ones `images: null`.
+  //
+  // Done here rather than per branch: the remix arm used to filter nulls itself and the
+  // Run/Patch arm spread `data.params` raw, so the same null was handled on one path
+  // and not the other.
+  data = {
+    ...data,
+    params: Object.fromEntries(
+      Object.entries(data.params).map(([k, v]) => [k, v === null ? undefined : v])
+    ),
+  } as GenerationData;
 
   // Params are already mapped via mapDataToGraphInput (workflow,
   // ecosystem, aspectRatio, etc.); split flat resources into
@@ -221,22 +307,44 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
       ? isWorkflowAvailable(resolvedWorkflow, remixEco.id)
       : !remixEcosystemKey;
 
-    // v1 parity: a null param means "clear" (QueueItem replays send
-    // `seed: null`, txt2img ones `images: null`). The reset below already
-    // clears everything, and a null written through set() is a TRUSTED value
-    // stored verbatim — it fails the output schema at validate() and the
-    // submit button dies silently. Drop nulls instead of writing them.
-    const remixValues = Object.fromEntries(
-      Object.entries({
-        ...paramsWithoutOutputSettings,
-        ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
-        workflow: resolvedWorkflow,
-        model: split.model,
-        upscaler: split.upscaler,
-        resources: split.resources,
-        vae: split.vae,
-      }).filter(([, value]) => value !== null)
-    );
+    // Nulls are already `undefined` (see the entry), and the reset below clears
+    // everything anyway — so an absent key here means "leave it at its default".
+    const remixValues = {
+      ...(isPolyGenRemix
+        ? migrateModel3dParams(paramsWithoutOutputSettings)
+        : paramsWithoutOutputSettings),
+      ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
+      workflow: resolvedWorkflow,
+      model: split.model,
+      upscaler: split.upscaler,
+      resources: split.resources,
+      vae: split.vae,
+    };
+
+    // Stage the discriminators, then the values. Never one combined set: two separate
+    // mechanisms land on the target family only if it is already active, and both fail
+    // silently rather than loudly.
+    //
+    // 1. A single set can evaluate child keys before the branch switched, so a
+    //    family-specific value lands outside the ACTIVE subgraph (3D's original reason).
+    // 2. `coerce` is read from the resolution as it stands BEFORE the patch
+    //    (form-graph `store.js`: `resolution.records.get(key)?.codec?.coerce`), so a combined
+    //    set truncates text against the SOURCE family's cap and stores a value the target
+    //    refuses — a Generate button that does nothing, which is the class the hooks in
+    //    `defs.ts` exist to close. `correct` is immune: it runs inside resolution, after the
+    //    patch. `coerce` is the one hook in the set with this asymmetry.
+    const applyRemix = (ecosystemOverride?: string) => {
+      const ecosystem =
+        ecosystemOverride ?? (remixValues as { ecosystem?: string }).ecosystem ?? undefined;
+
+      // 3. The reset runs BETWEEN the two sets, not before both: `scope: 'active'` reads the
+      //    resolution as it stands, so the discriminators go first to make the TARGET family
+      //    active. Reset first and it clears the family being LEFT while sparing the one being
+      //    entered, which is the inverse of the point. REMIX_RESET says what it keeps and why.
+      store.set({ ...(ecosystem ? { ecosystem } : {}), workflow: resolvedWorkflow });
+      store.reset(REMIX_RESET);
+      store.set(ecosystemOverride ? { ...remixValues, ecosystem: ecosystemOverride } : remixValues);
+    };
 
     if (!ecosystemSupportsWorkflow && remixEcosystemKey) {
       openCompatibilityConfirmModal({
@@ -245,24 +353,11 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
           currentEcosystem: remixEcosystemKey,
         }),
         onConfirm: (selectedEcosystemKey) => {
-          if (selectedEcosystemKey) {
-            store.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
-            store.set({ ...remixValues, ecosystem: selectedEcosystemKey });
-          }
+          if (selectedEcosystemKey) applyRemix(selectedEcosystemKey);
         },
       });
     } else {
-      store.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
-      // Two-stage set for 3D remixes: switch the discriminators first so
-      // every PolyGen-specific value lands in the ACTIVE subgraph (a
-      // single set can evaluate child keys before the branch switched).
-      if (
-        isPolyGenRemix &&
-        (resolvedWorkflow === 'txt2model3d' || resolvedWorkflow === 'img2model3d')
-      ) {
-        store.set({ ecosystem: model3dEcosystem, workflow: resolvedWorkflow });
-      }
-      store.set(remixValues);
+      applyRemix();
     }
   } else if (data.runType === 'wildcard') {
     // Add a wildcard set id to the snippets node, preserving the user's
@@ -297,22 +392,43 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
 
     const existingUrls = new Set(existingImages.map((img) => img.url));
     const newImages = incomingImages.filter((img) => !existingUrls.has(img.url));
-    const mergedImages = [...existingImages, ...newImages];
+    const merged = [...existingImages, ...newImages];
 
-    store.set({ workflow: targetWorkflow, images: mergedImages });
+    // 🔴 DROP FROM THE FRONT when the target is already full. `imagesDef`'s own correction
+    // keeps the FIRST n, which is right for a remix (stored order is the user's order) and
+    // wrong here: append is dispatched from a queue item or the 3D viewer, so the newest
+    // image IS the user's request and silently discarding it reads as a dead button.
+    //
+    // Set the workflow FIRST and read the field's own meta, rather than asking
+    // `getImagesLimit` for an (ecosystem, workflow) pair we cannot name: append crosses
+    // output types ("send to Image-to-Video"), and the current ecosystem does not belong to
+    // the target workflow. That pin resolves to a different ecosystem, so the probe fails
+    // closed and returns no cap at all — measured undefined for every cross-output target,
+    // which left the newest image to be trimmed after all. The store answers exactly,
+    // because by then it has resolved the target and corrected its ecosystem.
+    store.set({ workflow: targetWorkflow });
+    const cap = (store.getField('images')?.meta as { max?: number } | undefined)?.max;
+    const mergedImages =
+      cap !== undefined && merged.length > cap ? merged.slice(merged.length - cap) : merged;
+
+    store.set({ images: mergedImages });
   } else {
     // Run/Patch: model/vae overwrite, resources merge with existing
     const snap = state();
     const existingResources = (snap.resources ?? []) as ResourceData[];
     const incomingIds = new Set(split.resources.map((r) => r.id));
 
+    const incomingEcosystem = data.params.ecosystem as string | undefined;
+    // An empty resource list is compatible with every ecosystem, so it can't be the reason
+    // to keep the current one over an ecosystem the caller named (the workflow picker).
+    const switchesEcosystem = !!incomingEcosystem && data.resources.length === 0;
+
     // Preserve the current ecosystem when ALL incoming resources are
     // compatible with it; switch only on a truly incompatible resource.
     const currentEcosystem = snap.ecosystem as string | undefined;
     const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
-    const allCompatible = currentEco && areResourcesCompatible(currentEco.id, data.resources);
-
-    const incomingEcosystem = data.params.ecosystem as string | undefined;
+    const allCompatible =
+      !switchesEcosystem && currentEco && areResourcesCompatible(currentEco.id, data.resources);
 
     const currentWorkflow = snap.workflow as string | undefined;
     const currentWorkflowConfig = currentWorkflow
@@ -350,7 +466,7 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
 
     // No current ecosystem and incoming resources fit several — let the
     // user choose rather than silently picking one.
-    if (!currentEco && !allCompatible) {
+    if (!currentEco && !allCompatible && !switchesEcosystem) {
       const resolvedWorkflow = targetWorkflow ?? currentWorkflow ?? 'txt2img';
       const workflowEcosystemIds = getEcosystemsForWorkflow(resolvedWorkflow);
       const compatibleEcosystemIds = workflowEcosystemIds.filter((ecoId) =>
@@ -432,6 +548,13 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
       ...(split.upscaler && { upscaler: split.upscaler }),
       ...(split.vae && { vae: split.vae }),
     };
+    // Discriminators first, for the reasons on `applyRemix`.
+    if (switchesEcosystem) {
+      store.set({
+        ecosystem: incomingEcosystem,
+        ...(targetWorkflow && { workflow: targetWorkflow }),
+      });
+    }
     store.set(values);
   }
 

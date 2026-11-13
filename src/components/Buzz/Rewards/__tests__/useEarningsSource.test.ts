@@ -53,6 +53,12 @@ describe('useEarningsSource', () => {
     expect(renders.at(-1)).toEqual({ source: 'licenseFee', ready: true });
   });
 
+  it('restores Tips after a reload', async () => {
+    window.localStorage.setItem(EARNINGS_SOURCE_STORAGE_KEY, JSON.stringify('tip'));
+    await mount();
+    expect(renders.at(-1)).toEqual({ source: 'tip', ready: true });
+  });
+
   it('a selection made on one mount is what the next mount starts on', async () => {
     await mount();
     await act(async () => setSource('licenseFee'));

@@ -38,8 +38,8 @@ export const membershipGiftSentEmail = createEmail({
       body: `
         <p>
           Your gift of <strong>${describeGift({ tier, months })}</strong> has been delivered to
-          <strong>${escapeHtml(describeRecipient(recipient))}</strong> and is active on their
-          account.
+          <strong>${escapeHtml(describeRecipient(recipient))}</strong>. It starts when they
+          accept it.
         </p>
         ${anonymousNote}
         <p>
@@ -48,7 +48,7 @@ export const membershipGiftSentEmail = createEmail({
         </p>
       `,
       btnLabel: 'View My Gifts',
-      btnUrl: `${getBaseUrl()}/user/membership`,
+      btnUrl: `${getBaseUrl()}/pricing/gift#membership-gifts`,
     });
   },
   text({ username, tier, months, recipient, anonymous }: MembershipGiftSentData) {
@@ -58,7 +58,7 @@ export const membershipGiftSentEmail = createEmail({
       months,
     })} has been delivered to ${describeRecipient(
       recipient
-    )} and is active on their account.${anonymousNote} See your gifts at ${getBaseUrl()}/user/membership`;
+    )}. It starts when they accept it.${anonymousNote} See your gifts at ${getBaseUrl()}/pricing/gift#membership-gifts`;
   },
   testData: async () => ({
     to: 'test@tester.com',

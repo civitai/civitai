@@ -1,4 +1,5 @@
-import { Button, CloseButton, Popover, Text } from '@mantine/core';
+import { Button, CloseButton, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight } from '@tabler/icons-react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';

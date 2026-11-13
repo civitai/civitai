@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createVideoPreprocessStep } from '../ecosystems/video-preprocess.handler';
+import { createVideoPreprocessStep } from '../handlers/video-preprocess.handler';
 
 const VIDEO_URL = 'https://example.test/source.mp4';
 

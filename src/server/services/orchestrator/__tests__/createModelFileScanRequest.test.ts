@@ -27,7 +27,7 @@ const {
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 
-vi.mock('@civitai/client', () => ({
+vi.mock('@civitai/orchestration-client', () => ({
   submitWorkflow: mockSubmitWorkflow,
   // surface enums consumed at module-load time
   WorkflowStatus: {},
@@ -264,6 +264,23 @@ describe('createModelFileScanRequest', () => {
       expect(submitCall.body.metadata).toEqual({ fileId: 1, modelVersionId: 10 });
     });
 
+    it('carries a scan-only marker in workflow.metadata when the rescan asks for one', async () => {
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: null,
+        response: { status: 200 },
+      });
+
+      await createModelFileScanRequest({ ...baseInput, op: 'scan-only-rescan' });
+
+      const submitCall = mockSubmitWorkflow.mock.calls[0][0];
+      expect(submitCall.body.metadata).toEqual({
+        fileId: 1,
+        modelVersionId: 10,
+        op: 'scan-only-rescan',
+      });
+    });
+
     it('registers a callback to /api/webhooks/model-file-scan-result', async () => {
       mockSubmitWorkflow.mockResolvedValue({
         data: { id: 'wf-1' },
@@ -377,6 +394,20 @@ describe('createModelFileScanRequest', () => {
       // Only the post-success update would write scanRequestedAt; verify it didn't run.
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
     });
+
+    it("carries a 429's Retry-After so the fallback job can wait for it", async () => {
+      mockSubmitWorkflow.mockResolvedValue({
+        data: null,
+        error: { status: 429, detail: 'Too many requests' },
+        response: new Response(null, { status: 429, headers: { 'Retry-After': '420' } }),
+      });
+
+      const err = await createModelFileScanRequest(baseInput).catch((e) => e);
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('transient');
+      expect(err.status).toBe(429);
+      expect(err.retryAfter).toBe(420);
+    });
   });
 
   describe('pre-flight URL resolution (not-found path)', () => {
@@ -391,7 +422,15 @@ describe('createModelFileScanRequest', () => {
       await createModelFileScanRequest(baseInput);
 
       expect(mockResolveDownloadUrl).toHaveBeenCalledTimes(1);
-      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(1, 's3://bucket/key.safetensors');
+      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(
+        1,
+        's3://bucket/key.safetensors',
+        undefined,
+        {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        }
+      );
       expect(mockSubmitWorkflow).toHaveBeenCalled();
     });
 

@@ -52,8 +52,12 @@ import {
   updateCreatorShopItem,
 } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { shopItemReviewVersion } from '../creator-shop.data';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
@@ -98,8 +102,10 @@ dbMock.dbWrite.cosmeticShopItem.updateMany.mockImplementation((...args: unknown[
 dbMock.dbWrite.cosmetic.update.mockImplementation((...args: unknown[]) =>
   (mocks.cosmeticUpdate as (...a: unknown[]) => unknown)(...args)
 );
-dbMock.dbWrite.$transaction.mockImplementation((...args: unknown[]) =>
-  (mocks.transaction as (...a: unknown[]) => unknown)(...args)
+dbMock.dbWrite.$transaction.mockImplementation((arg: unknown) =>
+  typeof arg === 'function'
+    ? (arg as (tx: unknown) => unknown)(dbMock.dbWrite)
+    : (mocks.transaction as (...a: unknown[]) => unknown)(arg)
 );
 
 const RESELLER_ID = 200;
@@ -386,6 +392,18 @@ describe('the owner can change an item’s resale terms after publishing', () =>
     expect(mocks.cosmeticUpdate).not.toHaveBeenCalled();
   });
 
+  // The share is a money term a moderator's verdict must not approve unseen: recording it moves the
+  // version the verdict is pinned to (`shopItemReviewVersion`).
+  it('records a share-only edit in the history, with the exact before and after', async () => {
+    const before = ownedItem({ sellableByOthers: true, sellerShare: 50, purchases: 4 }).meta;
+    await update({ sellerShare: 10 });
+
+    expect(savedMeta().history?.at(-1)?.changes).toEqual([
+      { field: 'sellerShare', from: 50, to: 10 },
+    ]);
+    expect(shopItemReviewVersion(savedMeta())).not.toBe(shopItemReviewVersion(before));
+  });
+
   it('refuses a cross-lister editing the original creator’s terms', async () => {
     mocks.shopItemFindUnique.mockResolvedValue({
       ...ownedItem({ sellableByOthers: true, sellerShare: 50 }),
@@ -508,6 +526,40 @@ describe('getCreatorShop resold section', () => {
     expect(resold[0].meta.sellerShare).toBe(50);
   });
 
+  // Read only for the keys these two queries gate a NULL-cosmetic listing with.
+  const admitsBoxListing = (where: Record<string, unknown>): boolean => {
+    if (where.itemDefinitionId === null) return false;
+    if (where.cosmetic !== undefined) return false;
+    if (where.cosmeticId !== undefined && where.cosmeticId !== null) return false;
+    if (Array.isArray(where.OR) && !where.OR.some(admitsBoxListing)) return false;
+    return true;
+  };
+
+  // A mystery box listing has no cosmetic, so the pack branch would show it as a pack.
+  it.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ])(
+    'never shows a mystery box listing (stickers %s, packs %s)',
+    async (stickersEnabled, packsEnabled) => {
+      mocks.resaleFindMany.mockResolvedValue([{ shopItemId: SHOP_ITEM_ID, sellerShare: 20 }]);
+      // The reading admits what the pack branch used to be.
+      expect(admitsBoxListing({ listed: true, OR: [{ cosmeticId: null }] })).toBe(true);
+
+      await getCreatorShop({
+        userId: RESELLER_ID,
+        viewerId: RESELLER_ID,
+        stickersEnabled,
+        packsEnabled,
+      });
+
+      expect(admitsBoxListing(mocks.shopItemFindMany.mock.calls[0][0].where)).toBe(false);
+      expect(admitsBoxListing(resoldWhere())).toBe(false);
+    }
+  );
+
   // Preview is a moderator design aid with no resale rows behind it, so it must
   // keep showing only what's genuinely on offer.
   it('preview still requires a live, resellable item', async () => {
@@ -579,6 +631,18 @@ describe('withdrawing an item ends its resale listings', () => {
     mocks.shopItemFindFirst.mockResolvedValue(null);
     mocks.packMemberFindMany.mockResolvedValue([]);
     mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it('refuses to list a mystery box listing, for a moderator too', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(
+      ownedItem({ cosmeticId: null, cosmetic: null, itemDefinitionId: 9 })
+    );
+
+    for (const listed of [true, false])
+      await expect(
+        setCreatorShopItemListed({ id: SHOP_ITEM_ID, userId: 1, isModerator: true, listed })
+      ).rejects.toThrow('Mystery box listings stay unlisted');
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
   });
 
   it('deletes every listing when the item is delisted', async () => {

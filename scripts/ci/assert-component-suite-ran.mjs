@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Positive control for the `preview / component-tests` tier.
+ * Positive control for the browser `component` tier (`Component tests` in CI).
  *
  * 🔴 WHY: THE BROWSER SUITE HAS A FAILURE MODE THAT COLLECTS ZERO TESTS AND IS
  * INDISTINGUISHABLE, TO EVERY CONSUMER, FROM A SUITE THAT RAN.
@@ -33,6 +33,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 
 /**
  * The floor, and the reason it is a floor rather than an exact count.
@@ -95,8 +96,8 @@ export const ABORT_DIAGNOSIS = `
           line. Read that line before chasing a mock. Note that ONE crash zeroes the WHOLE
           run, however many files had already gone green above it.
       On NixOS the first signature is also what a playwright/Chromium REVISION MISMATCH looks
-      like — it collects files and executes none. See CLAUDE.md, "Browser/component tests on
-      NixOS".
+      like — it collects files and executes none. See docs/dev/worktrees.md, "Browser/component
+      tests on NixOS".
 
    3. THE PROJECT SELECTED NOTHING.  A \`--project\`/glob that matches no file exits without
       running, and an empty selection is not a pass.

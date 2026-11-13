@@ -1,6 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
-import { createFeedback, isFeedbackAreaEnabled } from '~/server/services/feedback.service';
+import {
+  buildFeedbackServerStamp,
+  createFeedback,
+  FEEDBACK_AREA_DISABLED_MESSAGE,
+  isFeedbackAreaEnabled,
+} from '~/server/services/feedback.service';
+import { captureFeedbackScreenshot } from '~/server/services/feedback-capture.service';
+import { fileFeedbackToHq } from '~/server/services/feedback-hq.service';
 import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { rateLimit } from '~/server/middleware.trpc';
 import { guardedProcedureAllowUnverifiedEmail, router } from '~/server/trpc';
@@ -31,10 +38,22 @@ export const feedbackRouter = router({
       const enabled = await isFeedbackAreaEnabled({ area: input.area, user: ctx.user });
       // Loud rather than dropped: if the area went off mid-typing, say so.
       if (!enabled)
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'Feedback is not being collected here right now.',
-        });
-      return createFeedback({ ...input, userId: ctx.user.id });
+        throw new TRPCError({ code: 'FORBIDDEN', message: FEEDBACK_AREA_DISABLED_MESSAGE });
+      const server = buildFeedbackServerStamp({
+        headers: ctx.req?.headers ?? {},
+        tier: ctx.user.tier,
+        domain: ctx.domain,
+        features: ctx.features,
+      });
+      const saved = await createFeedback({ ...input, userId: ctx.user.id, server });
+      // Not awaited: the capture and HQ must never delay or fail the submit. Neither throws.
+      void captureFeedbackScreenshot({
+        feedbackId: saved.id,
+        reporterId: ctx.user.id,
+        screenshotId: input.context?.screenshotId,
+      }).then((capture) =>
+        fileFeedbackToHq({ ...input, feedbackId: saved.id, userId: ctx.user.id, server, capture })
+      );
+      return saved;
     }),
 });

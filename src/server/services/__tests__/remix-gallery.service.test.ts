@@ -8,8 +8,11 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
+import type * as Hooks from '~/server/events/points/hooks';
+import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { HybridNode } from '~/__tests__/mocks/hybrid';
 
@@ -49,6 +52,13 @@ vi.mock('~/server/services/placement-escrow.service', () => ({
 
 const assertCanPlace = vi.fn(async () => undefined);
 vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlace }));
+// The event points hook, so a takedown can be seen handing its id over. The hook's own
+// behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
+const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
+  onPlacementsTakenDown,
+}));
 
 // Stubbed rather than spread from the original: the real module loads
 // `base.reward`, which pulls the buzz service and its whole import graph into a
@@ -81,6 +91,33 @@ vi.mock('~/server/services/free-placement.service', () => ({
 
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
+
+// Who qualifies for an event's team waiver is decided in team-remix-waiver.ts and tested there;
+// here it is an answer the submission and the listing act on. None unless a test says otherwise.
+const findTeamRemixWaiver = vi.fn<AnyFn>(async () => null);
+vi.mock('~/server/events/team-remix-waiver', () => ({
+  findTeamRemixWaiver: (...args: unknown[]) => findTeamRemixWaiver(...args),
+}));
+// The listing's count of today's waived submissions, a Kysely read.
+const displayCount = vi.fn<AnyFn>(async () => 0);
+vi.mock('@civitai/db-queries/placement', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  countPlacements: (...args: unknown[]) => displayCount(...args),
+}));
+
+// The viewer's own pending submissions on the visibility card, one Kysely read: none unless a test
+// says otherwise. Its rows, against a real database, are pinned in
+// hot-reads-3.kysely-parity.test.ts.
+const { viewerPendingRows } = vi.hoisted(() => ({ viewerPendingRows: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads3>()),
+  listViewerPendingRemixPlacements: viewerPendingRows,
+}));
+
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
 
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
@@ -118,6 +155,20 @@ const forwardTo = <T extends Mock<AnyFn>>(spy: T, ...nodes: HybridNode[]) => {
 };
 
 const queryRaw = forwardTo(vi.fn<AnyFn>(), dbMock.dbRead.$queryRaw, dbMock.dbWrite.$queryRaw);
+
+/**
+ * The reads moved off Prisma's `$queryRaw` (the host rating, the has-entries check, the card
+ * summaries) run through Kysely. Both Kysely clients forward to the same `queryRaw` spy, so the
+ * ordered call list holds them where it always did. The one statement they gained, the
+ * hosts-with-entries lookup in front of the card and has-entries reads, is answered here instead
+ * and kept out of that list: every asked host has a placement, so the reads behind it run.
+ */
+const isHostsLookup = (strings: readonly string[]) =>
+  strings.join('?').includes('SELECT DISTINCT pl."targetId" AS "hostId"');
+const answerKysely = async (strings: readonly string[], ...values: unknown[]) =>
+  isHostsLookup(strings)
+    ? (values[2] as number[]).map((hostId) => ({ hostId }))
+    : queryRaw(strings, ...values);
 const placementFindMany = forwardTo(
   vi.fn<AnyFn>(async () => [] as unknown[]),
   dbMock.dbRead.placement.findMany,
@@ -149,8 +200,6 @@ const primePlacementUpdate = () => placementUpdate.mockResolvedValue({});
 primePlacementUpdate();
 const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
 placementUpdateMany.mockResolvedValue({ count: 1 });
-
-dbMock.dbRead.user.findUnique.mockResolvedValue({ username: 'someone' });
 
 const {
   createRemixGallerySubmission,
@@ -214,10 +263,13 @@ const goodSubmission: SubmissionFixture = {
 
 const openSpace = {
   ownerId: OWNER,
+  ownerUsername: 'host-owner',
   mode: 'review' as const,
   setPrice: PRICE,
   price: PRICE,
   cap: 1000,
+  declineFee: 210,
+  declineFeeRate: 0.3,
   freeSlots: 2,
   freeSlotsRemaining: 1,
   settings: {},
@@ -259,6 +311,10 @@ function primeQueries({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  kysely.read.mockReset().mockImplementation(answerKysely);
+  kysely.write.mockReset().mockImplementation(answerKysely);
+  findTeamRemixWaiver.mockResolvedValue(null);
+  displayCount.mockResolvedValue(0);
   // 🔴 `clearAllMocks` is mockClear, which does NOT drain a queued `...Once`, and
   // neither does a later `mockResolvedValue` — the queue is consulted first. So
   // an unconsumed `...Once` survives into the next test and reddens something
@@ -270,6 +326,7 @@ beforeEach(() => {
   // refusal landing above an insert is enough to leave one unconsumed.
   placementCreate.mockReset();
   placementUpdate.mockReset();
+  viewerPendingRows.mockReset().mockResolvedValue([]);
   primePlacementUpdate();
   placementFindFirst.mockReset();
   createFreePlacement.mockReset();
@@ -1025,6 +1082,33 @@ describe('owner actions', () => {
       });
     });
 
+    it('pays nothing for accepting a team-waived submission', async () => {
+      placementFindUnique.mockResolvedValue({
+        ...pending,
+        free: true,
+        data: { ...pending.data, derivedFromHost: true, waiver: 'team' },
+      });
+      await expect(approve()).resolves.toMatchObject({ settled: true });
+      expect(rewardApply).not.toHaveBeenCalled();
+    });
+
+    // The pair for the test above: an ordinary free submission still earns the
+    // owner the accept reward, so the waiver check is on the marker, not on `free`.
+    it('still pays for accepting an ordinary free submission', async () => {
+      placementFindUnique.mockResolvedValue({
+        ...pending,
+        free: true,
+        data: { ...pending.data, derivedFromHost: true },
+      });
+      await approve();
+      expect(rewardApply).toHaveBeenCalledTimes(1);
+      expect(rewardApply).toHaveBeenCalledWith({
+        placementId: PLACEMENT,
+        ownerId: OWNER,
+        placerId: PLACER,
+      });
+    });
+
     it('pays nothing for a decline', async () => {
       await actOnRemixGallerySubmission({
         placementId: PLACEMENT,
@@ -1108,6 +1192,7 @@ describe('owner actions', () => {
     });
 
     expect(placementUpdateMany).toHaveBeenCalled();
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([PLACEMENT]);
   });
 
   it('lets a moderator take down a locked entry', async () => {
@@ -2955,6 +3040,76 @@ describe('free submissions', () => {
   });
 });
 
+describe('team-waived submissions', () => {
+  const WAIVER = { event: 'birthday2026', team: 'Pink', perDay: 10 };
+  const submitWaived = (over: Partial<Parameters<typeof createRemixGallerySubmission>[0]> = {}) =>
+    submit({ teamWaiver: true, expectedPrice: undefined, ...over });
+
+  beforeEach(() => {
+    findTeamRemixWaiver.mockResolvedValue(WAIVER);
+  });
+
+  it('claims through the free primitive with the event limit, never charging the price', async () => {
+    primeQueries({ submission: verifiedSubmission });
+
+    await expect(submitWaived()).resolves.toEqual({ id: FREE_PLACEMENT });
+
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+    expect(createFreePlacement).toHaveBeenCalledWith({
+      surface: 'remixGallery',
+      targetType: 'image',
+      targetId: HOST_IMAGE,
+      placerId: PLACER,
+      data: { imageId: REMIX_IMAGE, remixOfId: null, derivedFromHost: true },
+      teamWaiver: { perDay: WAIVER.perDay },
+    });
+    // The owner the submission lands with, and the host it lands on: the two facts the waiver is
+    // about. A swapped pair would ask whether the placer is their own teammate.
+    expect(findTeamRemixWaiver).toHaveBeenCalledWith({
+      placerId: PLACER,
+      ownerId: OWNER,
+      hostImageId: HOST_IMAGE,
+    });
+  });
+
+  it('refuses a remix the server did not resolve as made from the host', async () => {
+    // The waiver removes the price, the surface's only spam gate for an unverified remix.
+    await expect(submitWaived()).rejects.toThrow(/made from this image on-site/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses when no event waiver applies, rather than charging the price instead', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    findTeamRemixWaiver.mockResolvedValue(null);
+
+    await expect(submitWaived()).rejects.toThrow(/isn't free for your team/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(placementCreate).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a submission that asks to be both free and team-waived', async () => {
+    primeQueries({ submission: verifiedSubmission });
+
+    await expect(submitWaived({ free: true })).rejects.toThrow(/either free or team-waived/i);
+    expect(createFreePlacement).not.toHaveBeenCalled();
+  });
+
+  it('is not offered on an ordinary paid submission', async () => {
+    // A placer who did not ask for the waiver pays, even when they would qualify: the card offers
+    // it, and the mutation does not decide on the placer's behalf.
+    primeQueries({ submission: verifiedSubmission });
+
+    await submit();
+
+    expect(findTeamRemixWaiver).not.toHaveBeenCalled();
+    expect(createFreePlacement).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('what the public visibility query says about free capacity', () => {
   const visibility = (viewerId?: number) => {
     // One row satisfying every raw read this path makes. The host has to come
@@ -3203,21 +3358,32 @@ describe('the reads a Buzz figure is rendered from', () => {
     expect(rows[0].targetImage).toBeNull();
   });
 
+  // A Kysely read, so the `afterEach` above cannot see its columns: this pins that `free` reaches
+  // the card beside `amount`, from a free row the read returns.
   it('the submitter’s pending rows on the image detail card', async () => {
     queryRaw.mockImplementation(async () => [
       { exists: false, count: 0, nsfwLevel: NsfwLevel.PG, minor: false, showable: true },
     ]);
-    placementFindMany.mockResolvedValue([]);
+    viewerPendingRows.mockResolvedValue([
+      {
+        id: 7,
+        amount: 0,
+        free: true,
+        data: { imageId: REMIX_IMAGE },
+        createdAt: new Date(0),
+        expiresAt: null,
+      },
+    ]);
 
-    await getRemixGalleryVisibility({
+    const visibility = await getRemixGalleryVisibility({
       hostImageId: HOST_IMAGE,
       browsingLevel: allBrowsingLevelsFlag,
       viewerId: PLACER,
       domainLevels: allBrowsingLevelsFlag,
     });
 
-    // Same as above: the `afterEach` holds the assertion. This is the anchor.
-    expect(placementFindMany).toHaveBeenCalled();
+    expect(viewerPendingRows).toHaveBeenCalledTimes(1);
+    expect(visibility.viewerPending).toMatchObject([{ placementId: 7, amount: 0, free: true }]);
   });
 });
 
@@ -3322,7 +3488,56 @@ describe('the free eligibility listing', () => {
       allowance: { used: 1, remaining: 0, resetsAt: new Date('2026-03-04') },
       usedHere: true,
       verifiedImageIds: [REMIX_IMAGE],
+      teamWaiver: null,
     });
+  });
+
+  it("names the team and what is left of today's waivers when one applies", async () => {
+    findTeamRemixWaiver.mockResolvedValue({ event: 'birthday2026', team: 'Pink', perDay: 10 });
+    displayCount.mockResolvedValue(3);
+
+    const { teamWaiver } = await eligibility();
+
+    expect(teamWaiver).toMatchObject({ team: 'Pink', remaining: 7 });
+    expect(teamWaiver?.resetsAt.toISOString()).toMatch(/T00:00:00\.000Z$/);
+    // Asked about this gallery's owner, on the replica: it is a listing.
+    expect(findTeamRemixWaiver).toHaveBeenCalledWith(
+      expect.objectContaining({ placerId: PLACER, ownerId: OWNER, hostImageId: HOST_IMAGE })
+    );
+    // Today's waived rows only: the free tier's own count is a different number.
+    expect(displayCount.mock.calls[0][1]).toMatchObject({
+      placerId: PLACER,
+      free: true,
+      createdAt: expect.any(Object),
+      data: { path: ['waiver'], equals: 'team' },
+    });
+  });
+
+  it('never reports a negative number of waivers left', async () => {
+    findTeamRemixWaiver.mockResolvedValue({ event: 'birthday2026', team: 'Pink', perDay: 10 });
+    displayCount.mockResolvedValue(12);
+
+    expect((await eligibility()).teamWaiver?.remaining).toBe(0);
+  });
+
+  it('reads a failing event lookup as no waiver, keeping the free option', async () => {
+    findTeamRemixWaiver.mockRejectedValue(new Error('flipt down'));
+    getFreePlacementAllowance.mockResolvedValue({
+      used: 0,
+      remaining: 1,
+      resetsAt: new Date('2026-03-04'),
+    });
+
+    const result = await eligibility();
+    expect(result.teamWaiver).toBeNull();
+    expect(result.allowance.remaining).toBe(1);
+  });
+
+  it('offers no waiver on your own gallery, without asking the event', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({ ...openSpace, ownerId: PLACER });
+
+    expect((await eligibility()).teamWaiver).toBeNull();
+    expect(findTeamRemixWaiver).not.toHaveBeenCalled();
   });
 
   it('asks the never-twice question about THIS surface and THIS host', async () => {
@@ -3652,5 +3867,106 @@ describe('Availability parameters are cast to the enum, not bound as text', () =
       `AND p."publishedAt" < now() AND p."availability" != $${n}::"Availability" ` +
         `AND i.ingestion = 'Scanned'`
     );
+  });
+});
+
+/**
+ * The writers of the hosts-with-entries negative cache (remix-gallery-hosts.cache): every insert of
+ * a remix-gallery placement busts its host after the row exists, and approval busts again. The set
+ * of writers is pinned by remix-gallery-hosts-writers.test.ts; this pins that each busts the right
+ * host, after its write, and that a refusal busts nothing.
+ */
+describe('busting the hosts-with-entries cache', () => {
+  const hostKey = `packed:caches:remix-gallery-hosts:${HOST_IMAGE}`;
+  const busts = () =>
+    vi
+      .mocked(redisMock.redis.packed.set)
+      .mock.calls.filter(([key]) => String(key).startsWith('packed:caches:remix-gallery-hosts:'))
+      .map((call) => call.slice(0, 3));
+  const BUST = [hostKey, { hostId: HOST_IMAGE, debounce: true }, { EX: 10 }];
+
+  beforeEach(() => {
+    vi.mocked(redisMock.redis.packed.set).mockImplementation((async (key: string) => {
+      if (key === hostKey) calls.push('bust');
+    }) as never);
+  });
+
+  it('a paid submission busts its host after the insert, before the escrow', async () => {
+    await submit();
+    expect(busts()).toEqual([BUST]);
+    expect(calls).toEqual(['create', 'bust', 'hold']);
+  });
+
+  it('a free submission busts its host once the free primitive has inserted', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    createFreePlacement.mockImplementation(async () => {
+      calls.push('free-insert');
+      return { id: FREE_PLACEMENT };
+    });
+    await submit({ free: true });
+    expect(busts()).toEqual([BUST]);
+    expect(calls).toEqual(['free-insert', 'bust']);
+  });
+
+  it('approval busts the host', async () => {
+    placementFindUnique.mockResolvedValue({
+      id: PLACEMENT,
+      ownerId: OWNER,
+      placerId: PLACER,
+      status: 'pending',
+      surface: 'remixGallery',
+      data: { imageId: REMIX_IMAGE },
+      targetId: HOST_IMAGE,
+    });
+    await actOnRemixGallerySubmission({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+    expect(busts()).toEqual([BUST]);
+  });
+
+  it('a refused submission busts nothing', async () => {
+    primeQueries({ submission: { ...goodSubmission, tosViolation: true } });
+    await expect(submit()).rejects.toThrow();
+    expect(busts()).toEqual([]);
+  });
+});
+
+describe('the reads moved off the Prisma query engine', () => {
+  it('the card summaries and the has-entries check run through Kysely only', async () => {
+    queryRaw.mockImplementation(async () => []);
+    await getRemixGalleryCardSummaries({ imageIds: [HOST_IMAGE], browsingLevel: 1 });
+    await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: 1,
+      domainLevels: 1,
+    });
+    const viaPrisma = [
+      ...dbMock.dbRead.$queryRaw.mock.calls,
+      ...dbMock.dbWrite.$queryRaw.mock.calls,
+    ]
+      .map(flatten)
+      .join(' ');
+    const viaKysely = kysely.read.mock.calls.map(flatten).join(' ');
+    for (const statement of [
+      'WITH visible AS',
+      'SELECT EXISTS',
+      'AS showable',
+      'SELECT DISTINCT pl."targetId"',
+    ]) {
+      expect(viaKysely, statement).toContain(statement);
+      expect(viaPrisma, statement).not.toContain(statement);
+    }
+  });
+
+  it('a host with no placement skips the has-entries check entirely', async () => {
+    kysely.read.mockImplementation(async (strings: readonly string[], ...values: unknown[]) =>
+      isHostsLookup(strings) ? [] : queryRaw(strings, ...values)
+    );
+    queryRaw.mockImplementation(async () => [{ nsfwLevel: 1, minor: false, showable: true }]);
+    const visibility = await getRemixGalleryVisibility({
+      hostImageId: HOST_IMAGE,
+      browsingLevel: 1,
+      domainLevels: 1,
+    });
+    expect(visibility.hasEntries).toBe(false);
+    expect(kysely.read.mock.calls.map(flatten).join(' ')).not.toContain('SELECT EXISTS');
   });
 });

@@ -59,6 +59,8 @@ const call = async ({
   licensingSourceVersionId = ANIMA_ROOT_VERSION_ID as number | null,
   omitSource = false,
   storedLicensingSourceVersionId = null as number | null,
+  extraInput = {} as Record<string, unknown>,
+  isModerator = false,
 }: {
   modelTypes: Record<number, string | null>;
   id?: number;
@@ -74,6 +76,8 @@ const call = async ({
   omitSource?: boolean;
   /** What the row being edited already holds — what a payload that omits the field falls back to. */
   storedLicensingSourceVersionId?: number | null;
+  extraInput?: Record<string, unknown>;
+  isModerator?: boolean;
 }) => {
   dbMock.dbWrite.licensingRoot.findUnique.mockResolvedValue(root);
   // Keyed on the argument, NOT a flat `mockResolvedValue`. A mock that ignores its `where` hands
@@ -109,9 +113,10 @@ const call = async ({
       usageControl: 'Download',
       licensingFee: null,
       ...(omitSource ? {} : { licensingSourceVersionId }),
+      ...extraInput,
     },
     ctx: {
-      user: { id: OWNER_ID, isModerator: false, meta: {} },
+      user: { id: OWNER_ID, isModerator, meta: {} },
       features: {},
       track: { modelVersionEvent: vi.fn().mockResolvedValue(undefined) },
     },
@@ -321,5 +326,47 @@ describe('upsertModelVersionHandler — a save that omits the stamp', () => {
   it('reads no root table when the stored row carries no source either', async () => {
     await call(omitting({ storedLicensingSourceVersionId: null }));
     expect(dbMock.dbWrite.licensingRoot.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('upsertModelVersionHandler — trainingStatus on create', () => {
+  it.each(['Denied', 'Paused'])(
+    'refuses a non-moderator creating a version as %s',
+    async (trainingStatus) => {
+      await expect(
+        call({ ...creating('LORA'), extraInput: { trainingStatus } })
+      ).rejects.toThrowError(/training status/i);
+
+      expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([['Pending'], ['Approved'], ['Submitted'], [undefined], [null]])(
+    'lets a non-moderator create with %s',
+    async (trainingStatus) => {
+      await call({ ...creating('LORA'), extraInput: { trainingStatus } });
+
+      expect(mockUpsertModelVersion).toHaveBeenCalled();
+    }
+  );
+
+  it('lets a moderator create as Denied', async () => {
+    await call({
+      ...creating('LORA'),
+      extraInput: { trainingStatus: 'Denied' },
+      isModerator: true,
+    });
+
+    expect(mockUpsertModelVersion).toHaveBeenCalled();
+  });
+
+  it('leaves an update to the service, which judges it against the stored value', async () => {
+    await call({
+      id: VERSION_ID,
+      modelTypes: { [PAYLOAD_MODEL_ID]: 'LORA' },
+      extraInput: { trainingStatus: 'Approved' },
+    });
+
+    expect(mockUpsertModelVersion).toHaveBeenCalled();
   });
 });

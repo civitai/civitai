@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { resolve } from 'path';
 import type * as ChildProcess from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,8 +14,14 @@ vi.mock('child_process', async (importOriginal) => ({
 
 // Lives under scripts/ because the daemon is not part of the app's module graph — same arrangement
 // as the rest of the queue's tests.
-const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath, RUN_KINDS } =
-  await import('../../.claude/skills/dev-server/scripts/test-queue.mjs');
+const {
+  defaultStartRun,
+  TestQueue,
+  cacheReporterArgv,
+  cacheReporterPath,
+  sharedCacheCorePath,
+  RUN_KINDS,
+} = await import('../../.claude/skills/dev-server/scripts/test-queue.mjs');
 
 const fakeChild = () => {
   const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
@@ -70,6 +77,44 @@ describe('the queued run does not re-enter the queue', () => {
     expect(env.CIVITAI_TEST_QUEUE_PROBE).toBe('kept');
 
     delete process.env.CIVITAI_TEST_QUEUE_PROBE;
+  });
+});
+
+describe('the run width is not overridden by an inherited VITEST_MAX_WORKERS', () => {
+  /**
+   * Vitest reads `VITEST_MAX_WORKERS` after it merges the CLI, so the daemon's own copy (4 on the
+   * desk's user env) beat every `--max-workers` this queue passed: 3-4 forks under
+   * `--max-workers=12`, and every full unit run timed out at 30 minutes (2026-10-20).
+   */
+  beforeEach(() => vi.stubEnv('VITEST_MAX_WORKERS', '4'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const envFor = (opts: { args?: string[]; maxWorkers?: number | null }) => {
+    const handle = defaultStartRun({
+      worktree: '/repo',
+      args: opts.args ?? [],
+      maxWorkers: opts.maxWorkers ?? null,
+      onLog: () => undefined,
+      onExit: () => undefined,
+    });
+    handle.dispose();
+    return (spawn.mock.calls[0][2] as { env: Record<string, string | undefined> }).env;
+  };
+
+  it("sets it to the queue's width", () => {
+    expect(envFor({ maxWorkers: 12 }).VITEST_MAX_WORKERS).toBe('12');
+  });
+
+  it("keeps a caller's own --max-workers, in either spelling", () => {
+    expect(envFor({ args: ['--max-workers=3'], maxWorkers: 12 }).VITEST_MAX_WORKERS).toBe('3');
+    vi.clearAllMocks();
+    spawn.mockReturnValue(fakeChild());
+    expect(envFor({ args: ['--maxWorkers', '5'], maxWorkers: 12 }).VITEST_MAX_WORKERS).toBe('5');
+  });
+
+  it('clears it for an uncapped run rather than inheriting the daemon value', () => {
+    const env = envFor({ maxWorkers: null });
+    expect('VITEST_MAX_WORKERS' in env ? env.VITEST_MAX_WORKERS : undefined).toBeUndefined();
   });
 });
 
@@ -217,6 +262,10 @@ describe('result cache on queued runs', () => {
   const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
   const envOf = (call: number) =>
     (spawn.mock.calls[call][2] as { env: Record<string, string> }).env;
+  // What a queued cache-on run of THIS file inherits; without it the env assertions below pass or
+  // fail depending on how the suite was launched.
+  beforeEach(() => vi.stubEnv('CIVITAI_TEST_CACHE_CORE', '/inherited/core.mjs'));
+  afterEach(() => vi.unstubAllEnvs());
   // The repo's own tree, so the reporter file really exists and the argv is not vacuously empty.
   const worktree = process.cwd();
   const reporter = cacheReporterPath(worktree);
@@ -263,6 +312,13 @@ describe('result cache on queued runs', () => {
     start({ cacheMode: 'on', kind: 'typecheck' });
     expect(argvOf(0)).toEqual(['run', 'typecheck']);
     expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+    expect(envOf(0).CIVITAI_TEST_CACHE_CORE).toBeUndefined();
+  });
+
+  it("points a cached run at the daemon's own key definition", () => {
+    start({ cacheMode: 'on' });
+    expect(envOf(0).CIVITAI_TEST_CACHE_CORE).toBe(resolve(__dirname, '../test-cache/core.mjs'));
+    expect(sharedCacheCorePath).toBe(resolve(__dirname, '../test-cache/core.mjs'));
   });
 
   /**

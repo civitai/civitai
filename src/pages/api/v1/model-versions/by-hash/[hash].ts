@@ -2,9 +2,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
 import { resModelVersionDetails } from '~/pages/api/v1/model-versions/[id]';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 const schema = z.object({
   hash: z.string().transform((hash) => hash.toUpperCase()),
@@ -39,7 +43,18 @@ export default PublicEndpoint(
       },
     })) ?? { modelVersion: null };
 
-    await resModelVersionDetails(req, res, modelVersion);
+    // Served at the same levels as /api/v1/model-versions/[id]: a version outside them is a 404. A
+    // version above SFW is answered differently by region, which the shared cache does not key on.
+    if (modelVersion && !Flags.hasFlag(sfwBrowsingLevelsFlag, modelVersion.nsfwLevel))
+      res.setHeader('Cache-Control', 'private, no-store');
+    const servable =
+      modelVersion && Flags.intersects(modelVersion.nsfwLevel, apiBrowsingLevel(req))
+        ? modelVersion
+        : null;
+
+    await resModelVersionDetails(req, res, servable, async () =>
+      getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }).then((session) => session?.user)
+    );
   },
   ['GET'],
   // A file's hash never changes; this mapping only shifts when a version is

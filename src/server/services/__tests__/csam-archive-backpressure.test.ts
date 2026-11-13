@@ -50,6 +50,47 @@ const csamBaseDir = await vi.hoisted(async () => {
   return nodePath.join(dirname, 'csam');
 });
 
+// CommentV3 rows for `userContentSections`, served the way the keyset scan asks for them.
+const v3 = vi.hoisted(() => ({
+  comments: [] as { id: number; userId: number; content: string }[],
+  calls: [] as {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+    orderBy?: string[];
+  }[],
+}));
+vi.mock('~/server/db/kyselyDb', () => {
+  type State = {
+    userId?: number;
+    afterId?: number;
+    take?: number;
+    orderBy?: string[];
+    ids?: number[];
+  };
+  const query = (state: State): Record<string, unknown> => ({
+    selectAll: () => query(state),
+    select: () => query(state),
+    orderBy: (...args: string[]) => query({ ...state, orderBy: args }),
+    where: (column: string, op: string, value: number | number[]) =>
+      op === 'in'
+        ? query({ ...state, ids: value as number[] })
+        : query({ ...state, [column === 'userId' ? 'userId' : 'afterId']: value }),
+    limit: (take: number) => query({ ...state, take }),
+    execute: async () => {
+      // A cursor that never advances fails here rather than hanging the test.
+      if (v3.calls.length > 50) throw new Error('CommentV3 scan did not end');
+      v3.calls.push(state);
+      if (state.ids) return v3.comments.filter((c) => state.ids!.includes(c.id));
+      return v3.comments
+        .filter(
+          (c) => c.userId === state.userId && (state.afterId === undefined || c.id > state.afterId)
+        )
+        .slice(0, state.take);
+    },
+  });
+  return { kyselyV3Read: { selectFrom: () => query({}) } };
+});
 // The other half of the redirect: `baseDir` only honours `env.DIRNAME` when `isProd`. Scoped to
 // this file's module graph — no `process.cwd()` monkey-patching, which would leak to every other
 // file sharing the worker.
@@ -75,6 +116,7 @@ type ArchiveProbe = {
   peakRetainedBytes: number;
   entryNames: string[];
   options: { zlib?: { level?: number } } | undefined;
+  archive: Archiver;
 };
 const probes: ArchiveProbe[] = [];
 
@@ -94,6 +136,7 @@ vi.mock('archiver', async (importOriginal) => {
         peakRetainedBytes: 0,
         entryNames: [],
         options: options as ArchiveProbe['options'],
+        archive,
       };
       probes.push(probe);
       let retained = 0;
@@ -123,16 +166,54 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
   fetchBlob: (...args: unknown[]) => mockFetchBlob(...args),
 }));
 
+vi.mock('~/server/utils/archive-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  // Short, so the stuck-read test is quick; a second past the abort test's limit, so that test sees the abort.
+  FAILED_ARCHIVE_SETTLE_MS: 2_500,
+}));
+
+// Holds a large original's spool-dir mkdir, as a busy fs threadpool does.
+const spoolMkdir = vi.hoisted(() => ({ delayMs: 0, held: 0 }));
+vi.mock('fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof fsAsync>();
+  const mkdir = (async (dir: string, options?: unknown) => {
+    if (spoolMkdir.delayMs > 0 && String(dir).endsWith('/spool')) {
+      spoolMkdir.held++;
+      await new Promise((resolve) => setTimeout(resolve, spoolMkdir.delayMs));
+    }
+    return real.mkdir(dir, options as never);
+  }) as typeof real.mkdir;
+  return { ...real, mkdir, default: { ...real, mkdir } };
+});
+
+const getObjectKeys: string[] = [];
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getImageUploadBackend: async () => ({
+    bucket: 'test-images',
+    backend: 'backblaze',
+    s3: {
+      send: (command: { input: GetObjectInput }, options?: { abortSignal?: AbortSignal }) => {
+        getObjectKeys.push(command.input.Key);
+        return mockGetObject(command.input.Key, command.input, options?.abortSignal);
+      },
+    },
+  }),
+}));
+
 /**
  * Captures every uploaded object by its S3 key. The service deletes its scratch directories
  * before returning, so what reaches this mock is the only observable copy of what was archived —
  * which makes it the right place to assert bundle CONTENT.
  */
 const uploads = new Map<string, Buffer>();
+const uploadedKeys: string[] = [];
 let uploadFailure: Error | undefined;
 
-vi.mock('@aws-sdk/lib-storage', () => ({
-  Upload: class {
+// Both AWS mocks carry `default`: the packages are pre-bundled for CJS interop, so consumers
+// resolve through `default`, and an `importOriginal` spread would hand them the real client there.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {
     private readonly body: NodeJS.ReadableStream;
     private readonly key: string;
     constructor({ params }: { params: { Body: NodeJS.ReadableStream; Key: string } }) {
@@ -147,38 +228,67 @@ vi.mock('@aws-sdk/lib-storage', () => ({
       }
       if (uploadFailure) throw uploadFailure;
       uploads.set(this.key.slice(this.key.indexOf('_') + 1), Buffer.concat(chunks));
-      return {};
+      uploadedKeys.push(this.key);
+      return { ETag: `"etag-${uploadedKeys.length}"` };
     }
-  },
-}));
+  };
+  return { Upload, default: { Upload } };
+});
 
-vi.mock('@aws-sdk/client-s3', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  S3Client: class {
-    send() {
-      return Promise.resolve({});
-    }
-    destroy() {
-      return undefined;
-    }
-  },
-}));
+vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
+  const mocked = {
+    ...(await importOriginal<Record<string, unknown>>()),
+    S3Client: class {
+      send() {
+        return Promise.resolve({});
+      }
+      destroy() {
+        return undefined;
+      }
+    },
+  };
+  return { ...mocked, default: mocked };
+});
 
 vi.mock('~/server/http/orchestrator/flagged-consumers', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getConsumerStrikes: (...args: unknown[]) => mockGetConsumerStrikes(...args),
 }));
 
+vi.mock('~/server/services/file.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getFileForModelVersion: (...args: unknown[]) => mockGetFileForModelVersion(...args),
+}));
+
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
+type GetObjectInput = { Key: string; Range?: string; IfMatch?: string };
+let mockGetObject: (
+  key: string,
+  input: GetObjectInput,
+  abortSignal?: AbortSignal
+) => Promise<unknown>;
+const mockGetFileForModelVersion: (...args: unknown[]) => unknown = async () => ({
+  status: 'not-found',
+});
 let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 
 import {
   archiveCsamDataForReport,
+  archiveUserComments,
   ARCHIVE_SCAN_PAGE_SIZE,
+  CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS,
   getCsamsToArchive,
 } from '~/server/services/csam.service-new';
+import { createHash } from 'crypto';
+import { Readable } from 'stream';
+import fsAsync from 'fs/promises';
+import type { ReadStream } from 'fs';
+import JSZip from 'jszip';
+import { logToAxiom } from '~/server/logging/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { readZipEntryCount } from '~/server/services/csam-archive-evidence.service';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { FlaggedConsumerFetchError } from '~/server/http/orchestrator/flagged-consumers';
 import {
   MAX_PENDING_ARCHIVE_ENTRIES,
   MEDIA_ARCHIVE_COMPRESSION_LEVEL,
@@ -187,7 +297,16 @@ import {
 // Overshoot the bound by a wide, non-multiple margin so the fixture cannot sit on the boundary
 // it is testing. Invented figures — the real report was a different size entirely.
 const IMAGE_COUNT = 53;
+const MANIFEST_ENTRIES = 1;
 const IMAGE_BYTES = 97 * 1024;
+
+function fakeObject(bytes: number, contentType = 'image/jpeg') {
+  return {
+    Body: { transformToByteArray: async () => new Uint8Array(Buffer.alloc(bytes, 0xab)) },
+    ContentType: contentType,
+    ContentLength: bytes,
+  };
+}
 
 function fakeBlob(bytes: number) {
   return {
@@ -203,7 +322,13 @@ beforeEach(() => {
   probes.length = 0;
   uploads.clear();
   uploadFailure = undefined;
+  getObjectKeys.length = 0;
+  spoolMkdir.delayMs = 0;
+  spoolMkdir.held = 0;
+  // A regression to the edge copy must fail here, not reach the network.
+  vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected network fetch'));
   mockFetchBlob = async () => fakeBlob(IMAGE_BYTES);
+  mockGetObject = async () => fakeObject(IMAGE_BYTES);
   mockGetConsumerStrikes = async () => [];
   setEnv({
     CSAM_UPLOAD_KEY: 'test-key',
@@ -229,6 +354,100 @@ describe('getCsamsToArchive', () => {
     const args = dbMock.dbRead.csamReport.findMany.mock.calls.at(-1)?.[0];
     expect(args?.orderBy).toBeDefined();
     expect(args?.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('leaves out a report whose archive was skipped, so it is not retried every run', async () => {
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
+      { id: 1, details: {} },
+      { id: 2, details: { archiveSkipped: 'training data not found' } },
+      { id: 3, details: null },
+    ] as never);
+    const reports = await getCsamsToArchive();
+    expect(reports.map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  it('leaves reports it cannot archive unstamped and counts them, while the rest archive', async () => {
+    const generatorEvidence = {
+      id: 11,
+      userId: 707070,
+      reportedById: 5,
+      type: 'GeneratedImage',
+      reportSentAt: new Date(),
+      details: {
+        generatedImages: [
+          { jobId: 'job-1', source: 'workflow', blobs: [{ blobId: 'b1', status: 'preserved' }] },
+        ],
+        generatorEvidence: { version: 1, approvedAt: new Date().toISOString() },
+      },
+      images: [],
+    };
+    const control = {
+      id: 12,
+      userId: 717171,
+      reportedById: 5,
+      type: 'Image',
+      details: {},
+      images: [],
+    };
+    const namesNoUrl = { id: 13, userId: 727272, type: 'GeneratedImage', details: {}, images: [] };
+    dbMock.dbRead.csamReport.findMany.mockResolvedValueOnce([
+      generatorEvidence,
+      control,
+      namesNoUrl,
+    ] as never);
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: control.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+
+    // The job's loop: archive what was selected.
+    for (const report of await getCsamsToArchive()) await archiveCsamDataForReport(report);
+
+    const stampedIds = dbMock.dbWrite.csamReport.update.mock.calls
+      .map(([args]) => args as { where: { id: number }; data: { archivedAt?: unknown } })
+      .filter((args) => args.data.archivedAt instanceof Date)
+      .map((args) => args.where.id);
+    expect(stampedIds).toEqual([control.id]);
+    expect(
+      vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .filter((p) => p.subType === 'archive-skipped-unsupported')
+    ).toEqual([
+      expect.objectContaining({ count: 1, reason: 'generator evidence archive not supported' }),
+      expect.objectContaining({ count: 1, reason: 'no generated image URL to archive' }),
+    ]);
+  });
+});
+
+describe('archiveCsamDataForReport (TrainingData report, training data missing)', () => {
+  const report = {
+    id: 4545,
+    userId: 919191,
+    reportedById: 5,
+    reportId: 79,
+    type: 'TrainingData',
+    details: { modelVersionIds: [31] },
+    images: [],
+  };
+
+  it('records the skip and leaves archivedAt unset, so the report still holds evidence', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId, username: 'u' });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'training data not found'
+    );
+
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith({
+      where: { id: report.id },
+      data: { details: { modelVersionIds: [31], archiveSkipped: 'training data not found' } },
+    });
   });
 });
 
@@ -281,7 +500,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
     // because it is the only counter that reads IMAGE_COUNT on BOTH the fixed and the unfixed
     // code — asserting the processed count instead would kill this test on the un-awaited
     // finalize defect before the bound assertion below ever ran, i.e. green for the wrong reason.
-    expect(imageArchive!.appended).toBe(IMAGE_COUNT);
+    expect(imageArchive!.appended).toBe(IMAGE_COUNT + MANIFEST_ENTRIES);
 
     // The regression. Pre-fix this reads IMAGE_COUNT, because every append was fire-and-forget.
     expect(imageArchive!.peakOutstanding).toBeLessThanOrEqual(MAX_PENDING_ARCHIVE_ENTRIES);
@@ -300,8 +519,8 @@ describe('archiveCsamDataForReport (Image report)', () => {
     // Pre-fix `archive.finalize()` was not awaited, so this returned with the archive still
     // draining and `fs.createReadStream(outPath)` opened a partial file.
     const imageArchive = probes.find((p) => p.appended > 0);
-    expect(imageArchive!.appended).toBe(IMAGE_COUNT);
-    expect(imageArchive!.processed).toBe(IMAGE_COUNT);
+    expect(imageArchive!.appended).toBe(IMAGE_COUNT + 1);
+    expect(imageArchive!.processed).toBe(IMAGE_COUNT + 1);
   });
 
   it('archives every image exactly once — backpressure must not change what is stored', async () => {
@@ -310,10 +529,10 @@ describe('archiveCsamDataForReport (Image report)', () => {
     await archiveCsamDataForReport(report as never);
 
     const imageArchive = probes.find((p) => p.appended > 0);
-    expect(imageArchive!.entryNames).toHaveLength(IMAGE_COUNT);
-    expect(new Set(imageArchive!.entryNames).size).toBe(IMAGE_COUNT);
-    expect(imageArchive!.entryNames).toContain('picture-0.jpeg');
-    expect(imageArchive!.entryNames).toContain(`picture-${IMAGE_COUNT - 1}.jpeg`);
+    const imageEntries = imageArchive!.entryNames.filter((n) => n !== 'manifest.json');
+    expect(imageEntries).toHaveLength(IMAGE_COUNT);
+    expect(imageEntries).toContain('1.jpeg');
+    expect(imageEntries).toContain(`${IMAGE_COUNT}.jpeg`);
   });
 
   it('archives images from EVERY page, not just the first round-trip', async () => {
@@ -346,18 +565,18 @@ describe('archiveCsamDataForReport (Image report)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue([]);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
-    mockFetchBlob = async () => fakeBlob(8);
+    mockGetObject = async () => fakeObject(8);
 
     await archiveCsamDataForReport(report as never);
 
     const imageArchive = probes.find((p) => p.appended > 0);
     expect(imageArchive, 'no archive received any entries').toBeDefined();
-    expect(imageArchive!.entryNames).toHaveLength(TOTAL);
+    expect(imageArchive!.entryNames).toHaveLength(TOTAL + 1);
     // Named explicitly at both ends of the boundary: the last entry of page 1, the first of
     // page 2, and the last overall.
-    expect(imageArchive!.entryNames).toContain(`picture-${PAGE_SIZE - 1}.jpeg`);
-    expect(imageArchive!.entryNames).toContain(`picture-${PAGE_SIZE}.jpeg`);
-    expect(imageArchive!.entryNames).toContain(`picture-${TOTAL - 1}.jpeg`);
+    expect(imageArchive!.entryNames).toContain(`${PAGE_SIZE}.jpeg`);
+    expect(imageArchive!.entryNames).toContain(`${PAGE_SIZE + 1}.jpeg`);
+    expect(imageArchive!.entryNames).toContain(`${TOTAL}.jpeg`);
     // The bound still holds across page boundaries — a per-page drain must not become a
     // per-page burst.
     expect(imageArchive!.peakOutstanding).toBeLessThanOrEqual(MAX_PENDING_ARCHIVE_ENTRIES);
@@ -394,7 +613,7 @@ describe('archiveCsamDataForReport (Image report)', () => {
         return rows.filter((row) => row.id > (after ?? 0)).slice(0, args.take ?? rows.length);
       }
     );
-    mockFetchBlob = async () => fakeBlob(8);
+    mockGetObject = async () => fakeObject(8);
 
     const realCreateWriteStream = fs.createWriteStream;
     const created: fs.WriteStream[] = [];
@@ -455,9 +674,66 @@ describe('archiveCsamDataForReport (Image report)', () => {
     );
   });
 
+  it('records each stored object, and how many of the images the report names it holds', async () => {
+    seedDb();
+    // Image ids run 1..IMAGE_COUNT and image N's url is `image-uuid-${N - 1}`.
+    const unfetchable = `image-uuid-${IMAGE_COUNT - 1}`;
+    const notAnImage = `image-uuid-${IMAGE_COUNT - 2}`;
+    mockGetObject = async (key) => {
+      if (key === unfetchable || key === notAnImage)
+        throw Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+      return fakeObject(8);
+    };
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+      String(input).includes(notAnImage)
+        ? new Response('<html></html>', { headers: { 'content-type': 'text/html' } })
+        : new Response('not found', { status: 404 })
+    );
+    uploadedKeys.length = 0;
+
+    await archiveCsamDataForReport({
+      ...report,
+      images: [{ id: 1 }, { id: IMAGE_COUNT - 1 }, { id: IMAGE_COUNT }],
+    } as never);
+
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toEqual([
+      {
+        csamReportId: report.id,
+        kind: 'base',
+        key: uploadedKeys.find((k) => k.endsWith('data.json')),
+        etag: expect.stringMatching(/^"etag-\d+"$/),
+      },
+      {
+        csamReportId: report.id,
+        kind: 'images',
+        key: uploadedKeys.find((k) => k.endsWith('images.zip')),
+        etag: expect.stringMatching(/^"etag-\d+"$/),
+        entries: IMAGE_COUNT - 2 + MANIFEST_ENTRIES,
+        namedExpected: 3,
+        namedMissing: 2,
+      },
+    ]);
+    // The count recorded is the count in the archive that was stored.
+    const storage = {
+      send: async (command: { input: { Range?: string } }) => {
+        const bytes = uploads.get('images.zip')!;
+        const n = Number(command.input.Range?.match(/^bytes=-(\d+)$/)?.[1] ?? bytes.length);
+        const slice = bytes.subarray(Math.max(0, bytes.length - n));
+        return { Body: { transformToByteArray: async () => new Uint8Array(slice) } };
+      },
+    };
+    expect(await readZipEntryCount(storage as never, 'bucket', 'images.zip')).toBe(
+      rows?.[1]?.entries
+    );
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
+    );
+  });
+
   it('does not stamp archivedAt when the archive fails', async () => {
     seedDb();
-    mockFetchBlob = async () => {
+    mockGetObject = async () => {
       throw new Error('synthetic download failure');
     };
 
@@ -535,6 +811,154 @@ describe('archiveCsamDataForReport (GeneratedImage report)', () => {
     expect(zipSinks[0].destroyed).toBe(true);
   });
 
+  it('archives the blobs the report names, and counts the ones it could not fetch', async () => {
+    const named = ['https://example.invalid/named-0.jpeg', 'https://example.invalid/named-1.jpeg'];
+    mockFetchBlob = async (url: unknown) => (url === named[1] ? null : fakeBlob(8));
+
+    await archiveCsamDataForReport({
+      ...report,
+      reportSentAt: new Date(Date.now() - CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS * 3_600_000),
+      details: { generatedImages: [{ jobId: 'job-1', blobs: named.map((url) => ({ url })) }] },
+    } as never);
+
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: 'generatedImages',
+        entries: IMAGE_COUNT + 1,
+        namedExpected: 2,
+        namedMissing: 1,
+      })
+    );
+  });
+
+  const generatedLine = () =>
+    vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-generated-images');
+  const stamped = () =>
+    dbMock.dbWrite.csamReport.update.mock.calls.some(
+      ([args]) => (args as { data?: { archivedAt?: unknown } }).data?.archivedAt instanceof Date
+    );
+  const sentHoursAgo = (hours: number) => ({
+    ...report,
+    reportSentAt: new Date(Date.now() - hours * 3_600_000),
+  });
+  const rejectOne = (failing: string) => async (url: unknown) => {
+    if (url === failing) throw new Error('synthetic timeout');
+    return fakeBlob(8);
+  };
+
+  it('keeps failing the pass on a download that rejects, until the give-up window ends', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await expect(
+      archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
+    ).rejects.toThrow('synthetic timeout');
+    expect(stamped()).toBe(false);
+  });
+
+  it('archives the rest and counts the download it gave up on', async () => {
+    mockFetchBlob = rejectOne('https://example.invalid/blob-3.jpeg');
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ kind: 'generatedImages', entries: IMAGE_COUNT - 1 })
+    );
+    const line = generatedLine();
+    expect(line).toMatchObject({
+      reportId: report.id,
+      expected: IMAGE_COUNT,
+      strikeUrls: IMAGE_COUNT,
+      entries: IMAGE_COUNT - 1,
+      unreadable: 1,
+      type: 'error',
+    });
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).not.toContain('example.invalid');
+    expect(logged).not.toContain('synthetic timeout');
+  });
+
+  it('counts a body that is not media as unreadable after the window', async () => {
+    mockFetchBlob = async (url: unknown) =>
+      url === 'https://example.invalid/blob-3.jpeg'
+        ? { ...fakeBlob(8), type: 'text/html' }
+        : fakeBlob(8);
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(generatedLine()).toMatchObject({ unreadable: 1, type: 'error' });
+  });
+
+  it('stamps a pass that read nothing once the give-up window has passed', async () => {
+    mockFetchBlob = async () => null;
+
+    await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+
+    expect(stamped()).toBe(true);
+    expect(generatedLine()).toMatchObject({ entries: 0, unreadable: IMAGE_COUNT });
+  });
+
+  it('archives the blobs the report names when the strikes list is not found', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(404, 'Not Found');
+    };
+    const named = 'https://example.invalid/named-0.jpeg';
+
+    await archiveCsamDataForReport({
+      ...report,
+      details: { generatedImages: [{ jobId: 'job-1', blobs: [{ url: named }] }] },
+    } as never);
+
+    expect(stamped()).toBe(true);
+    expect(probes.flatMap((p) => p.entryNames)).toEqual(['named-0.jpeg']);
+    expect(generatedLine()).toMatchObject({
+      strikesNotFound: true,
+      strikeUrls: 0,
+      entries: 1,
+      type: 'info',
+    });
+  });
+
+  it('fails the pass when the strikes list fails any other way', async () => {
+    mockGetConsumerStrikes = async () => {
+      throw new FlaggedConsumerFetchError(503, 'Service Unavailable');
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('503');
+    expect(stamped()).toBe(false);
+  });
+
+  it('fails the pass, inside the window, on an error status or a body that is not media', async () => {
+    for (const answer of [null, { ...fakeBlob(8), type: 'text/html' }]) {
+      mockFetchBlob = async (url: unknown) =>
+        url === 'https://example.invalid/blob-3.jpeg' ? answer : fakeBlob(8);
+
+      await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+        'a generated image gave no media'
+      );
+      expect(stamped()).toBe(false);
+    }
+  });
+
+  it('stops queued downloads once the pass has failed', async () => {
+    let calls = 0;
+    mockFetchBlob = async () => {
+      calls += 1;
+      return null;
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'a generated image gave no media'
+    );
+    // At most the first round of the concurrency limit was started.
+    expect(calls).toBeLessThanOrEqual(10);
+  });
+
   it('holds a bounded number of generated-image buffers', async () => {
     await archiveCsamDataForReport(report as never);
 
@@ -597,11 +1021,20 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
   }));
   const models = [{ id: 11, name: 'm-eleven', userId: report.userId }];
   const modelVersions = [{ id: 21, modelId: 11, name: 'v-twenty-one' }];
+  const comments = [{ id: 31, userId: report.userId, content: 'a comment' }];
 
-  /** Exactly the document the pre-fix code produced, built the pre-fix way. */
+  /** Exactly the document `JSON.stringify` would produce, in the bundle's property order. */
   const expectedBundle = () =>
-    JSON.stringify({ user, reportId: report.reportId, models, modelVersions, images }, (_k, v) =>
-      typeof v === 'bigint' ? v.toString() : v
+    JSON.stringify(
+      {
+        user,
+        reportId: report.reportId,
+        models,
+        modelVersions,
+        images,
+        comments,
+      },
+      (_k, v) => (typeof v === 'bigint' ? v.toString() : v)
     );
 
   function seedDb() {
@@ -610,6 +1043,8 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     dbMock.dbRead.model.findMany.mockResolvedValue(models);
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue(modelVersions);
     dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    v3.comments = comments;
+    v3.calls = [];
   }
 
   /**
@@ -725,6 +1160,44 @@ describe('archiveCsamDataForReport (base evidence bundle)', () => {
     expect(cursors.slice(0, 3)).toEqual([undefined, pageSize, 2 * pageSize]);
   });
 
+  it("archives every comment the reported user wrote, page by page, and nobody else's", async () => {
+    const pageSize = ARCHIVE_SCAN_PAGE_SIZE;
+    seedDb();
+    v3.comments = [
+      ...Array.from({ length: pageSize + 1 }, (_, i) => ({
+        id: i + 1,
+        userId: report.userId,
+        content: `c${i + 1}`,
+      })),
+      { id: pageSize + 2, userId: report.userId + 1, content: 'not theirs' },
+    ];
+
+    await archiveCsamDataForReport(report as never);
+
+    const bundle = JSON.parse(uploads.get('data.json')!.toString('utf8'));
+    expect(bundle.comments.map((c: { id: number }) => c.id)).toEqual(
+      Array.from({ length: pageSize + 1 }, (_, i) => i + 1)
+    );
+    expect(v3.calls).toHaveLength(2);
+    expect(v3.calls[0].orderBy).toEqual(['id', 'asc']);
+    expect(v3.calls[1]).toMatchObject({ afterId: pageSize, take: pageSize });
+  });
+
+  it("archives a held user's comments on their own", async () => {
+    seedDb();
+    v3.comments = [
+      { id: 1, userId: report.userId, content: 'c1' },
+      { id: 2, userId: report.userId, content: 'c2' },
+      { id: 3, userId: report.userId + 1, content: 'not theirs' },
+    ];
+    const result = await archiveUserComments(report.userId);
+
+    const archive = JSON.parse(uploads.get('comments.json')!.toString('utf8'));
+    expect(archive.userId).toBe(report.userId);
+    expect(archive.comments.map((c: { id: number }) => c.id)).toEqual([1, 2]);
+    expect(result.comments).toBe(2);
+  });
+
   it('filters model versions by the COMPLETE set of model ids, not a partially-scanned one', async () => {
     // The ordering invariant in `archiveBaseReportData`: `modelVersions` is filtered by ids
     // accumulated while `models` streams, so its first query must not be issued until that scan
@@ -782,6 +1255,43 @@ describe('archiveCsamDataForReport (upload failure)', () => {
   });
 });
 
+describe('archiveCsamDataForReport (generated-image report as sent)', () => {
+  const report = {
+    id: 4747,
+    userId: 606060,
+    reportedById: 5,
+    reportId: 82,
+    type: 'GeneratedImage',
+    // As the send leaves it: the filed jobs, and NCMEC's upload results beside them.
+    details: {
+      generatedImages: [
+        { jobId: 'job-1', blobs: [{ url: 'https://example.invalid/filed-1.jpeg' }], prompt: 'p' },
+      ],
+      generatedImageUploads: [
+        { url: 'https://example.invalid/filed-1.jpeg', fileId: 'file-1', hash: 'h' },
+      ],
+    },
+    images: [],
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([]);
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+  });
+
+  it('archives the filed generated images', async () => {
+    await archiveCsamDataForReport(report as never);
+
+    expect(probes.flatMap((p) => p.entryNames)).toContain('filed-1.jpeg');
+    expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
+    );
+  });
+});
+
 describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
   const report = {
     id: 4646,
@@ -828,6 +1338,654 @@ describe('archiveCsamDataForReport (unnameable generated-image URL)', () => {
     expect(dbMock.dbWrite.csamReport.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ archivedAt: expect.any(Date) }) })
     );
+  });
+});
+
+describe('archiveCsamDataForReport (Image report, byte budget)', () => {
+  const MiB = 1024 * 1024;
+  const report = {
+    id: 4848,
+    userId: 303030,
+    reportedById: 5,
+    reportId: 83,
+    type: 'Image',
+    details: {},
+    images: [],
+  };
+  // Over the spool threshold, so each is read in ranged parts; the budget acts on the object's size.
+  const declared: Record<string, number> = {
+    'big-1': 200 * MiB,
+    'big-2': 200 * MiB,
+    'big-3': 200 * MiB,
+    oversize: 300 * MiB,
+  };
+  const rows = Object.keys(declared).map((url, i) => ({ id: i + 1, url, type: 'image' }));
+  let bodiesRead = 0;
+  let peakReadsAhead = 0;
+
+  beforeEach(() => {
+    bodiesRead = 0;
+    peakReadsAhead = 0;
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    mockGetObject = async (key, input) => {
+      const size = declared[key];
+      if (!input.Range)
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(0), destroy: () => undefined },
+          ContentType: 'image/png',
+          ContentLength: size,
+          ETag: '"etag"',
+        };
+      const [start, end] = input.Range.replace('bytes=', '').split('-').map(Number);
+      return {
+        Body: {
+          transformToByteArray: async () => {
+            if (start === 0) {
+              bodiesRead++;
+              // Objects started but not yet written by the archiver: what the budget holds.
+              const written = probes.at(-1)?.processed ?? 0;
+              peakReadsAhead = Math.max(peakReadsAhead, bodiesRead - written);
+            }
+            return new Uint8Array(end - start + 1);
+          },
+          destroy: () => undefined,
+        },
+        ContentRange: `bytes ${start}-${end}/${size}`,
+        ETag: '"etag"',
+      };
+    };
+  });
+
+  it('holds one large original at a time, and still archives one larger than the budget', async () => {
+    await archiveCsamDataForReport(report as never);
+
+    const imageArchive = probes.find((p) => p.appended > 0);
+    expect(bodiesRead).toBe(rows.length);
+    expect(imageArchive!.entryNames).toContain('4.png');
+    expect(peakReadsAhead).toBe(1);
+  });
+
+  it('rejects instead of hanging when a read fails while others wait on the budget', async () => {
+    const base = mockGetObject;
+    mockGetObject = async (key, input) => {
+      if (key === 'big-2')
+        throw Object.assign(new Error('synthetic storage outage'), {
+          name: 'InternalError',
+          $metadata: { httpStatusCode: 500 },
+        });
+      return base(key, input);
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 5_000)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
+    // The reader holding the budget is stopped and those parked on it are refused, so no body is read.
+    expect(bodiesRead).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(bodiesRead).toBe(0);
+  });
+
+  it('starts no read after a failed archive, and leaves its scratch dir removed', async () => {
+    // The original that holds the budget is still creating its spool dir when the archive fails.
+    spoolMkdir.delayMs = 200;
+    const base = mockGetObject;
+    const sends: { key: string; ranged: boolean }[] = [];
+    mockGetObject = async (key, input) => {
+      sends.push({ key, ranged: !!input.Range });
+      if (key === 'big-2')
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      return base(key, input);
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'synthetic storage outage'
+    );
+    // Past the held mkdir, so a read that outlived the archive would have started by now.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // The hold applied: without it this test proves nothing.
+    expect(spoolMkdir.held).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(csamBaseDir, 'images', String(report.id)))).toBe(false);
+    expect(sends.filter((send) => send.ranged)).toEqual([]);
+  });
+
+  it('rejects promptly when a read in flight is stopped by the failure', async () => {
+    let holderReading!: () => void;
+    const holderStarted = new Promise<void>((resolve) => (holderReading = resolve));
+    const base = mockGetObject;
+    mockGetObject = async (key, input, abortSignal) => {
+      if (key === 'big-2') {
+        // Fails only once another original is mid-read.
+        await holderStarted;
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      }
+      if (!input.Range) return base(key, input);
+      holderReading();
+      // A part that never arrives: only an abort ends it.
+      return new Promise((_, reject) => {
+        if (abortSignal?.aborted) reject(abortSignal.reason);
+        abortSignal?.addEventListener('abort', () => reject(abortSignal.reason));
+      });
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 1_500)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
+  });
+
+  it('still rejects when a read in flight ignores the stop', async () => {
+    let holderReading!: () => void;
+    const holderStarted = new Promise<void>((resolve) => (holderReading = resolve));
+    const base = mockGetObject;
+    mockGetObject = async (key, input) => {
+      if (key === 'big-2') {
+        await holderStarted;
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      }
+      if (!input.Range) return base(key, input);
+      holderReading();
+      // A part that never arrives, abort or not.
+      return new Promise(() => undefined);
+    };
+
+    const outcome = await Promise.race([
+      archiveCsamDataForReport(report as never).then(
+        () => 'resolved',
+        (e: Error) => e.message
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 4_000)),
+    ]);
+
+    expect(outcome).toBe('synthetic storage outage');
+  });
+});
+
+describe('archiveCsamDataForReport (Image report, failed read)', () => {
+  const ROWS = 30;
+
+  it('starts no further reads once one has failed', async () => {
+    const rows = Array.from({ length: ROWS }, (_, i) => ({
+      id: i + 1,
+      url: `key-${i + 1}`,
+      type: 'image',
+    }));
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 202020 });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    mockGetObject = async (key) => {
+      if (key === 'key-1')
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return fakeObject(8);
+    };
+
+    await expect(
+      archiveCsamDataForReport({
+        id: 4949,
+        userId: 202020,
+        reportedById: 5,
+        reportId: 84,
+        type: 'Image',
+        details: {},
+        images: [],
+      } as never)
+    ).rejects.toThrow('synthetic storage outage');
+    // Let any read still queued behind the concurrency limit start, if it is going to.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const reads = getObjectKeys.filter((key) => key.startsWith('key-'));
+    expect(reads.length).toBeGreaterThan(1);
+    expect(reads.length).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('archiveCsamDataForReport (Image report, stored originals)', () => {
+  const report = {
+    id: 4747,
+    userId: 404040,
+    reportedById: 5,
+    reportId: 82,
+    type: 'Image',
+    details: {},
+    images: [],
+  };
+  const stored = Buffer.from('stored original bytes');
+  const edge = Buffer.from('edge copy bytes');
+  const rows = [
+    { id: 7, url: 'key-seven', name: '../../not a name.png', type: 'image', mimeType: null },
+    { id: 8, url: 'key-eight', name: 'eight.jpeg', type: 'image', mimeType: 'image/jpeg' },
+    { id: 9, url: 'key-nine', name: 'nine.mp4', type: 'video', mimeType: 'video/mp4' },
+  ];
+  const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
+
+  beforeEach(() => {
+    dbMock.dbRead.image.findMany.mockImplementation(
+      async (args: { where?: { id?: { gt?: number } } } = {}) =>
+        rows.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+    );
+    dbMock.dbRead.user.findUnique.mockResolvedValue({ id: report.userId });
+    dbMock.dbRead.model.findMany.mockResolvedValue([]);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([]);
+    dbMock.dbWrite.csamReport.update.mockResolvedValue({});
+    mockGetObject = async (key) => {
+      if (key === 'key-seven')
+        return {
+          Body: { transformToByteArray: async () => new Uint8Array(stored) },
+          ContentType: 'image/webp',
+          ContentLength: stored.length,
+        };
+      throw Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+      String(input).includes('key-eight')
+        ? new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
+        : new Response('not found', { status: 404 })
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function archivedZip() {
+    await archiveCsamDataForReport(report as never);
+    const zip = uploads.get('images.zip');
+    expect(zip, 'images.zip was never uploaded').toBeDefined();
+    return JSZip.loadAsync(zip!);
+  }
+
+  it('archives a stored object of an undeclared type as .bin, and still counts it as held', async () => {
+    const base = mockGetObject;
+    mockGetObject = async (key, input) =>
+      key === 'key-seven'
+        ? {
+            Body: { transformToByteArray: async () => new Uint8Array(stored) },
+            ContentType: 'application/hta',
+            ContentLength: stored.length,
+          }
+        : base(key, input);
+
+    await archiveCsamDataForReport({ ...report, images: [{ id: 7 }] } as never);
+    const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+
+    expect(Object.keys(zip.files)).toContain('7.bin');
+    const rows = dbMock.dbWrite.csamReportArchiveObject.createMany.mock.calls.at(-1)?.[0]?.data;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ kind: 'images', namedExpected: 1, namedMissing: 0 })
+    );
+  });
+
+  it('reads each image from storage by its key, not through the edge', async () => {
+    await archivedZip();
+    expect(getObjectKeys.sort()).toEqual(['key-eight', 'key-nine', 'key-seven']);
+    const fetched = vi.mocked(globalThis.fetch).mock.calls.map(([url]) => String(url));
+    expect(fetched.some((url) => url.includes('key-seven'))).toBe(false);
+  });
+
+  it('stores the original bytes under an id-based name with an extension from the content type', async () => {
+    const zip = await archivedZip();
+    expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+    expect((await zip.file('7.webp')!.async('nodebuffer')).equals(stored)).toBe(true);
+    expect((await zip.file('8.jpeg')!.async('nodebuffer')).equals(edge)).toBe(true);
+  });
+
+  describe('a full URL whose host keeps failing', () => {
+    beforeEach(() => {
+      const withFullUrl = [
+        ...rows,
+        { id: 10, url: 'https://image.civitai.com/legacy/ten.png', name: 'ten.png', type: 'image' },
+      ];
+      dbMock.dbRead.image.findMany.mockImplementation(
+        async (args: { where?: { id?: { gt?: number } } } = {}) =>
+          withFullUrl.filter((row) => row.id > (args.where?.id?.gt ?? 0))
+      );
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
+        String(input).includes('ten.png')
+          ? new Response('unavailable', { status: 503 })
+          : String(input).includes('key-eight')
+          ? new Response(new Uint8Array(edge), { headers: { 'content-type': 'image/jpeg' } })
+          : new Response('not found', { status: 404 })
+      );
+    });
+    const sentHoursAgo = (hours: number) => ({
+      ...report,
+      reportSentAt: new Date(Date.now() - hours * 3_600_000),
+    });
+
+    it('fails the archive, to be retried, within a day of sending', async () => {
+      await expect(
+        archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS - 1) as never)
+      ).rejects.toThrow('503');
+    });
+
+    it('is recorded as missing after that, and the rest is archived', async () => {
+      await archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS) as never);
+      const zip = await JSZip.loadAsync(uploads.get('images.zip')!);
+
+      expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+      const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+      expect(manifest.images.at(-1)).toEqual({
+        imageId: 10,
+        source: 'missing',
+        reason: 'full url unreadable',
+      });
+      const read = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([p]) => p as Record<string, unknown>)
+        .find((p) => p.subType === 'archive-image-read' && p.imageId === 10);
+      expect(read).toMatchObject({ fullUrl: true, retried: false, type: 'info' });
+      expect(JSON.stringify(read)).not.toContain('ten.png');
+    });
+
+    it('still fails the archive on a stored object it cannot read, however long ago it was sent', async () => {
+      mockGetObject = async () => {
+        throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+      };
+
+      await expect(
+        archiveCsamDataForReport(sentHoursAgo(CSAM_ARCHIVE_GIVE_UP_AFTER_HOURS + 1) as never)
+      ).rejects.toThrow('synthetic storage outage');
+      expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    });
+  });
+
+  it('writes a manifest of ids, hashes, sizes, sources and content types only', async () => {
+    const zip = await archivedZip();
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+
+    expect(manifest).toEqual({
+      images: [
+        {
+          imageId: 7,
+          source: 'original',
+          sha256: sha256(stored),
+          bytes: stored.length,
+          contentType: 'image/webp',
+        },
+        {
+          imageId: 8,
+          source: 'edge-fallback',
+          sha256: sha256(edge),
+          bytes: edge.length,
+          contentType: 'image/jpeg',
+        },
+        { imageId: 9, source: 'missing', reason: 'edge 404' },
+      ],
+    });
+  });
+
+  it('logs counts only, never a storage key or a name', async () => {
+    await archivedZip();
+    const line = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([payload]) => payload as Record<string, unknown>)
+      .find((payload) => payload.subType === 'archive-images');
+
+    expect(line).toMatchObject({ reportId: report.id, original: 1, edgeFallback: 1, missing: 1 });
+    const text = JSON.stringify(line);
+    for (const row of rows) {
+      expect(text).not.toContain(row.url);
+      expect(text).not.toContain(row.name);
+    }
+  });
+
+  it('fails the archive on a storage error rather than storing an edge copy in its place', async () => {
+    mockGetObject = async () => {
+      throw Object.assign(new Error('synthetic storage outage'), { name: 'InternalError' });
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow(
+      'synthetic storage outage'
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+  });
+
+  it('logs which image failed the pass, and how far it got, without the key or the message', async () => {
+    mockGetObject = async (key) => {
+      if (key === 'key-eight')
+        throw Object.assign(new Error('aborted reading key-eight'), { code: 'ECONNRESET' });
+      return {
+        Body: { transformToByteArray: async () => new Uint8Array(stored) },
+        ContentType: 'image/webp',
+        ContentLength: stored.length,
+      };
+    };
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('aborted');
+
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    const read = lines.find((p) => p.subType === 'archive-image-read');
+    const failed = lines.find((p) => p.subType === 'archive-failed');
+    expect(read).toMatchObject({
+      reportId: report.id,
+      imageId: 8,
+      errorName: 'Error',
+      errorCode: 'ECONNRESET',
+      fullUrl: false,
+      retried: true,
+      attempts: 3,
+      type: 'error',
+    });
+    expect(getObjectKeys.filter((key) => key === 'key-eight')).toHaveLength(3);
+    expect(failed).toMatchObject({
+      reportId: report.id,
+      stored: ['base'],
+      errorCode: 'ECONNRESET',
+    });
+    const text = JSON.stringify([read, failed]);
+    expect(text).not.toContain('key-eight');
+    expect(text).not.toContain('eight.jpeg');
+  });
+
+  it('re-reads a stored object whose body resets partway, and archives it whole, once', async () => {
+    const seven = Buffer.from('stored original bytes, long enough to reset partway through');
+    const readBody = async (resetAfter?: number) => {
+      const body = new Readable({ read: () => undefined });
+      if (resetAfter === undefined) {
+        body.push(seven);
+        body.push(null);
+      } else {
+        body.push(seven.subarray(0, resetAfter));
+        setImmediate(() =>
+          body.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }))
+        );
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) chunks.push(chunk as Buffer);
+      return new Uint8Array(Buffer.concat(chunks));
+    };
+    const base = mockGetObject;
+    let sevenReads = 0;
+    mockGetObject = async (key, input) => {
+      if (key !== 'key-seven') return base(key, input);
+      sevenReads += 1;
+      const resetAfter = sevenReads === 1 ? 12 : undefined;
+      return {
+        Body: { transformToByteArray: () => readBody(resetAfter), destroy: () => undefined },
+        ContentType: 'image/webp',
+        ContentLength: seven.length,
+      };
+    };
+
+    const zip = await archivedZip();
+
+    expect(getObjectKeys.filter((key) => key === 'key-seven')).toHaveLength(2);
+    expect(Object.keys(zip.files).sort()).toEqual(['7.webp', '8.jpeg', 'manifest.json']);
+    const archived = await zip.file('7.webp')!.async('nodebuffer');
+    expect(sha256(archived)).toBe(sha256(seven));
+    // JSZip keeps one of two same-named entries, so count what the central directory holds.
+    const storage = {
+      send: async () => ({
+        Body: { transformToByteArray: async () => new Uint8Array(uploads.get('images.zip')!) },
+      }),
+    };
+    expect(await readZipEntryCount(storage as never, 'bucket', 'images.zip')).toBe(3);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    expect(manifest.images[0]).toMatchObject({
+      imageId: 7,
+      source: 'original',
+      sha256: sha256(seven),
+      bytes: seven.length,
+    });
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    expect(lines.find((p) => p.subType === 'archive-image-read')).toBeUndefined();
+    const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
+    expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
+    expect(JSON.stringify(retried)).not.toContain('key-seven');
+  });
+
+  // Over the spool threshold (this file may not import csam-original-image for its constants).
+  const video = Buffer.alloc(48 * 1024 * 1024 + 4321);
+  for (let i = 0; i + 4 <= video.length; i += 4) video.writeUInt32BE(i, i);
+  const resettingBody = (bytes: Buffer, resetAfter?: number) => ({
+    transformToByteArray: async () => {
+      const body = new Readable({ read: () => undefined });
+      if (resetAfter === undefined) {
+        body.push(bytes);
+        body.push(null);
+      } else {
+        body.push(bytes.subarray(0, resetAfter));
+        setImmediate(() =>
+          body.destroy(Object.assign(new Error('aborted'), { code: 'ECONNRESET' }))
+        );
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) chunks.push(chunk as Buffer);
+      return new Uint8Array(Buffer.concat(chunks));
+    },
+    destroy: () => undefined,
+  });
+  /**
+   * Stores `video` under key-seven. Every whole-object read resets partway, as a long single GET
+   * from storage did; `resetAfter` decides where a ranged part resets, if it does. Returns the
+   * ranges requested.
+   */
+  function storeLargeSeven(resetAfter: (start: number, firstTry: boolean) => number | undefined) {
+    const base = mockGetObject;
+    const ranges: string[] = [];
+    mockGetObject = async (key, input) => {
+      if (key !== 'key-seven') return base(key, input);
+      if (!input.Range)
+        return {
+          Body: resettingBody(video, 1024),
+          ContentType: 'video/mp4',
+          ContentLength: video.length,
+          ETag: '"etag-2"',
+        };
+      const [start, end] = input.Range.replace('bytes=', '').split('-').map(Number);
+      const firstTry = !ranges.includes(input.Range);
+      ranges.push(input.Range);
+      return {
+        Body: resettingBody(video.subarray(start, end + 1), resetAfter(start, firstTry)),
+        ContentRange: `bytes ${start}-${end}/${video.length}`,
+        ETag: '"etag-2"',
+      };
+    };
+    return ranges;
+  }
+
+  it('reads a large stored object in ranged parts, and archives it whole and once when a part resets', async () => {
+    const ranges = storeLargeSeven((start, firstTry) =>
+      start === 0 && firstTry ? 512 : undefined
+    );
+
+    const zip = await archivedZip();
+
+    // The first part once more after its reset, then each later part once.
+    expect(ranges.filter((range) => range.startsWith('bytes=0-'))).toHaveLength(2);
+    expect(new Set(ranges).size).toBe(ranges.length - 1);
+    expect(ranges.length).toBeGreaterThan(2);
+    expect(Object.keys(zip.files).sort()).toEqual(['7.mp4', '8.jpeg', 'manifest.json']);
+    const archived = await zip.file('7.mp4')!.async('nodebuffer');
+    expect(sha256(archived)).toBe(sha256(video));
+    // JSZip keeps one of two same-named entries, so count what the central directory holds.
+    const storage = {
+      send: async () => ({
+        Body: { transformToByteArray: async () => new Uint8Array(uploads.get('images.zip')!) },
+      }),
+    };
+    expect(await readZipEntryCount(storage as never, 'bucket', 'images.zip')).toBe(3);
+    const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+    expect(manifest.images[0]).toMatchObject({
+      imageId: 7,
+      source: 'original',
+      sha256: sha256(video),
+      bytes: video.length,
+    });
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    expect(lines.find((p) => p.subType === 'archive-image-read')).toBeUndefined();
+    const retried = lines.find((p) => p.subType === 'archive-image-read-retried');
+    expect(retried).toMatchObject({ reportId: report.id, imageId: 7, attempts: 2, type: 'info' });
+    expect(JSON.stringify(lines)).not.toContain('key-seven');
+  });
+
+  it('closes the spooled file when the archive fails before its entry is appended', async () => {
+    storeLargeSeven(() => undefined);
+    const readLast = mockGetObject;
+    mockGetObject = async (key, input) => {
+      const response = await readLast(key, input);
+      // The archive fails while the last part is being read, so the entry's append is refused.
+      if (input.Range?.endsWith(`-${video.length - 1}`))
+        probes.at(-1)!.archive.emit('error', new Error('archive failed'));
+      return response;
+    };
+    const streams: ReadStream[] = [];
+    const realOpen = fsAsync.open.bind(fsAsync);
+    vi.spyOn(fsAsync, 'open').mockImplementation(async (...args) => {
+      const handle = await realOpen(...args);
+      const createReadStream = handle.createReadStream.bind(handle);
+      handle.createReadStream = (options) => {
+        const stream = createReadStream(options);
+        streams.push(stream);
+        return stream;
+      };
+      return handle;
+    });
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('archive failed');
+
+    expect(streams).toHaveLength(1);
+    expect(streams[0].destroyed).toBe(true);
+    expect(uploads.has('images.zip')).toBe(false);
+  });
+
+  it('fails the pass, archiving no images, when a part of a large object keeps resetting', async () => {
+    storeLargeSeven((start) => (start > 0 ? 512 : undefined));
+
+    await expect(archiveCsamDataForReport(report as never)).rejects.toThrow('aborted');
+
+    expect(uploads.has('images.zip')).toBe(false);
+    expect(dbMock.dbWrite.csamReport.update).not.toHaveBeenCalled();
+    const lines = vi.mocked(logToAxiom).mock.calls.map(([p]) => p as Record<string, unknown>);
+    expect(lines.find((p) => p.subType === 'archive-image-read')).toMatchObject({
+      imageId: 7,
+      attempts: 3,
+      retried: true,
+    });
   });
 });
 

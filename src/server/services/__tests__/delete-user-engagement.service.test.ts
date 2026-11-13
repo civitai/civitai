@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { userFollowsCache } from '~/server/redis/caches';
 
+// No hold covers the account here; the hold itself is `account-legal-hold.behavior.test.ts`.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
+}));
+
 /**
  * 868kurkcf. `deleteUser` meant to clear the account's `UserEngagement` rows and its
  * predicate was `OR: [{ userId, targetUserId }]` — ONE OR element carrying two

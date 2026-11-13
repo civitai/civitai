@@ -4,11 +4,13 @@ import {
   IconBell,
   IconCreditCard,
   IconEye,
+  IconGauge,
   IconLayoutDashboard,
   IconPalette,
   IconShieldLock,
   IconUser,
 } from '@tabler/icons-react';
+import { CREATOR_SCORE_ANCHOR } from '~/components/Account/creator-score-copy';
 
 export const accountSectionGroups = [
   { id: 'account', label: 'Account' },
@@ -77,6 +79,11 @@ export const accountSections: AccountSection[] = [
       'chats',
       'blue buzz',
       'early adopter',
+      'privacy',
+      'reactions',
+      'who reacted',
+      'who collected',
+      'older reactions',
       'video controls',
       'advanced mode',
       'air',
@@ -112,6 +119,9 @@ export const accountSections: AccountSection[] = [
       'download count',
       'generation count',
       'earned buzz',
+      'creator showcase',
+      'hat turf',
+      'hats',
     ],
   },
   {
@@ -132,12 +142,28 @@ export const accountSections: AccountSection[] = [
     ],
   },
   {
+    id: 'usage',
+    path: 'usage',
+    label: 'Usage limits',
+    icon: IconGauge,
+    group: 'access',
+    keywords: ['limits', 'rate limit', 'quota', 'posts per day', 'too many', '429', 'api'],
+  },
+  {
     id: 'security',
     path: 'security',
     label: 'Security & Apps',
     icon: IconShieldLock,
     group: 'access',
-    keywords: ['sign in', 'connected accounts', 'api keys', 'oauth', 'connected apps'],
+    keywords: [
+      'sign in',
+      'connected accounts',
+      'api keys',
+      'oauth',
+      'connected apps',
+      'app storage',
+      'app data',
+    ],
   },
 ];
 
@@ -179,7 +205,8 @@ export function resolveAccountSection(path: string | undefined) {
 export const legacyAnchorSections: Record<string, string> = {
   accounts: 'security',
   'api-keys': 'security',
-  'creator-score': 'profile',
+  [CREATOR_SCORE_ANCHOR]: 'profile',
+  'creator-controls': 'creator',
   'manage-subscription': 'billing',
   'notification-settings': 'notifications',
   'payment-methods': 'billing',
@@ -192,4 +219,26 @@ export function resolveLegacyAnchor(hash: string) {
   const sectionId = legacyAnchorSections[key];
   if (!sectionId) return undefined;
   return accountSections.find((section) => section.id === sectionId);
+}
+
+// Keeps the fragment so the pane can scroll to it, and returns nothing once already on the target
+// pane: the redirected URL still carries the same legacy hash, so a second pass must be a no-op.
+export function resolveLegacyAnchorRedirect({
+  pathname,
+  search,
+  hash,
+}: {
+  pathname: string;
+  search: string;
+  hash: string;
+}) {
+  const section = resolveLegacyAnchor(hash);
+  if (!section) return undefined;
+  const target = getAccountSectionHref(section);
+  if (pathname === target) return undefined;
+  return {
+    pathname: target,
+    query: Object.fromEntries(new URLSearchParams(search).entries()),
+    hash: hash.replace(/^#/, ''),
+  };
 }

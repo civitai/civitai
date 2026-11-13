@@ -7,12 +7,11 @@ import {
   Divider,
   Group,
   Paper,
-  Popover,
   Stack,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { Popover, Tooltip } from '~/components/MantineOverlays';
 import {
   IconBox,
   IconCheck,

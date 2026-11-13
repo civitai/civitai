@@ -10,6 +10,7 @@ import type {
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { agentLog } from '~/server/freshdesk-agent/freshdesk-debug';
+import { APP_ERROR_MESSAGES } from '~/server/services/ai/provider-error';
 
 // Model aliases for easier usage
 export const AI_MODELS = {
@@ -31,7 +32,8 @@ export const AI_MODELS = {
   // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
   QWEN_FLASH: 'qwen/qwen3.7-flash',
   GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
-  QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
+  // Daily-challenge fallback (see games/daily-challenge/generative-content.ts).
+  GPT_6_LUNA: 'openai/gpt-6-luna',
   // Bounded-judgment vendor model (Choice/Score/Noul only — see services/ai/jev.ts).
   // Numbered pin on purpose: `jev-latest` is scratch-only and must never ship here.
   JEV: 'typesafe/jev-1.13',
@@ -60,6 +62,8 @@ type GetJsonCompletionInput = {
   temperature?: number;
   maxTokens?: number;
   retries?: number;
+  // Per request. The client has no timeout of its own, so a hung provider call never returns.
+  timeoutMs?: number;
 };
 
 /**
@@ -243,19 +247,23 @@ function createOpenRouterClient() {
     temperature = 1,
     maxTokens = 2048,
     retries = 0,
+    timeoutMs,
   }: GetJsonCompletionInput): Promise<{ content: T; usage: TokenUsage }> => {
     const sdkMessages = messages.map(toSDKMessage);
 
-    const response = await client.chat.send({
-      model,
-      messages: sdkMessages,
-      temperature,
-      maxTokens,
-      responseFormat: { type: 'json_object' },
-      provider: {
-        allowFallbacks: true,
+    const response = await client.chat.send(
+      {
+        model,
+        messages: sdkMessages,
+        temperature,
+        maxTokens,
+        responseFormat: { type: 'json_object' },
+        provider: {
+          allowFallbacks: true,
+        },
       },
-    });
+      timeoutMs ? { timeoutMs } : undefined
+    );
     const usage = extractUsage(response);
 
     const content = response.choices?.[0]?.message?.content;
@@ -267,10 +275,11 @@ function createOpenRouterClient() {
           temperature,
           maxTokens,
           retries: retries - 1,
+          timeoutMs,
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
-      throw new Error('No content in response');
+      throw new Error(APP_ERROR_MESSAGES.no_content);
     }
 
     try {
@@ -294,11 +303,17 @@ function createOpenRouterClient() {
           temperature,
           maxTokens,
           retries: retries - 1,
+          timeoutMs,
         });
         return { content: retried.content, usage: sumUsage(usage, retried.usage) };
       }
-      console.error('Failed to parse JSON from content:', content);
-      throw new Error('Failed to parse JSON from completion');
+      // Never the content: a model can be led to repeat the prompts it was sent.
+      console.error('Failed to parse JSON from completion', {
+        model,
+        length: content.length,
+        fenced: jsonBlockMatch !== undefined,
+      });
+      throw new Error(APP_ERROR_MESSAGES.json_parse);
     }
   };
 
@@ -366,7 +381,7 @@ function createOpenRouterClient() {
       });
 
       const choice = response.choices?.[0];
-      if (!choice) throw new Error('No choice in agent loop response');
+      if (!choice) throw new Error(APP_ERROR_MESSAGES.no_choice);
 
       const assistantMessage = choice.message;
       // Push the assistant message to conversation history

@@ -40,6 +40,8 @@ export const authProxy = {
   },
   async exitImpersonation(): Promise<void> {
     const res = await fetch('/api/auth/impersonate', { method: 'DELETE' });
+    // 410: the hub ended this session and the moderator's; the caller reloads into the signed-out state.
+    if (res.status === 410) return;
     if (!res.ok) throw new Error(await errorMessage(res, 'Could not exit impersonation'));
   },
 };

@@ -4,24 +4,23 @@ import {
   Badge,
   Button,
   Center,
-  Container,
   Divider,
   Group,
   LoadingOverlay,
   Stack,
   Text,
   Title,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
-import { useRouter } from 'next/router';
 import * as z from 'zod';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleProcessing } from '~/components/Article/ArticleProcessing';
@@ -37,21 +36,24 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { Collection } from '~/components/Collection/Collection';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { safeSchemaImageUrl } from '~/components/Meta/safe-schema-image';
 import { env } from '~/env/client';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { openArticleRatingReviewModal } from '~/components/Dialog/triggers/article-rating-review';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { OfficialArticleBadge } from '~/components/Article/OfficialArticleBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ArticleCoverStickers } from '~/components/Article/ArticleCoverStickers';
+import { ArticleCoverHat } from '~/components/Article/ArticleCoverHat';
+import { imageMediaHatClearLeft } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import { ArticleBanner } from '~/components/Article/Detail/ArticleBanner';
+import { ArticleDetailLayout } from '~/components/Article/Detail/ArticleDetailLayout';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
@@ -68,7 +70,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { getPublishedArticleIngestion } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleEngagementType,
   ArticleIngestionStatus,
@@ -81,11 +82,13 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery, parseNumericString } from '~/utils/query-string-helpers';
 import { getArticleUrl, removeTags, slugit } from '~/utils/string-helpers';
+import { removeSpoilers } from '~/utils/html-sanitize-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
-import { useInView } from 'react-intersection-observer';
+import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
+import { isViewer } from '~/utils/is-viewer';
 
 const NOT_FOUND = Symbol('article-not-found');
 
@@ -161,7 +164,7 @@ export const getServerSideProps = createServerSideProps({
           // 308 only for bare-id → slug canonical mapping with no query string,
           // because some browsers cache 308 keyed on path only and drop the
           // query on subsequent hits (which strands deep-link params from
-          // /comments/v2/<id> and notification redirects). 307 anywhere a
+          // /comments/<id> and notification redirects). 307 anywhere a
           // query is involved or the slug differs — those redirects are
           // request-specific and should not be cached.
           const permanent = !currentSlug && !queryString;
@@ -204,27 +207,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       { enabled: refused, refetchInterval: (query) => (query.state.data === true ? 15_000 : false) }
     );
 
-  // Intersection observer for lazy loading comments
-  const { ref: commentsRef, inView: commentsInView } = useInView({
-    triggerOnce: true,
-    rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px; this delays loading and may worsen perceived performance)
-    threshold: 0.1, // Trigger when 10% of the element is visible
-  });
-
-  // Force eager mount when the URL targets the comments section, so deep links
-  // (#comments, ?highlight=, mod report redirects) load comments on first paint
-  // instead of waiting for the user to scroll into the IntersectionObserver.
-  // Derived per-render so it stays in sync with router state across navigations
-  // (the page component instance is reused by _app without a key).
-  const router = useRouter();
-  const forceEagerComments =
-    !!router.query.highlight ||
-    (typeof window !== 'undefined' && window.location.hash === '#comments');
-
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
   const isModerator = currentUser?.isModerator ?? false;
-  const isActualOwner = currentUser?.id === article?.user?.id;
+  const isActualOwner = isViewer(currentUser, article?.user?.id);
   const isOwner = isActualOwner || isModerator;
 
   const disableArticles = !features.articles && !article?.user.isModerator;
@@ -244,10 +230,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     }
   }, [isProcessing, id, queryUtils]);
 
-  const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
-    { articleId: id },
-    { enabled: isActualOwner && !!features.articleRatingDispute, staleTime: 60_000 }
-  );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
 
@@ -268,14 +250,16 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   };
 
   const memoizedImageData = useMemo(
-    () => [article?.coverImage].filter(isDefined),
-    [article?.coverImage]
+    () => [article?.coverImage, article?.bannerImage].filter(isDefined),
+    [article?.coverImage, article?.bannerImage]
   );
   const { items } = useApplyHiddenPreferences({
     type: 'images',
     data: memoizedImageData,
   });
-  const [image] = items;
+  const image = items.find((item) => item.id === article?.coverImage?.id);
+  const showEventCosmetics = useShowEventCosmetics();
+  const banner = items.find((item) => item.id === article?.bannerImage?.id);
 
   if (isLoading) return <PageLoader />;
   if (!article) {
@@ -342,7 +326,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     </Group>
   );
 
-  const articleBodyText = removeTags(article.content);
+  const articleBodyText = removeTags(removeSpoilers(article.content));
   const articleSchema = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -351,9 +335,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     // articleBody intentionally omitted — Google reads the page body
     // directly for ranking. Embedding the full text in JSON-LD bloats
     // <head> on long articles without adding meaningful SEO signal.
-    image: article.coverImage?.url
-      ? getEdgeUrl(article.coverImage.url, { width: 1200 })
-      : undefined,
+    image: safeSchemaImageUrl(article.coverImage ?? article.bannerImage, { width: 1200 }),
     author:
       article.user.username && !article.user.deletedAt
         ? {
@@ -380,6 +362,247 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       : undefined,
   };
 
+  const headerBlock = (
+    <Stack gap={8} mb="xl">
+      <Group justify="space-between" wrap="nowrap">
+        <Title fw="bold" className={classes.title} order={1}>
+          {article.title}
+        </Title>
+        <Group align="center" className={classes.titleWrapper} wrap="nowrap">
+          {!mobile && actionButtons}
+          <ArticleContextMenu article={article} />
+        </Group>
+      </Group>
+      <Group gap={8}>
+        <UserAvatar user={article.user} withUsername linkToProfile />
+        <Divider orientation="vertical" />
+        <Text c="dimmed" size="sm">
+          {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
+        </Text>
+        {article.publishedAt &&
+          article.updatedAt &&
+          dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
+            <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
+              <Text size="sm" c="dimmed" className="cursor-default">
+                (Updated: {dayjs().to(dayjs(article.updatedAt))})
+              </Text>
+            </Tooltip>
+          )}
+        {article.isOfficial && (
+          <>
+            <Divider orientation="vertical" />
+            <OfficialArticleBadge />
+          </>
+        )}
+        {category && (
+          <>
+            <Divider orientation="vertical" />
+            <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
+              <Badge
+                component="a"
+                size="sm"
+                variant="gradient"
+                gradient={{ from: 'cyan', to: 'blue' }}
+                style={{ cursor: 'pointer' }}
+              >
+                {category.name}
+              </Badge>
+            </Link>
+          </>
+        )}
+        {!!tags.length && (
+          <>
+            <Divider orientation="vertical" />
+            <Collection
+              items={tags}
+              renderItem={(tag) => (
+                <Link
+                  legacyBehavior
+                  key={tag.id}
+                  href={`/articles?view=feed&tags=${tag.id}`}
+                  passHref
+                >
+                  <Badge
+                    component="a"
+                    color="gray"
+                    variant={colorScheme === 'dark' ? 'filled' : undefined}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {tag.name}
+                  </Badge>
+                </Link>
+              )}
+              grouped
+            />
+          </>
+        )}
+      </Group>
+      {article.status === ArticleStatus.Unpublished && isOwner && (
+        <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
+          <div>
+            This article has been unpublished.{' '}
+            <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
+              Click here
+            </Anchor>{' '}
+            to publish it again or make changes to it before publishing.
+          </div>
+        </AlertWithIcon>
+      )}
+      {article.scheduledAt && isOwner && (
+        <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="blue" iconColor="blue">
+          <div>
+            This article is scheduled to publish {formatDate(article.scheduledAt, 'lll')} your time.
+            It stays hidden until then.
+          </div>
+        </AlertWithIcon>
+      )}
+      {article.status === ArticleStatus.UnpublishedViolation && (
+        <ArticleUnpublishedAlert
+          reason={article.metadata?.unpublishedReason}
+          customMessage={article.metadata?.customMessage}
+          showSupportHint={!isModerator}
+        />
+      )}
+      {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
+        <ArticleScanStatus
+          articleId={article.id}
+          onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
+        />
+      )}
+      <OwnerRatingControls entityType="Article" entityId={article.id} isOwner={!!isActualOwner} />
+      {article.status === ArticleStatus.Published && (
+        <FirstPublishCard
+          entityType="article"
+          entityId={article.id}
+          ownerId={article.user.id}
+          publishedAt={article.publishedAt}
+        />
+      )}
+    </Stack>
+  );
+
+  const coverBlock = image && (
+    <AspectRatio ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}>
+      {/*
+        AspectRatio sizes every direct child, and ImageGuard2 renders
+        the blur explainer as a sibling of its content — so the guard
+        goes inside this div rather than around it, or the explainer
+        becomes a second sized child positioned against the page
+        instead of the cover. It is also the box the sticker overlay
+        measures the media against, which needs one shared offset
+        parent.
+      */}
+      <div
+        className="relative size-full"
+        style={imageMediaHatClearLeft(showEventCosmetics ? article.eventDecoration : null)}
+      >
+        <ArticleCoverHat articleId={article.id} decoration={article.eventDecoration} />
+        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+          {(safe) => (
+            <>
+              <RoutedDialogLink
+                name="imageDetail"
+                state={{ imageId: image.id }}
+                className="block size-full cursor-pointer"
+              >
+                <Center className="size-full">
+                  <div className="relative size-full">
+                    <ImageGuard2.BlurToggle className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10" />
+                    <ImageContextMenu
+                      image={image}
+                      noDelete={true}
+                      className="absolute right-2 top-2 z-10"
+                    />
+                    {!safe ? (
+                      <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                        <MediaHash {...image} />
+                      </div>
+                    ) : (
+                      <EdgeMedia
+                        src={image.url}
+                        className="h-full rounded-lg object-cover"
+                        name={image.name}
+                        alt={article.title}
+                        type={image.type}
+                        width={MAX_WIDTH}
+                        anim={safe}
+                      />
+                    )}
+                  </div>
+                </Center>
+              </RoutedDialogLink>
+              <ArticleCoverStickers imageId={image.id} safe={safe} />
+            </>
+          )}
+        </ImageGuard2>
+      </div>
+    </AspectRatio>
+  );
+
+  const bodyBlock = (
+    <>
+      {article.contentJson && (
+        <article>
+          <RenderRichText
+            content={article.contentJson}
+            fallbackHtml={article.content}
+            imageGuard={{ images: article.contentImages, nsfwLevel: article.nsfwLevel }}
+            className={features.articleTypography ? articleBodyClasses.articleBody : undefined}
+          />
+        </article>
+      )}
+      <Divider />
+      <Group justify="space-between">
+        <Reactions
+          entityType="article"
+          reactions={article.reactions}
+          entityId={article.id}
+          metrics={{
+            likeCount: article.stats?.likeCountAllTime,
+            dislikeCount: article.stats?.dislikeCountAllTime,
+            heartCount: article.stats?.heartCountAllTime,
+            laughCount: article.stats?.laughCountAllTime,
+            cryCount: article.stats?.cryCountAllTime,
+          }}
+          targetUserId={article.user.id}
+        />
+        {actionButtons}
+      </Group>
+    </>
+  );
+
+  const sidebarBlock = (
+    <Sidebar
+      creator={article.user}
+      attachments={article.attachments}
+      articleId={article.id}
+      hiddenNotice={
+        isOwner &&
+        (article.ingestion === ArticleIngestionStatus.Error ||
+          article.ingestion === ArticleIngestionStatus.Blocked) ? (
+          <AlertWithIcon
+            align="center"
+            color="red"
+            iconColor="red"
+            icon={<IconAlertCircle size={28} />}
+            title="This article isn't visible to the public"
+            size="sm"
+          >
+            {article.ingestion === ArticleIngestionStatus.Blocked
+              ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
+              : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
+          </AlertWithIcon>
+        ) : null
+      }
+    />
+  );
+
+  const commentsBlock = (
+    <div id="comments">
+      <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+    </div>
+  );
+
   return (
     <Gated
       contentNsfwLevel={article.nsfwLevel}
@@ -388,7 +611,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       meta={{
         title: `${article.title} | Civitai`,
         description: truncate(articleBodyText, { length: 150 }),
-        images: article?.coverImage,
+        images: article?.coverImage ?? article?.bannerImage,
         ogEndpoint: `/api/og?type=article&id=${article.id}`,
         canonical: getArticleUrl({ id: article.id, title: article.title }),
         alternate: `/articles/${article.id}`,
@@ -402,381 +625,19 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       }}
     >
       <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
-      <Container size="xl" pos="relative">
-        <LoadingOverlay visible={isRefetching || upsertArticleMutation.isPending} />
-        <Stack gap={8} mb="xl">
-          <Group justify="space-between" wrap="nowrap">
-            <Title fw="bold" className={classes.title} order={1}>
-              {article.title}
-            </Title>
-            <Group align="center" className={classes.titleWrapper} wrap="nowrap">
-              {!mobile && actionButtons}
-              <ArticleContextMenu article={article} />
-            </Group>
-          </Group>
-          <Group gap={8}>
-            <UserAvatar user={article.user} withUsername linkToProfile />
-            <Divider orientation="vertical" />
-            <Text c="dimmed" size="sm">
-              {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
-            </Text>
-            {article.publishedAt &&
-              article.updatedAt &&
-              dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
-                <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
-                  <Text size="sm" c="dimmed" className="cursor-default">
-                    (Updated: {dayjs().to(dayjs(article.updatedAt))})
-                  </Text>
-                </Tooltip>
-              )}
-            {article.isOfficial && (
-              <>
-                <Divider orientation="vertical" />
-                <OfficialArticleBadge />
-              </>
-            )}
-            {category && (
-              <>
-                <Divider orientation="vertical" />
-                <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
-                  <Badge
-                    component="a"
-                    size="sm"
-                    variant="gradient"
-                    gradient={{ from: 'cyan', to: 'blue' }}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    {category.name}
-                  </Badge>
-                </Link>
-              </>
-            )}
-            {!!tags.length && (
-              <>
-                <Divider orientation="vertical" />
-                <Collection
-                  items={tags}
-                  renderItem={(tag) => (
-                    <Link
-                      legacyBehavior
-                      key={tag.id}
-                      href={`/articles?view=feed&tags=${tag.id}`}
-                      passHref
-                    >
-                      <Badge
-                        component="a"
-                        color="gray"
-                        variant={colorScheme === 'dark' ? 'filled' : undefined}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        {tag.name}
-                      </Badge>
-                    </Link>
-                  )}
-                  grouped
-                />
-              </>
-            )}
-          </Group>
-          {article.status === ArticleStatus.Unpublished && isOwner && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
-              <div>
-                This article has been unpublished.{' '}
-                <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
-                  Click here
-                </Anchor>{' '}
-                to publish it again or make changes to it before publishing.
-              </div>
-            </AlertWithIcon>
-          )}
-          {article.status === ArticleStatus.UnpublishedViolation && (
-            <ArticleUnpublishedAlert
-              reason={article.metadata?.unpublishedReason}
-              customMessage={article.metadata?.customMessage}
-              showSupportHint={!isModerator}
-            />
-          )}
-          {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
-            <ArticleScanStatus
-              articleId={article.id}
-              onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
-            />
-          )}
-          {isActualOwner && features.articleRatingDispute && (
-            <ArticleOwnerRatingControls
-              articleId={article.id}
-              nsfwLevel={article.nsfwLevel}
-              myReview={myReview?.review ?? null}
-              canResubmit={myReview?.canResubmit ?? true}
-              derivedLevel={myReview?.derivedLevel ?? null}
-              derivedRatingDroppedBelowOverride={
-                myReview?.derivedRatingDroppedBelowOverride ?? false
-              }
-            />
-          )}
-        </Stack>
-        <ContainerGrid2 gutter="xl">
-          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
-            <Stack gap="xs">
-              {image && (
-                <AspectRatio
-                  ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
-                >
-                  {/*
-                    AspectRatio sizes every direct child, and ImageGuard2 renders
-                    the blur explainer as a sibling of its content — so the guard
-                    goes inside this div rather than around it, or the explainer
-                    becomes a second sized child positioned against the page
-                    instead of the cover. It is also the box the sticker overlay
-                    measures the media against, which needs one shared offset
-                    parent.
-                  */}
-                  <div className="relative size-full">
-                    <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                      {(safe) => (
-                        <>
-                          <RoutedDialogLink
-                            name="imageDetail"
-                            state={{ imageId: image.id, withoutPost: true }}
-                            className="block size-full cursor-pointer"
-                          >
-                            <Center className="size-full">
-                              <div className="relative size-full">
-                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                                <ImageContextMenu
-                                  image={image}
-                                  noDelete={true}
-                                  className="absolute right-2 top-2 z-10"
-                                />
-                                {!safe ? (
-                                  <div className="relative h-full overflow-hidden rounded-lg object-cover">
-                                    <MediaHash {...image} />
-                                  </div>
-                                ) : (
-                                  <EdgeMedia
-                                    src={image.url}
-                                    className="h-full rounded-lg object-cover"
-                                    name={image.name}
-                                    alt={article.title}
-                                    type={image.type}
-                                    width={MAX_WIDTH}
-                                    anim={safe}
-                                  />
-                                )}
-                              </div>
-                            </Center>
-                          </RoutedDialogLink>
-                          <ArticleCoverStickers imageId={image.id} safe={safe} />
-                        </>
-                      )}
-                    </ImageGuard2>
-                  </div>
-                </AspectRatio>
-              )}
-
-              {article.contentJson && (
-                <article>
-                  <RenderRichText content={article.contentJson} fallbackHtml={article.content} />
-                </article>
-              )}
-              <Divider />
-              <Group justify="space-between">
-                <Reactions
-                  entityType="article"
-                  reactions={article.reactions}
-                  entityId={article.id}
-                  metrics={{
-                    likeCount: article.stats?.likeCountAllTime,
-                    dislikeCount: article.stats?.dislikeCountAllTime,
-                    heartCount: article.stats?.heartCountAllTime,
-                    laughCount: article.stats?.laughCountAllTime,
-                    cryCount: article.stats?.cryCountAllTime,
-                  }}
-                  targetUserId={article.user.id}
-                />
-                {actionButtons}
-              </Group>
-            </Stack>
-          </ContainerGrid2.Col>
-          <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
-            <Sidebar
-              creator={article.user}
-              attachments={article.attachments}
-              articleId={article.id}
-              hiddenNotice={
-                isOwner &&
-                (article.ingestion === ArticleIngestionStatus.Error ||
-                  article.ingestion === ArticleIngestionStatus.Blocked) ? (
-                  <AlertWithIcon
-                    align="center"
-                    color="red"
-                    iconColor="red"
-                    icon={<IconAlertCircle size={28} />}
-                    title="This article isn't visible to the public"
-                    size="sm"
-                  >
-                    {article.ingestion === ArticleIngestionStatus.Blocked
-                      ? 'One or more images were blocked by our content policy, so the article stays hidden from the public until the issue is resolved.'
-                      : 'Image scanning failed for one or more images (ingestion error), so the article stays hidden from the public until the scan succeeds or a moderator resolves it.'}
-                  </AlertWithIcon>
-                ) : null
-              }
-            />
-          </ContainerGrid2.Col>
-        </ContainerGrid2>
-        <div id="comments" ref={commentsRef}>
-          {(commentsInView || forceEagerComments) && (
-            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-          )}
-        </div>
-      </Container>
+      <ArticleDetailLayout
+        banner={
+          banner && <ArticleBanner image={banner} articleId={article.id} title={article.title} />
+        }
+        overlay={<LoadingOverlay visible={isRefetching || upsertArticleMutation.isPending} />}
+        header={headerBlock}
+        cover={coverBlock}
+        body={bodyBlock}
+        sidebar={sidebarBlock}
+        comments={commentsBlock}
+      />
     </Gated>
   );
 }
 
 export default Page(ArticleDetailsPage);
-
-type OwnerRatingReview = {
-  id: number;
-  status: 'Pending' | 'Actioned' | 'Unactioned' | string;
-  createdAt: Date | string;
-  resolvedAt: Date | string | null;
-  appliedLevel: number | null;
-  modComment?: string | null;
-};
-
-function ArticleOwnerRatingControls({
-  articleId,
-  nsfwLevel,
-  myReview,
-  canResubmit: canResubmitFromServer,
-  derivedLevel,
-  derivedRatingDroppedBelowOverride,
-}: {
-  articleId: number;
-  nsfwLevel: number;
-  myReview: OwnerRatingReview | null | undefined;
-  canResubmit: boolean;
-  derivedLevel: number | null;
-  derivedRatingDroppedBelowOverride: boolean;
-}) {
-  const ratingLabel = getBrowsingLevelLabel(nsfwLevel);
-
-  // A review is "pending" if it exists and has not been resolved.
-  const isPending = !!myReview && myReview.status === 'Pending';
-  const isResolved = !!myReview && myReview.status !== 'Pending';
-
-  // After resolution, the owner may submit again only after the article has
-  // been edited (server-side check mirrors this — see plan §11). The server
-  // returns `canResubmit` directly so the client doesn't have to redo the
-  // date math; trust it.
-  const canResubmit = !myReview || (isResolved && canResubmitFromServer);
-
-  // Owner-visible signal for a stale moderator override: the article has been
-  // edited (canResubmit is true) AND the system-derived rating has dropped
-  // below the override. Server gates this on having an active override + a
-  // resolvable derived level, so we only need to combine it with `canResubmit`
-  // here. We additionally require derivedLevel >= 1 — a text-only article can
-  // yield derivedLevel = 0 (no images, no floor), which has no canonical
-  // browsing-level label and would render as "?" in the banner copy and
-  // pre-fill the dispute modal with an invalid level. Owner can still open
-  // the dispute modal via the inline button in that case.
-  const showStaleOverrideBanner =
-    derivedRatingDroppedBelowOverride && canResubmit && derivedLevel != null && derivedLevel >= 1;
-
-  const handleOpen = (initialSuggestedLevel?: number) => {
-    openArticleRatingReviewModal({ articleId, currentLevel: nsfwLevel, initialSuggestedLevel });
-  };
-
-  // Button label + state matrix:
-  //   no review  → "Request rating review" (enabled)
-  //   pending    → "Review pending" (disabled, with timestamp helper)
-  //   resolved, no edits since → "Last review <status> on <date>" (disabled, modComment tooltip)
-  //   resolved, edits since    → "Request rating review" (enabled — fresh dispute)
-  let button: React.ReactNode;
-  if (isPending) {
-    button = (
-      <Tooltip
-        label={
-          <span>
-            Submitted <DaysFromNow date={new Date(myReview!.createdAt)} />
-          </span>
-        }
-        withArrow
-      >
-        <Button variant="default" size="xs" disabled>
-          Review pending
-        </Button>
-      </Tooltip>
-    );
-  } else if (isResolved && !canResubmit) {
-    const resolvedDate = myReview!.resolvedAt ? formatDate(new Date(myReview!.resolvedAt)) : '';
-    const statusLabel =
-      myReview!.status === 'Actioned'
-        ? 'approved'
-        : myReview!.status === 'Unactioned'
-        ? 'declined'
-        : myReview!.status.toLowerCase();
-    const btn = (
-      <Button variant="default" size="xs" disabled>
-        Last review {statusLabel}
-        {resolvedDate ? ` on ${resolvedDate}` : ''}
-      </Button>
-    );
-    button = myReview!.modComment ? (
-      <Tooltip label={myReview!.modComment} withArrow multiline w={260}>
-        {btn}
-      </Tooltip>
-    ) : (
-      btn
-    );
-  } else {
-    button = (
-      <Button variant="default" size="xs" onClick={() => handleOpen()}>
-        Request rating review
-      </Button>
-    );
-  }
-
-  return (
-    <Stack gap="xs">
-      {showStaleOverrideBanner && (
-        <AlertWithIcon icon={<IconAlertCircle size={20} />} color="yellow" iconColor="yellow">
-          <Stack gap="xs">
-            <Text size="sm">
-              Your recent edits brought this article&apos;s content down to{' '}
-              <Text component="span" fw={600}>
-                {getBrowsingLevelLabel(derivedLevel!)}
-              </Text>
-              , but a previous moderator decision pinned the rating at{' '}
-              <Text component="span" fw={600}>
-                {ratingLabel}
-              </Text>
-              . Request a rating review and our system (or a moderator) will update it.
-            </Text>
-            <Group>
-              <Button
-                size="xs"
-                color="yellow"
-                variant="filled"
-                onClick={() => handleOpen(derivedLevel!)}
-              >
-                Request rating review
-              </Button>
-            </Group>
-          </Stack>
-        </AlertWithIcon>
-      )}
-      <Group gap="xs" align="center">
-        <Text size="sm" c="dimmed">
-          Rating:
-        </Text>
-        <Badge size="md" variant="filled" color="gray">
-          {ratingLabel}
-        </Badge>
-        {/* Hide the redundant inline CTA when the banner is rendering its own. */}
-        {showStaleOverrideBanner ? null : button}
-      </Group>
-    </Stack>
-  );
-}

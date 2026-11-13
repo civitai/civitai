@@ -14,10 +14,9 @@
 --
 --   purchasesMultiplier -> 1        (no bonus Buzz on purchases)
 --   rewardsMultiplier   -> 1        (no bonus Buzz on daily rewards)
---   badgeType           -> 'none'   (no monthly badge)
 --   buzzPurchase        -> true
 --   buzzType            -> REMOVED  (see below)
---   monthlyBuzz         -> REMOVED  (no monthly Buzz, and keeps both crons off these rows)
+--   monthlyBuzz         -> REMOVED  (no monthly Buzz)
 --
 -- THREE products total, shared by every site. `buzzType` is stripped rather than set:
 -- these memberships grant no Buzz, so there is no colour to tag them with, and `getPlans`
@@ -77,17 +76,15 @@ SELECT
   -- Keys dropped rather than overridden:
   --   buzzType    — these are site-agnostic; a leftover colour reads as a display hint
   --                 the membership doesn't earn.
-  --   monthlyBuzz — deliverMonthlyCosmetics and the token-unlock cron both require it to
-  --                 be present. Absent = neither cron ever matches these rows, which is
-  --                 what we want: no monthly Buzz AND no monthly badge.
+  --   monthlyBuzz — no monthly Buzz. (The token-unlock cron also excludes buzzPurchase
+  --                 products outright; prod rows carry 0, which its key check lets through.)
   (s.source_metadata - 'buzzType' - 'monthlyBuzz')
     || jsonb_build_object(
          'buzzPurchase', true,
          'purchasesMultiplier', 1,
-         'rewardsMultiplier', 1,
-         -- No monthly badge. Renders "No monthly badge" on the plan card, and matches how
-         -- the referral-perks products are configured.
-         'badgeType', 'none'
+         'rewardsMultiplier', 1
+         -- badge / badgeType are copied from the cash tier: Buzz memberships earn the
+         -- monthly badge.
        ),
   'Civitai'::"PaymentProvider",
   true,
@@ -145,7 +142,7 @@ SELECT
   pr.id AS price,
   pr."unitAmount" / 100.0 AS cash_usd,
   round((pr."unitAmount" / 100.0) * 1000 * cfg.premium) AS buzz_price,
-  -- Both should print NULL / 'none': no monthly Buzz, no monthly badge.
+  -- Should print NULL on every row: no monthly Buzz.
   p.metadata ->> 'monthlyBuzz' AS monthly_buzz,
   p.metadata ->> 'badgeType' AS badge_type,
   p.metadata ->> 'level' AS level,

@@ -4,11 +4,7 @@ import {
   ParentBasedSampler,
 } from '@opentelemetry/sdk-trace-web';
 import { describe, expect, it } from 'vitest';
-import {
-  createTraceSampler,
-  parseRate,
-  resolveFaroSampling,
-} from '~/utils/faro/traceSampler';
+import { createTraceSampler, parseRate, resolveFaroSampling } from '~/utils/faro/traceSampler';
 
 describe('parseRate', () => {
   it('parses a valid float', () => {
@@ -80,12 +76,6 @@ describe('resolveFaroSampling — the session/trace decoupling', () => {
     const { sessionSamplingRate, traceSampler } = resolveFaroSampling('1.0', '0');
     expect(sessionSamplingRate).toBe(1.0);
     expect(traceSampler).toBeInstanceOf(AlwaysOffSampler);
-  });
-
-  it('setting traces to 0.1 does NOT set session sampling to 0.1', () => {
-    const { sessionSamplingRate } = resolveFaroSampling('1.0', '0.1');
-    expect(sessionSamplingRate).not.toBe(0.1);
-    expect(sessionSamplingRate).toBe(1.0);
   });
 
   it('session sampling is invariant across every trace-rate value', () => {

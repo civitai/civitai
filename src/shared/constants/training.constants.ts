@@ -1,11 +1,6 @@
 import type { MantineColor } from '@mantine/core';
+import { TRAINING_REVIEW_EXPECTED_WAIT } from '@civitai/shared/training-review';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-
-// nb: these should be proper AIRs now
-export const blockedCustomModels = [
-  'civitai:53761@285757',
-  'urn:air:sd1:checkpoint:civitai:53761@285757',
-];
 
 export const trainingStatusFields: {
   [key in TrainingStatus]: { color: MantineColor; description: string };
@@ -22,8 +17,9 @@ export const trainingStatusFields: {
   },
   [TrainingStatus.Paused]: {
     color: 'orange',
-    description:
-      'Your training will resume or terminate within 1 business day. No action is required on your part.',
+    // Stage-neutral: the gate holds runs at submit and after their last epoch, and this map has
+    // no epoch count to tell which.
+    description: `This run is waiting for review. ${TRAINING_REVIEW_EXPECTED_WAIT}. No action is needed from you while it waits.`,
   },
   [TrainingStatus.Denied]: {
     color: 'red',
@@ -56,3 +52,50 @@ export const trainingStatusFields: {
       'The training data review was not completed in time and this request has expired. Please submit your training again.',
   },
 };
+
+/**
+ * A dataset is fixed once training has started, so the run's results and its review describe the
+ * bytes on record. Before the first run, and after a run that failed or expired (a retry), a new
+ * dataset may be uploaded. A denied dataset is never replaced.
+ */
+export const datasetEditableTrainingStatuses: (TrainingStatus | null)[] = [
+  null,
+  TrainingStatus.Pending,
+  TrainingStatus.Failed,
+  TrainingStatus.Expired,
+];
+export const isDatasetEditable = (status: TrainingStatus | null | undefined) =>
+  datasetEditableTrainingStatuses.includes(status ?? null);
+
+/** A dataset under moderator review, or denied, stays on record: only a moderator may delete it. */
+export const reviewedDatasetTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Paused,
+  TrainingStatus.Denied,
+];
+
+/**
+ * A run reads its dataset, and an InReview run is published from it, so the owner can't delete it
+ * meanwhile. Keyed on the version: a new version can train on an already-published model.
+ */
+export const liveRunDatasetTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Submitted,
+  TrainingStatus.Processing,
+  TrainingStatus.InReview,
+];
+
+/** A run in progress or under moderation keeps its version: the owner can't delete it or merge it away. */
+export const versionRemovalLockedTrainingStatuses: TrainingStatus[] = [
+  TrainingStatus.Submitted,
+  TrainingStatus.Processing,
+  TrainingStatus.Paused,
+  TrainingStatus.Denied,
+];
+
+/**
+ * The classic trainer (/models/train) stops starting runs at this instant; Training Studio is
+ * unaffected. The banners quote it, so change it only alongside the announcement.
+ */
+export const CLASSIC_TRAINER_RETIRES_AT = new Date('2026-11-16T00:00:00Z');
+export const isClassicTrainerRetired = (now = new Date()) => now >= CLASSIC_TRAINER_RETIRES_AT;
+export const CLASSIC_TRAINER_RETIRED_MESSAGE =
+  'The classic trainer has been retired and no longer starts new runs. Use Training Studio to train.';

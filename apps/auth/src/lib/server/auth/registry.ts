@@ -18,7 +18,9 @@ import { logToAxiom } from '../axiom';
 const noop: SessionRegistry = {
   async trackToken() {},
   async invalidateToken() {},
+  async invalidateFamily() {},
   async invalidateUserSessions() {},
+  async invalidateImpersonationsBy() {},
   async invalidateAll() {},
   async markForRefresh() {},
   async isRevoked() {
@@ -60,7 +62,9 @@ function registry(): SessionRegistry {
 export const sessions: SessionRegistry = {
   trackToken: (tokenId, userId) => registry().trackToken(tokenId, userId),
   invalidateToken: (tokenId, userId) => registry().invalidateToken(tokenId, userId),
+  invalidateFamily: (familyId) => registry().invalidateFamily(familyId),
   invalidateUserSessions: (userId) => registry().invalidateUserSessions(userId),
+  invalidateImpersonationsBy: (moderatorId) => registry().invalidateImpersonationsBy(moderatorId),
   invalidateAll: () => registry().invalidateAll(),
   markForRefresh: (tokenId) => registry().markForRefresh(tokenId),
   isRevoked: (claims) => registry().isRevoked(claims),

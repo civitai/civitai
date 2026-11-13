@@ -1,0 +1,28 @@
+{
+  // Standalone Node service tsconfig, as apps/assistant-runner. Two settings differ on purpose:
+  // the worker (src/worker.ts) and everything it imports are loaded by Node's own type
+  // stripping under test (vitest does not transform worker_threads entry files), so they must
+  // use erasable syntax only and import siblings with an explicit `.ts` extension.
+  // `erasableSyntaxOnly` + `verbatimModuleSyntax` make tsc refuse anything Node could not run.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "sourceMap": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

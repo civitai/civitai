@@ -43,7 +43,9 @@ function computeFileName({
   // A LoRA keeps the name its creator uploaded — creators encode the base model, the variant or the
   // character there, and `<model>_<version>` cannot carry any of it.
   const keepsUploadedName =
-    model.type === ModelType.LORA || model.type === ModelType.LoCon || modelName.length === 0;
+    ((model.type === ModelType.LORA || model.type === ModelType.LoCon) &&
+      !isTrainerBlobFileName(file.name)) ||
+    modelName.length === 0;
   if (keepsUploadedName) return fileName;
 
   const ext = file.name.split('.').pop();
@@ -73,6 +75,78 @@ function computeFileName({
   return fileName;
 }
 
+/** Basenames that say nothing about the model they belong to: framework and trainer defaults. */
+export const GENERIC_FILE_BASENAMES = [
+  'model',
+  'diffusion_pytorch_model',
+  'pytorch_model',
+  'pytorch_lora_weights',
+  'adapter_model',
+  'text_encoder',
+  'text_encoder_2',
+  'unet',
+  'transformer',
+  'vae',
+  'ae',
+  'clip',
+  'checkpoint',
+  'weights',
+  'output',
+  'final',
+  'last',
+  'untitled',
+  'file',
+  'download',
+] as const;
+
+const genericBasenames = new Set<string>(GENERIC_FILE_BASENAMES);
+const genericNamePatterns = [
+  /-\d+-of-\d+$/, // shard: model-00001-of-00003
+  /^[0-9a-hjkmnp-tv-z]{26}$/, // ULID: a training job id
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, // UUID
+  /^[0-9a-f]{16,}$/, // hash
+  /^\d+$/,
+];
+
+/**
+ * The name a trainer publish stores: the orchestrator blob id (a 26-character ULID, Crockford
+ * alphabet, so no I, L, O or U), optionally followed by the 8-character token `uniqueAssetKey` adds.
+ * Keep it exact: a looser match would replace names creators typed.
+ */
+const trainerBlobFileName = /^[0-9A-HJKMNP-TV-Z]{26}(\.[A-Za-z0-9]{8})?\.safetensors$/;
+export function isTrainerBlobFileName(fileName: string) {
+  return trainerBlobFileName.test(fileName);
+}
+
+export function isGenericFileName(fileName: string) {
+  const dot = fileName.lastIndexOf('.');
+  const basename = (dot > 0 ? fileName.slice(0, dot) : fileName)
+    .toLowerCase()
+    .replace(/\.(fp16|fp32|bf16|fp8)$/, '');
+  if (!basename || genericBasenames.has(basename)) return true;
+  return genericNamePatterns.some((pattern) => pattern.test(basename));
+}
+
+/**
+ * The name before siblings are considered: the uploaded name, which is what the model page lists
+ * and what workflows look files up by, unless it is generic.
+ */
+function preferredFileName(args: Parameters<typeof computeFileName>[0]) {
+  const { model, file } = args;
+  // A Textual Inversion's filename is its prompt token in A1111, and training data is loaded by no
+  // workflow tool, so both keep the scheme.
+  if (model.type === ModelType.TextualInversion || file.type === 'Training Data')
+    return computeFileName(args);
+  return isGenericFileName(file.name) || isTrainerBlobFileName(file.name)
+    ? computeFileName(args)
+    : file.name;
+}
+
+/** Windows and macOS file systems ignore case, so names equal in any case overwrite each other. */
+function fileNameKey(fileName: string) {
+  return fileName.toLowerCase();
+}
+
 function insertBeforeExtension(fileName: string, suffix: string) {
   const dot = fileName.lastIndexOf('.');
   if (dot <= 0) return `${fileName}_${suffix}`;
@@ -85,6 +159,73 @@ function variantSuffix(file: NameableFile) {
     .filter((part): part is string => typeof part === 'string' && part.length > 0)
     .map((part) => filenamize(part))
     .join('_');
+}
+
+/**
+ * Names every file on a version at once, so no two share a name. A file keeps its preferred name
+ * unless another file's preferred name equals it; the colliding files then try the scheme name,
+ * then the scheme with the variant suffix, then with the file id, each accepted only if no other
+ * file holds or is trying the same name.
+ */
+function nameVersionFiles(
+  model: NameableModel,
+  modelVersion: NameableVersion,
+  files: NameableFile[]
+): string[] {
+  const names = files.map(
+    (file) => file.overrideName || preferredFileName({ model, modelVersion, file })
+  );
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(fileNameKey(name), (counts.get(fileNameKey(name)) ?? 0) + 1);
+
+  const taken = new Set<string>();
+  let moving: number[] = [];
+  files.forEach((file, i) => {
+    if (file.overrideName || counts.get(fileNameKey(names[i])) === 1)
+      taken.add(fileNameKey(names[i]));
+    else moving.push(i);
+  });
+
+  const schemeOf = (file: NameableFile) => computeFileName({ model, modelVersion, file });
+  const stages: Array<(file: NameableFile) => string | undefined> = [
+    schemeOf,
+    (file) => {
+      const suffix = variantSuffix(file);
+      return suffix ? insertBeforeExtension(schemeOf(file), suffix) : undefined;
+    },
+    (file) =>
+      file.id != null ? insertBeforeExtension(schemeOf(file), String(file.id)) : undefined,
+  ];
+  for (const stage of stages) {
+    const candidates = moving.map((i) => stage(files[i]));
+    const tried = new Map<string, number>();
+    for (const candidate of candidates) {
+      if (candidate)
+        tried.set(fileNameKey(candidate), (tried.get(fileNameKey(candidate)) ?? 0) + 1);
+    }
+    moving = moving.filter((i, j) => {
+      const candidate = candidates[j];
+      if (!candidate) return true;
+      const key = fileNameKey(candidate);
+      if (taken.has(key) || tried.get(key) !== 1) return true;
+      names[i] = candidate;
+      taken.add(key);
+      return false;
+    });
+  }
+
+  // Nothing above told these apart: no id, or `<scheme>_<id>` is another file's uploaded name.
+  for (const i of moving) {
+    const base = files[i].id != null ? `${files[i].id}_` : '';
+    let attempt = 1;
+    let candidate: string;
+    do {
+      candidate = insertBeforeExtension(schemeOf(files[i]), `${base}${attempt++}`);
+    } while (taken.has(fileNameKey(candidate)));
+    names[i] = candidate;
+    taken.add(fileNameKey(candidate));
+  }
+  return names;
 }
 
 /**
@@ -103,28 +244,76 @@ export function resolveModelFileName({
   file: NameableFile;
   versionFiles?: NameableFile[];
 }): string {
-  if (file.overrideName) return file.overrideName;
+  if (file.overrideName) return headerSafeName(file.overrideName);
+  if (!versionFiles?.length)
+    return headerSafeName(preferredFileName({ model, modelVersion, file }));
 
-  const fileName = computeFileName({ model, modelVersion, file });
-  if (!versionFiles?.length) return fileName;
-
-  const nameOf = (candidate: NameableFile) =>
-    candidate.overrideName || computeFileName({ model, modelVersion, file: candidate });
-  const twins = versionFiles.filter((candidate) => nameOf(candidate) === fileName);
-  if (twins.length < 2) return fileName;
-
-  const suffix = variantSuffix(file);
-  if (suffix) {
-    const candidate = insertBeforeExtension(fileName, suffix);
-    const stillShared = twins.some(
-      (twin) =>
-        twin.id !== file.id &&
-        insertBeforeExtension(nameOf(twin), variantSuffix(twin)) === candidate
+  // API callers pass a destructured copy of the file, so find it by id, or by content without one.
+  let index = versionFiles.indexOf(file);
+  if (index < 0 && file.id != null) index = versionFiles.findIndex((c) => c.id === file.id);
+  if (index < 0 && file.id == null) {
+    index = versionFiles.findIndex(
+      (c) =>
+        c.id == null &&
+        c.name === file.name &&
+        (c.overrideName ?? null) === (file.overrideName ?? null) &&
+        c.type === file.type &&
+        JSON.stringify(c.metadata) === JSON.stringify(file.metadata)
     );
-    if (!stillShared) return candidate;
   }
+  const files = index < 0 ? [file, ...versionFiles] : versionFiles;
+  return headerSafeName(nameVersionFiles(model, modelVersion, files)[index < 0 ? 0 : index]);
+}
 
-  // Nothing about the file itself tells it apart from its twin, so fall back to the one thing that
-  // is guaranteed distinct.
-  return file.id != null ? insertBeforeExtension(fileName, String(file.id)) : fileName;
+/** Read-time header safety for every returned name; stored and uploaded names were never cleaned. */
+function headerSafeName(fileName: string) {
+  return fileName
+    .replace(unsafeNameChars, '')
+    .replace(/["\\]/g, '_')
+    .replace(/%(?=[0-9a-f]{2})/gi, '_');
+}
+
+/** UTF-8 bytes, under the 255 most file systems allow, with room for a browser's ` (1)`. */
+export const MAX_OVERRIDE_NAME_BYTES = 200;
+
+// Bidi overrides and zero-width characters spoof a displayed name.
+const unsafeNameChars = /[\p{Cc}\p{Cf}]/gu;
+
+/** The stored name comes from a client too, so an extension that is not plain is not kept. */
+function fileExtension(fileName: string) {
+  const dot = fileName.lastIndexOf('.');
+  const ext = dot > 0 ? fileName.slice(dot) : '';
+  return /^\.[A-Za-z0-9]{1,16}$/.test(ext) ? ext : '';
+}
+
+/**
+ * The server's copy of a creator's download name, ending in the stored file's extension when that
+ * extension is plain. Null when nothing is left, which clears the override.
+ */
+export function sanitizeOverrideName(value: string | null | undefined, storedName: string) {
+  if (value == null) return null;
+  const ext = fileExtension(storedName);
+  let base = value
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .replace(unsafeNameChars, '')
+    .replace(/["\\/:*?<>|]/g, '_')
+    .replace(/%(?=[0-9a-f]{2})/gi, '_')
+    .trim();
+  if (ext && base.toLowerCase().endsWith(ext.toLowerCase())) base = base.slice(0, -ext.length);
+  // Leading dots hide a file or climb a directory; trailing ones Windows drops.
+  base = base.replace(/^[\s.]+|[\s.]+$/g, '');
+
+  const encoder = new TextEncoder();
+  const budget = MAX_OVERRIDE_NAME_BYTES - encoder.encode(ext).length;
+  let bytes = 0;
+  let kept = '';
+  for (const char of base) {
+    bytes += encoder.encode(char).length;
+    if (bytes > budget) break;
+    kept += char;
+  }
+  base = kept.replace(/[\s.]+$/, '');
+
+  return base ? `${base}${ext}` : null;
 }

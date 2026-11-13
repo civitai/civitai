@@ -1,10 +1,13 @@
 import type {
   ImageResourceTrainingOutput,
+  ImageResouceTrainingModerationStatus,
   ImageResourceTrainingStep,
+  TrainingModerationStatus,
   TrainingOutput,
   TrainingStep,
   Workflow,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
+import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { upsertModel } from '~/server/services/model.service';
@@ -12,12 +15,18 @@ import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
-import type {
-  TrainingDetailsBaseModelList,
-  TrainingDetailsObj,
+import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
+import type * as z from 'zod';
+import {
+  aiToolkitTrainingDetailsParams,
+  type TrainingDetailsBaseModelList,
+  type TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import {
   trainingBaseModelTypesAudio,
@@ -25,8 +34,10 @@ import {
   trainingModelInfo,
   type TrainingBaseModelType,
 } from '~/utils/training';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { type BaseModel, isHiddenBaseModel } from '~/shared/constants/basemodel.constants';
+import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
+  ModelFileVisibility,
   ModelStatus,
   ModelType,
   ModelUploadType,
@@ -36,11 +47,24 @@ import {
 type TrainingStudioMeta = {
   name?: string;
   trigger?: string;
+  /** The Studio's LoRA type id (`character`/`style`/`concept`/`effect`). */
+  loraType?: string;
 };
+
+type TrainingModelType = (typeof constants.trainingModelTypes)[number];
+
+/** The Studio's lowercase LoRA type id as the trainer's `trainingModelTypes` value, or undefined for a
+ *  run that didn't record one (a foreign or pre-type run). */
+function mapLoraTypeToTrainingModelType(
+  loraType: string | undefined
+): TrainingModelType | undefined {
+  if (!loraType) return undefined;
+  return constants.trainingModelTypes.find((type) => type.toLowerCase() === loraType.toLowerCase());
+}
 
 /** The training step's input, read defensively — the client types `input` loosely and a foreign run may
  * carry only some of these. `model` is the AIR (imageResourceTraining path); `ecosystem`/`modelVariant`
- * identify an AI Toolkit base. */
+ * identify an AI Toolkit base. The AI-Toolkit hyperparameters sit alongside under their trainingDetails names. */
 type TrainingStepInputLike = {
   model?: string;
   ecosystem?: string;
@@ -49,9 +73,55 @@ type TrainingStepInputLike = {
   steps?: number;
   triggerWord?: string;
   samples?: { prompts?: string[] };
-};
+} & Record<string, unknown>;
 
-function getTrainingStep(workflow: Workflow) {
+type AiToolkitParams = z.infer<typeof aiToolkitTrainingDetailsParams>;
+
+/** For the required hyperparameters only: used when the step lacks one or carries a value
+ * `trainingDetails` rejects, so the stored params always parse. */
+const REQUIRED_HYPERPARAMETER_DEFAULTS = {
+  resolution: null,
+  lr: 0,
+  textEncoderLr: null,
+  trainTextEncoder: false,
+  lrScheduler: 'constant',
+  optimizerType: 'adamw',
+  networkDim: null,
+  networkAlpha: null,
+  noiseOffset: null,
+  minSnrGamma: null,
+  flipAugmentation: false,
+  shuffleTokens: false,
+  keepTokens: 0,
+} satisfies Partial<AiToolkitParams>;
+
+// Written from the run's identity instead; `continueFrom` would make a wizard retrain of the published
+// version continue from the source LoRA.
+const NON_HYPERPARAMETER_KEYS = new Set<string>([
+  'engine',
+  'ecosystem',
+  'modelVariant',
+  'continueFrom',
+]);
+
+/** The run's hyperparameters, read from the step input for every key the AI-Toolkit trainingDetails
+ * schema declares, so a knob added to the schema is carried without touching this list. */
+function readStepHyperparameters(input: TrainingStepInputLike) {
+  const params: Record<string, unknown> = { ...REQUIRED_HYPERPARAMETER_DEFAULTS };
+  const rejected: string[] = [];
+  for (const [key, field] of Object.entries(aiToolkitTrainingDetailsParams.shape)) {
+    if (NON_HYPERPARAMETER_KEYS.has(key) || input[key] === undefined) continue;
+    const parsed = field.safeParse(input[key]);
+    if (parsed.success) params[key] = parsed.data;
+    else rejected.push(key);
+  }
+  return {
+    params: params as typeof REQUIRED_HYPERPARAMETER_DEFAULTS & Partial<AiToolkitParams>,
+    rejected,
+  };
+}
+
+export function getTrainingStep(workflow: Workflow) {
   const step = workflow.steps?.find((s) => (s as { $type?: string }).$type === 'training') as
     | TrainingStep
     | undefined;
@@ -66,6 +136,72 @@ function getTrainingStep(workflow: Workflow) {
   if (stepType !== 'training' && stepType !== 'imageResourceTraining')
     throw throwBadRequestError(`Unsupported training step type: ${stepType ?? 'unknown'}`);
   return { step: first, stepType };
+}
+
+// A typed literal rather than the client's runtime enum object: `@civitai/orchestration-client` is mocked in the
+// unit test setup, so a value import from it is undefined there.
+const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerationStatus &
+  ImageResouceTrainingModerationStatus;
+
+const TRAINING_NOT_APPROVED_MESSAGE =
+  "This training run's dataset has not been approved, so a model can't be created or published from it.";
+
+export type PublishRefusalReason = 'not-approved' | 'unsupported-base' | 'no-checkpoint';
+
+/**
+ * The `cause` on a refusal the user can act on, so the from-orchestrator page can explain it by
+ * `reason` without matching on message text (or showing the message, which may name internals).
+ */
+export class PublishRefusalError extends Error {
+  constructor(readonly reason: PublishRefusalReason, message: string) {
+    super(message);
+    this.name = 'PublishRefusalError';
+  }
+}
+
+/** The `cause` on every refusal from the training moderation gate. */
+export class TrainingNotApprovedError extends PublishRefusalError {
+  constructor(message: string) {
+    super('not-approved', message);
+    this.name = 'TrainingNotApprovedError';
+  }
+}
+
+export function isTrainingNotApprovedRefusal(error: unknown): boolean {
+  return error instanceof TRPCError && error.cause instanceof TrainingNotApprovedError;
+}
+
+export function getPublishRefusalReason(error: unknown): PublishRefusalReason | null {
+  return error instanceof TRPCError && error.cause instanceof PublishRefusalError
+    ? error.cause.reason
+    : null;
+}
+
+function refuse(message: string): never {
+  throw throwBadRequestError(message, new TrainingNotApprovedError(message));
+}
+
+/**
+ * Throws unless the run's training step reports an `approved` training-data moderation status. Both
+ * step types carry the same four values (`evaluating`, `underReview`, `approved`, `rejected`), so the
+ * comparison is against the one approved value: every other status, a step with no status, and a step
+ * with no output at all are refused. Shared by `createDraftModelFromWorkflow` and
+ * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
+ */
+export function assertTrainingModerationApproved(workflow: Workflow): void {
+  if (!isTrainingModerationApproved(workflow)) refuse(TRAINING_NOT_APPROVED_MESSAGE);
+}
+
+/** The test `assertTrainingModerationApproved` applies, as a boolean: false for a run with no
+ *  readable training step. */
+export function isTrainingModerationApproved(workflow: Workflow): boolean {
+  let output: TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  try {
+    output = getTrainingStep(workflow).step.output as typeof output;
+  } catch {
+    return false;
+  }
+  return output?.moderationStatus === APPROVED_TRAINING_MODERATION_STATUS;
 }
 
 /**
@@ -101,10 +237,11 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   if (!match && input.ecosystem)
     match = entries.find(([, info]) => info.aiToolkit?.ecosystem === input.ecosystem);
 
-  if (!match)
-    throw throwBadRequestError(
-      'This training run uses a base model that can no longer be published from Training Studio.'
-    );
+  if (!match) {
+    const message =
+      'This training run uses a base model that can no longer be published from Training Studio.';
+    throw throwBadRequestError(message, new PublishRefusalError('unsupported-base', message));
+  }
 
   const [trainingKey, info] = match;
   return {
@@ -175,6 +312,23 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
 }
 
 /**
+ * Set `trainingStudioModerationApproved` on a model whose run was just checked and is approved, as a
+ * single-key write so a concurrent meta write is not overwritten. Best-effort: a failure is logged
+ * and the model stays unstamped.
+ */
+async function stampTrainingModerationApproved(modelId: number): Promise<void> {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model"
+      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+      WHERE id = ${modelId}
+    `;
+  } catch (error) {
+    console.error(`approval stamp backfill failed (model ${modelId}):`, error);
+  }
+}
+
+/**
  * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
  * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
  * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
@@ -182,8 +336,12 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
  * publish; the from-orchestrator page finalizes those client-side off the returned `selectedEpoch`.
  *
  * Idempotent per workflow: the first call stamps `meta.trainingStudioWorkflowId`, and later calls for the
- * same workflow return the existing ids instead of creating a duplicate. `selectedEpoch` is null only on
- * that path — once the blobs expire the draft still resolves, but there is nothing left to finalize.
+ * same workflow return the newest existing ids instead of creating a duplicate, unless the owner
+ * deleted that draft (see `studioModelNotOwnerDeleted`), which starts a fresh one. `selectedEpoch` is
+ * null only on the reuse path — once the blobs expire the draft still resolves, but there is nothing
+ * left to finalize.
+ *
+ * Refuses (BAD_REQUEST) unless the run's training data is approved — on first entry and on re-entry.
  */
 export async function createDraftModelFromWorkflow({
   user,
@@ -201,6 +359,8 @@ export async function createDraftModelFromWorkflow({
   selectedEpoch: TrainingResultsV2['epochs'][number] | null;
 }> {
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
+  // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
+  assertTrainingModerationApproved(workflow);
 
   const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
   const selectedEpoch =
@@ -212,21 +372,34 @@ export async function createDraftModelFromWorkflow({
       userId: user.id,
       uploadType: ModelUploadType.Trained,
       meta: { path: ['trainingStudioWorkflowId'], equals: workflow.id },
+      // A fresh draft made past the owner's delete is re-stamped onto the run by from-orchestrator.
+      ...studioModelNotOwnerDeleted(user.id),
     },
+    // A restored draft and its replacement can both match; the run follows the newest.
+    orderBy: { id: 'desc' },
     select: {
       id: true,
+      meta: true,
       modelVersions: { select: { id: true }, take: 1, orderBy: { index: 'asc' } },
     },
   });
-  if (existing?.modelVersions[0])
+  if (existing?.modelVersions[0]) {
+    // A draft materialized before the approval stamp existed gets it here: the run was just
+    // checked above. Set as one key, so a concurrent meta write is not overwritten. Best-effort: a
+    // failed write leaves the draft unstamped, which only matters once its workflow is gone.
+    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
+      await stampTrainingModerationApproved(existing.id);
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
       selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null,
     };
+  }
 
-  if (!selectedEpoch?.modelUrl)
-    throw throwBadRequestError('This training run has no downloadable checkpoint to publish.');
+  if (!selectedEpoch?.modelUrl) {
+    const message = 'This training run has no downloadable checkpoint to publish.';
+    throw throwBadRequestError(message, new PublishRefusalError('no-checkpoint', message));
+  }
 
   const {
     baseModel,
@@ -234,21 +407,23 @@ export async function createDraftModelFromWorkflow({
     trainingKey,
     info: trainingInfo,
   } = mapTrainingBaseModelToBaseModel(workflow);
+  if (!user.isModerator && isHiddenBaseModel(baseModel)) {
+    const message = `${baseModel} models can't be created from Training Studio yet.`;
+    throw throwBadRequestError(message, new PublishRefusalError('unsupported-base', message));
+  }
   const { step } = getTrainingStep(workflow);
   const input = ((step as { input?: TrainingStepInputLike }).input ?? {}) as TrainingStepInputLike;
   const meta = (workflow.metadata ?? {}) as TrainingStudioMeta;
 
   const trigger = meta.trigger || input.triggerWord || undefined;
-  const modelName =
+  const modelName = truncateModelName(
     name?.trim() ||
-    meta.name?.trim() ||
-    workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
-    trigger ||
-    'Trained LoRA';
+      meta.name?.trim() ||
+      workflow.tags?.find((tag) => tag.startsWith('name:'))?.slice('name:'.length) ||
+      trigger ||
+      'Trained LoRA'
+  );
 
-  // Best-effort params so the version's trainingDetails is complete for the wizard. The load-bearing
-  // fields are `baseModel`/`type`; the rest are defaulted (the run's real hyperparameters live on the
-  // orchestrator workflow, which stays the source of truth) with the length knobs carried from the step.
   const mediaType = (trainingBaseModelTypesVideo as readonly string[]).includes(
     trainingBaseModelType
   )
@@ -257,8 +432,20 @@ export async function createDraftModelFromWorkflow({
     ? 'audio'
     : 'image';
 
+  const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
+
+  const hyperparameters = readStepHyperparameters(input);
+  // A rejected value is stored as its default or dropped, which reads like a real value.
+  if (hyperparameters.rejected.length)
+    logToAxiom({
+      name: 'training-studio-publish-param-rejected',
+      type: 'warning',
+      workflowId: workflow.id,
+      keys: hyperparameters.rejected,
+    }).catch(() => undefined);
+
   const trainingDetails: TrainingDetailsObj = {
-    type: 'Character',
+    type: trainingModelType ?? 'Character',
     mediaType,
     baseModel: trainingKey,
     baseModelType: trainingBaseModelType,
@@ -266,21 +453,7 @@ export async function createDraftModelFromWorkflow({
       engine: 'ai-toolkit',
       ecosystem: input.ecosystem ?? trainingInfo.aiToolkit?.ecosystem ?? '',
       ...(input.modelVariant && { modelVariant: input.modelVariant }),
-      ...(typeof input.steps === 'number' && { steps: input.steps }),
-      ...(typeof input.epochs === 'number' && { epochs: input.epochs }),
-      resolution: null,
-      lr: 0,
-      textEncoderLr: null,
-      trainTextEncoder: false,
-      lrScheduler: 'constant',
-      optimizerType: 'adamw',
-      networkDim: null,
-      networkAlpha: null,
-      noiseOffset: null,
-      minSnrGamma: null,
-      flipAugmentation: false,
-      shuffleTokens: false,
-      keepTokens: 0,
+      ...hyperparameters.params,
     },
     samplePrompts: input.samples?.prompts ?? [],
   };
@@ -294,7 +467,14 @@ export async function createDraftModelFromWorkflow({
     nsfw: false,
     poi: false,
     minor: false,
-    meta: { trainingStudioWorkflowId: workflow.id },
+    // The in-app trainer stamps the same category tag at creation; the publish form reads it back as
+    // the default category.
+    ...(trainingModelType && {
+      tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }],
+    }),
+    // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
+    // approval stamp records that this run passed the moderation check at materialization.
+    serverMeta: { trainingStudioWorkflowId: workflow.id, trainingStudioModerationApproved: true },
   });
   if (!model) throw throwBadRequestError('Could not create the model');
 
@@ -309,11 +489,16 @@ export async function createDraftModelFromWorkflow({
     trainingDetails,
   });
 
-  await createFile({
+  // A placeholder until the archive-studio-training-datasets job replaces its url and size with the
+  // run's dataset zip (the studio uploads blobs, never a zip). Meanwhile it carries the run's results
+  // for the epoch picker and training readers. Private keeps it off the public files list. The url is
+  // the run's own epoch, chosen here, so the client url bound (assertClientFileUrlAllowed) does not apply.
+  const placeholder = await createFile({
     name: `${modelVersion.id}_training_data.zip`,
     url: selectedEpoch.modelUrl,
     sizeKB: 0,
     type: 'Training Data',
+    visibility: ModelFileVisibility.Private,
     modelVersionId: modelVersion.id,
     metadata: {
       trainingResults,
@@ -322,6 +507,10 @@ export async function createDraftModelFromWorkflow({
     userId: user.id,
     select: { id: true },
   });
+  // Its url is an orchestrator blob the scanner can't fetch, so the scan fallback job would submit
+  // it, fail the pre-flight and tombstone it exists=false minutes later anyway. Born in that state,
+  // the job never picks it up. Its scan status stays Pending: nothing scanned it.
+  await dbWrite.modelFile.update({ where: { id: placeholder.id }, data: { exists: false } });
 
   return { modelId: model.id, modelVersionId: modelVersion.id, selectedEpoch };
 }
@@ -362,6 +551,53 @@ export async function stampWorkflowDraftModel({
 }
 
 /**
+ * Called by every path that makes a model (or one of its versions) published or public, with the
+ * stored model. A model whose meta names no source workflow is not training-studio-born and is not
+ * checked. Otherwise:
+ *
+ * 1. Meta carries the approval stamp → passes without reading the workflow. The stamp records an
+ *    approval already seen, so a stamped model is not re-checked.
+ * 2. The workflow can be read (with the model OWNER's token — a moderator can publish someone else's
+ *    model) → it must report an approved status, or this throws; when it does, the stamp is written
+ *    (best-effort).
+ * 3. The orchestrator returns NOT_FOUND for the workflow, for whatever reason, and there is no stamp →
+ *    passes unchecked. Every model `createDraftModelFromWorkflow` creates carries the stamp, so this
+ *    only reaches models created before the stamp existed; they are grandfathered.
+ *
+ * Any other read failure is rethrown, so the publish fails and can be retried rather than going
+ * ahead unchecked. Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`).
+ */
+export async function assertTrainingSourcePublishable({
+  modelId,
+  meta,
+  ownerId,
+  callerId,
+}: {
+  modelId: number;
+  meta: ModelMeta | null | undefined;
+  ownerId: number;
+  callerId: number;
+}): Promise<void> {
+  const workflowId = meta?.trainingStudioWorkflowId;
+  if (!workflowId) return;
+  if (meta?.trainingStudioModerationApproved === true) return;
+  const token = await getOrchestratorToken(ownerId, undefined, {
+    bypassCache: callerId !== ownerId,
+    // Someone else's run, e.g. a moderator publishing it: the owner's restriction is not theirs.
+    allowRestricted: callerId !== ownerId,
+  });
+  let workflow: Workflow;
+  try {
+    workflow = await getWorkflow({ token, path: { workflowId } });
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return;
+    throw error;
+  }
+  assertTrainingModerationApproved(workflow);
+  await stampTrainingModerationApproved(modelId);
+}
+
+/**
  * Back-link a just-published studio-born model onto its source workflow: merge
  * `{ published, modelId, modelVersionId }` into the workflow's metadata, which is the studio's only
  * datastore — its run list flips the run to `published` and links the model page off these fields.
@@ -387,6 +623,7 @@ export async function stampWorkflowPublished({
   try {
     const token = await getOrchestratorToken(ownerId, undefined, {
       bypassCache: callerId !== ownerId,
+      allowRestricted: callerId !== ownerId,
     });
     const workflow = await getWorkflow({ token, path: { workflowId } });
     const metadata = {

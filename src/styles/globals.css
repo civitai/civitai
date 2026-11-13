@@ -104,6 +104,15 @@
   --safe-area-inset-bottom-page: var(--safe-area-inset-bottom);
 }
 
+/* Firefox for Android reports the system navigation bar as a bottom inset but lays the page out
+   above it, so paying it leaves a blank band over the bar (Chrome reports 0 there). Firefox on iOS
+   is WebKit and does not match. */
+@supports (-moz-appearance: none) {
+  :root {
+    --safe-area-inset-bottom: 0px;
+  }
+}
+
 /* 🔴 `--app-page-max-width` AND THE PLATFORM WIDTH-CAP LEDGER WERE BOTH DECLARED HERE AND
    ARE GONE. THE FULL-PAGE APP BLOCK SURFACE HAS NO PLATFORM WIDTH BOUND AT ALL — no
    custom property, no `var()` read, no per-app rule, no template, and no ledger to add one
@@ -158,6 +167,14 @@
    that has one, which is every route it renders on. */
 #__next:has([data-app-footer]) {
   --safe-area-inset-bottom-page: 0px;
+}
+
+/* How far the app footer's bar rises above the viewport bottom right now: unset
+   while it is slid out on scroll or absent, so a fixed bar reading
+   `var(--app-footer-offset, 0px)` drops to the edge with it instead of leaving
+   a footer-sized gap. `footer` excludes `PageActionBar`, which shares the mark. */
+#__next:has(footer[data-app-footer]:not([data-hidden])) {
+  --app-footer-offset: calc(var(--footer-height) + var(--safe-area-inset-bottom-unpaid));
 }
 
 @layer tailwind-preflight {
@@ -308,6 +325,11 @@ textarea {
                                        further down, because this package
                                        ships UNLAYERED CSS and a layered rule
                                        loses to it no matter how specific.
+     · `@civitai/components`           1 fixed (`toast-region`, `bottom/right:
+                                       16px`) — 0 call sites: the app renders
+                                       only its `button` markup (the
+                                       `shellDesignSystemMarkup` shell). 0
+                                       sticky. All in `@layer civitai.components`.
 
    One more entry point exists and is not in `_app.tsx`:
    `draft-js/dist/Draft.css`, imported by `TrainingImagesCaptionViewer`. 0
@@ -653,7 +675,8 @@ textarea {
 /* Mantine overrides */
 
 .mantine-Badge-label *,
-.mantine-Button-label * {
+.mantine-Button-label *,
+[data-badge-label] * {
   font-size: inherit;
   font-weight: inherit;
   font-family: inherit;
@@ -1138,6 +1161,13 @@ div[data-youtube-video] > iframe {
 #adconsent-usp-link {
   border: 1px solid #1971c2 !important;
   color: #1971c2 !important;
+}
+
+/* Admiral's injected "Do Not Sell" footer link (the only <a> directly inside our <footer>) and its
+   floating button, hidden until detectPrivacyUi sets `data-privacy-ui="visible"`. */
+html:not([data-privacy-ui='visible']) footer[data-app-footer] > a,
+html:not([data-privacy-ui='visible']) body > div:has(> #whisper-anchor) {
+  display: none !important;
 }
 
 #adconsent-usp-banner-optout input:checked + .adconsent-usp-slider {

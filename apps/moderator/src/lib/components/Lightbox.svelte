@@ -1,13 +1,13 @@
 <script lang="ts">
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import EdgeImage from './EdgeImage.svelte';
+  import EdgeMedia from './EdgeMedia.svelte';
   import { stepLightboxIndex, type LightboxItem } from '$lib/lightbox';
 
   /**
    * A large view of one image out of a set, with arrow-key paging.
    *
-   * 🔴 IT RENDERS `items[i].id` THROUGH `EdgeImage`, so every id reaching it has to be a
+   * 🔴 IT RENDERS `items[i].id` THROUGH `EdgeMedia`, so every id reaching it has to be a
    * Cloudflare-images KEY. `getEdgeUrl` returns its argument verbatim when it starts with `http` or
    * `blob`, so a caller that feeds this raw client-supplied text is rendering an arbitrary outbound
    * request in an operator's browser. Callers build `items` from an already-filtered source; on the
@@ -121,10 +121,14 @@
            attached the same file the capture produced yields two frames sharing an id, and keying on
            it would make paging between exactly those two a no-op. -->
       {#key index}
-        <EdgeImage
+        <!-- One frame on screen, so a video here may play by itself (EdgeVideo's default) — with
+             native controls, because this is where it is actually watched. -->
+        <EdgeMedia
           src={current.id}
+          type={current.type ?? 'image'}
           width={1600}
           alt={current.caption}
+          controls
           class="mx-auto max-h-[70vh] w-auto max-w-full rounded-lg"
         />
       {/key}

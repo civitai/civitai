@@ -4,9 +4,9 @@ import type {
   ImageGenStepTemplate,
   MuseImageCreateFalImageGenInput,
   MuseImageEditFalImageGenInput,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type MuseImageAspectRatio = NonNullable<MuseImageCreateFalImageGenInput['aspectRatio']>;
@@ -28,12 +28,12 @@ export const createMuseImageInput = defineHandler<
     return [
       {
         $type: 'imageGen',
-        input: removeEmpty({
+        input: removeEmpty<MuseImageEditFalImageGenInput>({
           ...baseInput,
           operation: 'editImage',
           aspectRatio: 'auto',
           images: data.images?.map((x) => x.url) ?? [],
-        }) as MuseImageEditFalImageGenInput,
+        }),
       },
     ];
   }
@@ -41,11 +41,11 @@ export const createMuseImageInput = defineHandler<
   return [
     {
       $type: 'imageGen',
-      input: removeEmpty({
+      input: removeEmpty<MuseImageCreateFalImageGenInput>({
         ...baseInput,
         operation: 'createImage',
         aspectRatio: data.aspectRatio?.value as MuseImageAspectRatio | undefined,
-      }) as MuseImageCreateFalImageGenInput,
+      }),
     },
   ];
 });

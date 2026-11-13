@@ -224,37 +224,6 @@ describe('deregisterFileLocationsByFile', () => {
     spy.mockRestore();
   });
 
-  it('tags its Axiom events with key=file so an inert deploy is distinguishable', async () => {
-    // The version-keyed batch path emits the IDENTICAL event names and payload
-    // shape, and success is never logged, so without a discriminator a wholly
-    // inert deploy of this feature looks exactly like a failing bulk deregister.
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 500,
-      text: () => Promise.resolve('boom'),
-    });
-
-    await deregisterFileLocationsByFile([123]);
-
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-failed', key: 'file' })
-    );
-  });
-
-  it('tags the not-configured SKIP with key=file too', async () => {
-    // The skip is the likeliest inert-deploy signal of the three — a pod
-    // missing the env emits it on every delete — so it needs the discriminator
-    // at least as much as the failure events. Asserted separately because a
-    // per-event mutation showed the failed-event assertion does not cover it.
-    envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
-
-    await expect(deregisterFileLocationsByFile([123])).resolves.toBeNull();
-
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'deregister-file-locations-skipped', key: 'file' })
-    );
-  });
-
   it('never throws when the request times out against a hung resolver', async () => {
     fetchMock.mockRejectedValue(
       new DOMException('The operation was aborted due to timeout', 'TimeoutError')

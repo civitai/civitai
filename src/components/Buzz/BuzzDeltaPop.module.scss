@@ -1,0 +1,104 @@
+.pop {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 1;
+  display: flex;
+  gap: var(--mantine-spacing-xs);
+  pointer-events: none;
+  white-space: nowrap;
+  // Size, weight and family come from the counter's digits it sits under.
+  // The counter's digits sit at line-height 0; a normal line box would push the pop past the header.
+  line-height: 1;
+  margin-top: 2px;
+  // Under a gradient-clipped counter, glyphs would otherwise inherit its transparent fill.
+  -webkit-text-fill-color: currentColor;
+  animation: popIn 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.exiting {
+  animation: popOut 600ms ease-in forwards;
+}
+
+.big {
+  font-size: 1.25em;
+}
+
+.line {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+// Per-type colour, darkened in light mode to stay legible on white.
+.blue {
+  color: var(--mantine-color-blue-7);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-blue-4);
+  }
+}
+
+.yellow {
+  color: var(--mantine-color-yellow-8);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-yellow-6);
+  }
+}
+
+.green {
+  color: var(--mantine-color-green-8);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-green-5);
+  }
+}
+
+.red {
+  color: var(--mantine-color-red-7);
+
+  [data-mantine-color-scheme='dark'] & {
+    color: var(--mantine-color-red-4);
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes popOut {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop {
+    animation: none;
+  }
+
+  .exiting {
+    animation: fadeOut 150ms linear forwards;
+  }
+}

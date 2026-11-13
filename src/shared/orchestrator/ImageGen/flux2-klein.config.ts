@@ -3,7 +3,7 @@ import type {
   Flux2KleinEditImageInput,
   SdCppSampleMethod,
   SdCppSchedule,
-} from '@civitai/client';
+} from '@civitai/orchestration-client';
 import * as z from 'zod';
 import {
   negativePromptSchema,

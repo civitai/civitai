@@ -1,7 +1,13 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 
 /**
- * The ONE projection from an `AppListing`'s media FKs to CDN URLs.
+ * The RAW projection from an `AppListing`'s media FKs to CDN URLs — no visibility decision.
+ *
+ * 🔴 PUBLIC SURFACES DO NOT CALL THESE DIRECTLY. Every public render of listing media goes
+ * through `listing-media-audience.ts`, which decides per image and per request whether the viewer
+ * may see it and only then calls these builders. Direct callers are the author's own "My builds"
+ * read and the moderator review facts, which must show what is attached; the ledger in
+ * `listing-media-audience.ledger.test.ts` pins that list.
  *
  * 🔴 IT IS A MODULE RATHER THAN TWO PRIVATE HELPERS BECAUSE THERE ARE NOW TWO READS.
  * `app_listings.icon_id` / `cover_id` are integer FKs to `Image`, not URLs, so every
@@ -18,6 +24,8 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 export const LISTING_ICON_WIDTH = 256;
 /** Cover render width. Covers are the wide card/hero image. */
 export const LISTING_COVER_WIDTH = 1200;
+/** Gallery screenshot render width — the same class as the cover, which it can stand in for. */
+export const LISTING_SCREENSHOT_WIDTH = 1200;
 
 /** Build a CDN icon URL from an icon `Image` row (or null/absent). */
 export function listingIconUrl(icon: { url: string | null } | null | undefined): string | null {
@@ -32,7 +40,7 @@ export function listingIconUrl(icon: { url: string | null } | null | undefined):
  *
  *   - the PUBLIC store projection passes the first screenshot's URL, because a shopper
  *     should see *something* rather than a grey box;
- *   - the AUTHOR's own "My apps" read passes `null`, because a missing cover is exactly
+ *   - the AUTHOR's own "My builds" read passes `null`, because a missing cover is exactly
  *     the fact its owner needs to see. Substituting a screenshot there would hide an
  *     incomplete listing from the only person who can complete it — and the advisory
  *     `computeListingProblems` warning already tells them the cover is missing, so the

@@ -4,6 +4,10 @@ import {
   FEEDBACK_NETWORK_ERROR_MAX_COUNT,
   FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
   FEEDBACK_NETWORK_URL_MAX_LENGTH,
+  FEEDBACK_TRPC_CODE_PATTERN,
+  FEEDBACK_TRPC_ERROR_MAX_COUNT,
+  FEEDBACK_TRPC_PATH_MAX_LENGTH,
+  FEEDBACK_TRPC_PATH_PATTERN,
 } from '~/shared/constants/feedback.constants';
 import { redactText, redactValue } from '~/utils/faro/redact';
 
@@ -93,6 +97,14 @@ export type FeedbackNetworkError = {
   initiatorType: string;
 };
 
+/** One failed tRPC call: which procedure, how it failed, and when. No input, no message. */
+export type FeedbackTrpcError = {
+  path: string;
+  code: string;
+  httpStatus?: number;
+  at: string;
+};
+
 /** One DISTINCT console message, with how many times it was recorded. */
 export type FeedbackConsoleError = {
   message: string;
@@ -178,6 +190,7 @@ class CountingBuffer {
 
 const consoleBuffer = new CountingBuffer(FEEDBACK_CONSOLE_ERROR_MAX_COUNT);
 const networkBuffer = new RingBuffer<FeedbackNetworkError>(FEEDBACK_NETWORK_ERROR_MAX_COUNT);
+const trpcBuffer = new RingBuffer<FeedbackTrpcError>(FEEDBACK_TRPC_ERROR_MAX_COUNT);
 
 /**
  * How many `console.error` arguments are formatted. A cap rather than the whole list because the
@@ -365,8 +378,16 @@ export function sanitizeNetworkUrl(raw: string, base?: string): string | null {
   }
 }
 
+/**
+ * tRPC's `loggerLink` prints every failed call through `console.error` as `%c << query #N %cpath`
+ * plus CSS. `trpcErrorLink` already records those calls with their codes, so the logger's copies
+ * would only spend the console buffer's ten slots on styling and evict the errors it exists for.
+ */
+const TRPC_LOGGER_LINE = /^%c (<<|>>) (query|mutation|subscription) #\d+ /;
+
 /** Record one already-raw console message. Exported for the recorder and for tests. */
 export function recordConsoleError(raw: string) {
+  if (TRPC_LOGGER_LINE.test(raw)) return;
   const message = sanitizeConsoleMessage(raw);
   if (!message) return;
   consoleBuffer.push(message);
@@ -413,10 +434,37 @@ export const readConsoleErrors = (): FeedbackConsoleError[] => consoleBuffer.rea
 /** The failed requests to attach to a submission, oldest first. Already redacted and clipped. */
 export const readNetworkErrors = (): FeedbackNetworkError[] => networkBuffer.read();
 
+/**
+ * Record one failed tRPC call. Takes only the fields it stores, so a caller cannot hand it the
+ * input or the error message: a message can quote what the user typed, and an input is what they
+ * typed. A path or code that does not have the expected shape is dropped, not cleaned.
+ */
+export function recordTrpcError(input: { path: string; code?: string; httpStatus?: number }) {
+  const { path, code, httpStatus } = input;
+  if (typeof path !== 'string' || path.length > FEEDBACK_TRPC_PATH_MAX_LENGTH) return;
+  if (!FEEDBACK_TRPC_PATH_PATTERN.test(path)) return;
+  const safeCode =
+    typeof code === 'string' && FEEDBACK_TRPC_CODE_PATTERN.test(code) ? code : 'UNKNOWN';
+  const status =
+    Number.isInteger(httpStatus) && httpStatus! >= 400 && httpStatus! <= 599
+      ? httpStatus
+      : undefined;
+  trpcBuffer.push({
+    path,
+    code: safeCode,
+    ...(status ? { httpStatus: status } : {}),
+    at: new Date().toISOString(),
+  });
+}
+
+/** The failed tRPC calls to attach to a submission, oldest first. */
+export const readTrpcErrors = (): FeedbackTrpcError[] => trpcBuffer.read();
+
 /** Drop everything. For tests, and for a caller that wants a clean slate. */
 export function resetBrowserErrorLog() {
   consoleBuffer.clear();
   networkBuffer.clear();
+  trpcBuffer.clear();
 }
 
 // Module + window guards make install idempotent across React StrictMode's double-mount and

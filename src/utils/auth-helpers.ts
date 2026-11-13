@@ -3,6 +3,8 @@
 // /api/auth/login-popup build the hub URL with the server's AUTH_JWT_ISSUER, so there's no client-side hub env
 // var to set (or to silently no-op when missing).
 
+import { safeInternalPath } from '~/utils/url-helpers';
+
 /** Same-origin POPUP login entry — the main server redirects to the hub, landing on /login/popup-done. */
 function loginPopupUrl(callbackUrl: string, reason?: string): string {
   const u = new URL('/api/auth/login-popup', window.location.origin);
@@ -23,6 +25,11 @@ function fullPageLoginUrl(dest: string, reason?: string): string {
  *  has no opener) can coordinate. */
 export const LOGIN_POPUP_CHANNEL = 'civitai-login';
 export const LOGIN_POPUP_DONE = 'civitai-login-popup-done';
+
+/** Where `/login/popup-done` sends a tab with no opener: its `cb` query param, if it is a same-origin path. */
+export function popupDoneTarget(search: string): string {
+  return safeInternalPath(new URLSearchParams(search).get('cb'), '/');
+}
 
 /**
  * Open the hub login (`auth.civitai.com/login`) in a POPUP window. The hub runs its normal login flow (providers
@@ -67,7 +74,21 @@ export function openLoginPopup(callbackUrl: string, reason?: string) {
     } catch {
       /* may already be closed */
     }
-    window.location.assign(callbackUrl); // back to where they started, now signed in
+    // Back to where they started, now signed in. Callers pass pathname+search+hash, and assigning this page's
+    // URL with a #fragment is a same-document fragment navigation (no reload) — the page would stay signed
+    // out. So for the current document, move to the target fragment (if it differs) and reload instead.
+    const here = new URL(window.location.href);
+    const dest = new URL(callbackUrl, here);
+    if (
+      dest.origin === here.origin &&
+      dest.pathname === here.pathname &&
+      dest.search === here.search
+    ) {
+      if (dest.hash !== here.hash) window.history.replaceState(window.history.state, '', dest.href);
+      window.location.reload();
+    } else {
+      window.location.assign(callbackUrl);
+    }
   };
 }
 

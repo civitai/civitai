@@ -498,7 +498,7 @@ const COMPLETING_STUCK_MINUTES = 30;
  * the fresh stamp. The stamp was never IN that snapshot, so there was nothing for the schema to
  * have preserved. Their damage differed, and only the first is what THIS gauge would have seen:
  *
- *   - `backfill-theme-elements.ts` wrote metadata and NOT status, so it left the row IN
+ *   - `backfill-theme-elements.ts` (removed) wrote metadata and NOT status, so it left the row IN
  *     `Completing` with no stamp — the stranded state this gauge counts. A multi-second LLM call
  *     sits between its read and its write, and `?force=true` widens it to every themed
  *     Active/Scheduled challenge.
@@ -506,11 +506,9 @@ const COMPLETING_STUCK_MINUTES = 30;
  *     Active/Scheduled value it had READ — so it did not strand a stampless `Completing` row, it
  *     UN-CLAIMED a challenge mid-completion. Invisible to this gauge; the damage lands elsewhere.
  *
- * BOTH WRITES ARE NOW PREDICATED (2026-07-31): the backfill's UPDATE carries
- * `AND status IN ('Active','Scheduled')` and merges with jsonb `||` instead of replacing the
- * column; `upsertChallenge` uses the `updateMany` + `count === 0` pattern keyed on the status it
- * read. Neither can strand a row in `Completing` any more, so this gauge should no longer see a
- * stampless `Completing` row from those paths.
+ * `upsertChallenge` is now predicated (2026-07-31): it uses the `updateMany` + `count === 0`
+ * pattern keyed on the status it read, so it cannot strand a row in `Completing`. The backfill
+ * with the same flaw has since been removed.
  *
  * It does NOT follow that the whole class is gone. `upsertChallenge` still writes the WHOLE metadata
  * column from its replica snapshot (`{ ...existingMetadata, themeElements }`) — the predicate only

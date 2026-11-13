@@ -11,8 +11,8 @@ import {
  *
  * 🔴 WHY THIS SUITE EXISTS IN THE NODE-ENV `unit` PROJECT. Both strings were previously
  * produced inside `src/pages/apps/activity.tsx`, whose only coverage tier is
- * `*.browser.test.tsx` — report-only, and unrunnable without a Playwright binary. That file's own
- * comment recorded the consequence: the provenance line is "the one copy site a literal sweep
+ * `*.browser.test.tsx` — report-only then, and unrunnable without a Playwright binary. That file's
+ * own comment recorded the consequence: the provenance line is "the one copy site a literal sweep
  * cannot find — it is computed". A computed copy site needs a BEHAVIOURAL test, so the rule moved
  * to a React-free leaf and the behaviour is pinned here.
  */

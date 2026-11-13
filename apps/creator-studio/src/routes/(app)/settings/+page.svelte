@@ -11,18 +11,18 @@
     CREATOR_PROGRAM_URL,
     CIVITAI_MEMBERSHIP_URL,
     CIVITAI_MANAGE_MEMBERSHIP_URL,
+    MIN_WITHDRAWAL_AMOUNT,
   } from '$lib/creator-program';
-  import { formatAmount } from '$lib/earnings';
+  import { centsToUsd, formatAmount } from '$lib/earnings';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   const BUZZ_DASHBOARD_URL = 'https://civitai.com/user/buzz-dashboard';
   // Payout onboarding is gated on settled cash so we don't push creators into a Tipalti signup (which bills us
-  // per account) before they can actually withdraw ($50 min withdrawal). Once they clear that, prompt setup.
-  const PAYOUT_UNLOCK_USD = 50;
+  // per account) before they can actually withdraw. Once they clear that, prompt setup.
   // cash balances are USD cents; settled is the withdrawable balance.
-  const canSetUpPayout = $derived(!!data.cash && data.cash.settled >= PAYOUT_UNLOCK_USD * 100);
+  const canSetUpPayout = $derived(!!data.cash && data.cash.settled >= MIN_WITHDRAWAL_AMOUNT);
 
   const tier = $derived(data.membership.tier);
   const isMember = $derived(data.membership.isMember);
@@ -38,8 +38,10 @@
   <Card>
     <CardHeader class="flex flex-row items-center gap-3">
       <CardTitle class="text-base text-white">Membership</CardTitle>
-      {#if isCP}
+      {#if isCP && isMember}
         <Badge variant="default" class="ml-auto">Creator Program</Badge>
+      {:else if isCP}
+        <Badge variant="outline" class="ml-auto">Membership inactive</Badge>
       {:else if isMember}
         <Badge variant="secondary" class="ml-auto">Member</Badge>
       {:else}
@@ -48,9 +50,13 @@
     </CardHeader>
     <CardContent class="flex flex-col gap-3">
       <p class="text-sm text-dark-0">
-        {#if isCP}
+        {#if isCP && isMember}
           You're a Creator Program member{tier ? ` on the ${tier} tier` : ''} —
           <strong class="text-green-5">monetization is unlocked</strong>.
+        {:else if isCP}
+          You're in the Creator Program, but
+          <strong class="text-white">your membership isn't active, so you can't bank more Buzz.</strong>
+          Buzz you've already banked still pays out at the end of the month.
         {:else if isMember}
           You have an active {tier} membership.
           <strong class="text-white">Join the Creator Program to unlock monetization.</strong>
@@ -59,7 +65,7 @@
         {/if}
       </p>
       <div class="flex flex-wrap gap-2">
-        {#if isMember || isCP}
+        {#if isMember}
           <Button
             href={CIVITAI_MANAGE_MEMBERSHIP_URL}
             target="_blank"
@@ -71,7 +77,7 @@
           </Button>
         {:else}
           <Button href={CIVITAI_MEMBERSHIP_URL} variant="secondary" size="sm"
-            >Get a membership</Button
+            >{isCP ? 'Renew membership' : 'Get a membership'}</Button
           >
         {/if}
         {#if !isCP}
@@ -108,7 +114,7 @@
           > in settled cash ready to withdraw. Set up payouts to cash out.
         {:else}
           Payout setup unlocks once you have <strong class="text-white"
-            >${PAYOUT_UNLOCK_USD} in settled cash</strong
+            >${centsToUsd(MIN_WITHDRAWAL_AMOUNT)} in settled cash</strong
           >
           ready to withdraw — so there's nothing to set up yet.
         {/if}

@@ -118,7 +118,7 @@ export function StickerBookGrid({
     // whole-rows trim is a layout tidy rather than a visibility decision — an
     // image it left off the last row is one this viewer may see, so paging into
     // it is correct. Withheld and hidden images are already gone from `visible`.
-    <ImagesProvider images={visible} hideStickerBadge revealStickers>
+    <ImagesProvider images={visible} hideStickerBadge revealStickers hideHatTurf>
       <div
         className="grid items-start"
         style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_WIDTH}px)`, gap: GRID_GAP }}
@@ -126,7 +126,7 @@ export function StickerBookGrid({
         {shown.map((item) => (
           <div key={item.imageId} className="relative">
             <div style={{ width: CARD_WIDTH }}>
-              <ImagesCard data={item.image} height={CARD_HEIGHT} />
+              <ImagesCard data={item.image} height={CARD_HEIGHT} width={CARD_WIDTH} />
             </div>
             <PlacedBy counterparts={item.counterparts} side={side} latestAt={item.latestAt} />
           </div>

@@ -1,8 +1,10 @@
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 
 /**
- * App Store Listings (W13) — P2d: `/apps/store-preview` REDIRECTS to `/apps`.
+ * App Store Listings (W13) — P2d: `/apps/store-preview` REDIRECTS to the store
+ * (`/apps/store`; it was `/apps` until the app home took that address).
  *
  * This was the DARK preview mount of the unified `AppListing`-backed store
  * (`AppListingsMarketplaceBody`) that parallel-ran alongside the live `/apps`
@@ -21,7 +23,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ features }) => {
     const access = resolveAppsPageAccess({ features });
     if ('notFound' in access) return access;
-    return { redirect: { destination: '/apps', permanent: false } };
+    return { redirect: { destination: APPS_STORE_HREF, permanent: false } };
   },
 });
 

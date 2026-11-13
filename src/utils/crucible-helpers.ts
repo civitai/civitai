@@ -1,8 +1,16 @@
+import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
 import {
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  crucibleRankingsAreFinal,
+} from '~/shared/constants/crucible.constants';
+import {
+  allBrowsingLevelsFlag,
   browsingLevelLabels,
+  getIsSafeBrowsingLevel,
+  nsfwLevelColors,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { slugit } from '~/utils/string-helpers';
@@ -18,6 +26,47 @@ export function getCrucibleSlug(name: string) {
 
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
+
+/** How a prize is displayed. It is paid in whichever Buzz the winner picks when claiming. */
+export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
+
+/**
+ * A crucible's allowed levels as one range ("PG–XXX"), keyed to the highest for its colour. `null`
+ * when a level in between is missing, since a range would claim it.
+ */
+export function getContentLevelRange(nsfwLevel: number) {
+  const levels = parseBitwiseBrowsingLevel(nsfwLevel).filter((level) => level in nsfwLevelColors);
+  if (!levels.length) return null;
+  const lowest = levels[0];
+  const highest = levels[levels.length - 1];
+  // Levels are single bits, so an unbroken run is exactly highest*2 - lowest.
+  if (levels.reduce((sum, level) => sum + level, 0) !== highest * 2 - lowest) return null;
+  const label = (level: number) => browsingLevelLabels[level as keyof typeof browsingLevelLabels];
+  return {
+    label: lowest === highest ? label(lowest) : `${label(lowest)}–${label(highest)}`,
+    level: highest,
+  };
+}
+
+/** Shown where a crucible's description is expected; a blank description is stored as NULL. */
+export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
+
+/** An entrant pays in the currency of the site they enter on. */
+export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
+  isGreen ? 'green' : 'yellow';
+
+/** The allowed-level values a crucible listed on the green site may have. */
+export const CRUCIBLE_SFW_LEVELS = Array.from(
+  { length: allBrowsingLevelsFlag },
+  (_, i) => i + 1
+).filter(getIsSafeBrowsingLevel);
+
+/**
+ * The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. Built on
+ * the list the feed queries match, so the gates and the feed cannot disagree.
+ */
+export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
+  CRUCIBLE_SFW_LEVELS.includes(nsfwLevel) && !textNsfw;
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;
@@ -58,7 +107,7 @@ export function getCrucibleTransactionDescription(text: string, crucible: Crucib
 
 const ENDING_SOON_MS = 24 * 60 * 60 * 1000;
 
-const STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
+export const CRUCIBLE_STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
   [CrucibleStatus.Pending]: { label: 'Upcoming', color: 'blue' },
   [CrucibleStatus.Active]: { label: 'Active', color: 'green' },
   [CrucibleStatus.Completed]: { label: 'Completed', color: 'gray' },
@@ -80,7 +129,7 @@ export function getCrucibleStatusBadge(
     if (msLeft <= ENDING_SOON_MS && isCrucibleFinalStretch({ startAt, endAt, now }))
       return { label: 'Ending soon', color: 'orange' };
   }
-  return STATUS_BADGES[status];
+  return CRUCIBLE_STATUS_BADGES[status];
 }
 
 /**
@@ -188,12 +237,14 @@ export function getCrucibleManageActions({
   endAt,
   isCreator,
   isModerator,
+  takenDownAt = null,
   now = new Date(),
 }: {
   status: CrucibleStatus;
   endAt: Date | null;
   isCreator: boolean;
   isModerator: boolean;
+  takenDownAt?: Date | null;
   now?: Date;
 }) {
   const ended =
@@ -201,12 +252,32 @@ export function getCrucibleManageActions({
     status === CrucibleStatus.Cancelled ||
     (!!endAt && new Date(endAt) <= now);
   const isPending = status === CrucibleStatus.Pending;
+  // An Active crucible past its end is finalize's until it lands as Completed.
+  const finalizing = status === CrucibleStatus.Active && !!endAt && new Date(endAt) <= now;
   return {
     canEdit:
       !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
     canCancel: !ended && (isModerator || (isCreator && isPending)),
-    canRemoveEntries: !ended && isModerator && status === CrucibleStatus.Active,
+    // An owner's removals are capped and need a reason; see CRUCIBLE_OWNER_REMOVAL_CAP.
+    canRemoveEntries: !ended && (isModerator || isCreator) && status === CrucibleStatus.Active,
+    canTakeDown: isModerator && !takenDownAt && !finalizing,
   };
+}
+
+/**
+ * Judging is blind: until a crucible ends, other people's entries show no creator and don't open
+ * the image detail, which carries the creator, prompt and resources.
+ */
+export function canSeeCrucibleEntryDetails({
+  status,
+  isModerator,
+  isOwnEntry,
+}: {
+  status: CrucibleStatus;
+  isModerator: boolean;
+  isOwnEntry: boolean;
+}) {
+  return isOwnEntry || isModerator || crucibleRankingsAreFinal(status);
 }
 
 export type PrizePosition = {
@@ -240,6 +311,98 @@ export function getCruciblePrizeAmount({
   return Math.floor((prize.percentage / 100) * totalPrizePool * (configured / filled));
 }
 
+export type CruciblePrizeWinner = {
+  entryId: number;
+  userId: number;
+  position: number;
+  prizePlace: number;
+  prizeAmount: number;
+};
+export type CrucibleDisplayPrize = Omit<CruciblePrizeWinner, 'userId'>;
+
+export const CRUCIBLE_ONE_PRIZE_RULE =
+  'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.';
+
+/**
+ * Creators in finishing order, each represented by their best-placed entry. Prizes and average
+ * finish both rank creators with this, so the two cannot disagree about where a creator finished.
+ */
+export function rankCreatorsByBestEntry<T extends { userId: number; position: number }>(
+  placed: T[]
+): T[] {
+  const seen = new Set<number>();
+  return [...placed]
+    .sort((a, b) => a.position - b.position)
+    .filter(({ userId }) => !seen.has(userId) && !!seen.add(userId));
+}
+
+/**
+ * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
+ * placing order, so a creator's other entries keep their positions but the next creator moves up
+ * a prize. Placings below the prize places don't change the result, so `placed` may be cut short
+ * after the last prize place's creator.
+ */
+export function getCruciblePrizeWinners({
+  placed,
+  prizePositions,
+  totalPrizePool,
+}: {
+  placed: { entryId: number; userId: number; position: number }[];
+  prizePositions: PrizePosition[];
+  totalPrizePool: number;
+}): CruciblePrizeWinner[] {
+  const lastPrizePlace = Math.max(0, ...prizePositions.map((p) => p.position));
+  const creatorsBest = rankCreatorsByBestEntry(placed)
+    .slice(0, lastPrizePlace)
+    .map(({ entryId, userId, position }) => ({ entryId, userId, position }));
+
+  return creatorsBest
+    .map((entry, index) => ({ ...entry, prizePlace: index + 1 }))
+    .filter(({ prizePlace }) => prizePositions.some((p) => p.position === prizePlace))
+    .map((winner) => ({
+      ...winner,
+      prizeAmount: getCruciblePrizeAmount({
+        position: winner.prizePlace,
+        prizePositions,
+        entryCount: creatorsBest.length,
+        totalPrizePool,
+      }),
+    }));
+}
+
+/** A place with a 0-Buzz amount is not a prize; every surface that lists or counts winners must filter through this. */
+export const isPaidPrize = ({ prizeAmount }: { prizeAmount: number }) => prizeAmount > 0;
+
+/** Smaller fields are too coarse to place a creator in: 2nd of 3 says little about skill. */
+export const AVG_FINISH_MIN_FIELD = 5;
+/** Below this, one lucky crucible would read as the creator's standing. */
+export const AVG_FINISH_MIN_CRUCIBLES = 3;
+
+/** Where a creator finished among the creators who placed; null when the creator did not place. */
+export function getCreatorFinish({
+  placed,
+  userId,
+}: {
+  placed: { userId: number; position: number }[];
+  userId: number;
+}): { rank: number; field: number } | null {
+  const ranked = rankCreatorsByBestEntry(placed);
+  const index = ranked.findIndex((creator) => creator.userId === userId);
+  return index === -1 ? null : { rank: index + 1, field: ranked.length };
+}
+
+/**
+ * A creator's average finish as "top X%" of the field, so entering big crucibles does not count
+ * against them the way a win rate does. Null until there are enough crucibles to mean something.
+ */
+export function getAverageFinishTopPercent(finishes: { rank: number; field: number }[]) {
+  const counted = finishes.filter(({ field }) => field >= AVG_FINISH_MIN_FIELD);
+  if (counted.length < AVG_FINISH_MIN_CRUCIBLES) return null;
+
+  const mean = counted.reduce((sum, { rank, field }) => sum + rank / field, 0) / counted.length;
+  return Math.max(1, Math.round(mean * 100));
+}
+
 export const CRUCIBLE_MIN_VOTES_PERCENT = 75;
 
 /** Votes an entry needs to place: a share of the average per entry, so late entries can't win unjudged. */
@@ -255,22 +418,125 @@ export function getCrucibleMinVotes({
   return Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT) / (entryCount * 100));
 }
 
-const FINAL_STRETCH_FRACTION = 0.2;
+/** The fewest votes the time-adjusted bar asks for, unless the old bar is lower. */
+export const CRUCIBLE_MIN_VOTES_FLOOR = 25;
 
-/** The last fifth of a crucible's run, when a new entry may not collect enough votes to place. */
+type TimedVoteEntry = { voteCount: number; createdAt: Date };
+
+/** Milliseconds an entry is live between `from` and `to`, never before the crucible started. */
+function getLiveMs(createdAt: Date, startAt: Date | null, to: Date) {
+  const liveFrom = Math.max(createdAt.getTime(), startAt?.getTime() ?? 0);
+  return Math.max(0, to.getTime() - liveFrom);
+}
+
+/** 75% of the votes an entry expects, never below the floor and never above the old bar. */
+function getTimeAdjustedBar({
+  totalVotes,
+  entryCount,
+  liveMs,
+  totalLiveMs,
+}: {
+  totalVotes: number;
+  entryCount: number;
+  liveMs: number;
+  totalLiveMs: number;
+}) {
+  const oldBar = getCrucibleMinVotes({ totalVotes, entryCount });
+  if (totalLiveMs <= 0) return oldBar;
+  // Integer arithmetic so an exact 75% stays exact, as in getCrucibleMinVotes.
+  const share = Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT * liveMs) / (100 * totalLiveMs));
+  return Math.min(Math.max(share, CRUCIBLE_MIN_VOTES_FLOOR), oldBar);
+}
+
+/**
+ * Votes each entry needs to place when the bar follows the time it was live: a share of the votes
+ * an entry expects given how long it ran, so late entries aren't judged against the full run.
+ * Same order as `entries`. Without any live time it falls back to getCrucibleMinVotes.
+ */
+export function getCrucibleTimeAdjustedMinVotes(
+  entries: TimedVoteEntry[],
+  { startAt, endAt }: { startAt: Date | null; endAt: Date }
+) {
+  const totalVotes = entries.reduce((sum, entry) => sum + entry.voteCount, 0);
+  const liveMs = entries.map((entry) => getLiveMs(entry.createdAt, startAt, endAt));
+  const totalLiveMs = liveMs.reduce((sum, ms) => sum + ms, 0);
+  return liveMs.map((ms) =>
+    getTimeAdjustedBar({ totalVotes, entryCount: entries.length, liveMs: ms, totalLiveMs })
+  );
+}
+
+/**
+ * Votes an entry submitted `now` needs to place, from the vote rate so far projected over the time
+ * left. Falls back to getCrucibleMinVotes before any entry has been live.
+ */
+export function getCrucibleLiveMinVotes({
+  entries,
+  startAt,
+  endAt,
+  now,
+}: {
+  entries: TimedVoteEntry[];
+  startAt: Date | null;
+  endAt: Date;
+  now: Date;
+}) {
+  const totalVotes = entries.reduce((sum, entry) => sum + entry.voteCount, 0);
+  const totalLiveMs = entries.reduce(
+    (sum, entry) => sum + getLiveMs(entry.createdAt, startAt, now),
+    0
+  );
+  return getTimeAdjustedBar({
+    totalVotes,
+    entryCount: entries.length,
+    liveMs: Math.max(0, endAt.getTime() - now.getTime()),
+    totalLiveMs,
+  });
+}
+
+/**
+ * The last `percent` of a crucible's run, when a new entry may not collect enough votes to place.
+ * Defaults to the warning share a crucible gets unless its creator picks another.
+ */
 export function isCrucibleFinalStretch({
   startAt,
   endAt,
+  percent = CRUCIBLE_ENTRY_WARNING_PERCENT.default,
   now = new Date(),
 }: {
   startAt: Date | null;
   endAt: Date | null;
+  percent?: number;
   now?: Date;
 }) {
   if (!startAt || !endAt) return false;
   const end = new Date(endAt).getTime();
   const remaining = end - now.getTime();
-  return remaining > 0 && remaining <= (end - new Date(startAt).getTime()) * FINAL_STRETCH_FRACTION;
+  return remaining > 0 && remaining * 100 <= (end - new Date(startAt).getTime()) * percent;
+}
+
+/** When a crucible stops taking entries: `entryCutoffPercent` of its run before the end. */
+export function getCrucibleEntriesCloseAt({
+  startAt,
+  endAt,
+  entryCutoffPercent,
+}: {
+  startAt: Date | null;
+  endAt: Date | null;
+  entryCutoffPercent: number;
+}): Date | null {
+  if (!endAt) return null;
+  const end = new Date(endAt).getTime();
+  if (!startAt || !entryCutoffPercent) return new Date(end);
+  const run = end - new Date(startAt).getTime();
+  return new Date(end - Math.floor((run * entryCutoffPercent) / 100));
+}
+
+export function areCrucibleEntriesClosed(
+  crucible: { startAt: Date | null; endAt: Date | null; entryCutoffPercent: number },
+  now: Date = new Date()
+) {
+  const closeAt = getCrucibleEntriesCloseAt(crucible);
+  return !!closeAt && now >= closeAt;
 }
 
 /**
@@ -337,3 +603,49 @@ export function getCrucibleRatings(nsfwLevel: number): string[] {
 export function getCrucibleRatingLabel(nsfwLevel: number): string {
   return getCrucibleRatings(nsfwLevel).join(' / ');
 }
+
+export type CrucibleJudgingBadge = { kind: 'available' | 'caughtUp'; label: string };
+
+/** Only for crucibles the viewer has judged: on any other, every pair is still open. */
+export function getCrucibleJudgingBadge(
+  judging: Pick<CrucibleJudgingStatus, 'judged' | 'available' | 'votesUsedUp'> | undefined
+): CrucibleJudgingBadge | null {
+  if (!judging?.judged) return null;
+  if (judging.available) return { kind: 'available', label: 'You have pairs to judge here' };
+  if (judging.votesUsedUp) return { kind: 'caughtUp', label: "You're caught up here" };
+  return null;
+}
+
+/** Its start has passed, but it opens only once its review finishes. */
+export const isCrucibleAwaitingReviewToStart = (
+  crucible: { status: CrucibleStatus; startAt: Date | null },
+  now = new Date()
+) => crucible.status === CrucibleStatus.Pending && !!crucible.startAt && crucible.startAt <= now;
+
+/** Entries a crucible's owner can remove from it. Moderator removals don't count against it. */
+export const CRUCIBLE_OWNER_REMOVAL_CAP = 10;
+export const CRUCIBLE_OWNER_REMOVAL_NOTE_MAX_LENGTH = 200;
+
+export const crucibleOwnerRemovalReasons = {
+  'off-topic': 'Off-topic for this crucible',
+  'breaks-rules': "Breaks the crucible's rules",
+  'low-effort': 'Low effort or spam',
+  other: 'Other',
+} as const;
+export type CrucibleOwnerRemovalReason = keyof typeof crucibleOwnerRemovalReasons;
+export const crucibleOwnerRemovalReasonKeys = Object.keys(crucibleOwnerRemovalReasons) as [
+  CrucibleOwnerRemovalReason,
+  ...CrucibleOwnerRemovalReason[]
+];
+
+/** What the entrant is told: the fixed reason's label, or the owner's note for "other". */
+export const getCrucibleOwnerRemovalReasonText = ({
+  reason,
+  note,
+}: {
+  reason: CrucibleOwnerRemovalReason;
+  note?: string | null;
+}) => (reason === 'other' && note ? note : crucibleOwnerRemovalReasons[reason]);
+
+export const getCrucibleOwnerRemovalsLeft = (ownerRemovalCount: number) =>
+  Math.max(0, CRUCIBLE_OWNER_REMOVAL_CAP - ownerRemovalCount);

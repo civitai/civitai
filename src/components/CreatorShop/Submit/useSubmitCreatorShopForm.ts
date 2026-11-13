@@ -24,6 +24,7 @@ import type {
   UpdateCreatorShopItemInput,
 } from '~/server/schema/creator-shop.schema';
 import {
+  CREATOR_OFFSET_LIMIT,
   cosmeticPriceFloor,
   STICKER_MIN_BUZZ_PER_USE,
   STICKER_MAX_USES,
@@ -40,6 +41,7 @@ import { CosmeticShopItemStatus, CosmeticSource, CosmeticType } from '~/shared/u
 import { isAnimatedImage } from '~/utils/media-preprocessors/image.preprocessor';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 
 // Owns the submit/edit form: local field state, the derived readiness/affordability
 // flags, artwork drop handling, and the create/update mutations. Keeps the modal
@@ -104,7 +106,7 @@ export function useSubmitCreatorShopForm({
     ?.acceptsBlueBuzz;
   const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(itemAcceptsBlueBuzz);
   const acceptsBlueBuzzChanged = acceptsBlueBuzz !== itemAcceptsBlueBuzz;
-  // Avatar-decoration fit adjustment (per side, -5..5); all-zero = none stored.
+  // Avatar-decoration fit adjustment (per side, within the creator range); all-zero = none stored.
   const [offsets, setOffsetsState] = useState<CosmeticOffsets>(
     (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? {
       top: 0,
@@ -308,6 +310,11 @@ export function useSubmitCreatorShopForm({
     (item?.cosmetic?.data as { offsets?: CosmeticOffsets } | null)?.offsets ?? null;
   const offsetsChanged =
     isDecoration && JSON.stringify(normalizedOffsets) !== JSON.stringify(existingOffsets);
+  // Edges a moderator set past the creator range stay as stored: the field is read-only rather
+  // than clamped to the range, which would save a different fit than the one approved.
+  const moderatorSetSides = (['top', 'bottom', 'left', 'right'] as const).filter(
+    (side) => Math.abs(existingOffsets?.[side] ?? 0) > CREATOR_OFFSET_LIMIT
+  );
 
   const handleSubmit = async () => {
     if (!canSubmit || !imageId) {
@@ -369,7 +376,7 @@ export function useSubmitCreatorShopForm({
           showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
           return;
         }
-        await submitItem.mutateAsync({
+        const submission = {
           cosmeticType: type,
           name: name.trim(),
           description: description.trim() || null,
@@ -387,7 +394,14 @@ export function useSubmitCreatorShopForm({
           pricePerUse: isSticker ? pricePerUse : undefined,
           rightsAffirmed: true,
           quotedFee: submissionFee,
-        });
+        };
+        // One key per submission: the same content resent after a failure that may have charged
+        // the fee is the same submission (charged once); any change to it is a new one, with its
+        // own key and its own fee.
+        await withPaymentIntentKey(
+          submissionIntent('creator-shop-item', submission),
+          (idempotencyKey) => submitItem.mutateAsync({ ...submission, idempotencyKey })
+        );
       }
       resetFiles();
       onClose();
@@ -463,6 +477,7 @@ export function useSubmitCreatorShopForm({
     offsets,
     setOffset,
     offsetsChanged,
+    moderatorSetSides,
     imageId,
     localUrl,
     checks,

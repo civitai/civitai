@@ -61,9 +61,10 @@ import path from 'path';
  * `src/server/utils/apps-catalog-rate-limit.ts`, the four
  * `src/pages/api/v1/blocks/` endpoints (`dev-token.ts`, `withdraw.ts`,
  * `submissions.ts`, `submit-version.ts`), and
- * `src/server/middleware/bot-detection.middleware.ts`. The first five carry a
+ * `getClientIp` in `src/server/middleware/api-request-policy.ts` (moved there
+ * from `bot-detection.middleware.ts`). The first five carry a
  * byte-identical open-coded helper and five of the six build rate-limit keys
- * (bot-detection is the exception; its value feeds bot verification). A seventh
+ * (`getClientIp` is the exception; its value feeds bot verification). A seventh
  * lives outside `src/` in `apps/auth/src/lib/server/auth/request.ts`, which this
  * walk's root cannot reach at all. None of that is in scope for this file —
  * it is recorded so the numbers here are read as "what is on the ledger", never
@@ -199,8 +200,8 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
   'server/controllers/image.controller.ts': {
     symbol: 'resolveClientIpOrNull',
     why:
-      'Forwards the acting moderator’s address to the moderator spoke, which records it on the '  +
-      'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the '  +
+      'Forwards the acting moderator’s address to the moderator spoke, which records it on the ' +
+      'image-moderation audit row. Attribution, not enforcement — and the field is optional, so the ' +
       'falsy sentinel is preserved.',
   },
   'pages/api/mod/comment/remove-as-tos.ts': {
@@ -215,13 +216,19 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
       '(apps/auth), so the relationship is pinned behaviourally from both ends rather than ' +
       'asserted here. Falsy sentinel preserved — the bridge omits the header on undefined.',
   },
-  'server/middleware.trpc.ts': {
+  'server/utils/rate-limit-bucket.ts': {
     symbol: 'resolveClientIp',
-    why: 'Rate-limit bucket key across many procedures — a limiter, not the control itself.',
+    why:
+      'Bucket key of the tRPC rateLimit() middleware across many procedures, and of the ' +
+      'usage-limits read — a limiter, not the control itself.',
   },
   'server/utils/public-api-rate-limit.ts': {
     symbol: 'resolveClientIp',
     why: 'Public-API rate-limit bucket key.',
+  },
+  'server/utils/app-visit-rate-limit.ts': {
+    symbol: 'resolveClientIp',
+    why: 'Rate-limit bucket key for the off-site visit redirect (/apps/go) — a limiter, not the control.',
   },
   // ── Enforcement ──────────────────────────────────────────────────────────
   'pages/api/v1/block-tokens/index.ts': {
@@ -235,7 +242,11 @@ const DERIVATION_SITES: Record<string, { symbol: string; why: string }> = {
  * edge. Kept as an explicit inverse list: the ledger above says what they DO
  * bind, this says what they must not.
  */
-const MUST_NOT_HOLD_EDGE = ['server/middleware.trpc.ts', 'server/utils/public-api-rate-limit.ts'];
+const MUST_NOT_HOLD_EDGE = [
+  'server/utils/rate-limit-bucket.ts',
+  'server/utils/public-api-rate-limit.ts',
+  'server/utils/app-visit-rate-limit.ts',
+];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

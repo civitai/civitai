@@ -60,6 +60,7 @@ export const placementCaller = ({
       stickers: true,
       stickerPlacement: true,
       remixGallery: true,
+      storylines: true,
       ...features,
     },
   } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;

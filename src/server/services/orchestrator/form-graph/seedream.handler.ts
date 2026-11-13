@@ -1,9 +1,12 @@
 /** Seedream handler for the form-graph lane — one seedream-engine imageGen step. */
 
-import type { ImageGenStepTemplate, SeedreamImageGenInput, SeedreamVersion } from '@civitai/client';
+import type { ImageGenStepTemplate, SeedreamImageGenInput } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import {
+  seedreamVersionIds,
+  type SeedreamVersion,
+} from '~/shared/form-graph/generation/image/seedream.graph';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const versionIdToVersion = new Map<number, SeedreamVersion>(
@@ -18,7 +21,7 @@ export const createSeedreamInput = defineHandler<EcosystemData<'Seedream'>, [Ima
     return [
       {
         $type: 'imageGen',
-        input: removeEmpty({
+        input: removeEmpty<SeedreamImageGenInput>({
           engine: 'seedream',
           prompt: data.prompt,
           width: data.aspectRatio?.width,
@@ -29,7 +32,7 @@ export const createSeedreamInput = defineHandler<EcosystemData<'Seedream'>, [Ima
           enableSafetyChecker: false,
           seed: data.seed,
           quantity: data.quantity ?? 1,
-        }) as SeedreamImageGenInput,
+        }),
       },
     ];
   }

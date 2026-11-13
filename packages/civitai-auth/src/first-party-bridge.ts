@@ -1,8 +1,10 @@
 import { randomBytes, createHash } from 'crypto';
 import { TokenScope } from './token-scope';
-import { hubBaseUrl, hubFetch } from './hub';
+import { hubBaseUrl, hubFetch, internalShapeReady } from './hub';
+import { loadAuthEnv } from './env';
 import { firstPartyClientId, SPOKE_CALLBACK_PATH } from './first-party';
 import { isSecureCookie } from './cookies';
+import { safeReturnPath } from './return-path';
 
 // FIRST-PARTY LOGIN BRIDGE (spoke side) — the framework-agnostic core of the OAuth authorization-code + PKCE
 // login a first-party app runs against the hub. A spoke on a different registrable domain can't read the hub's
@@ -31,13 +33,9 @@ export function randomState(): string {
   return b64url(randomBytes(24));
 }
 
-/**
- * Only ever continue to a same-origin PATH (no open redirect through returnUrl). Rejects protocol-relative
- * `//host` AND backslash-prefixed `/\host` / `/\/host` — some agents normalize `\`→`/`, turning the latter
- * into a protocol-relative external redirect.
- */
+/** Only ever continue to a same-origin PATH; anything else becomes `/`. The rule is `safeReturnPath`'s. */
 export function safePath(raw: unknown): string {
-  return typeof raw === 'string' && raw.startsWith('/') && !/^\/[/\\]/.test(raw) ? raw : '/';
+  return safeReturnPath(raw) ?? '/';
 }
 
 function buildBridgeCookie(
@@ -190,6 +188,8 @@ export async function completeFirstPartyCallback(opts: {
   // under internal routing (no proxy → no XFF), so the hub's getClientAddress() has a header to resolve.
   if (opts.clientIp) headers['x-forwarded-for'] = opts.clientIp;
   try {
+    const internal = internalShapeReady() && loadAuthEnv().AUTH_INTERNAL_TOKEN;
+    if (internal) headers.authorization = `Bearer ${internal}`;
     const res = await hubFetch('/api/auth/oauth/session', {
       method: 'POST',
       headers,
