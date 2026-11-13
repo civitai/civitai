@@ -56,7 +56,7 @@
     <p class="blurb">{blurb}</p>
 
     <dl>
-      <div><dt>Price</dt><dd class="gold"><Icon name="coins" size={16} />{count(card.price)}{#if packNote(card)} · {packNote(card)}{/if}</dd></div>
+      <div><dt>Price</dt><dd class="gold"><Icon name="coins" size={16} />{count(card.price)}{#if packNote(card)}<span class="per">&nbsp;· {packNote(card)}</span>{/if}</dd></div>
       <div><dt>Your gold</dt><dd><Icon name="coins" size={16} />{count(spendable)}</dd></div>
       <div><dt>After purchase</dt><dd><Icon name="coins" size={16} />{count(Math.max(0, spendable - card.price))}</dd></div>
     </dl>
@@ -129,6 +129,12 @@
       opacity var(--motion-base) var(--ease-out-quart),
       transform var(--motion-base) var(--ease-out-quart);
   }
+  @media (prefers-reduced-motion: reduce) {
+    .dialog,
+    .ov-backdrop.closing {
+      transition: none;
+    }
+  }
   .dialog.closing {
     opacity: 0;
     transform: scale(0.98);
@@ -181,6 +187,11 @@
   }
   dd.gold {
     color: var(--io-gold);
+  }
+  dd .per {
+    color: var(--io-parchment-muted);
+    font: 400 0.85rem/1 var(--io-font-ui);
+    text-transform: none;
   }
   form {
     display: flex;

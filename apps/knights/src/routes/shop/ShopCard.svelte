@@ -89,7 +89,6 @@
   <div class="body">
     {#if variant === 'pack'}
       <p class="pack-amount"><span id="card-{card.id}">{count(card.buzz ?? 0)}</span> <span class="unit">Buzz</span></p>
-      {#if bonus > 0}<p class="bonus">+{bonus}% more Buzz</p>{/if}
     {:else}
       <h3 id="card-{card.id}">{title}</h3>
     {/if}
@@ -106,9 +105,11 @@
     <p class="price">
       <Icon name="coins" size={16} /><b>{count(card.price)}</b>
       {#if card.deal}<s>{count(card.listPrice)}</s>{/if}
-      {#if pack}<span class="per">· {pack}</span>{/if}
+      {#if pack}<span class="per">&nbsp;· {pack}</span>{/if}
+      {#if variant === 'pack' && bonus > 0}<span class="chip">+{bonus}% more Buzz</span>{/if}
     </p>
-    {#if card.state === 'closed'}<p class="why">{refusalText('closed')}</p>{/if}
+    <!-- A closed pack shelf says so once, above the packs. -->
+    {#if card.state === 'closed' && variant !== 'pack'}<p class="why">{refusalText('closed')}</p>{/if}
   </div>
   {#if card.deal}
     <span class="tag">{card.state === 'rank' ? `${card.minRank} only` : `-${dealPercentOff(card.price, card.listPrice)}% today`}</span>
@@ -144,7 +145,7 @@
         Buy
       </button>
     {/key}
-  {:else}
+  {:else if !(variant === 'pack' && card.state === 'closed')}
     <span class="state">{cta}</span>
   {/if}
   {#if refusal}<p class="short" role="status">{refusal}</p>
@@ -217,11 +218,15 @@
     letter-spacing: 0.2em;
     text-transform: uppercase;
   }
-  .bonus {
-    margin: 0.15rem 0 0;
+  .chip {
+    margin-left: auto;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--io-gold-muted);
+    border-radius: 3px;
     color: var(--io-gold);
-    font: 600 0.75rem/1.3 var(--io-font-ui);
-    letter-spacing: 0.04em;
+    font: 600 0.62rem/1.2 var(--io-font-ui);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
   .perks {
     display: inline-flex;
@@ -254,6 +259,7 @@
   .why {
     color: var(--io-parchment-muted);
     font: 400 0.82rem/1.4 var(--io-font-ui);
+    text-transform: none;
   }
   .why {
     margin: 0.35rem 0 0;
@@ -417,6 +423,9 @@
     .sheen {
       display: none;
     }
+    .card.enter,
+    .seal.stamp,
+    .short,
     .buy.shake {
       animation: none;
     }

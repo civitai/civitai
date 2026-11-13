@@ -69,3 +69,9 @@ button.ov-secondary:hover:not(:disabled) {
     opacity: 0;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-backdrop {
+    animation: none;
+  }
+}

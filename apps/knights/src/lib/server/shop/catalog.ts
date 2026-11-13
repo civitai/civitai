@@ -2,7 +2,15 @@ import { sql, type Kysely } from 'kysely';
 import { withheldCosmetics } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { rankIndex } from '../ranks';
-import { cosmeticImageKey, holdingBlocksPurchase, stickerUses } from './cosmetics';
+import {
+  cosmeticImageKey,
+  frameFit,
+  holdingBlocksPurchase,
+  nameplateGradient,
+  stickerUses,
+  type FrameFit,
+  type NameplateGradient,
+} from './cosmetics';
 import { hasActiveMembership } from './inventory';
 import {
   isSellable,
@@ -32,6 +40,10 @@ export type ShopCard = {
   /** Null for anything but a limited sticker. */
   uses: number | null;
   imageKey: string | null;
+  /** A nameplate's gradient, so the shop can paint the viewer's name in it. */
+  nameplate: NameplateGradient | null;
+  /** How an avatar frame sits around the avatar, so the try-on preview places it as the main site does. */
+  frameFit: FrameFit | null;
   heldUses: number | null;
 };
 
@@ -124,6 +136,8 @@ export async function loadShop(
         cosmeticType: cosmetic?.type ?? null,
         uses,
         imageKey: cosmeticImageKey(cosmetic?.data),
+        nameplate: cosmetic?.type === 'NamePlate' ? nameplateGradient(cosmetic.data) : null,
+        frameFit: cosmetic?.type === 'ProfileDecoration' ? frameFit(cosmetic.data) : null,
         heldUses:
           isSticker && held.length ? held.reduce((n, row) => n + (row.remaining ?? 0), 0) : null,
       },

@@ -4,9 +4,12 @@
   import { count, formatClock, formatWait } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { reducedMotion, tween } from '$lib/motion';
-  import { PENDING_TEXT, buyClick } from '$lib/shop-view';
+  import { PENDING_TEXT, buyClick, groupCosmetics, refusalText } from '$lib/shop-view';
+  import CosmeticTile from './CosmeticTile.svelte';
+  import MembershipCard from './MembershipCard.svelte';
   import PurchaseDialog from './PurchaseDialog.svelte';
   import ShopCard from './ShopCard.svelte';
+  import TryOnDialog from './TryOnDialog.svelte';
   import type { PageData } from './$types';
 
   type Card = NonNullable<PageData['shop']>['cards'][number];
@@ -20,6 +23,13 @@
   const packs = $derived(rest.filter((card) => card.kind === 'buzz_pack'));
   const memberships = $derived(rest.filter((card) => card.kind === 'membership'));
   const cosmetics = $derived(rest.filter((card) => card.kind === 'cosmetic'));
+  const shelves = $derived(groupCosmetics(cosmetics));
+  // Buzz packs close together (conversion off, or no Buzz endpoint): said once for the shelf, not on every card.
+  const packsClosed = $derived(packs.length > 0 && packs.every((card) => card.state === 'closed'));
+  const username = $derived(data.player?.username ?? 'YourName');
+  const rankLine = $derived(
+    data.status ? `${data.status.rank} · Level ${count(data.status.level)}` : ''
+  );
 
   // The clock follows the server's, so a skewed device still counts down to the real UTC midnight.
   const skew = untrack(() => Date.parse(data.now) - Date.now());
@@ -36,6 +46,12 @@
   let skipped = $state(false);
   let reloadedFor = '';
   let confirming = $state<Card | null>(null);
+  // The id, not the card: the dialog always shows the live card, and closes if a reload drops it.
+  let tryingId = $state<number | null>(null);
+  const trying = $derived(tryingId === null ? null : (cards.find((card) => card.id === tryingId) ?? null));
+  $effect(() => {
+    if (tryingId !== null && !trying) tryingId = null;
+  });
   let requestKey = $state('');
   let short = $state<{ id: number; key: number; by: number; refusal: string | null } | null>(null);
   let notice = $state<string | null>(null);
@@ -135,7 +151,7 @@
         Spend the gold your judgments earn on Buzz, membership and cosmetics that only Knights can wear.
       </p>
     </div>
-    <div class="purse" aria-label="Your gold">
+    <div class="purse" role="group" aria-label="Your gold">
       <div class="figure">
         <p class="label">Spendable gold</p>
         <p class="value">
@@ -204,6 +220,7 @@
         <h2 class="eyebrow">Buzz packs</h2>
         <p class="refresh">Sent as Yellow Buzz to your Civitai wallet</p>
       </div>
+      {#if packsClosed}<p class="shelf-note" role="status"><Icon name="hourglass" size={14} />{refusalText('closed')}</p>{/if}
       <div class="packs">
         {#each packs as card, i (card.id)}
           <ShopCard
@@ -220,46 +237,56 @@
       </div>
     {/if}
 
-    <div class="duo">
-      {#if memberships.length > 0}
-        <section>
-          <div class="section-head"><h2 class="eyebrow">Membership</h2><p class="refresh">One week, perks only, if you have no membership</p></div>
-          <div class="stack">
-            {#each memberships as card, i (card.id)}
-              <ShopCard
+    {#if memberships.length > 0}
+      <div class="section-head">
+        <h2 class="eyebrow">Membership · 7 days</h2>
+        <p class="refresh">Perks only, if you have no membership</p>
+      </div>
+      <div class="tiers">
+        {#each memberships as card, i (card.id)}
+          <MembershipCard
+            {card}
+            {balance}
+            index={deals.length + packs.length + i}
+            shortBy={short?.id === card.id ? short.by : 0}
+            shakeKey={short?.id === card.id ? short.key : 0}
+            refusal={short?.id === card.id ? short.refusal : null}
+            onbuy={openConfirm}
+          />
+        {/each}
+      </div>
+    {/if}
+
+    {#if cosmetics.length > 0}
+      <div class="section-head">
+        <h2 class="eyebrow">Cosmetics</h2>
+        <p class="refresh">Only from Knights of New Order · select one to try it on</p>
+      </div>
+      {#each shelves as shelf, s (shelf.key)}
+        <section class="shelf" aria-labelledby="shelf-{shelf.key}">
+          <div class="shelf-head">
+            <h3 id="shelf-{shelf.key}">{shelf.label}</h3>
+            {#if shelf.note}<p>{shelf.note}</p>{/if}
+          </div>
+          <div class="tiles">
+            {#each shelf.cards as card, i (card.id)}
+              <CosmeticTile
                 {card}
-                variant="row"
-                index={deals.length + packs.length + i}
+                {username}
+                {balance}
+                index={deals.length + packs.length + memberships.length + s * 4 + i}
                 shortBy={short?.id === card.id ? short.by : 0}
                 shakeKey={short?.id === card.id ? short.key : 0}
                 refusal={short?.id === card.id ? short.refusal : null}
                 stamped={stamped === card.id}
                 onbuy={openConfirm}
+                ontry={(picked) => (tryingId = picked.id)}
               />
             {/each}
           </div>
         </section>
-      {/if}
-      {#if cosmetics.length > 0}
-        <section>
-          <div class="section-head"><h2 class="eyebrow">Cosmetics</h2><p class="refresh">Only from Knights of New Order</p></div>
-          <div class="stack">
-            {#each cosmetics as card, i (card.id)}
-              <ShopCard
-                {card}
-                variant="row"
-                index={deals.length + packs.length + memberships.length + i}
-                shortBy={short?.id === card.id ? short.by : 0}
-                shakeKey={short?.id === card.id ? short.key : 0}
-                refusal={short?.id === card.id ? short.refusal : null}
-                stamped={stamped === card.id}
-                onbuy={openConfirm}
-              />
-            {/each}
-          </div>
-        </section>
-      {/if}
-    </div>
+      {/each}
+    {/if}
 
     {#if cards.length === 0}
       <p class="closed">The shelves are empty today. Come back after midnight UTC.</p>
@@ -287,6 +314,21 @@
     </p>
   {/if}
 </div>
+
+{#if trying}
+  <TryOnDialog
+    card={trying}
+    {username}
+    avatarUrl={data.player?.avatarUrl ?? null}
+    {rankLine}
+    {balance}
+    onclose={() => (tryingId = null)}
+    onbuy={(card) => {
+      tryingId = null;
+      openConfirm(card);
+    }}
+  />
+{/if}
 
 {#if confirming}
   <PurchaseDialog
@@ -391,16 +433,42 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1rem;
   }
-  .duo {
+  .tiers {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0 2rem;
-    align-items: start;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
   }
-  .stack {
+  .shelf {
+    margin-top: 1.25rem;
+  }
+  .shelf-note {
     display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    align-items: center;
+    gap: 0.45rem;
+    margin: -0.25rem 0 0.75rem;
+    color: var(--io-parchment-muted);
+    font: 400 0.85rem/1.4 var(--io-font-ui);
+  }
+  .shelf-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.625rem;
+    margin-bottom: 0.75rem;
+  }
+  .shelf-head h3 {
+    margin: 0;
+    color: var(--io-parchment);
+    font: 700 1.06rem/1.2 var(--io-font-display);
+    letter-spacing: 0.04em;
+  }
+  .shelf-head p {
+    color: var(--io-parchment-muted);
+    font: 400 0.75rem/1.2 var(--io-font-ui);
+  }
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1rem;
   }
   .closed,
   .fine {
@@ -512,11 +580,18 @@
     .packs {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .duo {
+    .tiers {
       grid-template-columns: 1fr;
+    }
+    .tiles {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
   @media (max-width: 47.99rem) {
+    .tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.625rem;
+    }
     .recent li {
       flex-wrap: wrap;
       row-gap: 0.15rem;
