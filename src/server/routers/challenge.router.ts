@@ -166,6 +166,7 @@ export const challengeRouter = router({
         ...input,
         isGreen: ctx.features.isGreen,
         currentUserId: ctx.user?.id,
+        canAccessUserChallenges: ctx.features.userChallenges,
       })
     ),
 

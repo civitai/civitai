@@ -4120,9 +4120,23 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput & { isGreen: boolean; currentUserId?: number }
+  input: GetCompletedChallengesWithWinnersInput & {
+    isGreen: boolean;
+    currentUserId?: number;
+    canAccessUserChallenges?: boolean;
+  }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
+  const {
+    cursor,
+    limit,
+    eventId,
+    browsingLevel,
+    query,
+    source,
+    isGreen,
+    currentUserId,
+    canAccessUserChallenges = false,
+  } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
@@ -4131,6 +4145,10 @@ export async function getCompletedChallengesWithWinners(
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
     ...challengeScanGates(currentUserId),
   ];
+
+  // User challenges stay behind the `userChallenges` flag, as on the feed and the detail page.
+  if (!canAccessUserChallenges)
+    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
 
   if (eventId) {
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
