@@ -148,3 +148,18 @@ describe('releasing a held service', () => {
     expect(releaseServiceOffering).not.toHaveBeenCalled();
   });
 });
+
+// The form and the action meet only at this field name: renamed on one side, every release is a 400
+// and no other test notices.
+describe('the release form', () => {
+  it('posts the version the moderator read, under the name the action reads', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const table = readFileSync(
+      fileURLToPath(new URL('../ReportsTable.svelte', import.meta.url)),
+      'utf8'
+    );
+    const form = table.slice(table.indexOf('action="?/releaseServiceOffering"'));
+    expect(form.slice(0, form.indexOf('</form>'))).toMatch(/name="seenUpdatedAt"/);
+  });
+});

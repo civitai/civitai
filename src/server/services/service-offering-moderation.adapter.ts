@@ -12,7 +12,11 @@ import {
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
-import { ReportReason, ServiceOfferingIngestionStatus } from '~/shared/utils/prisma/enums';
+import {
+  EntityModerationStatus,
+  ReportReason,
+  ServiceOfferingIngestionStatus,
+} from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 const ENTITY_TYPE = 'ServiceOffering';
@@ -29,21 +33,26 @@ export function buildServiceOfferingModerationText(offering: {
  * result reached without one (a stored verdict for unchanged text, or the reconcile job's own
  * check) applies as is.
  */
-const forCurrentText = (offeringId: number, workflowId?: string) =>
-  workflowId ? { id: offeringId, scanWorkflowId: workflowId } : { id: offeringId };
+type CurrentText = {
+  workflowId?: string;
+  /** The offering is unchanged since this `updatedAt`, read with the text that was checked. */
+  unchangedSince?: Date;
+};
+const forCurrentText = (offeringId: number, { workflowId, unchangedSince }: CurrentText) => ({
+  id: offeringId,
+  ...(workflowId ? { scanWorkflowId: workflowId } : {}),
+  ...(unchangedSince ? { updatedAt: unchangedSince } : {}),
+});
 
 /**
  * Settles a check that passed: the rating takes the verdict, then the offering is marked scanned.
  * A blocked offering stays blocked; only a moderator releases it.
  */
-export async function settleServiceOfferingScan(
-  offeringId: number,
-  { workflowId }: { workflowId?: string } = {}
-) {
+export async function settleServiceOfferingScan(offeringId: number, current: CurrentText = {}) {
   await updateServiceOfferingNsfwLevels([offeringId]);
   await dbWrite.serviceOffering.updateMany({
     where: {
-      ...forCurrentText(offeringId, workflowId),
+      ...forCurrentText(offeringId, current),
       ingestion: {
         in: [ServiceOfferingIngestionStatus.Pending, ServiceOfferingIngestionStatus.Error],
       },
@@ -52,15 +61,13 @@ export async function settleServiceOfferingScan(
   });
 }
 
-export async function blockServiceOffering(
-  offeringId: number,
-  { workflowId }: { workflowId?: string } = {}
-) {
+export async function blockServiceOffering(offeringId: number, current: CurrentText = {}) {
   const where = {
-    ...forCurrentText(offeringId, workflowId),
+    ...forCurrentText(offeringId, current),
     ingestion: { not: ServiceOfferingIngestionStatus.Blocked },
   };
-  const offering = await dbRead.serviceOffering.findFirst({
+  // The primary: the check id this matches was written there a moment ago.
+  const offering = await dbWrite.serviceOffering.findFirst({
     where,
     select: { sellerId: true, seller: { select: { username: true } } },
   });
@@ -102,18 +109,37 @@ export async function blockServiceOffering(
   });
 }
 
-/** Records the check submitted for the text as it was read, unless the text changed since. */
+/**
+ * Records the check submitted for the text as it was read, unless the text changed since. Raw SQL,
+ * so `updatedAt` stays the edit's: the reconcile job compares a result's time against it. A result
+ * that landed before the check was recorded was matched to nothing, so it is applied here.
+ */
 async function trackSubmit(
   offeringId: number,
   readAt: Date,
   submit: () => Promise<{ id?: string | null } | null | undefined>
 ) {
   const workflow = await submit();
-  if (workflow?.id)
-    await dbWrite.serviceOffering.updateMany({
-      where: { id: offeringId, updatedAt: readAt },
-      data: { scanWorkflowId: workflow.id },
-    });
+  const workflowId = workflow?.id;
+  if (!workflowId) return workflow;
+  const recorded = await dbWrite.$executeRaw`
+    UPDATE "ServiceOffering" SET "scanWorkflowId" = ${workflowId}
+    WHERE id = ${offeringId} AND "updatedAt" = ${readAt}`;
+  if (!recorded) return workflow;
+  const early = await dbWrite.entityModeration.findFirst({
+    where: {
+      entityType: ENTITY_TYPE,
+      entityId: offeringId,
+      workflowId,
+      status: EntityModerationStatus.Succeeded,
+    },
+    select: { blocked: true },
+  });
+  if (early) {
+    const current = { workflowId, unchangedSince: readAt };
+    if (early.blocked) await blockServiceOffering(offeringId, current);
+    else await settleServiceOfferingScan(offeringId, current);
+  }
   return workflow;
 }
 

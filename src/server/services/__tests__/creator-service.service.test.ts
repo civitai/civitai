@@ -676,6 +676,8 @@ describe("an offering's content checks on save", () => {
     await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
     expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledWith([1]);
     expect(checks.scanServiceOffering).toHaveBeenCalledWith(1);
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledTimes(1);
+    expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
   });
 
   it('sends edited text back to its check, and leaves unchanged text as it was', async () => {
@@ -691,6 +693,7 @@ describe("an offering's content checks on save", () => {
       scanWorkflowId: null,
     });
     expect(checks.scanServiceOffering).toHaveBeenCalledWith(3);
+    expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a held offering held when its seller edits the text, and checks the new text', async () => {

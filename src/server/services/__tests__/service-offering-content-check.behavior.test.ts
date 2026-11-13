@@ -363,7 +363,7 @@ describe('the moderation adapter', () => {
       if (hit) Object.assign(row, args.data);
       return { count: hit ? 1 : 0 };
     }) as never);
-    dbMock.dbRead.serviceOffering.findFirst.mockImplementation((async (args: { where: Row }) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockImplementation((async (args: { where: Row }) =>
       matches(row, where(args.where)) ? row : null) as never);
   });
   const apply = (blocked: boolean, workflowId = 'wf-current') =>
@@ -443,26 +443,67 @@ describe('the moderation adapter', () => {
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
   });
 
-  it('records the check it submits, unless the text changed while it was submitted', async () => {
-    const readAt = new Date('2027-01-06T12:00:00.000Z');
-    row.updatedAt = readAt;
-    row.scanWorkflowId = null;
-    dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
-      title: 'Portraits',
-      description: 'desc',
-      updatedAt: readAt,
-    } as never);
-    await scanServiceOffering(OFFERING);
-    expect(row.scanWorkflowId).toBe('wf-new');
-
-    row.scanWorkflowId = null;
-    route.submitTextModerationOrScan.mockImplementationOnce(async () => {
-      // The seller saves again while this check is being submitted.
-      row.updatedAt = new Date('2027-01-06T12:00:01.000Z');
-      return { id: 'wf-stale' };
+  describe('submitting a check', () => {
+    // The check id is written by raw SQL, to Postgres; the result is applied to the row above.
+    let readAt: Date;
+    const storedCheck = async () =>
+      (
+        await q<{ scanWorkflowId: string | null; updatedAt: Date }>(
+          `SELECT "scanWorkflowId", "updatedAt" FROM "ServiceOffering" WHERE id = $1`,
+          [OFFERING]
+        )
+      )[0];
+    beforeEach(async () => {
+      readAt = (await storedCheck()).updatedAt;
+      row.updatedAt = readAt;
+      dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
+        title: 'Portraits',
+        description: 'desc',
+        updatedAt: readAt,
+      } as never);
+      dbMock.dbWrite.entityModeration.findFirst.mockResolvedValue(null as never);
     });
-    await scanServiceOffering(OFFERING);
-    expect(row.scanWorkflowId).toBeNull();
+
+    it('records the check for the text it read, without moving the edit time', async () => {
+      await scanServiceOffering(OFFERING);
+      expect(await storedCheck()).toEqual({ scanWorkflowId: 'wf-new', updatedAt: readAt });
+    });
+
+    it('records nothing when the text changed while the check was submitted', async () => {
+      route.submitTextModerationOrScan.mockImplementationOnce(async () => {
+        await q(`UPDATE "ServiceOffering" SET "updatedAt" = "updatedAt" + interval '1 second'`);
+        return { id: 'wf-stale' };
+      });
+      await scanServiceOffering(OFFERING);
+      expect((await storedCheck()).scanWorkflowId).toBeNull();
+    });
+
+    it.each([
+      [false, ServiceOfferingIngestionStatus.Scanned],
+      [true, ServiceOfferingIngestionStatus.Blocked],
+    ])(
+      'applies a result (blocked %s) that landed before the check was recorded',
+      async (blocked, ingestion) => {
+        // The callback came first and matched nothing; the stored row now names this check.
+        row.scanWorkflowId = 'wf-new';
+        dbMock.dbWrite.entityModeration.findFirst.mockResolvedValueOnce({ blocked } as never);
+        await scanServiceOffering(OFFERING);
+        expect(dbMock.dbWrite.entityModeration.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ workflowId: 'wf-new', status: 'Succeeded' }),
+          })
+        );
+        expect(row.ingestion).toBe(ingestion);
+      }
+    );
+
+    it('applies no early result once the text has changed', async () => {
+      row.scanWorkflowId = 'wf-new';
+      row.updatedAt = new Date(readAt.getTime() + 1000);
+      dbMock.dbWrite.entityModeration.findFirst.mockResolvedValueOnce({ blocked: false } as never);
+      await scanServiceOffering(OFFERING);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+    });
   });
 
   it('marks a failed check Error only while it is still Pending', async () => {

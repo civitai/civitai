@@ -24,7 +24,7 @@ const CONCURRENCY = 5;
 export type ReconcileAction = 'submit' | 'settle' | 'block' | 'leave';
 
 /**
- * What to do with an offering still Pending past the grace window. A succeeded check whose result
+ * What to do with an offering still Pending, or in Error, past the grace window. A succeeded check whose result
  * never reached the offering is applied; a missing or lost submit is resubmitted. Failed rows are
  * the retry cron's.
  */
@@ -59,7 +59,10 @@ export const serviceOfferingIngestionReconcile = createJob(
 
     const candidates = await dbRead.serviceOffering.findMany({
       where: {
-        ingestion: ServiceOfferingIngestionStatus.Pending,
+        // Error too: a held result whose report failed to file is retried from here.
+        ingestion: {
+          in: [ServiceOfferingIngestionStatus.Pending, ServiceOfferingIngestionStatus.Error],
+        },
         status: { not: ServiceOfferingStatus.Removed },
         updatedAt: { lt: stuckBefore },
       },
