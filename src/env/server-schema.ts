@@ -1,6 +1,7 @@
 // @ts-check
 import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import { isEnvSwitchOn } from '@civitai/shared/env-switch';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
   commaDelimitedNumberArray,
@@ -778,6 +779,16 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
+    // Fail-closed OFF-switches (each ON when unset; `off` / `0` / `false`, any case, turns it
+    // off — see `@civitai/shared/env-switch`; any other value keeps it on).
+    // PROMPT_CHECK_FAIL_CLOSED: a classifier error refuses the submit with a 503; off restores
+    // the pass-through on the word lists alone (auditPromptServer).
+    PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    // BLOCKS_ENFORCE_GENERATION_STATUS: App Blocks submits obey the global generation kill switch.
+    BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    // TRAINING_STATUS_FAIL_CLOSED: a failed training-status read serves the last status read, or
+    // "paused" when there is none; off restores "available" (getTrainingServiceStatus).
+    TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
     // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
     // visible as the instant its series appear — which is the only thing that distinguishes "no

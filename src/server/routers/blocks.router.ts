@@ -430,6 +430,7 @@ import {
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
@@ -7011,6 +7012,12 @@ export const blocksRouter = router({
       // An anonymous subject is refused later, by each branch.
       const subjectId = parseSubjectUserId(claims.sub);
       if (subjectId != null) await assertAccountNotRestricted(subjectId);
+      // The global generation kill switch, as onsite generation applies it, ahead of every
+      // generation kind. Training is governed by its own status (checked on its arm), as onsite.
+      // BLOCKS_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+      if (input.body.kind !== 'training' && env.BLOCKS_ENFORCE_GENERATION_STATUS) {
+        await assertBlockGenerationAllowed(subjectId);
+      }
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
@@ -9680,6 +9687,25 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   // belt's exemption is asserted by the subscription NOT being queried.
   const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
   return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
+}
+
+/**
+ * The global generation kill switch for an App Blocks submit: the same decision onsite generation
+ * applies (`generationStatusRefusal`), so a moderator's "disabled" or "members only" also stops a
+ * generator reached through an app. The subject is looked up only when the switch is not
+ * `enabled`, so the normal path costs the one sysRedis read and no database read. An anonymous
+ * subject is refused while the switch is on (it is no moderator and holds no tier).
+ * A switch that cannot be read (sysRedis down, never read in this process) is refused for every
+ * subject, moderators included, as `buildGenerationContext` refuses it onsite: the moderator bypass
+ * applies to an operator's decision, not to a state nobody knows.
+ */
+async function assertBlockGenerationAllowed(subjectId: number | null): Promise<void> {
+  const generation = await import('~/server/services/generation/generation.service');
+  const { status, known } = await generation.getGenerationStatusState();
+  if (!known) throw generation.generationConfigUnavailableError();
+  if (status.mode === 'enabled') return;
+  const user = subjectId == null ? null : await getBlockSessionUser(subjectId);
+  assertGenerationStatusAllows(status, { isModerator: !!user?.isModerator, tier: user?.tier });
 }
 
 /**

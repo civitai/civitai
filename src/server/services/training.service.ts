@@ -13,6 +13,7 @@ import {
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { env } from '~/env/server';
 import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
@@ -223,10 +224,38 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   return response.data?.jobs?.[0]?.result;
 };
 
-export async function getTrainingServiceStatus() {
-  // Fail open: symmetric with the three getGenerationStatus fixes in this
-  // PR. A sysRedis outage shouldn't crash the training status endpoint or
-  // training submission. Falls back to the schema's '{}' default.
+/** Shown when the training status cannot be read and this process has never read it. */
+export const TRAINING_STATUS_UNKNOWN_MESSAGE =
+  'Training is temporarily unavailable. Please try again in a few minutes.';
+
+// The last status this process read. The "training paused" flag is a moderator control on a paid
+// submit, so a failed read must not turn an operator's pause back into "available". No age bound,
+// and that is a trade-off, not a guarantee: a pod cut off from sysRedis keeps serving its
+// last-known value for as long as the outage lasts, so a pause (or an un-pause) a moderator saves
+// meanwhile, through a pod that can still reach sysRedis, is not seen by the cut-off pod until its
+// reads succeed again.
+let lastKnownTrainingStatus: TrainingServiceStatus | undefined;
+
+/** For tests: forget the last-known training status. */
+export function __resetTrainingStatusLastKnownForTests() {
+  lastKnownTrainingStatus = undefined;
+}
+
+/**
+ * The training status, with whether it is KNOWN (mirrors `getGenerationStatusState`). `known` is
+ * false only for the fail-closed fallback: the read failed, this process has never read the status,
+ * and TRAINING_STATUS_FAIL_CLOSED is on. The public status endpoints must not edge-cache that
+ * fallback, or it is served to everyone for the TTL after the pod recovers. A last-known value, a
+ * live read, and the switch-off "available" default (the previous behaviour) are all `known`.
+ */
+export async function getTrainingServiceStatusState(): Promise<{
+  status: TrainingServiceStatus;
+  known: boolean;
+}> {
+  // A sysRedis outage must not crash the training status endpoint or training submission, and must
+  // not read as "available" either: a failed read serves the last status this process read, and
+  // "paused" (TRAINING_STATUS_UNKNOWN_MESSAGE) when there is none. TRAINING_STATUS_FAIL_CLOSED=off
+  // restores the previous fall-back to the schema's '{}' default (available).
   // Note on Buffer-vs-string asymmetry (see PR #2697): sysRedis.hGet is typed
   // `string | null` but the HA/Sentinel client returns a Buffer for
   // BLOB_STRING replies. `JSON.parse` accepts a Buffer in Node ≥18 (we run
@@ -243,13 +272,39 @@ export async function getTrainingServiceStatus() {
       sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)
     );
   } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
-    raw = undefined;
+    if (!env.TRAINING_STATUS_FAIL_CLOSED) {
+      logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err, {
+        served: 'defaults',
+      });
+      return {
+        status: trainingServiceStatusSchema.parse({}) as TrainingServiceStatus,
+        known: true,
+      };
+    }
+    // `served` uses getGenerationStatus's vocabulary (`last-known-good` | `fail-closed`).
+    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err, {
+      served: lastKnownTrainingStatus ? 'last-known-good' : 'fail-closed',
+    });
+    if (lastKnownTrainingStatus) return { status: lastKnownTrainingStatus, known: true };
+    return {
+      status: trainingServiceStatusSchema.parse({
+        available: false,
+        message: TRAINING_STATUS_UNKNOWN_MESSAGE,
+      }) as TrainingServiceStatus,
+      known: false,
+    };
   }
   const result = trainingServiceStatusSchema.safeParse(JSON.parse(raw ?? '{}'));
-  if (!result.success) return trainingServiceStatusSchema.parse({});
+  const status = (
+    result.success ? result.data : trainingServiceStatusSchema.parse({})
+  ) as TrainingServiceStatus;
+  lastKnownTrainingStatus = status;
+  return { status, known: true };
+}
 
-  return result.data as TrainingServiceStatus;
+/** The training status; see getTrainingServiceStatusState (this drops `known`). */
+export async function getTrainingServiceStatus(): Promise<TrainingServiceStatus> {
+  return (await getTrainingServiceStatusState()).status;
 }
 
 export async function setTrainingServiceStatus(input: {
