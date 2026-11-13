@@ -39,6 +39,8 @@ export type Skipped = Partial<
 >;
 
 const MAX_ID = 200;
+/** `Image.id` is a Postgres `integer`; a larger id cannot exist, and binding it in a lookup would fail the whole chunk. */
+const MAX_IMAGE_ID = 2_147_483_647;
 const MAX_EFFECT = 40;
 const META_COLUMNS = {
   caseId: 'case_id',
@@ -103,7 +105,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
       continue;
     }
     const imageId = Number(r.image_id);
-    if (!Number.isSafeInteger(imageId) || imageId <= 0) {
+    if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_IMAGE_ID) {
       skip('bad-image');
       continue;
     }

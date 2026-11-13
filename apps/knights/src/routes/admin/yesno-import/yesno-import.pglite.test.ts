@@ -157,6 +157,22 @@ describe('POST /admin/yesno-import', () => {
     expect(await count()).toBe(0);
   });
 
+  it('skips an image id too large to be an image as bad-image instead of failing the chunk', async () => {
+    const csv = [HEADER, line('a'), line('b', { image: '2147483648' })].join('\n');
+    const dry = await post(moderator, { csv, dryRun: true });
+    expect(dry.status).toBe(200);
+    expect(dry.body).toMatchObject({ read: 2, toImport: 1, skipped: { 'bad-image': 1 } });
+
+    const real = await post(moderator, { csv, dryRun: false });
+    expect(real.status).toBe(200);
+    expect(real.body).toMatchObject({ read: 2, toImport: 1, skipped: { 'bad-image': 1 } });
+    expect(real.body.result).toMatchObject({ inserted: 1 });
+    const stored = await pg.query<{ externalId: string }>(
+      `SELECT "externalId" FROM "KnightsQueueItem"`
+    );
+    expect(stored.rows.map((r) => r.externalId)).toEqual(['a']);
+  });
+
   it('rejects a malformed payload with 400', async () => {
     expect((await post(moderator, 'not json')).status).toBe(400);
     expect((await post(moderator, { csv: 5, dryRun: false })).status).toBe(400);
