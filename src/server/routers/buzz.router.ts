@@ -45,7 +45,8 @@ export const buzzRouter = router({
   // getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
   getBuzzAccount: buzzProcedure
     .meta({ requiredScope: TokenScope.BuzzRead })
-    // Every signed-in page's header asks for this: bounded, last-good on failure.
+    // The header and `useBuzz` (client affordability checks) read this: bounded at 2s; the
+    // last-good fallback is dark unless BUZZ_BALANCE_SERVE_STALE=true (buzz-balance-display.ts).
     .query(({ ctx }) => getUserBuzzAccountsForDisplay({ userId: ctx.user.id })),
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
   getUserTransactions: buzzProcedure

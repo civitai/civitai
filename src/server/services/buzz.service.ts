@@ -153,8 +153,9 @@ export async function getUserBuzzAccounts({ userId }: { userId: number }) {
   return await getUserBuzzAccountByAccountTypes(userId, buzzSpendTypes);
 }
 
-// The header balance (see buzz-balance-display.ts): bounded, and the last good read on failure.
-// Display only; anything that decides a spend reads `getUserBuzzAccounts` instead.
+// `buzz.getBuzzAccount` (the header and the client's `useBuzz` hook; see buzz-balance-display.ts):
+// bounded, with a last-good fallback that is off unless flagged. The server never charges on this
+// figure; spend paths re-read the balance themselves.
 const readBalanceForDisplay = createBalanceDisplayReader((userId, opts) =>
   getUserBuzzAccountByAccountTypes(userId, buzzSpendTypes, opts)
 );
