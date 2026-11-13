@@ -51,11 +51,24 @@ const image = (id: number) => ({
   needsReview: 'poi',
   ingestion: 'Blocked',
   blockedFor: 'review',
+  metadata: {
+    width: 512,
+    height: 512,
+    duration: 3,
+    ruleId: 7,
+    ruleReason: 'a rule',
+    nsfwLevelReason: 'a reason',
+  },
 });
 /** Generation data and moderation state, none of which a 3D model read returns. */
 const HIDDEN = ['meta', 'hideMeta', 'needsReview', 'ingestion', 'blockedFor'];
 const expectNoHidden = (img: unknown) => {
   for (const key of HIDDEN) expect(img).not.toHaveProperty(key);
+};
+/** A page or an action's result draws no image metadata at all. */
+const expectNoMetadata = (img: unknown) => {
+  expectNoHidden(img);
+  expect(img).not.toHaveProperty('metadata');
 };
 const MODEL = {
   id: 9,
@@ -99,8 +112,8 @@ describe('a 3D model page', () => {
       const model = await getModel3DById({ id: 9, user: user as never });
       expect(model.sourceImage?.id).toBe(2);
       expect(model.thumbnailImage?.id).toBe(1);
-      expectNoHidden(model.sourceImage);
-      expectNoHidden(model.thumbnailImage);
+      expectNoMetadata(model.sourceImage);
+      expectNoMetadata(model.thumbnailImage);
     }
   });
 
@@ -108,6 +121,8 @@ describe('a 3D model page', () => {
     const { items } = await getModel3DsInfinite({ limit: 10, user: null } as never);
     expect(items[0]?.thumbnailImage?.id).toBe(1);
     expectNoHidden(items[0]?.thumbnailImage);
+    // Only what the card's media player reads: never a moderation reason.
+    expect(items[0]?.thumbnailImage?.metadata).toEqual({ width: 512, height: 512, duration: 3 });
   });
 });
 
@@ -131,8 +146,8 @@ describe('a 3D model edit or moderation action', () => {
       const model = await act();
       expect(model.sourceImage?.id).toBe(2);
       expect(model.thumbnailImage?.id).toBe(1);
-      expectNoHidden(model.sourceImage);
-      expectNoHidden(model.thumbnailImage);
+      expectNoMetadata(model.sourceImage);
+      expectNoMetadata(model.thumbnailImage);
     }
   );
 });

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
@@ -10,6 +10,19 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
+const h = vi.hoisted(() => ({
+  hiddenTags: [] as { id: number; hidden: boolean }[],
+  addons: [] as unknown[],
+}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getAllHiddenForUser: async () => ({ hiddenTags: h.hiddenTags }),
+}));
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getBrowsingSettingAddons: async () => h.addons,
+}));
+
 const { getModel3DRelatedPosts } = await import('~/server/services/model3d.service');
 
 /**
@@ -19,7 +32,7 @@ const { getModel3DRelatedPosts } = await import('~/server/services/model3d.servi
  * would select.
  */
 type Row = Record<string, unknown>;
-const OPERATORS = new Set(['in', 'not', 'lte', 'some']);
+const OPERATORS = new Set(['in', 'not', 'lte', 'some', 'none']);
 const matches = (row: Row, where: Row | undefined): boolean =>
   !where ||
   Object.entries(where).every(([key, cond]) => {
@@ -28,13 +41,14 @@ const matches = (row: Row, where: Row | undefined): boolean =>
     if (!(key in row)) throw new Error(`The fake has no column ${key}`);
     const value = row[key];
     if (cond !== null && typeof cond === 'object' && !(cond instanceof Date)) {
-      const ops = cond as { in?: unknown[]; not?: unknown; lte?: Date; some?: Row };
+      const ops = cond as { in?: unknown[]; not?: unknown; lte?: Date; some?: Row; none?: Row };
       for (const op of Object.keys(ops))
         if (!OPERATORS.has(op)) throw new Error(`The fake does not know ${op}`);
       if ('in' in ops && !ops.in!.includes(value)) return false;
       if ('not' in ops && value === ops.not) return false;
       if ('lte' in ops && !(value instanceof Date && value <= ops.lte!)) return false;
       if ('some' in ops && !(value as Row[]).some((r) => matches(r, ops.some))) return false;
+      if ('none' in ops && (value as Row[]).some((r) => matches(r, ops.none))) return false;
       return true;
     }
     return value === cond;
@@ -56,6 +70,7 @@ const image = (nsfwLevel: number, over: Row = {}) => ({
   acceptableMinor: false,
   poi: false,
   minor: false,
+  tags: [] as Row[],
   ...over,
 });
 const post = (id: number, nsfwLevel: number, images: Row[], over: Row = {}) => ({
@@ -114,6 +129,7 @@ const POSTS = [
   ),
 ];
 const RESTRICTED_MATURE = new Set([9001]);
+let rows: Row[] = POSTS;
 
 type Args = {
   where: Row;
@@ -122,6 +138,9 @@ type Args = {
   select: { images: { where?: Row; take: number; select: Row } };
 };
 beforeEach(() => {
+  rows = POSTS;
+  h.hiddenTags = [];
+  h.addons = [];
   dbMock.dbRead.model3D.findUnique.mockResolvedValue({
     id: MODEL3D,
     userId: OWNER,
@@ -138,12 +157,14 @@ beforeEach(() => {
       .values.filter((v): v is number => typeof v === 'number' && RESTRICTED_MATURE.has(v))
       .map((id) => ({ id }))) as never);
   dbMock.dbRead.post.findMany.mockImplementation((async (args: Args) => {
-    const ordered = POSTS.filter((p) => matches(p, args.where)).sort(
-      (a, b) =>
-        Number(!a.publishedAt) - Number(!b.publishedAt) ||
-        (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0) ||
-        b.id - a.id
-    );
+    const ordered = (rows as typeof POSTS)
+      .filter((p) => matches(p, args.where))
+      .sort(
+        (a, b) =>
+          Number(!a.publishedAt) - Number(!b.publishedAt) ||
+          (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0) ||
+          b.id - a.id
+      );
     const from = args.cursor ? ordered.findIndex((p) => p.id === args.cursor!.id) : 0;
     return ordered.slice(from, from + args.take).map((p) => ({
       ...p,
@@ -290,11 +311,71 @@ describe('getModel3DRelatedPosts', () => {
       } as never);
       await expect(page(undefined, publicBrowsingLevelsFlag)).rejects.toThrow(/No 3D model/);
       await expect(page({ id: STRANGER }, publicBrowsingLevelsFlag)).rejects.toThrow(/No 3D model/);
-      await expect(page({ id: OWNER }, publicBrowsingLevelsFlag)).resolves.toBeDefined();
-      await expect(
-        page({ id: 1, isModerator: true }, publicBrowsingLevelsFlag)
-      ).resolves.toBeDefined();
+      expect((await page({ id: OWNER }, publicBrowsingLevelsFlag)).items).toBeInstanceOf(Array);
+      expect(
+        (await page({ id: 1, isModerator: true }, publicBrowsingLevelsFlag)).items
+      ).toBeInstanceOf(Array);
     }
+  });
+});
+
+describe('getModel3DRelatedPosts, with hidden tags', () => {
+  const HIDDEN = 100;
+  const SITE_HIDDEN = 200;
+  const tagged = (tagId: number, disabled = false) => [{ tagId, disabled }];
+  const TAG_POSTS = [
+    // Its first image carries a hidden tag: the next one is its cover.
+    post(30, PG, [image(PG, { tags: tagged(HIDDEN) }), image(PG)]),
+    // Its only image carries a hidden tag: not listed.
+    post(31, PG, [image(PG, { tags: tagged(HIDDEN) })]),
+    // A tag vote that was disabled hides nothing.
+    post(32, PG, [image(PG, { tags: tagged(HIDDEN, true) })]),
+    // Another user's post whose only image carries a tag the site hides at PG.
+    post(33, PG, [image(PG, { userId: STRANGER, tags: tagged(SITE_HIDDEN) })], {
+      userId: STRANGER,
+    }),
+  ];
+  const coverOf = async (user: Parameters<typeof page>[0]) =>
+    Object.fromEntries(
+      (await page(user, publicBrowsingLevelsFlag, { limit: 50 })).items.map((p) => [
+        p.id,
+        p.images[0]?.id ?? null,
+      ])
+    );
+  const [first30, second30] = TAG_POSTS[0].images.map((i) => i.id);
+  beforeEach(() => {
+    rows = TAG_POSTS;
+  });
+
+  it('lists every post and its first cover when nothing is hidden (control)', async () => {
+    expect(await coverOf({ id: 77 })).toEqual({
+      30: first30,
+      31: TAG_POSTS[1].images[0].id,
+      32: TAG_POSTS[2].images[0].id,
+      33: TAG_POSTS[3].images[0].id,
+    });
+  });
+
+  it('passes over a cover carrying a tag the viewer hid, moderators included', async () => {
+    h.hiddenTags = [{ id: HIDDEN, hidden: true }];
+    for (const user of [{ id: 77 }, { id: 1, isModerator: true }]) {
+      const covers = await coverOf(user);
+      expect(covers[30]).toBe(second30);
+      expect(covers[32]).toBe(TAG_POSTS[2].images[0].id);
+    }
+    expect(await coverOf({ id: 77 })).not.toHaveProperty('31');
+    // A moderator sees posts in any state: listed, with no cover.
+    expect((await coverOf({ id: 1, isModerator: true }))[31]).toBeNull();
+    // A tag the viewer only voted on, not hid, hides nothing.
+    h.hiddenTags = [{ id: HIDDEN, hidden: false }];
+    expect((await coverOf({ id: 77 }))[30]).toBe(first30);
+  });
+
+  it("hides a site-hidden tag at the viewer's level, except on the viewer's own image", async () => {
+    h.addons = [{ type: 'some', nsfwLevels: [PG], excludedTagIds: [SITE_HIDDEN] }];
+    expect(await coverOf(undefined)).not.toHaveProperty('33');
+    expect(await coverOf({ id: 77 })).not.toHaveProperty('33');
+    expect((await coverOf({ id: STRANGER }))[33]).toBe(TAG_POSTS[3].images[0].id);
   });
 });
 

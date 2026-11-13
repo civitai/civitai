@@ -74,6 +74,9 @@ import {
 } from '~/server/orchestrator/polygen/polygen-output';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 
 type SessionUser = {
   id: number;
@@ -116,11 +119,20 @@ const model3dImageSelect = {
   height: true,
   hash: true,
   type: true,
-  metadata: true,
   userId: true,
   createdAt: true,
   postId: true,
 } satisfies Prisma.ImageSelect;
+
+// A feed card's thumbnail also carries what its media player reads from `metadata`, and nothing
+// else in it: the rest holds moderation reasons.
+const CARD_METADATA_KEYS = ['width', 'height', 'duration', 'thumbnailFrame'] as const;
+const cardMetadata = (metadata: Prisma.JsonValue) => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  return Object.fromEntries(
+    CARD_METADATA_KEYS.filter((key) => key in metadata).map((key) => [key, metadata[key]])
+  );
+};
 
 const model3dDetailSelect = {
   id: true,
@@ -180,7 +192,7 @@ const model3dListSelect = {
   publishedAt: true,
   createdAt: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: model3dImageSelect },
+  thumbnailImage: { select: { ...model3dImageSelect, metadata: true } },
   user: { select: userWithCosmeticsSelect },
   metric: true,
   // Tags drive client-side `useApplyHiddenPreferences` filtering on the feed.
@@ -639,6 +651,10 @@ export const getModel3DsInfinite = async ({
       const review = reviewByModel.get(rest.id);
       return {
         ...rest,
+        thumbnailImage: rest.thumbnailImage && {
+          ...rest.thumbnailImage,
+          metadata: cardMetadata(rest.thumbnailImage.metadata),
+        },
         tags: tags.map((t) => t.tagId),
         userReview: review ? { id: review.id, recommended: review.recommended } : null,
       };
@@ -1664,17 +1680,43 @@ export const getModel3DRelatedPosts = async ({
       poi: false,
       minor: false,
     };
+    // As the image feeds: never a cover carrying a tag the viewer hid, nor one of the site's hidden
+    // tags at this level unless it is the viewer's own image.
+    const [hidden, addonData] = await Promise.all([
+      getAllHiddenForUser({ userId: viewerId }),
+      getBrowsingSettingAddons(),
+    ]);
+    const hiddenTagIds = hidden.hiddenTags.filter((tag) => tag.hidden).map((tag) => tag.id);
+    const systemTagIds = resolveBrowsingSettingsAddons(addonData, level, {
+      isModerator,
+    }).excludedTagIds;
+    const withoutTags = (tagIds: number[]): Prisma.ImageWhereInput => ({
+      tags: { none: { tagId: { in: tagIds }, disabled: false } },
+    });
+    const tagCover: Prisma.ImageWhereInput[] = [
+      ...(hiddenTagIds.length ? [withoutTags(hiddenTagIds)] : []),
+      ...(systemTagIds.length
+        ? [
+            viewerId
+              ? { OR: [{ userId: viewerId }, withoutTags(systemTagIds)] }
+              : withoutTags(systemTagIds),
+          ]
+        : []),
+    ];
     const publishedClause: Prisma.PostWhereInput = {
       publishedAt: { lte: new Date() },
       availability: { not: 'Private' },
       nsfwLevel: { in: postLevelsWithin(level) },
-      images: { some: coverGate },
+      images: { some: tagCover.length ? { AND: [coverGate, ...tagCover] } : coverGate },
     };
-    const coverWhere: Prisma.ImageWhereInput = isModerator
+    const levelCover: Prisma.ImageWhereInput = isModerator
       ? levelImages
       : viewerId
       ? { OR: [{ userId: viewerId, ...levelImages }, coverGate] }
       : coverGate;
+    const coverWhere: Prisma.ImageWhereInput = tagCover.length
+      ? { AND: [levelCover, ...tagCover] }
+      : levelCover;
     const visibility: Prisma.PostWhereInput = isModerator
       ? levelPosts
       : viewerId
