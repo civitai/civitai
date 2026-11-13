@@ -288,4 +288,25 @@ describe('an Error row re-submitted successfully, over real rows', () => {
     expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
     expect(await queued(25)).toBe(false);
   });
+
+  it('an exhausted Rescan row drops the earlier failure and is not re-sent once re-queued', async () => {
+    await insertError(
+      26,
+      { retryCount: 9, workflowId: 'wf-first', lastFailure: transientFailure },
+      { ingestion: 'Rescan', requestedAgo: 2 * HOUR }
+    );
+
+    await runCron([26]);
+    const { ingestion, scanJobs } = await row(26);
+    expect(ingestion).toBe('Error');
+    expect(scanJobs.lastFailure).toBeUndefined();
+    // The scan-queue trigger re-queues a row whose ingestion becomes Error.
+    await pg.query(
+      `INSERT INTO "JobQueue" (type, "entityType", "entityId") VALUES ('ImageScan', 'Image', 26)`
+    );
+    await runCron([26]);
+
+    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
+    expect(await queued(26)).toBe(false);
+  });
 });

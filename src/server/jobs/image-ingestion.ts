@@ -429,9 +429,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     .filter((img) => img.ingestion === 'Rescan' && staleIdSet.has(img.id))
     .map((img) => img.id);
   if (exhaustedRescanIds.length > 0) {
+    // The flip to Error re-queues the row (the Image scan-queue trigger). Dropping lastFailure
+    // gives it the unknown cap, so an earlier episode's class does not re-open its retries.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
       WHERE id = ANY(${exhaustedRescanIds})
         AND ingestion = 'Rescan'::"ImageIngestionStatus"
     `;
@@ -448,7 +450,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // `pendingImages` -> `processedIds`, so not pruned), so next run they are
   // re-pulled and handled as Error.
   if (agedOutPendingIds.length > 0) {
-    // Dropping lastFailure gives the aged-out row the unknown cap, not an earlier episode's.
+    // As above, dropping lastFailure gives the row the unknown cap, not an earlier episode's.
     await dbWrite.$executeRaw`
       UPDATE "Image"
       SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
