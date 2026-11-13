@@ -148,10 +148,22 @@ try {
 // HTTP listener — the warmer needs that listener up to self-request, so
 // awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
 // never block or crash boot.
+//
+// The background dependency-health metrics loop starts once the warmer settles (success, fail-open
+// timeout, disabled or a failed kick alike), so its checks never compete with warming for the
+// loop thread. It runs the same runHealthChecks() as the probes, for metrics only: nothing reads
+// its result, so it cannot change readiness. It runs in every process that runs this file, which
+// covers both the Next server and the standalone server (scripts/trpc-server/server.cjs calls
+// register()). HEALTH_METRICS_INTERVAL_MS <= 0 turns it off. See ~/server/health/metrics-loop.
 void import('~/server/warmup')
   .then((m) => m.runWarmup())
   .catch((err) => {
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
+  })
+  .then(() => import('~/server/health/metrics-loop'))
+  .then((m) => m.startHealthMetricsLoop())
+  .catch((err) => {
+    console.error('[instrumentation.node] health metrics loop start failed (fail-open):', err);
   });
 
 // Attach the OTel sink to the shared structured logger.
