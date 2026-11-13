@@ -87,6 +87,9 @@ async function post(path: string[], body: unknown, headers: Record<string, strin
     ended: spies.end.mock.calls.at(-1)?.[0],
     body: spies.json.mock.calls.at(-1)?.[0],
     sent: spies.send.mock.calls.at(-1)?.[0],
+    contentLength: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Length')
+      .at(-1)?.[1],
     contentType: spies.setHeader.mock.calls
       .filter(([name]: [string]) => name === 'Content-Type')
       .at(-1)?.[1],
@@ -347,8 +350,11 @@ describe('passthrough (site-search-passthrough)', () => {
       queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
     });
     expect(res.status).toBe(200);
-    expect(Buffer.isBuffer(res.sent)).toBe(true);
-    expect(res.sent.toString('utf8')).toBe(upstream);
+    // Written with `end`, never `send`: Next's `send` JSON.stringifies a Buffer for its ETag.
+    expect(res.sent).toBeUndefined();
+    expect(Buffer.isBuffer(res.ended)).toBe(true);
+    expect(res.ended.toString('utf8')).toBe(upstream);
+    expect(res.contentLength).toBe(Buffer.byteLength(upstream));
     expect(res.contentType).toBe('application/json; charset=utf-8');
     expect(res.cacheControl).toBe('private, no-store');
     expect(res.body).toBeUndefined();
@@ -370,6 +376,7 @@ describe('passthrough (site-search-passthrough)', () => {
       queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
     });
     expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
     expect(res.body.results[0].hits[0]).not.toHaveProperty('sfwName');
   });
 
@@ -379,6 +386,7 @@ describe('passthrough (site-search-passthrough)', () => {
       queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
     });
     expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
     expect(res.body).toEqual({ results: [{ indexUid: USERS_SEARCH_INDEX, hits: [{ id: 1 }] }] });
   });
 

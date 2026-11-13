@@ -304,9 +304,11 @@ const isJsonWhitespace = (byte: number) =>
 
 /**
  * The response body as bytes, or `undefined` when it cannot be read or does not start with `{` and
- * end with `}` (ignoring JSON whitespace). That bracket check is not validation: it only stops an
- * empty or cut-off body (which the parse path reports as a failure) from being sent as a 200. A
- * body that passes it is sent unparsed.
+ * end with `}` (ignoring JSON whitespace). That bracket check is not validation: it stops an empty
+ * body, or one cut off before its closing `}`, from being sent as a 200 (the parse path reports
+ * both as a failure). A body cut off just after an inner `}` would pass it; that case relies on
+ * the body read itself failing when the connection closes early. A body that passes is sent
+ * unparsed.
  */
 async function readJsonObjectBytes(res: Response): Promise<Buffer | undefined> {
   let bytes: Buffer;
