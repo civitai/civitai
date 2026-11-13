@@ -379,6 +379,10 @@ describe('filterImagesForViewer', () => {
     expect(run({ id: 99 })).toEqual([1]);
     expect(run({ id: OWNER })).toEqual([1, 0]);
     expect(run({ id: 99, isModerator: true })).toEqual([1, 0]);
+    // The nsfw max-level rule would admit level 0; the unrated rule still decides.
+    expect(
+      ids(filterImagesForViewer(images, { browsingLevel: 31, modelNsfw: true, viewer: { id: 99 } }))
+    ).toEqual([1]);
   });
 
   it('hides poi and minor entries independently', () => {
