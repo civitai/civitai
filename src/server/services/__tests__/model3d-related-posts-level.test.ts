@@ -104,7 +104,7 @@ type Args = {
   where: Row;
   take: number;
   cursor?: { id: number };
-  select: { images: { where?: Row; take: number } };
+  select: { images: { where?: Row; take: number; select: Row } };
 };
 beforeEach(() => {
   dbMock.dbRead.model3D.findUnique.mockResolvedValue({ id: MODEL3D, userId: OWNER } as never);
@@ -128,7 +128,13 @@ beforeEach(() => {
       ...p,
       images: (p.images as Row[])
         .filter((i) => matches(i, args.select.images.where))
-        .slice(0, args.select.images.take),
+        .slice(0, args.select.images.take)
+        // A field the query leaves out is not in the row it returns.
+        .map((i) =>
+          Object.fromEntries(
+            Object.entries(i).filter(([k]) => args.select.images.select[k] !== false)
+          )
+        ),
     }));
   }) as never);
 });
@@ -210,14 +216,14 @@ describe('getModel3DRelatedPosts', () => {
     expect(b.nextCursor).toBeUndefined();
   });
 
-  it("withholds a cover's hidden prompt from everyone but its owner and moderators", async () => {
-    const meta = async (user: Parameters<typeof page>[0]) =>
-      (await page(user, publicBrowsingLevelsFlag, { limit: 50 })).items.find((p) => p.id === 1)
-        ?.images[0]?.meta;
-    expect(await meta(undefined)).toBeNull();
-    expect(await meta({ id: STRANGER })).toBeNull();
-    expect(await meta({ id: OWNER })).toEqual({ prompt: 'hidden' });
-    expect(await meta({ id: 1, isModerator: true })).toEqual({ prompt: 'hidden' });
+  it("never returns a cover's generation data, to anyone", async () => {
+    for (const user of [undefined, { id: STRANGER }, { id: OWNER }, { id: 1, isModerator: true }]) {
+      const cover = (await page(user, publicBrowsingLevelsFlag, { limit: 50 })).items.find(
+        (p) => p.id === 1
+      )?.images[0];
+      expect(cover?.id).toBeDefined();
+      expect(cover).not.toHaveProperty('meta');
+    }
   });
 
   it('shows a moderator every post with its first image (control)', async () => {
