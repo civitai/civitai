@@ -74,6 +74,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
+  getShowcaseImageFilter: vi.fn(async () => () => true),
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(),

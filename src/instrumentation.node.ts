@@ -29,6 +29,7 @@ import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
+import { startWarmupAndHealthMetricsLoop } from '~/server/health/start-after-warmup';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -115,9 +116,10 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
-// The last-known Flipt flag state in sysRedis (DARK unless FLIPT_SNAPSHOT_MAX_AGE_MS is set; then
-// nothing is registered, read or written): read only when this pod cannot reach Flipt at startup
-// (so its default-on flags are not all OFF), kept current by healthy pods. Registered BEFORE the
+// The last-known Flipt flag state in sysRedis. DARK by default: while FLIPT_SNAPSHOT_MAX_AGE_MS is
+// unset or 0, no store is registered and nothing is read or written. Once it is set, the stored
+// state is read only when this pod cannot reach Flipt (so its default-on flags are not all OFF),
+// and pods with live state keep it current. Registered BEFORE the
 // block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
 // that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
 try {
@@ -168,19 +170,11 @@ try {
 // reads its result, so it cannot change readiness. It runs in every process that runs this file,
 // which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
 // calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
-const warmupModule = import('~/server/warmup');
-void warmupModule
-  .then((m) => m.runWarmup())
-  .catch((err) => {
-    console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  });
-void Promise.all([import('~/server/health/metrics-loop'), warmupModule.catch(() => null)])
-  .then(([loop, warmup]) =>
-    loop.startHealthMetricsLoopWhenWarm(warmup ? warmup.isWarm : () => true)
-  )
-  .catch((err) => {
-    console.error('[instrumentation.node] health metrics loop start failed (fail-open):', err);
-  });
+// The sequence lives in ~/server/health/start-after-warmup (tested there); the imports stay here.
+void startWarmupAndHealthMetricsLoop({
+  warmup: import('~/server/warmup'),
+  metricsLoop: import('~/server/health/metrics-loop'),
+});
 
 // Attach the OTel sink to the shared structured logger.
 //
