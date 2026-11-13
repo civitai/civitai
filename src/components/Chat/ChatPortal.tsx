@@ -50,8 +50,10 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
       className={clsx(
         // The composer input is the bottom-most control in the window, so the 8px
         // `mb-2` is what would leave someone typing under the home indicator.
-        'absolute bottom-0 left-0 z-[251] mb-[max(0.5rem,var(--safe-area-inset-bottom))] ml-2 h-dvh w-[calc(100%-1rem)]',
-        '@sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]'
+        'absolute bottom-0 left-0 z-[251] mb-[max(0.5rem,var(--safe-area-inset-bottom))] h-dvh w-full',
+        // Edge to edge on a phone, like the notifications drawer; floating from `@sm` up.
+        '@max-sm:[&>*]:rounded-none',
+        '@sm:ml-2 @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]'
       )}
       // `100dvh` grew by (top inset + bottom inset) when the layout viewport
       // started covering the cutout, so this cap has to subtract them back or the
