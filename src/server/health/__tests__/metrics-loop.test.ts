@@ -40,6 +40,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
 import { instrumentationRegistry } from '@civitai/telemetry/client';
+import client from 'prom-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import healthHandler, { resetHealthCheckReuseForTests } from '~/pages/api/health';
 import {
@@ -51,6 +52,8 @@ import {
   DEFAULT_HEALTH_METRICS_INTERVAL_MS,
   resolveHealthMetricsIntervalMs,
   startHealthMetricsLoop,
+  startHealthMetricsLoopWhenWarm,
+  WARM_MAX_WAIT_MS,
 } from '~/server/health/metrics-loop';
 
 const ALL_CHECKS = ['clickhouse', 'pgRead', 'pgWrite', 'read', 'redis', 'sysRedis', 'write'];
@@ -324,6 +327,131 @@ describe('health metrics loop — readiness never waits on it', () => {
     await (healthHandler as unknown as (req: unknown, res: unknown) => Promise<unknown>)({}, res);
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ healthy: true, pgWrite: true });
+  });
+});
+
+describe('health metrics loop — interval above the timer limit', () => {
+  it('a value Node cannot honour as a timer delay turns the loop off instead of hot-looping', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(resolveHealthMetricsIntervalMs('2147483647')).toBe(2_147_483_647);
+    expect(resolveHealthMetricsIntervalMs('2147483648')).toBeNull();
+    expect(resolveHealthMetricsIntervalMs('1e12')).toBeNull();
+
+    const run = vi.fn(async () => undefined);
+    expect(
+      start({ intervalMs: 2_147_483_648, run, lastProbeRunStartedAt: neverProbed })
+    ).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe('health metrics loop — waits for the warm flag, not for runWarmup()', () => {
+  it('starts at once when the process is already warm', () => {
+    vi.useFakeTimers();
+    const startLoop = vi.fn();
+    startHealthMetricsLoopWhenWarm(() => true, { start: startLoop });
+    expect(startLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts on the first poll after the flag flips (e.g. the warmer fail-open timeout)', async () => {
+    vi.useFakeTimers();
+    const startLoop = vi.fn();
+    let warm = false;
+    startHealthMetricsLoopWhenWarm(() => warm, { start: startLoop, pollMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(startLoop).not.toHaveBeenCalled();
+
+    warm = true;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(startLoop).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(startLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts at the hard cap when the flag never flips', async () => {
+    vi.useFakeTimers();
+    const startLoop = vi.fn();
+    startHealthMetricsLoopWhenWarm(() => false, { start: startLoop, pollMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(WARM_MAX_WAIT_MS - 1_000);
+    expect(startLoop).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(startLoop).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The contract the alert rules read: every healthcheck family appears exactly ONCE in the
+// combined scrape (/api/metrics concatenates the default registry and the shared one; a family
+// in both fails the whole scrape), with these names, labels and buckets.
+describe('healthcheck metric contract in the combined scrape', () => {
+  it('each healthcheck family appears once, with its label names and histogram buckets', async () => {
+    await runHealthChecks(new AbortController().signal);
+    const scrape = [await client.register.metrics(), await instrumentationRegistry.metrics()].join(
+      '\n'
+    );
+    const families = [...scrape.matchAll(/^# TYPE (civitai_app_healthcheck_\S+) (\S+)$/gm)].map(
+      (m) => `${m[1]} ${m[2]}`
+    );
+    expect(families.sort()).toEqual(
+      [
+        'civitai_app_healthcheck_attempts_total counter',
+        'civitai_app_healthcheck_clickhouse counter',
+        'civitai_app_healthcheck_duration_seconds histogram',
+        'civitai_app_healthcheck_overall counter',
+        'civitai_app_healthcheck_pgread counter',
+        'civitai_app_healthcheck_pgwrite counter',
+        'civitai_app_healthcheck_read counter',
+        'civitai_app_healthcheck_redis counter',
+        'civitai_app_healthcheck_sysredis counter',
+        'civitai_app_healthcheck_write counter',
+      ].sort()
+    );
+
+    const attemptsMetric = await instrumentationRegistry
+      .getSingleMetric('civitai_app_healthcheck_attempts_total')!
+      .get();
+    expect(new Set(attemptsMetric.values.flatMap((v) => Object.keys(v.labels)))).toEqual(
+      new Set(['name', 'result'])
+    );
+
+    const duration = await instrumentationRegistry
+      .getSingleMetric('civitai_app_healthcheck_duration_seconds')!
+      .get();
+    expect(new Set(duration.values.flatMap((v) => Object.keys(v.labels)))).toEqual(
+      new Set(['name', 'le'])
+    );
+    const buckets = duration.values
+      .filter((v) => v.metricName?.endsWith('_bucket') && v.labels.name === 'write')
+      .map((v) => v.labels.le);
+    expect(buckets).toEqual([
+      0.001,
+      0.005,
+      0.01,
+      0.025,
+      0.05,
+      0.1,
+      0.25,
+      0.5,
+      1,
+      1.5,
+      2,
+      2.5,
+      3.5,
+      5,
+      7.5,
+      10,
+      15,
+      20,
+      30,
+      '+Inf',
+    ]);
+
+    const legacy = await instrumentationRegistry
+      .getSingleMetric('civitai_app_healthcheck_write')!
+      .get();
+    expect(legacy.values.every((v) => Object.keys(v.labels).length === 0)).toBe(true);
   });
 });
 

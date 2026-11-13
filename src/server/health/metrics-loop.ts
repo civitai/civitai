@@ -38,13 +38,19 @@ import { getLastProbeRunStartedAt, runHealthChecks } from '~/server/health/depen
 
 export const DEFAULT_HEALTH_METRICS_INTERVAL_MS = 15_000;
 const LOG_PREFIX = '[health-metrics-loop]';
+// Node's timer ceiling (2^31 - 1 ms). A larger delay is not honoured: Node warns and fires the
+// timer after 1ms, which would turn a "basically never" setting into a hot loop. Treated as off.
+const MAX_TIMER_MS = 2_147_483_647;
 
-/** HEALTH_METRICS_INTERVAL_MS → interval in ms, or null when the loop is switched off. */
+/**
+ * HEALTH_METRICS_INTERVAL_MS → interval in ms, or null when the loop is switched off (zero,
+ * negative, or above Node's timer ceiling).
+ */
 export function resolveHealthMetricsIntervalMs(raw: string | undefined): number | null {
   if (raw === undefined || raw.trim() === '') return DEFAULT_HEALTH_METRICS_INTERVAL_MS;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return DEFAULT_HEALTH_METRICS_INTERVAL_MS;
-  if (parsed <= 0) return null;
+  if (parsed <= 0 || parsed > MAX_TIMER_MS) return null;
   return Math.floor(parsed);
 }
 
@@ -87,8 +93,8 @@ export function startHealthMetricsLoop(options: HealthMetricsLoopOptions = {}): 
       options.intervalMs !== undefined
         ? options.intervalMs
         : resolveHealthMetricsIntervalMs(process.env.HEALTH_METRICS_INTERVAL_MS);
-    if (intervalMs === null || !(intervalMs > 0)) {
-      console.log(`${LOG_PREFIX} off (HEALTH_METRICS_INTERVAL_MS <= 0)`);
+    if (intervalMs === null || !(intervalMs > 0) || intervalMs > MAX_TIMER_MS) {
+      console.log(`${LOG_PREFIX} off (HEALTH_METRICS_INTERVAL_MS <= 0 or above the timer limit)`);
       return null;
     }
 
@@ -157,4 +163,41 @@ export function startHealthMetricsLoop(options: HealthMetricsLoopOptions = {}): 
     console.debug(`${LOG_PREFIX} failed to start (metrics only; readiness unaffected):`, err);
     return null;
   }
+}
+
+// The loop waits for the warmer so its checks never compete with warming for the loop thread. It
+// keys off the warm FLAG, not off runWarmup() resolving: the flag also flips on the warmer's
+// fail-open timeout, while runWarmup() itself can stay pending behind a hung warm request. A hard
+// cap starts it anyway, so a warmer that never flips the flag cannot keep the metrics dark.
+export const WARM_POLL_MS = 1_000;
+export const WARM_MAX_WAIT_MS = 120_000;
+
+/** Start the loop once `isWarm()` reads true, or after `maxWaitMs`, whichever comes first. Never throws. */
+export function startHealthMetricsLoopWhenWarm(
+  isWarm: () => boolean,
+  {
+    pollMs = WARM_POLL_MS,
+    maxWaitMs = WARM_MAX_WAIT_MS,
+    start = () => startHealthMetricsLoop(),
+    now = () => Date.now(),
+  }: { pollMs?: number; maxWaitMs?: number; start?: () => unknown; now?: () => number } = {}
+): void {
+  const startedWaitingAt = now();
+  const ready = () => {
+    try {
+      return isWarm() || now() - startedWaitingAt >= maxWaitMs;
+    } catch {
+      return true;
+    }
+  };
+  if (ready()) {
+    start();
+    return;
+  }
+  const poll = setInterval(() => {
+    if (!ready()) return;
+    clearInterval(poll);
+    start();
+  }, pollMs);
+  poll.unref();
 }

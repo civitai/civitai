@@ -149,19 +149,24 @@ try {
 // awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
 // never block or crash boot.
 //
-// The background dependency-health metrics loop starts once the warmer settles (success, fail-open
-// timeout, disabled or a failed kick alike), so its checks never compete with warming for the
-// loop thread. It runs the same runHealthChecks() as the probes, for metrics only: nothing reads
-// its result, so it cannot change readiness. It runs in every process that runs this file, which
-// covers both the Next server and the standalone server (scripts/trpc-server/server.cjs calls
-// register()). HEALTH_METRICS_INTERVAL_MS <= 0 turns it off. See ~/server/health/metrics-loop.
-void import('~/server/warmup')
+// The background dependency-health metrics loop starts once the pod is warm (the warm flag, which
+// also flips on the warmer's fail-open timeout and when warming is disabled), or after a hard cap,
+// so its checks never compete with warming for the loop thread. It does NOT wait on runWarmup()
+// resolving, which a hung warm request can delay indefinitely. If the warmer module fails to load,
+// it starts at once. It runs the same runHealthChecks() as the probes, for metrics only: nothing
+// reads its result, so it cannot change readiness. It runs in every process that runs this file,
+// which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
+// calls register()). HEALTH_METRICS_INTERVAL_MS <= 0 turns it off. See ~/server/health/metrics-loop.
+const warmupModule = import('~/server/warmup');
+void warmupModule
   .then((m) => m.runWarmup())
   .catch((err) => {
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  })
-  .then(() => import('~/server/health/metrics-loop'))
-  .then((m) => m.startHealthMetricsLoop())
+  });
+void Promise.all([import('~/server/health/metrics-loop'), warmupModule.catch(() => null)])
+  .then(([loop, warmup]) =>
+    loop.startHealthMetricsLoopWhenWarm(warmup ? warmup.isWarm : () => true)
+  )
   .catch((err) => {
     console.error('[instrumentation.node] health metrics loop start failed (fail-open):', err);
   });

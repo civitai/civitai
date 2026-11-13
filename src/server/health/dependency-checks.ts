@@ -3,7 +3,7 @@
 // /api/health and /api/ready probes and the background metrics loop (./metrics-loop).
 //
 // It lives outside src/pages so the instrumentation entry can import it without pulling in the
-// request-handler stack (ProbeEndpoint and its auth/session imports).
+// request-handler stack (the probe route wrapper and its auth/session imports).
 //
 // 🔴 It is evaluated once per bundler module graph. The probes run in the request graph and the
 // metrics loop in the instrumentation graph, so anything here that both must see has to live on
