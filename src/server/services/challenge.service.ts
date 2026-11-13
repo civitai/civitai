@@ -4144,6 +4144,12 @@ export async function getVisibleChallengeWinners({
     if (!canAccessUserChallenges)
       conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
   } else {
+    // Cancelled stays hidden from all but its creator, as on the detail page.
+    conditions.push(
+      viewerId
+        ? Prisma.sql`(c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus" OR c."createdById" = ${viewerId})`
+        : Prisma.sql`c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus"`
+    );
     conditions.push(
       ...(await challengeVisibilityConditions({
         isGreen,

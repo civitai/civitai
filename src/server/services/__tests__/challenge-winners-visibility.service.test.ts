@@ -26,6 +26,7 @@ const { getVisibleChallengeWinners } = await import('~/server/services/challenge
 
 const SCHEMA = `
   CREATE TYPE "ChallengeSource" AS ENUM ('System', 'Mod', 'User');
+  CREATE TYPE "ChallengeStatus" AS ENUM ('Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled');
   CREATE TYPE "ChallengeIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error');
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
   CREATE TABLE "Image" (
@@ -34,6 +35,7 @@ const SCHEMA = `
   );
   CREATE TABLE "Challenge" (
     id int PRIMARY KEY, source "ChallengeSource" NOT NULL,
+    status "ChallengeStatus" NOT NULL DEFAULT 'Completed',
     ingestion "ChallengeIngestionStatus" NOT NULL DEFAULT 'Scanned', "coverImageId" int,
     "createdById" int NOT NULL, "visibleAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 day',
     "buzzType" text NOT NULL DEFAULT 'yellow', "nsfwLevel" int NOT NULL DEFAULT 1
@@ -48,13 +50,14 @@ const VISIBLE = 1;
 const UNSCANNED = 2;
 const USER_CHALLENGE = 3;
 const ABOVE_LEVEL = 4;
+const CANCELLED = 5;
 const UNKNOWN = 999;
 
 let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
 beforeAll(async () => {
   harness = await startPglitePrisma(SCHEMA);
   await harness.pg.exec(`
-    INSERT INTO "Image" (id) VALUES (1), (2), (3);
+    INSERT INTO "Image" (id) VALUES (1), (2), (3), (5);
     INSERT INTO "Image" (id, "nsfwLevel") VALUES (4, ${R});
     INSERT INTO "Challenge" (id, source, "coverImageId", "createdById") VALUES
       (${VISIBLE}, 'System', 1, -1),
@@ -63,6 +66,8 @@ beforeAll(async () => {
       (${UNSCANNED}, 'User', 'Pending', 2, ${CREATOR});
     INSERT INTO "Challenge" (id, source, "coverImageId", "createdById", "nsfwLevel") VALUES
       (${ABOVE_LEVEL}, 'System', 4, -1, ${R});
+    INSERT INTO "Challenge" (id, source, status, "coverImageId", "createdById") VALUES
+      (${CANCELLED}, 'User', 'Cancelled', 5, ${CREATOR});
   `);
 });
 afterAll(() => harness.stop());
@@ -119,6 +124,14 @@ describe('getVisibleChallengeWinners', () => {
   it("answers a challenge above the viewer's level the same way", async () => {
     expect(await winners(ABOVE_LEVEL)).toEqual([]);
     expect(await winners(ABOVE_LEVEL, { browsingLevel: PG | R })).toEqual(WINNERS);
+  });
+
+  // getChallengeWinners is stubbed to always return winners, so an empty answer is the gate's.
+  it('answers a Cancelled challenge the same way, except to its creator and moderators', async () => {
+    expect(await winners(CANCELLED)).toEqual([]);
+    expect(await winners(CANCELLED, { viewerId: undefined })).toEqual([]);
+    expect(await winners(CANCELLED, { viewerId: CREATOR })).toEqual(WINNERS);
+    expect(await winners(CANCELLED, { isModerator: true })).toEqual(WINNERS);
   });
 
   it('lets the creator see their own unscanned challenge, as the feed does', async () => {
