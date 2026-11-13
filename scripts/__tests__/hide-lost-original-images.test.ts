@@ -63,6 +63,7 @@ const EXPECTED_REFS: [reason: string, table: string, column: string][] = [
   ['storyline-image', 'Storyline', 'heroImageId'],
   ['storyline-image', 'Storyline', 'sparkImageId'],
   ['storyline-cover-upload', 'StorylineCoverUpload', 'imageId'],
+  ['image-connection', 'ImageConnection', 'imageId'],
 ];
 const REF_TABLES = [...new Set(EXPECTED_REFS.map(([, table]) => table))];
 

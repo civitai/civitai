@@ -164,6 +164,8 @@ export const DISPLAY_REFS: { reason: string; table: string; columns: string[] }[
     columns: ['coverImageId', 'heroImageId', 'sparkImageId'],
   },
   { reason: 'storyline-cover-upload', table: 'StorylineCoverUpload', columns: ['imageId'] },
+  // Moderation Lead: any entityType (bounty and bounty entry included); when unsure, keep.
+  { reason: 'image-connection', table: 'ImageConnection', columns: ['imageId'] },
 ];
 
 /**
