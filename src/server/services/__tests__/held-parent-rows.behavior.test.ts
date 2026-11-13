@@ -161,6 +161,9 @@ beforeAll(async () => {
   `);
   await db.exec(heldCopiesSchemaSql());
   await db.exec(heldStorylineCopiesSchemaSql());
+  await db.exec(`CREATE TABLE "TextScanHold" (
+    id serial PRIMARY KEY, "entityType" text, "entityId" int, label text, status text
+  )`);
   await db.exec(postTextMigration);
 });
 afterAll(() => db.close());

@@ -1,8 +1,9 @@
 -- Storylines: text items in a post's reading order (PostText). Held text, and the post that holds
--- it, cannot be deleted until the hold is released: a text is held while its CSAM hold is pending
--- (`csamHeld`), while a CSAM report that still holds (pending, not yet archived, or sent within the
--- year) names its author or quotes its post, or while an evidence hold covers its author. The trigger refuses every delete of such a
--- row, including the cascade from "Post" and raw SQL. Its Comment v3 thread is
+-- it, cannot be deleted until the hold is released: a text is held while its CSAM hold is pending,
+-- or confirmed with no CSAM report on it (`csamHeld`); while a CSAM report that still holds
+-- (pending, not yet archived, or sent within the year) names its author or quotes its post; or
+-- while an evidence hold covers its author. The trigger refuses every delete of such a row,
+-- including the cascade from "Post" and raw SQL. Its Comment v3 thread is
 -- 20270108094000_post_text_comment_type, applied later.
 --
 -- MANUAL APPLY, per environment, BEFORE the PR that reads it merges. Applying early is safe for the
@@ -42,12 +43,35 @@ END $$;
 
 -- 2. Held text is kept. post_text_held is also what the app asks before a delete
 -- (src/server/services/post-text-hold.ts), so the two refuse the same rows.
-CREATE OR REPLACE FUNCTION post_text_held(csam_held BOOLEAN, post_id INTEGER, author_id INTEGER)
+CREATE OR REPLACE FUNCTION post_text_held(
+  text_id INTEGER, csam_held BOOLEAN, post_id INTEGER, author_id INTEGER
+)
 RETURNS boolean AS $$
 DECLARE
   marked BOOLEAN := false;
 BEGIN
-  IF csam_held THEN
+  -- `csamHeld` keeps the text from readers for good; as a delete hold it stands until a moderator
+  -- confirms the hold AND a CSAM report names the author or quotes the post. From then on that
+  -- report's own retention (below) holds the text, and ends when the report stops holding.
+  IF csam_held AND (
+    EXISTS (
+      SELECT 1 FROM "TextScanHold" h
+      WHERE h."entityType" = 'PostText' AND h."entityId" = text_id AND h.label = 'csam'
+        AND h.status = 'Pending'
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM "TextScanHold" h
+      WHERE h."entityType" = 'PostText' AND h."entityId" = text_id AND h.label = 'csam'
+        AND h.status = 'Confirmed'
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM "CsamReport" r
+      WHERE r."userId" = author_id
+        OR r.details ->> 'secondaryUserId' = author_id::text
+        OR (jsonb_typeof(r.details -> 'contextText') = 'array'
+            AND r.details -> 'contextText' @> jsonb_build_array(jsonb_build_object('postId', post_id)))
+    )
+  ) THEN
     RETURN true;
   END IF;
   -- A report holds while pending, not yet archived, or sent within the year (`reportHolds` in
@@ -83,7 +107,7 @@ $$ LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION post_text_keep_held() RETURNS trigger AS $$
 BEGIN
-  IF post_text_held(OLD."csamHeld", OLD."postId", OLD."userId") THEN
+  IF post_text_held(OLD."id", OLD."csamHeld", OLD."postId", OLD."userId") THEN
     RAISE EXCEPTION 'PostText % cannot be deleted while it is held', OLD."id";
   END IF;
   RETURN OLD;

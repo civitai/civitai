@@ -12,7 +12,7 @@ import { OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
  */
 export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "PostText" ht
-  WHERE ht."postId" = ${postId} AND post_text_held(ht."csamHeld", ht."postId", ht."userId")
+  WHERE ht."postId" = ${postId} AND post_text_held(ht.id, ht."csamHeld", ht."postId", ht."userId")
 )`;
 
 /** The posts among these holding held text, or holding these texts when they are held. */
@@ -31,7 +31,7 @@ export async function heldPostTextPostIds({
   if (!where) return [];
   const rows = await dbWrite.$queryRaw<{ postId: number }[]>`
     SELECT DISTINCT t."postId" FROM "PostText" t
-    WHERE ${where} AND post_text_held(t."csamHeld", t."postId", t."userId")
+    WHERE ${where} AND post_text_held(t.id, t."csamHeld", t."postId", t."userId")
   `;
   return rows.map((row) => row.postId);
 }
@@ -45,7 +45,7 @@ export const unheldPostTextUpdateSql = (id: number, content: string, resetLevel:
     SET content = ${content}, ${Prisma.raw(
     resetLevel ? '"nsfwLevel" = 0, ' : ''
   )}"updatedAt" = now()
-    WHERE t.id = ${id} AND NOT post_text_held(t."csamHeld", t."postId", t."userId")`;
+    WHERE t.id = ${id} AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;
 
 /** The refusal of a change to held text: an owner is never told why (`OWNER_CONTENT_KEPT`). */
 export const heldTextError = (isModerator: boolean | undefined, what: string) =>

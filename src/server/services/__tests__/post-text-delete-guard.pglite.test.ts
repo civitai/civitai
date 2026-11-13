@@ -26,6 +26,10 @@ CREATE TABLE "CsamReport" (
   "archivedAt" TIMESTAMP(3),
   "details" JSONB NOT NULL DEFAULT '{}'
 );
+CREATE TABLE "TextScanHold" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+  "label" TEXT NOT NULL, "status" TEXT NOT NULL
+);
 -- Stands in for the view: the trigger only reads its "userId".
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 `;
@@ -60,7 +64,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await pg.exec(`
-    DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser";
+    DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "TextScanHold";
     UPDATE "PostText" SET "csamHeld" = false;
     DELETE FROM "PostText"; DELETE FROM "Post";
     INSERT INTO "Post" ("id", "userId") VALUES (1, ${AUTHOR}), (2, ${AUTHOR});
@@ -176,6 +180,52 @@ describe('PostText delete trigger', () => {
       JSON.stringify({ contextText: [{ source: 'postDescription', id: 2, postId: 2 }] }),
     ]);
     await pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
+    expect(await texts()).toEqual([]);
+  });
+});
+
+describe('a CSAM hold on the text', () => {
+  const decide = (id: number, status: 'Pending' | 'Confirmed' | 'Dismissed') =>
+    pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', $1, 'csam', $2)`,
+      [id, status]
+    );
+  const del = (id: number) => pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
+
+  it('holds it for good once confirmed with no report', async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    await expect(del(id)).rejects.toThrow(/held/);
+  });
+
+  it("holds it, once confirmed with a report, for the report's retention and then lets it go", async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    await pg.query(
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES ($1, now() - interval '364 days', now())`,
+      [AUTHOR]
+    );
+    await expect(del(id)).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days'`);
+    await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
+  it('holds it while a hold is pending, a report or not', async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    await decide(id, 'Pending');
+    await pg.query(
+      `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES ($1, now() - interval '2 years', now())`,
+      [AUTHOR]
+    );
+    await expect(del(id)).rejects.toThrow(/held/);
+  });
+
+  it('lets it go once dismissed, which clears csamHeld (control)', async () => {
+    const id = await addText(1);
+    await decide(id, 'Dismissed');
+    await del(id);
     expect(await texts()).toEqual([]);
   });
 });

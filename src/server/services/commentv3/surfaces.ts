@@ -296,7 +296,7 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     },
   },
   appListing: {},
-  // Storyline text items: the thread opens with its visibility rule.
+  // Storyline text items: no thread is readable or writable yet, moderators included.
   postText: {
     assertVisible: async () => {
       throw throwNotFoundError('Text not found');

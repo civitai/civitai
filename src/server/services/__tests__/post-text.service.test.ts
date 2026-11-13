@@ -132,8 +132,8 @@ describe('setPostText', () => {
     await expect(setPostText({ id: TEXT, content: long, userId: AUTHOR })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    // The control: the same length counted with its tags is within the cap.
-    await setPostText({ id: TEXT, content: `<p>${'a'.repeat(4990)}</p>`, userId: AUTHOR });
+    // The control: 5,000 characters of text pass though the markup makes it longer.
+    await setPostText({ id: TEXT, content: `<p>${'a'.repeat(5000)}</p>`, userId: AUTHOR });
     expect(w.$executeRaw).toHaveBeenCalledTimes(1);
 
     vi.mocked(throwOnBlockedUserContent).mockRejectedValueOnce(new Error('blocked'));
