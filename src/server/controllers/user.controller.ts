@@ -330,7 +330,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       ? countUnclaimedPrizes(id).catch(() => 0)
       : Promise.resolve(0);
     // Concurrent, not serial: these hit two different backends — the
-    // notifications service over HTTP (with its own retries) and the main
+    // notifications service over HTTP (1.5 s per attempt, one retry) and the main
     // Postgres replica — with no data dependency between them. Awaiting them in
     // sequence tacked a full DB round trip onto a request already waiting on a
     // retrying HTTP call.

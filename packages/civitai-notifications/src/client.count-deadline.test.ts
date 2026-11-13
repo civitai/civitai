@@ -1,11 +1,11 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotificationsClient, NotificationsClientError } from './client';
 
-// The unread count feeds a badge polled on every signed-in page, and the caller degrades to "no badge" on
-// failure. So with a notifications app that accepts the connection and never answers, the count must give
-// up fast and once, not after the default 10 s x 3 attempts that the write routes keep.
+// The unread count feeds the bell badge, and the caller degrades a failure to "no badge" for the whole page
+// load (it is fetched once, not polled). So the count gives up fast — two 1.5 s attempts, not the default
+// 10 s x 3 the write routes keep — but does retry once, so a single blip doesn't zero the badge.
 
 let server: Server;
 let endpoint: string;
@@ -27,7 +27,7 @@ beforeEach(() => {
 });
 
 describe('countNotifications against a server that never answers', () => {
-  it('rejects in under 2 s with the default config, after a single attempt', async () => {
+  it('rejects in under 4 s with the default config, after two attempts', async () => {
     const client = createNotificationsClient({ endpoint, retryBaseMs: 0 });
     const started = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -36,12 +36,26 @@ describe('countNotifications against a server that never answers', () => {
         () => 'resolved' as const,
         (err: unknown) => err
       ),
-      new Promise<'hung'>((r) => (timer = setTimeout(() => r('hung'), 2000))),
+      new Promise<'hung'>((r) => (timer = setTimeout(() => r('hung'), 4000))),
     ]);
     clearTimeout(timer);
 
     expect(outcome).toBeInstanceOf(NotificationsClientError);
-    expect(Date.now() - started).toBeLessThan(2000);
-    expect(requests).toBe(1);
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(requests).toBe(2);
+  });
+
+  it('returns the count when the first attempt fails and the retry succeeds', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ category: 'Comment', count: 4 }]), { status: 200 })
+      );
+    const client = createNotificationsClient({ endpoint, retryBaseMs: 0, fetch: fetchMock });
+    expect(await client.countNotifications({ userId: 1, unread: true })).toEqual([
+      { category: 'Comment', count: 4 },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

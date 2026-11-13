@@ -11,7 +11,7 @@ import type { FastifyInstance, InjectOptions } from 'fastify';
 //     a DB read, unless NOTIFICATIONS_COUNT_DB_FALLBACK=true, which answers from the DB instead. Either way
 //     the failure is counted where an operator looks for redis trouble.
 
-type Mode = 'ok' | 'reject' | 'hang';
+type Mode = 'ok' | 'reject' | 'hang' | 'late-reject';
 
 const h = vi.hoisted(() => {
   // Read at module load by env.ts / lag.ts, so set before the app is imported.
@@ -26,6 +26,8 @@ const h = vi.hoisted(() => {
   const settle = <T>(mode: Mode, value: T): Promise<T> =>
     mode === 'hang'
       ? never()
+      : mode === 'late-reject' // rejects after the 200 ms deadline has already given up on it
+      ? new Promise<T>((_, reject) => setTimeout(() => reject(new Error('fake late')), 400))
       : mode === 'reject'
       ? Promise.reject(new Error(`fake ${mode}`))
       : Promise.resolve(value);
@@ -199,6 +201,14 @@ describe('a count-path redis failure is counted like the worker counts one', () 
     h.state.redis = 'reject';
     await count();
     expect(await redisErrors('lag')).toBe(before + 1);
+  });
+
+  it('a cache read that times out and then rejects is counted once, not twice', async () => {
+    const before = await redisErrors('get');
+    h.state.cache = 'late-reject';
+    await count();
+    await new Promise((r) => setTimeout(r, 500)); // let the abandoned call reject
+    expect(await redisErrors('get')).toBe(before + 1);
   });
 
   it('a hung cache read increments notifications_redis_errors_total{operation="get"}', async () => {

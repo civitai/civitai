@@ -10,7 +10,6 @@
 // only tests don't touch the DB).
 
 import { createClients, createPool, type AugmentedPool, type DbLogFn } from '@civitai/db';
-import { notifStatementTimeoutMs } from '../../../env';
 
 /** The `LOGGING` entry that turns on the pools' query echo (the monolith's `createLogger` convention). */
 export const DB_LOG_FLAG = 'notif-db';
@@ -42,10 +41,6 @@ export const { write: notifDbWrite, read: notifDbRead } = createClients({
   // has no SSL at all — without this knob a local worker cannot connect and every create is
   // swallowed as "The server does not support SSL connections".
   ssl: process.env.NOTIFICATION_DB_SSL === 'disable' ? false : undefined,
-  // Set with SET on connect rather than as a startup parameter, which PgBouncer rejects. Only on the
-  // notification DB, which nothing else connects to: the main-DB pools below leave the role's own timeout
-  // alone, because a session SET there could outlive this client on a pooled server connection.
-  perConnectionStatementTimeout: notifStatementTimeoutMs,
   log: log('notif'),
 });
 

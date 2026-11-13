@@ -226,11 +226,12 @@ function noticesConfig(config: NotificationsClientConfig): NotificationsClientCo
   };
 }
 
-// The count feeds a badge polled on every signed-in page, and its callers degrade a failure to no badge,
-// so it gives up fast and once: one 1.5 s attempt, the next poll being the retry. Other routes keep the
-// configured timeout and retries.
+// The count feeds the bell badge, and its caller degrades a failure to no badge for the rest of the page
+// load (it is fetched once, not polled). So it gives up fast — 1.5 s per attempt — but retries once, so a
+// single blip (a pod restart, a dropped connection) doesn't zero the badge: ~3 s worst case. Other routes
+// keep the configured timeout and retries.
 function countConfig(config: NotificationsClientConfig): NotificationsClientConfig {
-  return { ...config, timeoutMs: 1500, retries: 0 };
+  return { ...config, timeoutMs: 1500, retries: 1 };
 }
 
 // Bounds each bulk POST so a large producer run (tens of thousands of rows, each with a potentially large

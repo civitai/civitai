@@ -54,15 +54,6 @@ export const countRedisDeadlineMs = positiveMs(
 export function countDbFallbackEnabled(): boolean {
   return process.env.NOTIFICATIONS_COUNT_DB_FALLBACK === 'true';
 }
-/**
- * `statement_timeout` on every notification-DB connection. The worker's statements are batched, so each one
- * is short; this only ends a statement stuck behind a lock or a sick server, which otherwise holds its pool
- * slot indefinitely.
- */
-export const notifStatementTimeoutMs = positiveMs(
-  process.env.NOTIFICATION_DB_STATEMENT_TIMEOUT_MS,
-  30_000
-);
 
 // --- web push (VAPID) ---
 export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
