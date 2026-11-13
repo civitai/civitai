@@ -38,13 +38,12 @@ beforeAll(async () => {
       disabled boolean NOT NULL DEFAULT false
     );
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", source) VALUES
-      (501, ${CHILD}, 'Rekognition'), (501, ${WD14_TAG}, 'WD14'),
-      (502, ${CHILD}, 'Rekognition'), (502, ${WD14_TAG}, 'WD14');
+      (501, ${WD14_TAG}, 'WD14'), (502, ${WD14_TAG}, 'WD14');
   `);
 });
 afterAll(() => db.close());
 
-// The route's SQL arrives as Prisma.Sql and the cache's own row read as a tagged template; both run
+// The service's SQL arrives as Prisma.Sql and the cache's own row read as a tagged template; both run
 // as written on PGlite, so `fromWrite` reaching dbWrite reads the same rows.
 const runQuery = (async (sqlOrStrings: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
   if ('text' in sqlOrStrings)
@@ -73,7 +72,15 @@ beforeEach(() => {
 });
 
 describe('child-label reindex bust through the real tag-id cache', () => {
-  it('rewrites a selected image with its child tag and verifies every entry', async () => {
+  it('rewrites a stale entry with its child tag and verifies every entry', async () => {
+    // Cached before the child label landed, so the entry lacks it.
+    const stale = await tagIdsForImagesCache.fetch([501, 502], { bypassLocal: true });
+    expect(stale[501]?.tags).toEqual([WD14_TAG]);
+    await db.exec(`
+      INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", source) VALUES
+        (501, ${CHILD}, 'Rekognition'), (502, ${CHILD}, 'Rekognition');
+    `);
+
     const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 500 });
     expect(result).toMatchObject({ images: 2, refreshed: 2, verified: 2 });
     expect(result).not.toHaveProperty('aborted');

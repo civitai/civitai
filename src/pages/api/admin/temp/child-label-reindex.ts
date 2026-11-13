@@ -23,8 +23,8 @@ import { booleanString } from '~/utils/zod-helpers';
  *               (`refreshed` and `verified` stay 0).
  *   chunkSize - default 500. Image ids per selection page, WD14 check, lookup and refresh; ids per
  *               queue push.
- *   after     - default 0. Only images above this id; resume a bust from its `lastImageId`.
- *   maxChunks - optional, bust only. Select and refresh at most this many chunks.
+ *   after     - default 0. Only images above this id; resume from the last run's `lastImageId`.
+ *   maxChunks - optional. Select at most this many chunks, so one request stays short.
  */
 
 const schema = z.object({

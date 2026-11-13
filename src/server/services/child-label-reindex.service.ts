@@ -1,13 +1,16 @@
 import { Prisma } from '@prisma/client';
 import { childBrowsingTagIds } from '@civitai/shared';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { collectionsSearchIndex } from '~/server/search-index';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForImages,
+} from '~/server/services/collection-media-index';
 import { queueModelsReindex } from '~/server/search-index/queue-models-reindex';
 import { chunkIds } from '~/utils/array-helpers';
 
 const CHILD_TAG_IDS = [...childBrowsingTagIds];
+const SOURCE = 'child-label-reindex';
 
 /** The next `limit` images above `after` with an enabled child browsing tag from Rekognition. */
 export const childLabelImageIdsSql = (after: number, limit: number) => Prisma.sql`
@@ -39,32 +42,6 @@ export const modelIdsForImagesSql = (imageIds: number[]) => Prisma.sql`
   WHERE i.id = ANY(${imageIds}::int[])
 `;
 
-/**
- * Collections whose search document can show one of these images: as its cover, or through an item
- * that is the image, its post, a model in `modelIds`, an article it covers or a 3D model it is the
- * thumbnail of. Each item column is its own branch, so the indexed ones use their index.
- */
-export const collectionIdsForImagesSql = (imageIds: number[], modelIds: number[]) => Prisma.sql`
-  WITH posts AS (
-    SELECT DISTINCT "postId" AS id FROM "Image" WHERE id = ANY(${imageIds}::int[]) AND "postId" IS NOT NULL
-  ), articles AS (
-    SELECT id FROM "Article"
-    WHERE "coverId" = ANY(${imageIds}::int[]) OR "bannerId" = ANY(${imageIds}::int[])
-  ), models3d AS (
-    SELECT id FROM "Model3D" WHERE "thumbnailImageId" = ANY(${imageIds}::int[])
-  )
-  SELECT c.id FROM "Collection" c WHERE c."imageId" = ANY(${imageIds}::int[])
-  UNION
-  SELECT "collectionId" FROM "CollectionItem" WHERE "imageId" = ANY(${imageIds}::int[])
-  UNION
-  SELECT "collectionId" FROM "CollectionItem" WHERE "modelId" = ANY(${modelIds}::int[])
-  UNION
-  SELECT "collectionId" FROM "CollectionItem" WHERE "model3dId" IN (SELECT id FROM models3d)
-  UNION
-  SELECT "collectionId" FROM "CollectionItem"
-  WHERE "postId" IN (SELECT id FROM posts) OR "articleId" IN (SELECT id FROM articles)
-`;
-
 const ids = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ id: number }[]>(sql)).map((r) => r.id);
 
@@ -92,13 +69,18 @@ async function selectImageIds(after: number, chunkSize: number, limit?: number) 
 async function documentIdsForImages(imageIds: number[], chunkSize: number) {
   const modelIds = new Set<number>();
   const collectionIds = new Set<number>();
+  let truncated = false;
   for (const chunk of chunkIds(imageIds, chunkSize)) {
-    const chunkModelIds = await ids(modelIdsForImagesSql(chunk));
-    for (const id of chunkModelIds) modelIds.add(id);
-    for (const id of await ids(collectionIdsForImagesSql(chunk, chunkModelIds)))
-      collectionIds.add(id);
+    for (const id of await ids(modelIdsForImagesSql(chunk))) modelIds.add(id);
+    const collections = await getCollectionIdsForImages({
+      imageIds: chunk,
+      source: SOURCE,
+      db: dbRead,
+    });
+    for (const id of collections.collectionIds) collectionIds.add(id);
+    truncated ||= collections.truncated;
   }
-  return { modelIds: [...modelIds], collectionIds: [...collectionIds] };
+  return { modelIds: [...modelIds], collectionIds: [...collectionIds], truncated };
 }
 
 const holdsChildTag = (entry?: { tags: number[] }) =>
@@ -110,7 +92,7 @@ export type ChildLabelReindexOptions = {
   chunkSize: number;
   /** Start above this imageId (resume). */
   after?: number;
-  /** step=bust: stop after this many chunks; `lastImageId` is where to resume. */
+  /** Stop after this many chunks; `lastImageId` is where to resume. */
   maxChunks?: number;
 };
 
@@ -122,12 +104,12 @@ export async function runChildLabelReindex({
   after = 0,
   maxChunks,
 }: ChildLabelReindexOptions) {
+  const imageIds = await selectImageIds(
+    after,
+    chunkSize,
+    maxChunks ? maxChunks * chunkSize : undefined
+  );
   if (step === 'bust') {
-    const imageIds = await selectImageIds(
-      after,
-      chunkSize,
-      maxChunks ? maxChunks * chunkSize : undefined
-    );
     const chunks = chunkIds(imageIds, chunkSize);
     let refreshed = 0;
     let verified = 0;
@@ -167,7 +149,7 @@ export async function runChildLabelReindex({
     };
   }
 
-  const imageIds = await selectImageIds(after, chunkSize);
+  const lastImageId = imageIds[imageIds.length - 1];
   // Documents are rebuilt from the cache, so a reindex waits until the first and last image of
   // every bust chunk read back fixed: a bust that stopped early fails it.
   const probe = [
@@ -186,28 +168,25 @@ export async function runChildLabelReindex({
       images: imageIds.length,
       probe: probe.length,
       probeVerified,
+      lastImageId,
       aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
     };
 
-  const { modelIds, collectionIds } = await documentIdsForImages(imageIds, chunkSize);
+  const { modelIds, collectionIds, truncated } = await documentIdsForImages(imageIds, chunkSize);
   const models = await queueModelsReindex(modelIds, { dryRun, chunkSize });
-  let collectionsQueued = 0;
-  if (!dryRun) {
-    for (const chunk of chunkIds(collectionIds, chunkSize)) {
-      await collectionsSearchIndex.queueUpdate(
-        chunk.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-      );
-      collectionsQueued += chunk.length;
-    }
-  }
+  const collectionsQueued = dryRun
+    ? 0
+    : (await enqueueCollectionRebuild({ collectionIds, truncated, source: SOURCE })).queued;
   return {
     step,
     dryRun,
     images: imageIds.length,
     probe: probe.length,
     probeVerified,
+    lastImageId,
     models,
     collections: collectionIds.length,
+    collectionsTruncated: truncated,
     collectionsQueued,
   };
 }
