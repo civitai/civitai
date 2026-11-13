@@ -50,6 +50,7 @@ import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
+import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import { captureImageHeldSql, ownerHeldSql } from '~/server/services/legal-hold.service';
 
 export const SCRIPT_BASENAME = 'hide-lost-original-images';
@@ -427,7 +428,9 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
       if (r.skip) bump(counts, `skipped:${r.skip}`);
       else if (deps.isExternal(r.url)) bump(counts, 'skipped:external-url');
       // A key in a shape no control image has: a 404 for it would not show the original is gone.
-      else if (!control.shapes.has(keyShape(r.url))) bump(counts, 'skipped:odd-url');
+      // Same rule as isProbeableMediaKey's own doc: a 404 on a key that is not a bare uuid is no proof.
+      else if (!isProbeableMediaKey(r.url) || !control.shapes.has(keyShape(r.url)))
+        bump(counts, 'skipped:odd-url');
       else return true;
       return false;
     });

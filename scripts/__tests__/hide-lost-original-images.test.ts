@@ -120,8 +120,8 @@ beforeEach(async () => {
   await db.exec(`
     TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "PostReport", "Article", app_listings, app_listing_screenshots;
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
-      (1,'gone-1',10,100),(2,'gone-2',10,100),(3,'gone-3',11,101),
-      (900,'live-900',12,102),(901,'live-901',12,102);
+      (1,'00000001-0000-4000-8000-000000000000',10,100),(2,'00000002-0000-4000-8000-000000000000',10,100),(3,'00000003-0000-4000-8000-000000000000',11,101),
+      (900,'f0000900-0000-4000-8000-000000000000',12,102),(901,'f0000901-0000-4000-8000-000000000000',12,102);
   `);
   for (const table of REF_TABLES) await db.exec(`TRUNCATE "${table}"`);
 });
@@ -159,7 +159,7 @@ function makeDeps(over: Partial<Deps> = {}) {
   const deps: Deps = {
     query,
     head: async (url) => {
-      if (url.startsWith('gone-')) return 'missing';
+      if (url.startsWith('0000000')) return 'missing';
       return 'present';
     },
     isExternal: (url) => url.startsWith('http'),
@@ -179,7 +179,11 @@ describe('hide-lost-original-images', () => {
   it('hides only ids that still 404, logs the prior value, and propagates them', async () => {
     const { deps, logged, propagated } = makeDeps({
       head: async (url) =>
-        url === 'gone-2' ? 'present' : url.startsWith('gone-') ? 'missing' : 'present',
+        url === '00000002-0000-4000-8000-000000000000'
+          ? 'present'
+          : url.startsWith('0000000')
+          ? 'missing'
+          : 'present',
     });
     const counts = await run(options(), GONE, deps);
     expect([await ingestion(1), await ingestion(2), await ingestion(3)]).toEqual([
@@ -201,8 +205,8 @@ describe('hide-lost-original-images', () => {
   it('skips an id whose HEAD errors rather than hiding it', async () => {
     const { deps } = makeDeps({
       head: async (url) => {
-        if (url === 'gone-1') throw new Error('throttled');
-        return url.startsWith('gone-') ? 'missing' : 'present';
+        if (url === '00000001-0000-4000-8000-000000000000') throw new Error('throttled');
+        return url.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     const counts = await run(options(), GONE, deps);
@@ -231,8 +235,9 @@ describe('hide-lost-original-images', () => {
   it('a hold placed after the check still stops the write', async () => {
     const { deps } = makeDeps({
       head: async (url) => {
-        if (url === 'gone-1') await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
-        return url.startsWith('gone-') ? 'missing' : 'present';
+        if (url === '00000001-0000-4000-8000-000000000000')
+          await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
+        return url.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     const counts = await run(options(), GONE, deps);
@@ -243,8 +248,9 @@ describe('hide-lost-original-images', () => {
   it('logs a confirmation only for rows the UPDATE returned, and undo acts on those alone', async () => {
     const { deps, logged } = makeDeps({
       head: async (url) => {
-        if (url === 'gone-1') await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
-        return url.startsWith('gone-') ? 'missing' : 'present';
+        if (url === '00000001-0000-4000-8000-000000000000')
+          await db.exec(`INSERT INTO "ImageHeld" VALUES (1)`);
+        return url.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     await run(options(), GONE, deps);
@@ -403,7 +409,7 @@ describe('hide-lost-original-images', () => {
     const { deps } = makeDeps({
       head: async (u) => {
         heads.push(u);
-        return u.startsWith('gone-') ? 'missing' : 'present';
+        return u.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     const counts = await run(options(), GONE, deps);
@@ -541,11 +547,16 @@ describe('hide-lost-original-images', () => {
   });
 
   it('refuses to trust the HEADs when one control image is missing and another present', async () => {
-    await db.exec(`INSERT INTO "Image" (id, url, "userId") VALUES (950, 'live-950', 12)`);
+    await db.exec(
+      `INSERT INTO "Image" (id, url, "userId") VALUES (950, 'f0000950-0000-4000-8000-000000000000', 12)`
+    );
     const { deps } = makeDeps({
-      head: async (url) => (url === 'live-950' || url.startsWith('gone-') ? 'missing' : 'present'),
+      head: async (url) =>
+        url === 'f0000950-0000-4000-8000-000000000000' || url.startsWith('0000000')
+          ? 'missing'
+          : 'present',
     });
-    // Targets spread over the id range, so the control samples live-900 (present) and live-950 (missing).
+    // Targets spread over the id range, so the control samples f0000900-0000-4000-8000-000000000000 (present) and f0000950-0000-4000-8000-000000000000 (missing).
     await expect(run(options(), [...GONE, 940], deps)).rejects.toThrow(/control failed/);
     expect(await ingestion(1)).toBe('Scanned');
   });
@@ -554,7 +565,7 @@ describe('hide-lost-original-images', () => {
     let controlHeads = 0;
     const { deps } = makeDeps({
       head: async (url) => {
-        if (url.startsWith('live-')) {
+        if (url.startsWith('f0000')) {
           controlHeads += 1;
           // The first chunk's three controls (start, before its HEADs, before its write) pass; later fail.
           return controlHeads > 15 ? 'missing' : 'present';
@@ -567,35 +578,51 @@ describe('hide-lost-original-images', () => {
     expect(await ingestion(2)).toBe('Scanned');
   });
 
-  it('skips a url with whitespace without a HEAD', async () => {
-    await db.exec(`UPDATE "Image" SET url = 'gone-1 ' WHERE id = 1`);
+  it('skips a non-uuid url whose shape matches the controls, without a HEAD', async () => {
+    // keyShape collapses runs, so five hyphenated words share the uuid shape; the key itself is no uuid.
+    await db.exec(`UPDATE "Image" SET url = 'ab-cd-ef-gh-ij' WHERE id = 1`);
     const heads: string[] = [];
     const { deps } = makeDeps({
       head: async (u) => {
         heads.push(u);
-        return u.startsWith('gone-') ? 'missing' : 'present';
+        return u.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     const counts = await run(options(), GONE, deps);
-    expect(heads).not.toContain('gone-1 ');
+    expect(heads).not.toContain('ab-cd-ef-gh-ij');
+    expect(counts['skipped:odd-url']).toBe(1);
+    expect(await ingestion(1)).toBe('Scanned');
+  });
+
+  it('skips a url with whitespace without a HEAD', async () => {
+    await db.exec(`UPDATE "Image" SET url = '00000001-0000-4000-8000-000000000000 ' WHERE id = 1`);
+    const heads: string[] = [];
+    const { deps } = makeDeps({
+      head: async (u) => {
+        heads.push(u);
+        return u.startsWith('0000000') ? 'missing' : 'present';
+      },
+    });
+    const counts = await run(options(), GONE, deps);
+    expect(heads).not.toContain('00000001-0000-4000-8000-000000000000 ');
     expect(counts['skipped:odd-url']).toBe(1);
   });
 
   it('skips a target whose key shape no control image has, without a HEAD', async () => {
     await db.exec(`
-      UPDATE "Image" SET url = '/gone-1' WHERE id = 1;
-      UPDATE "Image" SET url = 'gone-2.jpg' WHERE id = 2;
+      UPDATE "Image" SET url = '/00000001-0000-4000-8000-000000000000' WHERE id = 1;
+      UPDATE "Image" SET url = '00000002-0000-4000-8000-000000000000.jpg' WHERE id = 2;
     `);
     const heads: string[] = [];
     const { deps } = makeDeps({
       head: async (u) => {
         heads.push(u);
-        return u.startsWith('gone-') ? 'missing' : 'present';
+        return u.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     const counts = await run(options(), GONE, deps);
-    expect(heads).not.toContain('/gone-1');
-    expect(heads).not.toContain('gone-2.jpg');
+    expect(heads).not.toContain('/00000001-0000-4000-8000-000000000000');
+    expect(heads).not.toContain('00000002-0000-4000-8000-000000000000.jpg');
     expect(counts['skipped:odd-url']).toBe(2);
     expect(counts.hidden).toBe(1);
   });
@@ -655,8 +682,11 @@ describe('hide-lost-original-images', () => {
   it('does not hide a row whose url changed after it was HEADed', async () => {
     const { deps } = makeDeps({
       head: async (url) => {
-        if (url === 'gone-1') await db.exec(`UPDATE "Image" SET url = 'gone-other' WHERE id = 1`);
-        return url.startsWith('gone-') ? 'missing' : 'present';
+        if (url === '00000001-0000-4000-8000-000000000000')
+          await db.exec(
+            `UPDATE "Image" SET url = '0000000a-0000-4000-8000-000000000000' WHERE id = 1`
+          );
+        return url.startsWith('0000000') ? 'missing' : 'present';
       },
     });
     const counts = await run(options(), GONE, deps);
@@ -669,7 +699,7 @@ describe('hide-lost-original-images', () => {
     const targetHeads: string[] = [];
     const { deps } = makeDeps({
       head: async (url) => {
-        if (url.startsWith('live-')) {
+        if (url.startsWith('f0000')) {
           controlHeads += 1;
           return controlHeads > 5 ? 'missing' : 'present';
         }
