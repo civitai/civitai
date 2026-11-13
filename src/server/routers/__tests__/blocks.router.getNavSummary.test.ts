@@ -49,8 +49,6 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 // same stated reason.
 vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  getRevenueForOwner: vi.fn(),
-  getRecentAttributionsForOwner: vi.fn(),
   getGoodsSalesForOwner: vi.fn(),
   emptyRevenue: vi.fn(),
 }));

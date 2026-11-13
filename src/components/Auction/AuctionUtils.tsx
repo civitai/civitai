@@ -13,7 +13,6 @@ import {
   useSignalTopic,
 } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
-import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import { useSignalTopicsStore } from '~/store/signal-topics.store';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -180,16 +179,11 @@ export const AuctionViews = () => {
   );
 };
 
+// AuctionBidChange is not applied here: its payload is one copy shared by every viewer, so it
+// holds only public images and must not stand in for this viewer's own getBySlug answer.
 export const useAuctionTopicListener = (auctionId?: number) => {
-  const queryUtils = trpc.useUtils();
   const { setViewing } = useAuctionContext();
 
-  // console.log('listening to auction', auctionId);
-
-  useSignalConnection(SignalMessages.AuctionBidChange, (data: GetAuctionBySlugReturn) => {
-    // console.log('auction bid change', data);
-    queryUtils.auction.getBySlug.setData({ slug: data.auctionBase.slug }, data);
-  });
   useSignalConnection(SignalMessages.TopicUpdate, (data: { topic: string; count: number }) => {
     // console.log('auction count', data);
     setViewing((prev) => {

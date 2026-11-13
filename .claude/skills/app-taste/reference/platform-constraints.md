@@ -367,15 +367,44 @@ Two consequences, and the second is the general one:
   that says what it IS (`HERO_SOURCE_ASPECT_RATIO`, a fact about the file) over
   one that sounds like an instruction the layout obeys.
 
-## 12. 🔴 `civitai app pull` gives you the DEPLOY MIRROR, not the dev source
+## 12. 🔴 For an app WITHOUT a source repo, `civitai app pull` gives you the BUILD REPO, not the dev source
 
-Measured 2026-09-03 doing phase 0 for `gen-matrix`, `panorama-360` and
-`playable-collections`. This is the single most expensive thing phase 0 can get
-wrong, because the wrong repo looks completely right: correct slug, correct
-manifest `version`, a clean `main`, and a HEAD commit that names the live
-release.
+**Which repo `app pull` clones depends on the app** (CLI 0.1.139, read from
+`civitai app pull --help` on 2026-11-12):
 
-`civitai app pull` clones from **`forgejo.civitai.com/civitai-apps/<slug>`**. That
+- **The app has a source repo** (`civitai-apps-src/<slug>`): a forked app, or one
+  App Assistant built, has one from its first day, before any approval, with
+  real history: App Assistant's saves are commits. `app pull` clones **that**,
+  and it is the dev clone. Pushing to it keeps history on the platform and never
+  builds or submits anything; a version still goes out via `civitai app submit`.
+- **The app has no source repo**: `app pull` clones the build repo
+  (`civitai-apps/<slug>`), which holds approved versions only. GitHub-developed
+  fleet apps are in this case, so the trap below still applies to them in full.
+
+Source-repo cloning landed in CLI 0.1.139. An older CLI clones the build repo
+for every app. What counts is the CLI that made the CLONE, not the one you have
+now: re-running `app pull` in an existing build-repo checkout keeps syncing from
+the build repo, even on 0.1.139 and even when the app now has a source repo (the
+command only prints where the source repo is). Clone into a new directory to
+switch.
+
+**Which repo you have** is read off the clone itself:
+`git -C <clone> remote get-url origin` ends in `civitai-apps-src/<slug>.git`
+for the source repo and `civitai-apps/<slug>.git` for the build repo. Phase 0 question 1
+(`git cat-file -t <live source sha>`) then says whether the clone is current. It
+needs the `Source commit` that `civitai app status` reports, and that field is
+only what the submitting CLI claimed. A submission that started from a git push
+leaves it empty. When status shows none, the remote URL still says which repo
+you have, but nothing here says whether the clone is current.
+
+The rest of this section is the build-repo case, measured 2026-09-03 doing
+phase 0 for `gen-matrix`, `panorama-360` and `playable-collections` (then the
+only behaviour `app pull` had). This is the single most expensive thing phase 0
+can get wrong, because the wrong repo looks completely right: correct slug,
+correct manifest `version`, a clean `main`, and a HEAD commit that names the
+live release.
+
+For such an app `civitai app pull` clones **`forgejo.civitai.com/civitai-apps/<slug>`**. That
 repo is the *published-artifact* mirror. Its HEAD is an auto-generated
 `Approved publish request pubreq_… — <app> v<ver>` snapshot, it has **only**
 `main`, and — the discriminator — **the `Source commit` that `civitai app status`
@@ -415,19 +444,32 @@ git -C <clone> show origin/main:block.manifest.json | python3 -c 'import json,sy
 
 `gh search repos <slug>` is the fallback when there is no clone yet.
 
-### 12b. The pulled clone embeds an access token in `.git/config`
+### 12b. Older clones carry an access token in `.git/config`; current ones do not
 
-`civitai app pull` warns about this in its own output, and the warning scrolls
-past. The remote is `https://<token>@forgejo.civitai.com/…`. If you pulled a
-mirror by mistake, **delete the directory** rather than repointing it — that
-disposes of the token with it.
+As of CLI 0.1.138 `app pull` writes **no token** to disk. The remote URL is
+token-less, and the clone's `.git/config` gets a repo-local credential helper
+for the platform git host instead: an empty `helper =` line first (so a global
+helper such as `store` cannot save the credential), then
+`helper = !civitai git-credential --app <slug>`, plus `useHttpPath = true`. git
+asks the CLI for the credential on each fetch/push, using your `civitai login`.
 
-### 12c. The CLI signature in phase 0 was wrong
+A clone made by an **older** CLI still has the token in its remote URL. It is a
+write token for every app repo you can write to, not only this one. Running
+`civitai app pull` inside that clone strips the token from every remote that
+points at the app's repo and installs the helper. It does **not** rotate the
+token. One case exits with an error before stripping anything: an old
+build-repo clone of an app that has a source repo but no approved version right
+now. Deleting the directory is still a fine way to dispose of a clone you
+pulled by mistake.
+
+### 12c. The CLI signature
 
 `civitai app pull <slug> <dir>` is rejected: *"accepts at most 1 arg (the target
-DIRECTORY) … the app goes in `--app`"*. The real form is
-`civitai app pull <dir> --app <slug>`. Corrected in `SKILL.md`, recorded here
-because the error text is clear and the failure is loud — unlike everything else
+DIRECTORY) … the app goes in `--app`"*. The form, per `--help` on CLI 0.1.139,
+is `civitai app pull [dir] --app <slug>`. `--app` is required and takes the slug
+or the appBlockId. `[dir]` is optional and defaults to `./<slug>`. If `[dir]` is
+already a checkout, the command pulls into it instead of cloning. Recorded here
+because the error text is clear and the failure is loud, unlike everything else
 in this section.
 
 ## 13. `civitai app status <slug>` reports the newest SUBMISSION, not what is live
@@ -449,7 +491,9 @@ believes it concludes the app is unpublished.
 identify a deploy — reconcile on the `pubreq_` id. `civitai app status` with no
 argument lists per-submission rows including the approved one, but it is capped
 at the newest 100 and says so, i.e. it is a sample. When the two disagree,
-**the deploy mirror's HEAD names the pubreq that is actually serving**.
+**the build repo's (`civitai-apps/<slug>`) HEAD names the pubreq that is actually
+serving**. For an app with a source repo, `civitai app pull` does not give you
+that repo (§12).
 
 ## 14. Manifest facts phase 0 keeps re-deriving
 

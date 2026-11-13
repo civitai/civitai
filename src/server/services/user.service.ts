@@ -125,7 +125,6 @@ import {
   bountiesSearchIndex,
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
@@ -2114,7 +2113,6 @@ export const removeAllContent = async ({
   if (keptModelIds.length)
     await runStep('kept-model-caches', () => dropHiddenModelCaches(keptModelIds, id));
   else await runStep('content-counts', () => userContentOverviewCache.refresh(id));
-  await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
   await unindex('index-collections', collectionsSearchIndex, collections);

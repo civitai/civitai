@@ -71,6 +71,7 @@ import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type ChatAuditEventRow = {
   createdAt: string;
@@ -666,7 +667,8 @@ export const modifyUserHandler = async ({
       // written, and letting an unreachable signals service throw reported the
       // action as failed after it had actually succeeded.
       await withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          timeoutMs: 10_000,
           method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all

@@ -158,9 +158,7 @@ export async function runImageSearch(
   // 🔴 The mechanism is the QUERY BUILDER, not the index schema, and an earlier
   // version of this comment had that wrong ("it indexes postedToId/
   // modelVersionId only"). Image `id` IS a filterable attribute — on the metrics
-  // index (`metrics-images.search-index.ts` filterableAttributes) and on the
-  // images index (`imagesFilterableAttributes`), where the note reads "`id` is
-  // filterable on every index because the keyset cleanup scan pages on it". What
+  // index (`metrics-images.search-index.ts` filterableAttributes). What
   // is missing is the CLAUSE: `ImagesFeed.queryDocuments`
   // (event-engine-common/feeds/images.feed.ts) never destructures `ids` and
   // never pushes an `id IN [...]` filter, while its sibling `models.feed.ts`

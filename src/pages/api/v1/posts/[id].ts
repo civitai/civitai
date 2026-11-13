@@ -23,15 +23,17 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 
 /**
- * GET /api/v1/posts/[id] — public, edge-cacheable post with its images.
+ * GET /api/v1/posts/[id] — public post with its images.
  *
- * Always evaluated as anonymous, so the response is a function of id + region only and the
- * `MixedAuthEndpoint` public cache stays leak-free. Maturity follows `/api/v1/model-versions/[id]`:
- * any browsable level is served (never unscanned or Blocked-only), except in a restricted region,
- * where a post with any non-SFW level is a 404. The 404 is answered here, not by
- * `handleEndpointError`, so the edge can absorb it. Images are the `/api/v1/images` items for the
- * post at the same ceiling, narrowed to the gallery's held level on a minor or SFW-only model, the
- * first 100 in the post's own order, so an image the viewer may not see is simply absent.
+ * Always evaluated as anonymous, so the response is a function of id + region only. Maturity
+ * follows `/api/v1/model-versions/[id]`: any browsable level is served (never unscanned or
+ * Blocked-only), except in a restricted region, where a post with any non-SFW level is a 404. An
+ * answer that differs by region (that 404 and its 200 elsewhere, or a 200 carrying an image above
+ * SFW) is `private, no-store` for every caller; any other keeps the `MixedAuthEndpoint` public
+ * cache. The 404 is answered here, not by `handleEndpointError`, so an SFW post's 404 can stay
+ * cached. Images are the `/api/v1/images` items for the post at the same ceiling, narrowed to the
+ * gallery's held level on a minor or SFW-only model, the first 100 in the post's own order, so an
+ * image the viewer may not see is simply absent.
  *
  * Published + scanned is re-checked here rather than trusted from `getPostDetail`, whose
  * collection-judge branch can return posts that are neither.
@@ -72,9 +74,13 @@ export default MixedAuthEndpoint(async function handler(
     const restricted = isRegionRestricted(getRegion(req));
     let browsingLevel = restricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
     const published = !!post.publishedAt && post.publishedAt <= new Date();
-    const browsable = restricted
-      ? !!post.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, post.nsfwLevel)
-      : Flags.intersects(post.nsfwLevel, allBrowsingLevelsFlag);
+    const browsableWhenRestricted =
+      !!post.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, post.nsfwLevel);
+    const browsableElsewhere = Flags.intersects(post.nsfwLevel, allBrowsingLevelsFlag);
+    // The shared cache does not key on region, so an answer that differs by region is not stored there.
+    if (browsableWhenRestricted !== browsableElsewhere)
+      res.setHeader('Cache-Control', 'private, no-store');
+    const browsable = restricted ? browsableWhenRestricted : browsableElsewhere;
     if (!published || !browsable || !servedAvailability.has(post.availability)) return notFound();
 
     // Loaded on demand: the model service's import graph is large.
@@ -127,6 +133,8 @@ export default MixedAuthEndpoint(async function handler(
       { browsingLevel, user: undefined, req }
     );
 
+    if (images.some((image) => !Flags.hasFlag(sfwBrowsingLevelsFlag, image.browsingLevel)))
+      res.setHeader('Cache-Control', 'private, no-store');
     return respond(images, nextCursor !== undefined);
   } catch (e) {
     if (isStatementTimeout(e)) return unavailable();

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { getOwnHosts, toCurrentDomainHref } from '~/utils/current-domain-href';
+import {
+  getOwnHosts,
+  isSameSitePath,
+  toCurrentDomainHref,
+  toOwnRootRelative,
+} from '~/utils/current-domain-href';
 
 const own = getOwnHosts({
   // The shape server-domain.ts describes: civitai.red is both blue's and red's primary.
@@ -62,4 +67,45 @@ describe('toCurrentDomainHref', () => {
     );
     expect(toCurrentDomainHref('https://civitai.com/x', '', own)).toBe('https://civitai.com/x');
   });
+});
+
+describe('toOwnRootRelative', () => {
+  const own = ['civitai.com', 'civitai.red', 'civitai.green'];
+
+  it.each([
+    ['https://civitai.com/articles/1', '/articles/1'],
+    ['http://CIVITAI.RED/models/2?x=1#y', '/models/2?x=1#y'],
+  ])('makes %s root-relative', (href, expected) => {
+    expect(toOwnRootRelative(href, own)).toBe(expected);
+  });
+
+  it.each([
+    'https://example.com/articles/1',
+    'https://civitai.com.evil.test/articles/1',
+    'https://orchestration.civitai.com/x',
+    'https://user:pw@civitai.com/x',
+    'https://civitai.red',
+    // Their paths start "//": made relative, they would leave the site.
+    'https://civitai.com//evil.com/x',
+    'https://civitai.com/\\evil.com/x',
+    'https://civitai.com/.//evil.com/x',
+    'https://civitai.com/a/..//evil.com/x',
+    'mailto:a@civitai.com',
+    '/already/relative',
+  ])('leaves %s alone', (href) => {
+    expect(toOwnRootRelative(href, own)).toBe(href);
+  });
+});
+
+describe('isSameSitePath', () => {
+  it.each(['/articles/1', '/%2F%2Fevil.com', '/a?b=//c'])('%s stays on this site', (href) => {
+    expect(isSameSitePath(href)).toBe(true);
+  });
+
+  it.each(['//evil.com', '/\\evil.com', '/\t/evil.com', 'https://civitai.com/x', 'x/y', ''])(
+    '%j leaves it or is not a path',
+    (href) => {
+      expect(isSameSitePath(href)).toBe(false);
+    }
+  );
 });

@@ -28,8 +28,12 @@ import { InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsear
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
 import { slugit } from '~/utils/string-helpers';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
-import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import {
+  isImageSearchIndex,
+  withSemanticImageSearch,
+} from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -100,20 +104,22 @@ type Props = Omit<AutocompleteProps, 'data' | 'onSubmit'> & {
 // never reaches `useInstantSearch().status`, so we can't key off that).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
   createResilientSearchClient(
-    withSemanticArticleSearch(
-      withSemanticImageSearch({
-        ...meilisearch,
-        search(requests) {
-          // Prevent making a request if there is no query
-          // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
-          // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
-          if (requests.every(({ params }) => !params?.query)) {
-            return Promise.resolve(emptyMeiliResults(requests));
-          }
+    withSemanticComicSearch(
+      withSemanticArticleSearch(
+        withSemanticImageSearch({
+          ...meilisearch,
+          search(requests) {
+            // Prevent making a request if there is no query
+            // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
+            // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
+            if (requests.every(({ params }) => !params?.query)) {
+              return Promise.resolve(emptyMeiliResults(requests));
+            }
 
-          return meilisearch.search(requests);
-        },
-      })
+            return meilisearch.search(requests);
+          },
+        })
+      )
     ),
     {
       onError: () => autocompleteAvailability.setUnavailable(true),
@@ -310,6 +316,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const filtersFeedInPlace = searchesImagesFeedInPlace(features, indexNameProp, router.pathname);
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
+  // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user
+  // types. Enter (or the search row) opens the search page, which runs it once.
+  const submitOnly = !filtersFeedInPlace && isImageSearchIndex(searchIndexMap[indexNameProp]);
 
   const { trackSearch, trackAction } = useTrackEvent();
   // The resilient search client swallows Meili comm errors (so they never reach
@@ -406,6 +415,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       ];
     }
 
+    if (submitOnly) {
+      return search ? [{ key: 'search', value: search, hit: null as any, label: search }] : [];
+    }
+
     if (status === 'stalled') {
       return []; // Wait it out
     }
@@ -444,6 +457,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     refusal,
     isProfaneSearch,
     domainColor,
+    submitOnly,
+    search,
   ]);
   const blockedQuery = !!refusal || (isProfaneSearch && domainColor === 'green');
   const feedSearch = useFeedSearchSync({
@@ -605,6 +620,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       router.push(air);
       return;
     }
+    if (submitOnly) return;
 
     const { query: cleanedSearch, filters } = parseQuery(indexName, debouncedSearch);
 
@@ -741,6 +757,18 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                   Please try again later
                 </Text>
               </Stack>
+            );
+          }
+
+          if (key === 'search') {
+            return (
+              <Group gap="xs" wrap="nowrap" className="w-full">
+                <IconSearch size={16} className="shrink-0" />
+                <Text size="sm" lineClamp={1} className="flex-1">
+                  Search images for &ldquo;{item.value}&rdquo;
+                </Text>
+                <Code>Enter</Code>
+              </Group>
             );
           }
 

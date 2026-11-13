@@ -66,14 +66,15 @@ describe('withCandidateCache', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('keeps a block per browsing level, query and viewer class', async () => {
+  it('keeps a block per browsing level, query, sort and viewer class', async () => {
     const { source, calls } = rankedSource();
     const args = { query: { text: 'fox' }, filter: filter(), offset: 0, limit: 50 };
     await withCandidateCache('images', source, 'user')(args);
     await withCandidateCache('images', source, 'user')({ ...args, filter: filter([1]) });
     await withCandidateCache('images', source, 'user')({ ...args, query: { text: 'cat' } });
     await withCandidateCache('images', source, 'mod')(args);
-    expect(calls).toHaveLength(4);
+    await withCandidateCache('images', source, 'user')({ ...args, sort: 'newest' });
+    expect(calls).toHaveLength(5);
   });
 
   it('fetches a block once per request, across its hydration rounds', async () => {

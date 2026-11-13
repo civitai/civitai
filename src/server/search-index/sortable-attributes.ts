@@ -3,7 +3,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -68,16 +67,6 @@ export const comicsSortableAttributes = [
   'stats.followerCount',
 ];
 
-export const imagesSortableAttributes = [
-  'createdAt',
-  'id',
-  'sortAt',
-  'stats.commentCountAllTime',
-  'stats.reactionCountAllTime',
-  'stats.collectedCountAllTime',
-  'stats.tippedAmountCountAllTime',
-];
-
 export const modelsSortableAttributes = [
   'createdAt',
   'id',
@@ -127,7 +116,6 @@ export const sortableAttributesByIndex = {
   [BOUNTIES_SEARCH_INDEX]: bountiesSortableAttributes,
   [COLLECTIONS_SEARCH_INDEX]: collectionsSortableAttributes,
   [COMICS_SEARCH_INDEX]: comicsSortableAttributes,
-  [IMAGES_SEARCH_INDEX]: imagesSortableAttributes,
   [MODELS_SEARCH_INDEX]: modelsSortableAttributes,
   [TOOLS_SEARCH_INDEX]: toolsSortableAttributes,
   [USERS_SEARCH_INDEX]: usersSortableAttributes,

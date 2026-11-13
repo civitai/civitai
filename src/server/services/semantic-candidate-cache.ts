@@ -3,7 +3,7 @@ import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { semanticSearchCandidateCache } from '~/server/metrics/semantic-search.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { singleFlight } from '~/server/utils/cache-helpers';
+import { createSingleFlight } from '~/server/utils/cache-helpers';
 import { withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
@@ -19,6 +19,9 @@ export const CANDIDATE_BLOCK = 100;
 const CACHE_READ_DEADLINE_MS = 250;
 
 type Block = { ids: number[]; correctedQuery?: string };
+
+// Identical misses in flight on this pod share one service call.
+const blockFlight = createSingleFlight();
 type CandidateKey = `${typeof REDIS_KEYS.SEMANTIC_SEARCH.CANDIDATES}:${string}`;
 
 async function readBlock(key: CandidateKey) {
@@ -43,15 +46,15 @@ export function withCandidateCache(
 ): CandidateSource {
   const fetched = new Map<string, Promise<Block>>();
 
-  return async ({ query, filter, offset, limit }) => {
+  return async ({ query, filter, offset, limit, sort }) => {
     const qdrantFilter = buildQdrantFilter(collection, filter);
     const fetchBlock = (start: number) =>
       withBulkheadSlotOrBusy(`semantic-search:${collection}`, env.SEMANTIC_SEARCH_CONCURRENCY, () =>
-        source({ query, filter, offset: start, limit: CANDIDATE_BLOCK })
+        source({ query, filter, offset: start, limit: CANDIDATE_BLOCK, sort })
       ).then((fresh): Block => ({ ids: fresh.ids, correctedQuery: fresh.correctedQuery }));
     const keyOf = (start: number) =>
       `${REDIS_KEYS.SEMANTIC_SEARCH.CANDIDATES}:${collection}:${createHash('sha256')
-        .update(JSON.stringify({ query, qdrantFilter, start, viewerClass }))
+        .update(JSON.stringify({ query, qdrantFilter, sort, start, viewerClass }))
         .digest('hex')}` as const;
     const write = (key: CandidateKey, block: Block) =>
       redis.packed.set(key, block, { EX: CacheTTL.md }).catch(() => undefined);
@@ -68,7 +71,7 @@ export function withCandidateCache(
           });
           if (cached) return cached;
           // The shared call keeps the service's own timeout: no single caller's abort ends it.
-          return singleFlight(key, async () => {
+          return blockFlight(key, async () => {
             const fresh = await fetchBlock(start);
             void write(key, fresh);
             return fresh;

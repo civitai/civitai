@@ -10,15 +10,22 @@ import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
+  queryVerdictLevel,
   recordRefusal,
+  isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
+  type QueryRefusal,
+  type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsArray,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -58,7 +65,11 @@ export async function searchSemanticImages({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  const browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -84,18 +95,25 @@ export async function searchSemanticImages({
   if (strip.emptyResult) return { items: [], nextCursor: undefined, correctedQuery: undefined };
   const tagIds = strip.tagIds;
   // The feed applies these in the browser; here they are applied server-side.
-  const addons = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
-    isModerator: user?.isModerator,
-  });
-  const refusalOf = async (text: string) => {
+  const addonsFor = (level: number) =>
+    resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
+  let addons = addonsFor(browsingLevel);
+  const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
       disablePoi: addons.disablePoi,
+      isModerator: user?.isModerator,
     });
-    recordRefusal(track, refusal, text, 'images_semantic');
+    recordRefusal(track, refusal, text, 'images_semantic', stage);
     return refusal;
   };
-  if (input.query && (await refusalOf(input.query))) return emptyPage();
+  const refusal = input.query ? await refusalOf(input.query, 'query') : false;
+  const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  if (verdictLevel === 'refuse') return emptyPage();
+  if (verdictLevel !== browsingLevel) {
+    browsingLevel = verdictLevel;
+    addons = addonsFor(browsingLevel);
+  }
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
@@ -173,14 +191,19 @@ export async function searchSemanticImages({
       lte: input.postedBefore?.toISOString(),
     },
     // As the image search index: no NSFW images made with a base model whose license forbids it.
-    mustNot: [
-      {
-        must: [
-          { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-          { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
-        ],
-      },
-    ],
+    // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
+    // Kept here, not only in hydration: Image."modelRestricted" is set by an hourly job, so a new
+    // image would pass hydration until it runs.
+    mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
+      ? [
+          {
+            must: [
+              { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
+              { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
+            ],
+          },
+        ]
+      : [],
   };
 
   const query: SearchQuery = input.imageId
@@ -190,22 +213,22 @@ export async function searchSemanticImages({
   let correctedQuery: string | undefined;
   // Every correction is audited, not only the first: rounds of one page can come from cached blocks
   // of different ages.
-  const corrections = new Map<string, Promise<boolean>>();
-  let refused = false;
+  const corrections = new Map<string, ReturnType<typeof refusalOf>>();
+  let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
-      const result = await timed('candidates', cachedSource({ query, filter, offset, limit }));
+      const result = await timed(
+        'candidates',
+        cachedSource({ query, filter, offset, limit, sort: input.sort })
+      );
       // The service embeds its spelling correction, not the text audited above.
       const corrected = result.correctedQuery;
-      if (corrected !== undefined && corrected !== input.query) {
+      if (!correctedRefusal && corrected !== undefined && corrected !== input.query) {
         if (!corrections.has(corrected))
-          corrections.set(
-            corrected,
-            refusalOf(corrected).then((refusal) => !!refusal)
-          );
-        if (await corrections.get(corrected)) refused = true;
+          corrections.set(corrected, refusalOf(corrected, 'correction'));
+        correctedRefusal = (await corrections.get(corrected)) || undefined;
       }
-      if (refused) return [];
+      if (correctedRefusal) return [];
       correctedQuery ??= result.correctedQuery;
       return result.ids;
     },
@@ -214,6 +237,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (refused) return emptyPage();
+  if (correctedRefusal) return emptyPage();
   return { ...page, correctedQuery };
 }

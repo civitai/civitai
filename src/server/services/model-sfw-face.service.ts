@@ -74,13 +74,16 @@ export async function checkSfwFace({
   sfwDescription,
   modelId,
   userId,
+  db = dbRead,
 }: {
   sfwName?: string | null;
   sfwDescription?: string | null;
   modelId?: number;
   userId: number;
+  /** The primary, for a caller reading an edit that has just committed. */
+  db?: Pick<typeof dbRead, 'modelVersion'>;
 }) {
-  const versionFields = modelId ? await getOwnVersionFields({ modelId, userId }) : [];
+  const versionFields = modelId ? await getOwnVersionFields({ modelId, userId, db }) : [];
   const description = removeTags(sfwDescription ?? '').trim();
 
   const [name, desc, versions] = await Promise.all([
@@ -96,8 +99,16 @@ export async function checkSfwFace({
   return verdicts;
 }
 
-async function getOwnVersionFields({ modelId, userId }: { modelId: number; userId: number }) {
-  const versions = await dbRead.modelVersion.findMany({
+async function getOwnVersionFields({
+  modelId,
+  userId,
+  db,
+}: {
+  modelId: number;
+  userId: number;
+  db: Pick<typeof dbRead, 'modelVersion'>;
+}) {
+  const versions = await db.modelVersion.findMany({
     where: { modelId, model: { userId } },
     select: { name: true, trainedWords: true },
   });

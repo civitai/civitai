@@ -101,11 +101,7 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import {
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
@@ -788,11 +784,14 @@ export const upsertModelVersion = async ({
     surface: 'modelVersion',
     ...patternLogIds,
   });
-  // Trigger words are part of the listing the .com face re-check reads (queued after commit).
+  // Version names and trigger words show on .com unchanged: the .com face re-check rates them
+  // (queued after commit).
   const trainedWordsChanged =
     data.trainedWords !== undefined &&
     [...new Set(data.trainedWords)].sort().join('\n') !==
       [...new Set(storedText?.trainedWords ?? [])].sort().join('\n');
+  const comTextChanged =
+    trainedWordsChanged || (data.name !== undefined && data.name !== storedText?.name);
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -1067,7 +1066,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1326,7 +1325,7 @@ export const upsertModelVersion = async ({
       { maxWait: 10000, timeout: 30000 }
     );
     // First after commit, so a later step that throws cannot drop it.
-    if (!isModerator && trainedWordsChanged) {
+    if (!isModerator && comTextChanged) {
       await queueComFaceRecheck(version.modelId);
       await queueComFaceRestore(version.modelId);
     }
@@ -1607,14 +1606,36 @@ async function purgeModelVersionByHashCache(hashes: string[]) {
   await purgeCache({ urls });
 }
 
-// Resolve a version's file hashes then purge the by-hash edge cache. Used by
-// publish/unpublish where the ModelFile/ModelFileHash rows still exist. The
+/**
+ * Purge the edge-cached public API bodies that carry a model's showcase, once its minor or SFW-only
+ * flag or its held gallery level changes: by-hash for every file of its versions, and the model and
+ * version by-id URLs. The origin's model response goes first, so the edge cannot refill from it.
+ * URLs with a query string are left to their TTL.
+ */
+export async function purgePublicModelShowcaseEdgeCache(
+  modelId: number,
+  modelVersionIds: number[]
+) {
+  await bustPublicModelResponseCache(modelId);
+  await purgeModelVersionByHashCacheById(modelVersionIds);
+  const origin = getBaseUrl();
+  await purgeCache({
+    urls: [
+      `${origin}/api/v1/models/${modelId}`,
+      ...modelVersionIds.map((id) => `${origin}/api/v1/model-versions/${id}`),
+    ],
+  });
+}
+
+// Resolve versions' file hashes then purge the by-hash edge cache. Used by the
+// showcase purge and publish/unpublish, where the ModelFile/ModelFileHash rows still exist. The
 // delete path can't use this (the cascade removes the rows), so it snapshots
 // the hashes inside the transaction and calls purgeModelVersionByHashCache
 // directly.
-async function purgeModelVersionByHashCacheById(modelVersionId: number) {
+async function purgeModelVersionByHashCacheById(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) return;
   const hashes = await dbRead.modelFileHash.findMany({
-    where: { file: { modelVersionId } },
+    where: { file: { modelVersionId: { in: modelVersionIds } } },
     select: { hash: true },
   });
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
@@ -2012,9 +2033,6 @@ export const publishModelVersionsWithEarlyAccess = async ({
         // await modelsSearchIndex.queueUpdate([
         //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
         // ]);
-        // await imagesSearchIndex.queueUpdate(
-        //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-        // );
         // await imagesMetricsSearchIndex.queueUpdate(
         //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
         // );
@@ -2278,7 +2296,7 @@ export const publishModelVersionById = async ({
   // freshly-published version starts resolving by-hash immediately instead of
   // serving the stale not-found until the edge cache TTL expires.
   try {
-    await purgeModelVersionByHashCacheById(version.id);
+    await purgeModelVersionByHashCacheById([version.id]);
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -2292,9 +2310,6 @@ export const publishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
@@ -2472,9 +2487,6 @@ export const unpublishModelVersionById = async ({
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
   ]);
-  await imagesSearchIndex.queueUpdate(
-    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
@@ -2488,7 +2500,7 @@ export const unpublishModelVersionById = async ({
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
   // version stops resolving by-hash before the edge cache TTL expires.
   try {
-    await purgeModelVersionByHashCacheById(version.id);
+    await purgeModelVersionByHashCacheById([version.id]);
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -3201,7 +3213,9 @@ export function publicModelResponseKey(
   modelId: number,
   browsingLevel: number
 ): RedisKeyTemplateCache {
-  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:${modelId}:${browsingLevel}`;
+  // `v2`: bodies whose card images are held to the level. Bump when the body's filtering changes,
+  // so entries built by the previous code are not read.
+  return `${REDIS_KEYS.CACHES.PUBLIC_MODEL_RESPONSE}:v2:${modelId}:${browsingLevel}`;
 }
 
 // Best-effort, fail-open invalidation of the origin-side public response cache for

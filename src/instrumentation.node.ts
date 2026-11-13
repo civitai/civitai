@@ -29,6 +29,7 @@ import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
+import { startWarmupAndHealthMetricsLoop } from '~/server/health/start-after-warmup';
 import { registerEnumArrayTypeParsers } from '@civitai/db/kysely';
 import { pgDbWrite } from '~/server/db/pgDb';
 // Build this app's Kysely clients (over the existing pgDb pools) eagerly at server start, so the first
@@ -115,6 +116,18 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// The last-known Flipt flag state in sysRedis. DARK by default: while FLIPT_SNAPSHOT_MAX_AGE_MS is
+// unset or 0, no store is registered and nothing is read or written. Once it is set, the stored
+// state is read only when this pod cannot reach Flipt (so its default-on flags are not all OFF),
+// and pods with live state keep it current. Registered BEFORE the
+// block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
+// that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
+try {
+  (await import('~/server/flipt/snapshot-store')).registerFliptSnapshotStore();
+} catch (err) {
+  console.error('[instrumentation.node] flipt snapshot store not registered:', err);
+}
+
 // Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
 // it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
 // of this module's static graph; a failure here must never affect boot — both metrics then keep
@@ -148,11 +161,20 @@ try {
 // HTTP listener — the warmer needs that listener up to self-request, so
 // awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
 // never block or crash boot.
-void import('~/server/warmup')
-  .then((m) => m.runWarmup())
-  .catch((err) => {
-    console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
-  });
+//
+// The background dependency-health metrics loop starts once the pod is warm (the warm flag, which
+// also flips on the warmer's fail-open timeout and when warming is disabled), or after a hard cap,
+// so its checks never compete with warming for the loop thread. It does NOT wait on runWarmup()
+// resolving, which a hung warm request can delay indefinitely. If the warmer module fails to load,
+// it starts at once. It runs the same runHealthChecks() as the probes, for metrics only: nothing
+// reads its result, so it cannot change readiness. It runs in every process that runs this file,
+// which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
+// calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
+// The sequence lives in ~/server/health/start-after-warmup (tested there); the imports stay here.
+void startWarmupAndHealthMetricsLoop({
+  warmup: import('~/server/warmup'),
+  metricsLoop: import('~/server/health/metrics-loop'),
+});
 
 // Attach the OTel sink to the shared structured logger.
 //

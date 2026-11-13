@@ -610,3 +610,58 @@ describe("the viewer's own hat says how long it keeps counting", () => {
     expect(timeLeft()).toHaveLength(0);
   });
 });
+
+describe('the hats follow the picture when it moves without resizing', () => {
+  // The detail view's sticker timeline pads the media's container: a width-limited video re-centres
+  // without changing size, and neither the layer nor the picture resizes. The padded box is the
+  // layer's own parent, or a container between it and the picture.
+  test.each([
+    ['a container between the picture and the layer', 'stage'],
+    ["the layer's own parent", 'frame'],
+  ])('padding on %s moves the hats with the picture', async (_, padded) => {
+    const centred = {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxSizing: 'border-box',
+    } as const;
+    const picture = (
+      <img src={svg(120, 80)} alt="" style={{ width: 120, height: 80, display: 'block' }} />
+    );
+    renderWithProviders(
+      <TurfSummaryContext.Provider
+        value={{
+          event: 'birthday2026',
+          arm: 'control',
+          team: 'blue',
+          images: {},
+          open: {},
+          stickers: {},
+          joined: h.stock.optedIn,
+          watch: () => () => undefined,
+        }}
+      >
+        <HatTurfCardProvider>
+          <div
+            data-testid="frame"
+            style={{ position: 'relative', overflow: 'hidden', ...CARD, ...centred }}
+          >
+            {padded === 'stage' ? (
+              <div data-testid="stage" style={{ position: 'absolute', inset: 0, ...centred }}>
+                {picture}
+              </div>
+            ) : (
+              picture
+            )}
+            <HatTurfLayer imageId={5} />
+            <OpenDraft />
+          </div>
+        </HatTurfCardProvider>
+      </TurfSummaryContext.Provider>
+    );
+    const top = () => parseFloat(q('hat-turf-draft')?.parentElement?.style.top ?? 'NaN');
+    await vi.waitFor(() => expect(top()).toBeCloseTo((CARD.height - 80) / 2, 0));
+    q(padded)!.style.paddingBottom = '132px';
+    await vi.waitFor(() => expect(top()).toBeCloseTo((CARD.height - 132 - 80) / 2, 0));
+  });
+});

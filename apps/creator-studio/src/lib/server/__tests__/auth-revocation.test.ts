@@ -3,8 +3,9 @@ import { SESSION_REGISTRY_KEYS } from '@civitai/auth';
 
 // The sign-in gate reads the shared revocation markers, so a sign-out written by any app ends the session here.
 const hashes = vi.hoisted(() => new Map<string, Map<string, string>>());
-const store = vi.hoisted(() => ({ down: false }));
+const store = vi.hoisted(() => ({ down: false, hung: false }));
 const read = async <T>(value: () => T) => {
+  if (store.hung) return new Promise<T>(() => undefined);
   if (store.down) throw new Error('connection refused');
   return value();
 };
@@ -51,5 +52,40 @@ describe('isRevoked', () => {
       message: 'connection refused',
     });
     expect(JSON.stringify(event)).not.toMatch(/child|root/);
+  });
+});
+
+// The shared check's deadline: REDIS_SYS_READ_TIMEOUT_MS, default 1000ms (this app's own 2000ms default is gone).
+describe('isRevoked over a hung session store', () => {
+  it('fails open at REDIS_SYS_READ_TIMEOUT_MS', async () => {
+    store.hung = true;
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '40';
+    try {
+      const started = Date.now();
+      expect(await isRevoked(claims as never)).toBe(false);
+      expect(Date.now() - started).toBeLessThan(800);
+    } finally {
+      store.hung = false;
+      delete process.env.REDIS_SYS_READ_TIMEOUT_MS;
+    }
+  });
+
+  it('defaults to 1000ms when the setting is unset', async () => {
+    // Fake timers, so the deadline is pinned exactly (still pending at 999ms, failed open at 1000ms) and a
+    // loaded runner cannot stretch it.
+    store.hung = true;
+    vi.useFakeTimers();
+    try {
+      let result: boolean | undefined;
+      const check = isRevoked(claims as never).then((r) => (result = r));
+      await vi.advanceTimersByTimeAsync(999);
+      expect(result).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toBe(false);
+      await check;
+    } finally {
+      vi.useRealTimers();
+      store.hung = false;
+    }
   });
 });
