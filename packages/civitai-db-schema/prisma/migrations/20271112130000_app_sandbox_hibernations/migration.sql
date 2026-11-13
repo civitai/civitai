@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS "app_sandbox_hibernations" (
     "bytes" BIGINT NOT NULL,
     -- What the archiver left out (the export exclusion list it applied).
     "excluded" TEXT[] NOT NULL DEFAULT '{}',
-    -- The encrypted `.env*` blob: all four set, or none.
+    -- The encrypted `.env*` blob: all four set, or none (see the CHECK below).
     "secrets_object_key" TEXT,
     "secrets_sha256" CHAR(64),
     "secrets_bytes" BIGINT,
@@ -47,10 +47,22 @@ CREATE TABLE IF NOT EXISTS "app_sandbox_hibernations" (
     CONSTRAINT "app_sandbox_hibernations_bytes_check" CHECK ("bytes" > 0),
     CONSTRAINT "app_sandbox_hibernations_reason_check"
         CHECK ("reason" IS NULL OR "reason" IN ('cap', 'retention', 'user')),
+    -- Every column is tested with IS [NOT] NULL explicitly: a bare comparison on a NULL column
+    -- is NULL, and a CHECK that evaluates to NULL PASSES, so a half-set row would get through.
     CONSTRAINT "app_sandbox_hibernations_secrets_check" CHECK (
-        ("secrets_object_key" IS NULL AND "secrets_sha256" IS NULL
-            AND "secrets_bytes" IS NULL AND "secrets_wrapped_key" IS NULL)
-        OR ("secrets_object_key" IS NOT NULL AND "secrets_sha256" ~ '^[0-9a-f]{64}$'
-            AND "secrets_bytes" > 0 AND "secrets_wrapped_key" IS NOT NULL)
+        (
+            "secrets_object_key" IS NULL
+            AND "secrets_sha256" IS NULL
+            AND "secrets_bytes" IS NULL
+            AND "secrets_wrapped_key" IS NULL
+        )
+        OR (
+            "secrets_object_key" IS NOT NULL
+            AND "secrets_sha256" IS NOT NULL
+            AND "secrets_bytes" IS NOT NULL
+            AND "secrets_wrapped_key" IS NOT NULL
+            AND "secrets_sha256" ~ '^[0-9a-f]{64}$'
+            AND "secrets_bytes" > 0
+        )
     )
 );

@@ -10,6 +10,9 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
  *   v1 \n METHOD \n PATH \n TIMESTAMP \n hex sha256(raw body)
  * PATH is the route's own path (no query), so a signature for one route is refused by another.
  *
+ * Several secrets may be accepted at once (the current one and the previous one, during a
+ * rotation); a signature made with any of them verifies.
+ *
  * A request is accepted only when the signature matches and the timestamp is within
  * {@link SIGNATURE_WINDOW_SECONDS} of now, as the repo's other signed internal callbacks do. A
  * request replayed inside the window repeats a call that is idempotent anyway: a retried `begin`
@@ -56,9 +59,9 @@ function sameSignature(presented: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(new Uint8Array(a), new Uint8Array(b));
 }
 
-/** Verifies a signed request: the signature first, then the timestamp window. */
+/** Verifies a signed request: the signature (under any of `secrets`) first, then the window. */
 export function verifyHibernationRequest(args: {
-  secret: string;
+  secrets: readonly string[];
   method: string;
   path: string;
   headers: Record<string, string | string[] | undefined>;
@@ -70,13 +73,18 @@ export function verifyHibernationRequest(args: {
   if (!timestamp || !signature || !/^\d{1,12}$/.test(timestamp))
     return { ok: false, status: 401, code: 'unauthorized' };
 
-  const expected = signHibernationRequest(args.secret, {
-    method: args.method,
-    path: args.path,
-    timestamp,
-    body: args.body,
-  });
-  if (!sameSignature(signature, expected)) return { ok: false, status: 401, code: 'unauthorized' };
+  // Every secret is compared (no early exit), so the timing does not say which one matched.
+  let matched = false;
+  for (const secret of args.secrets) {
+    const expected = signHibernationRequest(secret, {
+      method: args.method,
+      path: args.path,
+      timestamp,
+      body: args.body,
+    });
+    if (sameSignature(signature, expected)) matched = true;
+  }
+  if (!matched) return { ok: false, status: 401, code: 'unauthorized' };
 
   if (Math.abs(args.nowSeconds - Number(timestamp)) > SIGNATURE_WINDOW_SECONDS)
     return { ok: false, status: 401, code: 'stale' };

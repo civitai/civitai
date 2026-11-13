@@ -6,6 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   fromDb,
   fromOldestDb,
+  toAccountState,
+  type AccountDbRow,
   hibernationSql,
   toUsage,
   type DbRow,
@@ -36,8 +38,16 @@ beforeAll(async () => {
   await db.exec(ddl);
 });
 afterAll(() => db.close());
+beforeAll(async () => {
+  // The two columns of the real "User" table the account-state statement reads.
+  await db.exec(
+    'CREATE TABLE "User" ("id" int PRIMARY KEY, "deletedAt" timestamp(3), "bannedAt" timestamp(3))'
+  );
+});
 beforeEach(async () => {
-  await db.exec('TRUNCATE "app_sandbox_hibernations"');
+  await db.exec('TRUNCATE "app_sandbox_hibernations", "User"');
+  await db.exec(`INSERT INTO "User" ("id", "deletedAt", "bannedAt") VALUES
+    (9101, NULL, NULL), (9202, now(), NULL), (9303, NULL, now())`);
 });
 
 const row = (over: Partial<HibernationRow> = {}): HibernationRow => ({
@@ -164,5 +174,86 @@ describe('app_sandbox_hibernations SQL', () => {
 
   it('the per-user lock statement runs', async () => {
     await expect(run(hibernationSql.lock(9101))).resolves.toBeDefined();
+  });
+
+  // Each row sets exactly some of the four secrets columns. Every partial combination must fail:
+  // a bare comparison against a NULL column is NULL, and a CHECK that is NULL passes.
+  it.each([
+    ['object key only', { secretsObjectKey: 'archives/9101/t/a.secrets' }],
+    [
+      'all but the sha',
+      {
+        secretsObjectKey: 'archives/9101/t/a.secrets',
+        secretsBytes: 5,
+        secretsWrappedKey: 'v2.k1.x',
+      },
+    ],
+    [
+      'all but the bytes',
+      {
+        secretsObjectKey: 'archives/9101/t/a.secrets',
+        secretsSha256: 'c'.repeat(64),
+        secretsWrappedKey: 'v2.k1.x',
+      },
+    ],
+    [
+      'all but the wrapped key',
+      {
+        secretsObjectKey: 'archives/9101/t/a.secrets',
+        secretsSha256: 'c'.repeat(64),
+        secretsBytes: 5,
+      },
+    ],
+    [
+      'all but the object key',
+      { secretsSha256: 'c'.repeat(64), secretsBytes: 5, secretsWrappedKey: 'v2.k1.x' },
+    ],
+  ])('refuses half-set secrets: %s', async (_label, over) => {
+    await expect(run(hibernationSql.upsert(row(over)))).rejects.toThrow(/secrets_check/);
+  });
+
+  it('account state comes from the User row: active, deleted, banned or missing', async () => {
+    const state = async (id: number, forShare: boolean) =>
+      toAccountState(await run<AccountDbRow>(hibernationSql.accountState(id, forShare)));
+    expect(await state(9101, false)).toBe('active');
+    expect(await state(9202, false)).toBe('deleted');
+    expect(await state(9303, true)).toBe('banned');
+    expect(await state(9999, false)).toBe('missing');
+  });
+
+  it('referencedKeys names the archive and secrets keys a row records, and nothing else', async () => {
+    await run(
+      hibernationSql.upsert(
+        row({
+          secretsObjectKey: 'archives/9101/tip-calculator/s.kept.secrets',
+          secretsSha256: 'c'.repeat(64),
+          secretsBytes: 5,
+          secretsWrappedKey: 'v2.k1.x',
+        })
+      )
+    );
+    const keys = [
+      row().objectKey,
+      'archives/9101/tip-calculator/s.kept.secrets',
+      'archives/9101/x/unref.zip',
+    ];
+    const got = (await run<{ key: string }>(hibernationSql.referencedKeys(keys))).map((r) => r.key);
+    expect(got.sort()).toEqual(
+      [row().objectKey, 'archives/9101/tip-calculator/s.kept.secrets'].sort()
+    );
+  });
+
+  it('deletedAccountsWithRows lists only deleted users that still have rows', async () => {
+    await run(hibernationSql.upsert(row()));
+    await run(
+      hibernationSql.upsert(row({ userId: 9202, objectKey: 'archives/9202/tip-calculator/x.zip' }))
+    );
+    await run(
+      hibernationSql.upsert(row({ userId: 9303, objectKey: 'archives/9303/tip-calculator/x.zip' }))
+    );
+    const ids = (await run<{ userId: number }>(hibernationSql.deletedAccountsWithRows(10))).map(
+      (r) => r.userId
+    );
+    expect(ids).toEqual([9202]);
   });
 });

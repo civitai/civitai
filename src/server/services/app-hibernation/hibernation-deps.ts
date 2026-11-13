@@ -3,8 +3,10 @@ import type {
   AttemptRecord,
   AttemptStore,
   HibernationDeps,
+  WakeTicketRecord,
+  WakeTicketStore,
 } from '~/server/services/app-hibernation/app-hibernation.service';
-import { parseMasterKey } from '~/server/services/app-hibernation/secrets-envelope';
+import { parseMasterKeys } from '~/server/services/app-hibernation/secrets-envelope';
 import { sleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
 import { archiveStoreConfig, createArchiveStore } from '~/utils/app-archive-s3';
 import type { SessionUser } from '~/types/session';
@@ -37,6 +39,25 @@ const redisAttempts: AttemptStore = {
   },
 };
 
+const redisTickets: WakeTicketStore = {
+  async put(ticketHash, rec, ttlSeconds) {
+    const { sysRedis, keys } = await sysRedisClient();
+    await sysRedis.set(
+      `${keys.HIBERNATION_WAKE_TICKET}:${ticketHash}` as const,
+      JSON.stringify(rec),
+      {
+        EX: ttlSeconds,
+      }
+    );
+  },
+  async take(ticketHash) {
+    const { sysRedis, keys } = await sysRedisClient();
+    // GETDEL: one atomic read-and-delete, so two redemptions cannot both succeed.
+    const raw = await sysRedis.getDel(`${keys.HIBERNATION_WAKE_TICKET}:${ticketHash}` as const);
+    return raw ? (JSON.parse(raw) as WakeTicketRecord) : null;
+  },
+};
+
 export async function defaultHibernationDeps(): Promise<HibernationDeps> {
   const config = archiveStoreConfig();
   const [{ hibernationRepo }, { isAppHibernateEnabled }] = await Promise.all([
@@ -46,8 +67,9 @@ export async function defaultHibernationDeps(): Promise<HibernationDeps> {
   return {
     repo: hibernationRepo,
     attempts: redisAttempts,
+    tickets: redisTickets,
     store: config ? createArchiveStore(config) : null,
-    masterKey: parseMasterKey(env.APP_ARCHIVE_SECRETS_MASTER_KEY),
+    masterKeys: parseMasterKeys(env.APP_ARCHIVE_SECRETS_MASTER_KEYS),
     getUser: async (userId) => {
       const { sessionClient } = await import('~/server/auth/session-client');
       return ((await sessionClient.getSessionUserById(userId)) as SessionUser | null) ?? null;

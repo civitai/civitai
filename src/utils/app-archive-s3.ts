@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import {
+  CopyObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -47,11 +48,27 @@ export function archiveStoreConfig(): ArchiveStoreConfig | null {
   });
 }
 
-/** The object keys of one hibernation attempt. civitai builds them; no caller names a key. */
+/**
+ * The object keys of one hibernation attempt. civitai builds them; no caller names a key.
+ *
+ *   archive / secrets            the UPLOAD keys `begin` presigns PUTs for.
+ *   keptArchive / keptSecrets    the keys a commit copies the uploads to and records. No presigned
+ *                                URL ever names them, so nothing outside civitai can overwrite a
+ *                                committed archive (an upload URL stays valid for its whole TTL,
+ *                                commit or not).
+ */
 export function archiveObjectKeys(userId: number, appKey: string, attemptId: string) {
   const base = `${ARCHIVE_PREFIX}${userId}/${appKey}/${attemptId}`;
-  return { archive: `${base}.zip`, secrets: `${base}.secrets` };
+  return {
+    archive: `${base}.zip`,
+    secrets: `${base}.secrets`,
+    keptArchive: `${base}.kept.zip`,
+    keptSecrets: `${base}.kept.secrets`,
+  };
 }
+
+/** Thrown by `hash` / `read` once an object streams past the byte limit they were given. */
+export class ArchiveObjectTooLarge extends Error {}
 
 /** Every object one user owns sits under this prefix. */
 export function userArchivePrefix(userId: number): string {
@@ -67,14 +84,19 @@ export interface ArchiveStore {
   presignPut(key: string, ttlSeconds?: number): Promise<string>;
   /** The object's size, or `null` when it does not exist. */
   head(key: string): Promise<{ bytes: number } | null>;
-  /** sha256 (hex) and byte count of the object AS STORED, streamed; `null` when it does not exist. */
-  hash(key: string): Promise<{ sha256: string; bytes: number } | null>;
-  /** The whole object, refusing one larger than `maxBytes` (`null` when it does not exist). */
+  /**
+   * sha256 (hex) and byte count of the object AS STORED, streamed; `null` when it does not exist.
+   * Throws {@link ArchiveObjectTooLarge} as soon as more than `maxBytes` have streamed.
+   */
+  hash(key: string, maxBytes: number): Promise<{ sha256: string; bytes: number } | null>;
+  /** The whole object; throws {@link ArchiveObjectTooLarge} past `maxBytes` (`null` when absent). */
   read(key: string, maxBytes: number): Promise<Buffer | null>;
+  /** Server-side copy of `from` to `to`; `false` when `from` does not exist. */
+  copy(from: string, to: string): Promise<boolean>;
   /** Deletes the keys; a missing key is not an error. */
   deleteMany(keys: string[]): Promise<void>;
-  /** Every key under `prefix`. */
-  list(prefix: string): Promise<string[]>;
+  /** Every object under `prefix`, with when it was last written. */
+  list(prefix: string): Promise<{ key: string; lastModified: Date }[]>;
 }
 
 function isNotFound(err: unknown): boolean {
@@ -117,7 +139,7 @@ export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
         throw err;
       }
     },
-    async hash(key) {
+    async hash(key, maxBytes) {
       const body = await getBody(key);
       if (!body) return null;
       const h = createHash('sha256');
@@ -125,6 +147,10 @@ export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
       for await (const chunk of body) {
         const buf = typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer);
         bytes += buf.length;
+        if (bytes > maxBytes) {
+          body.destroy();
+          throw new ArchiveObjectTooLarge(`object ${key} is larger than ${maxBytes} bytes`);
+        }
         h.update(new Uint8Array(buf));
       }
       return { sha256: h.digest('hex'), bytes };
@@ -139,11 +165,26 @@ export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
         bytes += buf.length;
         if (bytes > maxBytes) {
           body.destroy();
-          throw new Error(`object ${key} is larger than ${maxBytes} bytes`);
+          throw new ArchiveObjectTooLarge(`object ${key} is larger than ${maxBytes} bytes`);
         }
         chunks.push(buf);
       }
       return Buffer.concat(chunks.map((c) => new Uint8Array(c)));
+    },
+    async copy(from, to) {
+      try {
+        await s3.send(
+          new CopyObjectCommand({
+            Bucket,
+            Key: to,
+            CopySource: `${Bucket}/${from.split('/').map(encodeURIComponent).join('/')}`,
+          })
+        );
+        return true;
+      } catch (err) {
+        if (isNotFound(err)) return false;
+        throw err;
+      }
     },
     async deleteMany(keys) {
       for (let i = 0; i < keys.length; i += 1000) {
@@ -162,13 +203,14 @@ export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
       }
     },
     async list(prefix) {
-      const keys: string[] = [];
+      const keys: { key: string; lastModified: Date }[] = [];
       let token: string | undefined;
       for (let page = 0; page < MAX_LIST_PAGES; page++) {
         const res = await s3.send(
           new ListObjectsV2Command({ Bucket, Prefix: prefix, ContinuationToken: token })
         );
-        for (const o of res.Contents ?? []) if (o.Key) keys.push(o.Key);
+        for (const o of res.Contents ?? [])
+          if (o.Key) keys.push({ key: o.Key, lastModified: o.LastModified ?? new Date() }); // unknown age: never old enough to sweep
         if (!res.IsTruncated || !res.NextContinuationToken) return keys;
         token = res.NextContinuationToken;
       }

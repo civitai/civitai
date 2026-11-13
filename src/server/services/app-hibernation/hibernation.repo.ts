@@ -31,6 +31,12 @@ export type HibernationUsage = { apps: number; bytes: number };
 export type OldestSleepingApp = { app: string; hibernatedAt: Date };
 
 /**
+ * Whether the account may still hibernate: it exists, is not deleted and is not banned. Read from
+ * the `User` row itself, never from a cached session (a cached session can outlive a deletion).
+ */
+export type AccountState = 'active' | 'deleted' | 'banned' | 'missing';
+
+/**
  * What a commit decides once it holds the user's lock: write `row` (insert, or replace the
  * user's row for that app) or not, and what to answer. Synchronous on purpose: nothing but the
  * database runs inside the transaction.
@@ -53,9 +59,19 @@ export interface HibernationRepo {
   commit<T>(
     userId: number,
     appKey: string,
-    decide: (existing: HibernationRow | null, usage: HibernationUsage) => CommitDecision<T>
+    decide: (
+      existing: HibernationRow | null,
+      usage: HibernationUsage,
+      account: AccountState
+    ) => CommitDecision<T>
   ): Promise<T>;
+  /** The account's state, read from its `User` row on the primary. */
+  accountState(userId: number): Promise<AccountState>;
   removeAll(userId: number): Promise<HibernationRow[]>;
+  /** Which of `keys` a row records (as its archive or its secrets object). */
+  referencedKeys(keys: string[]): Promise<Set<string>>;
+  /** Users that are deleted but still have rows: an account-deletion step that failed. */
+  deletedAccountsWithRows(limit: number): Promise<number[]>;
 }
 
 /** Namespace of the per-user advisory lock (`pg_advisory_xact_lock(int4, int4)`): "HBNT". */
@@ -149,6 +165,27 @@ export const hibernationSql = {
       "last_activity_at" = EXCLUDED."last_activity_at",
       "hibernated_at" = EXCLUDED."hibernated_at",
       "updated_at" = now()`,
+  /**
+   * `FOR SHARE` inside the commit transaction: an account deletion's `User` update waits for the
+   * commit, or the commit waits for the deletion and then sees `deletedAt`. Either way no row is
+   * written for an account whose deletion already committed.
+   */
+  accountState: (userId: number, forShare: boolean) => Prisma.sql`
+    SELECT "deletedAt" IS NOT NULL AS "deleted", "bannedAt" IS NOT NULL AS "banned"
+    FROM "User" WHERE "id" = ${userId}
+    ${forShare ? Prisma.sql`FOR SHARE` : Prisma.empty}`,
+  referencedKeys: (keys: string[]) => Prisma.sql`
+    SELECT "object_key" AS "key" FROM "app_sandbox_hibernations"
+    WHERE "object_key" = ANY(${keys}::text[])
+    UNION
+    SELECT "secrets_object_key" AS "key" FROM "app_sandbox_hibernations"
+    WHERE "secrets_object_key" = ANY(${keys}::text[])`,
+  deletedAccountsWithRows: (limit: number) => Prisma.sql`
+    SELECT DISTINCT h."user_id" AS "userId" FROM "app_sandbox_hibernations" h
+    JOIN "User" u ON u."id" = h."user_id"
+    WHERE u."deletedAt" IS NOT NULL
+    ORDER BY h."user_id"
+    LIMIT ${limit}`,
   removeAll: (userId: number) => Prisma.sql`
     DELETE FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId}
@@ -160,6 +197,10 @@ export const fromOldestDb = (r: OldestDbRow): OldestSleepingApp => ({
   app: r.app_key,
   hibernatedAt: r.hibernated_at,
 });
+
+export type AccountDbRow = { deleted: boolean; banned: boolean };
+export const toAccountState = (rows: AccountDbRow[]): AccountState =>
+  !rows[0] ? 'missing' : rows[0].deleted ? 'deleted' : rows[0].banned ? 'banned' : 'active';
 
 export type UsageDbRow = { apps: number; bytes: bigint | number };
 export const toUsage = (rows: UsageDbRow[]): HibernationUsage => ({
@@ -192,10 +233,32 @@ export const hibernationRepo: HibernationRepo = {
       await tx.$queryRaw(hibernationSql.lock(userId));
       const existing = await tx.$queryRaw<DbRow[]>(hibernationSql.get(userId, appKey));
       const usage = toUsage(await tx.$queryRaw<UsageDbRow[]>(hibernationSql.usage(userId, appKey)));
-      const decision = decide(existing[0] ? fromDb(existing[0]) : null, usage);
+      const account = toAccountState(
+        await tx.$queryRaw<AccountDbRow[]>(hibernationSql.accountState(userId, true))
+      );
+      const decision = decide(existing[0] ? fromDb(existing[0]) : null, usage, account);
       if (decision.write) await tx.$executeRaw(hibernationSql.upsert(decision.write));
       return decision.result;
     });
+  },
+
+  async accountState(userId) {
+    return toAccountState(
+      await dbWrite.$queryRaw<AccountDbRow[]>(hibernationSql.accountState(userId, false))
+    );
+  },
+
+  async referencedKeys(keys) {
+    if (keys.length === 0) return new Set();
+    const rows = await dbWrite.$queryRaw<{ key: string }[]>(hibernationSql.referencedKeys(keys));
+    return new Set(rows.map((r) => r.key));
+  },
+
+  async deletedAccountsWithRows(limit) {
+    const rows = await dbWrite.$queryRaw<{ userId: number }[]>(
+      hibernationSql.deletedAccountsWithRows(limit)
+    );
+    return rows.map((r) => r.userId);
   },
 
   async removeAll(userId) {

@@ -1342,10 +1342,20 @@ export const serverSchema = z
         message: 'APP_HIBERNATION_HMAC_SECRET must be at least 32 characters',
       })
       .optional(),
-    // The master key that wraps each sleeping app's per-archive data key (envelope encryption of
-    // its `.env*` files): base64 of exactly 32 random bytes. Held by civitai only; never sent to
-    // the sandbox service. Anything else counts as unset.
-    APP_ARCHIVE_SECRETS_MASTER_KEY: z.string().optional(),
+    // The PREVIOUS signing secret, still accepted while a rotation is under way (set it to the old
+    // value, move the sandbox service to the new one, then clear it). Never used alone: with
+    // APP_HIBERNATION_HMAC_SECRET unset the endpoints answer 503 whatever this holds.
+    APP_HIBERNATION_HMAC_SECRET_PREVIOUS: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET_PREVIOUS must be at least 32 characters',
+      })
+      .optional(),
+    // The master keys that wrap each sleeping app's per-archive data key (envelope encryption of
+    // its `.env*` files): comma-separated `<kid>:<base64 of 32 random bytes>`, the CURRENT key
+    // first, then old keys kept only to unwrap. Held by civitai only; never sent to the sandbox
+    // service. Malformed, it counts as unset.
+    APP_ARCHIVE_SECRETS_MASTER_KEYS: z.string().optional(),
 
     // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
     // ALL optional so envs without the feature still boot; the feature is dark

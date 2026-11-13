@@ -3,16 +3,20 @@ import {
   beginHibernation,
   commitHibernation,
   deleteSleepingAppsForAccount,
+  mintWakeTicket,
   restoreSleepingAppSecrets,
+  sweepOrphanedArchives,
   type BeginResult,
   type CommitInput,
 } from '~/server/services/app-hibernation/app-hibernation.service';
-import { beginAnswer } from '~/server/services/app-hibernation/internal-routes';
+import type { HibernationRow } from '~/server/services/app-hibernation/hibernation.repo';
+import { beginAnswer, commitAnswer } from '~/server/services/app-hibernation/internal-routes';
 import { sealSecrets } from '~/server/services/app-hibernation/secrets-envelope';
 import { sleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
 import { defaultUsageLimitConfig } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
-import { sha, world, type World } from './hibernation.fakes';
+import { archiveObjectKeys } from '~/utils/app-archive-s3';
+import { NOW, sha, world, type World } from './hibernation.fakes';
 
 /**
  * The civitai half of app hibernation, against in-memory boundaries (`hibernation.fakes.ts`).
@@ -27,6 +31,10 @@ const A1 = '11111111-1111-4111-8111-111111111111';
 const A2 = '22222222-2222-4222-8222-222222222222';
 const ARCHIVE_1 = Buffer.from('PK\x03\x04 first archive of the app');
 const ARCHIVE_2 = Buffer.from('PK\x03\x04 second archive, after a wake');
+const keysOf = (attemptId: string, app = APP, userId = USER) =>
+  archiveObjectKeys(userId, app, attemptId);
+/** Every object one attempt can leave behind. */
+const attemptObjects = (attemptId: string) => Object.values(keysOf(attemptId));
 
 async function begin(w: World, attemptId: string, app = APP, userId = USER) {
   const r = await beginHibernation({ userId, app, attemptId }, w.deps);
@@ -54,11 +62,13 @@ async function uploaded(
   return { b, body };
 }
 
-describe('commit verifies the object FROM STORAGE before writing anything', () => {
-  it('a tampered object (same size, other bytes) is a 409 mismatch and NO row', async () => {
+const leftOf = (w: World, attemptId: string) =>
+  attemptObjects(attemptId).filter((k) => w.objects.has(k));
+
+describe('commit verifies a copy no URL can write, before writing anything', () => {
+  it('a tampered object is a 409 mismatch, NO row, and the attempt leaves no object behind', async () => {
     const w = world();
     const { b, body } = await uploaded(w, A1, ARCHIVE_1);
-    // Swapped after the sandbox service hashed it: same length, different content.
     w.objects.set(b.archive.key, Buffer.from(ARCHIVE_1.toString().replace('first', 'FIRST')));
 
     expect(await commitHibernation(body, w.deps)).toEqual({
@@ -66,7 +76,7 @@ describe('commit verifies the object FROM STORAGE before writing anything', () =
       reason: 'archive sha256 mismatch',
     });
     expect(w.rows.size).toBe(0);
-    expect(w.log.filter((l) => l.startsWith('delete'))).toEqual([]);
+    expect(leftOf(w, A1)).toEqual([]);
   });
 
   it('a size that does not match the claim, or a missing object, is refused the same way', async () => {
@@ -86,6 +96,24 @@ describe('commit verifies the object FROM STORAGE before writing anything', () =
     expect(w.rows.size + w2.rows.size).toBe(0);
   });
 
+  it('a copy that streams past the 25 MiB archive limit is refused while hashing', async () => {
+    const w = world();
+    const { b, body } = await uploaded(w, A1, ARCHIVE_1);
+    // The upload is swapped for a huge one between the size check and the copy.
+    const store = w.deps.store!;
+    const realCopy = store.copy;
+    store.copy = async (from, to) => {
+      w.objects.set(from, Buffer.alloc(25 * 1024 * 1024 + 1));
+      return realCopy(from, to);
+    };
+    expect(await commitHibernation(body, w.deps)).toEqual({
+      kind: 'mismatch',
+      reason: 'archive too large',
+    });
+    expect(w.rows.size).toBe(0);
+    expect(b.archive.key).toBe(keysOf(A1).archive);
+  });
+
   it('a commit for an attempt civitai never began is refused', async () => {
     const w = world();
     expect(
@@ -96,27 +124,40 @@ describe('commit verifies the object FROM STORAGE before writing anything', () =
     ).toEqual({ kind: 'unknown-attempt' });
   });
 
-  it('a matching object is recorded, and the receipt carries its sha256', async () => {
+  it('records the KEPT copy (never the presigned upload key) and deletes the upload', async () => {
     const w = world();
     const { b, body } = await uploaded(w, A1, ARCHIVE_1);
     expect(await commitHibernation(body, w.deps)).toEqual({
       kind: 'committed',
       sha256: sha(ARCHIVE_1),
     });
-    expect(w.rows.get(`${USER}/${APP}`)).toMatchObject({
-      objectKey: b.archive.key,
+    const row = w.rows.get(`${USER}/${APP}`)!;
+    expect(row).toMatchObject({
+      objectKey: `archives/${USER}/${APP}/${A1}.kept.zip`,
       sha256: sha(ARCHIVE_1),
       bytes: ARCHIVE_1.length,
       secretsObjectKey: null,
     });
     expect(b.archive.key).toBe(`archives/${USER}/${APP}/${A1}.zip`);
+    expect(w.objects.has(b.archive.key)).toBe(false);
+  });
+
+  it('overwriting the upload key AFTER commit (its URL is still valid) cannot change the recorded archive', async () => {
+    const w = world();
+    const { b, body } = await uploaded(w, A1, ARCHIVE_1);
+    await commitHibernation(body, w.deps);
+    // The sandbox service (or anyone holding the URL) PUTs again within the URL's TTL.
+    w.objects.set(b.archive.key, Buffer.from('PK\x03\x04 something else entirely'));
+
+    const row = w.rows.get(`${USER}/${APP}`)!;
+    expect(sha(w.objects.get(row.objectKey)!)).toBe(row.sha256);
   });
 });
 
 describe('upsert and lineage', () => {
   it('a retried commit of the same attempt is idempotent: one row, unchanged, nothing deleted', async () => {
     const w = world();
-    const { b, body } = await uploaded(w, A1, ARCHIVE_1);
+    const { body } = await uploaded(w, A1, ARCHIVE_1);
     const first = await commitHibernation(body, w.deps);
     const rowAfterFirst = { ...w.rows.get(`${USER}/${APP}`) };
     const second = await commitHibernation(body, w.deps);
@@ -124,11 +165,11 @@ describe('upsert and lineage', () => {
     expect(second).toEqual(first);
     expect(w.rows.size).toBe(1);
     expect(w.rows.get(`${USER}/${APP}`)).toEqual(rowAfterFirst);
-    expect(w.objects.has(b.archive.key)).toBe(true);
+    expect(w.objects.has(keysOf(A1).keptArchive)).toBe(true);
     expect(w.log.filter((l) => l.startsWith('write'))).toHaveLength(1);
   });
 
-  it('a sandbox NOT woken from the stored record cannot overwrite it (409 lineage)', async () => {
+  it('a sandbox NOT woken from the stored record cannot overwrite it (409 lineage), and its objects go', async () => {
     const w = world();
     const first = await uploaded(w, A1, ARCHIVE_1);
     await commitHibernation(first.body, w.deps);
@@ -136,11 +177,11 @@ describe('upsert and lineage', () => {
 
     expect(await commitHibernation(second.body, w.deps)).toEqual({ kind: 'lineage' });
     expect(w.rows.get(`${USER}/${APP}`)?.sha256).toBe(sha(ARCHIVE_1));
-    // Neither archive was deleted: the stored one is still the record, the new one is an orphan.
-    expect(w.objects.has(first.b.archive.key)).toBe(true);
-    expect(w.objects.has(second.b.archive.key)).toBe(true);
+    expect(w.objects.has(keysOf(A1).keptArchive)).toBe(true);
+    expect(leftOf(w, A2)).toEqual([]);
 
-    const wrongSeed = { ...second.body, sandboxSeedSha: sha(Buffer.from('some other seed')) };
+    const third = await uploaded(w, '33333333-3333-4333-8333-333333333333', ARCHIVE_2);
+    const wrongSeed = { ...third.body, sandboxSeedSha: sha(Buffer.from('some other seed')) };
     expect(await commitHibernation(wrongSeed, w.deps)).toEqual({ kind: 'lineage' });
   });
 
@@ -154,10 +195,10 @@ describe('upsert and lineage', () => {
       kind: 'committed',
       sha256: sha(ARCHIVE_2),
     });
-    expect(w.rows.get(`${USER}/${APP}`)?.objectKey).toBe(second.b.archive.key);
-    expect(w.objects.has(first.b.archive.key)).toBe(false);
-    const writeAt = w.log.indexOf(`write ${second.b.archive.key}`);
-    const deleteAt = w.log.indexOf(`delete ${first.b.archive.key}`);
+    expect(w.rows.get(`${USER}/${APP}`)?.objectKey).toBe(keysOf(A2).keptArchive);
+    expect(w.objects.has(keysOf(A1).keptArchive)).toBe(false);
+    const writeAt = w.log.indexOf(`write ${keysOf(A2).keptArchive}`);
+    const deleteAt = w.log.indexOf(`delete ${keysOf(A1).keptArchive}`);
     expect(writeAt).toBeGreaterThan(-1);
     expect(deleteAt).toBeGreaterThan(writeAt);
   });
@@ -265,26 +306,34 @@ describe('per-plan sleeping-app limits', () => {
     ).toBe('ok');
   });
 
-  it('begin refuses once the plan bytes are used up; commit refuses an archive that would pass them', async () => {
+  it('begin refuses once the plan bytes are used up', async () => {
     const full = holding('free', 1, 104_857_600);
     expect(await beginHibernation({ userId: USER, app: APP, attemptId: A1 }, full.deps)).toEqual({
       kind: 'limit',
       limit: { kind: 'bytes', limit: 104_857_600, used: 104_857_600 },
       oldest: { app: 'held-0', hibernatedAt: '2026-06-01T00:00:00.000Z' },
     });
+  });
 
-    const nearly = holding('free', 1, 104_857_600 - 10);
+  it('commit refuses an archive that would pass the bytes, names the oldest (literal payload), and removes the attempt', async () => {
+    const nearly = holding('free', 2, 52_428_800 - 5);
     const { body } = await uploaded(nearly, A1, Buffer.alloc(11, 1));
-    expect(await commitHibernation(body, nearly.deps)).toEqual({
-      kind: 'limit',
-      limit: { kind: 'bytes', limit: 104_857_600, used: 104_857_600 - 10 },
+    expect(commitAnswer(await commitHibernation(body, nearly.deps))).toEqual({
+      status: 409,
+      json: {
+        error: 'Sleeping app limit reached',
+        code: 'SLEEPING_LIMIT',
+        limit: { kind: 'bytes', limit: 104_857_600, used: 104_857_590 },
+        oldest: { app: 'held-1', hibernatedAt: '2026-05-31T00:00:00.000Z' },
+      },
     });
     expect(nearly.rows.has(`${USER}/${APP}`)).toBe(false);
+    expect(leftOf(nearly, A1)).toEqual([]);
   });
 });
 
 describe('the flag off refuses every endpoint', () => {
-  it('begin, commit and the secrets restore all answer disabled and touch nothing', async () => {
+  it('begin, commit, the secrets restore and a wake ticket all answer disabled and touch nothing', async () => {
     const w = world();
     const { body } = await uploaded(w, A1, ARCHIVE_1);
     w.state.enabled = false;
@@ -295,52 +344,148 @@ describe('the flag off refuses every endpoint', () => {
     });
     expect(await commitHibernation(body, w.deps)).toEqual({ kind: 'disabled' });
     expect(
-      await restoreSleepingAppSecrets({ userId: USER, app: APP, sha256: sha(ARCHIVE_1) }, w.deps)
+      await restoreSleepingAppSecrets(
+        { userId: USER, app: APP, sha256: sha(ARCHIVE_1), ticket: 'x'.repeat(43) },
+        w.deps
+      )
     ).toEqual({ kind: 'disabled' });
+    expect(await mintWakeTicket(USER, APP, w.deps)).toEqual({ kind: 'disabled' });
     expect(w.rows.size).toBe(0);
     expect(w.attemptsMap.has(A2)).toBe(false);
     expect(w.log.slice(logBefore)).toEqual([]);
   });
 });
 
-describe('encrypted .env* secrets', () => {
+describe('deleted and banned accounts', () => {
+  it.each(['deleted', 'banned'] as const)('begin refuses a %s account', async (state) => {
+    const w = world();
+    w.accounts.set(USER, state);
+    expect(await beginHibernation({ userId: USER, app: APP, attemptId: A1 }, w.deps)).toEqual({
+      kind: 'account-closed',
+    });
+    expect(w.attemptsMap.size).toBe(0);
+  });
+
+  it('a commit after the account was deleted is refused: no row, no object left', async () => {
+    const w = world();
+    const { body } = await uploaded(w, A1, ARCHIVE_1);
+    w.accounts.set(USER, 'deleted');
+    expect(await commitHibernation(body, w.deps)).toEqual({ kind: 'account-closed' });
+    expect(w.rows.size).toBe(0);
+    expect(leftOf(w, A1)).toEqual([]);
+  });
+
+  it('a deletion that lands after the early check is still caught inside the transaction', async () => {
+    const w = world();
+    const { body } = await uploaded(w, A1, ARCHIVE_1);
+    // The early read still says active; the deletion commits before the row is written.
+    w.deps.repo.accountState = async () => 'active';
+    w.accounts.set(USER, 'deleted');
+    expect(await commitHibernation(body, w.deps)).toEqual({ kind: 'account-closed' });
+    expect(w.rows.size).toBe(0);
+    expect(leftOf(w, A1)).toEqual([]);
+  });
+});
+
+describe('encrypted .env* secrets and wake tickets', () => {
   const ENV = Buffer.from('.env\0SECRET=test-only-value\n');
 
-  async function withSecrets(
-    w: World,
-    attemptId: string,
-    plain: Buffer,
-    extra: Partial<CommitInput> = {}
-  ) {
-    const { b, body } = await uploaded(w, attemptId, ARCHIVE_1, extra);
+  async function committedWithSecrets(w: World, attemptId = A1) {
+    const { b, body } = await uploaded(w, attemptId, ARCHIVE_1);
     const sealed = sealSecrets(
       Buffer.from(b.secrets.dataKey, 'base64'),
       { userId: USER, appKey: APP, attemptId },
-      plain
+      ENV
     );
     w.objects.set(b.secrets.key, sealed);
-    return { b, body: { ...body, secrets: { sha256: sha(sealed), bytes: sealed.length } } };
+    const res = await commitHibernation(
+      { ...body, secrets: { sha256: sha(sealed), bytes: sealed.length } },
+      w.deps
+    );
+    return { b, res };
   }
 
-  it('commit stores them only wrapped, and the wake restore decrypts them for that seed only', async () => {
-    const w = world();
-    const { b, body } = await withSecrets(w, A1, ENV);
-    expect((await commitHibernation(body, w.deps)).kind).toBe('committed');
-    const row = w.rows.get(`${USER}/${APP}`);
-    expect(row?.secretsObjectKey).toBe(b.secrets.key);
-    expect(row?.secretsWrappedKey).not.toContain(b.secrets.dataKey);
+  const restore = (
+    w: World,
+    ticket: string,
+    over: Partial<{ app: string; userId: number; sha256: string }> = {}
+  ) =>
+    restoreSleepingAppSecrets(
+      { userId: USER, app: APP, sha256: sha(ARCHIVE_1), ticket, ...over },
+      w.deps
+    );
 
-    expect(
-      await restoreSleepingAppSecrets({ userId: USER, app: APP, sha256: sha(ARCHIVE_1) }, w.deps)
-    ).toEqual({ kind: 'ok', secrets: ENV.toString('base64') });
-    expect(
-      await restoreSleepingAppSecrets({ userId: USER, app: APP, sha256: 'b'.repeat(64) }, w.deps)
-    ).toEqual({ kind: 'stale' });
+  it('a ticket minted for a wake releases the secrets ONCE, and the release is logged without content', async () => {
+    const w = world();
+    const { b, res } = await committedWithSecrets(w);
+    expect(res.kind).toBe('committed');
+    const row = w.rows.get(`${USER}/${APP}`)!;
+    expect(row.secretsObjectKey).toBe(keysOf(A1).keptSecrets);
+    expect(row.secretsWrappedKey).not.toContain(b.secrets.dataKey);
+
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    expect(minted.sha256).toBe(sha(ARCHIVE_1));
+    // The store holds a hash of the ticket, never the ticket.
+    expect([...w.ticketsMap.keys()]).not.toContain(minted.ticket);
+
+    expect(await restore(w, minted.ticket)).toEqual({
+      kind: 'ok',
+      secrets: ENV.toString('base64'),
+    });
+    expect(w.reports).toEqual([
+      {
+        event: 'app-hibernation.secrets-released',
+        details: { userId: USER, app: APP, hadSecrets: true },
+      },
+    ]);
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'ticket' });
+  });
+
+  it('no ticket the store knows (never minted, or expired out of it) is refused', async () => {
+    const w = world();
+    await committedWithSecrets(w);
+    expect(await restore(w, 'never-minted-ticket-value-000000000000000')).toEqual({
+      kind: 'ticket',
+    });
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    w.ticketsMap.clear(); // its TTL ran out
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'ticket' });
+  });
+
+  it.each([
+    ['another user', { userId: OTHER_USER }],
+    ['another app', { app: 'other-app' }],
+    ['another archive', { sha256: 'b'.repeat(64) }],
+  ])('a ticket presented for %s is refused, and is used up', async (_label, over) => {
+    const w = world();
+    await committedWithSecrets(w);
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    expect(await restore(w, minted.ticket, over)).toEqual({ kind: 'ticket' });
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'ticket' });
+    expect(w.reports.filter((r) => r.event === 'app-hibernation.secrets-released')).toEqual([]);
+  });
+
+  it('a record replaced after the ticket was minted answers stale', async () => {
+    const w = world();
+    await committedWithSecrets(w);
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    w.rows.set(`${USER}/${APP}`, { ...w.rows.get(`${USER}/${APP}`)!, sha256: 'c'.repeat(64) });
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'stale' });
+  });
+
+  it('no ticket for an app the user has not got sleeping', async () => {
+    const w = world();
+    expect(await mintWakeTicket(USER, APP, w.deps)).toEqual({ kind: 'not-found' });
+    expect(w.ticketsMap.size).toBe(0);
   });
 
   it('a secrets blob that does not decrypt under the attempt key is a 409 and NO row', async () => {
     const w = world();
-    const { b, body } = await withSecrets(w, A1, ENV);
+    const { b, body } = await uploaded(w, A1, ARCHIVE_1);
     const forged = sealSecrets(
       Buffer.alloc(32, 7),
       { userId: USER, appKey: APP, attemptId: A1 },
@@ -353,29 +498,32 @@ describe('encrypted .env* secrets', () => {
     );
     expect(res).toEqual({ kind: 'mismatch', reason: 'secrets do not decrypt' });
     expect(w.rows.size).toBe(0);
+    expect(leftOf(w, A1)).toEqual([]);
   });
 
-  it('the master key never appears in what begin answers', async () => {
+  it('no master key appears in what begin answers', async () => {
     const w = world();
     const b = await begin(w, A1);
-    expect(JSON.stringify(b)).not.toContain(w.deps.masterKey!.toString('base64'));
+    const answer = JSON.stringify(b);
+    for (const key of w.deps.masterKeys!.keys.values())
+      expect(answer).not.toContain(key.toString('base64'));
   });
 });
 
 describe('account deletion', () => {
-  it('account deletion removes the user’s rows and every object under their prefix, and no one else’s', async () => {
+  it('removes the user’s objects FIRST, then the rows, and nobody else’s', async () => {
     const w = world();
     const mine = await uploaded(w, A1, ARCHIVE_1);
     await commitHibernation(mine.body, w.deps);
-    // An attempt that never committed: an object no row names.
     w.objects.set(`archives/${USER}/other-app/orphan.zip`, Buffer.from('x'));
-    const theirs = `archives/${OTHER_USER}/${APP}/${A2}.zip`;
+    const theirs = `archives/${OTHER_USER}/${APP}/${A2}.kept.zip`;
     w.objects.set(theirs, Buffer.from('y'));
     w.rows.set(`${OTHER_USER}/${APP}`, {
       ...w.rows.get(`${USER}/${APP}`)!,
       userId: OTHER_USER,
       objectKey: theirs,
     });
+    const logBefore = w.log.length;
 
     const res = await deleteSleepingAppsForAccount(USER, {
       repo: w.deps.repo,
@@ -386,9 +534,32 @@ describe('account deletion', () => {
     expect(res).toEqual({ rows: 1, objects: 2 });
     expect([...w.rows.keys()]).toEqual([`${OTHER_USER}/${APP}`]);
     expect([...w.objects.keys()]).toEqual([theirs]);
+    const after = w.log.slice(logBefore);
+    expect(after.findIndex((l) => l.startsWith('delete'))).toBeLessThan(
+      after.indexOf(`remove-rows ${USER}`)
+    );
   });
 
-  it('account deletion before the migration is applied still empties the store', async () => {
+  it('a store failure throws and keeps the rows as the record; the sweep then finishes the job', async () => {
+    const w = world();
+    const mine = await uploaded(w, A1, ARCHIVE_1);
+    await commitHibernation(mine.body, w.deps);
+    w.accounts.set(USER, 'deleted');
+    w.storeState.failDeletes = true;
+    const deps = { repo: w.deps.repo, store: w.deps.store, isMissingTable: () => false };
+
+    await expect(deleteSleepingAppsForAccount(USER, deps)).rejects.toThrow(/store unavailable/);
+    expect(w.rows.has(`${USER}/${APP}`)).toBe(true);
+    expect(w.objects.has(keysOf(A1).keptArchive)).toBe(true);
+
+    w.storeState.failDeletes = false;
+    const swept = await sweepOrphanedArchives({ ...w.deps, isMissingTable: () => false });
+    expect(swept.accountsRetried).toEqual([USER]);
+    expect(w.rows.size).toBe(0);
+    expect([...w.objects.keys()].filter((k) => k.startsWith(`archives/${USER}/`))).toEqual([]);
+  });
+
+  it('before the migration is applied it still empties the store', async () => {
     const w = world();
     w.objects.set(`archives/${USER}/a-app/x.zip`, Buffer.from('x'));
     w.deps.repo.removeAll = async () => {
@@ -404,5 +575,89 @@ describe('account deletion', () => {
       })
     ).toEqual({ rows: 0, objects: 1 });
     expect(w.objects.size).toBe(0);
+  });
+
+  it('with no store configured it keeps the rows and throws rather than orphan their objects', async () => {
+    const w = world();
+    const mine = await uploaded(w, A1, ARCHIVE_1);
+    await commitHibernation(mine.body, w.deps);
+    await expect(
+      deleteSleepingAppsForAccount(USER, {
+        repo: w.deps.repo,
+        store: null,
+        isMissingTable: () => false,
+      })
+    ).rejects.toThrow(/not configured/);
+    expect(w.rows.size).toBe(1);
+  });
+});
+
+describe('orphan sweep', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const ago = (ms: number) => new Date(NOW.getTime() - ms);
+  const row = (objectKey: string): HibernationRow => ({
+    userId: USER,
+    appKey: 'kept-app',
+    attemptId: A1,
+    objectKey,
+    sha256: 'a'.repeat(64),
+    bytes: 1,
+    excluded: [],
+    secretsObjectKey: `${objectKey}.secrets`,
+    secretsSha256: 'b'.repeat(64),
+    secretsBytes: 1,
+    secretsWrappedKey: 'v2.k1.x',
+    reason: null,
+    appCreatedAt: null,
+    lastActivityAt: null,
+    hibernatedAt: ago(30 * DAY),
+  });
+
+  function sweepWorld() {
+    const w = world();
+    const referenced = `archives/${USER}/kept-app/${A1}.kept.zip`;
+    w.rows.set(`${USER}/kept-app`, row(referenced));
+    const put = (key: string, age: number) => {
+      w.objects.set(key, Buffer.from(key));
+      w.times.set(key, ago(age));
+    };
+    // NEGATIVE CONTROL: referenced, and far older than the cutoff.
+    put(referenced, 30 * DAY);
+    put(`${referenced}.secrets`, 30 * DAY);
+    put(`archives/${USER}/gone-app/${A2}.zip`, DAY + 1); // never committed, old
+    put(`archives/${OTHER_USER}/x-app/old.kept.zip`, 3 * DAY); // superseded, delete failed
+    put(`archives/${USER}/fresh-app/${A2}.zip`, DAY - 60_000); // an attempt still in flight
+    return { w, referenced };
+  }
+  const deps = (w: World) => ({ ...w.deps, isMissingTable: () => false });
+
+  it('deletes only unreferenced objects older than 24 h, never a referenced key', async () => {
+    const { w, referenced } = sweepWorld();
+    const res = await sweepOrphanedArchives(deps(w));
+    expect(res.orphans.sort()).toEqual([
+      `archives/${USER}/gone-app/${A2}.zip`,
+      `archives/${OTHER_USER}/x-app/old.kept.zip`,
+    ]);
+    expect([...w.objects.keys()].sort()).toEqual(
+      [referenced, `${referenced}.secrets`, `archives/${USER}/fresh-app/${A2}.zip`].sort()
+    );
+  });
+
+  it('a dry run reports the same orphans and deletes nothing', async () => {
+    const { w } = sweepWorld();
+    const before = [...w.objects.keys()].sort();
+    const res = await sweepOrphanedArchives(deps(w), { dryRun: true });
+    expect(res.orphans).toHaveLength(2);
+    expect([...w.objects.keys()].sort()).toEqual(before);
+  });
+
+  it('an unreadable reference set aborts the sweep instead of deleting blind', async () => {
+    const { w } = sweepWorld();
+    const before = [...w.objects.keys()].sort();
+    w.deps.repo.referencedKeys = async () => {
+      throw new Error('database unavailable');
+    };
+    await expect(sweepOrphanedArchives(deps(w))).rejects.toThrow(/database unavailable/);
+    expect([...w.objects.keys()].sort()).toEqual(before);
   });
 });

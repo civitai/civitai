@@ -20,6 +20,7 @@ import { sha, world, type World } from './hibernation.fakes';
 // TEST-ONLY placeholder secrets.
 const SECRET = 'test-only-hibernation-hmac-secret-0001';
 const WRONG_SECRET = 'test-only-hibernation-hmac-secret-9999';
+const PREVIOUS_SECRET = 'test-only-hibernation-hmac-secret-0000';
 const NOW = 1_800_000_000;
 const USER = 7301;
 const APP = 'habit-tracker';
@@ -29,7 +30,7 @@ let w: World;
 let routes: ReturnType<typeof createHibernationRoutes>;
 
 beforeEach(() => {
-  setEnv({ APP_HIBERNATION_HMAC_SECRET: SECRET });
+  setEnv({ APP_HIBERNATION_HMAC_SECRET: SECRET, APP_HIBERNATION_HMAC_SECRET_PREVIOUS: undefined });
   w = world();
   const deps: HibernationRouteDeps = {
     hibernation: async () => w.deps,
@@ -145,6 +146,55 @@ describe('HMAC request signing', () => {
     expect(w.attemptsMap.size).toBe(0);
   });
 
+  it('during a rotation the previous secret is accepted too, and nothing else is', async () => {
+    setEnv({
+      APP_HIBERNATION_HMAC_SECRET: SECRET,
+      APP_HIBERNATION_HMAC_SECRET_PREVIOUS: PREVIOUS_SECRET,
+    });
+    const asPrevious = signed(HIBERNATION_PATHS.begin, beginBody, { secret: PREVIOUS_SECRET });
+    expect((await call(routes.begin, asPrevious)).status).toBe(200);
+    expect((await call(routes.begin, signed(HIBERNATION_PATHS.begin, beginBody))).status).toBe(200);
+    expect(
+      (
+        await call(
+          routes.begin,
+          signed(HIBERNATION_PATHS.begin, beginBody, { secret: WRONG_SECRET })
+        )
+      ).json
+    ).toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('the previous secret is refused once the rotation is over (unset)', async () => {
+    const asPrevious = signed(HIBERNATION_PATHS.begin, beginBody, { secret: PREVIOUS_SECRET });
+    expect((await call(routes.begin, asPrevious)).json).toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('the previous secret alone, with no current one, opens nothing', async () => {
+    setEnv({
+      APP_HIBERNATION_HMAC_SECRET: '',
+      APP_HIBERNATION_HMAC_SECRET_PREVIOUS: PREVIOUS_SECRET,
+    });
+    const asPrevious = signed(HIBERNATION_PATHS.begin, beginBody, { secret: PREVIOUS_SECRET });
+    expect((await call(routes.begin, asPrevious)).status).toBe(503);
+  });
+
+  it('the secrets route answers 403 ticket without a valid wake ticket', async () => {
+    expect(
+      await call(
+        routes.secrets,
+        signed(HIBERNATION_PATHS.secrets, {
+          userId: USER,
+          app: APP,
+          sha256: 'a'.repeat(64),
+          ticket: 'never-minted-ticket-value-000000000000000',
+        })
+      )
+    ).toEqual({
+      status: 403,
+      json: { error: 'No valid wake ticket for this restore', code: 'ticket' },
+    });
+  });
+
   it('no configured secret answers 503 to everyone', async () => {
     setEnv({ APP_HIBERNATION_HMAC_SECRET: '  ' });
     expect((await call(routes.begin, signed(HIBERNATION_PATHS.begin, beginBody))).status).toBe(503);
@@ -179,7 +229,12 @@ describe('the flag off refuses every route', () => {
     expect(
       await call(
         routes.secrets,
-        signed(HIBERNATION_PATHS.secrets, { userId: USER, app: APP, sha256: 'a'.repeat(64) })
+        signed(HIBERNATION_PATHS.secrets, {
+          userId: USER,
+          app: APP,
+          sha256: 'a'.repeat(64),
+          ticket: 'x'.repeat(43),
+        })
       )
     ).toEqual(disabled);
   });

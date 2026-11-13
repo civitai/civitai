@@ -70,6 +70,19 @@ const notConfigured: Answer = {
   status: 503,
   json: { error: 'App hibernation is not configured', code: 'not_configured' },
 };
+const accountClosed: Answer = {
+  status: 403,
+  json: { error: 'The account is deleted or banned', code: 'account_closed' },
+};
+const limitAnswer = (r: { limit: unknown; oldest: unknown }): Answer => ({
+  status: 409,
+  json: {
+    error: 'Sleeping app limit reached',
+    code: 'SLEEPING_LIMIT',
+    limit: r.limit,
+    oldest: r.oldest,
+  },
+});
 
 export function beginAnswer(r: BeginResult): Answer {
   switch (r.kind) {
@@ -77,16 +90,10 @@ export function beginAnswer(r: BeginResult): Answer {
       return disabled;
     case 'not-configured':
       return notConfigured;
+    case 'account-closed':
+      return accountClosed;
     case 'limit':
-      return {
-        status: 409,
-        json: {
-          error: 'Sleeping app limit reached',
-          code: 'SLEEPING_LIMIT',
-          limit: r.limit,
-          oldest: r.oldest,
-        },
-      };
+      return limitAnswer(r);
     case 'attempt-conflict':
       return {
         status: 409,
@@ -126,11 +133,10 @@ export function commitAnswer(r: CommitResult): Answer {
           code: 'lineage',
         },
       };
+    case 'account-closed':
+      return accountClosed;
     case 'limit':
-      return {
-        status: 409,
-        json: { error: 'Sleeping app limit reached', code: 'SLEEPING_LIMIT', limit: r.limit },
-      };
+      return limitAnswer(r);
     case 'committed':
       return { status: 200, json: { committed: true, sha256: r.sha256 } };
   }
@@ -142,6 +148,11 @@ export function restoreSecretsAnswer(r: RestoreSecretsResult): Answer {
       return disabled;
     case 'not-configured':
       return notConfigured;
+    case 'ticket':
+      return {
+        status: 403,
+        json: { error: 'No valid wake ticket for this restore', code: 'ticket' },
+      };
     case 'not-found':
       return { status: 404, json: { error: 'No sleeping app under that key', code: 'not_found' } };
     case 'stale':
@@ -177,8 +188,9 @@ function createRoute<S extends z.ZodType>(
     }
 
     const deps = await getDeps();
+    const previous = env.APP_HIBERNATION_HMAC_SECRET_PREVIOUS;
     const auth = verifyHibernationRequest({
-      secret,
+      secrets: isConfiguredSecret(previous) ? [secret, previous] : [secret],
       method: req.method,
       path,
       headers: req.headers,
