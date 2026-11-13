@@ -1,7 +1,7 @@
 import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
-import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { setFeedGoTransportEnabled, setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';
@@ -103,13 +103,15 @@ export const FeatureFlagsProvider = ({
     [flags, userFeatures]
   );
 
-  // Bridge `siteSearchProxy` to the module-scope search clients. Written while rendering, so the
-  // searches InstantSearch starts from the first commit's effects already go the right way. Browser
-  // only: on the server this module flag would be shared across concurrent requests.
+  // Bridge `siteSearchProxy` to the module-scope search clients, and `feedGoTransport` to the tRPC
+  // link. Written while rendering, so the searches InstantSearch starts from the first commit's
+  // effects already go the right way. Browser only: on the server this module flag would be shared
+  // across concurrent requests.
   if (typeof window !== 'undefined') {
     setSiteSearchProxyEnabled(!!featureFlags.siteSearchProxy);
     setSemanticArticleSearchEnabled(!!featureFlags.semanticArticleSearch);
     setSemanticComicSearchEnabled(!!featureFlags.semanticComicSearch);
+    setFeedGoTransportEnabled(!!featureFlags.feedGoTransport);
   }
 
   // Bridge `trpcBatching` to the module-scope tRPC link (see `shouldBatch` in

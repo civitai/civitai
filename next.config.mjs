@@ -398,6 +398,10 @@ export default defineNextConfig(
       return headers;
     },
     poweredByHeader: false,
+    // The `feedGoTransport` client path (src/utils/trpc.ts `GO_TRANSPORT_URL`). An exact-path route
+    // in front of this app may send it to the Go port in apps/feed-go; whatever reaches this app is
+    // served by the ordinary tRPC route, so the flag can never strand a request.
+    rewrites: async () => [{ source: '/api/trpc-go/:path*', destination: '/api/trpc/:path*' }],
     redirects: async () => {
       // Note: the .red-host support-portal bounce is implemented as a
       // Cloudflare Redirect Rule on the civitai.red zone. Config lives at

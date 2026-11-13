@@ -353,6 +353,50 @@ export function shouldBatch(op: {
 }
 
 /**
+ * Procedures the `feedGoTransport` flag sends to `GO_TRANSPORT_URL` instead of `/api/trpc`, so an
+ * exact-path route can hand them to the Go port (`apps/feed-go`) for a per-user cohort. Each must
+ * also be in `NEVER_BATCH_PROCEDURES`: a batched request names several procedures in one path and
+ * could not be routed by path at all.
+ */
+export const GO_TRANSPORT_PROCEDURES: ReadonlySet<string> = new Set([
+  'image.getImagesAsPostsInfinite',
+]);
+
+/**
+ * The separate path. `next.config.mjs` rewrites it back to `/api/trpc/:path*`, so with no route in
+ * front of it the request still reaches this app: turning the flag on can never strand a request.
+ */
+export const GO_TRANSPORT_URL = '/api/trpc-go';
+
+/**
+ * Module-scoped toggle for the Go transport, written by `FeatureFlagsProvider` from the
+ * `feedGoTransport` flag (default OFF). Mutable module state for the same reason as
+ * `trpcBatchingEnabled`: the terminating link is built once and re-reads it per operation.
+ */
+let feedGoTransportEnabled = false;
+export function setFeedGoTransportEnabled(enabled: boolean) {
+  feedGoTransportEnabled = enabled;
+}
+
+/**
+ * Send this operation over the Go transport only when ALL hold:
+ *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
+ *  - the `feedGoTransport` flag is on for this user,
+ *  - we're in an authenticated browser — signed-out responses are edge-cached under the
+ *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
+ *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
+ */
+export function shouldUseGoTransport(op: { type: string; path: string; input: unknown }) {
+  return (
+    op.type === 'query' &&
+    feedGoTransportEnabled &&
+    GO_TRANSPORT_PROCEDURES.has(op.path) &&
+    isAuthedBrowser() &&
+    !shouldSendQueryAsPost(op)
+  );
+}
+
+/**
  * Shared terminating link. Authenticated-browser queries (flag-gated) go out batched via
  * `httpBatchStreamLink` (results stream as they resolve, so the fastest query in a batch
  * isn't blocked by the slowest); everything else — anonymous traffic, mutations, large
@@ -366,7 +410,7 @@ function terminatingLink({
   url: string;
   headers: ReturnType<typeof getHeaders>;
 }): TRPCLink<AppRouter> {
-  return splitLink({
+  const defaultLink: TRPCLink<AppRouter> = splitLink({
     condition: shouldBatch,
     true: splitLink({
       // `trpcUnifiedBatchWindow`: both browser clients send through ONE batch link, so the React
@@ -377,6 +421,11 @@ function terminatingLink({
       false: batchStreamLink({ url, headers }),
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
+  });
+  return splitLink({
+    condition: shouldUseGoTransport,
+    true: httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+    false: defaultLink,
   });
 }
 

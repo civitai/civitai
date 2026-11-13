@@ -98,6 +98,12 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
+  // Sends `image.getImagesAsPostsInfinite` (signed in, browser) to `/api/trpc-go` instead of
+  // `/api/trpc`, so an exact-path route can serve a per-user cohort from the Go port in
+  // `apps/feed-go`. The path is rewritten back to `/api/trpc` when no route is in front of it, so
+  // ON without the route changes nothing. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  // See `GO_TRANSPORT_PROCEDURES` in `src/utils/trpc.ts`.
+  feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
