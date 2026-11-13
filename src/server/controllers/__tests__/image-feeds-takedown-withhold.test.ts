@@ -323,6 +323,33 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
     ).toEqual([1]);
   });
 
+  // A rule on only below mature levels: one resolution at every level at once would miss it.
+  it('hides poi and minor when any level a viewer could pick hides them', async () => {
+    addons.push({
+      type: 'none',
+      nsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+      disablePoi: true,
+      disableMinor: true,
+    });
+    expect(await run(uncapped)).toEqual([1, 4, 5]);
+  });
+
+  it('applies settings to a moderator or owner on a scoped key', async () => {
+    addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true, disableMinor: true });
+    const scoped = {
+      apiKeyId: 9,
+      apiKeyType: ApiKeyType.User,
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: TokenScope.ModelsRead,
+    };
+    expect(
+      await run({ user: { id: 7, isModerator: true }, features: { canViewNsfw: true }, ...scoped })
+    ).toEqual([1, 4, 5]);
+    expect(await run({ user: { id: OWNER }, features: { canViewNsfw: true }, ...scoped })).toEqual([
+      1, 4, 5,
+    ]);
+  });
+
   it('applies the poi and minor settings independently', async () => {
     addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true });
     expect(await run(uncapped)).toEqual([1, 3, 4, 5]);

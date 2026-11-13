@@ -30,6 +30,18 @@ const shapes: [string, BrowsingSettingsAddon[]][] = [
       { type: 'some', nsfwLevels: mature, disablePoi: false, disableMinor: false },
     ],
   ],
+  // On only when every level is selected: only the full set reaches it.
+  [
+    'an "all" rule over every level',
+    [
+      {
+        type: 'all',
+        nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+        disablePoi: true,
+        disableMinor: true,
+      },
+    ],
+  ],
 ];
 
 describe('resolveStrictestPoiMinor', () => {
@@ -43,10 +55,13 @@ describe('resolveStrictestPoiMinor', () => {
   });
 
   // A single resolution at every level at once, which these shapes defeat.
-  it.each(shapes.slice(1))('is stricter than one resolution at all levels for %s', (_l, data) => {
-    expect(resolveBrowsingSettingsAddons(data, allBrowsingLevelsFlag).disablePoi).toBe(false);
-    expect(resolveStrictestPoiMinor(data, allBrowsingLevelsFlag).disablePoi).toBe(true);
-  });
+  it.each(shapes.slice(1, 3))(
+    'is stricter than one resolution at all levels for %s',
+    (_l, data) => {
+      expect(resolveBrowsingSettingsAddons(data, allBrowsingLevelsFlag).disablePoi).toBe(false);
+      expect(resolveStrictestPoiMinor(data, allBrowsingLevelsFlag).disablePoi).toBe(true);
+    }
+  );
 
   it('resolves nothing for a moderator', () => {
     for (const [, data] of shapes)

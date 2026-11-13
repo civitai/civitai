@@ -429,8 +429,10 @@ export const getImagesForModelVersionHandler = async ({
   const settings = resolveStrictestPoiMinor(
     await getBrowsingSettingAddons(),
     requestServableLevels(ctx),
-    { isModerator: ctx.user?.isModerator }
+    { isModerator: moderatorView(ctx) }
   );
+  // Moderator and owner exemptions on the same credentials as the hold.
+  const exemptViewer = galleryOwnerId(ctx) !== undefined ? ctx.user : undefined;
   // Any version id can be asked for, so the cap applies per image.
   keepCrawlerAnswerOutOfEdgeCache(ctx);
   return Object.fromEntries(
@@ -446,7 +448,7 @@ export const getImagesForModelVersionHandler = async ({
             browsingLevel: allBrowsingLevelsFlag,
             disablePoi: settings.disablePoi,
             disableMinor: settings.disableMinor,
-            viewer: ctx.user,
+            viewer: exemptViewer,
           }
         ),
       },
