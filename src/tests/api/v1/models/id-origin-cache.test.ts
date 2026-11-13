@@ -395,6 +395,29 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
     expect(urls(await invoke({ id: '123' }))).toEqual(['pg.png', 'r.png']);
   });
 
+  it('(l) drops a creator avatar above the served level, keeps one within it', async () => {
+    const withAvatar = (nsfwLevel: number) =>
+      mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => {
+        const item = modelItem(input.ids[0]);
+        item.user = {
+          username: 'creator',
+          image: 'avatar.png',
+          profilePicture: { url: 'pic.png', type: 'image', nsfwLevel } as never,
+        };
+        return { items: [item] };
+      });
+    const avatar = (res: { body?: any }) => res.body.creator.image;
+
+    regionBox.restricted = true;
+    withAvatar(4);
+    expect(avatar(await invoke({ id: '123' }))).toBeNull();
+    withAvatar(1);
+    expect(avatar(await invoke({ id: '124' }))).toBe('pic.png');
+    regionBox.restricted = false;
+    withAvatar(4);
+    expect(avatar(await invoke({ id: '125' }))).toBe('pic.png');
+  });
+
   it('(k) keeps every answer out of the shared cache, since it depends on the region', async () => {
     for (const restricted of [true, false]) {
       regionBox.restricted = restricted;

@@ -88,12 +88,15 @@ async function buildPublicModelResponse(
     creator: user
       ? {
           username: user.username,
+          // A rated picture above the served level is dropped, not swapped for the unrated one.
           image: user.profilePicture
-            ? getEdgeUrl(user.profilePicture.url, {
-                width: 96,
-                name: user.username,
-                type: user.profilePicture.type,
-              })
+            ? !Flags.intersects(user.profilePicture.nsfwLevel, browsingLevel)
+              ? null
+              : getEdgeUrl(user.profilePicture.url, {
+                  width: 96,
+                  name: user.username,
+                  type: user.profilePicture.type,
+                })
             : user.image
             ? getEdgeUrl(user.image, { width: 96, name: user.username })
             : null,
