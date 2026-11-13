@@ -7,6 +7,7 @@ import type { SessionUser } from '~/types/session';
 
 const h = vi.hoisted(() => ({
   fetched: [] as number[][],
+  hiddenFor: [] as (number | undefined)[],
   rows: new Map<number, Record<string, unknown>>(),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
@@ -22,12 +23,15 @@ vi.mock('~/utils/metadata/audit', () => ({
 }));
 vi.mock('~/server/services/system-cache', () => ({ getBrowsingSettingAddons: async () => [] }));
 vi.mock('~/server/services/user-preferences.service', () => ({
-  getAllHiddenForUser: async () => ({
-    hiddenUsers: [{ id: 901 }],
-    blockedUsers: [{ id: 902 }],
-    blockedByUsers: [{ id: 903 }],
-    hiddenTags: [],
-  }),
+  getAllHiddenForUser: async ({ userId }: { userId?: number }) => {
+    h.hiddenFor.push(userId);
+    return {
+      hiddenUsers: [{ id: 901 }],
+      blockedUsers: [{ id: 902 }],
+      blockedByUsers: [{ id: 903 }],
+      hiddenTags: [],
+    };
+  },
 }));
 // The index's own read: only the comics still eligible come back (the rule is the index's, and
 // is tested there). Unknown ids stand for ineligible comics.
@@ -92,6 +96,7 @@ const ids = (r: { items: { id: number }[] }) => r.items.map((c) => c.id);
 beforeEach(() => {
   sent = [];
   h.fetched = [];
+  h.hiddenFor = [];
   h.rows = new Map();
   h.includesInappropriate.mockReset().mockReturnValue(false);
   loggingMock.logToAxiom.mockClear();
@@ -133,6 +138,11 @@ describe('semantic comic search', () => {
     h.rows.set(11, comic(11, { level: PG | R }));
     h.rows.set(12, comic(12, { level: 0 }));
     expect(ids(await search([11, 12, 10], { browsingLevel: PG }))).toEqual([10]);
+  });
+
+  it("reads the viewer's own hidden and blocked creators", async () => {
+    await search([], { user: MOD });
+    expect(h.hiddenFor).toEqual([MOD.id]);
   });
 
   it('drops a deleted owner and a hidden owner, and caps one creator per page', async () => {

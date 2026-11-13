@@ -17,7 +17,8 @@ async function recordsQuery(ids: number[]) {
 describe('getComicSearchRecords', () => {
   it("reads only through the index's eligibility rule, for the ids asked", async () => {
     const query = await recordsQuery([3, 4]);
-    for (const clause of comicSearchEligibleWhere) expect(query?.sql).toContain(clause.sql);
+    // Every clause, joined with AND (with OR any one clause would let a comic through).
+    expect(query?.sql).toContain(Prisma.join(comicSearchEligibleWhere, ' AND ').sql);
     expect(query?.sql).toContain('cp.id IN (');
     expect(query?.values).toEqual(expect.arrayContaining([3, 4]));
   });
