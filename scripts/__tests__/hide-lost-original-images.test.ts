@@ -578,7 +578,7 @@ describe('hide-lost-original-images', () => {
           ? 'missing'
           : 'present',
     });
-    // Targets spread over the id range, so the control samples f0000900-0000-4000-8000-000000000000 (present) and f0000950-0000-4000-8000-000000000000 (missing).
+    // Targets spread over the id range so the control samples across eras.
     await expect(run(options(), [...GONE, 940], deps)).rejects.toThrow(/control failed/);
     expect(await ingestion(1)).toBe('Scanned');
   });
@@ -589,14 +589,17 @@ describe('hide-lost-original-images', () => {
       head: async (url) => {
         if (url.startsWith('f0000')) {
           controlHeads += 1;
-          // The first chunk's three controls (start, before its HEADs, before its write) pass; later fail.
-          return controlHeads > 15 ? 'missing' : 'present';
+          // Control calls are 5 HEADs each: start (1-5), chunk 1 before its HEADs (6-10) pass; the third,
+          // chunk 1 before its write, fails. That is the check this test is for.
+          return controlHeads > 10 ? 'missing' : 'present';
         }
         return 'missing';
       },
     });
-    await expect(run(options({ chunk: 1 }), GONE, deps)).rejects.toThrow(/mid-run/);
-    expect(await ingestion(1)).toBe('NotFound');
+    await expect(run(options({ chunk: 1 }), GONE, deps)).rejects.toThrow(
+      /before this chunk was written/
+    );
+    expect(await ingestion(1)).toBe('Scanned');
     expect(await ingestion(2)).toBe('Scanned');
   });
 
@@ -887,7 +890,7 @@ describe('hide-lost-original-images', () => {
   it('reports how many control images vouched for the HEADs', async () => {
     const { deps } = makeDeps();
     const counts = await run(options({ apply: false }), GONE, deps);
-    expect(counts.controls).toBeGreaterThan(0);
+    expect(counts.controls).toBe(5);
   });
 
   it('--rebust hide skips a row that is no longer NotFound; --rebust undo covers restored rows', async () => {

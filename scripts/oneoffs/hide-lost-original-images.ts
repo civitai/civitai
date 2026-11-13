@@ -11,12 +11,9 @@
  * Runbook (desk):
  *   - One run at a time. The dry run prints any other run log it finds beside --log.
  *   - Run 1: the dry run prints counts only: listed, controls, scan-in-flight (workflow present,
- *     requested after scanned, both: shown separately), skipped:<reason> (not-scanned, needs-review,
- *     blocked-for, tos, minor, poi, image-hold, owner-hold, pending-collection-item, open-report,
- *     open-post-report, article-image, app-listing-asset, crucible-image, external-url, odd-url,
- *     head-error, now-200, recheck-ok, and one per DISPLAY_REFS reason: a confirmed-404 image shown as a
- *     display asset or ImageConnection stays visible with broken bytes, on purpose; each is its own
- *     count), raced-out,
+ *     requested after scanned, both: shown separately), skipped:<reason> (one per arm of
+ *     safetyHoldSql, linkageSql and DISPLAY_REFS, plus the HEAD outcomes; a confirmed-404 image shown
+ *     as a display asset or ImageConnection stays visible with broken bytes, on purpose), raced-out,
  *     still-404, no-row, would-hide.
  *   - Then `--apply --limit 1`, read the row back (public hidden, moderator sees it), then the rest.
  *   - Undo: `--undo --apply`. It does not touch the existence cache, which holds "gone" for up to 5
