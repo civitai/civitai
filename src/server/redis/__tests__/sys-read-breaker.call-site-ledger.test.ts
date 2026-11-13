@@ -15,6 +15,8 @@ const BREAKER = 'src/server/redis/sys-read-breaker.ts';
 const scan = scanSource(process.cwd(), {
   withSysReadBreaker: DEADLINE,
   withSysReadDeadline: DEADLINE,
+  withBreaker: BREAKER,
+  createSysReadGuard: BREAKER,
 });
 
 const OPTED_IN_HOT_READS = [
@@ -42,6 +44,13 @@ const body = (file: string, name: string) => {
 describe('the sys read breaker', () => {
   it('is used only at the listed hot request-path reads', () => {
     expect(scan.callersOf('withSysReadBreaker')).toEqual(OPTED_IN_HOT_READS);
+  });
+
+  it('has no way in other than withSysReadBreaker', () => {
+    // The process-wide guard is unexported in sys-read-deadline.ts. A caller that called a guard's
+    // withBreaker directly, or built its own guard, would skip the list above; only the deadline module may.
+    expect(scan.callersOf('withBreaker')).toEqual([DEADLINE]);
+    expect(scan.callersOf('createSysReadGuard')).toEqual([DEADLINE]);
   });
 
   it('the scan sees the plain deadline everywhere else (positive control)', () => {

@@ -25,7 +25,11 @@ export function revocationReadTimeoutMs(): number {
   return Number.isFinite(ms) ? ms : DEFAULT_REVOCATION_READ_TIMEOUT_MS;
 }
 
-export type RevocationFailureReason = 'timeout' | 'error';
+/**
+ * Why a check failed open: the read deadline passed (`timeout`), the caller's `bound` refused the read
+ * without waiting because its breaker is open (`breaker-open`), or anything else (`error`).
+ */
+export type RevocationFailureReason = 'timeout' | 'breaker-open' | 'error';
 export type RevocationOutcome = 'hit' | RevocationFailureReason;
 
 export interface RevocationCheckConfig {
@@ -39,7 +43,7 @@ export interface RevocationCheckConfig {
   /**
    * Bounds the read in place of the built-in deadline race, given the read and the deadline. For a caller
    * that already has its own bounded-read helper (the main app's, which adds a read breaker). An error it
-   * rejects with that carries `reason: 'timeout'` is reported as a timeout.
+   * rejects with that carries `reason: 'timeout'` or `reason: 'breaker-open'` is reported with that reason.
    */
   bound?: (read: Promise<boolean>, timeoutMs: number) => Promise<boolean>;
   /** Called when a read fails or times out and the check fails open. */
@@ -66,8 +70,10 @@ function raceDeadline(read: Promise<boolean>, ms: number): Promise<boolean> {
   return Promise.race([read, deadline]).finally(() => clearTimeout(timer));
 }
 
-const reasonOf = (err: unknown): RevocationFailureReason =>
-  (err as { reason?: unknown } | null)?.reason === 'timeout' ? 'timeout' : 'error';
+const reasonOf = (err: unknown): RevocationFailureReason => {
+  const reason = (err as { reason?: unknown } | null)?.reason;
+  return reason === 'timeout' || reason === 'breaker-open' ? reason : 'error';
+};
 
 const quietly = (fn: () => void) => {
   try {

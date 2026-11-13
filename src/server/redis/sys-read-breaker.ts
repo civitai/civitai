@@ -1,8 +1,4 @@
-import { env } from '~/env/server';
-import {
-  sysReadBreakerTransitionCounter,
-  sysReadGuardFailOpenCounter,
-} from '~/server/prom/sys-read-guard.metrics';
+import { ErrorReply } from 'redis';
 
 /**
  * Fast-fail for the hot request-path reads from the SYSTEM Redis client.
@@ -14,13 +10,18 @@ import {
  *
  * BREAKER (dark; REDIS_SYS_READ_BREAKER_ENABLED). One per process (globalThis, because the server
  * evaluates this module once per bundler module graph), shared by every opted-in read. After
- * REDIS_SYS_READ_BREAKER_THRESHOLD consecutive failed reads (timeout or error) it OPENS: opted-in reads
+ * REDIS_SYS_READ_BREAKER_THRESHOLD consecutive failed reads (a timeout or a client/connection error;
+ * an error reply from the store is not a failure, see storeAnswered) it OPENS: opted-in reads
  * reject at once with a SysReadUnavailableError('breaker-open'), so the caller's fail-open runs in
  * ~0ms. After REDIS_SYS_READ_BREAKER_COOLDOWN_MS one read is let through as a probe (HALF-OPEN; every
  * other read still fails fast); the probe's success closes the breaker, its failure re-opens it for
  * another cooldown. A probe that has not settled within one cooldown (only possible with the deadline
  * off) is abandoned and the next read probes instead, so a hung probe cannot hold the breaker
- * half-open. A null reply is a success.
+ * half-open. A null reply is a success, and so is an error reply (the store answered).
+ *
+ * This module is the mechanism only. The process-wide instance lives, unexported, in
+ * ./sys-read-deadline.ts, so `withSysReadBreaker` is the only way in (the call-site ledger pins its
+ * callers).
  *
  * The caller passes the command's promise, so while the breaker is open the command has already been
  * issued; the breaker stops the caller WAITING for it, and it settles in the background, bounded by the
@@ -156,6 +157,15 @@ export function raceSysDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * Whether a rejected read still got an answer from the store: an error reply (ErrorReply, and its
+ * SimpleError / BlobError / MultiErrorReply subclasses). Everything else (the guard's own deadline, a
+ * closed or offline client, a dropped socket, a reconnect failure, an unknown error) counts against the
+ * breaker. Listing the one class that proves health, rather than every class that disproves it, keeps an
+ * unlisted connection error from silently never opening the breaker during an outage.
+ */
+const storeAnswered = (err: unknown): boolean => err instanceof ErrorReply;
+
 export function createSysReadGuard(deps: SysReadGuardDeps) {
   const now = deps.now ?? Date.now;
 
@@ -202,7 +212,11 @@ export function createSysReadGuard(deps: SysReadGuardDeps) {
         return value;
       },
       (err) => {
-        deps.breaker.onFailure(cfg.breaker, now());
+        // An error reply (WRONGTYPE on one bad key, say) proves the store answered: it is healthy as far as
+        // the breaker is concerned, while the caller still gets the rejection. Counting it would let one bad
+        // key on one opted-in read open the breaker for every other opted-in read.
+        if (storeAnswered(err)) deps.breaker.onSuccess();
+        else deps.breaker.onFailure(cfg.breaker, now());
         report(reasonOf(err));
         throw err;
       }
@@ -211,29 +225,3 @@ export function createSysReadGuard(deps: SysReadGuardDeps) {
 
   return { deadline, withBreaker };
 }
-
-declare global {
-  // eslint-disable-next-line no-var, vars-on-top
-  var __civitaiSysReadBreaker: CircuitBreaker | undefined;
-}
-
-/** The process-wide breaker behind `withSysReadBreaker`. */
-export const sysReadBreaker: CircuitBreaker = (globalThis.__civitaiSysReadBreaker ??=
-  createCircuitBreaker((to) => sysReadBreakerTransitionCounter.inc({ to })));
-
-/** Read per call, so a changed env (or a test's setEnv) applies without rebuilding the guard. */
-export function sysReadGuardConfigFromEnv(): SysReadGuardConfig {
-  return {
-    breakerEnabled: env.REDIS_SYS_READ_BREAKER_ENABLED === true,
-    breaker: {
-      threshold: env.REDIS_SYS_READ_BREAKER_THRESHOLD,
-      cooldownMs: env.REDIS_SYS_READ_BREAKER_COOLDOWN_MS,
-    },
-  };
-}
-
-export const sysReadGuard = createSysReadGuard({
-  config: sysReadGuardConfigFromEnv,
-  breaker: sysReadBreaker,
-  onFailure: (reason) => sysReadGuardFailOpenCounter.inc({ reason }),
-});

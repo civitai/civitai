@@ -71,15 +71,21 @@ describe('isRevoked over a hung session store', () => {
   });
 
   it('defaults to 1000ms when the setting is unset', async () => {
+    // Fake timers, so the deadline is pinned exactly (still pending at 999ms, failed open at 1000ms) and a
+    // loaded runner cannot stretch it.
     store.hung = true;
+    vi.useFakeTimers();
     try {
-      const started = Date.now();
-      expect(await isRevoked(claims as never)).toBe(false);
-      const waited = Date.now() - started;
-      expect(waited).toBeGreaterThanOrEqual(900);
-      expect(waited).toBeLessThan(1700);
+      let result: boolean | undefined;
+      const check = isRevoked(claims as never).then((r) => (result = r));
+      await vi.advanceTimersByTimeAsync(999);
+      expect(result).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toBe(false);
+      await check;
     } finally {
+      vi.useRealTimers();
       store.hung = false;
     }
-  }, 10_000);
+  });
 });

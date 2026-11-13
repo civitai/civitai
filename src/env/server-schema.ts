@@ -129,7 +129,8 @@ export const serverSchema = z
     // healthy store and halves what each read costs while the store is hung. Was 2000.
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
     // Process-wide breaker for the hot request-path reads that opt in with withSysReadBreaker
-    // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (timeout or error), those
+    // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (a timeout or a client/connection
+    // error; an error reply from the store does not count), those
     // reads reject at once instead of waiting out the deadline, until COOLDOWN passes and one probe
     // read succeeds. Dark by default — while off, they wait on the client as before. Plain
     // withSysReadDeadline reads never consult it.

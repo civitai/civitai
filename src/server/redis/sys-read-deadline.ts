@@ -1,5 +1,41 @@
 import { env } from '~/env/server';
-import { sysReadGuard } from '~/server/redis/sys-read-breaker';
+import {
+  sysReadBreakerTransitionCounter,
+  sysReadGuardRejectionCounter,
+} from '~/server/prom/sys-read-guard.metrics';
+import {
+  createCircuitBreaker,
+  createSysReadGuard,
+  type CircuitBreaker,
+  type SysReadGuardConfig,
+} from '~/server/redis/sys-read-breaker';
+
+declare global {
+  // eslint-disable-next-line no-var, vars-on-top
+  var __civitaiSysReadBreaker: CircuitBreaker | undefined;
+}
+
+/** Read per call, so a changed env (or a test's setEnv) applies without rebuilding the guard. */
+function sysReadGuardConfigFromEnv(): SysReadGuardConfig {
+  return {
+    breakerEnabled: env.REDIS_SYS_READ_BREAKER_ENABLED === true,
+    breaker: {
+      threshold: env.REDIS_SYS_READ_BREAKER_THRESHOLD,
+      cooldownMs: env.REDIS_SYS_READ_BREAKER_COOLDOWN_MS,
+    },
+  };
+}
+
+// The process-wide guard and its breaker (globalThis, because the server evaluates this module once per
+// bundler module graph). NOT exported: withSysReadBreaker below is the only way to reach the breaker, so the
+// call-site ledger (sys-read-breaker.call-site-ledger.test.ts) sees every opted-in read.
+const sysReadGuard = createSysReadGuard({
+  config: sysReadGuardConfigFromEnv,
+  breaker: (globalThis.__civitaiSysReadBreaker ??= createCircuitBreaker((to) =>
+    sysReadBreakerTransitionCounter.inc({ to })
+  )),
+  onFailure: (reason) => sysReadGuardRejectionCounter.inc({ reason }),
+});
 
 /**
  * Wall-clock deadline for ANY per-request sysRedis READ (single command OR MULTI).
@@ -21,7 +57,7 @@ import { sysReadGuard } from '~/server/redis/sys-read-breaker';
  *
  * The deadline alone: it never consults the read breaker (see withSysReadBreaker). A
  * timeout rejects with a SysReadUnavailableError whose message says "timed out", and is
- * counted in sys_read_guard_failopen_total.
+ * counted in sys_read_guard_rejections_total.
  *
  * `ms` defaults to REDIS_SYS_READ_TIMEOUT_MS; pass an explicit value in tests. `<= 0`
  * disables the guard (returns the promise unchanged).

@@ -168,6 +168,32 @@ describe('createRevocationCheck deadline and reporting', () => {
     expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims);
   });
 
+  it('a breaker-open rejection from the bound hook is its own reason; any other tag is an error', async () => {
+    const onError = vi.fn();
+    const onOutcome = vi.fn();
+    const rejectWith = (reason: string) => () =>
+      Promise.reject(Object.assign(new Error('skipped'), { reason }));
+    const open = createRevocationCheck({
+      redis: hung,
+      bound: rejectWith('breaker-open'),
+      onError,
+      onOutcome,
+    });
+    expect(await open(claims)).toBe(false);
+    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'breaker-open', claims);
+    expect(onOutcome).toHaveBeenLastCalledWith('breaker-open', expect.any(Number));
+
+    const other = createRevocationCheck({
+      redis: hung,
+      bound: rejectWith('other'),
+      onError,
+      onOutcome,
+    });
+    expect(await other(claims)).toBe(false);
+    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'error', claims);
+    expect(onOutcome).toHaveBeenLastCalledWith('error', expect.any(Number));
+  });
+
   it('a throwing observer never turns a fail-open into a throw', async () => {
     const check = createRevocationCheck({
       redis: hung,

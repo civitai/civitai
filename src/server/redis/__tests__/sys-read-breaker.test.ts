@@ -1,3 +1,4 @@
+import { ClientClosedError, ErrorReply, SimpleError, SocketClosedUnexpectedlyError } from 'redis';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createCircuitBreaker,
@@ -146,6 +147,58 @@ describe('sys read breaker state machine', () => {
     expect(breaker.state()).toBe('open');
   });
 
+  it('an error reply proves the store answered: it rejects to the caller but never opens the breaker', async () => {
+    const { guard, breaker, failures } = makeGuard();
+    // Well past the threshold, and both the base class and a subclass node-redis actually throws.
+    for (let i = 0; i < THRESHOLD * 3; i++) {
+      const reply =
+        i % 2
+          ? new SimpleError('WRONGTYPE Operation against a key holding the wrong kind of value')
+          : new ErrorReply('ERR bad key');
+      await expect(guard(Promise.reject(reply), 1000)).rejects.toBe(reply);
+    }
+    expect(breaker.state()).toBe('closed');
+    expect(failures).toEqual(Array(THRESHOLD * 3).fill('error'));
+    await expect(guard(answered('still served'), 1000)).resolves.toBe('still served');
+  });
+
+  it('an error reply between failures resets the consecutive count, like any answer', async () => {
+    const { guard, breaker } = makeGuard();
+    await failTimes(guard, THRESHOLD - 1);
+    await expect(guard(Promise.reject(new ErrorReply('ERR x')), 1000)).rejects.toBeInstanceOf(
+      ErrorReply
+    );
+    await failTimes(guard, THRESHOLD - 1);
+    expect(breaker.state()).toBe('closed');
+  });
+
+  it('an error reply to the half-open probe closes the breaker (the store is up)', async () => {
+    const { guard, breaker, clock } = makeGuard();
+    await failTimes(guard, THRESHOLD);
+    clock.now += COOLDOWN_MS * 1.5;
+    await expect(guard(Promise.reject(new ErrorReply('ERR x')), 1000)).rejects.toBeInstanceOf(
+      ErrorReply
+    );
+    expect(breaker.state()).toBe('closed');
+  });
+
+  it.each([
+    ['ClientClosedError', () => new ClientClosedError()],
+    ['SocketClosedUnexpectedlyError', () => new SocketClosedUnexpectedlyError()],
+    // A plain Error: what node-redis rejects with once the command queue cap is hit on a wedged client.
+    ['the full command queue', () => new Error('The queue is full')],
+    [
+      'a raw socket error',
+      () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+    ],
+  ])('a client/connection error (%s) still trips the breaker', async (_name, make) => {
+    const { guard, breaker } = makeGuard();
+    for (let i = 0; i < THRESHOLD; i++) {
+      await expect(guard(Promise.reject(make()), 1000)).rejects.toThrow();
+    }
+    expect(breaker.state()).toBe('open');
+  });
+
   it('reports transitions in order: open, half-open, closed', async () => {
     const seen: BreakerState[] = [];
     const breaker = createCircuitBreaker((to) => seen.push(to));
@@ -173,7 +226,7 @@ describe('sys read breaker state machine', () => {
 });
 
 describe('plain deadline (withSysReadDeadline)', () => {
-  it('releases a hung command at the deadline and reports a timeout fail-open', async () => {
+  it('releases a hung command at the deadline and reports a timeout rejection', async () => {
     const { deadline, failures } = makeGuard();
     const started = Date.now();
     await expect(deadline(never(), 25)).rejects.toThrow('sysRedis read timed out after 25ms');
@@ -181,7 +234,7 @@ describe('plain deadline (withSysReadDeadline)', () => {
     expect(failures).toEqual(['timeout']);
   });
 
-  it('reports a read error as an error fail-open', async () => {
+  it('reports a read error as an error rejection', async () => {
     const { deadline, failures } = makeGuard();
     await expect(deadline(fail(), 1000)).rejects.toThrow('ECONNRESET');
     expect(failures).toEqual(['error']);
