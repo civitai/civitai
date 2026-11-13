@@ -135,7 +135,8 @@ type ShowcaseImage = {
 /**
  * The browsing-settings exclusions (tags, poi, minor) resolved at `browsingLevel` for `viewer`, as a
  * filter over showcase images. Resolved onto a target of its own, which names no owner, so none of
- * the tag exclusions are skipped; the viewer's own images pass.
+ * the tag exclusions are skipped; the viewer's own images pass. An image with no tag ids read is
+ * hidden while any tag is excluded.
  */
 export async function getShowcaseImageFilter({
   browsingLevel,
@@ -153,5 +154,5 @@ export async function getShowcaseImageFilter({
     (!!viewer.id && image.userId === viewer.id) ||
     (!(rules.disablePoi && image.poi) &&
       !(rules.disableMinor && image.minor) &&
-      !(image.tags ?? []).some((tagId) => excluded.has(tagId)));
+      (!excluded.size || (image.tags != null && !image.tags.some((tagId) => excluded.has(tagId)))));
 }
