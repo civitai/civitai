@@ -8,13 +8,7 @@ import {
 import { useRef, useState } from 'react';
 
 import type { AudioBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
-
-function formatTime(seconds: number) {
-  if (!isFinite(seconds) || seconds < 0) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
+import { formatPlaybackTime } from '~/utils/audio-player';
 
 export function GeneratedAudioOutput({
   image,
@@ -157,7 +151,7 @@ export function GeneratedAudioOutput({
                 {title}
               </div>
             )}
-            <div className="text-xs font-medium text-white/70">{formatTime(duration)}</div>
+            <div className="text-xs font-medium text-white/70">{formatPlaybackTime(duration)}</div>
           </div>
 
           <button

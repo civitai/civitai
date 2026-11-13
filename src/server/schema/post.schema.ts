@@ -188,6 +188,10 @@ export const updatePostImageSchema = z.object({
     return val;
   }),
   hideMeta: z.boolean().optional(),
+  /** Songs only. An empty title clears it. */
+  title: z.string().trim().max(POST_TITLE_MAX_LENGTH).optional(),
+  /** Songs only. */
+  allowRemix: z.boolean().optional(),
 });
 
 export type AddResourceToPostImageInput = z.infer<typeof addResourceToPostImageInput>;

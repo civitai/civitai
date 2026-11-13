@@ -31,7 +31,7 @@ import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { PostDetailEditable } from '~/server/services/post.service';
-import { CollectionType } from '~/shared/utils/prisma/enums';
+import { CollectionType, MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -276,6 +276,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         onSubmit: handlePublish,
         publishedAt: post.publishedAt,
         publishingModel: !!post.modelVersionId,
+        songCount: addedImages.filter((image) => image.type === MediaType.audio).length,
       },
     });
   };

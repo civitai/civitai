@@ -1,3 +1,4 @@
+import { SONG_KEY_MAX_LENGTH } from '~/server/common/constants';
 import type { AudioMetadata, LyricLine } from '~/server/schema/media.schema';
 
 /** The refusal when a user without the music flag tries to store a song. */
@@ -20,6 +21,10 @@ export function parseLyricLines(lyrics: unknown): LyricLine[] | undefined {
 
 const nonEmptyString = (value: unknown) =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
+const songKey = (value: unknown) => {
+  const key = nonEmptyString(value);
+  return key && key.length <= SONG_KEY_MAX_LENGTH ? key : undefined;
+};
 const positiveNumber = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 
@@ -35,9 +40,14 @@ export function buildSongDetails(
     title: nonEmptyString(params?.title),
     lyrics: parseLyricLines(params?.lyrics) ?? parseLyricLines(concept?.lyrics),
     bpm: positiveNumber(params?.bpm) ?? positiveNumber(concept?.bpm),
-    key: nonEmptyString(params?.key) ?? nonEmptyString(concept?.key),
+    key: songKey(params?.key) ?? songKey(concept?.key),
   };
   return Object.fromEntries(Object.entries(details).filter(([, v]) => v !== undefined));
+}
+
+/** Whether a song's owner lets others remix it; only an explicit `allowRemix: false` refuses. */
+export function songAllowsRemix(metadata: unknown): boolean {
+  return (metadata as { allowRemix?: unknown } | null | undefined)?.allowRemix !== false;
 }
 
 /** The drafting step's parsed output, from raw orchestrator workflow steps. */

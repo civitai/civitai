@@ -3,6 +3,7 @@ import {
   buildSongDetails,
   parseLyricLines,
   readSongConcept,
+  songAllowsRemix,
 } from '~/shared/form-graph/generation/audio/song-metadata';
 
 describe('parseLyricLines', () => {
@@ -57,6 +58,10 @@ describe('buildSongDetails', () => {
     expect(details.bpm).toBe(100);
   });
 
+  it('drops a drafted key longer than a song may store', () => {
+    expect(buildSongDetails({}, { key: 'A minor, then a long modulation' })).toEqual({});
+  });
+
   it('drops values of the wrong shape instead of passing them on', () => {
     expect(buildSongDetails({ title: '   ', bpm: 'fast', lyrics: 7 }, { key: 3 })).toEqual({});
     expect(buildSongDetails(undefined)).toEqual({});
@@ -82,5 +87,14 @@ describe('readSongConcept', () => {
       readSongConcept([{ $type: 'chatCompletion', output: { parsed: null } }])
     ).toBeUndefined();
     expect(readSongConcept(undefined)).toBeUndefined();
+  });
+});
+
+describe('songAllowsRemix', () => {
+  it('is false only when the owner turned remixing off', () => {
+    expect(songAllowsRemix({ duration: 1, allowRemix: false })).toBe(false);
+    expect(songAllowsRemix({ duration: 1, allowRemix: true })).toBe(true);
+    expect(songAllowsRemix({ duration: 1 })).toBe(true);
+    expect(songAllowsRemix(null)).toBe(true);
   });
 });

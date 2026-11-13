@@ -31,3 +31,8 @@ export function withScheduleTime(current: Date, time: string) {
 export function formatScheduleTime(date: Date) {
   return formatDate(date, 'HH:mm');
 }
+
+export function scheduleDescription(noun: string, songCount = 0) {
+  const songs = songCount > 0 ? ` and its ${songCount} ${songCount === 1 ? 'song' : 'songs'}` : '';
+  return `Select the date and time you want to publish this ${noun}${songs}.`;
+}

@@ -42,7 +42,11 @@ import {
   refreshHasReceivedReviews,
 } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ImageSchema, IngestImageInput } from '~/server/schema/image.schema';
+import type {
+  ImageSchema,
+  IngestImageInput,
+  SetSongCoverInput,
+} from '~/server/schema/image.schema';
 import { externalMetaSchema } from '~/server/schema/image.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
@@ -79,6 +83,7 @@ import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   createImage,
   createImageResources,
+  deleteImageById,
   deleteImageFromS3,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
@@ -108,6 +113,8 @@ import type {
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { capPostGetInfiniteImages } from '~/server/utils/post-getinfinite-images';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -139,7 +146,7 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { audioMetadataSchema } from '~/server/schema/media.schema';
+import { audioMetadataSchema, lyricLineSchema, type LyricLine } from '~/server/schema/media.schema';
 import {
   saveGeneratedTrackLyrics,
   submitTrackLyricsScan,
@@ -874,11 +881,74 @@ async function getPostUnpublishContext({
   };
 }
 
-async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
+/** Each song's stored lyric lines, in one read for all of them. */
+async function getSongLyricLines(
+  images: { id: number; type: MediaType }[],
+  db: typeof dbRead | typeof dbWrite
+) {
+  const songIds = images.filter((x) => x.type === MediaType.audio).map((x) => x.id);
+  if (!songIds.length) return new Map<number, LyricLine[]>();
+  const rows = await db.trackLyrics.findMany({
+    where: { imageId: { in: songIds } },
+    select: { imageId: true, lines: true },
+  });
+  return new Map(
+    rows.flatMap(({ imageId, lines }) => {
+      const parsed = lyricLineSchema.array().safeParse(lines);
+      return parsed.success ? [[imageId, parsed.data] as const] : [];
+    })
+  );
+}
+
+const songCoverSelect = {
+  id: true,
+  url: true,
+  ingestion: true,
+  nsfwLevel: true,
+  blockedFor: true,
+} satisfies Prisma.ImageSelect;
+export type SongCover = Prisma.ImageGetPayload<{ select: typeof songCoverSelect }>;
+
+/** Each song's cover with its scan state, in one read for all of them. */
+async function getSongCovers(
+  images: { id: number; type: MediaType; metadata: unknown }[],
+  db: typeof dbRead | typeof dbWrite
+) {
+  const links = images.flatMap((image) => {
+    const coverId = (image.metadata as { coverImageId?: unknown } | null)?.coverImageId;
+    return image.type === MediaType.audio && typeof coverId === 'number'
+      ? [{ songId: image.id, coverId }]
+      : [];
+  });
+  if (!links.length) return new Map<number, SongCover>();
+  // The songs come back too, for their owner: a cover must be theirs.
+  const rows = await db.image.findMany({
+    where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
+    select: { ...songCoverSelect, userId: true, postId: true, metadata: true },
+  });
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return new Map(
+    links.flatMap(({ songId, coverId }) => {
+      const song = byId.get(songId);
+      const cover = byId.get(coverId);
+      if (!song || !cover || !isCoverOfSong(cover, song)) return [];
+      const { userId: _userId, postId: _postId, metadata: _metadata, ...shown } = cover;
+      return [[songId, shown] as const];
+    })
+  );
+}
+
+async function combinePostEditImageData(
+  images: PostImageEditSelect[],
+  user: SessionUser,
+  db: typeof dbRead | typeof dbWrite = dbRead
+) {
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
   const thumbnails = await thumbnailCache.fetch(imageIds);
+  const lyrics = await getSongLyricLines(images, db);
+  const covers = await getSongCovers(images, db);
 
   return _images
     .map((image) => ({
@@ -888,6 +958,8 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
       thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
+      lyrics: lyrics.get(image.id) ?? null,
+      cover: covers.get(image.id) ?? null,
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
 }
@@ -899,7 +971,7 @@ export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: Ses
     where: { postId: id },
     select: editPostImageSelect,
   });
-  return combinePostEditImageData(images, user);
+  return combinePostEditImageData(images, user, db);
 };
 
 export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
@@ -1711,7 +1783,7 @@ export const addPostImage = async ({
         select: editPostImageSelect,
       });
       if (existingResult) {
-        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        const [existingImage] = await combinePostEditImageData([existingResult], user, dbWrite);
         return existingImage;
       }
     }
@@ -1728,6 +1800,11 @@ export const addPostImage = async ({
         })
       : undefined;
   const song = allowAudio ? resolveAudioMetadata(props.metadata, songWorkflow ?? null) : undefined;
+  if (song?.metadata.title)
+    await throwOnBlockedUserContent(song.metadata.title, {
+      isModerator: user.isModerator,
+      surface: 'post',
+    });
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -1763,7 +1840,7 @@ export const addPostImage = async ({
     select: editPostImageSelect,
   });
   if (!result) throw throwDbError(`Image not found`);
-  const [image] = await combinePostEditImageData([result], user);
+  const [image] = await combinePostEditImageData([result], user, dbWrite);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
   // Cache Busting — parallelize independent operations
@@ -1863,18 +1940,38 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   await imagesForModelVersionsCache.refresh(showcaseVersionIds);
 }
 
-export const updatePostImage = async (image: UpdatePostImageInput) => {
+export const updatePostImage = async ({ title, allowRemix, ...image }: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
     select: {
+      type: true,
       hideMeta: true,
       ingestion: true,
       blockedFor: true,
-      metadata: true,
       nsfwLevel: true,
       meta: true,
     },
   });
+
+  const songFieldsSent = title !== undefined || allowRemix !== undefined;
+  if (songFieldsSent && currentImage.type !== MediaType.audio)
+    throw throwBadRequestError('Only a song has a title and a remix setting.');
+  if (title)
+    await throwOnBlockedUserContent(title, {
+      surface: 'post',
+      entityType: 'Image',
+      entityId: image.id,
+    });
+  // Merged into the stored object by the UPDATE itself, so keys another save wrote meanwhile (the
+  // remix setting, the title, the cover link) stay. A call without song fields rewrites it as is.
+  const songKeys = {
+    ...(title ? { title } : {}),
+    ...(allowRemix !== undefined ? { allowRemix } : {}),
+  };
+  const storedMetadata =
+    title === ''
+      ? Prisma.sql`(COALESCE(metadata, '{}'::jsonb) - 'title')`
+      : Prisma.sql`COALESCE(metadata, '{}'::jsonb)`;
 
   // `meta` is optional on this input, and the difference matters: absent means "leave the
   // stored metadata alone" (the hide/show-prompt toggle sends only `hideMeta`), while an
@@ -1901,27 +1998,30 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 
   const shouldIngest = blockedForVerification && updatedIsVerifiable;
 
-  const result = await dbWrite.image.update({
-    where: { id: image.id },
-    data: {
-      ...image,
-      id: undefined, // prevent updating the id!
-      updatedAt: new Date(),
-      // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
-      meta: metaProvided
-        ? meta != null
-          ? (meta as Prisma.JsonObject)
-          : Prisma.JsonNull
-        : undefined,
-      // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: shouldIngest ? 'Pending' : undefined,
-      blockedFor: shouldIngest ? null : undefined,
-      metadata: {
-        ...((currentImage.metadata as MixedObject) ?? {}),
-      } as Prisma.JsonObject,
-    },
-    select: { id: true, url: true, userId: true, name: true, type: true },
-  });
+  const [result] = await dbWrite.$transaction([
+    dbWrite.image.update({
+      where: { id: image.id },
+      data: {
+        ...image,
+        id: undefined, // prevent updating the id!
+        updatedAt: new Date(),
+        // undefined = omit the column from the UPDATE; Prisma.JsonNull = write SQL NULL.
+        meta: metaProvided
+          ? meta != null
+            ? (meta as Prisma.JsonObject)
+            : Prisma.JsonNull
+          : undefined,
+        // If this image was blocked due to missing metadata, we need to set it back to pending
+        ingestion: shouldIngest ? 'Pending' : undefined,
+        blockedFor: shouldIngest ? null : undefined,
+      },
+      select: { id: true, url: true, userId: true, name: true, type: true },
+    }),
+    dbWrite.$executeRaw`
+      UPDATE "Image" SET metadata = ${storedMetadata} || ${JSON.stringify(songKeys)}::jsonb
+      WHERE id = ${image.id}
+    `,
+  ]);
   // Parallelize independent cache refreshes — none read what others write.
   // ingestImage stays sequential after: it does not read these caches but
   // does have ordering relative to the dbWrite.image.update above.
@@ -1951,6 +2051,87 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     });
   }
 };
+
+/**
+ * A song's cover is its owner's own image, outside any post, naming the song as its parent. Only
+ * such a row is shown or replaced through the song's `coverImageId`.
+ */
+function isCoverOfSong(
+  row: { userId: number; postId: number | null; metadata: unknown } | null | undefined,
+  song: { id: number; userId: number }
+) {
+  return (
+    !!row &&
+    row.userId === song.userId &&
+    row.postId == null &&
+    (row.metadata as { parentId?: unknown } | null)?.parentId === song.id
+  );
+}
+
+export async function setSongCover({
+  id,
+  cover,
+  user,
+}: SetSongCoverInput & { user: SessionUser }): Promise<SongCover> {
+  assertCanStoreSongs(user);
+  if (cover.type !== MediaType.image || (cover.mimeType && !cover.mimeType.startsWith('image/')))
+    throw throwBadRequestError('A cover must be an image.');
+
+  const song = await dbWrite.image.findUnique({
+    where: { id },
+    select: { id: true, userId: true, postId: true, type: true },
+  });
+  if (!song || (song.userId !== user.id && !user.isModerator)) throw throwAuthorizationError();
+  if (song.type !== MediaType.audio) throw throwBadRequestError('Only a song has a cover.');
+
+  // Deleting one row deletes its file, so a key behind any other image is refused. The song's own
+  // cover row on this key is a retry whose first attempt stopped before the link.
+  const existing = await dbWrite.image.findFirst({
+    where: { url: cover.url },
+    select: { id: true, userId: true, postId: true, metadata: true },
+  });
+  if (existing && !isCoverOfSong(existing, song))
+    throw throwBadRequestError(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+  const coverId =
+    existing?.id ??
+    (
+      await createImage({
+        ...pickClientImageColumns(cover),
+        type: MediaType.image,
+        metadata: { parentId: song.id },
+        userId: song.userId,
+        clientUrl: { alsoIssuedTo: user.id },
+      })
+    ).id;
+
+  // One statement, with the row locked, so concurrent saves each get back the cover they replaced
+  // and no other metadata field written meanwhile is lost.
+  const [linked] = await dbWrite.$queryRaw<{ previous: unknown }[]>`
+    UPDATE "Image" i
+    SET metadata = COALESCE(i.metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${coverId}::int)
+    FROM (SELECT id, metadata -> 'coverImageId' AS previous FROM "Image" WHERE id = ${song.id} FOR UPDATE) old
+    WHERE i.id = old.id
+    RETURNING old.previous
+  `;
+  const previousId = typeof linked?.previous === 'number' ? linked.previous : undefined;
+  if (previousId !== undefined && previousId !== coverId) {
+    const previous = await dbWrite.image.findUnique({
+      where: { id: previousId },
+      select: { userId: true, postId: true, metadata: true },
+    });
+    if (isCoverOfSong(previous, song))
+      await deleteImageById({ id: previousId, deletedById: user.id });
+  }
+
+  await Promise.all([
+    imageMetadataCache.refresh(song.id),
+    song.postId ? preventReplicationLag('postImages', song.postId) : undefined,
+  ]);
+
+  const saved = await dbWrite.image.findUnique({ where: { id: coverId }, select: songCoverSelect });
+  if (!saved) throw throwDbError('Cover not found');
+  return saved;
+}
 
 /** Looks up a version an uploader may credit to their images, or throws not found. */
 export async function findCreditableModelVersion(modelVersionId: number, user: SessionUser) {
