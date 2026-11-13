@@ -26,6 +26,8 @@ import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helper
 import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { TRPCError } from '@trpc/server';
+import { lastKnownGood, type LastKnownRead } from '~/server/services/generation/last-known-good';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
@@ -163,22 +165,69 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   );
 }
 
-export async function getGenerationStatus() {
-  // Fail open: a sysRedis outage shouldn't crash generation API calls.
-  let raw: string | null | undefined;
-  try {
+/**
+ * What a generation request is told when the generation settings (the kill switch or the gate
+ * rules) cannot be read and this process has never read them.
+ */
+export const GENERATION_CONFIG_UNAVAILABLE_MESSAGE =
+  'Generation is temporarily unavailable. Please try again in a few minutes.';
+
+export function generationConfigUnavailableError() {
+  return new TRPCError({
+    code: 'SERVICE_UNAVAILABLE',
+    message: GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+  });
+}
+
+const failOpenExtra = (last: { ageMs: number } | undefined) => ({
+  served: last ? 'last-known-good' : 'fail-closed',
+  lastKnownAgeMs: last?.ageMs,
+});
+
+// The kill switch is a moderation control: a failed read must never turn an operator's
+// "disabled" back into "enabled". The last raw value read is kept (the parse stays outside).
+const generationStatusRead = lastKnownGood<string | null>();
+
+/**
+ * The generation kill switch, with whether it is KNOWN. On a sysRedis failure it answers with the
+ * last value this process read; when there is none, `known: false` and a DISABLED status (global
+ * and self-hosted) with GENERATION_CONFIG_UNAVAILABLE_MESSAGE, never the schema default "enabled".
+ * Callers that ENFORCE refuse on `known: false` (buildGenerationContext); the public status
+ * endpoint must not edge-cache that fallback.
+ */
+export async function getGenerationStatusState(): Promise<{
+  status: GenerationStatus;
+  known: boolean;
+}> {
+  const read = await generationStatusRead.read(
     // Wall-clock deadline so a silent sysRedis half-open can't park this read
     // (runs in getGenerationConfig's Promise.all on every gen submit) ~11min.
-    raw = await withSysReadDeadline(
-      sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
-    );
-  } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
-    raw = undefined;
-  }
-  const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
+    () =>
+      withSysReadDeadline(
+        sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)
+      ),
+    (err, last) =>
+      logSysRedisFailOpen(
+        'defaults-firing',
+        'getGenerationStatus generation.service',
+        err,
+        failOpenExtra(last)
+      )
+  );
+  const status = read.known
+    ? generationStatusSchema.parse(JSON.parse(read.value ?? '{}'))
+    : generationStatusSchema.parse({
+        mode: 'disabled',
+        selfHostedMode: 'disabled',
+        message: GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+      });
 
-  return status as GenerationStatus;
+  return { status: status as GenerationStatus, known: read.known };
+}
+
+/** The kill switch; see getGenerationStatusState (this drops `known`). */
+export async function getGenerationStatus(): Promise<GenerationStatus> {
+  return (await getGenerationStatusState()).status;
 }
 
 export async function setGenerationStatus(input: {
@@ -874,17 +923,34 @@ const generatorMessageStore = perEntryStore<GeneratorMessage>({
   schema: generatorMessageSchema,
 });
 
+// Gate rules hide or disable models and ecosystems — a moderation control, like the kill switch.
+const gateRulesRead = lastKnownGood<GateRule[]>();
+
 /**
- * The operator-authored gate rules. Fail-open to `[]` so a bad or unreachable
- * store never blocks generation.
+ * The operator-authored gate rules, with whether they are known. On a sysRedis failure this is
+ * the last set this process read; `known: false` when there is none — "no rules" would make every
+ * hidden model submittable, so callers that ENFORCE must refuse instead (buildGenerationContext).
  */
-export async function getGateRules(): Promise<GateRule[]> {
+export async function getGateRuleState(): Promise<LastKnownRead<GateRule[]>> {
   // Wall-clock deadline: this runs in getGenerationConfig's Promise.all on every
   // gen submit — a silent sysRedis half-open would park it.
-  return withSysReadDeadline(gateRuleStore.read()).catch((err) => {
-    logSysRedisFailOpen('read-degraded', 'getGateRules', err);
-    return [];
-  });
+  return gateRulesRead.read(
+    () => withSysReadDeadline(gateRuleStore.read()),
+    (err, last) => logSysRedisFailOpen('read-degraded', 'getGateRules', err, failOpenExtra(last))
+  );
+}
+
+/** The gate rules; throws SERVICE_UNAVAILABLE when they cannot be read and were never read. */
+export async function getGateRules(): Promise<GateRule[]> {
+  const state = await getGateRuleState();
+  if (!state.known) throw generationConfigUnavailableError();
+  return state.value;
+}
+
+/** For tests: forget the last-known kill switch and gate rules. */
+export function __resetGenerationConfigLastKnownForTests() {
+  generationStatusRead.reset();
+  gateRulesRead.reset();
 }
 
 export async function saveGateRule(rule: GateRule): Promise<GateRule> {
@@ -969,14 +1035,17 @@ export function getSelfHostedDisabledEcosystems({
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean; tier?: string } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, hasTestingAccess, status, gateRules, generatorMessages] =
+  const [unstableResources, hasTestingAccess, status, gateRuleState, generatorMessages] =
     await Promise.all([
       getUnstableResources(),
       resolveTestingAccess(user),
       getGenerationStatus(),
-      getGateRules(),
+      getGateRuleState(),
       getGeneratorMessages(),
     ]);
+  // Display only: with the rules unknown the picker shows no gates, and a submit is refused by
+  // buildGenerationContext, which enforces them.
+  const gateRules = gateRuleState.known ? gateRuleState.value : [];
   const selfHostedMode = status.selfHostedMode;
   const isMember = (user.tier ?? 'free') !== 'free';
   return {
@@ -1145,7 +1214,12 @@ export async function getCanGenerateHiddenGates(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<CanGenerateBlockedTargets> {
-  const [rules, hasTestingAccess] = await Promise.all([getGateRules(), resolveTestingAccess(user)]);
+  const [ruleState, hasTestingAccess] = await Promise.all([
+    getGateRuleState(),
+    resolveTestingAccess(user),
+  ]);
+  // Display only (the model page's canGenerate); a submit is refused while the rules are unknown.
+  const rules = ruleState.known ? ruleState.value : [];
   return canGenerateBlockedTargets(
     applicableRulesFor(rules, {
       isModerator: !!user.isModerator,

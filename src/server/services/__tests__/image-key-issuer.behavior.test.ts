@@ -472,8 +472,40 @@ describe('keyIssueRecords', () => {
 });
 
 describe('recordUploadKeyOwner', () => {
-  it('does not throw when the write fails', async () => {
+  const writes = () => redisMock.sysRedis.set.mock.calls.length;
+
+  it('keeps a record through a write that fails twice, so the save after the cutover accepts it', async () => {
+    const before = writes();
+    redisMock.sysRedis.set
+      .mockRejectedValueOnce(new Error('blip'))
+      .mockRejectedValueOnce(new Error('blip'));
+    expect(await recordUploadKeyOwner(KEY, CALLER)).toBe(true);
+    expect(writes() - before).toBe(3);
+    expect(await outcome(KEY, AFTER)).toBe('accepted');
+    expect(outcomeCount('record_failed')).toBe(0);
+  });
+
+  it('says the record was not written when every attempt fails, and stops after three', async () => {
+    const before = writes();
+    const failed = outcomeCount('record_failed');
     redisMock.sysRedis.set.mockRejectedValue(new Error('down'));
-    await expect(recordUploadKeyOwner(KEY, CALLER)).resolves.toBeUndefined();
+    await expect(recordUploadKeyOwner(KEY, CALLER)).resolves.toBe(false);
+    expect(writes() - before).toBe(3);
+    expect(outcomeCount('record_failed')).toBe(failed + 1);
+  });
+
+  it('gives up on a write that never settles, within a bounded time', async () => {
+    const before = writes();
+    vi.useFakeTimers();
+    try {
+      redisMock.sysRedis.set.mockImplementation((() => new Promise(() => undefined)) as never);
+      let settled: boolean | undefined;
+      void recordUploadKeyOwner(KEY, CALLER).then((v) => (settled = v));
+      await vi.advanceTimersByTimeAsync(3 * 2_000 + 1_000);
+      expect(settled).toBe(false);
+      expect(writes() - before).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
