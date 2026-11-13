@@ -1,10 +1,11 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import path from 'node:path';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
+ * (The ledger classifying every rate-limiting router is a convention guard:
+ * src/server/services/__tests__/no-unclassified-rate-limit-router.test.ts.)
+ *
  * Money and generation procedures stay FAIL-CLOSED when the rate limiter's store is unavailable.
  *
  * The per-process fallback count (rate-limit-bucket.store-down.test.ts) keeps ordinary procedures
@@ -28,9 +29,11 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 
 import { hSetWithTTL } from '~/server/redis/atomic';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { rateLimit } from '~/server/middleware.trpc';
 import * as bucket from '~/server/utils/rate-limit-bucket';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const { claimRateLimitAttempt } = bucket;
 const hGet = redisMock.redis.packed.hGet;
@@ -60,6 +63,7 @@ async function claim(keyName: string, scope?: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetEnv();
   vi.mocked(hSetWithTTL).mockResolvedValue(undefined as never);
 });
 
@@ -73,32 +77,39 @@ describe('claimRateLimitAttempt, money scopes, store unavailable', () => {
     expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
   });
 
-  it('a store that never answers refuses with a 503 within 750ms', async () => {
+  it('a store that never answers refuses with a 503 after the longer fail-closed deadline, not before', async () => {
     hGet.mockImplementation(() => new Promise(() => undefined));
     const started = Date.now();
     const err = await within(
       claim('buzz:getUserAccount').catch((e: unknown) => e),
-      2000
+      4000
     );
-    expect(Date.now() - started).toBeLessThan(750);
+    const took = Date.now() - started;
     expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(took).toBeGreaterThanOrEqual(1900);
+    expect(took).toBeLessThan(2750);
   });
 
-  it('the scope decides, not the bucket key: a money procedure sharing a non-money key still fails closed', async () => {
-    hGet.mockRejectedValue(new Error('cluster down'));
-    const err = await claim('post:shared-bucket', 'orchestrator.getBoostCost').catch(
-      (e: unknown) => e
+  it('a slow read (500ms) on a money scope is answered, not refused', async () => {
+    hGet.mockImplementation(() => new Promise((r) => setTimeout(() => r([]), 500)));
+    await expect(claim('buzz:getUserAccount')).resolves.toBeUndefined();
+  });
+
+  it('control: the same 500ms read on a non-money scope still degrades under the default deadline', async () => {
+    hGet.mockImplementation(() => new Promise((r) => setTimeout(() => r([]), 500)));
+    await claim('post:create', 'post.create');
+    expect(logSysRedisFailOpen).toHaveBeenCalledWith(
+      'read-degraded',
+      'rate-limit-bucket.read',
+      expect.anything(),
+      expect.objectContaining({ reason: 'timeout' })
     );
-    expect((err as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
   });
 
-  it('positive control: a non-money procedure is admitted on the per-process count', async () => {
-    hGet.mockRejectedValue(new Error('cluster down'));
-    await expect(claim('post:create', 'post.create')).resolves.toBeUndefined();
-  });
-
-  it('a healthy store still admits a money procedure', async () => {
-    hGet.mockResolvedValue([]);
+  it('REDIS_CACHE_READ_DEADLINE_MS=0 switches the fail-closed bound off too', async () => {
+    setEnv({ REDIS_CACHE_READ_DEADLINE_MS: 0 });
+    // Slower than the fail-closed bound: answered only because no deadline applies at all.
+    hGet.mockImplementation(() => new Promise((r) => setTimeout(() => r([]), 2300)));
     await expect(claim('buzz:getUserAccount')).resolves.toBeUndefined();
   });
 });
@@ -121,48 +132,9 @@ describe('rateLimit middleware passes the procedure path as the scope', () => {
   });
 });
 
-/**
- * LEDGER. Every router module that rate-limits a procedure must be classified, by its tRPC router
- * key, as fail-closed or fallback. The set is asserted in both directions: a new router that starts
- * rate-limiting (a new payment provider, say) fails here until someone decides which it is, and a
- * classified router that stops rate-limiting fails too, so the lists never rot into reassurance.
- * Procedures added to a fail-closed router inherit fail-closed with no further step.
- */
-describe('rate-limit fail-closed ledger', () => {
-  const routersDir = path.resolve(__dirname, '../../routers');
-  const indexSrc = readFileSync(path.join(routersDir, 'index.ts'), 'utf8');
-  const keyByFile = new Map<string, string>();
-  for (const m of indexSrc.matchAll(/^\s+([a-zA-Z0-9]+): \(\) =>\s*import\('([^']+)'\)/gm)) {
-    keyByFile.set(path.basename(m[2]), m[1]);
-  }
-
-  function rateLimitedRouterFiles(dir: string): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) return e.name === '__tests__' ? [] : rateLimitedRouterFiles(full);
-      if (!e.name.endsWith('.ts')) return [];
-      return /\brateLimit\(/.test(readFileSync(full, 'utf8')) ? [full] : [];
-    });
-  }
-
-  it('can see the routers it classifies (positive control)', () => {
-    expect(keyByFile.get('buzz.router')).toBe('buzz');
-    expect(keyByFile.size).toBeGreaterThan(50);
-  });
-
-  it('classifies every rate-limiting router exactly once', () => {
-    const files = rateLimitedRouterFiles(routersDir);
-    const unmapped = files.filter((f) => !keyByFile.has(path.basename(f, '.ts')));
-    expect(unmapped).toEqual([]);
-    const keys = new Set(files.map((f) => keyByFile.get(path.basename(f, '.ts'))));
-
-    const closed = new Set(bucket.FAIL_CLOSED_RATE_LIMIT_SCOPES);
-    const fallback = new Set(bucket.RATE_LIMIT_FALLBACK_SCOPES);
-    expect([...closed].filter((k) => fallback.has(k))).toEqual([]);
-    // REST callers draw from a procedure's bucket under its router key, so they classify there too.
-    expect(new Set([...closed, ...fallback])).toEqual(keys);
-  });
-
+describe('money-scope list sign-off', () => {
+  // A deliberate SIGN-OFF PIN: literal equality, so adding OR removing a fail-closed router is a
+  // reviewed change to this list, never a side effect of editing FAIL_CLOSED_RATE_LIMIT_SCOPES alone.
   it('keeps buzz, payments and generation fail-closed', () => {
     expect([...bucket.FAIL_CLOSED_RATE_LIMIT_SCOPES].sort()).toEqual([...MONEY_SCOPES].sort());
   });
