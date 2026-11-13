@@ -1,10 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import superjson from 'superjson';
-import {
-  HOST_COOKIE_PREFIX,
-  SECURE_COOKIE_PREFIX,
-  SESSION_COOKIE_BASE,
-} from '@civitai/auth/client';
+import { allCookieNames, SESSION_COOKIE_BASE } from '@civitai/auth/client';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import {
   recordFeedGoShadowEncode,
@@ -14,47 +10,24 @@ import {
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
- * Shadow sampler for `apps/feed-go` (the Go port of `image.getImagesAsPostsInfinite`, see
- * `apps/feed-go/DESIGN.md` §7). After Node has answered a sampled request, this mirrors what Node
- * saw and what it answered to feed-go's internal compare endpoint, which recomputes the answer and
- * counts the differences. Node keeps serving every request; feed-go's answer is never used.
+ * Shadow sampler for the Go feed service (see its DESIGN.md): after Node has answered a sampled
+ * `image.getImagesAsPostsInfinite` request, mirror what Node saw and what it answered to that
+ * service's internal compare endpoint. Node keeps serving every request.
  *
- * Off unless ALL of these hold:
- *  1. `FEED_GO_SHADOW_URL` is set (feed-go's internal listener, e.g. `http://<service>:9090`);
- *  2. `FEED_GO_SHADOW_SAMPLE_RATE` is > 0 (a fraction, 0..1);
- *  3. the `feed-go-shadow` Flipt flag is on (global boolean, read at most once per 5s per process;
- *     unknown flag or uninitialized client reads as off).
+ * Off unless ALL of these hold: `FEED_GO_SHADOW_URL` is set; `FEED_GO_SHADOW_SAMPLE_RATE` is > 0;
+ * the `feed-go-shadow` Flipt flag is on (unknown or uninitialized reads as off).
  *
- * The user's request is never slowed or failed by it:
- *  - the sample decision is a few property reads, a cached flag read, one `Math.random()` and,
- *    for a request that passes all of those, one clock read for the per-second budget;
- *  - the response body is captured at serialize time by REFERENCE (the superjson envelope Node
- *    already built for the wire); nothing is copied or encoded on the request path;
- *  - the payload is encoded and POSTed from `setImmediate`, after the handler has written the
- *    response, never awaited, with a tight timeout (`FEED_GO_SHADOW_TIMEOUT_MS`);
- *  - at most `FEED_GO_SHADOW_MAX_IN_FLIGHT` samples per process are in flight; a sample beyond
- *    that is dropped at decision time (`dropped_overload`), before anything is captured;
- *  - every failure is swallowed into `civitai_app_feed_go_shadow_samples_total{outcome}`.
+ * Why the per-second token bucket (`FEED_GO_SHADOW_MAX_PER_SECOND`): the send happens after the
+ * response, but encoding the page (`JSON.stringify`, plus `superjson.serialize` for a devalue
+ * response) is synchronous on the event loop every other request shares, and the in-flight cap
+ * does not bound it (a slot frees as soon as the compare endpoint answers).
  *
- * The send is off the sampled request, but NOT off the event loop: encoding a feed page
- * (`JSON.stringify`, plus a full `superjson.serialize` when the response was written as devalue)
- * runs synchronously on the same thread as every other request in the process. The in-flight cap
- * does not bound that work (a slot frees as soon as feed-go answers), so a per-process token
- * bucket does: at most `FEED_GO_SHADOW_MAX_PER_SECOND` samples begin per second, whatever the
- * sample rate and however fast feed-go answers; a sample beyond it is dropped at decision time
- * (`dropped_rate_limit`). The encode cost actually paid is counted in
- * `civitai_app_feed_go_shadow_encode_seconds_total` and `..._encode_bytes_total`, so the rate can
- * be tuned from evidence.
+ * Forwarded: the raw `input`, the headers the answer depends on, and the SESSION cookies only
+ * (the compare side re-verifies their signature). An API credential is forwarded only as the
+ * literal `present`, because the answer depends on whether one was sent, never on its value.
  *
- * What is forwarded is only what feed-go's answer depends on: the raw `input` query value, the
- * `host`, the country / region / UK headers, the verified-crawler header, whether the request
- * carried an API credential (as the literal `present`, never the credential), and the SESSION
- * cookies only (other cookies are dropped). feed-go re-verifies the session cookie's signature
- * itself; it never trusts an identity asserted by the caller.
- *
- * 🔴 The forwarded session cookie is a bearer credential. `FEED_GO_SHADOW_URL` must point at an
- * in-cluster address only (plain HTTP inside the cluster network, reachable only from the web
- * pods); never at a public hostname.
+ * 🔴 The forwarded session cookie is a bearer credential: `FEED_GO_SHADOW_URL` must be an
+ * in-cluster address, never a public hostname.
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
@@ -66,11 +39,7 @@ export const SHADOW_DEFAULT_MAX_IN_FLIGHT = 8;
 export const SHADOW_DEFAULT_MAX_PER_SECOND = 5;
 
 /** The session cookie names feed-go reads (dev, `__Secure-` and `__Host-` slots). */
-const SESSION_COOKIE_NAMES = new Set([
-  SESSION_COOKIE_BASE,
-  `${SECURE_COOKIE_PREFIX}${SESSION_COOKIE_BASE}`,
-  `${HOST_COOKIE_PREFIX}${SESSION_COOKIE_BASE}`,
-]);
+const SESSION_COOKIE_NAMES = new Set(allCookieNames(SESSION_COOKIE_BASE));
 
 /** Headers forwarded verbatim when present. */
 const COPIED_HEADERS = [
@@ -136,6 +105,8 @@ export function readFeedGoShadowConfig(env: Env = process.env): FeedGoShadowConf
 }
 
 /** Keep only the session cookies of a raw `Cookie` header (same `name=value` text, `; `-joined). */
+// Hand-split rather than `parseCookieHeader` on purpose: that decodes %-escapes, and the compare
+// side must receive the cookie bytes exactly as the browser sent them.
 export function pickSessionCookies(header: string | undefined): string | undefined {
   if (!header) return undefined;
   const kept: string[] = [];
@@ -211,6 +182,8 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
   const schedule = deps.schedule ?? ((fn: () => void) => void setImmediate(fn));
   const storage = new AsyncLocalStorage<FeedGoShadowSample>();
   let inFlight = 0;
+  // A local bucket rather than `createBlockEventRateLimiter`: that one is a keyed, LRU-bounded
+  // limiter for App Blocks events defaulting to Date.now; this needs one bucket on a monotonic clock.
   // Token bucket for `maxPerSecond`: starts full, refills continuously, holds at most one
   // second's worth (and at least one token, so a rate below 1/s still admits a sample).
   const bucketCap = Math.max(1, config.maxPerSecond);

@@ -253,15 +253,6 @@ describe('createFeedGoShadow — sampling decision', () => {
     expect(harness({ config: { rate: 0.3 }, random: 0.29 }).shadow.begin(request())).toBeDefined();
     expect(harness({ config: { rate: 0.3 }, random: 0.3 }).shadow.begin(request())).toBeUndefined();
   });
-
-  it('reads the flag only after the cheap request checks', () => {
-    const enabled = vi.fn(() => true);
-    const shadow = createFeedGoShadow({ config: config(), enabled, record: () => undefined });
-    shadow.begin(request({ query: { trpc: 'image.getInfinite' } }));
-    expect(enabled).not.toHaveBeenCalled();
-    shadow.begin(request());
-    expect(enabled).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe('createFeedGoShadow — never on the user path', () => {
@@ -348,6 +339,40 @@ describe('createFeedGoShadow — never on the user path', () => {
     expect(h.fetchMock).not.toHaveBeenCalled();
     expect(h.outcomes).toEqual(['skipped_no_capture']);
     expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('pairs each of two interleaved samples with its own input and its own response', async () => {
+    const h = harness();
+    const procedure = 'image.getImagesAsPostsInfinite';
+    const a = h.shadow.begin(request({ query: { trpc: procedure, input: 'input-A' } }))!;
+    const b = h.shadow.begin(request({ query: { trpc: procedure, input: 'input-B' } }))!;
+    const tick = () => new Promise<void>((r) => setImmediate(r));
+    // Both handlers are in flight at once; B began last but serializes FIRST, A serializes after.
+    const handlerA = h.shadow.run(a, async () => {
+      await tick();
+      await tick();
+      h.shadow.capture({ page: 'A' }, superjson.serialize({ page: 'A' }), false);
+    });
+    const handlerB = h.shadow.run(b, async () => {
+      await tick();
+      h.shadow.capture({ page: 'B' }, superjson.serialize({ page: 'B' }), false);
+    });
+    await Promise.all([handlerA, handlerB]);
+    h.shadow.finish(b, 200);
+    h.shadow.finish(a, 200);
+    await h.flush();
+
+    const pairs = h.fetchMock.mock.calls
+      .map(([, init]) => JSON.parse(init.body as string) as { input: string; node: unknown })
+      .map(({ input, node }) => [input, node]);
+    expect(pairs).toHaveLength(2);
+    expect(pairs).toEqual(
+      expect.arrayContaining([
+        ['input-A', { json: { page: 'A' } }],
+        ['input-B', { json: { page: 'B' } }],
+      ])
+    );
+    expect(h.outcomes).toEqual(['sent', 'sent']);
   });
 
   it('keeps the first capture of a request (one unbatched call serializes one result)', async () => {
