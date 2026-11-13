@@ -290,7 +290,9 @@ describe('write budget: the document store and legacy budgets do not drain each 
     expect((await reserveTimes(30, DOC_STORE_SHARED_WRITE_BUDGET)).every((r) => r.allowed)).toBe(
       true
     );
-    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(false);
+    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(
+      false
+    );
     for (let i = 0; i < 10; i++) {
       expect((await reserveSharedWrite(USER, APP, SHARED_WRITE_BUDGET)).allowed).toBe(true);
     }
@@ -305,7 +307,9 @@ describe('write budget: the document store and legacy budgets do not drain each 
     expect((await reserveTimes(30, DOC_STORE_SHARED_WRITE_BUDGET)).every((r) => r.allowed)).toBe(
       true
     );
-    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(false);
+    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(
+      false
+    );
   });
 
   it('a rejection charged on one budget is not charged on the other', async () => {

@@ -1287,7 +1287,12 @@ describe('rate limits: separate buckets', () => {
         (await call({ token: v1, method: 'PUT', path: `/posts/q${i}`, body: { data: {} } })).status
       ).toBe(200);
     }
-    const refused = await call({ token: v1, method: 'PUT', path: '/posts/q30', body: { data: {} } });
+    const refused = await call({
+      token: v1,
+      method: 'PUT',
+      path: '/posts/q30',
+      body: { data: {} },
+    });
     expect(refused.status).toBe(429);
   });
 
