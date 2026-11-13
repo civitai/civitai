@@ -20,7 +20,9 @@ export const GO_TRANSPORT_PROCEDURES: ReadonlySet<string> = new Set([
 /**
  * The separate path. `next.config.mjs` rewrites `<this>/<procedure>` back to `/api/trpc/<procedure>`
  * for each procedure above (only those), so with no route in front of it the request still reaches
- * this app: turning the flag on can never strand a request.
+ * this app and is served: the flag can never strand a request. It can still MOVE one — edge rules
+ * keyed on the `/api/trpc/` prefix do not match this path (see `feedGoTransport` in
+ * feature-flags.service.ts).
  */
 export const GO_TRANSPORT_URL = '/api/trpc-go';
 
