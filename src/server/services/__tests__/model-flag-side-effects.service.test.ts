@@ -356,6 +356,7 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
   ])('purges the edge copies of every version when %s is set', async (_name, flags) => {
     await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter, ...flags } });
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -367,6 +368,7 @@ describe('applyModelFlagSideEffects — public API edge cache', () => {
       after: { ...baseAfter, ...flags, gallerySettings: { level: 4 } },
     });
     expect(mockPurgeShowcaseEdge).toHaveBeenCalledWith(42, [100]);
+    expect(mockPurgeShowcaseEdge).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 

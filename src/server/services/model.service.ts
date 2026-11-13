@@ -2736,14 +2736,12 @@ export async function applyModelFlagSideEffects({
   // The served level is held by the flags too (see heldGalleryLevel), not only by the stored one.
   if (galleryBrowsingLevelChanged || minorChanged) await bustModelGallerySettings([id]);
 
-  const getModelVersionIds = async () =>
-    (await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })).map(
-      ({ id }) => id
-    );
   let modelVersionIds: number[] | undefined;
 
   if (minorChanged || poiChanged) {
-    modelVersionIds = await getModelVersionIds();
+    modelVersionIds = (
+      await dbWrite.modelVersion.findMany({ where: { modelId: id }, select: { id: true } })
+    ).map(({ id }) => id);
 
     if (modelVersionIds.length !== 0) {
       // Set-based on purpose: a gallery can hold hundreds of thousands of images, and
@@ -2772,20 +2770,31 @@ export async function applyModelFlagSideEffects({
     }
   }
 
-  // The public API serves a held model's showcase at its gallery level; its edge copies predate the change.
   const heldLevelChanged = galleryBrowsingLevelChanged && (after.minor || after.sfwOnly);
-  if (minorChanged || heldLevelChanged) {
-    try {
-      await purgePublicModelShowcaseEdgeCache(id, modelVersionIds ?? (await getModelVersionIds()));
-    } catch (error) {
-      logToAxiom({
-        type: 'warning',
-        name: 'showcase-hold-edge-purge',
-        message: 'model showcase level changed; public API edge cache not purged',
-        modelId: id,
-        error: safeError(error),
-      }).catch(() => undefined);
-    }
+  if (minorChanged || heldLevelChanged) await purgeHeldShowcase(id, modelVersionIds);
+}
+
+/**
+ * After a write that changes what the public API serves of a minor or SFW-only model's showcase
+ * (a flag, or its gallery level), drop the cached public bodies. Best-effort: a failure is logged
+ * and the write stands.
+ */
+export async function purgeHeldShowcase(modelId: number, modelVersionIds?: number[]) {
+  try {
+    const versionIds =
+      modelVersionIds ??
+      (await dbWrite.modelVersion.findMany({ where: { modelId }, select: { id: true } })).map(
+        ({ id }) => id
+      );
+    await purgePublicModelShowcaseEdgeCache(modelId, versionIds);
+  } catch (error) {
+    logToAxiom({
+      type: 'warning',
+      name: 'showcase-hold-edge-purge',
+      message: 'model showcase level changed; public API edge cache not purged',
+      modelId,
+      error: safeError(error),
+    }).catch(() => undefined);
   }
 }
 

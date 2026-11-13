@@ -1606,13 +1606,14 @@ async function purgeModelVersionByHashCache(hashes: string[]) {
 /**
  * Purge the edge-cached public API bodies that carry a model's showcase, once its minor or SFW-only
  * flag or its held gallery level changes: by-hash for every file of its versions, and the model and
- * version by-id URLs.
+ * version by-id URLs. The origin's model response goes first, so the edge cannot refill from it.
  * URLs with a query string are left to their TTL.
  */
 export async function purgePublicModelShowcaseEdgeCache(
   modelId: number,
   modelVersionIds: number[]
 ) {
+  await bustPublicModelResponseCache(modelId);
   await purgeModelVersionByHashCacheById(modelVersionIds);
   const origin = getBaseUrl();
   await purgeCache({
