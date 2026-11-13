@@ -119,35 +119,46 @@ type cachedQueryOptions = {
  * cache hit returns. A value the codec cannot pack is shared, as before. The first caller gets the
  * original value, as without single-flight.
  *
- * The copy is made in the joiner's own `.then` on the shared promise, which runs before the first
- * caller can see the value as long as the first caller reaches it through an `async` function
- * (`queryThroughCache`, `fetchThroughCache` — each adds ticks before its own caller resumes).
+ * The value is PACKED ONCE per flight — lazily, by the first joiner to run, so a flight nobody
+ * joins packs nothing — and each joiner UNPACKS its own copy from those bytes. The bytes are taken
+ * in the first joiner's own `.then` on the shared promise, which runs before the first caller can
+ * see the value as long as the first caller reaches it through an `async` function
+ * (`queryThroughCache`, `fetchThroughCache` — each adds ticks before its own caller resumes); every
+ * later joiner decodes the same bytes, so nothing a caller does to its value reaches a joiner.
  * Pinned through the public API by "the first caller mutating synchronously on resolve cannot reach
  * a joiner"; a new caller that awaits `singleFlight` directly and mutates in place must keep that.
  */
-function codecCopy<T>(value: T): T {
-  let packed: Buffer;
-  try {
-    packed = pack(value);
-  } catch {
-    return value;
-  }
-  return unpack(packed) as T;
+function createCodecCopier() {
+  // undefined: not packed yet; null: the codec could not pack it (shared, as before).
+  let packed: Buffer | null | undefined;
+  return function codecCopy<T>(value: T): T {
+    if (packed === undefined) {
+      try {
+        packed = pack(value);
+      } catch {
+        packed = null;
+      }
+    }
+    return packed === null ? value : (unpack(packed) as T);
+  };
 }
 
 function createSingleFlight() {
-  const inFlight = new Map<string, Promise<unknown>>();
+  const inFlight = new Map<
+    string,
+    { flight: Promise<unknown>; copy: ReturnType<typeof createCodecCopier> }
+  >();
   return function singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const existing = inFlight.get(key) as Promise<T> | undefined;
-    if (existing) return existing.then(codecCopy);
+    const existing = inFlight.get(key);
+    if (existing) return (existing.flight as Promise<T>).then(existing.copy);
     // Promise.resolve().then(fn): a SYNCHRONOUS throw in fn is a rejection like any other, so the
     // finally always runs and the entry is always removed.
     const flight: Promise<T> = Promise.resolve()
       .then(fn)
       .finally(() => {
-        if (inFlight.get(key) === flight) inFlight.delete(key);
+        if (inFlight.get(key)?.flight === flight) inFlight.delete(key);
       });
-    inFlight.set(key, flight);
+    inFlight.set(key, { flight, copy: createCodecCopier() });
     return flight;
   };
 }

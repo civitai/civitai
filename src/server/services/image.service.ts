@@ -4254,6 +4254,8 @@ export const getImagesForModelVersion = async ({
   excludedTagIds,
   excludedIds,
   excludedUserIds,
+  excludePoi,
+  excludeMinor,
   imagesPerVersion = 1,
   include = [],
   user,
@@ -4265,6 +4267,8 @@ export const getImagesForModelVersion = async ({
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
+  excludePoi?: boolean;
+  excludeMinor?: boolean;
   imagesPerVersion?: number;
   include?: Array<'meta' | 'tags'>;
   user?: SessionUser;
@@ -4307,6 +4311,8 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
+  if (excludePoi) imageWhere.push(Prisma.sql`i.poi IS NOT TRUE`);
+  if (excludeMinor) imageWhere.push(Prisma.sql`i.minor IS NOT TRUE`);
   // With no user (the shared imagesForModelVersionsCache), this drops every blocked image.
   imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
