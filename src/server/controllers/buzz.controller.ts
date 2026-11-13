@@ -30,6 +30,7 @@ import {
   previewMultiAccountTransaction,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
+import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz-keyed-charge';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
 import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -141,6 +142,8 @@ export async function createBuzzTipTransactionHandler({
 }) {
   try {
     const { id: fromAccountId } = ctx.user;
+    // The on-site tip form's key travels in the input; the App Blocks endpoint passes its own.
+    const { idempotencyKey: inputKey, ...tipInput } = input;
     if (input.fromAccountType !== input.toAccountType) {
       throw throwBadRequestError('You cannot tip Buzz between different account types');
     }
@@ -256,11 +259,15 @@ export async function createBuzzTipTransactionHandler({
     // `fromUserId` and `toAccountId` are numeric, so `block-tip:${fromUserId}:${key}`
     // is delimiter-injective — no two distinct (user, key, target) triples collide.
     // Absent key → the original per-call `crypto.randomUUID()` (no dedup), byte-identical to today.
+    // The on-site key is a uuid (schema-checked) under its own `tip:` namespace, injective the same way.
+    const keyed = !!(idempotencyKey ?? inputKey);
     const sharedId = idempotencyKey
       ? `block-tip:${ctx.user.id}:${idempotencyKey}`
+      : inputKey
+      ? `tip:${ctx.user.id}:${inputKey}`
       : `tip-${crypto.randomUUID()}-${entityType ?? ''}-${entityId ?? ''}-by-${ctx.user.id}`;
     const transactions = targetUserIds.map((toAccountId) => ({
-      ...input,
+      ...tipInput,
       fromAccountId: ctx.user.id,
       type: TransactionType.Tip,
       amount,
@@ -281,7 +288,7 @@ export async function createBuzzTipTransactionHandler({
     // pre-checking duplicates, so the batch response alone cannot say which legs are new. The
     // endpoint's idempotency claim keeps a same-key call from running concurrently with this one.
     const alreadyMoved = new Set<string>();
-    if (idempotencyKey) {
+    if (keyed) {
       const existing = await Promise.all(
         transactions.map((t) => getTransactionByExternalId(t.externalTransactionId))
       );
@@ -290,8 +297,12 @@ export async function createBuzzTipTransactionHandler({
       });
     }
 
-    // Now, create all transactions
-    const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
+    // Now, create all transactions. With a key, a send whose outcome is unknown (timeout, reset,
+    // 5xx) is resolved by looking its legs up rather than reported as a failure the user retries.
+    const data = await createBuzzTransactionMany(transactions).catch((error) => {
+      if (!keyed) throw error;
+      return resolveFailedTipBatch(transactions, alreadyMoved, error, ctx.user.id);
+    });
 
     // ── LEDGER CONFLICT = MONEY ALREADY MOVED (audit 🔴-2) ───────────────────────
     // `createBuzzTransactionMany` returns `{ transactions, conflicts }`, and a
@@ -382,6 +393,35 @@ export async function createBuzzTipTransactionHandler({
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
+}
+
+/**
+ * A keyed tip batch that failed. A failure that provably moved nothing is rethrown. Otherwise
+ * every leg this call sent is looked up: all found, the batch landed and is reported as this
+ * call's (its side effects then run once, here); any leg missing, or a lookup failing, is
+ * PAYMENT_OUTCOME_UNKNOWN_MESSAGE, and a retry under the same key moves only the missing legs.
+ */
+export async function resolveFailedTipBatch(
+  transactions: { externalTransactionId: string; amount: number }[],
+  alreadyMoved: Set<string>,
+  error: unknown,
+  userId: number
+): Promise<{ transactions: string[]; conflicts: string[] }> {
+  if (chargeWasDeclined(error)) throw error;
+  const sent = transactions.filter((t) => !alreadyMoved.has(t.externalTransactionId));
+  const context = { externalTransactionId: sent[0]?.externalTransactionId ?? '', userId };
+  let found: unknown[];
+  try {
+    found = await Promise.all(sent.map((t) => getTransactionByExternalId(t.externalTransactionId)));
+  } catch (lookupError) {
+    throw paymentOutcomeUnknown(context, 'tip lookup failed after unknown outcome', {
+      error,
+      lookupError,
+    });
+  }
+  if (sent.length === 0 || found.some((leg) => !leg))
+    throw paymentOutcomeUnknown(context, 'tip legs missing after unknown outcome', { error });
+  return { transactions: sent.map((t) => t.externalTransactionId), conflicts: [] };
 }
 
 export async function getBuzzAccountTransactionsHandler({

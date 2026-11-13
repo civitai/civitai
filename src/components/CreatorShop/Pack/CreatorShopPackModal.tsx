@@ -48,6 +48,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 
 type Bundlable = PackMemberPricing & {
   name: string;
@@ -270,19 +271,24 @@ export function CreatorShopPackModal({ item }: { item?: PackEditTarget }) {
         showErrorNotification({ title: 'Not ready', error: new Error(FEE_UNAVAILABLE_MESSAGE) });
         return;
       }
-      await submitPack.mutateAsync({
-        name,
-        description: description || null,
-        memberCosmeticIds,
-        price,
-        availableQuantity: quantity ?? null,
-        buzzType,
-        acceptsBlueBuzz,
-        ...(imageId ? { imageUrl: imageId } : {}),
-        // Only claimed when artwork was actually supplied.
-        rightsAffirmed: !imageId ? undefined : true,
-        quotedFee: packFee,
-      });
+      // One key per submission, held across a failure that may have charged the fee: see
+      // payment-intent-keys. Scoped by currency, which decides the account charged.
+      await withPaymentIntentKey(`creator-shop-pack:${buzzType}`, (idempotencyKey) =>
+        submitPack.mutateAsync({
+          idempotencyKey,
+          name,
+          description: description || null,
+          memberCosmeticIds,
+          price,
+          availableQuantity: quantity ?? null,
+          buzzType,
+          acceptsBlueBuzz,
+          ...(imageId ? { imageUrl: imageId } : {}),
+          // Only claimed when artwork was actually supplied.
+          rightsAffirmed: !imageId ? undefined : true,
+          quotedFee: packFee,
+        })
+      );
     }
     dialog.onClose();
   };

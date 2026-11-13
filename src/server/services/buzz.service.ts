@@ -837,28 +837,58 @@ export async function createBuzzTransaction(
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
+  // The package requires an id so a lost response can be looked up. A caller with a business
+  // key passes one derived from it (and a retry of that caller reuses it); for one that does
+  // not, this id is minted ONCE per call, before the client's own retries, so the client never
+  // resends a write under a second id. It does not make a caller's own re-run idempotent.
   const externalTransactionId = payload.externalTransactionId || crypto.randomUUID();
+  return postBuzzTransaction(
+    { ...payload, entityId, entityType, toAccountId, amount, details, externalTransactionId },
+    opts
+  );
+}
+
+type PostBuzzTransactionInput = Omit<CreateBuzzTransactionInput, 'toAccountId'> & {
+  fromAccountId: number;
+  fromAccountType?: BuzzAccountType;
+  toAccountId: number;
+  externalTransactionId: string;
+};
+
+async function postBuzzTransaction(
+  { entityId, entityType, details, externalTransactionId, ...payload }: PostBuzzTransactionInput,
+  opts?: BuzzWriteOptions
+) {
   const data = await buzzService.createTransaction(
     {
       ...payload,
-      // The package requires an id so a lost response can be looked up. A caller with a business
-      // key passes one derived from it (and a retry of that caller reuses it); for one that does
-      // not, this id is minted ONCE per call, before the client's own retries, so the client never
-      // resends a write under a second id. It does not make a caller's own re-run idempotent.
       externalTransactionId,
       details: {
         ...(details ?? {}),
         entityId: entityId ?? details?.entityId,
         entityType: entityType ?? details?.entityType,
       },
-      amount,
-      toAccountId,
     },
     opts
   );
 
   // The key it was filed under, so a caller can reconcile by it (`getTransactionByExternalId`).
   return { ...data, externalTransactionId };
+}
+
+/**
+ * The ledger id of a transaction the ledger ALREADY holds under `externalTransactionId`.
+ * `getTransactionByExternalId` proves it exists but does not return its id, which a caller needs
+ * to refund it or record it. This resends the same write: the ledger keeps external ids unique and
+ * answers a resend of one it holds with 200 and the EXISTING transaction's id, moving nothing (on
+ * a short balance too: it checks for a committed id before answering "insufficient funds").
+ *
+ * 🔴 On an id the ledger does NOT hold this is an ordinary charge. Call it only after the lookup
+ * found the transaction. No balance pre-check here: the balance it would read is the one after
+ * the charge being recovered.
+ */
+export async function recoverBuzzTransactionId(input: PostBuzzTransactionInput) {
+  return postBuzzTransaction(input);
 }
 
 export async function upsertBuzzTip({

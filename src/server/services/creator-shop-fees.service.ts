@@ -3,7 +3,10 @@ import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { CreatorCosmeticType, CreatorShopFees } from '~/server/schema/creator-shop.schema';
 import { normalizeCreatorShopFees } from '~/server/schema/creator-shop.schema';
+import { chargeByExternalId } from '~/server/services/buzz-keyed-charge';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 
 /**
  * A read failure is deliberately NOT swallowed into the defaults. The fee is charged
@@ -28,6 +31,57 @@ export function assertQuotedFee(quotedFee: number, actualFee: number) {
   if (quotedFee === actualFee) return;
   throw throwBadRequestError(
     `The submission fee changed to ${actualFee} Buzz while this form was open. Close and reopen it to continue.`
+  );
+}
+
+const SUBMISSION_FEE_PREFIX = {
+  item: 'creator-shop-submit',
+  pack: 'creator-shop-pack-submit',
+  mysteryPack: 'creator-shop-mystery-pack-submit',
+} as const;
+export type SubmissionFeeKind = keyof typeof SUBMISSION_FEE_PREFIX;
+
+/**
+ * The fee charge's external id for one submission. With the client's key (a uuid, minted once per
+ * submission and resent on its retries) it is the same on every retry, so the ledger holds one
+ * charge for it. The user id comes first and has no '-', so one user's key never names another
+ * user's charge. Without a key (a client from before keys), a new id per call, as before.
+ */
+export function submissionFeeTransactionId(
+  kind: SubmissionFeeKind,
+  userId: number,
+  idempotencyKey: string | undefined
+) {
+  return `${SUBMISSION_FEE_PREFIX[kind]}-${userId}-${idempotencyKey ?? Date.now()}`;
+}
+
+/** Charges a submission fee once per submission: see chargeByExternalId. */
+export function chargeSubmissionFee({
+  kind,
+  userId,
+  buzzType,
+  amount,
+  description,
+  idempotencyKey,
+}: {
+  kind: SubmissionFeeKind;
+  userId: number;
+  buzzType: BuzzSpendType;
+  amount: number;
+  description: string;
+  idempotencyKey: string | undefined;
+}) {
+  return chargeByExternalId(
+    {
+      fromAccountId: userId,
+      fromAccountType: buzzType,
+      toAccountId: 0,
+      amount,
+      type: TransactionType.Purchase,
+      description,
+      externalTransactionId: submissionFeeTransactionId(kind, userId, idempotencyKey),
+    },
+    { reusable: idempotencyKey !== undefined }
   );
 }
 

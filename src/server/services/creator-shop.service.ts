@@ -76,6 +76,7 @@ import {
 } from '~/server/services/buzz.service';
 import {
   assertQuotedFee,
+  chargeSubmissionFee,
   getCreatorShopSubmissionFee,
 } from '~/server/services/creator-shop-fees.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -571,6 +572,7 @@ export const submitCreatorShopItem = async ({
   pricePerUse,
   rightsAffirmed,
   quotedFee,
+  idempotencyKey,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
   // Submitters are held to the creator range, moderators included: a moderator widens the fit
   // afterwards on the review page.
@@ -629,14 +631,13 @@ export const submitCreatorShopItem = async ({
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
   const submissionFee = await getCreatorShopSubmissionFee(cosmeticType);
   assertQuotedFee(quotedFee, submissionFee);
-  const feeTx = await createBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountType: buzzType as BuzzSpendType,
-    toAccountId: 0,
+  const feeTx = await chargeSubmissionFee({
+    kind: 'item',
+    userId,
+    buzzType: buzzType as BuzzSpendType,
     amount: submissionFee,
-    type: TransactionType.Purchase,
     description: `Creator Shop submission fee - ${name}`,
-    externalTransactionId: `creator-shop-submit-${userId}-${Date.now()}`,
+    idempotencyKey,
   });
   const feeTxId = feeTx.transactionId;
   if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');

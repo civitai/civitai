@@ -1,0 +1,146 @@
+import { isSafeToRetry } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  createBuzzTransaction,
+  getTransactionByExternalId,
+  recoverBuzzTransactionId,
+} from '~/server/services/buzz.service';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+
+/**
+ * Charging a user once per action when a Buzz write can end with an unknown outcome.
+ *
+ * A write that times out, is reset, or answers 5xx may still have committed. Treated as "not
+ * charged", the user retries, and a caller that minted a fresh external id per attempt charges
+ * them again. So: the external id comes from the action (a key the client sends once and resends
+ * on retry), and an unknown outcome is resolved by looking that id up, never by a new id.
+ */
+
+/** Told to the user when the charge may have happened and the flow did not finish. */
+export const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
+  "We couldn't confirm whether your Buzz payment went through. Check your Buzz transactions before trying again. Retrying this same action will not charge you twice.";
+
+/** Told to the user when the action's earlier charge was refunded: a new action is needed. */
+export const PAYMENT_REFUNDED_MESSAGE =
+  'The payment for this attempt was refunded. Please try again.';
+
+/**
+ * A 500, so a client holds its key (a 4xx tells it nothing was charged and to start over with a
+ * new one). Logged with the external id so the charge can be found.
+ */
+export function paymentOutcomeUnknown(
+  context: { externalTransactionId: string; userId: number; amount?: number },
+  reason: string,
+  errors: { error?: unknown; lookupError?: unknown } = {}
+) {
+  const describe = (e: unknown) => (e instanceof Error ? e.message : e);
+  logToAxiom({
+    name: 'buzz-payment-outcome-unknown',
+    type: 'error',
+    message: 'buzz payment outcome unknown',
+    reason,
+    ...context,
+    error: describe(errors.error),
+    lookupError: describe(errors.lookupError),
+  }).catch(() => undefined);
+  return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE });
+}
+
+/**
+ * A failed charge that provably moved nothing: refused in the app before anything was sent (a
+ * balance or validation refusal, a BAD_REQUEST with no ledger status behind it), a connection that
+ * never opened, or a ledger 4xx other than 408 (may have landed) and 409 (the id is taken).
+ * Everything else, a timeout, a reset, a 5xx, is an unknown outcome.
+ */
+export function chargeWasDeclined(error: unknown): boolean {
+  if (isSafeToRetry(error)) return true;
+  const status = getBuzzApiStatus(error);
+  if (status !== undefined)
+    return status >= 400 && status < 500 && status !== 408 && status !== 409;
+  return error instanceof TRPCError && error.code === 'BAD_REQUEST';
+}
+
+type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
+  toAccountId: number;
+  externalTransactionId: string;
+};
+
+/**
+ * Charges under `externalTransactionId`, once. Resolves with the ledger transaction id when the
+ * ledger holds the charge, whether this call moved the money or an earlier attempt under the
+ * same id did. A failure is rethrown when it provably moved nothing; otherwise the id is looked
+ * up, and found it is the charge, not found (or the lookup failing) it is
+ * `PAYMENT_OUTCOME_UNKNOWN_MESSAGE`.
+ *
+ * `reusable`: the id may have been sent by an earlier request (it derives from a client key). The
+ * ledger then answers 200 with whatever it holds under the id, including a charge a failed earlier
+ * attempt refunded, so that is checked and refused with a 400: the client starts a new action
+ * with a new key. An id minted for this call alone has no earlier charge to have been refunded.
+ */
+export async function chargeByExternalId(
+  input: KeyedChargeInput,
+  { reusable }: { reusable: boolean }
+): Promise<{ transactionId: string }> {
+  const context = {
+    externalTransactionId: input.externalTransactionId,
+    userId: input.fromAccountId,
+    amount: input.amount,
+  };
+
+  let transactionId: string | null | undefined;
+  try {
+    ({ transactionId } = await createBuzzTransaction(input));
+  } catch (error) {
+    transactionId = await resolveFailedCharge(input, context, error);
+  }
+  if (!transactionId) throw paymentOutcomeUnknown(context, 'ledger returned no transaction id');
+  if (!reusable) return { transactionId };
+
+  // A resend of an id the ledger holds answers 200 with that transaction, which may be one a
+  // failed earlier attempt had refunded (the refund's id is the ledger's, `refund-<transactionId>`).
+  let refund: unknown;
+  try {
+    refund = await getTransactionByExternalId(`refund-${transactionId}`);
+  } catch (lookupError) {
+    throw paymentOutcomeUnknown(context, 'refund lookup failed', { lookupError });
+  }
+  if (refund) throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+
+  return { transactionId };
+}
+
+async function resolveFailedCharge(
+  input: KeyedChargeInput,
+  context: Parameters<typeof paymentOutcomeUnknown>[0],
+  error: unknown
+): Promise<string | null> {
+  // Looked up on a decline too: an insufficient balance on a retry can be the earlier attempt's
+  // charge, which this one should continue from rather than refuse.
+  const declined = chargeWasDeclined(error);
+  let found: unknown;
+  try {
+    found = await getTransactionByExternalId(input.externalTransactionId);
+  } catch (lookupError) {
+    if (declined) throw error;
+    throw paymentOutcomeUnknown(context, 'lookup failed after unknown outcome', {
+      error,
+      lookupError,
+    });
+  }
+  if (!found) {
+    if (declined) throw error;
+    throw paymentOutcomeUnknown(context, 'not found after unknown outcome', { error });
+  }
+
+  try {
+    const { insufficientFundsErrorMsg: _message, ...transaction } = input;
+    const { transactionId } = await recoverBuzzTransactionId(transaction);
+    return transactionId;
+  } catch (recoverError) {
+    throw paymentOutcomeUnknown(context, 'found, but its id could not be read', {
+      error: recoverError,
+    });
+  }
+}

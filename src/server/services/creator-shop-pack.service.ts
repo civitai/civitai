@@ -2,7 +2,6 @@ import type { Prisma } from '@prisma/client';
 import { isEqual } from 'lodash-es';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CosmeticShopItemHistoryChange,
@@ -24,8 +23,12 @@ import {
   packPriceFloor,
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { refundTransaction } from '~/server/services/buzz.service';
+import {
+  assertQuotedFee,
+  chargeSubmissionFee,
+  getCreatorShopFees,
+} from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import { lockShopItem } from '~/server/services/creator-shop-lock';
 import {
@@ -208,6 +211,7 @@ export const submitCreatorShopPack = async ({
   imageUrl,
   rightsAffirmed,
   quotedFee,
+  idempotencyKey,
   stickersEnabled,
 }: SubmitCreatorShopPackInput & { userId: number; stickersEnabled?: boolean }) => {
   // The same CosmeticShopItem.title/description columns the moderator-only upsert guards; these
@@ -247,14 +251,13 @@ export const submitCreatorShopPack = async ({
 
   const submissionFee = (await getCreatorShopFees()).pack;
   assertQuotedFee(quotedFee, submissionFee);
-  const feeTx = await createBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountType: buzzType as BuzzSpendType,
-    toAccountId: 0,
+  const feeTx = await chargeSubmissionFee({
+    kind: 'pack',
+    userId,
+    buzzType: buzzType as BuzzSpendType,
     amount: submissionFee,
-    type: TransactionType.Purchase,
     description: `Creator Shop pack submission fee - ${name}`,
-    externalTransactionId: `creator-shop-pack-submit-${userId}-${Date.now()}`,
+    idempotencyKey,
   });
   const feeTxId = feeTx.transactionId;
   if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
