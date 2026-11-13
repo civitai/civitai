@@ -119,7 +119,13 @@ export const model3dRouter = router({
   getById: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DByIdSchema)
-    .query(({ input, ctx }) => getModel3DById({ ...input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getModel3DById({
+        ...input,
+        user: ctx.user,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
+      })
+    ),
   // Look up a Model3D by orchestrator workflowId — used by the queue-card
   // "Post from Generation" flow. Requires login + ownership (or mod); the
   // service returns null instead of throwing when the draft hasn't landed yet

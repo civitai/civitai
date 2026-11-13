@@ -42,11 +42,35 @@ const applySelect = (row: Row, select: Select): Row =>
       })
   );
 
+/** Every field a 3D model's image may return: what its pages and cards draw. */
+const DRAWN = [
+  'id',
+  'name',
+  'url',
+  'nsfwLevel',
+  'width',
+  'height',
+  'hash',
+  'type',
+  'userId',
+  'createdAt',
+  'postId',
+];
 const image = (id: number) => ({
   id,
-  userId: 5,
+  name: `image-${id}`,
   url: `img-${id}`,
+  nsfwLevel: 1,
+  width: 512,
+  height: 512,
+  hash: 'hash',
+  type: 'image',
+  userId: 5,
+  createdAt: new Date('2026-01-01T00:00:00Z'),
+  postId: null,
   hideMeta: true,
+  generationProcess: 'txt2img',
+  scannedAt: new Date('2026-01-01T00:00:00Z'),
   meta: { prompt: 'a prompt its owner hid' },
   needsReview: 'poi',
   ingestion: 'Blocked',
@@ -68,7 +92,8 @@ const expectNoHidden = (img: unknown) => {
 /** A page or an action's result draws no image metadata at all. */
 const expectNoMetadata = (img: unknown) => {
   expectNoHidden(img);
-  expect(img).not.toHaveProperty('metadata');
+  // Exactly what the pages draw: nothing else the image row carries.
+  expect(Object.keys(img as object).sort()).toEqual([...DRAWN].sort());
 };
 const MODEL = {
   id: 9,
@@ -82,6 +107,15 @@ const MODEL = {
 };
 
 beforeEach(() => {
+  // The source image is one the viewer may see.
+  dbMock.dbRead.image.findUnique.mockResolvedValue({
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    blockedFor: null,
+    needsReview: null,
+    minor: false,
+    poi: false,
+  } as never);
   dbMock.dbRead.model3D.findUnique.mockImplementation((async (args: { select: Select }) =>
     applySelect(MODEL, args.select)) as never);
   dbMock.dbRead.model3D.findMany.mockImplementation((async (args: { select: Select }) => [
@@ -150,4 +184,43 @@ describe('a 3D model edit or moderation action', () => {
       expectNoMetadata(model.thumbnailImage);
     }
   );
+});
+
+describe("a 3D model's source image", () => {
+  const passing = {
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    blockedFor: null,
+    needsReview: null,
+    minor: false,
+    poi: false,
+  };
+  const sourceFor = async (user: unknown, state: object, browsingLevel = 1) => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, ...state } as never);
+    const model = await getModel3DById({ id: 9, user: user as never, browsingLevel });
+    return model.sourceImage?.id ?? null;
+  };
+
+  it.each([
+    ['above the viewer level', { nsfwLevel: 4 }],
+    ['not yet scanned', { ingestion: 'Pending' }],
+    ['blocked', { blockedFor: 'tos' }],
+    ['in review', { needsReview: 'minor' }],
+    ['flagged minor', { minor: true }],
+    ['flagged poi', { poi: true }],
+  ])('is not returned to another viewer when %s', async (_, state) => {
+    for (const user of [null, { id: 6 }]) expect(await sourceFor(user, state)).toBeNull();
+  });
+
+  it('is returned to another viewer when it passes (control), and at their level', async () => {
+    expect(await sourceFor({ id: 6 }, {})).toBe(2);
+    expect(await sourceFor({ id: 6 }, { nsfwLevel: 4 }, 1 | 4)).toBe(2);
+  });
+
+  it.each([
+    ['the model owner', { id: 5 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('is returned to %s whatever its state', async (_, user) => {
+    expect(await sourceFor(user, { blockedFor: 'tos', nsfwLevel: 16 })).toBe(2);
+  });
 });

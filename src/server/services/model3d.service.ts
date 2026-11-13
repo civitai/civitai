@@ -238,7 +238,12 @@ export type Model3DGetById = NonNullable<Awaited<ReturnType<typeof getModel3DByI
 export const getModel3DById = async ({
   id,
   user,
-}: GetModel3DByIdInput & { user?: SessionUser | null }) => {
+  browsingLevel = publicBrowsingLevelsFlag,
+}: GetModel3DByIdInput & {
+  user?: SessionUser | null;
+  /** The viewer's resolved, capped level; unset reads PG only. */
+  browsingLevel?: number;
+}) => {
   try {
     const isModerator = !!user?.isModerator;
     const model3d = await dbRead.model3D.findUnique({
@@ -263,6 +268,32 @@ export const getModel3DById = async ({
     )
       throw throwNotFoundError(`No 3D model with id ${id}`);
 
+    // The source image is shown as the feed shows images: scanned, out of review, never blocked,
+    // not flagged, and within the viewer's level. Its owner and moderators see it regardless.
+    let sourceImage = model3d.sourceImage;
+    if (sourceImage && !isModerator && model3d.userId !== user?.id) {
+      const state = await dbRead.image.findUnique({
+        where: { id: sourceImage.id },
+        select: {
+          nsfwLevel: true,
+          ingestion: true,
+          blockedFor: true,
+          needsReview: true,
+          minor: true,
+          poi: true,
+        },
+      });
+      const shown =
+        !!state &&
+        state.ingestion === 'Scanned' &&
+        !state.blockedFor &&
+        !state.needsReview &&
+        !state.minor &&
+        !state.poi &&
+        parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel)).includes(state.nsfwLevel);
+      if (!shown) sourceImage = null;
+    }
+
     // The signed-in user's own recommend (thumbs-up), so the detail page can
     // render the gold thumbs-up toggle in its correct state.
     const userReview = user
@@ -274,6 +305,7 @@ export const getModel3DById = async ({
 
     return {
       ...model3d,
+      sourceImage,
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
