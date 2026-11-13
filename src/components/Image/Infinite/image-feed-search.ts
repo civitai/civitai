@@ -12,9 +12,9 @@ import { QS } from '~/utils/qs';
 
 // The feed filters the search index cannot apply. While a query is set they are shown greyed and
 // ignored, never sent: the index ranks by meaning and carries no tools, techniques, remix or meta
-// fields, and the viewer-only views (hidden, followed, own drafts) are not in it.
+// fields, and the viewer-only views (hidden, followed, own drafts) are not in it. Made on-site and
+// Metadata only are applied when hydrating instead.
 export const imageFeedSearchUnavailableKeys = [
-  'withMeta',
   'requiringMeta',
   'hidden',
   'scheduled',
@@ -44,7 +44,6 @@ export const imageFeedFilterLabels: Record<
   string
 > = {
   // As the Filters menu and the Followed button word them, so a greyed control reads the same.
-  withMeta: 'Metadata only',
   requiringMeta: 'Requiring Metadata',
   hidden: 'Hidden',
   scheduled: 'Scheduled',
@@ -155,6 +154,7 @@ export function toSemanticImageSearchInput({
     userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
     fromPlatform: filters.fromPlatform || undefined,
+    withMeta: filters.withMeta || undefined,
     limit: 50,
   };
 }

@@ -258,6 +258,21 @@ describe('app_sandbox_hibernations SQL', () => {
     );
   });
 
+  it('deletedAccountsWithRows rotates: with a batch of one, every deleted account is reached', async () => {
+    await db.exec(`INSERT INTO "User" ("id", "deletedAt") VALUES (9404, now()), (9505, now())`);
+    for (const id of [9202, 9404, 9505])
+      await run(
+        hibernationSql.upsert(row({ userId: id, objectKey: `archives/${id}/tip-calculator/x.zip` }))
+      );
+    const seen = new Set<number>();
+    // A fixed order would answer the same account every time; 60 draws of 1 from 3 miss one
+    // with probability 3 * (2/3)^60, about 1e-10.
+    for (let i = 0; i < 60 && seen.size < 3; i++)
+      for (const r of await run<{ userId: number }>(hibernationSql.deletedAccountsWithRows(1)))
+        seen.add(r.userId);
+    expect([...seen].sort()).toEqual([9202, 9404, 9505]);
+  });
+
   it('deletedAccountsWithRows lists only deleted users that still have rows', async () => {
     await run(hibernationSql.upsert(row()));
     await run(

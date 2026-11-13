@@ -74,7 +74,8 @@ beforeAll(async () => {
       "profilePictureId" int, settings jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text, "blockedFor" text
+      id int PRIMARY KEY, "userId" int, ingestion text, "nsfwLevel" int, url text, "blockedFor" text,
+      "needsReview" text
     );
     CREATE TABLE "ImageReaction" ("imageId" int, "userId" int, reaction text, "createdAt" timestamp DEFAULT now());
     CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int);
@@ -308,5 +309,47 @@ describe('Creator Studio "Who reacted" leaves out reactors the reaction totals d
   it('does not read the set for a caller who does not own the content', async () => {
     expect(await page('image', NC_IMAGE, 999)).toBeNull();
     expect(notCounted.reads).toBe(0);
+  });
+});
+
+describe('Creator Studio "Who reacted" and "Who collected" avatars', () => {
+  const AV_IMAGE = 930;
+  // [userId, the avatar's needsReview, the avatar served]
+  const USERS: [number, string | null, string | null][] = [
+    [300, 'csam', null],
+    [301, 'minor', 'av301.jpg'],
+    [302, null, 'av302.jpg'],
+  ];
+  const avatars = (rows: { userId: number; image: string | null }[] | undefined) =>
+    rows?.map((r) => [r.userId, r.image]);
+  const expected = [...USERS].reverse().map(([id, , image]) => [id, image]);
+
+  beforeAll(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId") VALUES (${AV_IMAGE}, ${OWNER});
+      INSERT INTO "Image" (id, "userId", ingestion, "nsfwLevel", url, "needsReview") VALUES
+        ${USERS.map(([u, review]) => `(${u + 10000}, ${u}, 'Scanned', 1, 'av${u}.jpg', ${review ? `'${review}'` : 'NULL'})`).join(', ')};
+      INSERT INTO "User" (id, username, "profilePictureId") VALUES
+        ${USERS.map(([u]) => `(${u}, 'u${u}', ${u + 10000})`).join(', ')};
+      INSERT INTO "ImageReaction" ("imageId", "userId", reaction) VALUES
+        ${USERS.map(([u]) => `(${AV_IMAGE}, ${u}, 'Like')`).join(', ')};
+      INSERT INTO "Collection" VALUES
+        ${USERS.map(([u]) => `(${u}, ${u}, 'Public', 'Public', NULL)`).join(', ')};
+      INSERT INTO "CollectionItem" ("collectionId", "imageId", status, "addedById") VALUES
+        ${USERS.map(([u]) => `(${u}, ${AV_IMAGE}, 'ACCEPTED', ${u})`).join(', ')};
+    `);
+  });
+
+  it('"Who reacted" hides an avatar held for CSAM review and keeps the rest', async () => {
+    const page = await getReactors(holder.db as never, OWNER, 'image', AV_IMAGE, {
+      reaction: 'Like',
+      cursor: null,
+    } as never);
+    expect(avatars(page?.reactors)).toEqual(expected);
+  });
+
+  it('"Who collected" hides an avatar held for CSAM review and keeps the rest', async () => {
+    const page = await getCollectors(holder.db as never, OWNER, 'image', AV_IMAGE, null);
+    expect(avatars(page?.collectors)).toEqual(expected);
   });
 });
