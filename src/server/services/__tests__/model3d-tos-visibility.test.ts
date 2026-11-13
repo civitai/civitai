@@ -6,12 +6,12 @@ import { Model3DStatus } from '~/shared/utils/prisma/enums';
 type Row = Record<string, unknown>;
 type Where = Record<string, unknown>;
 
-/** Prisma `where` over a flat row: equality, `in`, `not`, AND/OR. Relation filters are not under test. */
+/** Prisma `where` over a flat row: equality, `in`, `not`, AND/OR. Refuses a column the row lacks. */
 function matches(row: Row, where: Where): boolean {
   return Object.entries(where).every(([key, cond]) => {
     if (key === 'AND') return (cond as Where[]).every((w) => matches(row, w));
     if (key === 'OR') return (cond as Where[]).some((w) => matches(row, w));
-    if (!(key in row)) return true;
+    if (!(key in row)) throw new Error(`The fake has no column ${key}`);
     if (cond === null || typeof cond !== 'object') return row[key] === cond;
     const op = cond as { in?: unknown[]; not?: unknown };
     if ('in' in op) return op.in!.includes(row[key]);

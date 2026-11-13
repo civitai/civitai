@@ -11,12 +11,15 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 
 const h = vi.hoisted(() => ({
-  hiddenTags: [] as { id: number; hidden: boolean }[],
+  // Each viewer's own hidden tags, by user id (-1: signed out).
+  hiddenByUser: {} as Record<number, { id: number; hidden: boolean }[]>,
   addons: [] as unknown[],
 }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  getAllHiddenForUser: async () => ({ hiddenTags: h.hiddenTags }),
+  getAllHiddenForUser: async ({ userId = -1 }: { userId?: number }) => ({
+    hiddenTags: h.hiddenByUser[userId] ?? [],
+  }),
 }));
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -139,7 +142,7 @@ type Args = {
 };
 beforeEach(() => {
   rows = POSTS;
-  h.hiddenTags = [];
+  h.hiddenByUser = {};
   h.addons = [];
   dbMock.dbRead.model3D.findUnique.mockResolvedValue({
     id: MODEL3D,
@@ -357,7 +360,9 @@ describe('getModel3DRelatedPosts, with hidden tags', () => {
   });
 
   it('passes over a cover carrying a tag the viewer hid, moderators included', async () => {
-    h.hiddenTags = [{ id: HIDDEN, hidden: true }];
+    h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: true }], 1: [{ id: HIDDEN, hidden: true }] };
+    // Another viewer's hides are not this viewer's (control).
+    expect((await coverOf({ id: STRANGER }))[30]).toBe(first30);
     for (const user of [{ id: 77 }, { id: 1, isModerator: true }]) {
       const covers = await coverOf(user);
       expect(covers[30]).toBe(second30);
@@ -367,7 +372,7 @@ describe('getModel3DRelatedPosts, with hidden tags', () => {
     // A moderator sees posts in any state: listed, with no cover.
     expect((await coverOf({ id: 1, isModerator: true }))[31]).toBeNull();
     // A tag the viewer only voted on, not hid, hides nothing.
-    h.hiddenTags = [{ id: HIDDEN, hidden: false }];
+    h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: false }] };
     expect((await coverOf({ id: 77 }))[30]).toBe(first30);
   });
 
@@ -376,6 +381,8 @@ describe('getModel3DRelatedPosts, with hidden tags', () => {
     expect(await coverOf(undefined)).not.toHaveProperty('33');
     expect(await coverOf({ id: 77 })).not.toHaveProperty('33');
     expect((await coverOf({ id: STRANGER }))[33]).toBe(TAG_POSTS[3].images[0].id);
+    // A moderator is not held to the site's hidden tags.
+    expect((await coverOf({ id: 1, isModerator: true }))[33]).toBe(TAG_POSTS[3].images[0].id);
   });
 });
 
