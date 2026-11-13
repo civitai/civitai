@@ -28,8 +28,9 @@ const mockFindFirst = dbMock.dbRead.modelFile.findFirst;
 const HASH = 'a'.repeat(64);
 
 const runRequest = (query: Record<string, string>) => {
-  const req = { method: 'GET', query } as unknown as NextApiRequest;
+  const req = { method: 'GET', query, headers: {} } as unknown as NextApiRequest;
   const res = {
+    setHeader: vi.fn().mockReturnThis(),
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
   } as unknown as NextApiResponse;
