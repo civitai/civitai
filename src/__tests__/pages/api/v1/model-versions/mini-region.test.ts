@@ -131,11 +131,13 @@ describe('mini/[id] by region', () => {
     const restricted = await call(versionRow(level), true);
     expect(restricted.statusCode).toBe(404);
     expect(restricted.body).toEqual({ error: 'Model not found' });
+    expect(restricted.cacheControl).toBe(NO_STORE);
   });
 
   it.each([
     ['an R version', R],
     ['an X version', X],
+    ['an unrated version', 0],
   ])('serves %s elsewhere, and caches it in neither region', async (_, level) => {
     const elsewhere = await call(versionRow(level), false);
     const restricted = await call(versionRow(level), true);
@@ -177,6 +179,19 @@ describe('mini/[id] orchestrator exemption', () => {
     );
     expect(statusCode).toBe(200);
     expect(body?.modelName).toBe('Red Name');
+    expect(cacheControl).toBe(NO_STORE);
+  });
+
+  it.each([
+    ['an SFW version', PG],
+    ['an unrated version', 0],
+  ])('serves the orchestrator %s in a restricted region, uncached', async (_, level) => {
+    const { statusCode, cacheControl } = await call(
+      versionRow(level),
+      true,
+      `Bearer ${SERVICE_TOKEN}`
+    );
+    expect(statusCode).toBe(200);
     expect(cacheControl).toBe(NO_STORE);
   });
 

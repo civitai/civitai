@@ -289,9 +289,12 @@ export default MixedAuthEndpoint(async function handler(
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
     return res.status(404).json({ error: 'Model not found' });
 
-  // Above SFW, or with a civitai.com name, the answer depends on the caller's region, which the
-  // shared cache does not key on.
-  if (!Flags.hasFlag(sfwBrowsingLevelsFlag, modelVersion.nsfwLevel) || modelVersion.sfwName != null)
+  // Above SFW, unrated, or with a civitai.com name, the answer depends on the caller's region, which
+  // the shared cache does not key on. The orchestrator's answer is never shared either: it skips
+  // the region rules below.
+  const withinSfw =
+    !!modelVersion.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, modelVersion.nsfwLevel);
+  if (orchestrator || !withinSfw || modelVersion.sfwName != null)
     res.setHeader('Cache-Control', 'private, no-store');
   // A restricted region is served the levels /api/v1/model-versions/[id] serves it (unrated fails
   // closed), with the civitai.com name. The orchestrator, on its verified service token, is exempt:
