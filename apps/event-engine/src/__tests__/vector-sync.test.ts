@@ -1458,7 +1458,9 @@ describe('collection layout', () => {
         .spec as CollectionSpec<object>;
       return { name: d.name, replicationFactor, writeConsistencyFactor };
     });
-    expect(specs.map((s) => s.name)).toEqual(expect.arrayContaining(['model', 'article', 'comic']));
+    expect(specs.map((s) => s.name)).toEqual(
+      expect.arrayContaining(['model', 'article', 'comic', 'crucible'])
+    );
     for (const spec of specs) expect(spec).toEqual({ name: spec.name, ...SITE_REPLICATION });
   });
 });
