@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import { IconAlertCircle, IconApps, IconLink } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 
 export type IntentComposeValues = { title: string; description: string; tags: string[] };
@@ -46,6 +47,7 @@ export function IntentComposeSheet({
   busy,
   error,
 }: IntentComposeSheetProps) {
+  const toCurrentDomain = useCurrentDomainHref();
   const set = (patch: Partial<IntentComposeValues>) => onChange({ ...values, ...patch });
 
   return (
@@ -119,7 +121,7 @@ export function IntentComposeSheet({
             </Text>
             <Anchor
               size="sm"
-              href={sourceLink}
+              href={toCurrentDomain(sourceLink)}
               target="_blank"
               rel="ugc nofollow noopener noreferrer"
               className="truncate"

@@ -27,6 +27,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as AppProviderModule from '~/providers/AppProvider';
 import type { PostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -35,6 +36,12 @@ const mocks = vi.hoisted(() => ({
   cardInputs: [] as unknown[],
   cardProps: [] as { card: unknown; canOpenPage?: boolean; embedded?: boolean }[],
   appBlocksPages: false,
+  appContext: null as { host: string; serverDomains: Record<string, unknown> } | null,
+}));
+
+vi.mock('~/providers/AppProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppProviderModule>()),
+  useMaybeAppContext: () => mocks.appContext,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -111,6 +118,7 @@ beforeEach(() => {
   mocks.cardInputs = [];
   mocks.cardProps = [];
   mocks.appBlocksPages = false;
+  mocks.appContext = null;
 });
 
 describe('PostPublishedWithApp', () => {
@@ -223,6 +231,19 @@ describe('PostPublishedWithApp', () => {
     expect(itemLink?.getAttribute('href')).toBe('https://games.civitai.com/play/fakeful');
     expect(itemLink?.getAttribute('target')).toBe('_blank');
     expect(itemLink?.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  test('opens an off-site item on another of our sites on the site being read', async () => {
+    mocks.appContext = {
+      host: 'civitai.red',
+      serverDomains: {
+        blue: { primary: 'civitai.com', aliases: [] },
+        red: { primary: 'civitai.red', aliases: [] },
+      },
+    };
+    const item = { name: 'Fakeful', href: 'https://civitai.com/models/1', external: true };
+    await rendered({ ...viewable, item });
+    expect(chip()?.querySelector('a')?.getAttribute('href')).toBe('https://civitai.red/models/1');
   });
 
   test('names an item with no valid link unlinked', async () => {

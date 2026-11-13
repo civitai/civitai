@@ -1,12 +1,19 @@
 import { Anchor, Card, Divider, Text } from '@mantine/core';
 import { IconDatabase } from '@tabler/icons-react';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 function ExternalUrl({ url }: { url: string }) {
+  const toCurrentDomain = useCurrentDomainHref();
   if (!/^https?:\/\//i.test(url)) return <>{url}</>;
   return (
-    <Anchor href={url} target="_blank" rel="ugc nofollow noopener noreferrer" className="break-all">
+    <Anchor
+      href={toCurrentDomain(url)}
+      target="_blank"
+      rel="ugc nofollow noopener noreferrer"
+      className="break-all"
+    >
       {url}
     </Anchor>
   );
