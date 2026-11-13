@@ -29,6 +29,8 @@ const h = await vi.hoisted(async () => {
     redisGetThrows: false,
     redisGetHangs: false,
     redisSetThrows: false,
+    // Like the real sys client (disableOfflineQueue): commands reject until it is ready.
+    sysReady: true,
     rate: new Map<string, number>(),
     rateCalls: [] as string[],
     clientIp: '203.0.113.7' as string | null,
@@ -93,12 +95,17 @@ vi.mock('$lib/server/redis', async (orig) => ({
     },
   }),
   getSysRedis: () => ({
+    get isReady() {
+      return h.sysReady;
+    },
     async set(key: string, value: string, opts: { EX: number }) {
+      if (!h.sysReady) throw new Error('The client is offline');
       if (h.redisSetThrows) throw new Error('redis down');
       h.redis.set(key, { value, ex: opts.EX });
       return 'OK';
     },
     async get(key: string) {
+      if (!h.sysReady) throw new Error('The client is offline');
       if (h.redisGetThrows) throw new Error('redis down');
       if (h.redisGetHangs) return new Promise<never>(() => undefined);
       return h.redis.get(key)?.value ?? null;
@@ -219,6 +226,7 @@ beforeEach(() => {
   h.redisGetThrows = false;
   h.redisGetHangs = false;
   h.redisSetThrows = false;
+  h.sysReady = true;
   h.rate.clear();
   h.rateCalls = [];
   h.clientIp = '203.0.113.7';
@@ -551,6 +559,22 @@ describe('user token exchange — request checks, in order', () => {
     expect((await exchange()).status).toBe(200);
   });
 
+  it('waits for the record store to be ready on a cold start', async () => {
+    h.sysReady = false;
+    setTimeout(() => (h.sysReady = true), 150);
+    const res = await exchange();
+    expect(res.status).toBe(200);
+    expect(h.redis.has(`oauth:xchg:${decodeJwt(res.body.access_token as string).jti}`)).toBe(true);
+  });
+
+  it('issues no token when the record store is not ready in time', async () => {
+    h.sysReady = false;
+    const res = await exchange();
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('server_error');
+    expect(res.body).not.toHaveProperty('access_token');
+  });
+
   it('answers 503 when a lookup fails', async () => {
     h.dbThrows = (t) => t === 'User';
     const res = await exchange();
@@ -814,6 +838,21 @@ describe('introspection of an exchanged JWT', () => {
     const res = await introspect(token);
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('5');
+  });
+
+  it('waits for the record store to be ready before reading', async () => {
+    const token = await minted();
+    h.sysReady = false;
+    setTimeout(() => (h.sysReady = true), 150);
+    expect((await introspect(token)).body.active).toBe(true);
+  });
+
+  it('answers 503, not inactive, when the record store is not ready in time', async () => {
+    const token = await minted();
+    h.sysReady = false;
+    const res = await introspect(token);
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'temporarily_unavailable' });
   });
 
   it('answers 503 when a database lookup fails', async () => {

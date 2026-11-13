@@ -152,25 +152,35 @@ export interface ExchangeRecord {
 const recordKey = (jti: string) => `${REDIS_SYS_KEYS.OAUTH.TOKEN_EXCHANGES}:${jti}` as const;
 
 type StringRedis = {
+  isReady?: boolean;
   set(key: string, value: string, opts: { EX: number }): Promise<unknown>;
   get(key: string): Promise<string | null>;
 };
 
-/** How long an exchange record read or write may wait (the client queues while reconnecting). */
+/** How long an exchange record read or write may wait, including for the client to be ready. */
 const RECORD_TIMEOUT_MS = 2000;
+const READY_POLL_MS = 20;
 
-function withTimeout<T>(op: Promise<T>): Promise<T> {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// The sys client rejects commands until it is ready (at startup, and while reconnecting) instead of
+// queueing them, so wait for it here. Throws when it is not ready in time or the command overruns.
+async function withSysRedis<T>(op: (redis: StringRedis) => Promise<T>): Promise<T> {
+  const deadline = Date.now() + RECORD_TIMEOUT_MS;
+  const redis = getSysRedis() as unknown as StringRedis | null;
+  if (!redis) throw new Error('REDIS_SYS_URL is not configured');
+  while (redis.isReady === false) {
+    if (Date.now() >= deadline) throw new Error('exchange record store not ready');
+    await sleep(READY_POLL_MS);
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('exchange record timed out')), RECORD_TIMEOUT_MS);
+    timer = setTimeout(
+      () => reject(new Error('exchange record timed out')),
+      Math.max(0, deadline - Date.now())
+    );
   });
-  return Promise.race([op, timeout]).finally(() => clearTimeout(timer));
-}
-
-function redisOrThrow(): StringRedis {
-  const redis = getSysRedis();
-  if (!redis) throw new Error('REDIS_SYS_URL is not configured');
-  return redis as unknown as StringRedis;
+  return Promise.race([op(redis), timeout]).finally(() => clearTimeout(timer));
 }
 
 /** Store the record until a minute past the JWT's expiry. Throws when it cannot be stored. */
@@ -180,12 +190,12 @@ export async function writeExchangeRecord(
   nowSeconds: number
 ): Promise<void> {
   const ttl = Math.max(1, record.exp - nowSeconds + 60);
-  await withTimeout(redisOrThrow().set(recordKey(jti), JSON.stringify(record), { EX: ttl }));
+  await withSysRedis((redis) => redis.set(recordKey(jti), JSON.stringify(record), { EX: ttl }));
 }
 
 /** The record for `jti`, or null when there is none. Throws when Redis cannot answer. */
 export async function readExchangeRecord(jti: string): Promise<ExchangeRecord | null> {
-  const raw = await withTimeout(redisOrThrow().get(recordKey(jti)));
+  const raw = await withSysRedis((redis) => redis.get(recordKey(jti)));
   if (raw == null) return null;
   try {
     return JSON.parse(raw) as ExchangeRecord;
