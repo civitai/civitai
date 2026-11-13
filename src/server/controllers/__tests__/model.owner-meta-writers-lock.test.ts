@@ -140,6 +140,14 @@ describe('setting the showcase collection', () => {
         userId: OWNER,
       }),
     });
+    expect(saveItemInCollections).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds with a moderator’s permissions when a moderator sets it', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: 7, isModerator: true });
+    expect(saveItemInCollections).toHaveBeenCalledWith({
+      input: expect.objectContaining({ userId: 7, isModerator: true }),
+    });
   });
 
   it('returns a refused add and leaves the showcase unset', async () => {
@@ -148,6 +156,13 @@ describe('setting the showcase collection', () => {
       setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
     ).rejects.toThrow('Collection type mismatch');
     expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('leaves a model already in the collection alone', async () => {
+    dbMock.dbWrite.collectionItem.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
+    expect(saveItemInCollections).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({ showcaseCollectionId: 9 });
   });
 
   it('adds nothing when the showcase is cleared', async () => {

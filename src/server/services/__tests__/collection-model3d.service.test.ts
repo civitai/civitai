@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
+import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { saveCollectionItemInputSchema } from '~/server/schema/collection.schema';
 
@@ -10,6 +11,11 @@ const mockDbWrite = dbMock.dbWrite;
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
+}));
+// Image visibility has its own suites; here it would refuse the image-item create before the write.
+vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageVisibility>()),
+  assertImagesVisibleToViewer: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => ({
   ...(await importOriginal<typeof HomeBlockCache>()),
@@ -176,7 +182,6 @@ describe('which item a collection save writes', () => {
   it('keys on the id that has a value, not one present as undefined', async () => {
     mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ type: 'Image' })]);
     mockDbRead.$queryRaw.mockResolvedValue([{ ...permissionRow, type: 'Image' }]);
-    mockDbRead.image.findMany.mockResolvedValue([{ id: 5, userId: USER_ID }] as never);
 
     await saveItemInCollections({
       input: {
@@ -224,10 +229,13 @@ describe('creating a collection', () => {
     expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toBeUndefined();
   });
 
-  it('writes the item it was created with', async () => {
-    await create({ modelId: 5 }).catch(() => undefined);
-    expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toEqual({
-      create: expect.objectContaining({ modelId: 5, addedById: USER_ID }),
-    });
-  });
+  it.each(['modelId', 'articleId', 'postId', 'model3dId', 'imageId'])(
+    'writes the item it was created with (%s)',
+    async (key) => {
+      await create({ [key]: 5 }).catch(() => undefined);
+      expect(mockDbWrite.collection.create.mock.calls[0][0].data.items).toEqual({
+        create: expect.objectContaining({ [key]: 5, addedById: USER_ID }),
+      });
+    }
+  );
 });

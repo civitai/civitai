@@ -103,6 +103,7 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { upsertModel } from '~/server/services/model.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
+import { saveItemInCollections } from '~/server/services/collection.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -220,6 +221,25 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     expect(submitModelTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ isModerator: true })
     );
+  });
+
+  // The model row is committed before the showcase add, so a refused add must not skip the submit.
+  it('update branch: still submits when the showcase add is refused, then returns the refusal', async () => {
+    mockUpdateReturning('New Name', 'New description');
+    vi.mocked(saveItemInCollections).mockRejectedValueOnce(new Error('Collection type mismatch'));
+
+    await expect(
+      upsert({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        name: 'New Name',
+        description: 'New description',
+        meta: { showcaseCollectionId: 9 },
+      } as never)
+    ).rejects.toThrow('Collection type mismatch');
+
+    expect(saveItemInCollections).toHaveBeenCalledTimes(1);
+    expect(submitModelTextModeration).toHaveBeenCalledTimes(1);
   });
 
   it('update branch: submits the POST-update name/description, not the stored pre-update ones', async () => {

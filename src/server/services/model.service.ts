@@ -4215,14 +4215,11 @@ export const upsertModel = async (
     if (modelMeta?.showcaseCollectionId) {
       // Best-effort — model create should not fail if the showcase collection
       // can't be written to (e.g. user references one they don't own).
-      await saveItemInCollections({
-        input: {
-          collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-          modelId: result.id,
-          type: 'Model',
-          userId,
-          isModerator,
-        },
+      await addModelToShowcaseCollection({
+        modelId: result.id,
+        collectionId: modelMeta.showcaseCollectionId,
+        userId,
+        isModerator,
       }).catch((error) =>
         logToAxiom({
           type: 'error',
@@ -4727,16 +4724,17 @@ export const upsertModel = async (
         ).catch(() => undefined);
     }
 
+    // The model is already saved, so a refused add is returned only after the follow-ups below run.
+    let showcaseAddError: unknown;
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
-        await saveItemInCollections({
-          input: {
-            collections: [{ collectionId: modelMeta.showcaseCollectionId }],
-            modelId: id,
-            type: 'Model',
-            userId,
-            isModerator,
-          },
+        await addModelToShowcaseCollection({
+          modelId: id,
+          collectionId: modelMeta.showcaseCollectionId,
+          userId,
+          isModerator,
+        }).catch((error) => {
+          showcaseAddError = error;
         });
       } else {
         saveItemInCollections({
@@ -4779,6 +4777,8 @@ export const upsertModel = async (
         context: { name: result.name, isModerator },
       });
     }
+
+    if (showcaseAddError) throw showcaseAddError;
 
     return withoutModeratorOnlyMeta(result);
   }
@@ -6867,6 +6867,31 @@ export async function copyGallerySettingsToAllModelsByUser({
   return result;
 }
 
+/**
+ * A showcase collection must list its model. A model already in it is left alone: re-saving would
+ * demand write access and a tag the caller may not have, and would clear an existing item's tag.
+ */
+async function addModelToShowcaseCollection({
+  modelId,
+  collectionId,
+  userId,
+  isModerator,
+}: {
+  modelId: number;
+  collectionId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const existing = await dbWrite.collectionItem.findFirst({
+    where: { collectionId, modelId },
+    select: { id: true },
+  });
+  if (existing) return;
+  await saveItemInCollections({
+    input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
+  });
+}
+
 export async function setModelShowcaseCollection({
   id,
   collectionId,
@@ -6885,13 +6910,9 @@ export async function setModelShowcaseCollection({
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
   if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
 
-  // A showcase the model isn't in shows a collection that doesn't list it. Add first so a refused
-  // add leaves the showcase unchanged; an existing item is a no-op.
-  if (collectionId != null && !modelAlreadyInCollection) {
-    await saveItemInCollections({
-      input: { collections: [{ collectionId }], modelId: id, type: 'Model', userId, isModerator },
-    });
-  }
+  // Add first so a refused add leaves the showcase unchanged.
+  if (collectionId != null && !modelAlreadyInCollection)
+    await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
 
   const updated = await updateModelById({
     id,
