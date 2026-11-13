@@ -21,7 +21,7 @@ vi.mock('~/server/services/child-label-reindex.service', () => ({ runChildLabelR
 
 const handler = (await import('~/pages/api/admin/temp/child-label-reindex')).default;
 
-function call(query: Record<string, string>, token = 'test-token') {
+async function call(query: Record<string, string>, token = 'test-token') {
   const req = { method: 'POST', query: { token, ...query }, headers: {} } as never;
   let statusCode = 0;
   const res = {
@@ -34,7 +34,8 @@ function call(query: Record<string, string>, token = 'test-token') {
     setHeader: () => res,
     end: () => res,
   };
-  return handler(req, res as never).then(() => statusCode);
+  await handler(req, res as never);
+  return statusCode;
 }
 
 describe('child-label-reindex route', () => {
