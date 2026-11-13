@@ -20,7 +20,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../../packages/civitai-db-schema/prisma/migrations/20270106120000_app_publish_request_holds/migration.sql'
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20270114120000_app_publish_request_holds/migration.sql'
 );
 
 type Raw = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw'>;
