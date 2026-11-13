@@ -251,7 +251,8 @@ const moderateTrainingData = async ({
         const hook = await outboundFetch(
           `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           {
-            timeoutMs: 30_000,
+            // Our own webhook handler; generous so a slow but successful run is not reported failed.
+            timeoutMs: 120_000,
             method: 'POST',
             body: JSON.stringify({ workflowId, status }),
             headers: {

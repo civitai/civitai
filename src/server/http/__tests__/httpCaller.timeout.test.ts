@@ -48,14 +48,15 @@ describe('HttpCaller against a server that never responds', () => {
     for (const [k, v] of entries) flags.values.set(k, v);
     const caller = new TestCaller(server.url);
 
+    const requestsBefore = server.requests();
     const started = Date.now();
     const result = await settleOrHung(caller.get('/anything'), BUDGET_MS);
 
     expect(result).not.toBe('hung');
     expect(result).toMatchObject({ ok: false });
     expect(Date.now() - started).toBeLessThan(BUDGET_MS);
-    // The request really reached the stalled server: the timeout is what ended it.
-    expect(server.requests()).toBeGreaterThan(0);
+    // THIS case's request reached the stalled server: the timeout is what ended it.
+    expect(server.requests() - requestsBefore).toBe(1);
   });
 
   it('POST, PUT and DELETE are bounded too', async () => {
