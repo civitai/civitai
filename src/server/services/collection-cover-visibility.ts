@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { songReviewedSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -12,12 +13,13 @@ const baseModelAllowedSql = Prisma.sql`(
   OR NOT i."modelRestricted"
 )`;
 
-/** Scanned, not awaiting review, not removed, allowed by its base model: as SQL over `"Image" i`. */
+/** Scanned, not awaiting review, not removed, allowed by its base model, not a held song: as SQL over `"Image" i`. */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  AND ${songReviewedSql()}
   AND ${baseModelAllowedSql}
 )`;
 

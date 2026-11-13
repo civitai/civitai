@@ -38,10 +38,12 @@ const names = Object.keys(images);
 beforeAll(async () => {
   pg.db = new PGlite();
   await pg.db.exec(`
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM
       ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
-    CREATE TABLE "Image" (
+    CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       id int PRIMARY KEY, url text NOT NULL, hash text, "nsfwLevel" int NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL, "blockedFor" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb

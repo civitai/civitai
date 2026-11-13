@@ -507,6 +507,7 @@ export function PostDetailContent({ postId }: Props) {
                   )}
                 <PostImages
                   postId={post.id}
+                  postTitle={post.title}
                   images={images}
                   isLoading={imagesLoading}
                   collectionItems={collectionItems}

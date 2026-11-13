@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useFileUploadContext } from '~/components/FileUpload/FileUploadProvider';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import { UploadType } from '~/server/common/enums';
 import { MEDIA_TYPE } from '~/shared/constants/mime-types';
+import type { SongDetails } from '~/shared/form-graph/generation/audio/song-metadata';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import type { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { preprocessFile } from '~/utils/media-preprocessors';
@@ -38,6 +40,16 @@ export type MediaUploadOnCompleteProps = {
   blockedFor?: string | null;
 } & MediaUploadDataProps;
 
+/** A file handed to `upload`. */
+export type MediaUploadFile = {
+  file: File;
+  meta?: Record<string, unknown>;
+  generationWorkflowId?: string;
+  /** The file is a generated song, posted as audio even in a video container. Needs the music flag. */
+  mediaType?: 'audio';
+  audioMetadata?: SongDetails;
+};
+
 export type UseMediaUploadProps<TContext> = {
   count: number;
   onComplete: (props: MediaUploadOnCompleteProps, context?: TContext) => void;
@@ -56,6 +68,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   onUnreadable,
 }: UseMediaUploadProps<TContext>) {
   const currentUser = useCurrentUser();
+  const musicEnabled = !!useOptionalFeatureFlags()?.music;
   // #region [state]
   const [error, setError] = useState<Error>();
   const [loading, setLoading] = useState(false);
@@ -185,10 +198,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   // #endregion
 
   // #region [file processor]
-  async function processFiles(
-    data: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[],
-    context?: TContext
-  ) {
+  async function processFiles(data: MediaUploadFile[], context?: TContext) {
     setLoading(true);
     try {
       const start = Math.max(count, lastIndexRef.current) + 1;
@@ -213,83 +223,101 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       // process media metadata
       const mapped = (
         await Promise.all(
-          sliced.map(async ({ file, meta: fileMeta, generationWorkflowId }) => {
-            let data: PreprocessFileReturnType | null;
-            try {
-              data = await preprocessFile(file, { allowAnimatedWebP: currentUser?.isModerator });
-            } catch (e: any) {
-              data = null;
-              if (isReadFailure(e) && onUnreadableRef.current?.(file)) return null;
-              showErrorNotification({
-                title: `Error: ${file.name}`,
-                error: e instanceof Error ? e : { message: e },
-                autoClose: 6000,
-              });
-            }
-            if (!data) return null;
-            // A generated video's file carries the worker's ComfyUI graph, whose Model path and
-            // engine would override the generator's meta and fail the on-site check. The
-            // generator's meta drops empty arrays, so a job with no resources (e.g. an
-            // interpolated video) has no civitaiResources: the workflow id marks it as generated.
-            const isOnSiteVideo =
-              data.type === 'video' && (!!fileMeta?.civitaiResources || !!generationWorkflowId);
-            const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
-            // Merge civitaiResources arrays by modelVersionId instead of overwriting
-            const mergedCivitaiResources = (() => {
-              const fileResources = fileMeta?.civitaiResources as
-                | { modelVersionId: number }[]
-                | undefined;
-              const exifResources = embeddedMeta?.civitaiResources as
-                | { modelVersionId: number }[]
-                | undefined;
-              if (!fileResources?.length) return exifResources;
-              if (!exifResources?.length) return fileResources;
-              const merged = [...fileResources];
-              for (const resource of exifResources) {
-                if (!merged.some((r) => r.modelVersionId === resource.modelVersionId)) {
-                  merged.push(resource);
-                }
+          sliced.map(
+            async ({ file, meta: fileMeta, generationWorkflowId, mediaType, audioMetadata }) => {
+              const asAudio = musicEnabled && mediaType === 'audio';
+              let data: PreprocessFileReturnType | null;
+              try {
+                data = await preprocessFile(file, {
+                  allowAnimatedWebP: currentUser?.isModerator,
+                  asAudio,
+                });
+              } catch (e: any) {
+                data = null;
+                if (isReadFailure(e) && onUnreadableRef.current?.(file)) return null;
+                showErrorNotification({
+                  title: `Error: ${file.name}`,
+                  error: e instanceof Error ? e : { message: e },
+                  autoClose: 6000,
+                });
               }
-              return merged;
-            })();
-            const processing: ProcessingFile = {
-              ...data,
-              generationWorkflowId,
-              meta: {
-                ...fileMeta,
-                ...embeddedMeta,
-                ...(mergedCivitaiResources ? { civitaiResources: mergedCivitaiResources } : {}),
-              },
-              file,
-            };
-            const meta = embeddedMeta;
+              if (!data) return null;
+              if (data.type === 'audio' && !asAudio) {
+                URL.revokeObjectURL(data.objectUrl);
+                showErrorNotification({
+                  title: `Error: ${file.name}`,
+                  error: new Error('Audio uploads are not supported yet.'),
+                  autoClose: 6000,
+                });
+                return null;
+              }
+              // A generated video's file carries the worker's ComfyUI graph, whose Model path and
+              // engine would override the generator's meta and fail the on-site check. The
+              // generator's meta drops empty arrays, so a job with no resources (e.g. an
+              // interpolated video) has no civitaiResources: the workflow id marks it as generated.
+              const isOnSiteVideo =
+                data.type === 'video' && (!!fileMeta?.civitaiResources || !!generationWorkflowId);
+              const embeddedMeta = isOnSiteVideo ? undefined : data.meta;
+              // Merge civitaiResources arrays by modelVersionId instead of overwriting
+              const mergedCivitaiResources = (() => {
+                const fileResources = fileMeta?.civitaiResources as
+                  | { modelVersionId: number }[]
+                  | undefined;
+                const exifResources = embeddedMeta?.civitaiResources as
+                  | { modelVersionId: number }[]
+                  | undefined;
+                if (!fileResources?.length) return exifResources;
+                if (!exifResources?.length) return fileResources;
+                const merged = [...fileResources];
+                for (const resource of exifResources) {
+                  if (!merged.some((r) => r.modelVersionId === resource.modelVersionId)) {
+                    merged.push(resource);
+                  }
+                }
+                return merged;
+              })();
+              // Cast: TS cannot pair each union member's `type` with its own `metadata` through the spread.
+              const processing = {
+                ...data,
+                generationWorkflowId,
+                meta: {
+                  ...fileMeta,
+                  ...embeddedMeta,
+                  ...(mergedCivitaiResources ? { civitaiResources: mergedCivitaiResources } : {}),
+                },
+                file,
+              } as ProcessingFile;
+              if (processing.type === 'audio' && audioMetadata)
+                processing.metadata = { ...processing.metadata, ...audioMetadata };
+              const meta = embeddedMeta;
 
-            if (meta) {
-              const audit = auditPostImageMeta(meta, false);
-              if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
-            }
+              if (meta) {
+                const audit = auditPostImageMeta(meta, false);
+                if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
+              }
 
-            if (data.type === 'image') {
-              if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
-                throw new Error(
-                  'Comfy metadata is too large. Please consider updating your workflow'
-                );
-            } else if (data.type === 'video') {
-              const { metadata } = data;
-              if (metadata.duration && metadata.duration > uploadSettings.maxVideoDuration)
-                throw new Error(
-                  `Video duration cannot be longer than ${uploadSettings.maxVideoDuration} seconds. Please trim your video and try again.`
-                );
-              if (
-                metadata.width > uploadSettings.maxVideoDimensions ||
-                metadata.height > uploadSettings.maxVideoDimensions
-              )
-                throw new Error(
-                  `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image or video and try again.`
-                );
+              if (data.type === 'image') {
+                if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
+                  throw new Error(
+                    'Comfy metadata is too large. Please consider updating your workflow'
+                  );
+              } else if (data.type === 'video') {
+                const { metadata } = data;
+                if (metadata.duration && metadata.duration > uploadSettings.maxVideoDuration)
+                  throw new Error(
+                    `Video duration cannot be longer than ${uploadSettings.maxVideoDuration} seconds. Please trim your video and try again.`
+                  );
+                if (
+                  metadata.width > uploadSettings.maxVideoDimensions ||
+                  metadata.height > uploadSettings.maxVideoDimensions
+                )
+                  throw new Error(
+                    `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image or video and try again.`
+                  );
+              }
+              return processing;
             }
-            return processing;
-          })
+          )
         )
       ).filter(isDefined);
 

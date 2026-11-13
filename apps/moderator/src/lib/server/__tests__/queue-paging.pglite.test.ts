@@ -20,7 +20,8 @@ vi.mock('../db', () => ({
 
 const { getImageReviewQueue, getReportedImageQueue } = await import('../image-review.service');
 const { getComicReviewQueue } = await import('../comic-review.service');
-const { getImagesPendingIngestion, getIngestionErrorImages } = await import('../ingestion.service');
+const { getImagesPendingIngestion, getIngestionErrorImages, countIngestionErrorImages } =
+  await import('../ingestion.service');
 const { getImageTagReviewQueue } = await import('../image-tags.service');
 const { getImageRatingRequests } = await import('../image-rating-review.service');
 
@@ -179,6 +180,18 @@ describe('keyset queues reach every item exactly once', () => {
     const seen = await walkPages<number>((cursor) => getIngestionErrorImages({ cursor, limit }));
 
     expect(seen).toEqual(NEWEST_FIRST);
+  });
+
+  it('keeps a song in Error out of the ingestion error queue and its badge: the cron retries it', async () => {
+    await db.exec(`TRUNCATE "Image"`);
+    await db.exec(`INSERT INTO "Image" ("id", "type", "ingestion", "nsfwLevel", "createdAt") VALUES
+      (1, 'image', 'Error', 0, now() - interval '1 day'),
+      (2, 'audio', 'Error', 0, now() - interval '1 day')`);
+
+    const { items } = await getIngestionErrorImages({ limit: 10 });
+
+    expect(items.map((i) => i.id)).toEqual([1]);
+    expect(await countIngestionErrorImages()).toBe(1);
   });
 
   it.each(LIMITS)('image tag review queue at %i per page', async (limit) => {

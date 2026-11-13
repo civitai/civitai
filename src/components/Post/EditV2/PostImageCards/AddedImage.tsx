@@ -37,9 +37,8 @@ import {
 } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useId, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -119,6 +118,10 @@ import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.
 import { isDefined } from '~/utils/type-guards';
 import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
+import { SongDetails } from './SongDetails';
+import { SongMedia } from './SongMedia';
+import { SongRemixSwitch } from './SongRemixSwitch';
+import { useDeletePostImage } from './useDeletePostImage';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -218,18 +221,14 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
-  const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId, postPublishedAt, collectionId] = usePostEditStore(
-    (state) => [
-      state.images,
-      state.updateImage,
-      state.setImages,
-      state.post?.id,
-      state.post?.publishedAt,
-      state.collectionId,
-    ]
-  );
+  const [images, updateImage, postId, postPublishedAt, collectionId] = usePostEditStore((state) => [
+    state.images,
+    state.updateImage,
+    state.post?.id,
+    state.post?.publishedAt,
+    state.collectionId,
+  ]);
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
   const minor = image.minor ?? false;
@@ -261,35 +260,10 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #endregion
 
   // #region [delete image]
-  const removeFromEditor = (id: number) => {
-    setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-    if (postId)
-      queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-        if (!old) return old;
-
-        return { ...old, images: old.images?.filter((x) => x.id !== id) };
-      });
-  };
-
-  const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => removeFromEditor(id),
-    onError: (error) => showErrorNotification({ error: new Error(error.message) }),
-  });
-
-  const handleDelete = () => {
-    if (!isBlocked)
-      dialogStore.trigger({
-        component: ConfirmDialog,
-        props: {
-          title: 'Delete image',
-          message: 'Are you sure you want to delete this image?',
-          labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-          confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
-          onConfirm: async () => await deleteImageMutation.mutateAsync({ id: image.id }),
-        },
-      });
-    else deleteImageMutation.mutate({ id: image.id });
-  };
+  const { onDelete: handleDelete, removeFromEditor, isDeleting } = useDeletePostImage(
+    image.id,
+    image.type
+  );
   // #endregion
 
   // #region [move image]
@@ -380,7 +354,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         onDelete: handleDelete,
         onMove: canMove ? handleMove : undefined,
         onEditMetaClick: handleEditMetaClick,
-        isDeleting: deleteImageMutation.isPending,
+        isDeleting,
         isUpdating: updateImageMutation.isPending,
         isAddingResource: addResourceMutation.isPending,
         toggleHidePrompt,
@@ -748,6 +722,8 @@ function EditDetail() {
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
+  const isAudio = image.type === MediaType.audio;
+  const hidePromptDescriptionId = useId();
 
   // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
   const reviewFocus = useReviewFocusStore((state) => state.target);
@@ -759,7 +735,8 @@ function EditDetail() {
     useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
+  // A song's seed is in its source line; the other generation settings are image-only.
+  const simpleMeta = isAudio ? [] : Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
   const resourcesSorted = sortByModelTypes(resources);
   const unmatchedResources = useMemo(() => {
@@ -885,7 +862,7 @@ function EditDetail() {
           // #region [TOS Violation]
           */}
             {isBlocked && !showPreview && <TosViolationBanner />}
-            {cannotVerifyAi && (
+            {!isAudio && cannotVerifyAi && (
               <Alert
                 color="red"
                 className={`p-3 @container ${showPreview ? 'rounded-none' : 'rounded-lg'}`}
@@ -900,8 +877,10 @@ function EditDetail() {
                 </Text>
               </Alert>
             )}
-            <NsfwLicenseViolationAlert />
+            {!isAudio && <NsfwLicenseViolationAlert />}
             {/* #endregion */}
+
+            {isAudio && <SongDetails image={image} />}
 
             {/*
           // #region [prompt]
@@ -923,7 +902,7 @@ function EditDetail() {
                     >
                       EDIT
                     </Button>
-                    {meta?.prompt && (
+                    {(meta?.prompt || isAudio) && (
                       <Button
                         variant={hideMeta ? 'filled' : 'light'}
                         color="blue"
@@ -931,6 +910,7 @@ function EditDetail() {
                         classNames={{ label: 'flex gap-1 text-sm' }}
                         onClick={toggleHidePrompt}
                         loading={isUpdating}
+                        aria-describedby={isAudio ? hidePromptDescriptionId : undefined}
                       >
                         {hideMeta ? <IconEye size={16} /> : <IconEyeOff size={16} />}
                         <span>{hideMeta ? 'SHOW' : 'HIDE'} PROMPT</span>
@@ -939,6 +919,12 @@ function EditDetail() {
                   </div>
                 )}
               </div>
+              {isAudio && (
+                <Text id={hidePromptDescriptionId} size="xs" c="dimmed">
+                  Hides the style prompt, lyrics prompt and seed, and removes Remix this recipe.
+                  Lyrics stay visible.
+                </Text>
+              )}
               {meta?.prompt && (
                 <Text className={`line-clamp-3 leading-5 ${hideMeta ? 'opacity-20' : ''}`}>
                   {meta.prompt}
@@ -962,6 +948,12 @@ function EditDetail() {
             </CustomCard>
 
             {/* #endregion */}
+
+            {isAudio && (
+              <CustomCard>
+                <SongRemixSwitch image={image} />
+              </CustomCard>
+            )}
 
             {/*
           // #region [resources]
@@ -1226,7 +1218,7 @@ function EditDetail() {
                     src={image.url}
                     thumbnailFrame={(image.metadata as VideoMetadata)?.thumbnailFrame}
                     thumbnailUrl={image.thumbnailUrl}
-                    width={image.metadata.width}
+                    width={(image.metadata as VideoMetadata).width}
                     updateImage={updateImage}
                   />
                 </div>
@@ -1247,7 +1239,7 @@ function EditDetail() {
         {/*
  // #region [tags]
  */}
-        {(!!image.tags?.length || isScanned) && (
+        {!isAudio && (!!image.tags?.length || isScanned) && (
           <>
             <Divider />
             <VotableTags
@@ -1310,7 +1302,7 @@ function EditDetail() {
             </Text>
           </Alert>
         )}
-        {isPendingManualAssignment && (
+        {!isAudio && isPendingManualAssignment && (
           <Alert
             color="blue"
             w="100%"
@@ -1330,7 +1322,8 @@ function EditDetail() {
 function StorylineCaption() {
   const { image } = useAddedImageContext();
   const post = usePostEditStore((state) => state.post);
-  if (!post) return null;
+  // The caption box draws the item through EdgeMedia, which has no audio render.
+  if (!post || image.type === MediaType.audio) return null;
   return <StorylineCaptionSlot post={post} image={image} />;
 }
 
@@ -1363,6 +1356,85 @@ function PostImage() {
   const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
   const warmMenu = useWarmImageMenu(id, isOwner);
   const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
+  const isAudio = type === MediaType.audio;
+
+  const reactionCount = (
+    <ImageReactionCount
+      count={image.reactionCount}
+      className="pointer-events-none absolute bottom-2 left-2 z-20"
+    />
+  );
+  const menu = (
+    <div className="absolute right-2 top-2 z-20 flex gap-1">
+      <Menu withArrow position="bottom-end">
+        <Menu.Target>
+          <LegacyActionIcon
+            onPointerEnter={warmMenu}
+            onTouchStart={warmMenu}
+            onFocus={warmMenu}
+            aria-label={isAudio ? 'Song options' : undefined}
+            // A song's cover may be the light placeholder or a pale image, with no gradient behind.
+            className={isAudio ? 'rounded-full bg-black/40 hover:bg-black/60' : undefined}
+          >
+            <IconDotsVertical
+              color="#fff"
+              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+            />
+          </LegacyActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          {!isBlocked && !isAudio && (
+            <Menu.Item leftSection={<IconPencil size={16} />} onClick={onEditMetaClick}>
+              Edit image
+            </Menu.Item>
+          )}
+          {!isBlocked && !isAudio && isOwner && image.id > 0 && (
+            <AddEventDecorationMenuItem
+              entityType={CosmeticEntity.Image}
+              entityId={image.id}
+              image={image}
+            />
+          )}
+          {!isBlocked && !isAudio && image.id > 0 && (
+            // Inside the menu rather than on the card: it is a setting, not an
+            // action, and the card is already carrying every control the
+            // editor needs at a glance.
+            <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+              <PlacementSpaceToggle level="image" entityId={image.id} />
+            </div>
+          )}
+          {!isBlocked && !isAudio && onMove && (
+            <Menu.Item leftSection={<IconArrowsExchange size={16} />} onClick={onMove}>
+              Move to another post
+            </Menu.Item>
+          )}
+          <Menu.Item
+            color="red"
+            leftSection={<IconTrash size={16} />}
+            onClick={onDelete}
+            disabled={isDeleting}
+          >
+            {isAudio ? 'Delete song' : 'Delete image'}
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    </div>
+  );
+
+  if (isAudio)
+    return (
+      <SongMedia
+        image={image}
+        className={showPreview ? 'p-3' : undefined}
+        coverOverlay={
+          <>
+            {reactionCount}
+            {menu}
+          </>
+        }
+      />
+    );
+
   return (
     <div className={`relative`}>
       <div
@@ -1403,57 +1475,8 @@ function PostImage() {
           )}
         </div>
       )}
-      <ImageReactionCount
-        count={image.reactionCount}
-        className="pointer-events-none absolute bottom-2 left-2 z-20"
-      />
-      <div className="absolute right-2 top-2 z-20 flex gap-1">
-        <Menu withArrow position="bottom-end">
-          <Menu.Target>
-            <LegacyActionIcon onPointerEnter={warmMenu} onTouchStart={warmMenu} onFocus={warmMenu}>
-              <IconDotsVertical
-                color="#fff"
-                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-              />
-            </LegacyActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            {!isBlocked && (
-              <Menu.Item leftSection={<IconPencil size={16} />} onClick={onEditMetaClick}>
-                Edit image
-              </Menu.Item>
-            )}
-            {!isBlocked && isOwner && image.id > 0 && (
-              <AddEventDecorationMenuItem
-                entityType={CosmeticEntity.Image}
-                entityId={image.id}
-                image={image}
-              />
-            )}
-            {!isBlocked && image.id > 0 && (
-              // Inside the menu rather than on the card: it is a setting, not an
-              // action, and the card is already carrying every control the
-              // editor needs at a glance.
-              <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
-                <PlacementSpaceToggle level="image" entityId={image.id} />
-              </div>
-            )}
-            {!isBlocked && onMove && (
-              <Menu.Item leftSection={<IconArrowsExchange size={16} />} onClick={onMove}>
-                Move to another post
-              </Menu.Item>
-            )}
-            <Menu.Item
-              color="red"
-              leftSection={<IconTrash size={16} />}
-              onClick={onDelete}
-              disabled={isDeleting}
-            >
-              Delete image
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </div>
+      {reactionCount}
+      {menu}
     </div>
   );
 }

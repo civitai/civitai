@@ -13,9 +13,11 @@ function armImage(columns: {
   blockedFor?: string | null;
   needsReview?: string | null;
   user?: { bannedAt: Date | null; deletedAt: Date | null };
+  type?: string;
 }) {
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     ingestion: 'Error',
+    type: 'image',
     postId: null,
     userId: 99,
     metadata: {},
@@ -94,6 +96,14 @@ describe('resolveIngestionError and blockedFor', () => {
     expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
     expect(purgeRowDrops()).toHaveLength(0);
+  });
+
+  it('refuses a song and writes nothing: only its own scan publishes it, and the cron retries that', async () => {
+    armImage({ type: 'audio' });
+
+    await expect(resolve()).rejects.toMatchObject({ code: 'BAD_REQUEST', message: /song/ });
+
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
   });
 
   it.each([

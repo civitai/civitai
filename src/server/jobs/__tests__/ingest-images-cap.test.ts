@@ -17,27 +17,28 @@ const {
 } = vi.hoisted(() => {
   const MOCK_CAP = 100; // IMAGE_SCANNING_MAX_PER_RUN under test
   const TOTAL_QUEUE = 500; // simulated backlog, intentionally >> cap
-    // Shared between the findMany mock (which honors `take`) and the $queryRaw
-    // mock (which returns image rows for exactly the ids that were pulled).
-    const pulled: { ids: number[] } = { ids: [] };
-    return {
-      MOCK_CAP,
-      TOTAL_QUEUE,
-      mockDbRead: {
-        jobQueue: {
-          // Simulate a DB LIMIT: return at most `take` rows from a backlog of
-          // TOTAL_QUEUE, oldest-first. This is what bounds the run.
-          findMany: vi.fn(async ({ take }: { take: number; orderBy?: unknown; where?: unknown }) => {
-            const n = Math.min(take, TOTAL_QUEUE);
-            pulled.ids = Array.from({ length: n }, (_, i) => i + 1);
-            return pulled.ids.map((entityId) => ({ entityId }));
-          }),
-        },
+  // Shared between the findMany mock (which honors `take`) and the $queryRaw
+  // mock (which returns image rows for exactly the ids that were pulled).
+  const pulled: { ids: number[] } = { ids: [] };
+  return {
+    MOCK_CAP,
+    TOTAL_QUEUE,
+    mockDbRead: {
+      jobQueue: {
+        // Simulate a DB LIMIT: return at most `take` rows from a backlog of
+        // TOTAL_QUEUE, oldest-first. This is what bounds the run.
+        findMany: vi.fn(async ({ take }: { take: number; orderBy?: unknown; where?: unknown }) => {
+          const n = Math.min(take, TOTAL_QUEUE);
+          pulled.ids = Array.from({ length: n }, (_, i) => i + 1);
+          return pulled.ids.map((entityId) => ({ entityId }));
+        }),
       },
-      mockDbWrite: {
-        // Tagged-template: return a Pending, immediately-eligible image row for
-        // each pulled id so every pulled image is submitted this run.
-        $queryRaw: vi.fn(async () =>
+    },
+    mockDbWrite: {
+      // Tagged-template: return a Pending, immediately-eligible image row for
+      // each pulled id so every pulled image is submitted this run.
+      $queryRaw: vi.fn(
+        async (): Promise<Record<string, unknown>[]> =>
           pulled.ids.map((id) => ({
             id,
             url: `img-${id}`,
@@ -50,17 +51,17 @@ const {
             retryCount: 0,
             isBackfill: false,
           }))
-        ),
-        $executeRaw: vi.fn(async () => 0),
-      },
-      mockIngestImage: vi.fn(async () => true),
-      mockDeleteImages: vi.fn(async () => undefined),
-      // Run tasks sequentially for deterministic assertions.
-      mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
-        for (const t of tasks) await t();
-      }),
-    };
-  });
+      ),
+      $executeRaw: vi.fn(async () => 0),
+    },
+    mockIngestImage: vi.fn(async () => true),
+    mockDeleteImages: vi.fn(async () => undefined),
+    // Run tasks sequentially for deterministic assertions.
+    mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
+      for (const t of tasks) await t();
+    }),
+  };
+});
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({
@@ -78,6 +79,10 @@ vi.mock('~/env/server', () => ({
 }));
 
 import { ingestImages } from '~/server/jobs/image-ingestion';
+import {
+  classifyImageScanFailure,
+  getImageScanRetryLimit,
+} from '~/server/services/image-scan-failure';
 
 const ctx = {} as Parameters<typeof ingestImages.run>[0];
 
@@ -112,5 +117,47 @@ describe('ingest-images per-run cap', () => {
     // All pulled images were eligible+submitted, so we hit the cap exactly.
     expect(mockIngestImage.mock.calls.length).toBe(MOCK_CAP);
     expect(result.sent).toBe(MOCK_CAP);
+  });
+});
+
+describe('ingest-images retry cap for a song waiting on its lyrics', () => {
+  // How a song lands in Error when its lyrics scan ends without a verdict (apply-song-scan's failSong).
+  const lyricsFailureClass = classifyImageScanFailure({
+    failureType: 'lyrics-scan-failed',
+    reason: 'lyrics scan ended without a verdict',
+  });
+  const songInError = (retryCount: number) => ({
+    id: 1,
+    url: 'song-1',
+    type: 'audio',
+    width: null,
+    height: null,
+    prompt: null,
+    scanRequestedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    ingestion: 'Error',
+    retryCount,
+    failureClass: lyricsFailureClass,
+    isBackfill: false,
+  });
+
+  it('re-sends a song in Error under the cap', async () => {
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [
+      songInError(getImageScanRetryLimit(lyricsFailureClass) - 1),
+    ]);
+
+    await runJob(ingestImages);
+
+    expect(mockIngestImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('never re-sends a song whose lyrics failures spent the cap, so it stays hidden in Error', async () => {
+    mockDbWrite.$queryRaw.mockImplementationOnce(async () => [
+      songInError(getImageScanRetryLimit(lyricsFailureClass)),
+    ]);
+
+    await runJob(ingestImages);
+
+    expect(mockIngestImage).not.toHaveBeenCalled();
   });
 });

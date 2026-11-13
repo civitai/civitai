@@ -47,6 +47,8 @@ beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
     CREATE TYPE "CommentEntityType" AS ENUM ('review', 'challenge');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Private', 'Unsearchable', 'EarlyAccess');
     CREATE TABLE "Post" (
@@ -71,7 +73,7 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false,
       metadata jsonb
     );
-    CREATE TABLE "Image" (
+    CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       id int PRIMARY KEY,
       "userId" int NOT NULL,
       "postId" int,

@@ -6,6 +6,7 @@ import {
   BRIDGE_MESSAGE_OUTCOMES,
 } from '~/components/AppBlocks/bridgeLabels';
 import { trackedReasons } from '~/utils/login-helpers';
+import { PG_INT4_MAX } from '~/server/common/constants';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { USER_MENU_ITEM_IDS } from '~/shared/constants/user-menu.constants';
 import {
@@ -179,6 +180,9 @@ export const addViewSchema = z.object({
 });
 
 export type AddViewSchema = z.infer<typeof addViewSchema>;
+
+/** A song play's start or complete (`track.songPlayStart` / `track.songPlay`): the song's image id. */
+export const songPlaySchema = z.object({ imageId: z.number().int().positive().max(PG_INT4_MAX) });
 
 // App Blocks Analytics Phase 2 — block render/impression event.
 //

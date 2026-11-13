@@ -59,10 +59,11 @@ type SchemaName = (typeof SCHEMA_NAMES)[number];
 
 /** Every non-test file referencing a shared image schema, with its reference counts. */
 const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>>> = {
-  // Definitions: `imageInputSchema` omits the three columns; the others derive from it.
+  // Definitions: `imageInputSchema` omits the three columns; the others derive from it. Two route
+  // inputs take a fresh upload on it: a video's custom thumbnail and a song's cover.
   'src/server/schema/image.schema.ts': {
     imageSchema: 3,
-    imageInputSchema: 4,
+    imageInputSchema: 5,
     imageReferenceInputSchema: 3,
     imagePositionSchema: 1,
     comfylessImageSchema: 1,
@@ -221,6 +222,12 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
   'src/server/services/image.service.ts#setVideoThumbnail': {
     calls: 1,
     spreads: ['pickClientImageColumns(customThumbnail)'],
+    serverColumns: [],
+  },
+  // A song's cover: a fresh upload, owned by the song's owner, linked from the song's metadata.
+  'src/server/services/post.service.ts#setSongCover': {
+    calls: 1,
+    spreads: ['pickClientImageColumns(cover)'],
     serverColumns: [],
   },
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
@@ -526,6 +533,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['coverId', 'bannerId', 'coverId', 'bannerId'],
     decision: 'resolver',
   },
+  // The song `addPostImage` just created for the caller.
+  'src/server/services/audio-scan/track-lyrics.ts#saveGeneratedTrackLyrics': {
+    writes: ['imageId'],
+    decision: 'server-derived',
+  },
   'src/server/services/auto-feature-images.service.ts#runAutoFeatureImages': {
     writes: ['imageId: p.imageId'],
     decision: 'server-derived',
@@ -698,7 +710,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'subject',
   },
   // The image createImageIngestionRequest is scanning.
-  'src/server/services/video-audio-scan.service.ts#submitVideoAudioScan': {
+  'src/server/services/video-audio-scan.service.ts#submitAudioScanWorkflow': {
     writes: ['imageId'],
     decision: 'server-derived',
   },

@@ -33,6 +33,7 @@ vi.mock('~/env/client', () => ({
 
 const {
   resolveSourceImageIds,
+  readUserWorkflow,
   resolveVerifiedSourceImageIds,
   sanitizeProvenance,
   signProvenance,
@@ -215,6 +216,47 @@ describe('resolveVerifiedSourceImageIds', () => {
     expect(
       await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'someone-elses-workflow' })
     ).toBeNull();
+  });
+});
+
+describe('readUserWorkflow', () => {
+  it('reads with the user’s own token and answers null when the read fails', async () => {
+    getWorkflowMock.mockResolvedValue({ id: 'wf-1' });
+    expect(await readUserWorkflow({ userId: 42, workflowId: 'wf-1' })).toEqual({ id: 'wf-1' });
+    expect(getTokenMock).toHaveBeenCalledWith(42, expect.anything());
+
+    getWorkflowMock.mockRejectedValue(new Error('not found'));
+    expect(await readUserWorkflow({ userId: 42, workflowId: 'wf-2' })).toBeNull();
+  });
+
+  it('gives up after the timeout it was given', async () => {
+    vi.useFakeTimers();
+    try {
+      getWorkflowMock.mockReturnValue(new Promise(() => undefined));
+      const read = readUserWorkflow({ userId: 42, workflowId: 'wf-1', timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await read).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets resolveVerifiedSourceImageIds use a workflow already read, without reading again', async () => {
+    getWorkflowMock.mockClear();
+    const workflow = {
+      metadata: { provenance: signProvenance({ userId: 42, sourceImageIds: [3] }) },
+    };
+    expect(
+      await resolveVerifiedSourceImageIds({
+        userId: 42,
+        workflowId: 'wf-1',
+        workflow: workflow as never,
+      })
+    ).toEqual([3]);
+    expect(
+      await resolveVerifiedSourceImageIds({ userId: 42, workflowId: 'wf-1', workflow: null })
+    ).toBeNull();
+    expect(getWorkflowMock).not.toHaveBeenCalled();
   });
 });
 

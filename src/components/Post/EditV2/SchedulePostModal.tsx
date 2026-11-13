@@ -14,6 +14,7 @@ import { increaseDate } from '~/utils/date-helpers';
 import {
   formatScheduleTime,
   getDefaultScheduleDate,
+  scheduleDescription,
   withScheduleDay,
   withScheduleTime,
 } from './schedule-post.utils';
@@ -48,11 +49,13 @@ export function SchedulePostModal({
   publishedAt,
   publishingModel,
   entity = 'post',
+  songCount = 0,
 }: {
   onSubmit: (date: Date) => void;
   publishedAt?: Date | null;
   publishingModel?: boolean;
   entity?: 'post' | 'article';
+  songCount?: number;
 }) {
   const noun = publishingModel ? 'model' : entity;
   const dialog = useDialogContext();
@@ -79,7 +82,7 @@ export function SchedulePostModal({
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          Select the date and time you want to publish this {noun}.
+          {scheduleDescription(noun, publishingModel ? 0 : songCount)}
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack gap="xl">

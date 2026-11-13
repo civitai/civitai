@@ -190,6 +190,7 @@ const ingestionErrorWhere = sql`
   AND i."createdAt" < now() - INTERVAL '1 hour'
   AND i.ingestion = 'Error'::"ImageIngestionStatus"
   AND i."nsfwLevel" = 0
+  AND i.type <> 'audio'
 `;
 
 export type IngestionErrorImage = {
@@ -274,6 +275,9 @@ async function probeImageMediaPresence(key: string) {
   return exists ? MediaPresence.Present : MediaPresence.Absent;
 }
 
+const SONG_RESOLVE_REFUSAL =
+  'A song is published only by its own scan, which is retried automatically; it cannot be rated here.';
+
 export async function resolveIngestionError({
   id,
   nsfwLevel,
@@ -291,6 +295,7 @@ export async function resolveIngestionError({
       'url',
       'blockedFor',
       'needsReview',
+      'type',
       thumbnailParentId.as('parentId'),
       eb
         .selectFrom('User')
@@ -306,6 +311,8 @@ export async function resolveIngestionError({
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
+  // A song is published only by its own scan; the ingest cron retries it, so no rating here can.
+  if (image.type === 'audio') throw new Error(SONG_RESOLVE_REFUSAL);
 
   const refusal = ingestionResolveRefusal({
     blockedFor: image.blockedFor,

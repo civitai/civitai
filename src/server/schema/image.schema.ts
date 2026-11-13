@@ -675,6 +675,20 @@ export const setVideoThumbnailSchema = z.object({
   postId: z.number().optional(),
 });
 
+export type SetSongCoverInput = z.infer<typeof setSongCoverSchema>;
+export const setSongCoverSchema = z.object({
+  /** The song. */
+  id: z.number().int().positive(),
+  /** A still image the caller just uploaded. */
+  cover: imageInputSchema.extend({ type: z.literal(MediaType.image).default(MediaType.image) }),
+});
+
+export type GetSongCoversInput = z.infer<typeof getSongCoversSchema>;
+export const getSongCoversSchema = z.object({
+  /** Song ids. */
+  ids: z.number().int().positive().array().min(1).max(100),
+});
+
 export type UpdateImageAcceptableMinorInput = z.infer<typeof updateImageAcceptableMinorSchema>;
 export const updateImageAcceptableMinorSchema = z.object({
   id: z.number(),

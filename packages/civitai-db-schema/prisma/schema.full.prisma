@@ -2300,6 +2300,7 @@ model Image {
   storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
+  trackLyrics            TrackLyrics?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -8152,6 +8153,26 @@ model ImageAudioScan {
   @@index([flagged, createdAt])
 }
 
+enum TrackLyricsSource {
+  generator
+  user
+  aligned
+  transcribed
+}
+
+/// The lyrics of a song (an audio Image). No row means no lyrics: an instrumental.
+model TrackLyrics {
+  imageId   Int               @id
+  image     Image             @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  text      String
+  /// `[{ t, text }]`: `t` is the line's offset in milliseconds, or null until a timed source exists.
+  lines     Json
+  source    TrackLyricsSource
+  language  String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}
+
 model ScanLabelVote {
   itemId    Int
   userId    Int
@@ -9621,6 +9642,7 @@ enum EntityMetric_MetricType_Type {
   Comment
   Collection
   Buzz
+  Play
 }
 
 model EntityMetric {

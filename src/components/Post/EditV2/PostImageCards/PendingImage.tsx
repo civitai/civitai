@@ -13,6 +13,8 @@ export function PendingImage({ image }: { image: PostEditMediaDetail }) {
 
 function Preview({ image }: { image: PostEditMediaDetail }) {
   const { metadata } = image;
+  if (image.type === 'audio')
+    return <Skeleton data-testid="song-tile" w={168} h={168} radius={12} mx="auto" />;
   return (
     <div className="w-full">
       <Skeleton

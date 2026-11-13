@@ -1,5 +1,9 @@
 import { IMAGE_PREP_ERROR, ImagePrepError } from '~/shared/utils/canvas-utils';
 import { ConsumerBlobUploadError, uploadConsumerBlob } from '~/utils/consumer-blob-upload';
+import {
+  probeMediaElement,
+  releaseMediaElement,
+} from '~/utils/media-preprocessors/media-element-probe';
 import { uploadGenerationSourceImage } from './generationSourceImageUpload';
 import {
   MEDIA_UPLOAD_FAILED_ERROR,
@@ -8,8 +12,6 @@ import {
   type BlockMediaUploadInfo,
   type MediaUploadKind,
 } from './mediaUploadLogic';
-
-const PROBE_TIMEOUT_MS = 15_000;
 
 const MEDIA_UPLOAD_BLOCKED_ERROR = {
   video: 'this video was refused by the upload service',
@@ -21,58 +23,27 @@ export class MediaUploadError extends Error {
   name = 'MediaUploadError';
 }
 
-function once(el: HTMLMediaElement, ok: string, timeoutMs: number) {
-  return new Promise<boolean>((resolve) => {
-    const done = (value: boolean) => {
-      clearTimeout(timer);
-      el.removeEventListener(ok, onOk);
-      el.removeEventListener('error', onError);
-      resolve(value);
-    };
-    const onOk = () => done(true);
-    const onError = () => done(false);
-    const timer = setTimeout(() => done(false), timeoutMs);
-    el.addEventListener(ok, onOk);
-    el.addEventListener('error', onError);
-  });
-}
-
-/**
- * A MediaRecorder WebM has no duration in its header, so the element reports `Infinity` until it
- * has seeked to the end. `undefined` when that does not resolve it either.
- */
-async function resolveDuration(el: HTMLMediaElement): Promise<number | undefined> {
-  if (Number.isFinite(el.duration)) return el.duration;
-  const changed = once(el, 'durationchange', PROBE_TIMEOUT_MS);
-  el.currentTime = Number.MAX_SAFE_INTEGER;
-  await changed;
-  return Number.isFinite(el.duration) ? el.duration : undefined;
-}
-
 /** Decode the file's metadata in a media element: a file the browser cannot play is refused. */
 export async function probeMedia(
   kind: 'video' | 'audio',
   blob: Blob
 ): Promise<{ width?: number; height?: number; durationMs?: number }> {
-  const el = document.createElement(kind);
-  el.preload = 'metadata';
-  el.muted = true;
   const objectUrl = URL.createObjectURL(blob);
+  let el: HTMLMediaElement | undefined;
   try {
-    const loaded = once(el, 'loadedmetadata', PROBE_TIMEOUT_MS);
-    el.src = objectUrl;
-    if (!(await loaded)) throw new MediaUploadError(MEDIA_UPLOAD_UNREADABLE_ERROR[kind]);
-    const duration = await resolveDuration(el);
+    const probed = await probeMediaElement(kind, objectUrl);
+    el = probed?.element;
+    if (!probed) throw new MediaUploadError(MEDIA_UPLOAD_UNREADABLE_ERROR[kind]);
+    const { duration } = probed;
     const durationMs = duration === undefined ? undefined : Math.round(duration * 1000);
     if (kind === 'audio') return { durationMs };
-    const video = el as HTMLVideoElement;
+    const video = probed.element as HTMLVideoElement;
     if (!video.videoWidth || !video.videoHeight) {
       throw new MediaUploadError(MEDIA_UPLOAD_NO_VIDEO_TRACK_ERROR);
     }
     return { width: video.videoWidth, height: video.videoHeight, durationMs };
   } finally {
-    el.removeAttribute('src');
-    el.load();
+    if (el) releaseMediaElement(el);
     URL.revokeObjectURL(objectUrl);
   }
 }

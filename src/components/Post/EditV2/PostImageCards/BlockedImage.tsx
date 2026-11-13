@@ -2,6 +2,7 @@ import { Alert, Button, Text } from '@mantine/core';
 import type { PostEditMediaDetail } from '~/components/Post/EditV2/PostEditProvider';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { CustomCard } from '~/components/Post/EditV2/PostImageCards/CustomCard';
+import { SongGlyphTile } from '~/components/Post/EditV2/PostImageCards/SongCover';
 
 export function BlockedImage({ image }: { image: PostEditMediaDetail }) {
   const { showPreview } = usePostPreviewContext();
@@ -12,8 +13,12 @@ function Preview({ image }: { image: PostEditMediaDetail }) {
   const handleRemoveClick = useRemoveImage(image.url);
   return (
     <div className="relative overflow-hidden rounded-lg">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={image.url} alt={image.name} />
+      {image.type === 'audio' ? (
+        <SongGlyphTile className="mx-auto my-3 size-[168px]" />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={image.url} alt={image.name} />
+      )}
       <Alert
         color="red"
         className="rounded-none"
@@ -46,8 +51,12 @@ function EditDetail({ image }: { image: PostEditMediaDetail }) {
       classNames={{ message: 'flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3' }}
     >
       <div className="w-full @sm:w-4/12">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={image.url} alt={image.name} className="rounded-lg" />
+        {image.type === 'audio' ? (
+          <SongGlyphTile className="aspect-square w-full max-w-[168px]" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={image.url} alt={image.name} className="rounded-lg" />
+        )}
       </div>
       <CustomCard className="flex flex-1 flex-col gap-3 overflow-hidden">
         <Alert color="red" className="-mx-3 -mt-3 rounded-none">

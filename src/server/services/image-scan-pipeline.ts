@@ -545,6 +545,7 @@ export async function resolveScanOutcome({
   workflowId,
   prompt,
   negativePrompt,
+  fixed,
   axes,
   log = LEGACY_SCAN_LOG,
 }: {
@@ -554,6 +555,18 @@ export async function resolveScanOutcome({
   workflowId: string;
   prompt?: string;
   negativePrompt?: string;
+  /**
+   * For media with nothing to audit (a song has no tags): the level to store, and the reason when the
+   * scan blocked it, and the metadata to store with the verdict. Replaces the tag audit; every guard
+   * below still runs.
+   */
+  fixed?: {
+    nsfwLevel: number;
+    blockedFor?: string;
+    metadata?: Record<string, unknown>;
+    /** The scan found a minor involved, which the image row records as `minor`. */
+    minor?: boolean;
+  };
   /** Rating axes, written with the verdict while `image-axis-shadow-write` is on. */
   axes?: RatingAxes;
   log?: ScanLog;
@@ -586,16 +599,20 @@ export async function resolveScanOutcome({
 
   // A collection judge's floor, read before the audit so its checks run at the level the image
   // will be written at, not only the level its tags carry.
-  const [floorRow] = await dbWrite.$queryRaw<{ judgeFloor: number }[]>`
-    SELECT ${judgeRatingFloorSql()} AS "judgeFloor" FROM "Image" WHERE id = ${image.id}
-  `;
-  const audit = await auditScanResults({
-    imageId: image.id,
-    userId: image.userId,
-    prompt,
-    negativePrompt,
-    floorLevel: typeof floorRow?.judgeFloor === 'number' ? floorRow.judgeFloor : 0,
-  });
+  const floorLevel = fixed
+    ? 0
+    : await dbWrite.$queryRaw<{ judgeFloor: number }[]>`
+        SELECT ${judgeRatingFloorSql()} AS "judgeFloor" FROM "Image" WHERE id = ${image.id}
+      `.then(([row]) => (typeof row?.judgeFloor === 'number' ? row.judgeFloor : 0));
+  const audit = fixed
+    ? fixedAudit(fixed)
+    : await auditScanResults({
+        imageId: image.id,
+        userId: image.userId,
+        prompt,
+        negativePrompt,
+        floorLevel,
+      });
   let reviewKey = audit.reviewKey ?? null;
 
   const toUpdate: Prisma.ImageUpdateInput = { updatedAt, pHash };
@@ -630,7 +647,7 @@ export async function resolveScanOutcome({
   // metadata with the matched rule. Applied after the scan audit so a Block/Hold
   // takes precedence over the audit's own decision.
   const modRule = await evaluateImageModRules(image, audit.tags);
-  let metadataUpdate: Record<string, any> | undefined;
+  let metadataUpdate: Record<string, any> | undefined = fixed?.metadata;
   if (modRule) {
     metadataUpdate = modRule.metadata;
     if (modRule.ingestion) toUpdate.ingestion = modRule.ingestion;
@@ -647,6 +664,7 @@ export async function resolveScanOutcome({
         userId: image.userId,
         reason: modRule.ruleReason,
         log,
+        type: image.type,
       });
     }
   }
@@ -845,6 +863,35 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
         source,
       })),
   ];
+}
+
+/** The audit of media that has nothing to audit: no tags, no review, the level it was given. */
+function fixedAudit({
+  nsfwLevel,
+  blockedFor,
+  minor = false,
+}: {
+  nsfwLevel: number;
+  blockedFor?: string;
+  minor?: boolean;
+}): Awaited<ReturnType<typeof auditScanResults>> {
+  return {
+    tags: [],
+    nsfwLevel,
+    checkedLevel: nsfwLevel,
+    nsfw: false,
+    minorTags: [],
+    poiTags: [],
+    reviewTags: [],
+    tagReview: false,
+    poiReview: false,
+    minorReview: false,
+    newUserReview: false,
+    minor,
+    poi: false,
+    reviewKey: undefined,
+    blockedFor,
+  };
 }
 
 /** Log event for an unrated scan that would take the newer minor review routing. */
@@ -1084,11 +1131,13 @@ async function notifyImageAutoBlocked({
   userId,
   reason,
   log,
+  type,
 }: {
   imageId: number;
   userId: number;
   reason?: string | null;
   log: ScanLog;
+  type?: string;
 }) {
   if (isFeedbackCaptureOwner(userId)) return;
   await createNotification({
@@ -1097,7 +1146,9 @@ async function notifyImageAutoBlocked({
     type: 'system-message',
     userId,
     details: {
-      message: `One of your images has been blocked due to a moderation rule violation${
+      message: `One of your ${
+        type === 'audio' ? 'songs' : 'images'
+      } has been blocked due to a moderation rule violation${
         reason ? ` by the following reason: ${reason}` : ''
       }. If you believe this is a mistake, you can appeal this decision.`,
       url: `/images/${imageId}`,

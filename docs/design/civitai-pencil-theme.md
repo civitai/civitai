@@ -4,6 +4,28 @@ A design-token set and component library for Pencil (`.pen`) files, derived from
 theme sources so mockups and shipped UI stay in step.
 
 Currently lives in `designs/collections.pen` (components at canvas `y 0–830`, screens at `y 1000+`).
+`designs/civitai-audio.pen` (the music section) is seeded from the same tokens. Every screen uses
+the cover-led design ("the cover sets the room", formerly the "Concept" direction): the song's
+artwork colour tints the player and the song page, while system controls stay Civitai blue.
+Sections run top to bottom: `00 Read me`, `01 Components`, `02 Discovery`, `03 Song detail`,
+`04 Global player`, `05 Player across the site`, `06 Profile & playlists`, `07 Publishing`,
+`08 Moderation`, `09 Mobile`, `10 Light mode`. `99 Archive – Main direction`, to the right of the
+stack, keeps the superseded screens and their components; nothing outside it uses them.
+
+| Component | ID | Section |
+| --- | --- | --- |
+| Player Bar | `KZCo9` | 01 Components |
+| Song Card | `AECSM` | 01 Components |
+| Remixes / More From Card | `ThzKc` | 01 Components |
+| Up Next Panel | `hG63C` | 01 Components |
+| Mini Player Minimized / Mini Player Minimized / Hover | `xtQOw` / `wO9tw` | 01 Components |
+| App Header | `mKQoL` | 01 Components |
+| Song Row | `VQ3N0` | 01 Components |
+| Song Context Menu | `rUDmm` | 01 Components |
+| Timed Comment Inline | `oiINd` | 01 Components |
+| Equalizer (now playing indicator) | `VKZHS` | 01 Components |
+| Site Floating Buttons | `ZVcO4` | 01 Components |
+| Mini Player, Song Card, Up Next Panel, Mini Player Minimized (+ Hover), each suffixed "(archived)" | `t1JZl5`, `mwcs8`, `gBKY9`, `CvSq5`, `vZOc1` | 99 Archive (superseded) |
 
 ## Where the values come from
 
@@ -46,6 +68,9 @@ which is exactly why both exist.
 | `text-primary` | `#C1C2C5` | `#222222` |
 | `text-bright` | `#FFFFFF` | `#000000` |
 | `text-dimmed` | `#8c8fa3` | `#868e96` |
+
+`civitai-audio.pen` adds `primary-text` (dark `#74C0FC`, light `#1C7ED6`): blue text on a
+`primary-subtle` fill, which a fixed `color-blue-3` fails in light mode.
 
 Unthemed semantics: `primary` `#228BE6`, `primary-hover` `#1C7ED6`, `accent`/`buzz` `#FC9C2D`,
 `success` `#1EBD8E`, `danger` `#fa5252`, `warning` `#FAB005`. The `*-subtle` variants are themed.
@@ -162,16 +187,49 @@ SetVariables(v)
 
 ## Working notes
 
-**The screenshot renderer draws no text.** `pencil.get_screenshot` returns fills, strokes and icons
-but omits every text node, in every font — including with no `fontFamily` set. Layout still sizes
-correctly from text metrics, so the document is fine; only the raster is wrong. Verify type and
-spacing by exporting instead:
+**Verify with a PNG export, not `TakeScreenshot`.** `TakeScreenshot` returns a small raster, and
+a node with no fill of its own renders on a transparent background, so white (`$text-bright`) text
+on it looks missing. Older Pencil builds also dropped text from screenshots altogether. The
+reliable check is a PNG export into a scratch directory, which renders text, fills and spacing
+faithfully and can be read back as an image:
 
-```
-pencil.export_html → serve the directory over http:// → screenshot in a browser
+```js
+Export([screenId], "png", "<scratch dir>", {scale: 0.6})
 ```
 
-Playwright blocks `file://`, so the file has to be served (`python3 -m http.server`).
+The `export_html` → serve → browser-screenshot loop below is only needed for HTML hand-off.
+
+**`browser` nodes render blank in screenshots and exports.** A live-page `browser` node is useful
+to the person looking at the canvas, but it gives an agent nothing to see. Capture reference pages
+with Playwright instead (screenshots must land in `.playwright-mcp/`).
+
+**Z-order follows sibling order.** A dropdown or popover nested inside a toolbar renders *under*
+any later sibling (e.g. the card grid below it). Move it to the screen frame as the last child,
+with `layoutPosition: "absolute"`.
+
+**Moving a component's child into a new wrapper drops every instance's override of that child.**
+Wrapping a card's title in a new row reset all 57 instance titles to the component default.
+Before restructuring a component, record the overrides (or keep them recoverable from layer
+names) and re-apply them afterwards.
+
+**Emoji in text nodes render monochrome.** Pencil draws an emoji in the text's `fill` colour, and
+`Noto Color Emoji` renders nothing. For colour emoji (the music covers), use Noto's Apache-2.0 PNGs
+as image fills: `designs/images/emoji/emoji_u<codepoint>.png`, downloaded from
+`cdn.jsdelivr.net/gh/googlefonts/noto-emoji@v2.047/png/512/`.
+
+`designs/images/` is gitignored, so a fresh checkout of `civitai-audio.pen` shows empty covers.
+Restore the emoji it references with:
+
+```sh
+mkdir -p designs/images/emoji && cd designs/images/emoji
+for cp in $(grep -o 'emoji_u[0-9a-f]*' ../../civitai-audio.pen | sort -u | sed 's/emoji_u//'); do
+  curl -sfLO "https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@v2.047/png/512/emoji_u$cp.png"
+done
+```
+
+**`Generate` draws on the pen.dev plan's image quota.** When the quota runs out, the call
+succeeds but leaves the target frame with an empty image fill. Re-run `Generate` on the same
+nodes once the plan is topped up.
 
 **`ctx.bounds` in `Get` visitors is unreliable.** Child bounds come back with a phantom offset, and
 the `problems` field derives from them, so nodes that render correctly are reported as

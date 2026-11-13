@@ -32,7 +32,8 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 import { getAllImages, getImagesForModelVersion } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const REVIEWED = /"i"\."ingestion" = \S+ OR \( "i"\."nsfwLevelLocked" = TRUE/;
+const REVIEWED =
+  /"i"\."ingestion" = \S+ OR \( "i"\."type" <> \S+ AND "i"\."nsfwLevelLocked" = TRUE/;
 const squash = (sql: string) => sql.replace(/\s+/g, ' ');
 
 async function getAllImagesSql(browsingLevel: number | undefined) {

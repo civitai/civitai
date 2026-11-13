@@ -97,6 +97,12 @@ const INSET_CONSUMERS = [
   // inset (the open form sheet starts below it) and its closed form bar by the home indicator's.
   'src/components/ImageGeneration/MobileGenerator.module.scss',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
+  // The global music player's bar: the last in-flow row of `#__next` while it shows, under every
+  // page and in place of the ad bar, so it pays the home indicator's inset as the ad bar does.
+  'src/components/MusicPlayer/MusicPlayerBar.tsx',
+  // The up-next panel floats above that bar (fixed, bottom-anchored), so its offset and max height
+  // add the same bottom inset the bar pays beneath it.
+  'src/components/MusicPlayer/MusicUpNextPanel.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
   // `<Progress>`, so its static class is `mantine-Progress-root` — shared with
@@ -1260,6 +1266,31 @@ describe('the AppFooter / AdhesiveAd bottom-edge handover', () => {
         'reason it stops paying — it would then never pay on any route it renders on, and its ' +
         'links sit under the home indicator for every paid member and every moderator route.'
     ).not.toContain('--safe-area-inset-bottom-unpaid');
+  });
+});
+
+describe('the music player bar takes over the bottom edge', () => {
+  /**
+   * While it shows, the bar is the last row of `#__next` (rendered by `BaseLayout`, after the
+   * page) and the ad bar stands down. It pays the bottom inset itself, so it must settle both
+   * questions the ad bar settles, or the footer and chrome-less pages pay a second time above it.
+   */
+  it('marks itself, and globals.css stands the footer and the page down on that mark', () => {
+    const css = read(GLOBALS_CSS);
+    const bar = stripComments(
+      read(path.join(REPO_ROOT, 'src/components/MusicPlayer/MusicPlayerBar.tsx'))
+    );
+
+    expect(bar, 'the bar no longer carries `data-music-player-bar`').toContain(
+      'data-music-player-bar'
+    );
+    expect(bar.replace(/\s+/g, ' ')).toContain("paddingBottom: 'var(--safe-area-inset-bottom)'");
+    const selector = '#__next:has([data-music-player-bar])';
+    const at = css.indexOf(selector);
+    expect(at, `globals.css has no \`${selector}\` rule`).toBeGreaterThan(-1);
+    const body = braceMatched(css, css.indexOf('{', at));
+    expect(body).toContain('--safe-area-inset-bottom-unpaid: 0px;');
+    expect(body).toContain('--safe-area-inset-bottom-page: 0px;');
   });
 });
 

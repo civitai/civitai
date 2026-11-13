@@ -182,7 +182,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // should scan via the low-priority orchestrator lane. EXISTS uses the
   // ImageConnection composite PK (imageId, entityType, entityId) for an
   // index-only seek per image.
-  const images =
+  const loadedImages =
     (await dbWrite.$queryRaw<IngestImageRow[]>`
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i."createdAt", i.ingestion,
@@ -204,6 +204,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     WHERE i.id = ANY(${imageIds})
   `) ?? [];
 
+  const images = loadedImages;
   // A row stamped Unknown before its reason was recognised retries as what it is now.
   for (const img of images) {
     if (
@@ -287,6 +288,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         img.ingestion === 'Pending' &&
         !img.isBackfill &&
         !isRateLimitExempt(img) &&
+        // A song never sent (no scan requested) has had no scan to lose: it is sent, not failed unsent.
+        !(img.type === 'audio' && !img.scanRequestedAt) &&
         img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);

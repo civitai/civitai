@@ -1018,6 +1018,15 @@ export const AppealCategory = {
 
 export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
 
+export const TrackLyricsSource = {
+  generator: 'generator',
+  user: 'user',
+  aligned: 'aligned',
+  transcribed: 'transcribed',
+} as const;
+
+export type TrackLyricsSource = (typeof TrackLyricsSource)[keyof typeof TrackLyricsSource];
+
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',
@@ -1126,6 +1135,7 @@ export const EntityMetric_MetricType_Type = {
   Comment: 'Comment',
   Collection: 'Collection',
   Buzz: 'Buzz',
+  Play: 'Play',
 } as const;
 
 export type EntityMetric_MetricType_Type =

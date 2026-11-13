@@ -79,6 +79,41 @@ a tip / view / read ──►  entityMetricEvents_month
   `generationCount`) and for very high read volume (the image feed). (Comic reads
   *used* to live here — see the comics example for why they moved to Postgres.)
 
+### Image `Play` (songs)
+
+A song play is an `entityMetricEvents` row: `entityType: 'Image'`, the song's image id,
+`metricType: 'Play'`, value 1. The rule: "Play = 30 s listened or full track if shorter"; the owner's own plays count
+too (user decision, 2026-11-13).
+
+The rule follows the streaming industry's standard: Spotify and Apple Music count a play at 30 s
+listened, and a replay past 30 s counts again. Two deliberate differences: a song shorter than 30 s
+counts when it finishes (those services never count one), and the owner's plays count. A percentage
+of the song was considered and rejected: it makes long songs need minutes of listening to count.
+
+- **The server is the only writer.** The client reports a start and a complete
+  (`track.songPlayStart`, `track.songPlay`); `src/server/services/song-play.service.ts` decides,
+  against its own clock since the start, and emits through `updateEntityMetric`; `track.songPlay`
+  answers `counted: true` only when the event was emitted. The shared rule is
+  `src/shared/utils/song-play.ts`.
+- **The global player reports.** `MusicPlayCounter` feeds the player store's listen progress
+  (audio actually played; seeking adds nothing) to `useSongPlayTracker` while a song plays. A song
+  shorter than 30 s counts from about a second before its end, since the last `timeupdate` can
+  fall short of it, and reports go out in order so a replay's start never overtakes the previous
+  playback's complete.
+- **Counted only** with the `music` flag on, for a publicly visible audio image, by someone not on
+  the metric-excluded list; a start is refused on the same checks. A
+  listener is the signed-in user, else the client's network address; an anonymous request whose
+  address cannot be established is not counted.
+- **De-duplicated before the write**, because this pipeline does not self-heal: one start yields at
+  most one play, the same listener's plays of a song are at least the song's length (and at least 30 s) apart, each
+  listener is rate-limited, and when Redis is unavailable nothing is counted. A play whose event
+  fails to emit is lost, never retried.
+- **Not read anywhere yet.** `MetricService` sums only the names in `ENTITY_METRIC_TYPES.Image`
+  (`event-engine-common`), which does not list `Play`.
+- `Play` is a value of the Postgres enum `EntityMetric_MetricType_Type` because the tracker is typed
+  on it. Deploy the regenerated client before applying its migration
+  (`20270106120000_entity_metric_play`); no code writes the value to Postgres.
+
 ---
 
 ## Why is the same data in two places?

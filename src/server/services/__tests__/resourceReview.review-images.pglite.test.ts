@@ -43,6 +43,8 @@ let pg: PGlite;
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "CommentEntityType" AS ENUM ('review', 'challenge');
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TYPE "Availability" AS ENUM ('Public', 'Private', 'Unsearchable', 'EarlyAccess');
@@ -80,7 +82,8 @@ beforeAll(async () => {
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "acceptableMinor" boolean NOT NULL DEFAULT false,
       metadata jsonb,
-      "scanJobs" jsonb
+      "scanJobs" jsonb,
+      type "MediaType" NOT NULL DEFAULT 'image'
     );
     CREATE TABLE "ImageResourceNew" (
       "imageId" int NOT NULL,

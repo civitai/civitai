@@ -24,7 +24,8 @@ import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGener
 import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { getStepMeta } from './GenerationForm/generation.utils';
+import { toPostableMedia } from '~/components/ImageGeneration/utils/toPostableMedia';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './GeneratedImageActions.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
@@ -49,6 +50,7 @@ export function GeneratedImageActions({
   compact?: boolean;
 }) {
   const router = useRouter();
+  const features = useFeatureFlags();
   const showCreatePostError = useShowCreatePostError();
   const { data, markerTags } = useGetTextToImageRequests(GENERATOR_QUEUE_INPUT);
   const { running, helpers, returnUrl } = useTourContext();
@@ -99,9 +101,9 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isPending;
 
   const postSelectedImages = async () => {
-    // Audio outputs aren't supported by the post system, and some workflows' outputs can't be posted.
+    // Songs can be posted only by users with the music flag, and some workflows' outputs can't be posted.
     const postable = selected.filter(
-      (image) => image.mediaType !== 'audio' && image.canUse('post')
+      (image) => (image.mediaType !== 'audio' || features.music) && image.canUse('post')
     );
     const skipped = selected.length - postable.length;
 
@@ -120,11 +122,7 @@ export function GeneratedImageActions({
       });
     }
 
-    const imageData = postable.map((image) => ({
-      url: image.url,
-      meta: getStepMeta(image.step),
-      generationWorkflowId: image.workflowId,
-    }));
+    const imageData = postable.map(toPostableMedia);
 
     try {
       await postGeneratedMedia({

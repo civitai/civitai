@@ -1,6 +1,6 @@
 import type { WorkflowEvent } from '@civitai/orchestration-client';
 import { logToAxiom } from '~/server/logging/client';
-import { processAudioScanCallback } from '~/server/services/video-audio-scan.service';
+import { handleAudioScanCallback } from '~/server/services/audio-scan/handle-callback';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -9,7 +9,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   try {
     const event = (req.body ?? {}) as Partial<WorkflowEvent>;
-    const result = await processAudioScanCallback(event.workflowId);
+    const result = await handleAudioScanCallback(event.workflowId);
     return res.status(200).json({ ok: true, ...result });
   } catch (e) {
     // A failed workflow read or DB error; a 400 has the orchestrator retry it.

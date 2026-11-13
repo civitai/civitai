@@ -1,5 +1,6 @@
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/client';
+import { AUDIO_FILE_EXTENSIONS } from '~/shared/constants/mime-types';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { isDefined } from '~/utils/type-guards';
 
@@ -295,6 +296,15 @@ export function resolveEdgeUrl(
   // Same passthrough boundary as getEdgeUrl — one predicate, see edge-url-passthrough.ts.
   if (isEdgeUrlPassthrough(src)) return { url: src, srcSet: undefined, type: inferredType };
 
+  // Audio is always the stored file: no transcode, no image transforms.
+  if (inferredType === 'audio') {
+    return {
+      url: getEdgeUrl(src, { name: options?.name, type: 'audio', original: true }),
+      srcSet: undefined,
+      type: inferredType,
+    };
+  }
+
   let { anim, transcode } = options ?? {};
 
   if (inferredType === 'video' && type === 'image') {
@@ -395,8 +405,9 @@ export function getInferredMediaType(
   src: string,
   options?: { name?: string | null; type?: MediaType | undefined }
 ) {
-  return (
-    options?.type ??
-    (videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext)) ? 'video' : 'image')
-  );
+  const fileName = options?.name || src;
+  if (options?.type) return options.type;
+  if (videoTypeExtensions.some((ext) => fileName?.endsWith(ext))) return 'video';
+  if (AUDIO_FILE_EXTENSIONS.some((ext) => fileName?.endsWith(ext))) return 'audio';
+  return 'image';
 }

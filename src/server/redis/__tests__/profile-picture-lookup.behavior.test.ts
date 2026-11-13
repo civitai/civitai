@@ -20,10 +20,12 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, name text, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1,
       hash text, "userId" int NOT NULL, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text,
+      type "MediaType" NOT NULL DEFAULT 'image', width int, height int, metadata jsonb, "needsReview" text,
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);

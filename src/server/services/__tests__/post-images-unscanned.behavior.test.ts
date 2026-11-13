@@ -32,10 +32,12 @@ let pg: PGlite;
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan', 'PendingManualAssignment');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int NOT NULL, "userId" int NOT NULL, name text, url text NOT NULL,
-      "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
+      "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type "MediaType" NOT NULL DEFAULT 'image',
       metadata jsonb DEFAULT '{}', meta jsonb, minor boolean DEFAULT false, poi boolean DEFAULT false,
       "needsReview" text, "acceptableMinor" boolean DEFAULT false, "blockedFor" text,
       "modelRestricted" boolean DEFAULT false, index int DEFAULT 0,

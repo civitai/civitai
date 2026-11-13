@@ -314,6 +314,26 @@ export async function sourceImageIdsFromWorkflow({
   userId: number;
   workflowId: string;
 }): Promise<number[] | null> {
+  return provenanceFromWorkflow(await readUserWorkflow({ userId, workflowId }), userId);
+}
+
+export type UserWorkflow = Awaited<ReturnType<typeof getWorkflow>>;
+
+/**
+ * Reads a workflow with an orchestrator token minted for `userId`, so someone else's workflow 404s.
+ * Null when it cannot be read, or not within `timeoutMs`. The timer cannot cancel the read itself;
+ * `getWorkflow` carries its own long backstop.
+ */
+export async function readUserWorkflow({
+  userId,
+  workflowId,
+  timeoutMs,
+}: {
+  userId: number;
+  workflowId: string;
+  timeoutMs?: number;
+}): Promise<UserWorkflow | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const token = await getOrchestratorToken(
       userId,
@@ -322,9 +342,16 @@ export async function sourceImageIdsFromWorkflow({
         res: NextApiResponse;
       }
     );
-    const workflow = await getWorkflow({ token, path: { workflowId } });
-    const claimed = (workflow?.metadata as { provenance?: unknown } | null | undefined)?.provenance;
-    return verifyProvenance(claimed, userId);
+    const read = getWorkflow({ token, path: { workflowId } });
+    if (!timeoutMs) return await read;
+    // A read that loses the race still settles later; swallow it so it cannot go unhandled.
+    read.catch(() => null);
+    return await Promise.race([
+      read,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('workflow read timed out')), timeoutMs);
+      }),
+    ]);
   } catch (error) {
     logToAxiom({
       name: 'remix-provenance',
@@ -333,7 +360,14 @@ export async function sourceImageIdsFromWorkflow({
       details: { userId, workflowId },
     }).catch(() => null);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+function provenanceFromWorkflow(workflow: UserWorkflow | null, userId: number) {
+  const claimed = (workflow?.metadata as { provenance?: unknown } | null | undefined)?.provenance;
+  return verifyProvenance(claimed, userId);
 }
 
 /**
@@ -467,13 +501,17 @@ export async function resolveVerifiedSourceImageIds({
   userId,
   provenance,
   workflowId,
+  workflow,
 }: {
   userId: number;
   provenance?: unknown;
   workflowId?: string;
+  /** The workflow, when the caller already read it (`null` = the read failed). Skips the read. */
+  workflow?: UserWorkflow | null;
 }): Promise<number[] | null> {
   const signed = verifyProvenance(provenance, userId);
   if (signed) return signed;
+  if (workflow !== undefined) return provenanceFromWorkflow(workflow, userId);
   if (!workflowId) return null;
   return sourceImageIdsFromWorkflow({ userId, workflowId });
 }

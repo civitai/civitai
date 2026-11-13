@@ -237,6 +237,11 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
 export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
   const preprocessed = await preprocessFile(file, options);
+  // preprocessFile refuses audio before probing it; this narrows the type for what follows.
+  if (preprocessed.type === 'audio') {
+    URL.revokeObjectURL(preprocessed.objectUrl);
+    throw new Error('Audio uploads are not supported yet.');
+  }
   // Video generation meta is only taken through useMediaUpload.
   const processed =
     preprocessed.type === 'video' ? { ...preprocessed, meta: undefined } : preprocessed;

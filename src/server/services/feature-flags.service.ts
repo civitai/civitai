@@ -371,6 +371,7 @@ const featureFlags = createFeatureFlags({
   ideogram4Training: { availability: ['mod'] },
   // Old trainer only — Training Studio gates ACE-Step on its own `training-studio-audio-training`.
   audioTraining: { availability: ['mod'] },
+  music: { availability: ['mod'], fliptKey: 'music' },
   trainingStudioAudioTraining: {
     availability: ['mod'],
     fliptKey: 'training-studio-audio-training',

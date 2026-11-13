@@ -88,12 +88,16 @@ beforeAll(async () => {
       "collectionId" int NOT NULL, "userId" int NOT NULL,
       permissions "CollectionContributorPermission"[] NOT NULL
     );
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, name text, url text NOT NULL DEFAULT 'u',
-      "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type text DEFAULT 'image',
+      "nsfwLevel" int NOT NULL DEFAULT 1, width int, height int, hash text, type "MediaType" NOT NULL DEFAULT 'image',
       poi boolean DEFAULT false, minor boolean DEFAULT false, index int,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
+      "modelRestricted" boolean NOT NULL DEFAULT false,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, metadata jsonb, "scanJobs" jsonb
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int, "modelVersionId" int, "publishedAt" timestamp,

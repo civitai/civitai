@@ -19,6 +19,8 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan', 'PendingManualAssignment');
     CREATE TYPE "ArticleIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'Rescan');
     CREATE TYPE "ArticleStatus" AS ENUM ('Draft', 'Published', 'Unpublished');
@@ -38,7 +40,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, "publishedAt" timestamp(3), availability "Availability" DEFAULT 'Public',
       "nsfwLevel" int DEFAULT 1, metadata jsonb DEFAULT '{}'
     );
-    CREATE TABLE "Image" (
+    CREATE TABLE "Image" ( type "MediaType" NOT NULL DEFAULT 'image',
       id int PRIMARY KEY, "postId" int, "userId" int DEFAULT ${UPLOADER}, "nsfwLevel" int DEFAULT 1, "needsReview" text,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "blockedFor" text,
       "modelRestricted" boolean DEFAULT false, "nsfwLevelLocked" boolean DEFAULT false,
