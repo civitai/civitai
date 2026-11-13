@@ -53,8 +53,6 @@ export function useQueryChallenges(
   const features = useFeatureFlags();
   const input = { ...defaultFilters, ...filters, browsingLevel };
 
-  // A search answers from the semantic search while its flag is on; off, or when it fails, the
-  // feed's own title and theme match answers instead.
   const query = input.query?.trim();
   const semanticEnabled = !!query && !!features.semanticChallengeSearch;
   const semantic = trpc.semanticChallengeSearch.search.useInfiniteQuery(
@@ -80,6 +78,7 @@ export function useQueryChallenges(
       retry: false,
     }
   );
+  // A failed semantic search falls back to the feed's own query (retry: false so it is immediate).
   const useSemantic = semanticEnabled && !semantic.isError;
   const feed = trpc.challenge.getInfinite.useInfiniteQuery(
     { ...input, query },

@@ -11,7 +11,7 @@ export type SemanticChallengeSearchInput = z.infer<typeof semanticChallengeSearc
 /** The challenge feed's filters (getInfiniteChallengesSchema) that the index can apply. */
 export const semanticChallengeSearchSchema = baseQuerySchema.extend({
   query: z.string().trim().min(1, 'Enter a query').max(SEMANTIC_QUERY_MAX_LENGTH),
-  // Cancelled challenges are not indexed, and the public feed never lists them.
+  // Cancelled challenges are not indexed.
   status: z.enum(ChallengeStatus).exclude([ChallengeStatus.Cancelled]).array().optional(),
   source: z.enum(ChallengeSource).array().optional(),
   includeEnded: z.boolean().default(false),

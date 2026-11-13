@@ -58,4 +58,13 @@ describe('semanticChallengeSearch.search', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(h.search).not.toHaveBeenCalled();
   });
+
+  it('is closed while the challenge platform is off, whatever the search flag says', async () => {
+    await expect(
+      callerWith({ challengePlatform: false, semanticChallengeSearch: true }).search({
+        query: 'neon',
+      })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.search).not.toHaveBeenCalled();
+  });
 });

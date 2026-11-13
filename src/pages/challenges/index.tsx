@@ -235,7 +235,8 @@ function ChallengesPage() {
                   includeEnded,
                   excludeEventChallenges: true,
                   participation,
-                  query: searchQuery,
+                  // Off, the feed has no search box, so a stray ?query= must not filter it.
+                  query: features.semanticChallengeSearch ? searchQuery : undefined,
                 }}
               />
             </Stack>
