@@ -16,6 +16,7 @@ vi.mock('~/server/utils/browsing-level', async (importOriginal) => ({
 const { createCallerFactory } = await import('~/server/trpc');
 const { semanticComicSearchRouter } = await import('~/server/routers/semantic-comic-search.router');
 
+const TRACK = { search: vi.fn(async () => undefined), action: vi.fn(async () => undefined) };
 const VIEWER = { id: 77, onboarding: 15, emailVerified: new Date('2026-01-01'), meta: {} };
 const callerWith = (semanticComicSearch: boolean) =>
   createCallerFactory(semanticComicSearchRouter)({
@@ -23,7 +24,7 @@ const callerWith = (semanticComicSearch: boolean) =>
     tokenScope: TokenScope.Full,
     user: VIEWER,
     features: { trpcFlagGuardPerRequest: true, semanticComicSearch },
-    track: { search: vi.fn(async () => undefined) },
+    track: TRACK,
     ip: '127.0.0.1',
     cache: {},
     req: { headers: {} },
@@ -46,7 +47,7 @@ describe('semanticComicSearch.search', () => {
     h.cap = cap;
     await caller.search({ query: 'pirates' });
     expect(h.search).toHaveBeenCalledWith(
-      expect.objectContaining({ browsingLevelCap: cap, user: VIEWER })
+      expect.objectContaining({ browsingLevelCap: cap, user: VIEWER, track: TRACK })
     );
   });
 });

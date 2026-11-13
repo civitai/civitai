@@ -82,18 +82,21 @@ const search = (
     cap,
     genres,
     correctedQuery,
+    track,
   }: {
     browsingLevel?: number;
     user?: SessionUser;
     cap?: number;
     genres?: string[];
     correctedQuery?: string;
+    track?: { action: ReturnType<typeof vi.fn> };
   } = {}
 ) =>
   searchSemanticComics({
     input: { query: 'space pirates', browsingLevel, genres, limit: 10 },
     user,
     browsingLevelCap: cap,
+    track: track as never,
     candidateSource: ranking(ids, correctedQuery),
   });
 const ids = (r: { items: { id: number }[] }) => r.items.map((c) => c.id);
@@ -194,6 +197,39 @@ describe('semantic comic search', () => {
 });
 
 describe('semantic comic search: the query audit', () => {
+  const tracker = () => ({ action: vi.fn(async () => undefined) });
+  const csamHelp = (query: string) => ({
+    type: 'CSAM_Help_Triggered',
+    details: { query, index: 'comics_semantic' },
+  });
+
+  it('records a minor verdict on the query for the safety team', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const track = tracker();
+    await search([10], { browsingLevel: 31, user: MOD, track });
+    expect(track.action).toHaveBeenCalledWith(csamHelp('space pirates'));
+  });
+
+  it('searches a non-moderator minor query at the safe levels instead of refusing it', async () => {
+    h.rows.set(10, comic(10));
+    h.includesInappropriate.mockReturnValue('minor');
+    const track = tracker();
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    const result = await search([10], { browsingLevel: PG | PG13 | R, user: viewer, track });
+    expect(ids(result)).toEqual([10]);
+    expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, PG13, PG | PG13] });
+    expect(track.action).toHaveBeenCalledWith(csamHelp('space pirates'));
+  });
+
+  it('records a minor verdict on the spelling correction', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    const track = tracker();
+    await search([10], { browsingLevel: 31, user: MOD, correctedQuery: 'corrected', track });
+    expect(track.action).toHaveBeenCalledWith(csamHelp('corrected'));
+  });
+
   it('refuses a refused query before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     const result = await search([10], { browsingLevel: 31, user: MOD });
