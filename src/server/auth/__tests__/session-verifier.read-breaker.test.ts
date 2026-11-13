@@ -3,9 +3,9 @@ import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 import { envMock, redisMock } from '~/__tests__/mocks';
 
-// The revocation read runs on every authenticated request, so it opts into the sys read breaker. With the
+// The revocation read runs on every authenticated request, so it has a sys read breaker of its own. With the
 // breaker enabled and tripped, a hung store costs this read ~0ms instead of a deadline per request. Uses the
-// REAL withSysReadBreaker (the canonical seam's default) over a sysRedis that never answers.
+// REAL withRevocationReadBreaker over a sysRedis that never answers.
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
@@ -29,6 +29,7 @@ afterEach(() => {
   globalThis.__civitaiSysReadBreaker?.reset();
   envMock.reset();
 });
+afterEach(() => globalThis.__civitaiRevocationReadBreaker?.reset());
 
 describe('isRevoked over a hung store', () => {
   it('with the breaker enabled and tripped, fails open at once instead of waiting its deadline', async () => {
