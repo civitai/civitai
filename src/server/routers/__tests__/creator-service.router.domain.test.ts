@@ -32,9 +32,9 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const { creatorServiceRouter } = await import('~/server/routers/creator-service.router');
 
-const callerOn = (green: boolean) =>
+const callerOn = (green: boolean, viewerLevel: number = allBrowsingLevelsFlag) =>
   creatorServiceRouter.createCaller({
-    user: { id: 7, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+    user: { id: 7, showNsfw: true, browsingLevel: viewerLevel },
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
@@ -92,4 +92,28 @@ describe('creator service router: what the domain may be sent', () => {
       browsingLevel: level,
     });
   });
+
+  // What the domain may serve is not what the viewer browses at: on civitai.red a viewer browsing
+  // SFW still gets the full domain mask, so a router that passed one as the other goes red here.
+  it.each([
+    [
+      'a storefront',
+      () => mockGetForShop,
+      () => callerOn(false, sfwBrowsingLevelsFlag).getForShop({ userId: 9 }),
+    ],
+    [
+      'the services feed',
+      () => mockGetFeed,
+      () => callerOn(false, sfwBrowsingLevelsFlag).getFeed({}),
+    ],
+  ] as const)(
+    "%s on civitai.red sends the domain's levels, not the viewer's",
+    async (_, mock, call) => {
+      await call();
+      expect(mock().mock.calls[0][0]).toMatchObject({
+        servable: allBrowsingLevelsFlag,
+        browsingLevel: sfwBrowsingLevelsFlag,
+      });
+    }
+  );
 });
