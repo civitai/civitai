@@ -278,13 +278,6 @@ export function collectBlockStepTemplates(
 }
 
 /**
- * Step `$type`s (lowercased) that may take a reference into media: generators
- * whose own output the platform scans before it is served, so what they make
- * from an earlier output carries a fresh verdict, and the analysers above. Every other consumer may only
- * reference text (`TEXT_REF_LEAVES`). 🔴 An allow-list: a new `$type` starts
- * refused. Each entry was confirmed against the orchestrator's upload path.
- */
-/**
  * Analysers: they read media and answer with text and labels only. A test walks
  * each one's declared output type at every depth and fails on any url-, blob- or
  * id-like field, so one that starts returning media cannot stay here.
@@ -299,6 +292,13 @@ export const MEDIA_REF_ANALYSERS: readonly string[] = [
   'videoMetadata',
 ];
 
+/**
+ * Step `$type`s (lowercased) that may take a reference into media: generators
+ * whose own output the platform scans before it is served, so what they make
+ * from an earlier output carries a fresh verdict, plus `MEDIA_REF_ANALYSERS`.
+ * Every other consumer may only reference text (`TEXT_REF_LEAVES`). 🔴 An
+ * allow-list: a new `$type` starts refused.
+ */
 const MEDIA_REF_CONSUMERS: ReadonlySet<string> = new Set([
   ...MEDIA_REF_ANALYSERS.map((type) => type.toLowerCase()),
   'imagegen',
@@ -456,6 +456,16 @@ function findWriteTargetKey(value: unknown, depth = 0): string | typeof TOO_DEEP
   return null;
 }
 
+/**
+ * Why a step input may not be submitted as-is: it names an output destination,
+ * or is too deep to check for one. `null` when neither.
+ */
+export function writeTargetProblem(input: unknown): string | null {
+  const found = findWriteTargetKey(input);
+  if (found === TOO_DEEP) return `input is nested deeper than ${WORKFLOW_INPUT_DEPTH_MAX} levels`;
+  return found ? WRITE_TARGET_ERROR : null;
+}
+
 /** The orchestrator's reference predicate: `$ref` and `path`, and no other key but `default`/`format`. */
 function isRefObject(value: Record<string, unknown>): boolean {
   if (!('$ref' in value) || !('path' in value)) return false;
@@ -539,10 +549,8 @@ function checkStepInput(
   sources: ReadonlySet<string>,
   state: WalkState
 ): string | null {
-  const writeTarget = findWriteTargetKey(input);
-  if (writeTarget === TOO_DEEP)
-    return `input is nested deeper than ${WORKFLOW_INPUT_DEPTH_MAX} levels`;
-  if (writeTarget) return WRITE_TARGET_ERROR;
+  const writeTarget = writeTargetProblem(input);
+  if (writeTarget) return writeTarget;
   state.mediaRefsAllowed = acceptsMediaRefs(stepType, input);
   if (isMergeStepType(stepType)) {
     const mergeSources = readMergeSources(input);

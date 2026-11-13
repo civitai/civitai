@@ -344,6 +344,8 @@ export function splitPassThroughStep(
   rest: unknown;
   trainedEpochs: TrainedEpoch[];
   model3d: Model3dOutputLabel[];
+  /** Subtrees nested past the walk cap, nulled rather than forwarded. */
+  truncated: number;
 } {
   if (!isTrainingStepType(stepType)) {
     return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
