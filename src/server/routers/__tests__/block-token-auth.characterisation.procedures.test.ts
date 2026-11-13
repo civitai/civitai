@@ -299,7 +299,7 @@ const INPUTS: Record<string, Record<string, unknown>> = {
   'blocks.listMyWorkflows': {},
   'blocks.persistAppUploadImage': { url: '00000000-0000-4000-8000-000000000000' },
   'blocks.pollWorkflow': { workflowId: 'wf_1' },
-  'blocks.presignMediaUploadBatchItem': { batchId: 1 },
+  'blocks.presignMediaUploadBatchItem': { batchId: 1, index: 0 },
   'blocks.recordMediaUploadBatchItem': { batchId: 1, blobKey: `${'a'.repeat(32)}.jpeg` },
   'blocks.startMediaUploadBatch': { items: [{ kind: 'image', sizeBytes: 1000 }] },
   'blocks.previewPostFromApp': POST_PAYLOAD,

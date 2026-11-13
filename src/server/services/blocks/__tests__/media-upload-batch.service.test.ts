@@ -131,6 +131,7 @@ describe('startMediaUploadBatch', () => {
         blockId: 'alpha-app',
         version: '1.4.0',
         itemCount: 3,
+        presignCounts: [0, 0, 0],
         totalBytes: BigInt(6000),
         createdAt: NOW,
         expiresAt,
@@ -166,6 +167,43 @@ describe('startMediaUploadBatch', () => {
     expect(used('bytes')).toBe(0);
   });
 
+  it.each([
+    [
+      'a raw-query permission error',
+      Object.assign(
+        new Error(
+          'Raw query failed. Code: `42501`. Message: `permission denied for table app_block_upload_batches`'
+        ),
+        { code: 'P2010', meta: { code: '42501' } }
+      ),
+    ],
+    [
+      'a permission error on the id sequence',
+      new Error('permission denied for sequence app_block_upload_batches_id_seq'),
+    ],
+  ])(
+    'with the table applied but not granted (%s): the same clean refusal, and the quota handed back',
+    async (_label, err) => {
+      dbMock.dbWrite.appBlockUploadBatch.create.mockRejectedValue(err);
+      await expect(
+        startMediaUploadBatch({ actor: ACTOR, items: items(2), now: NOW })
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: 'batch media upload is not available yet, please try again later',
+      });
+      expect(used('items')).toBe(0);
+    }
+  );
+
+  it('a permission error on ANOTHER table is not dressed up as "not available"', async () => {
+    dbMock.dbWrite.appBlockUploadBatch.create.mockRejectedValue(
+      new Error('permission denied for table "User"')
+    );
+    await expect(
+      startMediaUploadBatch({ actor: ACTOR, items: items(1), now: NOW })
+    ).rejects.toThrow('permission denied for table "User"');
+  });
+
   it('any other write failure is not dressed up as "not available"', async () => {
     dbMock.dbWrite.appBlockUploadBatch.create.mockRejectedValue(new Error('connection reset'));
     await expect(
@@ -178,24 +216,28 @@ describe('startMediaUploadBatch', () => {
 describe('presignMediaUploadBatchItem', () => {
   it('mints the URL with the VIEWER’s token it was handed, after claiming an attempt', async () => {
     await expect(
-      presignMediaUploadBatchItem({ actor: ACTOR, batchId: 91, token: 'viewer-token', now: NOW })
+      presignMediaUploadBatchItem({
+        actor: ACTOR,
+        batchId: 91,
+        index: 0,
+        token: 'viewer-token',
+        now: NOW,
+      })
     ).resolves.toEqual({ uploadUrl: 'u', expiresAt: 'e' });
     expect(presignSpy.mock.calls).toEqual([[{ token: 'viewer-token' }]]);
-    const values = dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1);
-    // The claim is scoped to this batch, viewer and app, inside the open window.
-    expect(values).toEqual([
-      91,
-      USER,
-      'apb_alpha',
-      new Date(NOW.getTime() - 6 * 60 * 60 * 1000),
-      2,
-    ]);
+    // Which attempts the claim admits is measured against real SQL in the pglite suite.
   });
 
   it('refuses, and mints nothing, once the batch has no attempts left (or is not this viewer’s)', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
     await expect(
-      presignMediaUploadBatchItem({ actor: ACTOR, batchId: 91, token: 'viewer-token', now: NOW })
+      presignMediaUploadBatchItem({
+        actor: ACTOR,
+        batchId: 91,
+        index: 0,
+        token: 'viewer-token',
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'this batch cannot take more uploads' });
     expect(presignSpy).not.toHaveBeenCalled();
   });
@@ -203,7 +245,13 @@ describe('presignMediaUploadBatchItem', () => {
   it('hands the attempt back when the orchestrator mints nothing', async () => {
     presignSpy.mockRejectedValue(new Error('upstream 503'));
     await expect(
-      presignMediaUploadBatchItem({ actor: ACTOR, batchId: 91, token: 'viewer-token', now: NOW })
+      presignMediaUploadBatchItem({
+        actor: ACTOR,
+        batchId: 91,
+        index: 0,
+        token: 'viewer-token',
+        now: NOW,
+      })
     ).rejects.toThrow('upstream 503');
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
@@ -211,7 +259,13 @@ describe('presignMediaUploadBatchItem', () => {
   it('before the audit table exists: the not-available refusal', async () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValue(missingTable());
     await expect(
-      presignMediaUploadBatchItem({ actor: ACTOR, batchId: 91, token: 'viewer-token', now: NOW })
+      presignMediaUploadBatchItem({
+        actor: ACTOR,
+        batchId: 91,
+        index: 0,
+        token: 'viewer-token',
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
     expect(presignSpy).not.toHaveBeenCalled();
   });

@@ -173,8 +173,11 @@ function listen() {
       .filter((p) => p.requestId === requestId);
 }
 
+/** The last mount, so a test can re-render it with new props (a refreshed token). */
+let mounted: Awaited<ReturnType<typeof renderWithProviders>> | null = null;
+
 async function mountReady(props: Partial<typeof baseProps> & { reviewMode?: boolean } = {}) {
-  await renderWithProviders(
+  mounted = await renderWithProviders(
     <>
       <PageBlockHost {...baseProps} {...props} />
       <DialogProvider />
@@ -286,7 +289,7 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — the confirm', () => {
     postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_presign', wavs(1)));
     await confirm();
     await oneReply(replies, 'rq_presign');
-    expect(h.presign).toHaveBeenCalledWith({ blockToken: 'tok_abc', batchId: 91 });
+    expect(h.presign).toHaveBeenCalledWith({ blockToken: 'tok_abc', batchId: 91, index: 0 });
   });
 });
 
@@ -425,5 +428,137 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — validation, scan and limits'
     await expect.element(confirmButton()).toBeVisible();
     postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_second', wavs(1)));
     expect(await oneReply(replies, 'rq_second')).toEqual({ requestId: 'rq_second', error: 'busy' });
+  });
+});
+
+describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — a batch that outlives its token', () => {
+  /** The token each call of `fn` was made with, in call order. */
+  const tokensOf = (fn: typeof h.record) =>
+    fn.mock.calls.map((c) => (c[0] as { blockToken: string }).blockToken);
+
+  test('calls made after the host refreshes its token use the NEW token', async () => {
+    const replies = await mountReady();
+    const pending: Array<() => void> = [];
+    holdUploads = (release) => pending.push(release);
+    // Each upload mints its URL through the batch presign, as the real upload does.
+    h.upload.mockImplementation(
+      async (blob: Blob, options: { presign: () => Promise<unknown> }) => {
+        await options.presign();
+        const n = uploads.push({ blob, options });
+        if (holdUploads) await new Promise<void>((resolve) => holdUploads!(resolve));
+        return { id: `${String(n).padStart(32, '0')}.wav`, url: 'blob:x', available: true };
+      }
+    );
+    postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_refresh', wavs(5)));
+    await confirm();
+    await vi.waitFor(() => expect(pending.length).toBe(3), { timeout: 10_000 });
+    // The host's token refresh lands while the first three uploads are in flight.
+    await mounted!.rerender(
+      <>
+        <PageBlockHost {...baseProps} token="tok_refreshed" />
+        <DialogProvider />
+      </>
+    );
+    holdUploads = null;
+    pending.splice(0).forEach((release) => release());
+    const reply = await oneReply(replies, 'rq_refresh');
+    expect((reply.results as Array<Record<string, unknown>>).every((r) => 'selected' in r)).toBe(
+      true
+    );
+    expect(tokensOf(h.start)).toEqual(['tok_abc']);
+    // The first three presigns ran before the refresh; the last two after it.
+    expect(tokensOf(h.presign)).toEqual([
+      'tok_abc',
+      'tok_abc',
+      'tok_abc',
+      'tok_refreshed',
+      'tok_refreshed',
+    ]);
+    // Every record ran after the refresh.
+    expect(tokensOf(h.record)).toEqual(new Array(5).fill('tok_refreshed'));
+  });
+
+  test('a call refused UNAUTHORIZED is retried once with the token read again', async () => {
+    const replies = await mountReady();
+    h.record.mockRejectedValueOnce(
+      Object.assign(new Error('invalid block token'), {
+        data: { code: 'UNAUTHORIZED', httpStatus: 401 },
+      })
+    );
+    postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_401', wavs(1)));
+    await confirm();
+    const reply = await oneReply(replies, 'rq_401');
+    expect(reply.results).toEqual([
+      { index: 0, selected: expect.objectContaining({ kind: 'audio' }) },
+    ]);
+    expect(h.record).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — recording an uploaded file', () => {
+  const serverError = () =>
+    Object.assign(new Error('Internal server error'), {
+      data: { code: 'INTERNAL_SERVER_ERROR', httpStatus: 500 },
+    });
+
+  test('a record that fails with a server error is retried, and the file handed over once it lands', async () => {
+    const replies = await mountReady();
+    h.record
+      .mockRejectedValueOnce(serverError())
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_rec_retry', wavs(1)));
+    await confirm();
+    const reply = await oneReply(replies, 'rq_rec_retry');
+    expect(reply.results).toEqual([
+      { index: 0, selected: expect.objectContaining({ kind: 'audio' }) },
+    ]);
+    expect(h.record).toHaveBeenCalledTimes(3);
+  });
+
+  test('after 3 failed attempts the item is an error, and the file is not handed over', async () => {
+    const replies = await mountReady();
+    h.record.mockRejectedValue(serverError());
+    postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_rec_fail', wavs(1)));
+    await confirm();
+    const reply = await oneReply(replies, 'rq_rec_fail');
+    expect(reply.results).toEqual([{ index: 0, error: 'media upload failed — please try again' }]);
+    expect(h.record).toHaveBeenCalledTimes(3);
+  });
+
+  test('a record the server refuses (not a server error) is not retried', async () => {
+    const replies = await mountReady();
+    h.record.mockRejectedValue(
+      Object.assign(new Error('this batch cannot record more files'), {
+        data: { code: 'FORBIDDEN', httpStatus: 403 },
+      })
+    );
+    postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_rec_403', wavs(1)));
+    await confirm();
+    await oneReply(replies, 'rq_rec_403');
+    expect(h.record).toHaveBeenCalledTimes(1);
+  });
+
+  test('each presign names its file’s position in the batch the server was told about', async () => {
+    const replies = await mountReady();
+    h.upload.mockImplementation(
+      async (_blob: Blob, options: { presign: () => Promise<unknown> }) => {
+        await options.presign();
+        return { id: `${'c'.repeat(32)}.wav`, url: 'blob:x', available: true };
+      }
+    );
+    // The GIF is refused before the batch starts, so the server's items are the three WAVs.
+    postFromBlock(
+      'OPEN_MEDIA_UPLOAD_BATCH',
+      batch('rq_index', [
+        { kind: 'audio', bytes: WAV.slice(0) },
+        { kind: 'image', bytes: GIF.slice(0) },
+        { kind: 'audio', bytes: WAV.slice(0) },
+        { kind: 'audio', bytes: WAV.slice(0) },
+      ])
+    );
+    await confirm();
+    await oneReply(replies, 'rq_index');
+    const indexes = h.presign.mock.calls.map((c) => (c[0] as { index: number }).index).sort();
+    expect(indexes).toEqual([0, 1, 2]);
   });
 });

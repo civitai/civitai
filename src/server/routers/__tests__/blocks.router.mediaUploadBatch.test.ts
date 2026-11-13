@@ -93,7 +93,8 @@ const ITEMS = [
 const calls = {
   start: (c = ctx()) =>
     caller(c).startMediaUploadBatch({ blockToken: 'tok', items: ITEMS } as never),
-  presign: (c = ctx()) => caller(c).presignMediaUploadBatchItem({ blockToken: 'tok', batchId: 91 }),
+  presign: (c = ctx()) =>
+    caller(c).presignMediaUploadBatchItem({ blockToken: 'tok', batchId: 91, index: 0 }),
   record: (c = ctx()) =>
     caller(c).recordMediaUploadBatchItem({
       blockToken: 'tok',
@@ -141,6 +142,7 @@ describe('blocks.*MediaUploadBatch*', () => {
     expect(h.presign).toHaveBeenCalledWith({
       actor: { userId: VIEWER_ID, appBlockId: 'apb_alpha' },
       batchId: 91,
+      index: 0,
       token: `orch-token-for-${VIEWER_ID}`,
     });
   });
