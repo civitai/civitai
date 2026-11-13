@@ -250,7 +250,7 @@ describe('the global player bar', () => {
     let songUrl = '';
     let run = 0;
     const songRequests = (fetch: ReturnType<typeof vi.spyOn>) =>
-      fetch.mock.calls.filter(([input]) => String(input).includes(songUrl));
+      fetch.mock.calls.filter(([input]: unknown[]) => String(input).includes(songUrl));
     const listen = (listenedSec: number) =>
       act(() =>
         useMusicPlayerStore.setState((s) => ({

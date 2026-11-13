@@ -1,12 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
-const act = (React as unknown as { act: typeof actType }).act;
+type Act = {
+  (callback: () => Promise<unknown>): Promise<void>;
+  (callback: () => void): void;
+};
+const act = (React as unknown as { act: Act }).act;
 
 const h = vi.hoisted(() => ({
   start: vi.fn(),

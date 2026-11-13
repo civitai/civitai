@@ -208,9 +208,12 @@ describe('bringing the saved song back on load', () => {
   });
 
   it.each([
-    ['the server refuses it (deleted, private, blocked)', async () => {
-      throw Object.assign(new Error('not found'), { data: { httpStatus: 404 } });
-    }],
+    [
+      'the server refuses it (deleted, private, blocked)',
+      async () => {
+        throw Object.assign(new Error('not found'), { data: { httpStatus: 404 } });
+      },
+    ],
     ['its media is withheld from this viewer', async () => image({ url: null })],
     ['it is no longer a song', async () => image({ type: 'image' })],
   ])('dropped silently when %s', async (_, fetchSong) => {

@@ -17,27 +17,28 @@ const {
 } = vi.hoisted(() => {
   const MOCK_CAP = 100; // IMAGE_SCANNING_MAX_PER_RUN under test
   const TOTAL_QUEUE = 500; // simulated backlog, intentionally >> cap
-    // Shared between the findMany mock (which honors `take`) and the $queryRaw
-    // mock (which returns image rows for exactly the ids that were pulled).
-    const pulled: { ids: number[] } = { ids: [] };
-    return {
-      MOCK_CAP,
-      TOTAL_QUEUE,
-      mockDbRead: {
-        jobQueue: {
-          // Simulate a DB LIMIT: return at most `take` rows from a backlog of
-          // TOTAL_QUEUE, oldest-first. This is what bounds the run.
-          findMany: vi.fn(async ({ take }: { take: number; orderBy?: unknown; where?: unknown }) => {
-            const n = Math.min(take, TOTAL_QUEUE);
-            pulled.ids = Array.from({ length: n }, (_, i) => i + 1);
-            return pulled.ids.map((entityId) => ({ entityId }));
-          }),
-        },
+  // Shared between the findMany mock (which honors `take`) and the $queryRaw
+  // mock (which returns image rows for exactly the ids that were pulled).
+  const pulled: { ids: number[] } = { ids: [] };
+  return {
+    MOCK_CAP,
+    TOTAL_QUEUE,
+    mockDbRead: {
+      jobQueue: {
+        // Simulate a DB LIMIT: return at most `take` rows from a backlog of
+        // TOTAL_QUEUE, oldest-first. This is what bounds the run.
+        findMany: vi.fn(async ({ take }: { take: number; orderBy?: unknown; where?: unknown }) => {
+          const n = Math.min(take, TOTAL_QUEUE);
+          pulled.ids = Array.from({ length: n }, (_, i) => i + 1);
+          return pulled.ids.map((entityId) => ({ entityId }));
+        }),
       },
-      mockDbWrite: {
-        // Tagged-template: return a Pending, immediately-eligible image row for
-        // each pulled id so every pulled image is submitted this run.
-        $queryRaw: vi.fn(async () =>
+    },
+    mockDbWrite: {
+      // Tagged-template: return a Pending, immediately-eligible image row for
+      // each pulled id so every pulled image is submitted this run.
+      $queryRaw: vi.fn(
+        async (): Promise<Record<string, unknown>[]> =>
           pulled.ids.map((id) => ({
             id,
             url: `img-${id}`,
@@ -50,17 +51,17 @@ const {
             retryCount: 0,
             isBackfill: false,
           }))
-        ),
-        $executeRaw: vi.fn(async () => 0),
-      },
-      mockIngestImage: vi.fn(async () => true),
-      mockDeleteImages: vi.fn(async () => undefined),
-      // Run tasks sequentially for deterministic assertions.
-      mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
-        for (const t of tasks) await t();
-      }),
-    };
-  });
+      ),
+      $executeRaw: vi.fn(async () => 0),
+    },
+    mockIngestImage: vi.fn(async () => true),
+    mockDeleteImages: vi.fn(async () => undefined),
+    // Run tasks sequentially for deterministic assertions.
+    mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
+      for (const t of tasks) await t();
+    }),
+  };
+});
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({

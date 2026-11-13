@@ -100,6 +100,9 @@ const INSET_CONSUMERS = [
   // The global music player's bar: the last in-flow row of `#__next` while it shows, under every
   // page and in place of the ad bar, so it pays the home indicator's inset as the ad bar does.
   'src/components/MusicPlayer/MusicPlayerBar.tsx',
+  // The up-next panel floats above that bar (fixed, bottom-anchored), so its offset and max height
+  // add the same bottom inset the bar pays beneath it.
+  'src/components/MusicPlayer/MusicUpNextPanel.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
   // `<Progress>`, so its static class is `mantine-Progress-root` — shared with

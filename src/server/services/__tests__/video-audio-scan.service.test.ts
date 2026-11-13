@@ -359,7 +359,7 @@ describe('submitSongScan', () => {
     const result = await submitSongScan(input);
 
     expect(result.data).toBeUndefined();
-    expect(result.response?.status).toBe(503);
+    expect('response' in result ? result.response?.status : undefined).toBe(503);
     expect(dbMock.dbWrite.imageAudioScan.upsert).not.toHaveBeenCalled();
   });
 });

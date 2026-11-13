@@ -66,6 +66,9 @@ const MODEL_ITEM_DRAFT_VERSION = 8037;
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TABLE "TextScanHold" ("entityType" text, "entityId" int, label text, status text);
     CREATE TABLE "Image" (
       "id"          integer PRIMARY KEY,
       "index"       integer,
@@ -80,12 +83,15 @@ beforeAll(async () => {
       "createdAt"   timestamp NOT NULL DEFAULT now(),
       "mimeType"    text,
       "scannedAt"   timestamp,
-      "type"        text NOT NULL DEFAULT 'image',
+      "type"        "MediaType" NOT NULL DEFAULT 'image',
       "meta"        jsonb,
       "userId"      integer NOT NULL DEFAULT 1,
-      "ingestion"   text NOT NULL DEFAULT 'Scanned',
+      "ingestion"   "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
       "needsReview" text,
-      "blockedFor"  text
+      "blockedFor"  text,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
+      "metadata"    jsonb,
+      "scanJobs"    jsonb
     );
     CREATE TABLE "Post" (
       "id" integer PRIMARY KEY, "userId" integer, "modelVersionId" integer,

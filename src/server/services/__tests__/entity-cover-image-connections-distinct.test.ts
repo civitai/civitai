@@ -53,6 +53,7 @@ vi.mock('~/server/services/cosmetic.service', () => ({
 }));
 
 import { getEntityCoverImage } from '../image.service';
+import { songReviewedSql } from '~/server/common/image-visibility';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const ENTITY = { entityId: 1, entityType: 'Bounty' as const };
@@ -322,14 +323,16 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
     // image) carries no predicate of its own, so this outer WHERE is the sole check
     // that stops an unscanned or needs-review image being served as a cover. Every
     // other branch filters in-branch, which is exactly why deleting this line leaves
-    // the rest of the suite green.
+    // the rest of the suite green. A song cover must also have its lyrics reviewed.
+    const songReviewed = songReviewedSql();
     expect(
       outerFilter(await captureQuery()),
       'the outer eligibility filter is gone, so the IMAGES branch can serve unscanned or needs-review images'
     ).toBe(
       'JOIN "Image" i ON i.id = t."imageId" ' +
-        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
-        'ORDER BY t."coverRank"'
+        `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND ` +
+        render(songReviewed.strings, songReviewed.values).replace(/\s+/g, ' ') +
+        ' ORDER BY t."coverRank"'
     );
   });
 });
