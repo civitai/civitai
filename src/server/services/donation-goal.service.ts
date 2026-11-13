@@ -33,7 +33,12 @@ import {
   paymentOutcomeUnknown,
 } from '~/server/services/buzz-keyed-charge';
 import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
-import { CHARGE_WRITE_TIMEOUT_MS, withChargeKeyLock } from '~/server/services/buzz-charge-lock';
+import {
+  CHARGE_LOCKED_READ,
+  CHARGE_LOCKED_REFUND_TIMEOUT_MS,
+  refundUnlessRecorded,
+  withChargeKeyLock,
+} from '~/server/services/buzz-charge-lock';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 // Batch read-side accessor for the public donation goal per entity — mirrors getPaidAccess. The
@@ -307,134 +312,155 @@ export const donateToGoal = async ({
   );
   const outcomeContext = { externalTransactionId: externalTransactionIdPrefix, userId, amount };
   const keyed = idempotencyKey !== undefined;
-  // Every Buzz write under the key's lock has a deadline (see buzz-charge-lock.ts).
-  const writeOpts = keyed ? { timeoutMs: CHARGE_WRITE_TIMEOUT_MS } : undefined;
+  const lockContext = { userId, amount };
 
   const charge = () =>
-    createMultiAccountBuzzTransaction(
-      {
-        amount,
-        fromAccountId: userId,
-        fromAccountTypes: [buzzType],
-        // The creator receives what the donor gave. Naming no destination let the
-        // buzz service apply its yellow default, so a green donation reached the
-        // creator as yellow — 137 legs / 85,210 Buzz since green launched.
-        toAccountType: buzzType,
-        toAccountId: goal.userId,
-        externalTransactionIdPrefix,
-        description: `Donation to ${goal.title}`,
-        type: TransactionType.Donation,
-      },
-      writeOpts
-    );
+    createMultiAccountBuzzTransaction({
+      amount,
+      fromAccountId: userId,
+      fromAccountTypes: [buzzType],
+      // The creator receives what the donor gave. Naming no destination let the
+      // buzz service apply its yellow default, so a green donation reached the
+      // creator as yellow — 137 legs / 85,210 Buzz since green launched.
+      toAccountType: buzzType,
+      toAccountId: goal.userId,
+      externalTransactionIdPrefix,
+      description: `Donation to ${goal.title}`,
+      type: TransactionType.Donation,
+    });
+  const isRecorded = async (db: Prisma.TransactionClient | typeof dbWrite) =>
+    !!(await db.donation.findFirst({
+      where: { buzzTransactionId: externalTransactionIdPrefix, userId },
+      select: { id: true },
+    }));
+  const isRefunded = async (opts?: typeof CHARGE_LOCKED_READ) => {
+    try {
+      const { reversed } = await (opts
+        ? getPrefixRefundState(externalTransactionIdPrefix, opts)
+        : getPrefixRefundState(externalTransactionIdPrefix));
+      return reversed.length > 0;
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(outcomeContext, 'donation refund lookup failed', { lookupError });
+    }
+  };
 
-  /**
-   * Charges (or, with a key, continues from the charge the ledger already holds under the prefix)
-   * and records the donation through `db`, refunding the charge if the record fails.
-   */
-  const chargeAndRecord = async (db: Prisma.TransactionClient | typeof dbWrite) => {
-    // An earlier request under this key already recorded the donation (its response was lost):
-    // the donor has donated, so answer as that request would have, and charge nothing.
-    if (keyed) {
-      const recorded = await db.donation.findFirst({
-        where: { buzzTransactionId: externalTransactionIdPrefix, userId },
-        select: { id: true },
+  // An earlier request under this key already recorded the donation (its response was lost): the
+  // donor has donated, so answer as that request would have, and charge nothing.
+  if (keyed && (await isRecorded(dbWrite))) return finishDonation(goal, donationGoalId);
+
+  // With a key, legs the ledger already holds under the prefix are this donation's charge, from
+  // an earlier request. Looked up BEFORE charging: the ledger checks the donor's balance before it
+  // looks at the ids, so a resend would refuse a retry whose money already moved.
+  let replayed = false;
+  if (keyed) {
+    try {
+      replayed =
+        (await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix)).length > 0;
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(outcomeContext, 'donation lookup before charging failed', {
+        lookupError,
       });
-      if (recorded) return;
     }
+  }
 
-    // With a key, legs the ledger already holds under the prefix are this donation's charge, from
-    // an earlier request. Looked up BEFORE charging: the ledger checks the donor's balance before
-    // it looks at the ids, so a resend would refuse a retry whose money already moved.
-    let held: unknown[] = [];
-    if (keyed) {
-      try {
-        held = await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix);
-      } catch (lookupError) {
-        throw paymentOutcomeUnknown(outcomeContext, 'donation lookup before charging failed', {
-          lookupError,
-        });
-      }
-    }
-
-    let replayed = held.length > 0;
-    if (!replayed) {
-      // A failure that may have committed is resent once under the same prefix: the ledger
-      // answers a leg it already holds as `duplicate` and moves nothing.
-      let transaction: Awaited<ReturnType<typeof charge>>;
+  // Outside any transaction. A failure that may have committed is resent once under the same
+  // prefix: the ledger answers a leg it already holds as `duplicate` and moves nothing.
+  if (!replayed) {
+    let transaction: Awaited<ReturnType<typeof charge>>;
+    try {
+      transaction = await charge();
+    } catch (error) {
+      if (chargeWasDeclined(error)) throw new Error('Failed to create donation');
       try {
         transaction = await charge();
-      } catch (error) {
-        if (chargeWasDeclined(error)) throw new Error('Failed to create donation');
-        try {
-          transaction = await charge();
-        } catch (resendError) {
-          throw paymentOutcomeUnknown(
-            outcomeContext,
-            'donation resend failed after unknown outcome',
-            {
-              error,
-              resendError,
-            }
-          );
-        }
-      }
-      if (!transaction.transactionIds || transaction.transactionIds.length === 0)
-        throw new Error('Failed to create donation');
-      replayed = transaction.transactionIds.some((leg) => leg.duplicate === true);
-    }
-
-    // Legs from an earlier request under this key may have been refunded after it failed to
-    // record the donation. Refunded money is not a donation.
-    if (keyed && replayed) {
-      let reversed: unknown[];
-      try {
-        ({ reversed } = await getPrefixRefundState(externalTransactionIdPrefix));
-      } catch (lookupError) {
-        throw paymentOutcomeUnknown(outcomeContext, 'donation refund lookup failed', {
-          lookupError,
-        });
-      }
-      if (reversed.length > 0) throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
-    }
-
-    try {
-      await db.donation.create({
-        data: {
-          amount,
-          buzzTransactionId: externalTransactionIdPrefix, // Store primary transaction ID
-          donationGoalId,
-          userId,
-        },
-      });
-    } catch (e) {
-      // Refund using multi-account transaction. With a key this runs under its lock, so a request
-      // waiting on the key sees the refund, never a charge this one is about to reverse.
-      try {
-        await refundMultiAccountTransaction(
+      } catch (resendError) {
+        throw paymentOutcomeUnknown(
+          outcomeContext,
+          'donation resend failed after unknown outcome',
           {
-            externalTransactionIdPrefix,
-            description: `Refund for failed donation to ${goal.title}`,
-          },
-          writeOpts
+            error,
+            resendError,
+          }
         );
+      }
+    }
+    if (!transaction.transactionIds || transaction.transactionIds.length === 0)
+      throw new Error('Failed to create donation');
+    replayed = transaction.transactionIds.some((leg) => leg.duplicate === true);
+  }
+
+  // Legs from an earlier request under this key may have been refunded after it failed to record
+  // the donation. Refunded money is not a donation.
+  if (keyed && replayed && (await isRefunded()))
+    throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+
+  const record = (db: Prisma.TransactionClient | typeof dbWrite) =>
+    db.donation.create({
+      data: {
+        amount,
+        buzzTransactionId: externalTransactionIdPrefix, // Store primary transaction ID
+        donationGoalId,
+        userId,
+      },
+    });
+  const refund = () =>
+    refundMultiAccountTransaction(
+      {
+        externalTransactionIdPrefix,
+        description: `Refund for failed donation to ${goal.title}`,
+      },
+      keyed ? { timeoutMs: CHARGE_LOCKED_REFUND_TIMEOUT_MS } : undefined
+    );
+
+  if (!keyed) {
+    try {
+      await record(dbWrite);
+    } catch (e) {
+      try {
+        await refund();
       } catch (refundError) {
         console.error('Failed to refund donation transaction:', refundError);
       }
       throw new Error('Failed to create donation');
     }
-  };
+    return finishDonation(goal, donationGoalId);
+  }
 
-  if (keyed)
-    // One request per key at a time; the record is written on the lock's transaction.
-    await withChargeKeyLock(externalTransactionIdPrefix, { userId, amount }, (tx) =>
-      chargeAndRecord(tx)
-    );
-  else await chargeAndRecord(dbWrite);
+  // Under the key's lock in a short transaction: recorded by a concurrent request → done; refunded
+  // meanwhile → refused; otherwise recorded here, on the lock's transaction.
+  let recordFailed = false;
+  try {
+    await withChargeKeyLock(externalTransactionIdPrefix, lockContext, async (tx) => {
+      if (await isRecorded(tx)) return;
+      if (await isRefunded(CHARGE_LOCKED_READ))
+        throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+      try {
+        await record(tx);
+      } catch (error) {
+        recordFailed = true;
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (!recordFailed) throw error;
+    await refundUnlessRecorded(externalTransactionIdPrefix, lockContext, {
+      isRecorded,
+      isRefunded: () => isRefunded(CHARGE_LOCKED_READ),
+      refund,
+    });
+    throw new Error('Failed to create donation');
+  }
+  return finishDonation(goal, donationGoalId);
+};
 
-  // The donation is COMMITTED. Closing the goal + ending the gate is a best-effort side effect that
-  // must NOT reach the refund path — a throw there would reverse a real, committed donation and
-  // the donor double-donates on retry. Same guard earlyAccessPurchase puts around this call.
+/**
+ * The donation is COMMITTED. Closing the goal + ending the gate is a best-effort side effect that
+ * must NOT reach the refund path — a throw there would reverse a real, committed donation and the
+ * donor double-donates on retry. Same guard earlyAccessPurchase puts around this call.
+ */
+async function finishDonation<
+  G extends { entityType: PaidAccessEntityType | null; entityId: number | null }
+>(goal: G, donationGoalId: number) {
   try {
     return await checkDonationGoalComplete({
       entityType: goal.entityType,
@@ -449,7 +475,7 @@ export const donateToGoal = async ({
     }).catch(() => undefined);
     return goal;
   }
-};
+}
 
 // Entity-agnostic: a goal is addressed by (entityType, entityId) — its phase-2 primary key. Whether
 // reaching it unlocks anything is NOT a property of the goal; it's decided here by looking at the

@@ -43,6 +43,7 @@ export function createFakeBuzzLedger() {
   let lookupError: Error | null = null;
   let seq = 0;
   let releaseHung: () => void = () => undefined;
+  let hung = false;
 
   const balanceOf = (userId: number) => balances.get(userId) ?? Infinity;
   const write = (input: Write) => {
@@ -59,7 +60,11 @@ export function createFakeBuzzLedger() {
   const faulted = async <T>(run: () => T): Promise<T> => {
     const fault = faults.shift();
     if (fault === 'fail-before-commit') throw timeoutError();
-    if (fault === 'hang') await new Promise<void>((resolve) => (releaseHung = resolve));
+    if (fault === 'hang') {
+      hung = true;
+      await new Promise<void>((resolve) => (releaseHung = resolve));
+      hung = false;
+    }
     const result = run();
     if (fault === 'lose-response') throw timeoutError();
     return result;
@@ -79,6 +84,8 @@ export function createFakeBuzzLedger() {
     },
     setBalance: (userId: number, balance: number) => balances.set(userId, balance),
     balanceOf,
+    /** True while a `hang` write is waiting. */
+    isHung: () => hung,
     /** Lets a `hang` write commit and answer. */
     releaseHung: () => releaseHung(),
 

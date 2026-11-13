@@ -42,11 +42,14 @@ let locks = createFakeAdvisoryLocks();
 dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => Promise<unknown>) =>
   locks.transaction(cb, {
     cosmetic: { create: mocks.cosmeticCreate },
-    cosmeticShopItem: {
-      create: mocks.shopItemCreate,
-      findFirst: (args: unknown) => dbMock.dbWrite.cosmeticShopItem.findFirst(args as never),
-    },
+    cosmeticShopItem: { create: mocks.shopItemCreate },
     cosmeticShopItemCosmetic: { createMany: mocks.packMemberCreate },
+    // The listed-fee check: a listing of this submitter whose meta records this fee.
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = strings.join('?');
+      if (!sql.includes(`meta->>'submissionTxId'`)) throw new Error(`unexpected query: ${sql}`);
+      return values[0] === USER && listedTxIds.has(String(values[1])) ? [{ id: 1 }] : [];
+    },
   })) as never);
 
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
@@ -333,8 +336,19 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
   it('takes the lock on the fee charge id', async () => {
     await site.submit({ idempotencyKey: KEY });
     expect(locks.taken()).toEqual([submissionFeeTransactionId(site.kind, USER, KEY)]);
-    // Every Buzz write under the lock has a deadline, so the lock cannot outlive a hung write.
-    expect(buzz.createBuzzTransaction.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
+  });
+
+  // A slow Buzz service must not hold the app's write pool: the charge runs before the record's
+  // transaction opens.
+  it('holds no transaction while the Buzz charge is pending', async () => {
+    ledger.queueFault('hang');
+    const submitted = site.submit({ idempotencyKey: KEY });
+    while (!ledger.isHung()) await settle();
+    expect(locks.open()).toBe(0);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    ledger.releaseHung();
+    await submitted;
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
   });
 
   // A hung charge: the client times out and retries while the first request is still running.
@@ -345,11 +359,14 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     const second = site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
     await settle();
     ledger.releaseHung();
+    const results = await Promise.all([first.catch((e: unknown) => e), second]);
 
-    await first;
-    expect(await second).toMatchObject({ code: 'BAD_REQUEST', message: ALREADY_COMPLETED });
+    // The ledger gave both the one charge; whichever recorded second is refused, not listed.
     expect(ledger.charges()).toHaveLength(1);
     expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    expect(
+      results.filter((r) => (r as { message?: string })?.message === ALREADY_COMPLETED)
+    ).toHaveLength(1);
   });
 
   it('the first request refund after a failed write never reverses a charge the second listed', async () => {
@@ -364,9 +381,11 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     failWrite(new Error('write failed'));
 
     expect(await first).toMatchObject({ message: 'write failed' });
-    expect(await second).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_REFUNDED_MESSAGE });
-    expect(ledger.refunds()).toHaveLength(1);
-    expect(listedTxIds.size).toBe(0);
+    await second;
+    // Exactly one of: the second request listed it and the charge was kept, or it was refunded and
+    // nothing was listed. Never a listing on refunded money.
+    expect(ledger.charges()).toHaveLength(1);
+    expect(listedTxIds.size + ledger.refunds().length).toBe(1);
   });
 
   it('charges a new submission (a new key) again', async () => {

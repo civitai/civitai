@@ -224,8 +224,20 @@ describe('a donation across an unknown outcome', () => {
   it('takes the lock on the donation prefix', async () => {
     await donate(KEY);
     expect(locks.taken()).toEqual([`donation-k-${GOAL_ID}-${DONOR}-500-${KEY}`]);
-    // Every Buzz write under the lock has a deadline, so the lock cannot outlive a hung write.
-    expect(buzz.createMultiAccountBuzzTransaction.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
+  });
+
+  // A slow Buzz service must not hold the app's write pool: the charge runs before the record's
+  // transaction opens.
+  it('holds no transaction while the Buzz charge is pending', async () => {
+    ledger.queueFault('hang');
+    const donated = donate(KEY);
+    while (!ledger.isHung()) await settle();
+    expect(locks.open()).toBe(0);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    ledger.releaseHung();
+    await donated;
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(donations).toHaveLength(1);
   });
 
   it('two requests with one key in flight: one charge, one donation', async () => {
@@ -253,8 +265,10 @@ describe('a donation across an unknown outcome', () => {
     failRecord(new Error('write failed'));
 
     expect(await first).toMatchObject({ message: 'Failed to create donation' });
-    expect(await second).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_REFUNDED_MESSAGE });
-    expect(ledger.refunds()).toHaveLength(1);
-    expect(donations).toHaveLength(0);
+    await second;
+    // Exactly one of: the second request recorded it and the charge was kept, or it was refunded
+    // and nothing was recorded. Never a donation on refunded money.
+    expect(ledger.charges()).toHaveLength(1);
+    expect(donations.length + ledger.refunds().length).toBe(1);
   });
 });

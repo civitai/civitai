@@ -88,32 +88,26 @@ export const CHARGE_DECLINED_MESSAGE = 'Unable to charge this payment';
  * `resendBuzzTransaction`). A resend that also fails, or that the ledger answers with no
  * transaction, is `PAYMENT_OUTCOME_UNKNOWN_MESSAGE`. A first send answered cleanly with no
  * transaction is the ledger's "insufficient funds": a 400, `declinedMessage`.
- *
- * `timeoutMs` bounds every write, for a caller holding a lock (buzz-charge-lock.ts).
  */
 export async function chargeByExternalId(
   input: KeyedChargeInput,
   {
     reusable,
-    timeoutMs,
     declinedMessage = CHARGE_DECLINED_MESSAGE,
-  }: { reusable: boolean; timeoutMs?: number; declinedMessage?: string }
+  }: { reusable: boolean; declinedMessage?: string }
 ): Promise<{ transactionId: string }> {
   const context = {
     externalTransactionId: input.externalTransactionId,
     userId: input.fromAccountId,
     amount: input.amount,
   };
-  const opts = timeoutMs ? { timeoutMs } : undefined;
   const { insufficientFundsErrorMsg: _message, ...transaction } = input;
 
   // Resends the same write: the ledger answers a held id with its transaction, moving nothing.
   const resend = async (reason: string, error?: unknown) => {
     let resent: string | null | undefined;
     try {
-      ({ transactionId: resent } = await (opts
-        ? resendBuzzTransaction(transaction, opts)
-        : resendBuzzTransaction(transaction)));
+      ({ transactionId: resent } = await resendBuzzTransaction(transaction));
     } catch (resendError) {
       throw paymentOutcomeUnknown(context, `resend failed: ${reason}`, { error, resendError });
     }
@@ -137,8 +131,7 @@ export async function chargeByExternalId(
   if (!transactionId) {
     let sent: { transactionId: string | null };
     try {
-      // Without a deadline, called exactly as every other caller calls it.
-      sent = await (opts ? createBuzzTransaction(input, opts) : createBuzzTransaction(input));
+      sent = await createBuzzTransaction(input);
     } catch (error) {
       if (chargeWasDeclined(error)) throw error;
       sent = { transactionId: await resend('unknown outcome', error) };

@@ -11,6 +11,7 @@
 export function createFakeAdvisoryLocks() {
   const holders = new Map<string, Promise<void>>();
   const taken: string[] = [];
+  let open = 0;
 
   async function transaction<T>(run: (tx: unknown) => Promise<T>, tx: Record<string, unknown>) {
     const mine: (() => void)[] = [];
@@ -27,14 +28,17 @@ export function createFakeAdvisoryLocks() {
       });
       return 0;
     };
+    open++;
     try {
       return await run({ ...tx, $executeRaw });
     } finally {
+      open--;
       for (const release of mine) release();
     }
   }
 
-  return { transaction, taken: () => [...taken] };
+  /** `open()`: transactions currently open, i.e. pooled connections held. */
+  return { transaction, taken: () => [...taken], open: () => open };
 }
 
 /** Lets pending promise callbacks run, so a concurrent request reaches the point it waits at. */

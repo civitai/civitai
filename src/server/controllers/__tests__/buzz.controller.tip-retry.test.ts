@@ -113,6 +113,11 @@ describe('on-site tip across an unknown outcome', () => {
 
     expect(ledger.charges()).toHaveLength(1);
     expect(ledger.charges()[0].externalTransactionId).toBe(`tip:${TIPPER}:${KEY}:100:Image:77-5`);
+    // Pinned: the retry moved nothing, so it records nothing. upsertBuzzTip adds to a running
+    // total and there is no per-key record to tell whether the first request recorded, so the
+    // tip record, notification and metric for legs an earlier request moved are not written again.
+    expect(mockUpsertBuzzTip).not.toHaveBeenCalled();
+    expect(mockUpdateEntityMetric).not.toHaveBeenCalled();
   });
 
   it('records the tip once, in the same request, when the resend answers', async () => {
@@ -212,6 +217,8 @@ describe('on-site tip across an unknown outcome', () => {
 
     expect(ledger.charges()).toHaveLength(1);
     expect(result).toMatchObject({ deduped: true });
+    expect(mockUpsertBuzzTip).not.toHaveBeenCalled();
+    expect(mockUpdateEntityMetric).not.toHaveBeenCalled();
   });
 
   it('still refuses a short balance for legs not yet moved', async () => {
@@ -221,14 +228,21 @@ describe('on-site tip across an unknown outcome', () => {
     expect(ledger.charges()).toHaveLength(0);
   });
 
-  it('takes the lock on the tip id', async () => {
-    await imageTip(KEY);
-    expect(locks.taken()).toEqual([`tip:${TIPPER}:${KEY}:100:Image:77`]);
-    // Every Buzz write under the lock has a deadline, so the lock cannot outlive a hung write.
-    expect(buzz.createBuzzTransactionMany.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
+  // A slow Buzz service must not hold the app's write pool: a tip opens no transaction at all,
+  // and its record writes are the ones it always made.
+  it('holds no transaction while the Buzz send is pending, and takes no lock', async () => {
+    ledger.queueFault('hang');
+    const tipped = imageTip(KEY);
+    while (!ledger.isHung()) await settle();
+    expect(locks.open()).toBe(0);
+    ledger.releaseHung();
+    await tipped;
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(locks.taken()).toEqual([]);
+    expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
   });
 
-  it('two requests with one key in flight: the Buzz moves once and the tip is recorded once', async () => {
+  it('two requests with one key in flight: the ledger moves the Buzz once and only the mover records', async () => {
     ledger.queueFault('hang');
     const first = imageTip(KEY);
     await settle();
@@ -240,6 +254,7 @@ describe('on-site tip across an unknown outcome', () => {
     expect(ledger.charges()).toHaveLength(1);
     expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
     expect(mockUpdateEntityMetric).toHaveBeenCalledTimes(1);
-    expect(results[1]).toMatchObject({ deduped: true });
+    // The ledger gave the legs to one request; the other was answered as a replay.
+    expect(results.filter((r) => r.deduped)).toHaveLength(1);
   });
 });

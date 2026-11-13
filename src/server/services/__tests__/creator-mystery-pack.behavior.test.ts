@@ -11,6 +11,7 @@ import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema'
 import { DEFAULT_CREATOR_SHOP_FEES } from '~/server/schema/creator-shop.schema';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 import { createFakeBuzzLedger } from './buzz-ledger.fake';
+import { settle } from './charge-lock.fake';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -1126,5 +1127,52 @@ describe('the mystery pack submission fee across an unknown outcome', () => {
     expect((error as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
     expect(await packCount()).toBe(0);
     expect(ledger.refunds()).toHaveLength(0);
+  });
+
+  // On Postgres (PGlite): the listed-fee check is the real query, so a second request with the
+  // key finds the first one's listing by its fee.
+  it('two requests with one key in flight: one charge, one pack, the other refused', async () => {
+    ledger.queueFault('hang');
+    const first = submit({ idempotencyKey: KEY } as never).catch((e: unknown) => e);
+    while (!ledger.isHung()) await settle();
+    // The first request's charge is pending and holds no transaction.
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    const second = await submit({ idempotencyKey: KEY } as never);
+    ledger.releaseHung();
+
+    expect(await first).toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This submission was already completed. Reload to see it, or start a new submission.',
+    });
+    expect(second).toMatchObject({ shopItemId: expect.any(Number) });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(await packCount()).toBe(1);
+  });
+
+  it('a retry with the key of a refunded submission is refused, and writes nothing', async () => {
+    await holder.db.exec(`
+      CREATE FUNCTION fail_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'revision insert failed'; END $$;
+      CREATE TRIGGER fail_revision BEFORE INSERT ON "BoxRevision"
+        FOR EACH ROW EXECUTE FUNCTION fail_revision();
+    `);
+    try {
+      await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow(
+        'revision insert failed'
+      );
+    } finally {
+      await holder.db.exec(
+        `DROP TRIGGER fail_revision ON "BoxRevision"; DROP FUNCTION fail_revision;`
+      );
+    }
+    expect(ledger.refunds()).toHaveLength(1);
+
+    await expect(submit({ idempotencyKey: KEY } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'The payment for this attempt was refunded. Please try again.',
+    });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(await packCount()).toBe(0);
   });
 });
