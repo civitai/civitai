@@ -174,6 +174,12 @@ describe('model.getAll card images and browsing-settings tag exclusions', () => 
     expect(await feedImages({ ...VIEWER })).toEqual([1, 3]);
   });
 
+  it("applies the viewer's own excluded tags alongside the browsing-settings ones", async () => {
+    expect(await feedImages({ ...VIEWER }, { excludedTagIds: [OTHER_TAG] })).toEqual([1]);
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValue([]);
+    expect(await feedImages({ ...VIEWER }, { excludedTagIds: [OTHER_TAG] })).toEqual([1, 2]);
+  });
+
   it('drops it on the pending path too', async () => {
     expect(await feedImages(undefined, { pending: true })).toEqual([1, 3]);
     expect(getImagesForModelVersion).toHaveBeenCalledWith(
