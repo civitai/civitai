@@ -11,7 +11,6 @@ import {
   FLIPT_FEATURE_FLAGS,
   getFliptClientSync,
   getFliptLocalOverride,
-  isFlipt,
 } from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import { Flags } from '~/shared/utils/flags';
@@ -32,14 +31,25 @@ export function resolveSemanticBrowsingLevel(
   return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
 }
 
-/** The containment switch. Flipt unreachable reads as ON: the clamp holds when the switch can't be read. */
-export async function isNonModClampOn() {
+/**
+ * The containment switch, read fail-closed: only a successful evaluation that answers off lifts
+ * the clamp. An unavailable client, an evaluation error (a missing key throws) or a malformed
+ * answer all hold it. Read uncached so a flip takes effect at the next refresh.
+ */
+export async function isNonModClampOn(): Promise<boolean> {
   const flag = FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_NONMOD_CLAMP;
-  if (getFliptLocalOverride(flag) === undefined) {
-    await ensureFliptInitialized();
-    if (!getFliptClientSync()) return true;
+  const override = getFliptLocalOverride(flag);
+  if (override !== undefined) return override !== 'off';
+  await ensureFliptInitialized();
+  const client = getFliptClientSync();
+  if (!client) return true;
+  try {
+    return (
+      client.evaluateBoolean({ flagKey: flag, entityId: 'global', context: {} }).enabled !== false
+    );
+  } catch {
+    return true;
   }
-  return isFlipt(flag);
 }
 
 /**

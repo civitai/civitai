@@ -26,7 +26,8 @@ const h = vi.hoisted(() => {
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
     isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
-    fliptClient: {} as object | null,
+    evalBoolean: vi.fn<() => { enabled: unknown }>(),
+    fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
   };
 });
 
@@ -150,7 +151,8 @@ beforeEach(() => {
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
   h.isFlipt.mockReset().mockResolvedValue(false);
-  h.fliptClient = {};
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
 });
 
 describe('a stale index cannot surface a hidden image', () => {
@@ -627,8 +629,7 @@ describe('the query audit and the browsing level', () => {
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
-  const clampOn = () =>
-    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-search-nonmod-clamp');
+  const clampOn = () => h.evalBoolean.mockReturnValue({ enabled: true });
 
   it('searches a non-moderator at their own level while the clamp switch is off', async () => {
     const { calls } = await run({ browsingLevel: ALL_LEVELS });
@@ -636,8 +637,18 @@ describe('the query audit and the browsing level', () => {
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
   });
 
-  it('holds the clamp when the switch cannot be read', async () => {
-    h.fliptClient = null;
+  it.each([
+    ['the client is unavailable', () => (h.fliptClient = null)],
+    [
+      'the key is missing',
+      () =>
+        h.evalBoolean.mockImplementation(() => {
+          throw new Error('flag not found');
+        }),
+    ],
+    ['the answer is malformed', () => h.evalBoolean.mockReturnValue({ enabled: undefined })],
+  ])('holds the clamp when %s', async (_name, arrange) => {
+    arrange();
     const { calls } = await run({ browsingLevel: ALL_LEVELS });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2]);
   });

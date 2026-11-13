@@ -14,7 +14,8 @@ const h = vi.hoisted(() => ({
   includesMinor: vi.fn<(prompt?: string) => boolean>(),
   addons: [] as unknown[],
   isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
-  fliptClient: {} as object | null,
+  evalBoolean: vi.fn<() => { enabled: unknown }>(),
+  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -104,7 +105,8 @@ const ranking =
 
 beforeEach(() => {
   h.isFlipt.mockReset().mockResolvedValue(false);
-  h.fliptClient = {};
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
   sent = [];
   h.fetched = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
@@ -274,14 +276,14 @@ describe('semantic article search: the query audit and the browsing level', () =
     ['all levels', 31, [1, 2]],
     ['NSFW levels only', 4 | 8, [1]],
   ])('clamps a non-moderator asking for %s to the safe levels', async (_name, level, expected) => {
-    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-search-nonmod-clamp');
+    h.evalBoolean.mockReturnValue({ enabled: true });
     await run({ browsingLevel: level });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: expected });
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 
   it('clamps a signed-out visitor too', async () => {
-    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-search-nonmod-clamp');
+    h.evalBoolean.mockReturnValue({ enabled: true });
     await run({ browsingLevel: 31, user: undefined });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
   });
@@ -291,8 +293,18 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
   });
 
-  it('holds the clamp when the switch cannot be read', async () => {
-    h.fliptClient = null;
+  it.each([
+    ['the client is unavailable', () => (h.fliptClient = null)],
+    [
+      'the key is missing',
+      () =>
+        h.evalBoolean.mockImplementation(() => {
+          throw new Error('flag not found');
+        }),
+    ],
+    ['the answer is malformed', () => h.evalBoolean.mockReturnValue({ enabled: undefined })],
+  ])('holds the clamp when %s', async (_name, arrange) => {
+    arrange();
     await run({ browsingLevel: 31 });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
   });
