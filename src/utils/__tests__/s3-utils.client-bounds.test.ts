@@ -54,7 +54,8 @@ async function boundsOf(client: S3Client) {
   };
 }
 
-const bounded = { maxAttempts: 2, connectionTimeout: 3_000, requestTimeout: 30_000 };
+// Attempts stay at the SDK default (3); only the connect and idle timeouts are added.
+const bounded = { maxAttempts: 3, connectionTimeout: 3_000, requestTimeout: 30_000 };
 
 /** The SDK's resolved HTTP handler config (populated once the handler has served a request). */
 function handlerConfig(client: { config: { requestHandler: unknown } }) {
@@ -69,7 +70,7 @@ describe('s3-utils clients', () => {
     ['getB2S3Client', () => getB2S3Client()],
     ['getB2ImageS3Client', () => getB2ImageS3Client()],
     ['getQuarantineS3Client', () => getQuarantineS3Client() as S3Client],
-  ])('%s carries the connect/socket timeouts and a 2-attempt cap', async (_name, get) => {
+  ])('%s carries the connect/socket timeouts and the default attempts', async (_name, get) => {
     expect(await boundsOf(get())).toEqual(bounded);
   });
 

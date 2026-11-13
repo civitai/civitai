@@ -46,11 +46,10 @@ function handlerConfig(client: { config: { requestHandler: unknown } }) {
 
 describe('newS3Client', () => {
   it('rejects within its bounds against an endpoint that never answers, after maxAttempts', async () => {
-    const client = newS3Client(config(), {
-      connectionTimeoutMs: 500,
-      requestTimeoutMs: 300,
-      maxAttempts: 2,
-    });
+    const client = newS3Client(
+      { ...config(), maxAttempts: 2 },
+      { connectionTimeoutMs: 500, requestTimeoutMs: 300 }
+    );
     const started = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const outcome = await Promise.race([
@@ -74,11 +73,25 @@ describe('newS3Client', () => {
     const client = newS3Client(config());
     await client.send(new HeadObjectCommand({ Bucket: 'b', Key: 'k' }));
 
-    expect(await client.config.maxAttempts()).toBe(S3_CLIENT_BOUNDS.maxAttempts);
+    expect(await client.config.maxAttempts()).toBe(3); // the SDK default, untouched
     expect(handlerConfig(client)).toMatchObject({
       connectionTimeout: S3_CLIENT_BOUNDS.connectionTimeoutMs,
       requestTimeout: S3_CLIENT_BOUNDS.requestTimeoutMs,
     });
+  });
+
+  it('S3_CLIENT_TIMEOUTS=off builds the client without the timeouts (the off-switch)', async () => {
+    answer = true;
+    process.env.S3_CLIENT_TIMEOUTS = 'off';
+    try {
+      const client = newS3Client(config());
+      await client.send(new HeadObjectCommand({ Bucket: 'b', Key: 'k' }));
+      const handler = handlerConfig(client);
+      expect(handler.connectionTimeout).toBeUndefined();
+      expect(handler.requestTimeout).toBeUndefined();
+    } finally {
+      delete process.env.S3_CLIENT_TIMEOUTS;
+    }
   });
 
   it('lets a caller override maxAttempts (the retry-free probe client)', async () => {

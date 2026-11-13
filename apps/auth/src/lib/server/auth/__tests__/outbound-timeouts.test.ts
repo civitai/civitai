@@ -62,6 +62,25 @@ afterEach(() => {
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
 });
 
+describe('AUTH_OUTBOUND_TIMEOUTS=off (the off-switch)', () => {
+  it('sends the provider calls without a timeout signal', async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+      seen.push(init?.signal);
+      return new Response(JSON.stringify({ access_token: 't' }), { status: 200 });
+    });
+    process.env.AUTH_OUTBOUND_TIMEOUTS = 'off';
+    try {
+      await exchangeCode(provider, { code: 'c', redirectUri: 'https://auth.test/cb' });
+      await verifyCaptchaToken('token', '1.2.3.4');
+    } finally {
+      delete process.env.AUTH_OUTBOUND_TIMEOUTS;
+    }
+    expect(seen).toHaveLength(2);
+    expect(seen.every((s) => s == null)).toBe(true);
+  });
+});
+
 describe('outbound calls against an upstream that never answers', () => {
   it('captcha verification fails closed within 6 s', async () => {
     const started = Date.now();

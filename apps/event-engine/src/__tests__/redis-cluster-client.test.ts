@@ -35,6 +35,16 @@ test('control: an unpinned node-redis 6 cluster has the 6.x defaults', () => {
   expect(raw._commandOptions).toEqual({ timeout: 5000 });
 });
 
+test('REDIS_SOCKET_TIMEOUT_MS=0 turns the socket timeout off (the off-switch)', () => {
+  process.env.REDIS_SOCKET_TIMEOUT_MS = '0';
+  try {
+    const cluster: any = createEngineCluster(url);
+    expect(cluster._self._options.defaults.socket.socketTimeout).toBeUndefined();
+  } finally {
+    delete process.env.REDIS_SOCKET_TIMEOUT_MS;
+  }
+});
+
 test('pins a 10 s socket inactivity timeout with a keepalive PING below it', () => {
   const cluster: any = createEngineCluster(url);
   expect(cluster._self._options.defaults.socket.socketTimeout).toBe(10_000);

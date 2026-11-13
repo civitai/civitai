@@ -18,7 +18,7 @@ async function startFakePgServer(mode: 'silent-after-auth' | 'never-auth') {
   const sockets = new Set<net.Socket>();
   const server = net.createServer((socket) => {
     sockets.add(socket);
-    socket.on('error', () => {});
+    socket.on('error', () => undefined);
     socket.on('close', () => sockets.delete(socket));
     if (mode === 'never-auth') return;
     let started = false;
@@ -81,7 +81,7 @@ async function settleWithin<T>(ms: number, work: Promise<T>) {
 }
 
 afterEach(async () => {
-  await pool?.end().catch(() => {});
+  await pool?.end().catch(() => undefined);
   pool = undefined;
   await server?.close();
   server = undefined;
@@ -112,6 +112,20 @@ describe('EventProcessor pg pool deadlines', () => {
       const outcome = await settleWithin(3000, pool.query('SELECT 1'));
       expect(outcome).toBeInstanceOf(Error);
       expect(Date.now() - started).toBeLessThan(2000);
+    },
+    IMPORT_TIMEOUT_MS
+  );
+
+  test(
+    'PG_CONNECTION_TIMEOUT_MS=0 / PG_QUERY_TIMEOUT_MS=0 turn the bounds off',
+    async () => {
+      pool = await eventProcessorPool('silent-after-auth', {
+        PG_QUERY_TIMEOUT_MS: '0',
+        PG_CONNECTION_TIMEOUT_MS: '0',
+      });
+      const options = (pool as unknown as { options: Record<string, unknown> }).options;
+      expect(options.connectionTimeoutMillis ?? 0).toBe(0);
+      expect(options.query_timeout).toBeUndefined();
     },
     IMPORT_TIMEOUT_MS
   );
