@@ -612,10 +612,14 @@ describe('the advisory locks have exactly one call site', () => {
   // approve gate's open-run check and the plan reservation. The only lock in its transaction.
   // blocks/review-autodeploy takes one platform-wide (0x72657631, 0) around the review build-slot
   // count and claim. The only lock in its transaction.
+  // blocks/publish-request-holds takes one per app (0x41525648, hashtext of the slug) around hold
+  // placement and each approve's hold check. Hold placement takes no other lock; an off-site approve
+  // takes it after its own listing row lock, which no holder of it takes; lock_timeout is 5 s.
   const ALLOWED = [
     'services/access-token.service.ts',
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
+    'services/blocks/publish-request-holds.service.ts',
     'services/blocks/review-autodeploy.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
