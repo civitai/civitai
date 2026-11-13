@@ -71,6 +71,8 @@ import { AppNameCrumb } from '~/components/AppBlocks/AppNameCrumb';
 // eslint-disable-next-line import/first
 import { resolveChromeGeometry } from '~/components/AppBlocks/chromeGeometry';
 // eslint-disable-next-line import/first
+import { isPageSlot } from '~/shared/constants/slot-registry';
+// eslint-disable-next-line import/first
 import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
@@ -100,21 +102,22 @@ function detailFixture(over: Record<string, unknown> = {}) {
  * open popover is lost. On a loaded CI runner the measurement can land mid-test.
  */
 async function renderChrome(props: Record<string, unknown> = {}) {
+  const slotId = (props.slotId as string | undefined) ?? 'app.page';
   renderWithProviders(
     <AppBlockChrome
       blockInstanceId="inst-crumb"
       appName={APP_NAME}
       slug={SLUG}
-      slotId="app.page"
       {...props}
+      slotId={slotId}
     />
   );
   const chrome = page.getByTestId('app-block-chrome');
   await expect.element(chrome).toBeInTheDocument();
   const width = chrome.element().getBoundingClientRect().width;
-  await expect
-    .element(chrome)
-    .toHaveAttribute('data-chrome-compact', String(resolveChromeGeometry(width).compact));
+  // Only the page surface goes compact (`isPage && geometry.compact` in the chrome).
+  const compact = isPageSlot(slotId) && resolveChromeGeometry(width).compact;
+  await expect.element(chrome).toHaveAttribute('data-chrome-compact', String(compact));
 }
 
 /**
