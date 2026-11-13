@@ -8,6 +8,19 @@
  * HEAD 404 hides. Every row about to change is appended to `--log` (id and prior ingestion) before
  * the UPDATE; `--undo` restores from it. Output is counts only.
  *
+ * Runbook (desk):
+ *   - One run at a time. The dry run prints any other run log it finds beside --log.
+ *   - Run 1: the dry run prints counts only: listed, controls, scan-in-flight (workflow present,
+ *     requested after scanned, both: shown separately), skipped:<reason> (not-scanned, needs-review,
+ *     blocked-for, tos, minor, poi, image-hold, owner-hold, pending-collection-item, open-report,
+ *     article-image, app-listing-asset, crucible-image, external-url, odd-url, head-error, now-200),
+ *     still-404, no-row, would-hide.
+ *   - Then `--apply --limit 1`, read the row back (public hidden, moderator sees it), then the rest.
+ *   - Undo: `--undo --apply`. It does not touch the existence cache, which holds "gone" for up to 5
+ *     minutes after an undo; wait that long before judging the feed.
+ *   - A crash between the UPDATE and its confirmation line leaves rows default undo ignores; pass
+ *     `--include-unconfirmed` to cover them (it can also cover rows that went NotFound by themselves).
+ *
  * Usage (dry run is the default):
  *   npm run tsscript scripts/oneoffs/hide-lost-original-images.ts --ids <file> --log <file>
  *   ... --apply --limit 1       # one id first, then read it back
@@ -30,6 +43,7 @@
  */
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
 import { hasScanWorkflowSql } from '~/server/common/judge-rating';
@@ -92,7 +106,8 @@ export function parseArgs(argv: string[]): RunOptions {
     options.rebust = rebustArg;
   }
   if (!options.logFile) throw new Error('--log is required');
-  if (options.logFile === options.idsFile) throw new Error('--log must not be the ids file');
+  if (options.idsFile && path.resolve(options.logFile) === path.resolve(options.idsFile))
+    throw new Error('--log must not be the ids file');
   if (!options.undo && !options.rebust && !options.idsFile) throw new Error('--ids is required');
   return options;
 }
@@ -114,6 +129,17 @@ const holdReasonSql = Prisma.sql`(CASE
   WHEN EXISTS (
     SELECT 1 FROM "CollectionItem" ci WHERE ci."imageId" = i.id AND ci.status = 'REVIEW'
   ) THEN 'pending-collection-item'
+  -- An open report is a moderator's queue item; hiding the image would make it vanish.
+  WHEN EXISTS (
+    SELECT 1 FROM "ImageReport" ir JOIN "Report" rp ON rp.id = ir."reportId"
+    WHERE ir."imageId" = i.id AND rp.status::text IN ('Pending', 'Processing')
+  ) THEN 'open-report'
+  -- Article covers/banners and app-listing assets read NotFound as an error state, with no notice.
+  WHEN EXISTS (SELECT 1 FROM "Article" ar WHERE ar."coverId" = i.id OR ar."bannerId" = i.id)
+  THEN 'article-image'
+  WHEN EXISTS (SELECT 1 FROM app_listings al WHERE al.icon_id = i.id OR al.cover_id = i.id)
+    OR EXISTS (SELECT 1 FROM app_listing_screenshots als WHERE als.image_id = i.id)
+  THEN 'app-listing-asset'
   -- A crucible is listed only while its cover is Scanned; hiding the cover hides the contest.
   WHEN EXISTS (
     SELECT 1 FROM "Crucible" cr WHERE cr."imageId" = i.id OR cr."heroImageId" = i.id
@@ -135,11 +161,12 @@ export function selectSql(ids: number[]) {
   `;
 }
 
-export function hideSql(ids: number[]) {
+/** `urls` are the keys that were HEADed: a row whose url changed since is not the one that 404ed. */
+export function hideSql(ids: number[], urls: string[]) {
   return Prisma.sql`
     UPDATE "Image" i
     SET ingestion = 'NotFound'::"ImageIngestionStatus"
-    WHERE i.id = ANY(${ids}::int[]) AND ${skipReasonSql} IS NULL
+    WHERE i.id = ANY(${ids}::int[]) AND i.url = ANY(${urls}::text[]) AND ${skipReasonSql} IS NULL
     RETURNING i.id, i."postId"
   `;
 }
@@ -322,6 +349,10 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
       return false;
     });
 
+    // The control brackets the HEADs (it is checked again before the write): a bucket that is
+    // unhealthy now would turn every HEAD in this chunk into a 404.
+    if (options.apply && eligible.length && !(await controlOk(ids, deps)).count)
+      throw new Error('control failed mid-run: stopped before this chunk was HEADed');
     const limit = pLimit(options.concurrency);
     const heads = await Promise.all(
       eligible.map((r) =>
@@ -349,7 +380,12 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     const batch = gone.slice(0, room);
     if (options.apply && batch.length) {
       deps.appendLog(batch.map((r) => ({ id: r.id, prior: r.prior })));
-      const touched = await deps.query<Touched>(hideSql(batch.map((r) => r.id)));
+      const touched = await deps.query<Touched>(
+        hideSql(
+          batch.map((r) => r.id),
+          batch.map((r) => r.url)
+        )
+      );
       const prior = new Map(batch.map((r) => [r.id, r.prior]));
       if (touched.length)
         deps.appendLog(
@@ -418,6 +454,7 @@ export function actedOn(entries: LogEntry[], includeUnconfirmed: boolean) {
  * would swallow or poison the lines appended after it.
  */
 export function appendDurable(file: string, text: string) {
+  const isNew = !fs.existsSync(file);
   if (fs.existsSync(file)) {
     const body = fs.readFileSync(file, 'utf8');
     if (body && !body.endsWith('\n')) fs.truncateSync(file, body.lastIndexOf('\n') + 1);
@@ -427,21 +464,61 @@ export function appendDurable(file: string, text: string) {
     fs.fchmodSync(fd, 0o600);
     // writeSync may write less than asked (a full disk); a torn line must not look written.
     const bytes = Buffer.from(text);
-    for (let at = 0; at < bytes.length; ) at += fs.writeSync(fd, bytes, at);
+    for (let at = 0; at < bytes.length; ) {
+      const wrote = fs.writeSync(fd, bytes, at);
+      if (!wrote) throw new Error('log write made no progress');
+      at += wrote;
+    }
     fs.fsyncSync(fd);
+    // A new file's directory entry must survive a power loss too.
+    if (isNew) {
+      const dir = fs.openSync(path.dirname(file), 'r');
+      try {
+        fs.fsyncSync(dir);
+      } finally {
+        fs.closeSync(dir);
+      }
+    }
   } finally {
     fs.closeSync(fd);
   }
 }
 
 /** A torn last line (a crash mid-write) is dropped; a bad line anywhere else is an error. */
+/** Other run logs beside this one: name and counts only, so a second run in flight is visible. */
+export function siblingLogs(file: string) {
+  const dir = path.dirname(file);
+  const own = path.basename(file);
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((n) => n !== own && /\.(log|jsonl)$/.test(n))
+    .flatMap((n) => {
+      try {
+        const entries = readLog(path.join(dir, n));
+        if (!entries.length) return [];
+        const confirmed = new Set(entries.filter((e) => e.hidden).map((e) => e.id));
+        return [
+          {
+            name: n,
+            entries: entries.length,
+            unconfirmed: entries.filter((e) => !e.hidden && !confirmed.has(e.id)).length,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
+}
+
 export function readLog(file: string): LogEntry[] {
   if (!fs.existsSync(file)) return [];
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
   return lines.flatMap((l, n) => {
     try {
       const entry = JSON.parse(l) as LogEntry;
-      if (!Number.isInteger(entry?.id) || typeof entry.prior !== 'string')
+      // The script only ever writes Scanned as the prior state; anything else is not our log.
+      if (!Number.isInteger(entry?.id) || entry.prior !== 'Scanned')
         throw new Error('log line is not an entry');
       return [entry];
     } catch (e) {
@@ -527,6 +604,10 @@ async function main() {
   else {
     const ids = readIds(options.idsFile as string);
     if (!ids.length) throw new Error('ids file is empty');
+    for (const l of siblingLogs(logFile))
+      deps.log(
+        `other run log: ${l.name}: ${l.entries} lines, ${l.unconfirmed} unconfirmed (one run at a time)`
+      );
     await run(options, ids, deps);
   }
   if (!options.apply) deps.log('dry run: nothing written (pass --apply to write)');

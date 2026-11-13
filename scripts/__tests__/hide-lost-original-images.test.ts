@@ -24,6 +24,7 @@ import {
   CROSS_CHECK_EXPIRES,
   parseArgs,
   readIds,
+  siblingLogs,
   readLog,
   rebust,
   run,
@@ -49,6 +50,11 @@ beforeAll(async () => {
       "scanJobs" jsonb, "scanRequestedAt" timestamp, "scannedAt" timestamp
     );
     CREATE TABLE "CollectionItem" ("imageId" int, status text NOT NULL);
+    CREATE TABLE "Report" (id int PRIMARY KEY, status text NOT NULL);
+    CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+    CREATE TABLE "Article" ("coverId" int, "bannerId" int);
+    CREATE TABLE app_listings (icon_id int, cover_id int);
+    CREATE TABLE app_listing_screenshots (image_id int);
     CREATE TABLE "Crucible" ("imageId" int, "heroImageId" int);
     CREATE TABLE "CrucibleEntry" ("imageId" int);
   `);
@@ -58,7 +64,7 @@ const GONE = [1, 2, 3];
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry";
+    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "Article", app_listings, app_listing_screenshots;
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
       (1,'gone-1',10,100),(2,'gone-2',10,100),(3,'gone-3',11,101),
       (900,'live-900',12,102),(901,'live-901',12,102);
@@ -424,6 +430,8 @@ describe('hide-lost-original-images', () => {
     const log = path.join(dir, 'log');
     fs.writeFileSync(log, 'null\n{"id":2,"prior":"Scanned"}\n');
     expect(() => readLog(log)).toThrow();
+    fs.writeFileSync(log, '{"id":2,"prior":"Blocked"}\n{"id":3,"prior":"Scanned"}\n');
+    expect(() => readLog(log)).toThrow();
     fs.writeFileSync(log, '{"id":2,"prior":"Scanned"}\nnull\n');
     expect(readLog(log).map((e) => e.id)).toEqual([2]);
   });
@@ -467,8 +475,8 @@ describe('hide-lost-original-images', () => {
       head: async (url) => {
         if (url.startsWith('live-')) {
           controlHeads += 1;
-          // The first chunk's control (5 HEADs at start, 5 before the write) passes; later ones fail.
-          return controlHeads > 10 ? 'missing' : 'present';
+          // The first chunk's three controls (start, before its HEADs, before its write) pass; later fail.
+          return controlHeads > 15 ? 'missing' : 'present';
         }
         return 'missing';
       },
@@ -517,6 +525,81 @@ describe('hide-lost-original-images', () => {
     expect(keyShape('/3f2b9c1e')).toBe('/a');
   });
 
+  it('leaves an image alone while a report on it is open, but not once it is closed', async () => {
+    await db.exec(`
+      INSERT INTO "Report" VALUES (1, 'Pending'), (2, 'Processing'), (3, 'Actioned');
+      INSERT INTO "ImageReport" VALUES (1, 1), (2, 2), (3, 3);
+    `);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect([await ingestion(1), await ingestion(2), await ingestion(3)]).toEqual([
+      'Scanned',
+      'Scanned',
+      'NotFound',
+    ]);
+    expect(counts['skipped:open-report']).toBe(2);
+  });
+
+  it('leaves article covers and banners and app-listing assets alone', async () => {
+    await db.exec(`
+      INSERT INTO "Article" VALUES (1, NULL), (NULL, 2);
+      INSERT INTO app_listing_screenshots VALUES (3);
+    `);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect(counts['skipped:article-image']).toBe(2);
+    expect(counts['skipped:app-listing-asset']).toBe(1);
+    expect(counts.hidden).toBe(0);
+    await db.exec(
+      `DELETE FROM "Article"; DELETE FROM app_listing_screenshots; INSERT INTO app_listings VALUES (1, 2)`
+    );
+    const again = await run(options(), GONE, makeDeps().deps);
+    expect(again['skipped:app-listing-asset']).toBe(2);
+    expect(again.hidden).toBe(1);
+  });
+
+  it('lists the other run logs beside the log, counts only', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-test-'));
+    fs.writeFileSync(
+      path.join(dir, 'a.jsonl'),
+      '{"id":1,"prior":"Scanned"}\n{"id":1,"prior":"Scanned","hidden":true}\n{"id":2,"prior":"Scanned"}\n'
+    );
+    fs.writeFileSync(path.join(dir, 'own.jsonl'), '{"id":9,"prior":"Scanned"}\n');
+    fs.writeFileSync(path.join(dir, 'ids.txt'), '1\n');
+    expect(siblingLogs(path.join(dir, 'own.jsonl'))).toEqual([
+      { name: 'a.jsonl', entries: 3, unconfirmed: 1 },
+    ]);
+  });
+
+  it('does not hide a row whose url changed after it was HEADed', async () => {
+    const { deps } = makeDeps({
+      head: async (url) => {
+        if (url === 'gone-1') await db.exec(`UPDATE "Image" SET url = 'gone-other' WHERE id = 1`);
+        return url.startsWith('gone-') ? 'missing' : 'present';
+      },
+    });
+    const counts = await run(options(), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(counts['raced-out']).toBe(1);
+  });
+
+  it('stops before the HEADs of a chunk when the control is unhealthy at that point', async () => {
+    let controlHeads = 0;
+    const targetHeads: string[] = [];
+    const { deps } = makeDeps({
+      head: async (url) => {
+        if (url.startsWith('live-')) {
+          controlHeads += 1;
+          return controlHeads > 5 ? 'missing' : 'present';
+        }
+        targetHeads.push(url);
+        return 'missing';
+      },
+    });
+    await expect(run(options(), GONE, deps)).rejects.toThrow(/before this chunk was HEADed/);
+    expect(targetHeads).toEqual([]);
+  });
+
   it('reports how many control images vouched for the HEADs', async () => {
     const { deps } = makeDeps();
     const counts = await run(options({ apply: false }), GONE, deps);
@@ -549,5 +632,6 @@ describe('hide-lost-original-images', () => {
     expect(() => parseArgs(['--log', 'l'])).toThrow(/--ids/);
     expect(parseArgs(['--log', 'l', '--undo']).undo).toBe(true);
     expect(() => parseArgs(['--ids', 'same', '--log', 'same'])).toThrow(/ids file/);
+    expect(() => parseArgs(['--ids', './same', '--log', 'same'])).toThrow(/ids file/);
   });
 });
