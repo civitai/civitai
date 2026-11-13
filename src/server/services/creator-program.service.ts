@@ -84,18 +84,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
 import { userUpdateCounter } from '~/server/prom/client';
 import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
-import {
-  chargeByExternalId,
-  PAYMENT_REFUNDED_MESSAGE,
-  paymentOutcomeUnknown,
-} from '~/server/services/buzz-keyed-charge';
-import {
-  CHARGE_LOCKED_READ,
-  CHARGE_LOCKED_REFUND,
-  recordStepError,
-  refundUnlessRecorded,
-  withChargeKeyLock,
-} from '~/server/services/buzz-charge-lock';
 import { TRPCError } from '@trpc/server';
 
 type UserCapCacheItem = {
@@ -530,6 +518,19 @@ async function getFlippedPhaseStatus() {
 }
 
 /**
+ * The keyed-charge helpers, loaded at the call site and only for a keyed request: imported at the
+ * top of this file they join its import cycle (the same reason `refundTransactionOnce` is loaded
+ * in `withdrawCash`).
+ */
+async function loadKeyedCharge() {
+  const [charge, lock] = await Promise.all([
+    import('~/server/services/buzz-keyed-charge'),
+    import('~/server/services/buzz-charge-lock'),
+  ]);
+  return { ...charge, ...lock };
+}
+
+/**
  * The ledger id of one deposit into the bank. With the client's key (a uuid, minted once per
  * deposit and resent on its retries) it is the same on every retry, so the ledger holds one
  * deposit for it. The user id comes first and has no '-', so one user's key never names another
@@ -604,6 +605,7 @@ export async function bankBuzz(
   const keyedId =
     idempotencyKey !== undefined ? bankDepositTransactionId(userId, idempotencyKey) : undefined;
   const declinedMessage = 'Unable to bank this amount';
+  const keyed = keyedId !== undefined ? await loadKeyedCharge() : undefined;
 
   // The limits are read and spent in one critical section: two deposits racing past the same
   // check would bank twice the remaining amount. It also keeps two requests with one key from
@@ -614,12 +616,12 @@ export async function bankBuzz(
       // With a key, a deposit the ledger already holds is this action's, from an earlier request
       // whose answer was lost. Looked up BEFORE the cap and bankable checks: they read a banked
       // total that already includes it, and would clamp or refuse a retry whose Buzz moved.
-      if (keyedId !== undefined) {
+      if (keyedId !== undefined && keyed) {
         let held: unknown;
         try {
           held = await getTransactionByExternalId(keyedId);
         } catch (lookupError) {
-          throw paymentOutcomeUnknown(
+          throw keyed.paymentOutcomeUnknown(
             { externalTransactionId: keyedId, userId, amount },
             'deposit lookup before checks failed',
             { lookupError }
@@ -627,7 +629,7 @@ export async function bankBuzz(
         }
         if (held) {
           // Resends under the held id (moves nothing) and refuses a deposit since refunded.
-          await chargeByExternalId(
+          await keyed.chargeByExternalId(
             { ...deposit(), externalTransactionId: keyedId },
             { reusable: true, declinedMessage }
           );
@@ -648,11 +650,11 @@ export async function bankBuzz(
       }
       if (amount <= 0) throw new Error('Amount exceeds cap');
 
-      if (keyedId !== undefined) {
+      if (keyedId !== undefined && keyed) {
         // An unknown outcome is resent once under the same id; a resend that fails too is "may
         // have gone through" and the client keeps its key. The ledger is the deposit's only
         // record (the banked total is read from it), so there is no row to write under a lock.
-        await chargeByExternalId(
+        await keyed.chargeByExternalId(
           { ...deposit(), externalTransactionId: keyedId },
           { reusable: true, declinedMessage }
         );
@@ -1210,6 +1212,16 @@ async function burnAndRecordKeyedWithdrawal({
   method: CashWithdrawalMethod;
   externalTransactionId: string;
 }): Promise<{ created: false } | { created: true; id: string; transactionId: string }> {
+  const {
+    chargeByExternalId,
+    paymentOutcomeUnknown,
+    PAYMENT_REFUNDED_MESSAGE,
+    CHARGE_LOCKED_READ,
+    CHARGE_LOCKED_REFUND,
+    recordStepError,
+    refundUnlessRecorded,
+    withChargeKeyLock,
+  } = await loadKeyedCharge();
   const { transactionId } = await chargeByExternalId(
     {
       amount,
