@@ -273,6 +273,9 @@ export type HealthCheckRunSource = 'probe' | 'metrics-loop';
 // When a probe last STARTED a full run (performance.now(), monotonic and process-wide). On
 // globalThis because the probes stamp it from the request graph and the loop reads it from the
 // instrumentation graph; a module-scope value would be two values that never meet.
+// TEMPORARY: exists only so the metrics loop can skip ticks while readiness still calls
+// /api/health. Remove it (with the `source` option and the loop's skip) once readiness is
+// repointed to /api/readyz. See ./metrics-loop.
 declare global {
   // eslint-disable-next-line no-var
   var __civitaiHealthCheckStamp: { lastProbeRunStartedAt: number } | undefined;

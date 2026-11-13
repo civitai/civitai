@@ -20,6 +20,10 @@
 //  - Add load while the probe still does the work. A tick is skipped when a probe started a full
 //    run within the last interval, so with the probe still on /api/health the loop mostly idles
 //    and, once the probe stops, it is the only source.
+//    TEMPORARY: this probe skip (and the stamp it reads, getLastProbeRunStartedAt() and the
+//    `source` option in ./dependency-checks) only matters while readiness still calls
+//    /api/health. Remove all three once readiness is repointed to /api/readyz; after that no
+//    probe stamps it and the skip never fires.
 //
 // Cadence is FIXED-RATE (setInterval), not "wait N ms after the last run finished": a slow or
 // timing-out run must not stretch the period, because per-pod failure-rate alerts read the attempt
