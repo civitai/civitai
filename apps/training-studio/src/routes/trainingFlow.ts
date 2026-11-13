@@ -1,3 +1,4 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import {
   EXTRA_PARAM_FIELDS,
   LORA_TYPES,
@@ -368,6 +369,10 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
 export interface RunParams {
+  lrWarmupSteps: NumericInput;
+  captionDropoutRate: NumericInput;
+  rankDropout: NumericInput;
+  trainConv: boolean;
   steps: number;
   epochs: number;
   unetLr: NumericInput;
@@ -399,6 +404,10 @@ export const numberInputValue = (value: NumericInput): number | string | null =>
 /** Human label per param — typed against `RunParams` so a new field without one fails typecheck
  *  instead of rendering its key. */
 export const PARAM_LABELS: Record<keyof RunParams, string> = {
+  lrWarmupSteps: 'LR warmup steps',
+  captionDropoutRate: 'Caption dropout',
+  rankDropout: 'Rank dropout',
+  trainConv: 'Train convolution layers',
   steps: 'Steps',
   epochs: 'Checkpoints (epochs)',
   batchSize: 'Batch size',
@@ -419,6 +428,14 @@ export const PARAM_LABELS: Record<keyof RunParams, string> = {
 /** Help text per param, written for someone doing their first LoRA. `{recommended}` is replaced
  *  with the model's own default at render time so the explanation names a number. */
 export const PARAM_HELP: Record<keyof RunParams, string> = {
+  lrWarmupSteps:
+    'Gradually raise the learning rate at the start. Available with constant learning rate. Leave blank to keep the scheduler default.',
+  captionDropoutRate:
+    'Chance of training without a caption, from 0 to 1. Leave blank to keep the model default (0.05).',
+  rankDropout:
+    'Randomly skip part of the LoRA during training to help reduce overfitting. Leave blank or use 0 to keep it off.',
+  trainConv:
+    'Train additional image-detail layers. Uses more memory. Available for SD 1.5 and SDXL-family models only; off by default.',
   steps:
     'How many optimisation steps the run makes. More steps means each image is seen more often; too many and the model memorises the dataset instead of learning it. The recommended budget for this model is {recommended}.',
   epochs:
@@ -552,6 +569,10 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
   const d = paramsForVersion(runCard(run), run.versionKey, loraType);
   const x = extraParamDefaults(runCard(run), run.versionKey, !!trigger.trim());
   return {
+    lrWarmupSteps: '',
+    captionDropoutRate: '',
+    rankDropout: '',
+    trainConv: false,
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
     unetLr: String(d.unetLr),
@@ -571,8 +592,18 @@ export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunPara
 }
 
 /** Which of the extra AI-Toolkit fields a run can actually use, given the dataset's label mode. */
-export function runExtraCapabilities(run: Run, labelMode: LabelType) {
-  return extraParamCapabilities(runCard(run), runVersion(run), labelMode);
+export function runExtraCapabilities(
+  run: Run,
+  labelMode: LabelType,
+  params = defaultRunParams(run)
+) {
+  return extraParamCapabilities(
+    runCard(run),
+    runVersion(run),
+    labelMode,
+    params.lrScheduler,
+    params.steps
+  );
 }
 
 /** Why the run's text-encoder rate is locked at 0, or undefined when its model can train it. */
@@ -623,7 +654,13 @@ export interface ParamDeviation {
 
 /** Display form of one param value — numbers as typed, booleans as On/Off. */
 export function paramDisplay(value: NumericInput | boolean): string {
-  return typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value);
+  return typeof value === 'boolean'
+    ? value
+      ? 'On'
+      : 'Off'
+    : value === ''
+    ? 'Model default'
+    : String(value);
 }
 
 /** Two param values agree when they read as the same number (so `0.00005` equals `5e-5`), else as
@@ -646,7 +683,7 @@ export function paramDeviations(
   loraType = ''
 ): ParamDeviation[] {
   const defaults = defaultRunParams(run, trigger, loraType);
-  const caps = runExtraCapabilities(run, labelMode);
+  const caps = runExtraCapabilities(run, labelMode, params);
   const out: ParamDeviation[] = [];
   for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
     if (paramLockReason(run, field)) continue;
@@ -912,6 +949,68 @@ export function stampMature(
   }));
 }
 
+export function runTrainingSettings(
+  run: Run,
+  params: RunParams,
+  labelMode: LabelType,
+  trigger = ''
+) {
+  const version = runVersion(run);
+  const t = trigger.trim();
+  const caps = runExtraCapabilities(run, labelMode, params);
+  // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
+  // ones on video — go out as 0/off whatever the form holds, so a value edited before a model or
+  // label-mode switch can't ride into a run that hangs or misreads it.
+  const tags = caps.shuffleTokens.supported;
+  // A cleared field falls back to the model's default, with LRs taken for the chosen optimizer (Prodigy ~1).
+  const defaults = defaultRunParams(run, t);
+  const d = {
+    ...defaults,
+    ...optimizerLrParams(run, { ...defaults, optimizer: params.optimizer }),
+  };
+  return {
+    ecosystem: version.ecosystem,
+    modelVariant: version.modelVariant,
+    version: version.version,
+    engine: version.engine,
+    model: version.air,
+    customModel: isCustom(run) ? run.customAir?.trim() : undefined,
+    steps: params.steps,
+    epochs: params.epochs,
+    unetLr: num(params.unetLr, d.unetLr),
+    textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, d.textEncoderLr),
+    networkDim: num(params.networkDim, d.networkDim),
+    networkAlpha: num(params.networkAlpha, d.networkAlpha),
+    resolution: num(params.resolution, d.resolution),
+    batchSize: num(params.batchSize, d.batchSize),
+    lrScheduler: params.lrScheduler,
+    optimizer: params.optimizer,
+    shuffleTokens: tags && params.shuffleTokens,
+    keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, d.keepTokens))) : 0,
+    minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, d.minSnrGamma) : undefined,
+    noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, d.noiseOffset) : 0,
+    flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
+    ...pickAiToolkitOptions(
+      {
+        engine: version.engine ?? 'ai-toolkit',
+        ecosystem: version.ecosystem,
+        lrScheduler: params.lrScheduler,
+        steps: params.steps,
+      },
+      {
+        lrWarmupSteps: optionalNumber(params.lrWarmupSteps),
+        captionDropoutRate: optionalNumber(params.captionDropoutRate),
+        rankDropout: optionalNumber(params.rankDropout),
+        trainConv: params.trainConv,
+      }
+    ),
+  };
+}
+
+function optionalNumber(value: NumericInput | undefined): number | undefined {
+  return value === undefined || value === '' ? undefined : Number(value);
+}
+
 export function buildTrainingRuns(
   selection: Selection,
   images: Img[],
@@ -932,40 +1031,8 @@ export function buildTrainingRuns(
   const t = trigger.trim();
 
   return launched.map(({ run, params }) => {
-    const version = runVersion(run);
-    const caps = runExtraCapabilities(run, labelMode);
-    // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
-    // ones on video — go out as 0/off whatever the form holds, so a value edited before a model or
-    // label-mode switch can't ride into a run that hangs or misreads it.
-    const tags = caps.shuffleTokens.supported;
-    // A cleared field falls back to the model's default, with LRs taken for the chosen optimizer (Prodigy ~1).
-    const defaults = defaultRunParams(run, t);
-    const d = {
-      ...defaults,
-      ...optimizerLrParams(run, { ...defaults, optimizer: params.optimizer }),
-    };
     return {
-      ecosystem: version.ecosystem,
-      modelVariant: version.modelVariant,
-      version: version.version,
-      engine: version.engine,
-      model: version.air,
-      customModel: isCustom(run) ? run.customAir?.trim() : undefined,
-      steps: params.steps,
-      epochs: params.epochs,
-      unetLr: num(params.unetLr, d.unetLr),
-      textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, d.textEncoderLr),
-      networkDim: num(params.networkDim, d.networkDim),
-      networkAlpha: num(params.networkAlpha, d.networkAlpha),
-      resolution: num(params.resolution, d.resolution),
-      batchSize: num(params.batchSize, d.batchSize),
-      lrScheduler: params.lrScheduler,
-      optimizer: params.optimizer,
-      shuffleTokens: tags && params.shuffleTokens,
-      keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, d.keepTokens))) : 0,
-      minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, d.minSnrGamma) : undefined,
-      noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, d.noiseOffset) : 0,
-      flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
+      ...runTrainingSettings(run, params, labelMode, t),
       trigger: t,
       items,
       ...(edit ? { editTraining: true } : {}),

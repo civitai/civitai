@@ -119,8 +119,31 @@ describe('default version', () => {
 });
 
 describe('extra parameter capabilities', () => {
-  it('offers everything to an SDXL tag dataset', () => {
-    const caps = runExtraCapabilities(run('sdxl'), 'tag');
+  it('gates convolution, caption dropout and warmup by model, engine and scheduler', () => {
+    for (const type of ['sd15', 'sdxl', 'pony', 'illustrious']) {
+      const r = run(type);
+      expect(runExtraCapabilities(r, 'tag').trainConv.supported).toBe(true);
+      expect(runExtraCapabilities(r, 'tag').lrWarmupSteps.supported).toBe(false);
+    }
+    expect(runExtraCapabilities(run('minimaxh3'), 'caption').trainConv.supported).toBe(false);
+    expect(runExtraCapabilities(run('yue2'), 'caption').captionDropoutRate.supported).toBe(false);
+    const flux = run('flux2');
+    const caps = runExtraCapabilities(flux, 'caption');
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const)
+      expect(caps[field].supported).toBe(false);
+  });
+
+  it('offers all advanced controls to an SDXL tag dataset with constant learning rate', () => {
+    const r = run('sdxl');
+    const caps = runExtraCapabilities(r, 'tag', {
+      ...defaultRunParams(r),
+      lrScheduler: 'constant',
+    });
     for (const cap of Object.values(caps)) expect(cap.supported).toBe(true);
   });
 
@@ -243,6 +266,26 @@ describe('buildTrainingRuns extra fields', () => {
       ['blue'],
       labelMode
     )[0]!;
+
+  it('preserves backend defaults for blank new fields and sends explicit zeroes', () => {
+    const defaults = build(run('sdxl'), 'tag', { lrScheduler: 'constant' });
+    for (const field of ['lrWarmupSteps', 'captionDropoutRate', 'rankDropout'] as const)
+      expect(defaults).not.toHaveProperty(field);
+    expect(defaults.trainConv).toBe(false);
+    const edited = build(run('sdxl'), 'tag', {
+      lrScheduler: 'constant',
+      lrWarmupSteps: '0',
+      captionDropoutRate: '0',
+      rankDropout: '0',
+      trainConv: true,
+    });
+    expect(edited).toMatchObject({
+      lrWarmupSteps: 0,
+      captionDropoutRate: 0,
+      rankDropout: 0,
+      trainConv: true,
+    });
+  });
 
   it('sends the tag fields as set for a tag dataset on an SD-family model', () => {
     const out = build(run('sdxl'), 'tag', {

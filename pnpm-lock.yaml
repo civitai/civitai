@@ -34,6 +34,9 @@ patchedDependencies:
   '@civitai/next-axiom@0.17.0':
     hash: 1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02
     path: patches/@civitai__next-axiom@0.17.0.patch
+  '@civitai/orchestration-client@0.2.3':
+    hash: a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629
+    path: patches/@civitai__orchestration-client@0.2.3.patch
   '@mantine/core@7.17.8':
     hash: 931d5abe5ba37a67dbf2fd359d8e27219d22e4824a178377cc47c4fe13c73b8f
     path: patches/@mantine__core@7.17.8.patch
@@ -125,7 +128,7 @@ importers:
         version: 0.17.0(patch_hash=1cafa5d3be23d421780ce432e5d3f370d48d39c3cb9c2a71df53c03be2037b02)(next@16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0))
       '@civitai/orchestration-client':
         specifier: 0.2.3
-        version: 0.2.3
+        version: 0.2.3(patch_hash=a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629)
       '@civitai/sdk':
         specifier: ^0.24.0
         version: 0.24.0
@@ -1252,7 +1255,7 @@ importers:
         version: link:../../packages/civitai-notifications
       '@civitai/orchestration-client':
         specifier: 0.2.3
-        version: 0.2.3
+        version: 0.2.3(patch_hash=a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629)
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1410,7 +1413,7 @@ importers:
         version: link:../../packages/civitai-db-schema
       '@civitai/orchestration-client':
         specifier: 0.2.3
-        version: 0.2.3
+        version: 0.2.3(patch_hash=a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629)
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1536,7 +1539,7 @@ importers:
         version: link:../../packages/civitai-flipt
       '@civitai/orchestration-client':
         specifier: 0.2.3
-        version: 0.2.3
+        version: 0.2.3(patch_hash=a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629)
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1564,6 +1567,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@sveltejs/adapter-node':
         specifier: ^5.3.2
@@ -13488,7 +13494,7 @@ snapshots:
       next: 16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
-  '@civitai/orchestration-client@0.2.3':
+  '@civitai/orchestration-client@0.2.3(patch_hash=a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629)':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -13496,7 +13502,7 @@ snapshots:
 
   '@civitai/sdk@0.24.0':
     dependencies:
-      '@civitai/orchestration-client': 0.2.3
+      '@civitai/orchestration-client': 0.2.3(patch_hash=a28f464882cf51985e00bc04955e59d0b13b367b2fb14fb47f705fa6df394629)
 
   '@civitai/theme@0.5.2': {}
 

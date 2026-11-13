@@ -1,3 +1,4 @@
+import type { TrainingQuote } from './orchestrator-core';
 // The SvelteKit shell's StudioBackend: every call is a relative fetch to this app's own /api routes
 // (the session-gated wrappers under src/routes/api/*). Flow code goes through $lib/host's backend()
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
@@ -283,7 +284,7 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify(input),
     });
     if (!res.ok) return null;
-    return ((await res.json()) as { cost: number | null }).cost;
+    return (await res.json()) as TrainingQuote;
   },
 
   getBuzz: async () => {
