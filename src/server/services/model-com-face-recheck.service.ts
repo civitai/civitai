@@ -9,6 +9,7 @@ import {
   checkSfwFace,
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
+import type { SfwFaceVerdict } from '~/server/services/model-sfw-face.service';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { backoffDelay } from '~/utils/backoff';
 
@@ -118,7 +119,8 @@ export async function recheckComFace(modelId: number): Promise<RecheckResult> {
     userId: model.userId,
     db: dbWrite,
   });
-  const [verdict, { versions = { status: 'clean' } }] = await Promise.all([
+  const clean: SfwFaceVerdict = { status: 'clean' };
+  const [verdict, { versions = clean }] = await Promise.all([
     checkComFaceIntentVerdict({
       name: model.name,
       description: model.description,
@@ -131,8 +133,8 @@ export async function recheckComFace(modelId: number): Promise<RecheckResult> {
       ? 'removed'
       : 'skipped';
   if (versions.status === 'unavailable') return 'unavailable';
-  if (verdict.status === 'unavailable') return 'intent-unavailable';
-  if (verdict.status === 'allowed') return 'allowed';
+  if (verdict.status !== 'detected')
+    return verdict.status === 'unavailable' ? 'intent-unavailable' : 'allowed';
   recordIntent(modelId, 'detected', {
     sfwCoverImageId: model.sfwCoverImageId,
     detail: verdict.reason,
