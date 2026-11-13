@@ -314,16 +314,15 @@ beforeAll(async () => {
       'utf8'
     )
   );
-  // The content wipe asks it whether a post holds held text. Each test makes its own
-  // "EvidenceHeldUser", which the function reads, so its body is checked when it runs.
+  // The content wipe asks it whether a post holds held text.
   await holder.db.exec(
-    `SET check_function_bodies = off; ${readFileSync(
+    readFileSync(
       path.resolve(
         __dirname,
         '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
       ),
       'utf8'
-    )}; RESET check_function_bodies;`
+    )
   );
   await holder.db.exec(heldCopiesSchemaSql());
   // Append-only, so set once: two models CLEAN was given, one by a held owner.

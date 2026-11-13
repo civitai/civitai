@@ -102,7 +102,7 @@ describe('PostText delete trigger', () => {
     expect(await texts()).not.toContain(id);
   });
 
-  it('holds text while an unsent CSAM report names its author or quotes its post', async () => {
+  it('holds text while a report, unsent or sent within the year, names its author or quotes its post', async () => {
     const id = await addText(1);
     await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [AUTHOR]);
     await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
@@ -113,10 +113,30 @@ describe('PostText delete trigger', () => {
     ]);
     await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
 
-    // Sent, the report no longer holds the text: an evidence hold takes over from there.
-    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now()`);
+    // Sent, it holds for a year from submission.
+    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '364 days'`);
+    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days'`);
     await pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
     expect(await texts()).toEqual([]);
+  });
+
+  it('holds by a sent report naming the author, and works without "EvidenceHeldUser"', async () => {
+    const id = await addText(1);
+    await pg.query(`ALTER TABLE "EvidenceHeldUser" RENAME TO "EvidenceHeldUserGone"`);
+    try {
+      await pg.query(`INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES ($1, now())`, [
+        AUTHOR,
+      ]);
+      await expect(pg.query(`DELETE FROM "Post" WHERE id = 1`)).rejects.toThrow(
+        /cannot be deleted while it is held/
+      );
+      await pg.query(`DELETE FROM "CsamReport"`);
+      await pg.query(`DELETE FROM "Post" WHERE id = 1`);
+      expect(await texts()).not.toContain(id);
+    } finally {
+      await pg.query(`ALTER TABLE "EvidenceHeldUserGone" RENAME TO "EvidenceHeldUser"`);
+    }
   });
 
   it("doesn't hold text over a report on someone else quoting another post", async () => {
