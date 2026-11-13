@@ -1075,7 +1075,7 @@ describe('escalateExpired', () => {
     await vote(3, stalePaladin, '4');
 
     const res = await escalateExpired(db, { now: NOW });
-    expect(res).toEqual({ escalated: 1, toInquisitor: 1, extended: 0 });
+    expect(res).toEqual({ escalated: 1, toInquisitor: 1, extended: 0, expired: 0 });
     expect(await itemRow(stale)).toMatchObject({ status: 'Open', minRank: 'Templar' });
     expect(await itemRow(stalePaladin)).toMatchObject({
       status: 'Inquisitor',
@@ -1087,6 +1087,120 @@ describe('escalateExpired', () => {
     expect(
       (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM "KnightsQueueItem"`)).rows[0].n
     ).toBe(3);
+  });
+
+  const PAST = new Date('2026-12-15T11:00:00Z');
+  const hoursAfter = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
+  const imageLevel = async (id: number) =>
+    (await pg.query<{ nsfwLevel: number }>(`SELECT "nsfwLevel" FROM "Image" WHERE id=$1`, [id]))
+      .rows[0].nsfwLevel;
+  const voteRow = async (itemId: number, playerId: number) =>
+    (
+      await pg.query<{ verdict: string; gold: number; settledAt: Date | null }>(
+        `SELECT verdict, gold, "settledAt" FROM "KnightsVote" WHERE "itemId"=$1 AND "playerId"=$2`,
+        [itemId, playerId]
+      )
+    ).rows[0];
+  const goldEarned = async (userId: number) =>
+    (
+      await pg.query<{ goldEarned: number }>(
+        `SELECT "goldEarned" FROM "NewOrderPlayer" WHERE "userId"=$1`,
+        [userId]
+      )
+    ).rows[0].goldEarned;
+  /** A vote that counts for nothing at the item's stage: a held player's (weight 0), or one cast at an earlier stage. */
+  async function uncountedVote(itemId: number, playerId: number, stage: string, weight: number) {
+    await player(playerId, 'Knight');
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold")
+       VALUES ($1,$2,$3,$4,10,$5,'4',$6,5)`,
+      [itemId, playerId, NOW, Q, stage, weight]
+    );
+  }
+
+  it('closes a zero-vote item as expired after its one extension, with no label, write-back or payout', async () => {
+    await active(2, 'Knight');
+    await image(10, 8);
+    const id = await item(10, { expires: hoursAfter(72) });
+    await uncountedVote(id, 3, 'Knight', 0);
+    const before = await counterValue('knights_escalations_total', { reason: 'expired' });
+
+    expect(await escalateExpired(db, { now: hoursAfter(72) })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 1,
+      expired: 0,
+    });
+    expect(await escalateExpired(db, { now: hoursAfter(144) })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 0,
+      expired: 1,
+    });
+
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'expired',
+      minRank: 'Knight',
+      escalationReason: null,
+      resolvedValue: null,
+    });
+    expect(await counterValue('knights_escalations_total', { reason: 'expired' })).toBe(before + 1);
+    expect(await voteRow(id, 3)).toMatchObject({ verdict: 'inconclusive', gold: 0 });
+    expect((await voteRow(id, 3)).settledAt).not.toBeNull();
+    expect(await goldEarned(3)).toBe(0);
+    expect(await applyPendingResolutions(db, depsAt(hoursAfter(144)))).toMatchObject({
+      applied: 0,
+    });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await imageLevel(10)).toBe(8);
+  });
+
+  it('expires a zero-vote item at a higher stage even when an earlier stage voted on it', async () => {
+    await active(2, 'Templar');
+    await image(10);
+    const id = await item(10, { minRank: 'Templar', expires: hoursAfter(72) });
+    await uncountedVote(id, 1, 'Knight', 1);
+
+    expect(await escalateExpired(db, { now: hoursAfter(72) })).toMatchObject({
+      extended: 1,
+      expired: 0,
+    });
+    expect(await escalateExpired(db, { now: hoursAfter(144) })).toEqual({
+      escalated: 0,
+      toInquisitor: 0,
+      extended: 0,
+      expired: 1,
+    });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'expired',
+      minRank: 'Templar',
+    });
+    expect(await voteRow(id, 1)).toMatchObject({ verdict: 'inconclusive', gold: 0 });
+  });
+
+  it('expires a zero-vote item in the same tick that escalates a voted one', async () => {
+    await active(1, 'Knight');
+    await active(2, 'Templar');
+    await image(10);
+    await image(11);
+    const voted = await item(10, { expires: PAST });
+    const idle = await item(11, { expires: PAST });
+    await vote(1, voted, '4');
+    await pg.query(`UPDATE "KnightsQueueItem" SET "createdAt" = $1 WHERE id = $2`, [
+      hoursAfter(-150),
+      idle,
+    ]);
+
+    expect(await escalateExpired(db, { now: NOW })).toEqual({
+      escalated: 1,
+      toInquisitor: 0,
+      extended: 0,
+      expired: 1,
+    });
+    expect(await itemRow(voted)).toMatchObject({ status: 'Open', minRank: 'Templar' });
+    expect(await itemRow(idle)).toMatchObject({ status: 'Closed', reason: 'expired' });
   });
 });
 
@@ -1110,6 +1224,7 @@ describe('escalation with empty ranks', () => {
       escalated: 0,
       toInquisitor: 1,
       extended: 0,
+      expired: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       status: 'Inquisitor',
@@ -1125,6 +1240,7 @@ describe('escalation with empty ranks', () => {
       escalated: 1,
       toInquisitor: 0,
       extended: 0,
+      expired: 0,
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Templar', votesNeeded: 3 });
   });
@@ -1185,6 +1301,7 @@ describe('escalation with empty ranks', () => {
       escalated: 0,
       toInquisitor: 0,
       extended: 1,
+      expired: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       status: 'Open',
@@ -1211,19 +1328,24 @@ describe('escalation with empty ranks', () => {
     expect(await itemRow(id)).toMatchObject({ minRank: 'Templar', expiresAt: TTL_END });
   });
 
-  it('escalates a zero-vote item whose stage nobody can serve', async () => {
+  it('expires a zero-vote item whose stage nobody can serve instead of handing it to the Inquisitors', async () => {
     await active(1, 'Knight');
     await image(10);
     const id = await item(10, { minRank: 'Templar', expires: PAST });
     expect(await escalateExpired(db, { now: NOW })).toEqual({
       escalated: 0,
-      toInquisitor: 1,
+      toInquisitor: 0,
       extended: 0,
+      expired: 1,
     });
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'expired',
+      minRank: 'Templar',
+    });
   });
 
-  it('extends a zero-vote item once, then hands it up when the only server already voted', async () => {
+  it('extends a zero-vote item once, then expires it when the only server already voted', async () => {
     await image(10);
     const id = await item(10, { expires: PAST });
     await active(2, 'Paladin');
@@ -1238,20 +1360,20 @@ describe('escalation with empty ranks', () => {
       escalated: 0,
       toInquisitor: 0,
       extended: 1,
+      expired: 0,
     });
-    // A second lapse at the same stage escalates; the Paladin stage is served by the same player, so it gets its own single extension.
-    expect(await escalateExpired(db, { now: hoursAfter(144) })).toMatchObject({
-      escalated: 1,
-      extended: 0,
-    });
-    expect(await itemRow(id)).toMatchObject({ minRank: 'Paladin' });
-    expect(await escalateExpired(db, { now: hoursAfter(216) })).toMatchObject({ extended: 1 });
-    expect(await escalateExpired(db, { now: hoursAfter(288) })).toEqual({
+    // A second lapse at the same stage with no vote there closes it: its Knight-stage vote does not count.
+    expect(await escalateExpired(db, { now: hoursAfter(144) })).toEqual({
       escalated: 0,
-      toInquisitor: 1,
+      toInquisitor: 0,
       extended: 0,
+      expired: 1,
     });
-    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'expired',
+      minRank: 'Templar',
+    });
   });
 });
 
@@ -1423,6 +1545,7 @@ describe('held players', () => {
       escalated: 0,
       toInquisitor: 0,
       extended: 1,
+      expired: 0,
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Open', minRank: 'Knight' });
   });
@@ -1439,6 +1562,7 @@ describe('held players', () => {
       escalated: 0,
       toInquisitor: 1,
       extended: 0,
+      expired: 0,
     });
     expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor' });
 

@@ -12,10 +12,16 @@ Eligible means a `NewOrderPlayer` who voted within the last 14 days (`ACTIVE_PLA
 
 When the window lapses and the item has no vote at its current stage, it stays at that stage for another window, as long as someone can serve that stage (rule 1). It is not stamped as escalated (`escalatedAt`, `escalationReason` are untouched), keeps its priority, and stays in the feed. Votes cast at earlier stages do not count; only votes at the current stage do.
 
-Extension lasts until two stage windows after the item entered the stage: an item whose stage entry (`escalatedAt`, else `createdAt`) is more than two windows old is handed up instead. With the default first window that is one extension; an item enqueued with a shorter custom `expiresAt` can be extended twice within the bound. This bounds the case where the only eligible players have already judged the image, so no one can answer it. An item at a stage nobody can serve is handed up at once, and an item with at least one vote at the stage goes on to rule 1 as well.
+Extension lasts until two stage windows after the item entered the stage (`escalatedAt`, else `createdAt`). With the default first window that is one extension; an item enqueued with a shorter custom `expiresAt` can be extended twice within the bound. This bounds the case where the only eligible players have already judged the image, so no one can answer it. An item with at least one vote at the stage goes on to rule 1.
 
-The tick response carries `escalated`, `toInquisitor` and `extended`.
+## Rule 3: an item still unvoted after its extension expires
+
+An item that still has no counted vote at its current stage once its extension is used up closes instead of moving on: status `Closed`, `reason = 'expired'`, at any stage. Unvoted overflow never becomes moderator work. Nothing is decided: no label, no write-back, and the image keeps its level. Any vote left on it (a held player's at weight 0, or one from an earlier stage) becomes `inconclusive` and settles unpaid, as `closeWithoutOutcome` does.
+
+An item at a stage nobody can serve is not extended. It is handed up as rule 1 says when a later stage is served, and expires when that hand-up would reach the Inquisitors with no counted vote at its stage.
+
+The tick response carries `escalated`, `toInquisitor`, `extended` and `expired`; each expiry also counts as `knights_escalations_total{reason="expired"}`.
 
 ## Sources
 
-Scan sampling and owner ratings feed the queue only while `system:knights-v2-sources` (`{enabled, sfwRate, nsfwRate}`) is on. Moderators switch the sources and set both rates from the moderator app's Knights of New Order Config page; each save is recorded in `ModActivity` with the value before and after. The main app reads the key with a 30 s cache.
+Scan sampling and owner ratings feed the queue only while `system:knights-v2-sources` (`{enabled, sfwRate, nsfwRate, maxOpen?}`) is on. Scan sampling also pauses while more than `maxOpen` Knight-stage items are open (see [Knights queue sources](knights-sources.md)). Moderators switch the sources and set both rates from the moderator app's Knights of New Order Config page; each save is recorded in `ModActivity` with the value before and after. The main app reads the key with a 30 s cache.

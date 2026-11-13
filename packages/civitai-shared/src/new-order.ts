@@ -35,10 +35,21 @@ export const KNIGHTS_BLOCK_REASONS = [
  * The main app reads it to decide what to enqueue and the moderator app writes it, so the shape and the
  * reader live here: a field added on one side cannot drift from the other.
  */
-export type KnightsSourcesConfig = { enabled: boolean; sfwRate: number; nsfwRate: number };
+export type KnightsSourcesConfig = {
+  enabled: boolean;
+  sfwRate: number;
+  nsfwRate: number;
+  /** Scan sampling pauses while more than this many Knight-stage items are open. Absent when not stored: read it with `knightsSourcesMaxOpen`. */
+  maxOpen?: number;
+};
 
 /** The rates used when the stored JSON omits one. Reading never turns a missing key on. */
 export const KNIGHTS_SOURCES_DEFAULT_RATES = { sfwRate: 1, nsfwRate: 0.3 } as const;
+
+export const KNIGHTS_SOURCES_DEFAULT_MAX_OPEN = 5000;
+
+export const knightsSourcesMaxOpen = (config: KnightsSourcesConfig): number =>
+  config.maxOpen ?? KNIGHTS_SOURCES_DEFAULT_MAX_OPEN;
 
 const KNIGHTS_SOURCES_OFF: KnightsSourcesConfig = {
   enabled: false,
@@ -47,6 +58,9 @@ const KNIGHTS_SOURCES_OFF: KnightsSourcesConfig = {
 
 const clampRate = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
+
+const readCap = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 
 /** `stored` is false for an absent or unreadable value, which reads as off. */
 export function readKnightsSourcesConfig(raw: string | Buffer | null): {
@@ -59,12 +73,15 @@ export function readKnightsSourcesConfig(raw: string | Buffer | null): {
     const parsed = JSON.parse(Buffer.isBuffer(raw) ? raw.toString('utf8') : raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return off;
     const config = parsed as Record<string, unknown>;
+    const maxOpen = readCap(config.maxOpen);
     return {
       stored: true,
       config: {
         enabled: config.enabled === true,
         sfwRate: clampRate(config.sfwRate, KNIGHTS_SOURCES_DEFAULT_RATES.sfwRate),
         nsfwRate: clampRate(config.nsfwRate, KNIGHTS_SOURCES_DEFAULT_RATES.nsfwRate),
+        // Left out when not stored, so the moderator page's three-field shape reads back unchanged.
+        ...(maxOpen === undefined ? {} : { maxOpen }),
       },
     };
   } catch {

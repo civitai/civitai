@@ -56,19 +56,25 @@ export function validateSourcesInput(
 const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
   a.enabled === b.enabled && a.sfwRate === b.sfwRate && a.nsfwRate === b.nsfwRate;
 
-/** All three fields are written, so a later change to the reader's defaults cannot move a saved rate. */
+/**
+ * All three fields are written, so a later change to the reader's defaults cannot move a saved rate. A stored
+ * `maxOpen` is carried over: the page does not edit it, and dropping it would reset the intake cap to the default.
+ */
 export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
   const checked = validateSourcesInput(input);
   if (!checked.ok) return checked;
-  const { config } = checked;
 
   const before = await getSourcesSettings();
-  if (before.stored && same(before.config, config)) return { ok: true, changed: false };
+  if (before.stored && same(before.config, checked.config)) return { ok: true, changed: false };
 
-  await getSysRedis().set(
-    REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES,
-    JSON.stringify({ enabled: config.enabled, sfwRate: config.sfwRate, nsfwRate: config.nsfwRate })
-  );
+  const { maxOpen } = before.config;
+  const config: KnightsSourcesConfig = {
+    enabled: checked.config.enabled,
+    sfwRate: checked.config.sfwRate,
+    nsfwRate: checked.config.nsfwRate,
+    ...(maxOpen === undefined ? {} : { maxOpen }),
+  };
+  await getSysRedis().set(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES, JSON.stringify(config));
   await recordModActivity({
     userId: moderatorId,
     entityType: SOURCES_AUDIT_ENTITY.type,

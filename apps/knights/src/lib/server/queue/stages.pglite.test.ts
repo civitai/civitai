@@ -287,6 +287,7 @@ describe('stage consensus and escalation', () => {
       escalated: 1,
       toInquisitor: 0,
       extended: 0,
+      expired: 0,
     });
     expect(await itemRow(id)).toMatchObject({
       minRank: 'Templar',

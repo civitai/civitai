@@ -9,7 +9,7 @@ import {
 } from '@civitai/shared/new-order';
 import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
-import { settleAndMirror, settleItemVotes } from '../progression/progression';
+import { payOutVotes, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { votePartitionName } from './vote-partition';
@@ -846,14 +846,16 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with no counted vote (a held player's weighs 0) at its stage may have had no one to answer it, so it gets
- * one more window at the same stage, until two stage windows after it entered the stage; after that, or when nobody can serve the stage, it is handed up like one with
- * votes: to the next stage someone can serve, or to the Inquisitors.
+ * Moves items whose stage window lapsed. An item with votes is handed up: to the next stage someone can serve, or to the Inquisitors.
+ * An item with no counted vote (a held player's weighs 0; an earlier stage's does not count) at its stage may have had no one to answer
+ * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
+ * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
+ * when a later stage is served, and expires when the hand-up would reach the Inquisitors.
  */
 export async function escalateExpired(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ escalated: number; toInquisitor: number; extended: number }> {
+): Promise<{ escalated: number; toInquisitor: number; extended: number; expired: number }> {
   return db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
@@ -866,7 +868,7 @@ export async function escalateExpired(
       .skipLocked()
       .execute();
 
-    const counts = { escalated: 0, toInquisitor: 0, extended: 0 };
+    const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0 };
     if (due.length === 0) return counts;
 
     const voted = new Set(
@@ -913,8 +915,26 @@ export async function escalateExpired(
       counts.extended = idle.length;
     }
 
+    const expire = (item: (typeof due)[number]) => {
+      if (voted.has(item.id) || extend(item)) return false;
+      if (staffed.has(item.minRank)) return true;
+      const next = nextStaffedRank(item.minRank, staffed);
+      return !next || next === 'Inquisitor';
+    };
+    const lapsed = due.filter(expire);
+    if (lapsed.length > 0) {
+      await closeItems(
+        trx,
+        lapsed.map((item) => item.id),
+        now,
+        'expired'
+      );
+      for (let i = 0; i < lapsed.length; i++) metrics.escalation('expired');
+      counts.expired = lapsed.length;
+    }
+
     for (const item of due) {
-      if (extend(item)) continue;
+      if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
       else counts.toInquisitor++;
@@ -923,21 +943,37 @@ export async function escalateExpired(
   });
 }
 
+/**
+ * Closes items with no outcome: no label and nothing written back. Pending votes become `inconclusive` and settle unpaid. All the items'
+ * votes settle in one pass ordered by player, so the player rows are locked in one order across items.
+ */
+async function closeItems(trx: Transaction<DB>, itemIds: number[], now: Date, reason?: string) {
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({ status: 'Closed', updatedAt: utc(now), ...(reason ? { reason } : {}) })
+    .where('id', 'in', itemIds)
+    .execute();
+  await trx
+    .updateTable('KnightsVote')
+    .set({ verdict: 'inconclusive' })
+    .where('itemId', 'in', itemIds)
+    .where('verdict', '=', 'pending')
+    .execute();
+  const votes = await trx
+    .selectFrom('KnightsVote')
+    .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt'])
+    .where('itemId', 'in', itemIds)
+    .where('settledAt', 'is', null)
+    .where('verdict', '<>', 'pending')
+    .orderBy('playerId', 'asc')
+    .orderBy('itemId', 'asc')
+    .forUpdate()
+    .execute();
+  await payOutVotes(trx, votes, now);
+}
+
 export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: Date) {
-  await db.transaction().execute(async (trx) => {
-    await trx
-      .updateTable('KnightsQueueItem')
-      .set({ status: 'Closed', updatedAt: utc(now) })
-      .where('id', '=', itemId)
-      .execute();
-    await trx
-      .updateTable('KnightsVote')
-      .set({ verdict: 'inconclusive' })
-      .where('itemId', '=', itemId)
-      .where('verdict', '=', 'pending')
-      .execute();
-    await settleItemVotes(trx, itemId, now);
-  });
+  await db.transaction().execute((trx) => closeItems(trx, [itemId], now));
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
