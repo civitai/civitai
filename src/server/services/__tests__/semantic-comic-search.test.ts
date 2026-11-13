@@ -11,6 +11,14 @@ const h = vi.hoisted(() => ({
   rows: new Map<number, Record<string, unknown>>(),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
+  evalBoolean: vi.fn<() => { enabled: unknown }>(),
+  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -45,6 +53,7 @@ vi.mock('~/server/search-index/comics.search-index', () => ({
 const { searchSemanticComics, levelsWithin, MAX_HITS_PER_USER } = await import(
   '~/server/services/semantic-comic-search.service'
 );
+const { resolveSemanticBrowsingLevel } = await import('~/server/services/semantic-query-guard');
 
 const { PG, PG13, R, X } = NsfwLevel;
 const comic = (
@@ -107,6 +116,9 @@ beforeEach(() => {
   h.hiddenFor = [];
   h.rows = new Map();
   h.includesInappropriate.mockReset().mockReturnValue(false);
+  // The containment switch reads enabled (clamped) unless a test lifts it.
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: true });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
   loggingMock.logToAxiom.mockClear();
 });
 
@@ -185,6 +197,29 @@ describe('semantic comic search', () => {
     const viewer = { id: 500, isModerator: false } as SessionUser;
     expect(ids(await search([11, 10], { browsingLevel: PG | R, user: viewer }))).toEqual([10]);
     expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+  });
+
+  it('searches a signed-in non-moderator at their own level once the switch is disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    h.rows.set(10, comic(10));
+    h.rows.set(11, comic(11, { level: R }));
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    expect(ids(await search([11, 10], { browsingLevel: PG | R, user: viewer }))).toEqual([11, 10]);
+    expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
+  });
+
+  it('holds the clamp when the switch cannot be read', async () => {
+    h.fliptClient = null;
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    await search([], { browsingLevel: PG | R, user: viewer });
+    expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+  });
+
+  it('treats a missing clamp value as clamped; only an explicit false lifts it', () => {
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    expect(resolveSemanticBrowsingLevel(PG | R, viewer, undefined)).toBe(PG);
+    expect(resolveSemanticBrowsingLevel(PG | R, viewer, true)).toBe(PG);
+    expect(resolveSemanticBrowsingLevel(PG | R, viewer, false)).toBe(PG | R);
   });
 
   it('logs how many candidates came back and how many survived hydration', async () => {
