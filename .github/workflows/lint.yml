@@ -735,6 +735,8 @@ jobs:
       KYSELY_HOT_READS_9_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-10 suite (its own `hot_reads_10_parity` schema).
       KYSELY_HOT_READS_10_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-11 suite (its own `hot_reads_11_parity` schema).
+      KYSELY_HOT_READS_11_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # The image_delivery_lookup(url) parity suite: creates and drops its own database and roles
       # on this server, so it needs the superuser URL.
       IMAGE_DELIVERY_LOOKUP_FN_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres

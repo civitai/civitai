@@ -443,6 +443,51 @@ describe('GET /api/v1/posts/[id]', () => {
     }
   });
 
+  describe('shared cache by region, the same URL from both sides of the region line', () => {
+    const NO_STORE = 'private, no-store';
+    async function bothRegions() {
+      mockIsRegionRestricted.mockReturnValue(false);
+      const elsewhere = await call({ id: '55288' });
+      mockIsRegionRestricted.mockReturnValue(true);
+      const restricted = await call({ id: '55288' });
+      return { elsewhere, restricted };
+    }
+
+    it.each([
+      ['a mature post', NsfwLevel.R],
+      ['a post mixing safe and mature images', NsfwLevel.PG | NsfwLevel.X],
+      ['a safe post with some Blocked images', NsfwLevel.PG | NsfwLevel.Blocked],
+    ])('stores neither the 200 nor the restricted 404 for %s', async (_, nsfwLevel) => {
+      mockGetPostDetail.mockResolvedValue(post({ nsfwLevel }));
+
+      const { elsewhere, restricted } = await bothRegions();
+
+      expect(elsewhere.statusCode).toBe(200);
+      expect(restricted.statusCode).toBe(404);
+      expect(elsewhere.header('Cache-Control')).toBe(NO_STORE);
+      expect(restricted.header('Cache-Control')).toBe(NO_STORE);
+    });
+
+    it('keeps the public cache for a safe post, served the same in both regions', async () => {
+      mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.PG | NsfwLevel.PG13 }));
+
+      for (const { statusCode, header } of Object.values(await bothRegions())) {
+        expect(statusCode).toBe(200);
+        expect(header('Cache-Control')).toBe(PUBLIC_CACHE);
+      }
+    });
+
+    it('does not store a safe post whose image search returns an image above SFW', async () => {
+      mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.PG }));
+      mockRunImageSearch.mockResolvedValue({ items: [{ id: 1, browsingLevel: NsfwLevel.R }] });
+
+      const { statusCode, header } = await call({ id: '55288' });
+
+      expect(statusCode).toBe(200);
+      expect(header('Cache-Control')).toBe(NO_STORE);
+    });
+  });
+
   it('400s an id that is not a positive int4', async () => {
     for (const id of ['abc', '0', '-1', '2147483648']) {
       expect((await call({ id })).statusCode).toBe(400);

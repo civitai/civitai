@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  PROMPT_CHECK_UNAVAILABLE_MESSAGE,
+  PromptCheckUnavailableError,
+} from '~/server/services/orchestrator/prompt-check-unavailable';
 import type * as FliptClientModule from '~/server/flipt/client';
 import {
   appSharedStorageLatencyHistogram,
@@ -766,11 +770,8 @@ describe('the platform audit unable to run (its 503) is unavailable moderation, 
   // moderation_unavailable. PROMPT_CHECK_FAIL_CLOSED=off restores the previous handling (an audit
   // block: Report row, alert, charged). A plain audit block is the positive control.
   const RETRY = 'Content could not be reviewed right now. Please try again.';
-  const AUDIT_503 = 'The prompt check is temporarily unavailable. Please try again in a moment.';
   const auditUnavailable = () =>
-    mockAuditPromptServer.mockRejectedValueOnce(
-      new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: AUDIT_503 })
-    );
+    mockAuditPromptServer.mockRejectedValueOnce(new PromptCheckUnavailableError());
   const OPS: Array<[op: 'append' | 'update', arrange: () => void]> = [
     ['append', () => appendDataPath()],
     ['update', () => existingRow()],
@@ -815,7 +816,10 @@ describe('the platform audit unable to run (its 503) is unavailable moderation, 
         (e: unknown) => e
       );
 
-      expect(error).toMatchObject({ code: 'BAD_REQUEST', message: AUDIT_503 });
+      expect(error).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: PROMPT_CHECK_UNAVAILABLE_MESSAGE,
+      });
       expect(isEscalatedServerFault(error)).toBe(false);
       expect(mockReleaseWrite.mock.calls).toEqual([[{ rejected: true }]]);
       expect(reportRows()).toBe(1);

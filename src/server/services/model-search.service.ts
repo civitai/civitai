@@ -365,12 +365,15 @@ export async function runModelSearch(
     creator: modelUser
       ? {
           username: modelUser.username,
+          // A rated picture above the served level is dropped, not swapped for the unrated one.
           image: modelUser.profilePicture
-            ? getEdgeUrl(modelUser.profilePicture.url, {
-                width: 96,
-                name: modelUser.username,
-                type: modelUser.profilePicture.type,
-              })
+            ? !Flags.intersects(modelUser.profilePicture.nsfwLevel, browsingLevel)
+              ? null
+              : getEdgeUrl(modelUser.profilePicture.url, {
+                  width: 96,
+                  name: modelUser.username,
+                  type: modelUser.profilePicture.type,
+                })
             : modelUser.image
             ? getEdgeUrl(modelUser.image, { width: 96, name: modelUser.username })
             : null,
