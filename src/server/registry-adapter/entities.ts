@@ -30,8 +30,7 @@ import { APP_STORAGE_ENABLED_FEATURES } from '~/shared/constants/block-storage.c
 /**
  * The schema stream is the root (registry spec, "Schemas"): JSON Schema 2020-12's own meta-schema,
  * {@link JSON_SCHEMA_DIALECT}, the `$schema` every schema body declares. Every schema entity claims
- * it. The earlier spec's `urn:schema:registry:schema@v1` is not served: it is an unknown schema
- * like any other, answered `end`.
+ * it.
  */
 export const SERVED_SCHEMAS = [
   JSON_SCHEMA_DIALECT,

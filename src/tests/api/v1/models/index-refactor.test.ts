@@ -138,9 +138,24 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     const res = await invoke({ nsfw: 'true' });
     const [, ctx] = mockRunModelSearch.mock.calls[0];
     expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
-    // nsfwImagePassthrough still mirrors the client nsfw flag — unchanged from
-    // pre-refactor behavior (the region override only narrows browsingLevel).
-    expect(ctx.nsfwImagePassthrough).toBe(true);
+    // Images are held to that level too: the nsfw widening does not apply there.
+    expect(ctx.nsfwImagePassthrough).toBe(false);
+  });
+
+  it('keeps an nsfw=true answer out of the shared cache, in every region', async () => {
+    for (const restricted of [true, false]) {
+      mockIsRegionRestricted.mockReturnValue(restricted);
+      const res = await invoke({ nsfw: 'true' });
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
+    }
+  });
+
+  it('leaves the default answer to the shared cache (control)', async () => {
+    for (const restricted of [true, false]) {
+      mockIsRegionRestricted.mockReturnValue(restricted);
+      const res = await invoke({});
+      expect(res.headers['Cache-Control']).toBeUndefined();
+    }
   });
 
   it('query path uses the same browsingLevel for the Meili pre-step', async () => {

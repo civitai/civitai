@@ -326,7 +326,6 @@ export async function recordUploadKeyOwner(key: string, userId: number): Promise
         backoffDelay(attempt - 1, { baseMs: RECORD_RETRY_BASE_MS, jitterMs: RECORD_RETRY_BASE_MS })
       );
     try {
-      // The deadline was written for reads; it bounds a write's wait the same way.
       await withSysReadDeadline(
         sysRedis.set(ownerKey(key.toLowerCase()), String(userId), {
           EX: UPLOAD_KEY_OWNER_TTL_SECONDS,
@@ -350,11 +349,10 @@ export async function recordUploadKeyOwner(key: string, userId: number): Promise
 }
 
 /**
- * Whether an upload route withholds a key, given whether `recordUploadKeyOwner` wrote its issue
- * record. Off by default: the key is handed out and counted, and the save decides from the
- * request log, which `trackImageUpload` writes naming the caller (fail-closed there from
- * `UNRECORDED_KEYS_ACCEPTED_UNTIL`). With `UPLOAD_KEY_REFUSE_UNRECORDED` on, this answers a 503
- * the client can retry and returns true: the route must hand out nothing more.
+ * Whether an upload route withholds a key whose issue record `recordUploadKeyOwner` could not
+ * write. With `UPLOAD_KEY_REFUSE_UNRECORDED` off (the default) it returns false and the key is
+ * handed out. With it on, it answers a 503 the client can retry and returns true: the route must
+ * hand out nothing more.
  */
 export function withholdUnrecordedUploadKey(res: NextApiResponse, recorded: boolean) {
   if (recorded) return false;

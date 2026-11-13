@@ -10,6 +10,8 @@ import type * as Blocklist from '~/server/services/blocklist.service';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { DEFAULT_CREATOR_SHOP_FEES } from '~/server/schema/creator-shop.schema';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { createFakeBuzzLedger } from './buzz-ledger.fake';
+import { settle } from './charge-lock.fake';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -24,6 +26,8 @@ const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const buzz = vi.hoisted(() => ({
   createBuzzTransaction: vi.fn(),
   refundTransaction: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  resendBuzzTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -1058,5 +1062,117 @@ describe('submitMysteryPack box image key', () => {
       COVER_IMAGE_UNAVAILABLE_MESSAGE
     );
     expect(await boxes()).toHaveLength(1);
+  });
+});
+
+// The submission fee across an unknown outcome: the ledger committed the charge and the response
+// was lost. One charge and one pack across the creator's retry under the same key.
+describe('the mystery pack submission fee across an unknown outcome', () => {
+  const KEY = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
+  const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
+    "We couldn't confirm whether your Buzz payment went through. Trying this same action again from this page is safe. If you reloaded or left the page, check your Buzz balance and transactions first.";
+  let ledger: ReturnType<typeof createFakeBuzzLedger>;
+  let clock = 1_700_000_000_000;
+
+  beforeEach(() => {
+    ledger = createFakeBuzzLedger();
+    buzz.createBuzzTransaction.mockImplementation(ledger.createBuzzTransaction);
+    buzz.resendBuzzTransaction.mockImplementation(ledger.resendBuzzTransaction);
+    buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
+    buzz.refundTransaction.mockImplementation(ledger.refundTransaction);
+    // Each attempt is a later moment, as it is for a creator pressing submit again.
+    vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1000));
+  });
+
+  const packCount = async () =>
+    (await q<{ n: number }>(`SELECT count(*)::int AS n FROM "BoxRevision"`))[0].n;
+
+  it('a retry with the same key after an unanswered charge charges once and submits once', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    // What the creator is told is pinned below; here only that it failed and wrote nothing.
+    await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow();
+    ledger.clearFaults();
+    expect(await packCount()).toBe(0);
+
+    const { shopItemId } = await submit({ idempotencyKey: KEY } as never);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(ledger.charges()[0].amount).toBe(FEE);
+    expect(await packCount()).toBe(1);
+    const meta = (
+      await q<{ meta: CosmeticShopItemMeta }>(`SELECT meta FROM "CosmeticShopItem" WHERE id = $1`, [
+        shopItemId,
+      ])
+    )[0].meta;
+    expect(meta.submissionTxId).toBe(ledger.charges()[0].transactionId);
+  });
+
+  it('continues to the pack in the same request when the resend answers', async () => {
+    ledger.queueFault('lose-response');
+
+    await submit({ idempotencyKey: KEY } as never);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(await packCount()).toBe(1);
+  });
+
+  it('answers "may have gone through" when the resend also fails, and writes nothing', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('fail-before-commit');
+
+    const error = await submit({ idempotencyKey: KEY } as never).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect((error as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
+    expect(await packCount()).toBe(0);
+    expect(ledger.refunds()).toHaveLength(0);
+  });
+
+  // On Postgres (PGlite): the listed-fee check is the real query, so a second request with the
+  // key finds the first one's listing by its fee.
+  it('two requests with one key in flight: one charge, one pack, the other refused', async () => {
+    ledger.queueFault('hang');
+    const first = submit({ idempotencyKey: KEY } as never).catch((e: unknown) => e);
+    while (!ledger.isHung()) await settle();
+    // The first request's charge is pending and holds no transaction.
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    const second = await submit({ idempotencyKey: KEY } as never);
+    ledger.releaseHung();
+
+    expect(await first).toMatchObject({
+      code: 'BAD_REQUEST',
+      message:
+        'This submission was already completed. Reload to see it, or start a new submission.',
+    });
+    expect(second).toMatchObject({ shopItemId: expect.any(Number) });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(await packCount()).toBe(1);
+  });
+
+  it('a retry with the key of a refunded submission is refused, and writes nothing', async () => {
+    await holder.db.exec(`
+      CREATE FUNCTION fail_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'revision insert failed'; END $$;
+      CREATE TRIGGER fail_revision BEFORE INSERT ON "BoxRevision"
+        FOR EACH ROW EXECUTE FUNCTION fail_revision();
+    `);
+    try {
+      await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow(
+        'revision insert failed'
+      );
+    } finally {
+      await holder.db.exec(
+        `DROP TRIGGER fail_revision ON "BoxRevision"; DROP FUNCTION fail_revision;`
+      );
+    }
+    expect(ledger.refunds()).toHaveLength(1);
+
+    await expect(submit({ idempotencyKey: KEY } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'The payment for this attempt was refunded. Please try again.',
+    });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(await packCount()).toBe(0);
   });
 });

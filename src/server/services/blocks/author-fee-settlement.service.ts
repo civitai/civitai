@@ -260,7 +260,7 @@ export async function settleBlockAuthorFees(args: {
       // (connection refused / DNS); a 5xx or a timeout throws on the first
       // response. So a run with N payable buckets issues at most N POSTs that
       // reach the service, plus refused-connection retries that never arrived.
-      // The batch call is bounded at 60s (`DEFAULT_BATCH_WRITE_TIMEOUT_MS`).
+      // The batch call has no client deadline: it waits for Buzz's answer.
       let mint: Awaited<ReturnType<typeof createBuzzTransactionMany>> | null = null;
       let threw: unknown = null;
       try {

@@ -17,7 +17,8 @@ import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/articles — public, edge-cacheable list/search over articles.
+ * GET /api/v1/articles — public list/search over articles, edge-cacheable except at `?nsfw=true`,
+ * whose body depends on the caller's region and is `private, no-store`.
  *
  * Wraps the EXISTING `getArticles` service (the same function that powers the
  * website's article feed via `articleRouter.getInfinite`). This endpoint serves
@@ -91,11 +92,12 @@ export default MixedAuthEndpoint(async function handler(
   const parsedCursor = parseArticleCursor(cursor);
   if (parsedCursor === null) return res.status(400).json({ error: 'Invalid cursor' });
 
-  // Maturity/region ceiling — identical derivation to models/index.ts. This is
-  // the ONE legitimate response variation (region-derived); the CDN keys on it.
+  // Maturity/region ceiling — identical derivation to models/index.ts.
   const region = getRegion(req);
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+  if (nsfw) res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     const { items, nextCursor } = await getArticles({

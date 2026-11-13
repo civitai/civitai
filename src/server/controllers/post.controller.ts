@@ -108,11 +108,11 @@ export const getPostsInfiniteHandler = async ({
     if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
-      // The feed reads 0 as no filter, so an empty intersection is an empty page.
+      // An empty intersection is an empty page; passed on, the feed would read 0 as the public level.
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       input = { ...input, browsingLevel };
     }
-    return await getPostsInfinite({ ...input, user: ctx.user });
+    return await getPostsInfinite({ ...input, user: ctx.user, asModerator: moderator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -884,7 +884,19 @@ export const getPostResourcesHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
 
-    return resources.filter((x) => x.name !== 'vae');
+    const rows = resources.filter((x) => x.name !== 'vae');
+    const modelIds = [...new Set(rows.map((x) => x.modelId).filter(isDefined))];
+    const models = modelIds.length
+      ? await dbRead.model.findMany({
+          where: { id: { in: modelIds } },
+          select: { id: true, userId: true },
+        })
+      : [];
+    const ownerByModelId = new Map(models.map((m) => [m.id, m.userId]));
+    return rows.map((x) => ({
+      ...x,
+      modelUserId: x.modelId != null ? ownerByModelId.get(x.modelId) ?? null : null,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

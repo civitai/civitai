@@ -700,6 +700,36 @@ model CustomerSubscription {
   @@unique([userId, buzzType])
 }
 
+/// One row per membership, kept by a trigger on CustomerSubscription (which holds only the
+/// current state of each slot). At most one open row (closedAt null) per (userId, buzzType);
+/// that partial unique index and the trigger live only in the migration
+/// 20261122120000_customer_subscription_history. Never write this table from the app.
+/// No relation to User on purpose: an FK locks "User" while it validates.
+model CustomerSubscriptionHistory {
+  id                 Int       @id @default(autoincrement())
+  userId             Int
+  subscriptionId     String
+  buzzType           String
+  productId          String
+  priceId            String
+  status             String
+  metadata           Json      @default("{}")
+  cancelAtPeriodEnd  Boolean   @default(false)
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  startedAt          DateTime
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  endedAt            DateTime?
+  /// Set when the live row moved on: 'removed' | 'replaced' | 'plan-changed' | 'restarted'
+  closedAt           DateTime?
+  closedReason       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now())
+
+  @@index([userId])
+}
+
 enum PaymentProvider {
   Stripe
   Paddle
@@ -5056,6 +5086,36 @@ model AppSourceRepo {
   @@index([ownerUserId], map: "app_source_repos_owner_idx")
   @@index([appBlockId], map: "app_source_repos_app_block_idx")
   @@map("app_source_repos")
+}
+
+// App hibernate ("Sleeping" apps): one row per sleeping app, per user — the archive of the app's
+// workspace in the archive store, and optionally its `.env*` files, encrypted under a data key
+// that is stored here only wrapped by a civitai-held master key. RAW SQL ONLY
+// (`app-hibernation/hibernation.repo.ts`), so the model is stripped from the generated client;
+// the migration `20271112130000_app_sandbox_hibernations` is applied by hand (with its CHECKs,
+// which live only there).
+// @no-type
+model AppSandboxHibernation {
+  id                Int       @id @default(autoincrement())
+  userId            Int       @map("user_id")
+  appKey            String    @map("app_key")
+  attemptId         String    @map("attempt_id") @db.Uuid
+  objectKey         String    @unique(map: "app_sandbox_hibernations_object_key_key") @map("object_key")
+  sha256            String    @db.Char(64)
+  bytes             BigInt
+  excluded          String[]  @default([])
+  secretsObjectKey  String?   @unique(map: "app_sandbox_hibernations_secrets_object_key_key") @map("secrets_object_key")
+  secretsSha256     String?   @map("secrets_sha256") @db.Char(64)
+  secretsBytes      BigInt?   @map("secrets_bytes")
+  secretsWrappedKey String?   @map("secrets_wrapped_key")
+  reason            String?
+  appCreatedAt      DateTime? @map("app_created_at") @db.Timestamptz(6)
+  lastActivityAt    DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  hibernatedAt      DateTime  @default(now()) @map("hibernated_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, appKey], map: "app_sandbox_hibernations_user_app_key")
+  @@map("app_sandbox_hibernations")
 }
 
 /// App Blocks Phase 3 (git-push self-service) — per-civitai-user Forgejo

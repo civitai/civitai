@@ -4,6 +4,7 @@ import { chunk } from 'lodash-es';
 // purpose: it is a pure helper with no client state, and importing it through the shim would
 // force every suite that mocks the shim to add it to its mock factory.
 import { CACHE_KEY_PREFIX, createCacheBuilders, prefixCacheKey } from '@civitai/redis';
+import { pack, unpack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -106,10 +107,71 @@ type cachedQueryOptions = {
 };
 
 /**
+ * Per-process single-flight by key: concurrent calls for one key share the first call's `fn()`
+ * instead of each running it. Used where a cache is unavailable or missed and every caller would
+ * otherwise hit the origin (database / ClickHouse) at once — `queryCache` misses and
+ * `fetchThroughCache`'s fail-open path. An entry lives only while its `fn()` runs.
+ *
+ * 🔴 Every JOINER gets its OWN copy, decoded exactly as a cache hit is (msgpack round trip, the
+ * `redis.packed` codec): callers mutate what they get (post.service pops the cursor row off a
+ * page), and a cache hit never shares objects between callers. Not `structuredClone`: it THROWS on
+ * class instances such as `Prisma.Decimal` from a raw query, where the codec turns them into what a
+ * cache hit returns. A value the codec cannot pack is shared, as before. The first caller gets the
+ * original value, as without single-flight.
+ *
+ * The value is PACKED ONCE per flight — lazily, by the first joiner to run, so a flight nobody
+ * joins packs nothing — and each joiner UNPACKS its own copy from those bytes. The bytes are taken
+ * in the first joiner's own `.then` on the shared promise, which runs before the first caller can
+ * see the value as long as the first caller reaches it through an `async` function
+ * (`queryThroughCache`, `fetchThroughCache` — each adds ticks before its own caller resumes); every
+ * later joiner decodes the same bytes, so nothing a caller does to its value reaches a joiner.
+ * Pinned through the public API by "the first caller mutating synchronously on resolve cannot reach
+ * a joiner"; a new caller that awaits `singleFlight` directly and mutates in place must keep that.
+ */
+function createCodecCopier() {
+  // undefined: not packed yet; null: the codec could not pack it (shared, as before).
+  let packed: Buffer | null | undefined;
+  return function codecCopy<T>(value: T): T {
+    if (packed === undefined) {
+      try {
+        packed = pack(value);
+      } catch {
+        packed = null;
+      }
+    }
+    return packed === null ? value : (unpack(packed) as T);
+  };
+}
+
+export function createSingleFlight() {
+  const inFlight = new Map<
+    string,
+    { flight: Promise<unknown>; copy: ReturnType<typeof createCodecCopier> }
+  >();
+  return function singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = inFlight.get(key);
+    if (existing) return (existing.flight as Promise<T>).then(existing.copy);
+    // Promise.resolve().then(fn): a SYNCHRONOUS throw in fn is a rejection like any other, so the
+    // finally always runs and the entry is always removed.
+    const flight: Promise<T> = Promise.resolve()
+      .then(fn)
+      .finally(() => {
+        if (inFlight.get(key)?.flight === flight) inFlight.delete(key);
+      });
+    inFlight.set(key, { flight, copy: createCodecCopier() });
+    return flight;
+  };
+}
+
+/** queryCache / queryCacheRaw misses (query + write-back), by cache key. */
+const queryCacheMissFlight = createSingleFlight();
+
+/**
  * The one body behind `queryCache` and `queryCacheRaw`: read the cached rows, else run the query and
  * cache them. Both cache calls go through the cluster-cache guard (bounded, breaker-aware), so a
  * cache that fails or never answers is a miss on the read and a skipped write-back — the query's
- * rows are returned either way, never an error or a 15s wait for a cache.
+ * rows are returned either way, never an error or a 15s wait for a cache. Concurrent misses for one
+ * key in this process run the query once (createSingleFlight).
  */
 async function queryThroughCache<T extends object[]>(
   run: () => Promise<T>,
@@ -139,16 +201,18 @@ async function queryThroughCache<T extends object[]>(
   }
 
   cacheMissCounter.inc({ cache_name: key, cache_type: 'queryCache' });
-  const result = await run();
-  await clusterCacheGuard.writeBestEffort(
-    'cache-helpers.queryCache set',
-    async () => {
-      await redis.packed.set(cacheKey, result, { EX: options?.ttl });
-      if (options?.tag) await tagCacheKey(cacheKey, options.tag);
-    },
-    { logExtra: { cache: key } }
-  );
-  return result;
+  return queryCacheMissFlight(cacheKey, async () => {
+    const result = await run();
+    await clusterCacheGuard.writeBestEffort(
+      'cache-helpers.queryCache set',
+      async () => {
+        await redis.packed.set(cacheKey, result, { EX: options?.ttl });
+        if (options?.tag) await tagCacheKey(cacheKey, options.tag);
+      },
+      { logExtra: { cache: key } }
+    );
+    return result;
+  });
 }
 
 export function queryCache(db: PrismaClient, key: string, version?: string) {
@@ -306,23 +370,13 @@ type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
  * unbounded (× per-request concurrency). It is NOT cross-pod (that's what the Redis
  * lock was for and Redis is down), but it removes the per-pod multiplier, which is the
  * dominant term under a request flood. Entries are deleted as soon as the shared
- * promise settles, so the map only ever holds currently-degraded keys.
+ * promise settles, so the map only ever holds currently-degraded keys. Each caller that joins
+ * gets its own copy (see createSingleFlight).
  */
-const failOpenInFlight = new Map<string, Promise<unknown>>();
+const failOpenFlight = createSingleFlight();
 
 function fetchThroughCacheFailOpen<T>(key: string, fetchFn: () => Promise<T>): Promise<T> {
-  const existing = failOpenInFlight.get(key) as Promise<T> | undefined;
-  if (existing) return existing;
-  // Promise.resolve().then(fetchFn) so even a SYNCHRONOUS throw inside fetchFn becomes
-  // a rejected promise — guaranteeing the .finally cleanup runs and the map entry is
-  // always removed (no leaked/stuck in-flight entry).
-  const p = Promise.resolve()
-    .then(fetchFn)
-    .finally(() => {
-      failOpenInFlight.delete(key);
-    });
-  failOpenInFlight.set(key, p);
-  return p;
+  return failOpenFlight(key, fetchFn);
 }
 
 export async function fetchThroughCache<T>(
@@ -340,7 +394,7 @@ export async function fetchThroughCache<T>(
   // --- Redis READ (cache lookup) -------------------------------------------------
   // With the socketTimeout fix a stalled Redis read now THROWS (~10s) instead of
   // hanging to the 30s Traefik 504. Fail OPEN: degrade to a slow-but-working origin
-  // fetch (single-flighted per pod to avoid a DB stampede — see failOpenInFlight)
+  // fetch (single-flighted per pod to avoid a DB stampede — see failOpenFlight)
   // rather than propagating a 500 on these ~18 hot read paths. This is strictly no
   // worse than today's behavior on the same paths (a Redis stall already meant a
   // failed request); it just turns the failure mode from 500/504 into a slow 200.
