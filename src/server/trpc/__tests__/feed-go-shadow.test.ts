@@ -94,13 +94,13 @@ describe('readFeedGoShadowConfig', () => {
 
   it('appends the compare path to the base URL', () => {
     const c = readFeedGoShadowConfig({
-      FEED_GO_SHADOW_URL: 'http://feed-go.feed-go.svc.cluster.local:9090',
+      FEED_GO_SHADOW_URL: 'http://feed-go.internal.test:9090',
       FEED_GO_SHADOW_SAMPLE_RATE: '0.25',
       FEED_GO_SHADOW_TIMEOUT_MS: '750',
       FEED_GO_SHADOW_MAX_IN_FLIGHT: '3',
     });
     expect(c).toEqual({
-      url: `http://feed-go.feed-go.svc.cluster.local:9090${FEED_GO_SHADOW_PATH}`,
+      url: `http://feed-go.internal.test:9090${FEED_GO_SHADOW_PATH}`,
       rate: 0.25,
       timeoutMs: 750,
       maxInFlight: 3,
