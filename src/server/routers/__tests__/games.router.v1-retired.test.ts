@@ -78,6 +78,34 @@ describe('games.newOrder player procedures', () => {
   });
 });
 
+describe('games.newOrder player procedures with invalid input', () => {
+  const INVALID: [string, (c: Caller) => Promise<unknown>][] = [
+    ['getHistory', (c) => c.getHistory({ limit: 'many' } as never)],
+    ['addRating', (c) => c.addRating({} as never)],
+  ];
+
+  it.each(INVALID)(
+    '%s refuses invalid input with FORBIDDEN once v1 is retired',
+    async (_name, call) => {
+      v1Live.mockResolvedValue(false);
+
+      await expect(call(gamesRouter.createCaller(ctxFor(false)).newOrder)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+    }
+  );
+
+  it.each(INVALID)(
+    '%s still answers BAD_REQUEST to invalid input while v1 is live',
+    async (_name, call) => {
+      await expect(call(gamesRouter.createCaller(ctxFor(false)).newOrder)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+      expect(handler).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('games.newOrder moderator procedures', () => {
   it('stay open once v1 is retired, to drain and settle what players did', async () => {
     v1Live.mockResolvedValue(false);

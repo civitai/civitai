@@ -141,9 +141,9 @@ export const gamesRouter = router({
       ),
     getHistory: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
-      .input(getHistorySchema)
       .use(isFlagProtected('newOrderGame'))
       .use(isV1Open)
+      .input(getHistorySchema)
       .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
     smitePlayer: moderatorProcedure
       .input(smitePlayerSchema)
@@ -155,9 +155,9 @@ export const gamesRouter = router({
       .mutation(({ input }) => cleanseSmite({ ...input })),
     addRating: guardedProcedure
       .meta({ requiredScope: TokenScope.SocialWrite })
-      .input(addImageRatingSchema)
       .use(isFlagProtected('newOrderGame'))
       .use(isV1Open)
+      .input(addImageRatingSchema)
       .mutation(({ input, ctx }) =>
         addImageRating({
           ...input,
