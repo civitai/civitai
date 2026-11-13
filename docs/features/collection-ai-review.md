@@ -105,13 +105,25 @@ FROM collectionAiReviewEvents WHERE collectionId = 3870938 AND applied = 0
 ORDER BY createdAt DESC LIMIT 100;
 ```
 
-## Contest collections only
+## Collection mode
 
-`updateCollectionItemsStatus` sends its accept/reject notification only when
-`collection.mode === CollectionMode.Contest`. Anywhere else the job would reject submissions
-silently — and on boards where a cron deletes rejected rows, the entry disappears with no
-explanation at all. `setCollectionAiReview` therefore refuses to enable AI review on a non-Contest
-collection. Lifting that restriction means fixing the notification path first.
+AI review is configured independently of collection mode. A non-contest image collection can
+use AI review without inheriting contest ordering or hidden reaction counts. The scheduled job
+reviews pending image entries; it does not review model, post, or article entries.
+`updateCollectionItemsStatus` sends acceptance/rejection notifications for both contest and
+non-contest collections. Configuration remains moderator-only and feature-flag protected.
+
+Enabling AI review does not change a collection's mode or write permissions. Submissions must
+enter `REVIEW` to reach the job, so use the `Review` write configuration for a moderated board.
+Existing contest collections keep their current behavior.
+
+For the Buzz Beggars Board to show reaction counts, its operator must separately change its mode
+from `Contest` to the normal collection mode (`null`), retaining its AI review configuration and
+`Review` write configuration. This is a configuration change, not a schema migration. Before
+changing mode, review its submission settings: the server currently enforces `maxItemsPerUser`
+and submission windows through contest entry validation. Clearing the mode also removes those
+contest checks; enabling AI review alone does not replace them. The board's expiry job is
+independent of collection mode.
 
 ## Operational notes
 

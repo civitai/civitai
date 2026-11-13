@@ -2787,12 +2787,9 @@ export const setCollectionAiReview = async ({
 }: SetCollectionAiReviewInput) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, mode: true },
+    select: { id: true },
   });
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
-
-  if (aiReview.enabled && collection.mode !== CollectionMode.Contest)
-    throw throwBadRequestError('AI review can only be enabled on Contest collections.');
 
   const key = collectionAiReviewKey(collectionId);
   await dbWrite.keyValue.upsert({
