@@ -102,7 +102,12 @@ describe('resolveBlockMediaFetch (the media route)', () => {
   });
 
   it('a rated blob with no content location is pending, never a redirect to nowhere', async () => {
-    blobState.mockResolvedValue({ ...rated('pg'), location: null });
+    blobState.mockResolvedValue({
+      verdict: 'rated',
+      nsfwLevel: 'pg',
+      blockedReason: null,
+      location: null,
+    });
     expect(await resolveBlockMediaFetch(allTicket())).toEqual({ state: 'pending' });
   });
 
