@@ -342,6 +342,35 @@ describe('the scan verdict writes nsfwAxes', () => {
     await scan('wf-0', axes(4), { blocked: true });
     expect(await axesOfRow()).toMatchObject({ sexual: 2, sexualHighWater: 2 });
   });
+
+  describe('on a NotFound row', () => {
+    const scanNotFound = (workflowId: string) =>
+      resolveScanOutcome({
+        image: { ...image(), ingestion: 'NotFound' } as unknown as ScanImage,
+        workflowId,
+        prompt: 'a landscape',
+        axes: axes(2, 1),
+      });
+    const seedNotFound = async (current: string) => {
+      await seed({ current });
+      await holder.db.query(`UPDATE "Image" SET ingestion = 'NotFound' WHERE id = $1`, [ID]);
+    };
+
+    it('keeps NotFound and writes the axes for the submitted workflow', async () => {
+      await seedNotFound('wf-1');
+      await scanNotFound('wf-1');
+
+      expect((await row()).ingestion).toBe('NotFound');
+      expect(await axesOfRow()).toMatchObject({ sexual: 2, violence: 1, sexualHighWater: 2 });
+    });
+
+    it('keeps NotFound and writes no axes for a superseded workflow', async () => {
+      await seedNotFound('wf-2');
+      await scanNotFound('wf-1');
+
+      expect(await row()).toEqual({ nsfwAxes: null, ingestion: 'NotFound', workflowId: 'wf-1' });
+    });
+  });
 });
 
 describe('the nsfwAxes write never changes the scan', () => {
