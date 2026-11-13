@@ -86,7 +86,6 @@ import { POST as switchPost } from '../routes/api/auth/switch/+server';
 import { GET as accountsGet } from '../routes/api/auth/accounts/+server';
 import { establishSession } from '$lib/server/auth/session';
 import { deviceFamiliesKey } from '$lib/server/auth/lineage';
-import { resetSysReadTrip } from '$lib/server/sys-read';
 
 const CALLBACK = 'https://civitai.com/api/auth/callback';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -197,9 +196,6 @@ beforeEach(() => {
   h.users.clear();
   h.firstParty = true;
   setMode('shared');
-  // A case that drives fake time past the sys-read deadline while the redis fake is mid-call trips it;
-  // the trip must not carry into the next case.
-  resetSysReadTrip();
 });
 afterEach(() => {
   vi.useRealTimers();
