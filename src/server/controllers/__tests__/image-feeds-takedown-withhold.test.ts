@@ -316,6 +316,8 @@ describe('image.getImagesForModelVersion viewer filtering', () => {
       return result[20]?.images.map((i) => i.id) ?? [];
     };
     expect(await noRow(uncapped)).toEqual([]);
+    // No owner id to match: an `undefined === undefined` owner check would let these through.
+    expect(await noRow({ features: { canViewNsfw: true } })).toEqual([]);
     expect(
       await noRow({ user: { id: 7, isModerator: true }, features: { canViewNsfw: true } })
     ).toEqual([1]);
