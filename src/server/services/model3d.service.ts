@@ -106,19 +106,23 @@ const model3dFileSelect = {
   createdAt: true,
 } satisfies Prisma.Model3DFileSelect;
 
+// Every image a 3D model read returns: never its generation data, which no 3D model surface shows
+// and which an image's owner may have hidden.
+const model3dImageSelect = { ...imageSelect, meta: false } satisfies Prisma.ImageSelect;
+
 const model3dDetailSelect = {
   id: true,
   name: true,
   description: true,
   userId: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: imageSelect },
+  thumbnailImage: { select: model3dImageSelect },
   licenseId: true,
   license: true,
   licenseDetails: true,
   workflowId: true,
   sourceImageId: true,
-  sourceImage: { select: imageSelect },
+  sourceImage: { select: model3dImageSelect },
   generationParams: true,
   status: true,
   nsfw: true,
@@ -164,7 +168,7 @@ const model3dListSelect = {
   publishedAt: true,
   createdAt: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: imageSelect },
+  thumbnailImage: { select: model3dImageSelect },
   user: { select: userWithCosmeticsSelect },
   metric: true,
   // Tags drive client-side `useApplyHiddenPreferences` filtering on the feed.
@@ -1664,7 +1668,7 @@ export const getModel3DRelatedPosts = async ({
           where: coverWhere,
           take: COVER_CANDIDATES,
           orderBy: { index: 'asc' },
-          select: imageSelect,
+          select: model3dImageSelect,
         },
       },
     });
@@ -1676,14 +1680,7 @@ export const getModel3DRelatedPosts = async ({
           )
         );
     for (const post of items) {
-      post.images = post.images
-        .filter((image) => !restricted.has(image.id))
-        .slice(0, 1)
-        .map((image) =>
-          image.hideMeta && !isModerator && image.userId !== viewerId
-            ? { ...image, meta: null }
-            : image
-        );
+      post.images = post.images.filter((image) => !restricted.has(image.id)).slice(0, 1);
     }
 
     let nextCursor: number | undefined;
