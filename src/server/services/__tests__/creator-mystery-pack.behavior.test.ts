@@ -10,6 +10,7 @@ import type * as Blocklist from '~/server/services/blocklist.service';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { DEFAULT_CREATOR_SHOP_FEES } from '~/server/schema/creator-shop.schema';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { createFakeBuzzLedger } from './buzz-ledger.fake';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -24,6 +25,8 @@ const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 const buzz = vi.hoisted(() => ({
   createBuzzTransaction: vi.fn(),
   refundTransaction: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  recoverBuzzTransactionId: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -1058,5 +1061,71 @@ describe('submitMysteryPack box image key', () => {
       COVER_IMAGE_UNAVAILABLE_MESSAGE
     );
     expect(await boxes()).toHaveLength(1);
+  });
+});
+
+// The submission fee across an unknown outcome: the ledger committed the charge and the response
+// was lost. One charge and one pack across the creator's retry under the same key.
+describe('the mystery pack submission fee across an unknown outcome', () => {
+  const KEY = '6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
+  const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
+    "We couldn't confirm whether your Buzz payment went through. Check your Buzz transactions before trying again. Retrying this same action will not charge you twice.";
+  let ledger: ReturnType<typeof createFakeBuzzLedger>;
+  let clock = 1_700_000_000_000;
+
+  beforeEach(() => {
+    ledger = createFakeBuzzLedger();
+    buzz.createBuzzTransaction.mockImplementation(ledger.createBuzzTransaction);
+    buzz.recoverBuzzTransactionId.mockImplementation(ledger.recoverBuzzTransactionId);
+    buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
+    buzz.refundTransaction.mockImplementation(ledger.refundTransaction);
+    // Each attempt is a later moment, as it is for a creator pressing submit again.
+    vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1000));
+  });
+
+  const packCount = async () =>
+    (await q<{ n: number }>(`SELECT count(*)::int AS n FROM "BoxRevision"`))[0].n;
+
+  it('a retry with the same key after an unanswered charge charges once and submits once', async () => {
+    ledger.queueFault('lose-response');
+    ledger.failLookups();
+    await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow(
+      PAYMENT_OUTCOME_UNKNOWN_MESSAGE
+    );
+    expect(await packCount()).toBe(0);
+
+    ledger.failLookups(null);
+    const { shopItemId } = await submit({ idempotencyKey: KEY } as never);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(ledger.charges()[0].amount).toBe(FEE);
+    expect(await packCount()).toBe(1);
+    const meta = (
+      await q<{ meta: CosmeticShopItemMeta }>(`SELECT meta FROM "CosmeticShopItem" WHERE id = $1`, [
+        shopItemId,
+      ])
+    )[0].meta;
+    expect(meta.submissionTxId).toBe(ledger.charges()[0].transactionId);
+  });
+
+  it('continues to the pack in the same request when the lookup finds the charge', async () => {
+    ledger.queueFault('lose-response');
+
+    await submit({ idempotencyKey: KEY } as never);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(await packCount()).toBe(1);
+  });
+
+  it('answers "may have gone through" when the lookup fails, and writes nothing', async () => {
+    ledger.queueFault('lose-response');
+    ledger.failLookups();
+
+    const error = await submit({ idempotencyKey: KEY } as never).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect((error as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
+    expect(await packCount()).toBe(0);
+    expect(ledger.refunds()).toHaveLength(0);
   });
 });
