@@ -60,7 +60,7 @@ import { withSysReadDeadline } from '~/server/redis/sys-read-deadline';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TurfHatArt, TurfStickerData, TurfStickersCursor } from '~/server/schema/turf.schema';
-import { TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
+import { FLAG_HAT_MAX, TURF_FEED_STICKERS } from '~/server/schema/turf.schema';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
@@ -483,8 +483,6 @@ export async function placeTurfSticker(input: PlaceTurfStickerInput, now = new D
   void requestTurfSync(event, imageId).catch(logSyncError);
 }
 
-export const FLAG_HAT_COUNTS = [1, 5, 10] as const;
-
 /**
  * Spends `count` hats on one of today's flags. Flags stack without limit and take hats on every
  * image, even one whose owner keeps Hat Turf off (entering the Crucible was the owner's consent).
@@ -507,8 +505,8 @@ export async function placeFlagHats(
     !!fliptKey &&
     (await isFliptOnForTesters(fliptKey, { id: input.userId, isModerator: input.isModerator }));
   if (!open) throw throwBadRequestError("The Flag Race isn't open right now");
-  if (!(FLAG_HAT_COUNTS as readonly number[]).includes(input.count))
-    throw throwBadRequestError('Add 1, 5 or 10 hats at a time');
+  if (!Number.isInteger(input.count) || input.count < 1 || input.count > FLAG_HAT_MAX)
+    throw throwBadRequestError(`Add 1 to ${FLAG_HAT_MAX} hats at a time`);
   const { flags } = await readFlagRaceConfig(input.event);
   if (!flags?.on) throw throwBadRequestError("The Flag Race isn't open right now");
   const { event, team, multiplier } = await resolvePlacer(input, now);
@@ -580,6 +578,8 @@ export type FlagSummary = {
   // The cut falls in the hour before this.
   closesAt: Date;
   flags: FlagStanding[];
+  // Once frozen: the points each team won across the day's flags. Empty before.
+  teamPoints: Record<string, number>;
 };
 
 // Cached with the cut beside it, so a hit is checked in memory: an open summary must not outlive
@@ -604,20 +604,28 @@ function flagStanding(
   };
 }
 
-/** Per flag of a frozen day, the teams its freeze paid (none when nobody placed); empty if not frozen. */
-async function frozenFlagWinners(event: string, flagDayId: number) {
-  const rows = await dbWrite.$queryRaw<{ sourceId: string; team: string | null }[]>`
-    SELECT "sourceId", team FROM "EventAwardResult"
+/**
+ * A frozen day's results: per flag, the teams its freeze paid (none when nobody placed), and per
+ * team, the points paid across the day (unvoided). Both empty if the day isn't frozen yet.
+ */
+async function frozenFlagResults(event: string, flagDayId: number) {
+  const rows = await dbWrite.$queryRaw<
+    { sourceId: string; team: string | null; points: number; voided: boolean }[]
+  >`
+    SELECT "sourceId", team, points, "voidedAt" IS NOT NULL AS voided FROM "EventAwardResult"
     WHERE event = ${event} AND kind = ${FLAG_KIND} AND "sourceId" LIKE ${`flag:${flagDayId}:%`}
   `;
   const winners = new Map<number, string[]>();
+  const teamPoints: Record<string, number> = {};
   for (const r of rows) {
     const imageId = Number(r.sourceId.split(':')[2]);
     const list = winners.get(imageId) ?? [];
     if (r.team) list.push(r.team);
     winners.set(imageId, list.sort());
+    if (r.team && !r.voided && r.points > 0)
+      teamPoints[r.team] = (teamPoints[r.team] ?? 0) + Number(r.points);
   }
-  return winners;
+  return { winners, teamPoints };
 }
 
 /**
@@ -675,7 +683,8 @@ async function buildFlagSummary(
   // Closed, it must agree with the freeze: read the primary, as the freeze does, and name the teams
   // the freeze paid once it has run.
   const tally = await flagTally(event, day, closed ? dbWrite : dbRead);
-  const paid = closed ? await frozenFlagWinners(eventName, day.id) : undefined;
+  const results = closed ? await frozenFlagResults(eventName, day.id) : undefined;
+  const paid = results?.winners;
   const at = closed ? day.cutAt : now;
   const summary: FlagSummary = {
     flagDayId: day.id,
@@ -687,6 +696,7 @@ async function buildFlagSummary(
       const frozen = paid?.get(imageId);
       return frozen ? { ...standing, winners: frozen } : standing;
     }),
+    teamPoints: results?.teamPoints ?? {},
   };
   const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime(), gen };
   const frozen = !!paid?.size;
