@@ -163,6 +163,8 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { TRPCError } from '@trpc/server';
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const READ = 'apps:storage:shared:read';
 const WRITE = 'apps:storage:shared:write';
@@ -753,6 +755,85 @@ describe('the title/body blocklist scan: a throw is unavailable moderation, a hi
       );
       expect(reports.length, 'Report rows filed').toBe(expected.reportFiled ? 1 : 0);
       expect(recordedExactlyOnce()).toEqual({ op, outcome: expected.outcome });
+    }
+  );
+});
+
+describe('the platform audit unable to run (its 503) is unavailable moderation, not a block', () => {
+  // `auditPromptServer` throws a retry-able SERVICE_UNAVAILABLE when the external classifier (or
+  // the audit's own reads) cannot answer. That is our outage, so it must not file a Report row or
+  // raise the content-block alert, it must refund the write budget, and it records
+  // moderation_unavailable. PROMPT_CHECK_FAIL_CLOSED=off restores the previous handling (an audit
+  // block: Report row, alert, charged). A plain audit block is the positive control.
+  const RETRY = 'Content could not be reviewed right now. Please try again.';
+  const AUDIT_503 = 'The prompt check is temporarily unavailable. Please try again in a moment.';
+  const auditUnavailable = () =>
+    mockAuditPromptServer.mockRejectedValueOnce(
+      new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: AUDIT_503 })
+    );
+  const OPS: Array<[op: 'append' | 'update', arrange: () => void]> = [
+    ['append', () => appendDataPath()],
+    ['update', () => existingRow()],
+  ];
+  const reportRows = () =>
+    mockPool.query.mock.calls.filter(([sql]) => String(sql).includes('shared_kv_reports')).length;
+  const contentBlockAlerts = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([entry]) => (entry as { name?: string })?.name === 'app-blocks-shared-storage-content-block'
+    ).length;
+
+  afterEach(() => resetEnv());
+
+  it.each(OPS)(
+    '%s: refused with the retry message, refunded, no Report, no alert',
+    async (op, arrangeOp) => {
+      arrangeOp();
+      auditUnavailable();
+      const error = await ACT[op]().then(
+        () => undefined,
+        (e: unknown) => e
+      );
+
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(error).toMatchObject({ code: 'BAD_REQUEST', message: RETRY });
+      expect(isEscalatedServerFault(error), 'escalated as our fault').toBe(true);
+      expect(mockReleaseWrite.mock.calls, 'refunded, not charged').toEqual([[{ rejected: false }]]);
+      expect(reportRows(), 'Report rows filed').toBe(0);
+      expect(contentBlockAlerts(), 'content-block alerts').toBe(0);
+      expect(recordedExactlyOnce()).toEqual({ op, outcome: 'moderation_unavailable' });
+    }
+  );
+
+  it.each(OPS)(
+    'PROMPT_CHECK_FAIL_CLOSED off: %s is an audit block again, as before',
+    async (op, arrangeOp) => {
+      setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+      arrangeOp();
+      auditUnavailable();
+      const error = await ACT[op]().then(
+        () => undefined,
+        (e: unknown) => e
+      );
+
+      expect(error).toMatchObject({ code: 'BAD_REQUEST', message: AUDIT_503 });
+      expect(isEscalatedServerFault(error)).toBe(false);
+      expect(mockReleaseWrite.mock.calls).toEqual([[{ rejected: true }]]);
+      expect(reportRows()).toBe(1);
+      expect(contentBlockAlerts()).toBe(1);
+      expect(recordedExactlyOnce()).toEqual({ op, outcome: 'moderation_blocked' });
+    }
+  );
+
+  it.each(OPS)(
+    'POSITIVE CONTROL: %s, a real audit block still files its Report and alert',
+    async (op, arrangeOp) => {
+      arrangeOp();
+      mockAuditPromptServer.mockRejectedValueOnce(new Error('blocked'));
+      await ACT[op]().catch(() => undefined);
+
+      expect(reportRows()).toBe(1);
+      expect(contentBlockAlerts()).toBe(1);
+      expect(mockReleaseWrite.mock.calls).toEqual([[{ rejected: true }]]);
     }
   );
 });

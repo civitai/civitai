@@ -433,10 +433,14 @@ describe('auditPromptServer — still produces today’s side effects', () => {
     expect(mockApplyPendingReviewMute).not.toHaveBeenCalled();
   });
 
-  it('an external-moderation failure is logged by the wrapper and still fails open', async () => {
+  // The classifier itself still fails open (the verdict above); the WRAPPER refuses what that
+  // verdict would let through — see promptAuditing.classifier-unavailable.test.ts.
+  it('an external-moderation failure is logged by the wrapper, which then fails closed', async () => {
     mockModeratePrompt.mockRejectedValueOnce(new Error('classifier down'));
-    await expect(auditPromptServer({ ...base, isGreen: false })).resolves.toBeUndefined();
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    await expect(auditPromptServer({ ...base, isGreen: false })).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+    expect(logToAxiom).toHaveBeenCalledTimes(2);
     expect(logToAxiom).toHaveBeenCalledWith({
       name: 'external-moderation-error',
       type: 'error',

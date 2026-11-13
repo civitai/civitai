@@ -25,7 +25,8 @@
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
 import { liveCatalogReadDeps } from '~/server/registry-adapter/catalog-source.live';
-import { abortableSleep, createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
+import { createPollingAdapter, sharedRead } from '~/server/registry-adapter/cursor';
+import { abortableSleep } from '~/utils/errorHandling';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { createGrpcServer, listenGrpc } from '~/server/registry-adapter/grpc';
 import { liveSharedDocSource } from '~/server/registry-adapter/doc-source.live';

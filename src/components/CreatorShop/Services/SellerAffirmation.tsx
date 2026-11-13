@@ -38,6 +38,7 @@ export function SellerAffirmationCheckbox({
     <Checkbox
       checked={checked}
       onChange={(e) => onChange(e.currentTarget.checked)}
+      styles={{ label: { paddingRight: 'var(--mantine-spacing-md)' } }}
       label={
         <Stack gap={4}>
           <Text size="sm">{SELLER_AFFIRMATION_INTRO}</Text>

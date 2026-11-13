@@ -18,8 +18,8 @@ import { TRPCError } from '@trpc/server';
 const {
   mockIsAppBlocksEnabled,
   mockGetMyAppAnalytics,
-  mockGetRevenueForOwner,
-  mockGetRecentAttributionsForOwner,
+  mockGetAuthorFeeEarningsForOwner,
+  mockGetMyAppRoles,
   mockGetGoodsSalesForOwner,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
@@ -28,8 +28,8 @@ const {
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockGetMyAppAnalytics: vi.fn(),
-  mockGetRevenueForOwner: vi.fn(),
-  mockGetRecentAttributionsForOwner: vi.fn(),
+  mockGetAuthorFeeEarningsForOwner: vi.fn(),
+  mockGetMyAppRoles: vi.fn(),
   mockGetGoodsSalesForOwner: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -60,7 +60,7 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   resolveRange: () => ({ from: new Date(0), to: new Date(0), granularity: 'day' as const }),
 }));
 // 🔴 SPREAD + OVERRIDES, not a hand-listed factory. This suite DOES assert revenue, so it
-// needs the three reads stubbed — but a factory that lists only those fails to LOAD the
+// needs the reads stubbed — but a factory that lists only those fails to LOAD the
 // moment `blocks.router` imports one more export from this module: in CI, in a file nobody
 // was looking at, with a green typecheck. It already had to be edited twice for exactly
 // that (`getGoodsSalesForOwner`, then `unreadableGoodsSales` + `isMissingGoodsTableError`).
@@ -72,9 +72,15 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 // reason — it is the function whose `unavailable` discriminator the flag-off test asserts.
 vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
-  getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
   getGoodsSalesForOwner: (...a: unknown[]) => mockGetGoodsSalesForOwner(...a),
+}));
+vi.mock('~/server/services/blocks/app-collaborator-earnings.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  getMyAppRoles: (...a: unknown[]) => mockGetMyAppRoles(...a),
+}));
+vi.mock('~/server/services/blocks/author-fee-earnings.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  getAuthorFeeEarningsForOwner: (...a: unknown[]) => mockGetAuthorFeeEarningsForOwner(...a),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
@@ -165,10 +171,13 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
   mockGetMyAppAnalytics.mockReset();
   mockGetMyAppAnalytics.mockResolvedValue(SENTINEL);
-  mockGetRevenueForOwner.mockReset();
-  mockGetRevenueForOwner.mockResolvedValue({ summary: {}, topApps: [] });
-  mockGetRecentAttributionsForOwner.mockReset();
-  mockGetRecentAttributionsForOwner.mockResolvedValue([]);
+  mockGetAuthorFeeEarningsForOwner.mockReset();
+  mockGetAuthorFeeEarningsForOwner.mockResolvedValue({
+    accrued: { count: 0, feeBuzz: 0, byBuzzType: {} },
+    settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
+    byApp: [],
+    recent: [],
+  });
   mockGetGoodsSalesForOwner.mockReset();
   mockGetGoodsSalesForOwner.mockResolvedValue({
     sales: {
@@ -327,12 +336,58 @@ describe('getMyAppAnalytics — input validation & delegation', () => {
   });
 });
 
+describe('getMyApps — the card-purchase share is not returned', () => {
+  it('rows carry the app and the caller’s role, but no lifetime share', async () => {
+    mockGetMyAppRoles.mockResolvedValue([
+      { appBlockId: 'apb_1', role: 'editor', lifetimeShareCents: 4321, lifetimeCount: 9 },
+    ]);
+    mockDbRead.appBlock.findMany.mockResolvedValue([
+      {
+        id: 'apb_1',
+        blockId: 'blk_1',
+        appId: 'app_1',
+        status: 'approved',
+        manifest: {},
+        app: { name: 'One' },
+      },
+    ]);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const rows = await caller.getMyApps();
+
+    expect(rows).toEqual([
+      {
+        id: 'apb_1',
+        blockId: 'blk_1',
+        appId: 'app_1',
+        status: 'approved',
+        appName: 'One',
+        manifest: {},
+        role: 'editor',
+      },
+    ]);
+  });
+});
+
 describe('getMyRevenue — dark-flag short-circuit', () => {
-  it('flag ON (moderator): runs the revenue aggregate', async () => {
+  it('flag ON: returns the caller’s author fees, scoped, and no card-purchase share', async () => {
+    const authorFees = {
+      accrued: { count: 3, feeBuzz: 41, byBuzzType: { yellow: 41 } },
+      settled: { count: 5, feeBuzz: 97, byBuzzType: { yellow: 90, blue: 7 } },
+      byApp: [],
+      recent: [],
+    };
+    mockGetAuthorFeeEarningsForOwner.mockResolvedValue(authorFees);
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
-    expect(mockGetRevenueForOwner).toHaveBeenCalledTimes(1);
-    expect(result.recentAttributions).toEqual([]);
+
+    expect(mockGetAuthorFeeEarningsForOwner).toHaveBeenCalledWith({
+      ownerUserId: modUser.id,
+      appBlockId: 'apb_1',
+      from: undefined,
+      to: undefined,
+    });
+    expect(result.authorFees).toStrictEqual(authorFees);
+    expect(Object.keys(result).sort()).toEqual(['authorFees', 'goods']);
   });
 
   it('flag ON: the DIGITAL-GOODS bridge runs too, scoped and returned', async () => {
@@ -379,10 +434,8 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // read that silently ignored `from`/`to` would report the lifetime total under
     // a period heading.
     //
-    // 🔴 BOTH, not just the new one. Adding the goods branch rewrote all three call
-    // sites, and `getRevenueForOwner`'s arguments were asserted NOWHERE — only its
-    // call COUNT — so dropping `from`/`to` from the pre-existing attribution read
-    // in that refactor would have shipped silently.
+    // 🔴 BOTH, not just one: a read that drops `from`/`to` reports a lifetime total under a
+    // period heading.
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     await caller.getMyRevenue({
       from: '2026-09-01T00:00:00.000Z',
@@ -393,15 +446,18 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     const goodsArgs = mockGetGoodsSalesForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
     expect(goodsArgs.from).toEqual(from);
     expect(goodsArgs.to).toEqual(to);
-    const revenueArgs = mockGetRevenueForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
-    expect(revenueArgs.from).toEqual(from);
-    expect(revenueArgs.to).toEqual(to);
+    const feeArgs = mockGetAuthorFeeEarningsForOwner.mock.calls[0]?.[0] as {
+      from?: Date;
+      to?: Date;
+    };
+    expect(feeArgs.from).toEqual(from);
+    expect(feeArgs.to).toEqual(to);
   });
 
   it('UNREADABLE goods table: the rail is flagged, the rest of the payload survives', async () => {
     // 🔴 `block_good_purchase` is applied BY HAND per environment, so this proc can
     // run against a database without it. Unguarded, the new branch took the whole
-    // of `getMyRevenue` down — including the attribution figures, which were
+    // of `getMyRevenue` down — including the other figures, which were
     // readable — so both revenue pages failed outright.
     // 🔴 THE CLASSIFICATION IS LOAD-BEARING, AND IT IS CODE **OR** MESSAGE. The
     // router degrades only on `isMissingGoodsTableError`, which now delegates to the
@@ -416,15 +472,15 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     mockGetGoodsSalesForOwner.mockRejectedValue(
       Object.assign(new Error('The table `block_good_purchase` does not exist'), { code: 'P2021' })
     );
-    // 🔴 NON-ZERO attribution figures, deliberately. The default fixture returns an
-    // empty summary, against which "the attribution half survived" is unfalsifiable —
-    // a proc that dropped it entirely would look identical. These literals appear
-    // nowhere else in this file, so they can only have come through intact.
-    mockGetRevenueForOwner.mockResolvedValue({
-      summary: { confirmed: { count: 4, grossCents: 517, shareCents: 362 } },
-      topApps: [{ appBlockId: 'apb_1', shareCents: 362, count: 4 }],
-    });
-    mockGetRecentAttributionsForOwner.mockResolvedValue([{ id: 'bba_survivor' }]);
+    // 🔴 NON-ZERO author-fee figures, deliberately: against the empty default, "the
+    // author-fee half survived" is unfalsifiable. These literals appear nowhere else.
+    const survivor = {
+      accrued: { count: 4, feeBuzz: 517, byBuzzType: { yellow: 517 } },
+      settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
+      byApp: [],
+      recent: [{ id: 'bafa_survivor' }],
+    };
+    mockGetAuthorFeeEarningsForOwner.mockResolvedValue(survivor);
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
 
     const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
@@ -434,11 +490,9 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // prevent, which is why the catch returns `unreadableGoodsSales()`.
     expect(result.goods.unavailable).toBe('unreadable');
     expect(result.goods.sales.count).toBe(0);
-    // ...and the attribution half arrives untouched: one unreadable rail must degrade
+    // ...and the author-fee half arrives untouched: one unreadable rail must degrade
     // to a labelled gap, not take down figures that were readable.
-    expect(result.summary.confirmed).toEqual({ count: 4, grossCents: 517, shareCents: 362 });
-    expect(result.topApps).toEqual([{ appBlockId: 'apb_1', shareCents: 362, count: 4 }]);
-    expect(result.recentAttributions).toEqual([{ id: 'bba_survivor' }]);
+    expect(result.authorFees).toStrictEqual(survivor);
     // The PAYLOAD-level discriminator must stay absent: the payload is a real
     // measurement; it is one bucket inside it that could not be read.
     expect(result.unavailable).toBeUndefined();
@@ -504,12 +558,10 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     mockIsAppBlocksEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
-    expect(result.topApps).toEqual([]);
-    expect(result.recentAttributions).toEqual([]);
-    expect(result.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
-    expect(mockGetRevenueForOwner).not.toHaveBeenCalled();
-    expect(mockGetRecentAttributionsForOwner).not.toHaveBeenCalled();
-    // The goods read is behind the SAME short-circuit. A third aggregate added
+    expect(result.authorFees.accrued.feeBuzz).toBe(0);
+    expect(result.authorFees.recent).toEqual([]);
+    expect(mockGetAuthorFeeEarningsForOwner).not.toHaveBeenCalled();
+    // The goods read is behind the SAME short-circuit. An aggregate added
     // after the guard would leak live sales to a flag-off caller while every
     // assertion above still passed.
     expect(mockGetGoodsSalesForOwner).not.toHaveBeenCalled();
@@ -531,7 +583,7 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
     expect(result.unavailable).toBeUndefined();
-    expect(mockGetRevenueForOwner).toHaveBeenCalledTimes(1);
+    expect(mockGetAuthorFeeEarningsForOwner).toHaveBeenCalledTimes(1);
   });
 });
 

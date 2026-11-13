@@ -6,7 +6,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -28,7 +27,6 @@ const SITE_SEARCH_RETRY_AFTER_SECONDS = 2;
 const searchableIndexes = (retired: readonly string[]) =>
   [
     MODELS_SEARCH_INDEX,
-    IMAGES_SEARCH_INDEX,
     ARTICLES_SEARCH_INDEX,
     USERS_SEARCH_INDEX,
     COLLECTIONS_SEARCH_INDEX,
@@ -85,7 +83,6 @@ export function viewerSearchClauses(indexUid: string, viewer: SiteSearchViewer):
     const own = Number.isInteger(userId) && userId > 0 ? ` OR user.id = ${userId}` : '';
     if (indexUid === MODELS_SEARCH_INDEX)
       clauses.push(`poi != true${own}`, `availability != ${Availability.Private}${own}`);
-    if (indexUid === IMAGES_SEARCH_INDEX) clauses.push('poi != true');
   }
 
   if (viewer.browsingLevelCap !== undefined) {
@@ -164,7 +161,7 @@ export function shapeModelHit(
   return rest;
 }
 
-type ComicHit = Record<string, unknown> & {
+export type ComicHit = Record<string, unknown> & {
   coverImageNsfwLevel?: unknown;
   _formatted?: Record<string, unknown>;
 };
@@ -173,7 +170,7 @@ type ComicHit = Record<string, unknown> & {
  * A capped site gets a cover only when every level it carries is inside the cap, stricter than
  * model images (any overlap). An unrated cover counts as outside.
  */
-function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
+export function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined) return hit;
   const level = Number(hit.coverImageNsfwLevel) || 0;
   if (level > 0 && (level & ~browsingLevelCap) === 0) return hit;

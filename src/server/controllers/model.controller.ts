@@ -153,6 +153,7 @@ import {
   unpublishModelById,
   removedWithOwnerEditError,
   updateModelById,
+  purgeHeldShowcase,
   queueModelEarlyAccessReindex,
   upsertModel,
 } from '~/server/services/model.service';
@@ -2358,6 +2359,7 @@ export const updateGallerySettingsHandler = async ({
     const { id, gallerySettings } = input;
     const { user: sessionUser } = ctx;
     let prevPinnedPosts: ModelGallerySettingsSchema['pinnedPosts'];
+    let heldLevelChanged = false;
 
     const updatedModel = await updateModelById({
       id,
@@ -2382,10 +2384,15 @@ export const updateGallerySettingsHandler = async ({
           : sfwLocked
           ? { level: modelBrowsingLevelLimit(model) }
           : null;
+        heldLevelChanged =
+          (model.minor || model.sfwOnly) &&
+          (model.gallerySettings as ModelGallerySettingsSchema | null)?.level !==
+            updatedSettings?.level;
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },
     });
     await bustModelGallerySettings([id]);
+    if (heldLevelChanged) await purgeHeldShowcase(id);
 
     // A moderator's pin on someone else's model is curation, not the creator's credit.
     if (gallerySettings && updatedModel.userId === sessionUser.id) {

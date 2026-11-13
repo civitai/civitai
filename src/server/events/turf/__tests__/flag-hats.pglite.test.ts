@@ -56,6 +56,7 @@ const { placeFlagHats, placeTurfSticker, getFlagSummary } = await import(
   '~/server/events/turf/turf.service'
 );
 const { flagRaceConfigKey } = await import('~/server/events/scoring/award-results');
+const { flagSummaryKey, flagSummaryGenKey } = await import('~/server/events/turf/flag-day');
 
 const PLACER = 5;
 // Keeps Hat Turf off their own images: a flag takes hats anyway.
@@ -245,5 +246,46 @@ describe('the shared flag summary', () => {
     // The recount says Blue; the freeze paid Pink (say, before an exclusion): the badge says Pink.
     const closed = await getFlagSummary('e', new Date(CUT.getTime() + 3_600_000));
     expect(closed?.flags[0].winners).toEqual(['Pink']);
+  });
+
+  it('caches an open or unfrozen day for seconds, and a frozen day for longer', async () => {
+    const lastTtl = () => (redisMock.sysRedis.set.mock.calls.at(-1)?.[2] as { EX: number }).EX;
+    await add(5);
+    await getFlagSummary('e', BEFORE);
+    const open = lastTtl();
+    await getFlagSummary('e', CUT);
+    const unfrozen = lastTtl();
+    await db.query(
+      `INSERT INTO "EventAwardResult" (event, "sourceId", kind, team, points, at, inputs)
+       VALUES ('e', $1, 'flag', NULL, 0, $2, '{}')`,
+      [`flag:${dayId}:${FLAG}`, CUT]
+    );
+    await getFlagSummary('e', new Date(CUT.getTime() + 3_600_000));
+    const frozen = lastTtl();
+    // Until the freeze has run, a cached summary must not hide it for long.
+    expect(open).toBeLessThanOrEqual(10);
+    expect(unfrozen).toBeLessThanOrEqual(10);
+    expect(frozen).toBeGreaterThan(unfrozen);
+  });
+
+  it('never serves a summary built before the latest swap', async () => {
+    await add(5);
+    await getFlagSummary('e', BEFORE);
+    const cached = redisMock.sysRedis.set.mock.calls.at(-1)?.[1] as string;
+    const serve = (gen: string | null) =>
+      redisMock.sysRedis.get.mockImplementation((async (key: string) => {
+        if (key === flagRaceConfigKey('e')) return JSON.stringify(config);
+        if (key === flagSummaryKey('e')) return cached;
+        if (key === flagSummaryGenKey('e')) return gen;
+        return null;
+      }) as never);
+    serve(null);
+    redisMock.sysRedis.set.mockClear();
+    await getFlagSummary('e', BEFORE);
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    // A swap since (the generation moved on): the cached day is rebuilt, not served.
+    serve('1');
+    await getFlagSummary('e', BEFORE);
+    expect(redisMock.sysRedis.set).toHaveBeenCalledOnce();
   });
 });

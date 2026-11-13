@@ -5,7 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const h = vi.hoisted(() => ({
   submitPresetImageGen: vi.fn(async () => ({ id: 'wf-1' })),
-  auditPromptServer: vi.fn(async () => undefined),
+  auditPromptServer: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
 }));
 
 vi.mock('~/server/services/subscriptions.service', () => ({
@@ -31,6 +31,8 @@ vi.mock('~/utils/signal-client', () => ({
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
 import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generation-input-urls';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
+import { TRPCError } from '@trpc/server';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const OWNER = 5;
 const OTHER_USER = 7;
@@ -40,8 +42,11 @@ const CDN = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${KEY}/original=tr
 type Panel = { id: number; status: ComicPanelStatus; errorMessage?: string };
 let panels: Panel[];
 
-function givenPanel(url: string, owner: Record<string, unknown> = {}) {
-  panels = [{ id: 1, status: ComicPanelStatus.Enqueued }];
+function givenPanel(url: string, owner: Record<string, unknown> = {}, count = 1) {
+  panels = Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    status: ComicPanelStatus.Enqueued,
+  }));
   dbMock.dbRead.comicPanel.findMany.mockImplementation((async () =>
     panels
       .filter((p) => p.status === ComicPanelStatus.Enqueued)
@@ -146,5 +151,80 @@ describe('process-enqueued-comic-panels: account restriction', () => {
       errorMessage: 'User account is restricted',
     });
     expect(h.submitPresetImageGen).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The pre-submit prompt audit's retry-able 503 (the external classifier unavailable, or the audit's
+ * own reads failing) means nothing judged the prompt. The panel stays Enqueued so the next run
+ * retries it, rather than being Failed with the outage's message; the rest of the run stops.
+ */
+describe('process-enqueued-comic-panels: prompt check unavailable', () => {
+  const unavailable = () =>
+    new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
+    });
+
+  beforeEach(() => resetEnv());
+
+  it('leaves the panel Enqueued, submits nothing, and stops the run', async () => {
+    givenPanel(CDN, {}, 3);
+    // Panel 3 belongs to another user, so stopping "the run" is pinned past this user's loop.
+    const ownPanels = dbMock.dbRead.comicPanel.findMany.getMockImplementation()!;
+    dbMock.dbRead.comicPanel.findMany.mockImplementation((async (...a: unknown[]) =>
+      (
+        (await (ownPanels as (...x: unknown[]) => Promise<unknown[]>)(...a)) as Array<{
+          id: number;
+          chapter: { project: { userId: number; user: { id: number } } };
+        }>
+      ).map((p) =>
+        p.id === 3
+          ? {
+              ...p,
+              chapter: {
+                project: {
+                  ...p.chapter.project,
+                  userId: OTHER_USER,
+                  user: { ...p.chapter.project.user, id: OTHER_USER },
+                },
+              },
+            }
+          : p
+      )) as never);
+    dbMock.dbWrite.$queryRaw.mockImplementation((async () => []) as never);
+    h.auditPromptServer.mockRejectedValueOnce(unavailable());
+    await run();
+    expect(panels.map((p) => p.status)).toEqual([
+      ComicPanelStatus.Enqueued,
+      ComicPanelStatus.Enqueued,
+      ComicPanelStatus.Enqueued,
+    ]);
+    expect(dbMock.dbWrite.comicPanel.update).not.toHaveBeenCalled();
+    expect(h.submitPresetImageGen).not.toHaveBeenCalled();
+    expect(h.auditPromptServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('PROMPT_CHECK_FAIL_CLOSED off: the panel is Failed, as before', async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    givenPanel(CDN);
+    givenPrivateImageOf(OWNER);
+    h.auditPromptServer.mockRejectedValueOnce(unavailable());
+    await run();
+    expect(panels[0].status).toBe(ComicPanelStatus.Failed);
+    expect(h.submitPresetImageGen).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a content refusal still fails the panel', async () => {
+    givenPanel(CDN);
+    givenPrivateImageOf(OWNER);
+    h.auditPromptServer.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged' })
+    );
+    await run();
+    expect(panels[0]).toMatchObject({
+      status: ComicPanelStatus.Failed,
+      errorMessage: 'Job processing failed: Your prompt was flagged',
+    });
   });
 });

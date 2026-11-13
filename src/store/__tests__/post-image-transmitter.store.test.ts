@@ -9,7 +9,11 @@ vi.mock('~/utils/file-utils', async (importOriginal) => ({
 }));
 vi.mock('@grafana/faro-web-sdk', () => ({ faro: { api: { pushError: h.pushError } } }));
 
-import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import {
+  mediaDropzoneData,
+  orchestratorMediaTransmitter,
+} from '~/store/post-image-transmitter.store';
+import { MEDIA_IDLE_TIMEOUT_MS } from '~/utils/file-utils';
 
 const OK_URL = 'https://orchestration.example.com/abc/ok.jpeg?token=secret-ok';
 const BAD_URL = 'https://cdn.example.com/def/bad.jpeg?token=secret-bad';
@@ -59,7 +63,30 @@ describe('orchestratorMediaTransmitter.getFiles', () => {
     const { files, failedCount } = await orchestratorMediaTransmitter.getFiles('k');
 
     expect([files.length, failedCount]).toEqual([0, 1]);
-    expect(h.fetchBlob).toHaveBeenCalledWith(OK_URL, undefined, { requireOk: true });
+    // The generator import reads with an idle timeout, not a total cap: long videos are large.
+    expect(h.fetchBlob).toHaveBeenCalledWith(OK_URL, undefined, {
+      requireOk: true,
+      idleTimeoutMs: MEDIA_IDLE_TIMEOUT_MS,
+    });
     expect(h.pushError.mock.calls[0][1].context.errorName).toBe('NoBlob');
+  });
+});
+
+// Drag-and-drop calls getData without a catch, so a failed import must resolve, not reject.
+describe('mediaDropzoneData.getData', () => {
+  it('resolves undefined and reports when the fetch fails', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('network'));
+    vi.stubGlobal('fetch', fetchMock);
+    h.pushError.mockReset();
+    try {
+      const url = 'https://orchestration.civitai.com/v2/blobs/a.mp4?sig=x';
+      mediaDropzoneData.setData(url, {});
+
+      await expect(mediaDropzoneData.getData(url)).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenCalled();
+      expect(h.pushError.mock.calls[0][1].context.errorName).toBe('TypeError');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

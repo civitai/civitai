@@ -524,6 +524,11 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
 vi.mock('~/server/services/generation/generation.service', () => ({
   resolveCanGenerateForVersions: (...args: unknown[]) => mockResolveCanGenerateForVersions(...args),
   getResourceData: (...args: unknown[]) => mockGetResourceData(...args),
+  // The global generation kill switch, read on every generation submit: on, so it admits.
+  getGenerationStatusState: async () => ({
+    status: { mode: 'enabled', message: null },
+    known: true,
+  }),
 }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: (...args: unknown[]) => mockGetHighestTierSubscription(...args),
@@ -1508,8 +1513,8 @@ describe('blocks.submitWorkflow', () => {
     // NOTHING on real traffic: no shipped client sends one (the SDK has zero
     // occurrences; the live tipping block hand-rolls its POST). Meanwhile the actual
     // double-charge is server-side and unconditional — `submitWorkflow` calls
-    // `submitWorkflowWithRetry` with maxAttempts=3 and no per-attempt timeout on the
-    // real submit, and that wrapper's own doc says it adds NO idempotency key: "the
+    // `submitWorkflowWithRetry` with maxAttempts=3 (5xx, network and timed-out attempts
+    // retried) on the real submit, and that wrapper's own doc says it adds NO idempotency key: "the
     // CALLER must set `body.externalId`". So the server now MINTS one when the client
     // sends none.
     it('🔴 UNKEYED submit MINTS a server-side externalId (a client key is NOT the gate)', async () => {

@@ -40,7 +40,10 @@ const scannedNoJobs = Prisma.sql`(i.ingestion = 'Scanned'::"ImageIngestionStatus
 )})`;
 const pendingManual = Prisma.sql`(i.ingestion = 'PendingManualAssignment'::"ImageIngestionStatus")`;
 // What the shared write accepts, in a judge-rated collection: so the counts match what it queues.
-const inScope = Prisma.sql`(${inJudgeCollection} AND ${rescannableImageSql('i')})`;
+// Left out while a scan workflow on the row may still be running. Only rows waiting for a
+// manual level can carry one in this scope.
+const runScope = Prisma.sql`(${inJudgeCollection} AND NOT ${hasScanWorkflowSql('i')})`;
+const inScope = Prisma.sql`(${runScope} AND ${rescannableImageSql('i')})`;
 // Counted only: the shared write marks these Error instead of queuing them.
 const outOfRetries = Prisma.sql`COALESCE((i."scanJobs"->>'retryCount')::int, 0) >= ${IMAGE_RESCAN_RETRY_LIMIT}`;
 const hasScannerTags = Prisma.sql`EXISTS (
@@ -99,6 +102,17 @@ async function scopeControls() {
   return row ?? { inScopeWithScannerTags: 0, outOfScopeScannedWithoutScannerTags: 0 };
 }
 
+/** Rescannable rows in judge-rated collections left out for carrying a scan workflow. */
+async function countExcludedWithScanWorkflow(ids?: number[]) {
+  const [row] = await dbRead.$queryRaw<{ total: number; pendingManual: number }[]>`
+    SELECT count(*)::int AS total, count(*) FILTER (WHERE ${pendingManual})::int AS "pendingManual"
+    FROM "Image" i
+    WHERE ${inJudgeCollection} AND ${rescannableImageSql('i')} AND ${hasScanWorkflowSql('i')}
+      ${idFilter(ids)}
+  `;
+  return row ?? { total: 0, pendingManual: 0 };
+}
+
 /** In-scope rows held for moderator review: a rescan's verdict would replace the hold. */
 async function countHeld(ids?: number[]) {
   const [row] = await dbRead.$queryRaw<{ held: number }[]>`
@@ -145,13 +159,14 @@ export default WebhookEndpoint(async (req, res) => {
     }
   }
 
-  const [cohorts, heldForReview, floorApplied] = await Promise.all([
+  const [cohorts, heldForReview, floorApplied, excludedWithScanWorkflow] = await Promise.all([
     countCohorts(ids),
     countHeld(ids),
     floorMigrationApplied(),
+    countExcludedWithScanWorkflow(ids),
   ]);
   console.log(
-    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} outOfRetries=${cohorts.outOfRetries} heldForReview=${heldForReview} floorMigrationApplied=${floorApplied} dryRun=${dryRun}`
+    `rescan-judge-collection-images: scannedNoJobs=${cohorts.scannedNoJobs} pendingManual=${cohorts.pendingManual} outOfRetries=${cohorts.outOfRetries} heldForReview=${heldForReview} floorMigrationApplied=${floorApplied} excludedWithScanWorkflow=${excludedWithScanWorkflow.total} (pendingManual=${excludedWithScanWorkflow.pendingManual}) dryRun=${dryRun}`
   );
   if (dryRun) {
     const [wide, controls] = await Promise.all([countWide(), scopeControls()]);
@@ -163,6 +178,8 @@ export default WebhookEndpoint(async (req, res) => {
       cohorts,
       heldForReview,
       floorMigrationApplied: floorApplied,
+      // Left out of the run; `pendingManual` is how many of them wait for a manual level.
+      excludedWithScanWorkflow,
       wide,
       controls,
     });
@@ -183,7 +200,7 @@ export default WebhookEndpoint(async (req, res) => {
     processor: async ({ batch, batchNumber, batchCount }) => {
       if (!batch.length) return;
       // The write checks the scope again, so a row that changed since the read is skipped.
-      const count = await queueNeverScannedRescan(batch, inJudgeCollection);
+      const count = await queueNeverScannedRescan(batch, runScope);
       queued += count.queued.length;
       markedError += count.failed.length;
       console.log(

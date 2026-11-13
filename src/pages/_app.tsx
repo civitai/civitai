@@ -395,7 +395,7 @@ function MyApp(props: CustomAppProps) {
                                       {...cookies.referrals}
                                       pending={referralsPending}
                                     >
-                                      <FiltersProvider>
+                                      <FiltersProvider isRed={domain === 'red'}>
                                         <AdsProvider gated={adsGated}>
                                           <HiddenPreferencesProvider>
                                             <CivitaiLinkProvider>
@@ -529,8 +529,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const sessionCookie = sessionCookieKind(cookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
-    await import('~/server/utils/server-domain');
+  const { serverDomainMap, getRequestDomainColor, getAllServerHosts } = await import(
+    '~/server/utils/server-domain'
+  );
   const serverDomains: ServerDomains = {
     green: serverDomainMap.green,
     blue: serverDomainMap.blue,
@@ -538,7 +539,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   };
   const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
   // Provider list comes from the hub (single source of provider config/secrets), cached + fail-open.
-  const availableOAuthProviders = await getAvailableOAuthProviders();
+  // `typeof window` block: the module reads the flag client, which must stay out of the client bundle.
+  let availableOAuthProviders: string[] = [];
+  if (typeof window === 'undefined') {
+    const { getAvailableOAuthProviders } = await import('~/server/auth/oauth-providers');
+    availableOAuthProviders = await getAvailableOAuthProviders();
+  }
 
   const region = getRegion(request);
 

@@ -155,6 +155,7 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 type GetAllPostsRaw = {
   id: number;
@@ -1541,7 +1542,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
   let respJson;
   try {
-    const response = await fetch(src);
+    const response = await outboundFetch(src, { timeoutMs: 10_000 });
     respJson = await response.json();
   } catch (e) {
     return log({ user, message: 'Failure fetching JSON data from external URL.', domain: src });

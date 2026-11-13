@@ -4,11 +4,7 @@ import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
-import {
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { collectionsSearchIndex, imagesMetricsSearchIndex } from '~/server/search-index';
 import {
   getNsfwLevelRelatedEntities,
   updateCollectionsNsfwLevels,

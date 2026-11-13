@@ -3,6 +3,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { HttpCaller } from '../httpCaller';
 import type { Orchestrator } from './orchestrator.types';
 
+// copyAsset is sent with `wait: true`, so the reply comes only after a large training asset has
+// been copied, which can take minutes. It gets its own ceiling instead of HttpCaller's 120 s default.
+const COPY_ASSET_TIMEOUT_MS = 600_000;
+
 class OrchestratorCaller extends HttpCaller {
   constructor(endpoint?: string, token?: string) {
     endpoint ??= env.ORCHESTRATOR_ENDPOINT;
@@ -25,6 +29,7 @@ class OrchestratorCaller extends HttpCaller {
     return this.post<Orchestrator.Training.CopyAssetJobResponse>('/v1/consumer/jobs', {
       payload: { $type: 'copyAsset', ...payload },
       queryParams,
+      timeout: COPY_ASSET_TIMEOUT_MS,
     });
   }
 
