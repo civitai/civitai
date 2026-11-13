@@ -138,6 +138,33 @@ describe('submitWorkflow — a real submit to an orchestrator that never answers
     expect(elapsedMs).toBeLessThanOrEqual(31_000);
   });
 
+  // The queue wording is for the generation form, where the user has a queue to check. Every other
+  // caller (training, scans, comics, resource loads) keeps the same bounds but the generic copy.
+  it.each([['other'], ['preset'], [undefined]] as const)(
+    'a non-generate submit (source %s) that runs out of time gets the generic 503 copy',
+    async (source) => {
+      mockSubmitWorkflow.mockImplementation(settleOnlyOnAbort);
+
+      const { settled, elapsedMs } = await runUntilSettled(() =>
+        submitWorkflow({
+          token: 'tok',
+          body: { steps: [], externalId: KEY } as never,
+          ...(source ? { source } : {}),
+        })
+      );
+
+      expect(settled, 'submit never settled within 120s of fake time').toBeDefined();
+      const err = settled?.value as TRPCError;
+      expect(err).toBeInstanceOf(TRPCError);
+      expect(err.code).toBe('SERVICE_UNAVAILABLE');
+      expect(err.message).toBe(
+        'Generation services are temporarily unavailable. Please try again.'
+      );
+      // Same bounds as generate.
+      expect(elapsedMs).toBeLessThanOrEqual(61_000);
+    }
+  );
+
   it('recovers when the first attempt hangs and the retry is answered', async () => {
     mockSubmitWorkflow
       .mockImplementationOnce(settleOnlyOnAbort)
