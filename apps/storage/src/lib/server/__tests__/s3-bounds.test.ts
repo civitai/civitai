@@ -45,19 +45,22 @@ function handlerConfig(client: { config: { requestHandler: unknown } }) {
 }
 
 describe('storage S3 client bounds', () => {
-  it('S3_CLIENT_TIMEOUTS=off builds clients without the timeouts (the off-switch)', async () => {
-    answer = true;
-    process.env.S3_CLIENT_TIMEOUTS = 'off';
-    try {
-      const client = buildS3Client(backend());
-      await client.send(new HeadObjectCommand({ Bucket: 'b', Key: 'k' }));
-      const handler = handlerConfig(client);
-      expect(handler.connectionTimeout).toBeUndefined();
-      expect(handler.requestTimeout).toBeUndefined();
-    } finally {
-      delete process.env.S3_CLIENT_TIMEOUTS;
+  it.each(['off', 'OFF', '0', 'false'])(
+    'S3_CLIENT_TIMEOUTS=%s builds clients without the timeouts (the off-switch)',
+    async (value) => {
+      answer = true;
+      process.env.S3_CLIENT_TIMEOUTS = value;
+      try {
+        const client = buildS3Client(backend());
+        await client.send(new HeadObjectCommand({ Bucket: 'b', Key: 'k' }));
+        const handler = handlerConfig(client);
+        expect(handler.connectionTimeout).toBeUndefined();
+        expect(handler.requestTimeout).toBeUndefined();
+      } finally {
+        delete process.env.S3_CLIENT_TIMEOUTS;
+      }
     }
-  });
+  );
 
   it('headObject against a backend that never answers rejects within the bounds, after maxAttempts', async () => {
     const s3 = createS3Client(backend(), {
@@ -88,8 +91,11 @@ describe('storage S3 client bounds', () => {
 
     expect(await client.config.maxAttempts()).toBe(3); // the SDK default, untouched
     expect(handlerConfig(client)).toMatchObject({
-      connectionTimeout: S3_CLIENT_BOUNDS.connectionTimeoutMs,
-      requestTimeout: S3_CLIENT_BOUNDS.requestTimeoutMs,
+      connectionTimeout: 10_000,
+      requestTimeout: 30_000,
+      // Sized past smithy's 50: connectionTimeout also covers waiting for a free socket.
+      httpAgent: { maxSockets: 256 },
+      httpsAgent: { maxSockets: 256 },
     });
   });
 });

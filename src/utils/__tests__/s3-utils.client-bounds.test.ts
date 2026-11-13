@@ -46,16 +46,27 @@ async function boundsOf(client: S3Client) {
   const handler = handlerConfig(client) as {
     connectionTimeout?: number;
     requestTimeout?: number;
+    httpAgent?: { maxSockets?: number };
+    httpsAgent?: { maxSockets?: number };
   };
   return {
     maxAttempts: await client.config.maxAttempts(),
     connectionTimeout: handler.connectionTimeout,
     requestTimeout: handler.requestTimeout,
+    maxSockets: [handler.httpAgent?.maxSockets, handler.httpsAgent?.maxSockets],
   };
 }
 
 // Attempts stay at the SDK default (3); only the connect and idle timeouts are added.
-const bounded = { maxAttempts: 3, connectionTimeout: 3_000, requestTimeout: 30_000 };
+// connectionTimeout also covers waiting for a free socket, so the memoised client's pool is sized well
+// past smithy's default of 50; otherwise call 51+ under load fails at the connect timeout instead of
+// queueing.
+const bounded = {
+  maxAttempts: 3,
+  connectionTimeout: 10_000,
+  requestTimeout: 30_000,
+  maxSockets: [256, 256],
+};
 
 /** The SDK's resolved HTTP handler config (populated once the handler has served a request). */
 function handlerConfig(client: { config: { requestHandler: unknown } }) {
@@ -82,4 +93,17 @@ describe('s3-utils clients', () => {
     expect(getB2S3Client()).toBe(getB2S3Client());
     expect(getS3Client()).toBe(getS3Client());
   });
+
+  it.each(['off', 'OFF', '0', 'false'])(
+    'S3_CLIENT_TIMEOUTS=%s is a full rollback: a fresh client per call, as before',
+    (value) => {
+      process.env.S3_CLIENT_TIMEOUTS = value;
+      try {
+        expect(getS3Client()).not.toBe(getS3Client());
+        expect(getB2S3Client()).not.toBe(getB2S3Client());
+      } finally {
+        delete process.env.S3_CLIENT_TIMEOUTS;
+      }
+    }
+  );
 });

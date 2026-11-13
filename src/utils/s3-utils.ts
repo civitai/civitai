@@ -1,4 +1,4 @@
-import { newS3Client } from '~/utils/s3-client-factory';
+import { newS3Client, s3ClientTimeoutsOff } from '~/utils/s3-client-factory';
 import type { GetObjectCommandInput, S3Client } from '@aws-sdk/client-s3';
 import {
   AbortMultipartUploadCommand,
@@ -47,24 +47,27 @@ const B2_BUCKET_NAMES: ReadonlySet<string> = new Set(
 
 let _b2S3Client: S3Client | null = null;
 // One client per process: the config is fixed env, and a client per call also meant a connection pool
-// per call.
+// per call. S3_CLIENT_TIMEOUTS=off goes back to a fresh client per call (the full rollback).
 export function getB2S3Client() {
-  if (!env.S3_UPLOAD_B2_ACCESS_KEY || !env.S3_UPLOAD_B2_SECRET_KEY || !env.S3_UPLOAD_B2_ENDPOINT) {
+  const accessKeyId = env.S3_UPLOAD_B2_ACCESS_KEY;
+  const secretAccessKey = env.S3_UPLOAD_B2_SECRET_KEY;
+  const endpoint = env.S3_UPLOAD_B2_ENDPOINT;
+  if (!accessKeyId || !secretAccessKey || !endpoint) {
     throw new Error('B2 upload credentials not configured');
   }
   // Wrap with the additive B2 PUT-metrics middleware (counts server-side .send()s;
   // presigned uploads never hit this path). Behavior-neutral.
-  return (_b2S3Client ??= instrumentB2Client(
-    newS3Client({
-      credentials: {
-        accessKeyId: env.S3_UPLOAD_B2_ACCESS_KEY,
-        secretAccessKey: env.S3_UPLOAD_B2_SECRET_KEY,
-      },
-      region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
-      endpoint: env.S3_UPLOAD_B2_ENDPOINT,
-      forcePathStyle: true,
-    })
-  ));
+  const build = () =>
+    instrumentB2Client(
+      newS3Client({
+        credentials: { accessKeyId, secretAccessKey },
+        region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+        endpoint,
+        forcePathStyle: true,
+      })
+    );
+  if (s3ClientTimeoutsOff()) return build();
+  return (_b2S3Client ??= build());
 }
 
 export function getUploadS3Client(backend: UploadBackend = 'default') {
@@ -134,7 +137,7 @@ let _b2ImageProbeS3Client: S3Client | null = null;
  * the live upload-completion endpoints (`src/pages/api/upload/complete.ts`,
  * `src/pages/api/upload/abort.ts`), the announcement media check
  * (`src/server/jobs/announcement-media-check.ts`) and the server-side upload/delete paths.
- * Those WANT a retry (the factory's two attempts) — a transient 500 there loses a user's bytes.
+ * Those WANT the SDK's retries (3 attempts) — a transient 500 there loses a user's bytes.
  * Taking retries away from all of them to bound a telemetry probe would be a production change
  * far wider than the probe. So the probe gets its own client and the shared factory above is
  * untouched.
@@ -295,14 +298,17 @@ export function getS3Client() {
   const missing = missingEnvs();
   if (missing.length > 0) throw new Error(`Next S3 Upload: Missing ENVs ${missing.join(', ')}`);
 
-  return (_s3Client ??= newS3Client({
-    credentials: {
-      accessKeyId: env.S3_UPLOAD_KEY,
-      secretAccessKey: env.S3_UPLOAD_SECRET,
-    },
-    region: env.S3_UPLOAD_REGION,
-    endpoint: env.S3_UPLOAD_ENDPOINT,
-  }));
+  const build = () =>
+    newS3Client({
+      credentials: {
+        accessKeyId: env.S3_UPLOAD_KEY,
+        secretAccessKey: env.S3_UPLOAD_SECRET,
+      },
+      region: env.S3_UPLOAD_REGION,
+      endpoint: env.S3_UPLOAD_ENDPOINT,
+    });
+  if (s3ClientTimeoutsOff()) return build();
+  return (_s3Client ??= build());
 }
 
 export async function getBucket() {
