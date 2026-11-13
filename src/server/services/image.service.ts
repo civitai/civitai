@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { decreaseDate } from '~/utils/date-helpers';
+import { ownerHeld } from '~/server/services/legal-hold.service';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -7110,6 +7111,75 @@ export async function createImageResources({
   return resources;
 }
 
+// `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+// over a crucible's maxClipSeconds before the user spends a click on them.
+const myImagesSelect = {
+  id: true,
+  url: true,
+  meta: true,
+  metadata: true,
+  createdAt: true,
+  type: true,
+  nsfwLevel: true,
+  ingestion: true,
+} satisfies Prisma.ImageSelect;
+
+/**
+ * The caller's own uploads whose scan failed, from the crucible entry modal's unpublished drafts:
+ * without them the modal would lose such an upload without a word. Its own query, first page only:
+ * an OR on ingestion would stop getMyImages' semi-join on Post. These were never scanned, so it
+ * lists only what the owner's other checks would let them see, and nothing when those checks
+ * cannot be read.
+ */
+async function getFailedEntryDrafts({
+  userId,
+  type,
+  limit,
+}: {
+  userId: number;
+  type: Prisma.ImageWhereInput['type'];
+  limit: number;
+}) {
+  try {
+    const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
+    if (held) return [];
+    const rows = await dbRead.image.findMany({
+      select: { ...myImagesSelect, pHash: true },
+      where: {
+        userId,
+        type,
+        ingestion: ImageIngestionStatus.Error,
+        blockedFor: null,
+        createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
+        ...entryDraftImageWhere(),
+      },
+      take: limit,
+      orderBy: { id: 'desc' },
+    });
+    const hashes = rows.flatMap((row) => (row.pHash != null ? [row.pHash] : []));
+    const blocked = hashes.length
+      ? new Set(
+          (
+            await dbRead.blockedImage.findMany({
+              where: { hash: { in: hashes } },
+              select: { hash: true },
+            })
+          ).map((x) => x.hash)
+        )
+      : new Set<bigint>();
+    return rows
+      .filter((row) => row.pHash == null || !blocked.has(row.pHash))
+      .map(({ pHash: _pHash, ...row }) => row);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'failed-entry-drafts',
+      message: (error as Error).message,
+    }).catch(() => undefined);
+    return [];
+  }
+}
+
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
@@ -7119,25 +7189,13 @@ export const getMyImages = async ({
   cursor = 0,
 }: GetMyImagesInput & { userId: number }) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
-  // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
-  // over a crucible's maxClipSeconds before the user spends a click on them.
-  const select = {
-    id: true,
-    url: true,
-    meta: true,
-    metadata: true,
-    createdAt: true,
-    type: true,
-    nsfwLevel: true,
-    ingestion: true,
-  } satisfies Prisma.ImageSelect;
   const type = {
     in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
   };
 
   try {
     const mediaQuery = dbRead.image.findMany({
-      select,
+      select: myImagesSelect,
       where: {
         userId,
         type,
@@ -7156,23 +7214,9 @@ export const getMyImages = async ({
       cursor: cursor ? { id: cursor } : undefined,
       orderBy: { id: 'desc' },
     });
-    // A failed scan drops an upload from the main query, so the entry modal would lose it
-    // without a word. Its own query, first page only: an OR on ingestion would stop the main
-    // query's semi-join on Post.
     const failedEntryDraftsQuery =
       publishedOnly && includeEntryDrafts && !cursor
-        ? dbRead.image.findMany({
-            select,
-            where: {
-              userId,
-              type,
-              ingestion: ImageIngestionStatus.Error,
-              createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
-              ...entryDraftImageWhere(),
-            },
-            take: limit,
-            orderBy: { id: 'desc' },
-          })
+        ? getFailedEntryDrafts({ userId, type, limit })
         : Promise.resolve([]);
     const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);
 
