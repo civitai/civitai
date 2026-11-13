@@ -121,7 +121,7 @@ beforeAll(async () => {
     CREATE TABLE app_listing_screenshots (image_id int);
     CREATE TABLE "Crucible" ("imageId" int, "heroImageId" int);
     CREATE TABLE "CrucibleEntry" ("imageId" int);
-    CREATE TABLE "CsamReport" (images jsonb NOT NULL DEFAULT '[]', status text);
+    CREATE TABLE "CsamReport" (images jsonb NOT NULL DEFAULT '[]');
     CREATE TABLE "EvidenceHoldImage" ("imageId" int);
   `);
 });
@@ -786,32 +786,32 @@ describe('hide-lost-original-images', () => {
     }
   );
 
-  // The real hold predicate, not the mock: a CsamReport that lists the image holds it whatever the
-  // report's own status (Moderation Lead: never hide an image with a CsamReport, any status).
-  it.each(['Pending', 'Actioned', 'Unactioned', 'Processing', null])(
-    'leaves an image alone that a CsamReport lists, report status %s',
-    async (status) => {
-      // The script builds its hold SQL when it loads, so load a copy with the real predicate.
-      realHold.on = true;
+  // The real hold predicate, not the mock: a CsamReport that lists the image holds it. The real
+  // predicate reads no status from the report, so whatever state the report is in, it holds.
+  it.each([
+    ['objects', [{ id: 1 }, { id: 2 }]],
+    ['strings', ['1', '2']],
+    ['numbers', [1, 2]],
+  ])('leaves an image alone that a CsamReport lists as %s', async (_shape, listed) => {
+    // The script builds its hold SQL when it loads, so load a copy with the real predicate.
+    realHold.on = true;
+    vi.resetModules();
+    try {
+      const real = await import('../oneoffs/hide-lost-original-images');
+      await db.query(`INSERT INTO "CsamReport" (images) VALUES ($1::jsonb)`, [
+        JSON.stringify(listed),
+      ]);
+      const { deps } = makeDeps();
+      const counts = await real.run(options(), GONE, deps);
+      expect(await ingestion(1)).toBe('Scanned');
+      expect(await ingestion(2)).toBe('Scanned');
+      expect(await ingestion(3)).toBe('NotFound');
+      expect(counts['skipped:image-hold']).toBe(2);
+    } finally {
+      realHold.on = false;
       vi.resetModules();
-      try {
-        const real = await import('../oneoffs/hide-lost-original-images');
-        await db.query(`INSERT INTO "CsamReport" (images, status) VALUES ($1::jsonb, $2)`, [
-          JSON.stringify([{ id: 1 }, '2']),
-          status,
-        ]);
-        const { deps } = makeDeps();
-        const counts = await real.run(options(), GONE, deps);
-        expect(await ingestion(1)).toBe('Scanned');
-        expect(await ingestion(2)).toBe('Scanned');
-        expect(await ingestion(3)).toBe('NotFound');
-        expect(counts['skipped:image-hold']).toBe(2);
-      } finally {
-        realHold.on = false;
-        vi.resetModules();
-      }
     }
-  );
+  });
 
   it('hides a row only if a second HEAD, after a wait, also reads missing', async () => {
     const seen = new Map<string, number>();
@@ -832,6 +832,22 @@ describe('hide-lost-original-images', () => {
     expect(await ingestion(2)).toBe('NotFound');
     expect(counts['skipped:recheck-ok']).toBe(1);
     expect(waits).toContain(7);
+  });
+
+  it('counts a second HEAD that errors as head-error, not recheck-ok', async () => {
+    const seen = new Map<string, number>();
+    const { deps } = makeDeps({
+      head: async (url) => {
+        const n = (seen.get(url) ?? 0) + 1;
+        seen.set(url, n);
+        if (url === '00000001-0000-4000-8000-000000000000' && n === 2) throw new Error('throttled');
+        return url.startsWith('0000000') ? 'missing' : 'present';
+      },
+    });
+    const counts = await run(options(), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(counts['skipped:head-error']).toBe(1);
+    expect(counts['skipped:recheck-ok']).toBeUndefined();
   });
 
   it('assertIdsSha refuses an apply whose --ids-sha is not the hash of the ids', () => {

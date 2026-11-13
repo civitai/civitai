@@ -39,7 +39,8 @@
  *   --concurrency <n>         HEADs in flight, 1-20 (default 10).
  *   --pause-ms <n>            Pause between chunks (default 1000).
  *   --recheck-ms <n>          Wait before the second HEAD of a row that read missing (default 5000).
- *   --ids-sha <hash>          Required with --apply: the `ids sha256` the dry run printed.
+ *   --ids-sha <hash>          Required with --apply: the `ids sha256` the dry run printed. It shows the
+ *                             ids are unchanged since then; it does not prove a dry run was done.
  *   --rebust hide|undo        With --apply, catch search and caches up for the log's rows (after a
  *                             stop that said "run --rebust"). Writes search and caches, not Image.
  *   --include-unconfirmed     Undo and rebust also act on log rows never confirmed hidden.
@@ -528,7 +529,7 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     );
     const gone = missing.filter((_, n) => {
       if (again[n] === 'missing') return true;
-      bump(counts, 'skipped:recheck-ok');
+      bump(counts, again[n] === 'present' ? 'skipped:recheck-ok' : 'skipped:head-error');
       return false;
     });
     bump(counts, 'still-404', gone.length);
