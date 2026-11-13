@@ -3,7 +3,6 @@ import {
   IconArrowsDiagonalMinimize2,
   IconArrowsShuffle,
   IconBookmark,
-  IconMusic,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconPlayerSkipBackFilled,
@@ -17,34 +16,35 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties, PointerEvent, ReactNode } from 'react';
-import { forwardRef, useRef, useState } from 'react';
+import { forwardRef, useCallback, useRef, useState } from 'react';
 import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
 import { WaveformBars } from '~/components/Audio/WaveformBars';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { withAlpha } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
+import {
+  ACCENT,
+  accentAt,
+  dimmed,
+  Equalizer,
+  SongArt,
+} from '~/components/MusicPlayer/MusicPlayerParts';
+import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
 import { CollectionType } from '~/shared/utils/prisma/enums';
-import styles from './MusicPlayerBar.module.scss';
 
-const ACCENT = 'var(--music-accent, var(--mantine-primary-color-filled))';
-const accentAt = (percent: number) => `color-mix(in srgb, ${ACCENT} ${percent}%, transparent)`;
 const SEEK_STEP_SECONDS = 5;
 const WAVEFORM_BARS = 100;
-// Pencil `VKZHS`: playing and paused bar heights.
-const EQ_HEIGHTS = { playing: [10, 16, 7, 13], paused: [6, 10, 5, 8] };
 
 const iconButton =
   'flex size-9 shrink-0 items-center justify-center rounded-lg text-gray-9 transition-colors hover:bg-gray-1 dark:text-dark-0 dark:hover:bg-dark-5';
-const dimmed = 'text-gray-6 dark:text-dark-2';
 
 const store = useMusicPlayerStore.getState;
 
@@ -68,6 +68,8 @@ function Bar({ track }: { track: MusicTrack }) {
   return (
     <div
       data-music-player-bar=""
+      role="region"
+      aria-label="Music player"
       className="relative z-[201] flex shrink-0 items-center gap-3.5 overflow-hidden border-t border-gray-3 bg-gray-0 px-5 dark:border-dark-4 dark:bg-dark-6"
       style={
         {
@@ -96,7 +98,7 @@ function Bar({ track }: { track: MusicTrack }) {
       </div>
       <Transport playing={playing} />
       <Timeline track={track} playing={playing} />
-      <Controls track={track} />
+      <Controls track={track} accent={accent} />
     </div>
   );
 }
@@ -133,43 +135,9 @@ function Cover({
       : `0 4px 14px ${withAlpha(accent.accent, 0.2)}`
     : undefined;
   return (
-    <div
-      className="size-16 shrink-0 overflow-hidden rounded-[14px] bg-gray-2 dark:bg-dark-5"
-      style={{ boxShadow: glow }}
-    >
-      {url ? (
-        <EdgeMedia
-          src={url}
-          type="image"
-          width={128}
-          name="Song cover"
-          className="size-full object-cover"
-          wrapperProps={{ className: 'size-full' }}
-        />
-      ) : (
-        <div
-          data-testid="music-cover-placeholder"
-          className={clsx('flex size-full items-center justify-center', dimmed)}
-        >
-          <IconMusic size={28} stroke={1.5} />
-        </div>
-      )}
+    <div className="shrink-0 rounded-[14px]" style={{ boxShadow: glow }}>
+      <SongArt url={url} width={64} iconSize={28} className="size-16 rounded-[14px]" />
     </div>
-  );
-}
-
-function Equalizer({ playing }: { playing: boolean }) {
-  const heights = playing ? EQ_HEIGHTS.playing : EQ_HEIGHTS.paused;
-  return (
-    <span aria-hidden className="flex h-4 shrink-0 items-end gap-0.5">
-      {heights.map((height, i) => (
-        <span
-          key={i}
-          className={clsx('w-[3px] rounded-[1px]', styles.eqBar, playing && styles.eqPlaying)}
-          style={{ height, backgroundColor: playing ? ACCENT : accentAt(50) }}
-        />
-      ))}
-    </span>
   );
 }
 
@@ -304,11 +272,12 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
   );
 }
 
-function Controls({ track }: { track: MusicTrack }) {
+function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | null }) {
   const muted = useMusicPlayerStore((s) => s.muted);
   const volume = useMusicPlayerStore((s) => s.volume);
-  // The Up next panel opens from here (T5a.4); the button already carries its open state.
   const [upNextOpen, setUpNextOpen] = useState(false);
+  const [upNextButton, setUpNextButton] = useState<HTMLButtonElement | null>(null);
+  const closeUpNext = useCallback(() => setUpNextOpen(false), []);
 
   return (
     <div className="flex shrink-0 items-center gap-1.5">
@@ -323,6 +292,7 @@ function Controls({ track }: { track: MusicTrack }) {
         </IconButton>
       </LoginRedirect>
       <IconButton
+        ref={setUpNextButton}
         label="Up next"
         aria-expanded={upNextOpen}
         onClick={() => setUpNextOpen((open) => !open)}
@@ -330,6 +300,15 @@ function Controls({ track }: { track: MusicTrack }) {
       >
         <IconPlaylist size={18} />
       </IconButton>
+      {upNextOpen && (
+        <MusicUpNextPanel
+          current={track}
+          accent={accent}
+          onClose={closeUpNext}
+          // The bar is the panel's anchor: using its controls keeps the panel open.
+          ignore={upNextButton?.closest<HTMLElement>('[data-music-player-bar]') ?? null}
+        />
+      )}
       <div className="flex items-center gap-2 px-1.5">
         <Tooltip label={muted ? 'Unmute' : 'Mute'}>
           <button
