@@ -225,6 +225,11 @@ export type Domain<P extends DomainPayload> = {
   outboxEntity?: string;
   /** VECTOR_<NAME>_EMBED_ENABLED unset: whether it embeds. True only for models, which predate it. */
   embedByDefault?: boolean;
+  /**
+   * A walk over every row, `batch` ids every `everyMs`, for a domain whose documents read tables
+   * that no signal covers (storylines: chapter 1's post). Each id goes through the normal sync.
+   */
+  refresh?: { everyMs: number; batch: number };
   store: () => VectorStore<P>;
   alias: () => string;
 };
