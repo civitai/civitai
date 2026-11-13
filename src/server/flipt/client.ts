@@ -110,6 +110,19 @@ export enum FLIPT_FEATURE_FLAGS {
   // flipping. Failures surface as pg errors, not Prisma P2024/P1008; a missing collection still
   // throws NOT_FOUND.
   KYSELY_HOT_READS_10 = 'kysely-hot-reads-10',
+  // The four per-page reads of `getModelsWithVersions` (the public /api/v1/models list and
+  // /api/v1/models/:id): the versions' linked components, the model and version metrics and the
+  // versions' `meta`, through packages/civitai-db-queries/src/hot-reads-11.db.ts as ONE Kysely
+  // statement in place of Prisma's four. Global boolean, read synchronously through
+  // `createCachedFlagGate` (at most once per 5s per process), with no entity id. A missing key, or
+  // Flipt not initialized yet, reads as OFF (Prisma) without an error; create the key
+  // (enabled: false) before flipping it.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S REPLICA POOL ONTO `pgDbRead` (kyselyRead), still the
+  // replica. That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before
+  // flipping. Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_11 = 'kysely-hot-reads-11',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
