@@ -67,6 +67,8 @@ import type * as PromptAuditingMod from '~/server/services/orchestrator/promptAu
 import type * as OrchestratorServiceMod from '~/server/services/orchestrator/orchestrator.service';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { generateFromGraph } from '~/server/services/orchestrator/orchestration-new.service';
+import { TRPCError } from '@trpc/server';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const USER_ID = 5;
 // An orchestrator blob: the generation input url check passes it without a database read.
@@ -177,5 +179,59 @@ describe('generateFromGraph — the prompt audit gate', () => {
   it('both fields empty does not call the audit', async () => {
     await submit('', '');
     expect(mockAuditPromptServer).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The audit's retry-able 503 (the external classifier unavailable, or the audit's own reads
+ * failing) is not a block: there is no verdict for the XGuard shadow scan to compare against, and
+ * `recordForReview` would queue a moderator review item for a prompt nobody refused. The 503 is
+ * still rethrown unchanged. The flagged-prompt case above is the positive control (it does scan).
+ */
+describe('generateFromGraph — the audit unable to run', () => {
+  const unavailable = () =>
+    new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
+    });
+  const submitRaw = () =>
+    generateFromGraph({
+      input: img2img('a cat', 'blurry'),
+      externalCtx: externalCtx(),
+      token: 'token',
+      userId: USER_ID,
+      isModerator: false,
+      inputGate: { entry: 'generateFromGraph', isApiCaller: false },
+    } as never);
+
+  beforeEach(() => resetEnv());
+
+  it('rethrows the 503 unchanged and fires no XGuard review scan', async () => {
+    const thrown = unavailable();
+    mockAuditPromptServer.mockImplementationOnce(async () => {
+      throw thrown;
+    });
+    await expect(submitRaw()).rejects.toBe(thrown);
+    expect(mockXGuard).not.toHaveBeenCalled();
+  });
+
+  it('PROMPT_CHECK_FAIL_CLOSED off: the 503 fires the review scan, as before', async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    const thrown = unavailable();
+    mockAuditPromptServer.mockImplementationOnce(async () => {
+      throw thrown;
+    });
+    await expect(submitRaw()).rejects.toBe(thrown);
+    expect(mockXGuard).toHaveBeenCalledTimes(1);
+    expect(mockXGuard).toHaveBeenCalledWith(expect.objectContaining({ recordForReview: true }));
+  });
+
+  it('CONTROL: a content refusal (BAD_REQUEST) still fires the review scan', async () => {
+    const thrown = new TRPCError({ code: 'BAD_REQUEST', message: 'Your prompt was flagged' });
+    mockAuditPromptServer.mockImplementationOnce(async () => {
+      throw thrown;
+    });
+    await expect(submitRaw()).rejects.toBe(thrown);
+    expect(mockXGuard).toHaveBeenCalledTimes(1);
   });
 });
