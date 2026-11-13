@@ -3051,6 +3051,30 @@ export type CustomerSubscription = {
   endedAt: Timestamp | null;
   updatedAt: Timestamp | null;
 };
+export type CustomerSubscriptionHistory = {
+  id: Generated<number>;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: Generated<unknown>;
+  cancelAtPeriodEnd: Generated<boolean>;
+  cancelAt: Timestamp | null;
+  canceledAt: Timestamp | null;
+  startedAt: Timestamp;
+  currentPeriodStart: Timestamp;
+  currentPeriodEnd: Timestamp;
+  endedAt: Timestamp | null;
+  /**
+   * Set when the live row moved on: 'removed' | 'replaced' | 'plan-changed' | 'restarted'
+   */
+  closedAt: Timestamp | null;
+  closedReason: string | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type Donation = {
   id: Generated<number>;
   userId: number;
@@ -6728,6 +6752,7 @@ export type DB = {
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
   CustomerSubscription: CustomerSubscription;
+  CustomerSubscriptionHistory: CustomerSubscriptionHistory;
   Donation: Donation;
   DonationGoal: DonationGoal;
   DownloadHistory: DownloadHistory;

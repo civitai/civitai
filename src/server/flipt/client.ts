@@ -110,6 +110,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // flipping. Failures surface as pg errors, not Prisma P2024/P1008; a missing collection still
   // throws NOT_FOUND.
   KYSELY_HOT_READS_10 = 'kysely-hot-reads-10',
+  // `getModelsWithVersions`' four per-page reads as one Kysely statement (hot-reads-11.db.ts).
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S REPLICA POOL ONTO `pgDbRead` (kyselyRead), still the
+  // replica. That pool's acquire wait is `DATABASE_CONNECTION_TIMEOUT` (default 0); with
+  // IS_DATAPACKET set, getClient (src/server/db/db-helpers.ts) turns 0 into 5s, and without it 0
+  // means WAIT FOREVER, so such an environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_11 = 'kysely-hot-reads-11',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.
@@ -252,6 +260,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
   // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
   OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
+  // Lets the inbound HTTP instrumentation make the head-sampling decision BEFORE it does any span
+  // work, for a request with no `traceparent`: unsampled requests then run with tracing suppressed
+  // (no span built at all), sampled ones are recorded exactly as before, at the same ratio. See
+  // `src/server/otel-root-presample.ts`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps today's behaviour. Global boolean, evaluated with no
+  // entity or context, read at most once per 5s per process. A flip reaches each process after the
+  // Flipt config poll, the eval cache and the gate's 5s cache.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off.
+  OTEL_ROOT_PRESAMPLE = 'otel-root-presample',
   // Picks how `getFeatureFlagsLazy` (feature-flags.service.ts) builds the per-request flag
   // object: ON = one small instance of a class whose prototype carries the per-key getters,
   // defined once at module load; OFF = a fresh object with one getter defined per flag key on
@@ -544,6 +562,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
+  // On: the site-search proxy (`/api/search/*`) sends Meilisearch's 200 body to the browser as
+  // the bytes it received when no hit in it is shaped for the viewer (`hitsNeedShaping`), instead
+  // of parsing it and serializing it again. Responses with shaped hits, and every non-200, are
+  // parsed as before. Off (and unknown, or a client that has not initialised): every response is
+  // parsed, as before.
+  //
+  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId, at most once per 5s per process
+  // (`createCachedFlagGate`, `~/server/services/site-search-passthrough`). The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
+  SITE_SEARCH_PASSTHROUGH = 'site-search-passthrough',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

@@ -656,7 +656,7 @@ async function main() {
     );
     const store = VectorStore.fromConfig();
     if (!dryRun) await store.bootstrap();
-    else if (!(await store.client.collectionExists(store.collection)).exists) {
+    else if (!(await store.exists())) {
       // Nothing is written in a dry run, so a missing collection just means no points yet.
       store.existing = async () => new Set();
     }
