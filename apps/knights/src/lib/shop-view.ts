@@ -37,6 +37,18 @@ export function refusalText(
   }
 }
 
+export type BuyClick =
+  | { kind: 'refused'; text: string }
+  | { kind: 'short'; by: number }
+  | { kind: 'confirm' };
+
+/** What a Buy click does before any request: a held player gets the refusal the server would send, a short purse the gap. */
+export function buyClick(balance: { held: boolean; convertible: number }, price: number): BuyClick {
+  if (balance.held) return { kind: 'refused', text: refusalText('held') };
+  if (balance.convertible < price) return { kind: 'short', by: price - balance.convertible };
+  return { kind: 'confirm' };
+}
+
 export const REFUSAL_STATUS: Record<Refusal, number> = {
   'no-player': 409,
   held: 403,

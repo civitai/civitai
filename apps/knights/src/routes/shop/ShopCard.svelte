@@ -23,6 +23,7 @@
     variant,
     index = 99,
     shortBy = 0,
+    refusal = null,
     shakeKey = 0,
     stamped = false,
     sheen = false,
@@ -34,6 +35,8 @@
     /** Position in the grid: only the first few cards animate in. */
     index?: number;
     shortBy?: number;
+    /** Why a click was refused before any request (a held purse), shown where the shortfall would be. */
+    refusal?: string | null;
     shakeKey?: number;
     stamped?: boolean;
     sheen?: boolean;
@@ -119,7 +122,7 @@
       <button
         type="button"
         class="buy"
-        class:shake={shortBy > 0 && shakeKey > 0}
+        class:shake={(shortBy > 0 || !!refusal) && shakeKey > 0}
         class:muted={!buyable}
         aria-disabled={!buyable}
         onclick={() => buyable && onbuy(card)}
@@ -134,7 +137,7 @@
       <button
         type="button"
         class="buy small"
-        class:shake={shortBy > 0 && shakeKey > 0}
+        class:shake={(shortBy > 0 || !!refusal) && shakeKey > 0}
         onclick={() => onbuy(card)}
         aria-label="Buy {title} for {count(card.price)} gold"
       >
@@ -144,7 +147,8 @@
   {:else}
     <span class="state">{cta}</span>
   {/if}
-  {#if shortBy > 0}<p class="short" role="status">You need {count(shortBy)} more gold.</p>{/if}
+  {#if refusal}<p class="short" role="status">{refusal}</p>
+  {:else if shortBy > 0}<p class="short" role="status">You need {count(shortBy)} more gold.</p>{/if}
   {#if stamped && variant === 'deal'}<span class="seal stamp over">Owned</span>{/if}
 </article>
 
