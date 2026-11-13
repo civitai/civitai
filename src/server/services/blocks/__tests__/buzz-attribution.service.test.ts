@@ -489,6 +489,7 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
       settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
       byApp: [],
       recent: [],
+      paidWindowDays: null,
     });
     // The card-purchase share is not part of the payload at all.
     expect(Object.keys(empty).sort()).toEqual(['authorFees', 'goods', 'unavailable']);
@@ -522,8 +523,12 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
 
     // Precondition: the buckets really are identical, so nothing else could tell
     // these two apart. If this assertion ever fails the discriminator has stopped
-    // being the only signal and this test is no longer proving what it claims.
-    expect(measured).toEqual(placeholder.authorFees);
+    // being the only signal and this test is no longer proving what it claims. (The window
+    // marker differs by design — a measurement says which window it covers — and is not a
+    // bucket.)
+    const { paidWindowDays: _measuredWindow, ...measuredBuckets } = measured;
+    const { paidWindowDays: _placeholderWindow, ...placeholderBuckets } = placeholder.authorFees;
+    expect(measuredBuckets).toEqual(placeholderBuckets);
 
     // The measured payload carries no discriminator at all; the placeholder does.
     expect('unavailable' in measured).toBe(false);

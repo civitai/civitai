@@ -437,7 +437,7 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     );
     // ...and "paid to you" is the rows that job settles, not a separate figure.
     const service = stripComments(read(AUTHOR_FEE_EARNINGS_SERVICE));
-    expect(service).toMatch(/group\.status\s*===\s*STATUS_SETTLED\s*\?\s*'settled'/);
+    expect(service).toMatch(/\.status\s*===\s*STATUS_SETTLED\s*\?\s*'settled'/);
   });
 
   it('no author surface renders the card-purchase share, which is never paid out', () => {

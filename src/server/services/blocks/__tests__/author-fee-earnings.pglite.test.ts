@@ -43,6 +43,8 @@ const OTHER_OWNER = 502;
 const VIEWER = 777;
 const APP_A = 'apb_alpha';
 const APP_B = 'apb_bravo';
+/** The clock every no-range read runs at, so the default window does not drift with the calendar. */
+const NOW = new Date('2026-11-12T00:00:00Z');
 
 type Row = {
   id: string;
@@ -96,6 +98,24 @@ const ROWS: Row[] = [
     fee: 16,
     status: 'settled',
     accruedAt: '2026-11-05T01:00:00Z',
+  },
+  // Older than the 90-day default window: a settled fee, and a fee still pending (settlement can
+  // leave a row `accrued` indefinitely, e.g. while the author-fee flag is off).
+  {
+    id: 'o1',
+    appBlockId: APP_A,
+    owner: OWNER,
+    fee: 128,
+    status: 'settled',
+    accruedAt: '2026-07-01T01:00:00Z',
+  },
+  {
+    id: 'o2',
+    appBlockId: APP_A,
+    owner: OWNER,
+    fee: 256,
+    status: 'accrued',
+    accruedAt: '2026-06-01T01:00:00Z',
   },
   // Another owner's rows, on one of OWNER's app ids too (an app that changed hands).
   {
@@ -155,9 +175,13 @@ beforeEach(() => {
 
 describe('getAuthorFeeEarningsForOwner', () => {
   it('totals the caller’s rows by status and never includes another owner’s', async () => {
-    const result = await getAuthorFeeEarningsForOwner({ ownerUserId: OWNER });
+    const result = await getAuthorFeeEarningsForOwner({ ownerUserId: OWNER, now: NOW });
 
-    expect(result.accrued).toEqual({ count: 2, feeBuzz: 1 + 8, byBuzzType: { yellow: 9 } });
+    expect(result.accrued).toEqual({
+      count: 3,
+      feeBuzz: 1 + 8 + 256,
+      byBuzzType: { yellow: 265 },
+    });
     expect(result.settled).toEqual({
       count: 3,
       feeBuzz: 2 + 4 + 16,
@@ -167,18 +191,22 @@ describe('getAuthorFeeEarningsForOwner', () => {
   });
 
   it('breaks the portfolio down per app, highest total first', async () => {
-    const { byApp } = await getAuthorFeeEarningsForOwner({ ownerUserId: OWNER });
+    const { byApp } = await getAuthorFeeEarningsForOwner({ ownerUserId: OWNER, now: NOW });
 
     expect(byApp.map((a) => [a.appBlockId, a.accrued.feeBuzz, a.settled.feeBuzz])).toEqual([
+      [APP_A, 1 + 256, 6],
       [APP_B, 8, 16],
-      [APP_A, 1, 6],
     ]);
   });
 
   it('narrows every figure to one app with appBlockId', async () => {
-    const result = await getAuthorFeeEarningsForOwner({ ownerUserId: OWNER, appBlockId: APP_A });
+    const result = await getAuthorFeeEarningsForOwner({
+      ownerUserId: OWNER,
+      appBlockId: APP_A,
+      now: NOW,
+    });
 
-    expect(result.accrued.feeBuzz).toBe(1);
+    expect(result.accrued.feeBuzz).toBe(1 + 256);
     expect(result.settled.feeBuzz).toBe(6);
     expect(result.byApp.map((a) => a.appBlockId)).toEqual([APP_A]);
     expect(result.recent.map((r) => r.id)).toEqual(['a3', 'a2', 'a1']);
@@ -188,13 +216,14 @@ describe('getAuthorFeeEarningsForOwner', () => {
     const result = await getAuthorFeeEarningsForOwner({
       ownerUserId: OWNER,
       appBlockId: 'apb_xray',
+      now: NOW,
     });
 
-    expect(result).toEqual(emptyAuthorFeeEarnings());
+    expect(result).toEqual({ ...emptyAuthorFeeEarnings(), paidWindowDays: 90 });
   });
 
   it('reads the other owner’s rows for that owner (control: the scope is the argument)', async () => {
-    const result = await getAuthorFeeEarningsForOwner({ ownerUserId: OTHER_OWNER });
+    const result = await getAuthorFeeEarningsForOwner({ ownerUserId: OTHER_OWNER, now: NOW });
 
     expect(result.accrued.feeBuzz).toBe(32);
     expect(result.settled.feeBuzz).toBe(64);
@@ -211,5 +240,38 @@ describe('getAuthorFeeEarningsForOwner', () => {
     expect(result.accrued.feeBuzz).toBe(8);
     expect(result.settled.feeBuzz).toBe(2 + 4);
     expect(result.recent.map((r) => r.id)).toEqual(['b1', 'a3']);
+  });
+});
+
+describe('getAuthorFeeEarningsForOwner — the default window', () => {
+  it('with no range, settled fees older than 90 days are excluded', async () => {
+    const result = await getAuthorFeeEarningsForOwner({ ownerUserId: OWNER, now: NOW });
+
+    expect(result.paidWindowDays).toBe(90);
+    expect(result.settled.feeBuzz).toBe(2 + 4 + 16);
+    expect(result.recent.map((r) => r.id)).not.toContain('o1');
+  });
+
+  it('an explicit from older than the window still includes them', async () => {
+    const result = await getAuthorFeeEarningsForOwner({
+      ownerUserId: OWNER,
+      from: new Date('2026-05-01T00:00:00Z'),
+      now: NOW,
+    });
+
+    expect(result.paidWindowDays).toBeNull();
+    expect(result.settled.feeBuzz).toBe(2 + 4 + 16 + 128);
+    expect(result.recent.map((r) => r.id)).toContain('o1');
+  });
+
+  it('pending fees are never windowed: a 160-day-old accrued fee still counts', async () => {
+    const result = await getAuthorFeeEarningsForOwner({
+      ownerUserId: OWNER,
+      appBlockId: APP_A,
+      now: NOW,
+    });
+
+    expect(result.paidWindowDays).toBe(90);
+    expect(result.accrued).toEqual({ count: 2, feeBuzz: 1 + 256, byBuzzType: { yellow: 257 } });
   });
 });

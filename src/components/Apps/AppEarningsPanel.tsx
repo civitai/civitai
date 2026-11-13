@@ -128,7 +128,7 @@ export function AppEarningsPanelView({
       <AuthorFeeCard
         authorFees={data.authorFees as AuthorFeeEarnings | undefined}
         scoped
-        emptyText="No author fees on this app yet."
+        emptyText="No author fees on this app."
       />
       <GoodsSalesCard
         goods={data.goods ?? GOODS_ABSENT}

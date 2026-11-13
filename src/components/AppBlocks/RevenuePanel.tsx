@@ -284,8 +284,8 @@ export function AuthorFeeCard({
         <Text c="dimmed" size="sm" mt="sm" data-testid="author-fees-empty">
           {emptyText ??
             (scoped
-              ? 'No author fees attributed to you for this app yet.'
-              : 'No author fees attributed to you on your apps yet.')}
+              ? 'No author fees attributed to you for this app.'
+              : 'No author fees attributed to you on your apps.')}
         </Text>
       ) : (
         <>
@@ -393,6 +393,12 @@ export function AuthorFeeCard({
             </>
           )}
         </>
+      )}
+      {authorFees?.paidWindowDays != null && (
+        <Text size="xs" c="dimmed" mt="sm" data-testid="author-fees-window">
+          Last {authorFees.paidWindowDays} days: paid fees and recent fees cover only that period.
+          Pending fees are shown in full.
+        </Text>
       )}
     </Card>
   );

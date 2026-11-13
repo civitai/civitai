@@ -14,6 +14,7 @@ import type { AppEarningsResult } from '~/server/services/blocks/app-collaborato
  */
 
 const FEES = {
+  paidWindowDays: 90,
   accrued: { count: 2, feeBuzz: 3, byBuzzType: { yellow: 3 } },
   settled: { count: 2, feeBuzz: 12, byBuzzType: { blue: 4, yellow: 8 } },
   byApp: [
@@ -99,6 +100,7 @@ describe('AppEarningsPanelView', () => {
       settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
       byApp: [],
       recent: [],
+      paidWindowDays: 90,
     };
     const noGoods = {
       sales: { ...GOODS.sales, count: 0, grossBuzz: 0, shareBuzz: 0, grossUsdCents: 0 },
@@ -109,11 +111,13 @@ describe('AppEarningsPanelView', () => {
     );
     await expect
       .element(page.getByTestId('author-fees-empty'))
-      .toHaveTextContent(/^No author fees on this app yet\.$/);
+      .toHaveTextContent(/^No author fees on this app\.$/);
     await expect
       .element(page.getByText('No digital goods sales on this app yet.'))
       .toBeInTheDocument();
     expect(page.getByText(/attributed to you/).elements()).toHaveLength(0);
+    // An empty window is not "never earned": the note says which period was read.
+    await expect.element(page.getByTestId('author-fees-window')).toHaveTextContent(/^Last 90 days/);
   });
 
   test('an older API payload without authorFees/goods says could-not-load, never zero', async () => {

@@ -97,7 +97,7 @@ describe('RevenuePanel — unavailable vs genuine zero', () => {
     await expect.element(page.getByRole('heading', { name: 'Author fees' })).toBeInTheDocument();
     await expect
       .element(page.getByTestId('author-fees-empty'))
-      .toHaveTextContent(/^No author fees attributed to you on your apps yet\.$/);
+      .toHaveTextContent(/^No author fees attributed to you on your apps\.$/);
     expect(page.getByText('Revenue unavailable').elements()).toHaveLength(0);
     // Rendered even at zero: "sold nothing" and "sales are not reported here" must
     // not look the same, which is this file's whole thesis one rail over.
@@ -426,6 +426,7 @@ describe('RevenuePanel — digital goods sales', () => {
 });
 
 const FEES = {
+  paidWindowDays: 90,
   accrued: { count: 3, feeBuzz: 41, byBuzzType: { yellow: 41 } },
   settled: { count: 5, feeBuzz: 97, byBuzzType: { yellow: 90, blue: 7 } },
   byApp: [
@@ -485,6 +486,10 @@ describe('RevenuePanel — author fees', () => {
     await expect
       .element(page.getByTestId('author-fees-payout-copy'))
       .toHaveTextContent(/paid into your Buzz account once a day/);
+    // A no-range read says plainly which period the paid figures cover.
+    await expect
+      .element(page.getByTestId('author-fees-window'))
+      .toHaveTextContent(/^Last 90 days: paid fees and recent fees cover only that period\./);
     // Blue was paid, so the non-withdrawable caveat shows.
     await expect.element(page.getByTestId('author-fees-blue-caveat')).toBeInTheDocument();
   });

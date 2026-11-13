@@ -221,10 +221,14 @@ const GOODS = [
   { appBlockId: APP_B, appOwnerUserId: OWNER, status: 'paid', price: 1000, share: 700 },
 ];
 
-type ScopeWhere = { appBlockId?: string; appOwnerUserId?: number };
-const inScope = (w: ScopeWhere, r: { appBlockId: string; appOwnerUserId: number }) =>
+type ScopeWhere = { appBlockId?: string; appOwnerUserId?: number; status?: string };
+const inScope = (
+  w: ScopeWhere,
+  r: { appBlockId: string; appOwnerUserId: number; status?: string }
+) =>
   (w.appBlockId === undefined || r.appBlockId === w.appBlockId) &&
-  (w.appOwnerUserId === undefined || r.appOwnerUserId === w.appOwnerUserId);
+  (w.appOwnerUserId === undefined || r.appOwnerUserId === w.appOwnerUserId) &&
+  (w.status === undefined || r.status === w.status);
 
 /** Fakes for the two app-scoped reads that HONOUR the where clause they are handed. */
 function wireAppScopedReads() {
@@ -505,7 +509,8 @@ describe('getAppEarnings — per-listing, fail-closed', () => {
     // Called as the EDITOR: the owner axis is the app's current owner, never the caller.
     await getAppEarnings({ appListingId: LISTING_A, userId: EDITOR });
     const calls = appScopedReadCalls();
-    expect(calls.length).toBe(3);
+    // Pending and settled author-fee groupBys, the recent list, and the goods groupBy.
+    expect(calls.length).toBe(4);
     for (const [args] of calls) {
       expect(args.where.appBlockId).toBe(APP_A);
       expect(args.where.appOwnerUserId).toBe(OWNER);
