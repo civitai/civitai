@@ -1142,6 +1142,7 @@ export const EntityMetric_MetricType_Type = {
   Comment: 'Comment',
   Collection: 'Collection',
   Buzz: 'Buzz',
+  Play: 'Play',
 } as const;
 
 export type EntityMetric_MetricType_Type =

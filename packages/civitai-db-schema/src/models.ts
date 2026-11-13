@@ -228,7 +228,7 @@ export type ChallengeEngagementType = "Notify";
 
 export type EntityMetric_EntityType_Type = "Image";
 
-export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
+export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz" | "Play";
 
 export type ComicProjectStatus = "Active" | "Deleted";
 
