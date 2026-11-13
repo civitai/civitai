@@ -643,6 +643,8 @@ export type SweepResult = {
   /** Deleted accounts whose sleeping apps this run removed (a retry of a failed deletion step). */
   accountsRetried: number[];
   accountsFailed: number[];
+  /** Deleted accounts skipped because they are under a legal hold, or the hold could not be read. */
+  accountsHeld: number[];
   /** Rows and objects those retries removed. */
   accountRowsFinished: number;
   accountObjectsRemoved: number;
@@ -657,7 +659,8 @@ export type SweepResult = {
  * ORPHAN SWEEP, run hourly by the `sweep-hibernation-objects` job (`src/server/jobs/sweep-hibernation-objects.ts`): uploads of attempts that never committed,
  * kept copies whose superseding delete failed, and the leftovers of a failed account-deletion
  * step. Two passes:
- *   1. every deleted account that still has rows gets {@link deleteSleepingAppsForAccount} again;
+ *   1. every deleted account that still has rows gets {@link deleteSleepingAppsForAccount} again,
+ *      unless it is under a legal hold (or the hold cannot be read): then nothing is touched;
  *   2. every object under the archives prefix older than {@link ORPHAN_MIN_AGE_MS} that NO row
  *      references is deleted. A referenced key is never touched, whatever its age; an unreadable
  *      reference set aborts the run (it throws) rather than deleting blind.
@@ -666,6 +669,11 @@ export type SweepResult = {
 export async function sweepOrphanedArchives(
   deps: Pick<HibernationDeps, 'repo' | 'store' | 'now' | 'report'> & {
     isMissingTable: (err: unknown) => boolean;
+    /**
+     * Whether the account is under a legal hold (`isAccountUnderLegalHold`): `null` means it could
+     * not be read, and counts as held.
+     */
+    isUnderLegalHold: (userId: number) => Promise<boolean | null>;
   },
   opts: { dryRun?: boolean; accountBatch?: number } = {}
 ): Promise<SweepResult> {
@@ -673,6 +681,7 @@ export async function sweepOrphanedArchives(
   const result: SweepResult = {
     accountsRetried: [],
     accountsFailed: [],
+    accountsHeld: [],
     accountRowsFinished: 0,
     accountObjectsRemoved: 0,
     scanned: 0,
@@ -681,7 +690,16 @@ export async function sweepOrphanedArchives(
   };
   if (!deps.store) return result;
 
+  // A random batch each run (`deletedAccountsWithRows`), so accounts that keep failing or stay held
+  // cannot starve the rest.
   for (const userId of await deps.repo.deletedAccountsWithRows(opts.accountBatch ?? 100)) {
+    // Re-checked immediately before each wipe: a hold placed after the deletion keeps everything.
+    // An unreadable hold blocks like a hold.
+    if ((await deps.isUnderLegalHold(userId)) !== false) {
+      result.accountsHeld.push(userId);
+      deps.report('app-hibernation.account-held', { userId });
+      continue;
+    }
     if (dryRun) {
       result.accountsRetried.push(userId);
       continue;

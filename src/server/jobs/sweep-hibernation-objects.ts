@@ -17,8 +17,9 @@ import { createJob } from './job';
  * safe ungated: it only finishes deletions of deleted accounts and removes objects no row
  * references. It is gated on the archive store instead: with none configured it does nothing.
  *
- * Logs one line per run with its counts. FAIL-OPEN like the sibling reapers: an error is logged and
- * the next run retries.
+ * A deleted account under a legal hold (or whose hold cannot be read) is skipped and counted.
+ * Logs one line per run with its counts. Quietly skipped while the table does not exist yet. Any
+ * other error fails the run (rethrown, so the job runner counts and logs it); the next run retries.
  */
 export const sweepHibernationObjectsJob = createJob(
   'sweep-hibernation-objects',
@@ -30,34 +31,36 @@ export const sweepHibernationObjectsJob = createJob(
     ]);
     const deps = await defaultHibernationDeps();
     if (!deps.store) return { skipped: 'no archive store configured' as const };
+    const [{ isMissingTableError }, { isAccountUnderLegalHold }] = await Promise.all([
+      import('~/server/services/blocks/app-access.service'),
+      import('~/server/services/legal-hold.service'),
+    ]);
+    let result;
     try {
-      const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
-      const result = await sweepOrphanedArchives({ ...deps, isMissingTable: isMissingTableError });
-      const summary = {
-        scanned: result.scanned,
-        removed: result.orphans.length,
-        deletedAccountsFinished: result.accountsRetried.length,
-        deletedAccountRowsFinished: result.accountRowsFinished,
-        deletedAccountObjectsRemoved: result.accountObjectsRemoved,
-        errors: result.accountsFailed.length,
-      };
-      logToAxiom({ name: 'sweep-hibernation-objects', type: 'info', ...summary }, 'webhooks').catch(
-        () => undefined
-      );
-      return summary;
+      result = await sweepOrphanedArchives({
+        ...deps,
+        isMissingTable: isMissingTableError,
+        isUnderLegalHold: isAccountUnderLegalHold,
+      });
     } catch (error) {
-      logToAxiom(
-        {
-          name: 'sweep-hibernation-objects',
-          type: 'error',
-          errors: 1,
-          message: (error as Error)?.message,
-          stack: (error as Error)?.stack,
-        },
-        'webhooks'
-      ).catch(() => undefined);
-      return { failed: true as const };
+      // Before the hand-applied migration exists there is nothing to sweep: say nothing.
+      if (isMissingTableError(error)) return { skipped: 'table missing' as const };
+      // Anything else is a FAILED run: rethrown, so the job runner counts and logs it.
+      throw error;
     }
+    const summary = {
+      scanned: result.scanned,
+      removed: result.orphans.length,
+      deletedAccountsFinished: result.accountsRetried.length,
+      deletedAccountRowsFinished: result.accountRowsFinished,
+      deletedAccountObjectsRemoved: result.accountObjectsRemoved,
+      heldAccounts: result.accountsHeld.length,
+      errors: result.accountsFailed.length,
+    };
+    logToAxiom({ name: 'sweep-hibernation-objects', type: 'info', ...summary }, 'webhooks').catch(
+      () => undefined
+    );
+    return summary;
   },
   // A full listing of the archives prefix can outlast the 5-minute default; overlapping runs
   // would only repeat idempotent deletes, but there is no reason to start one.

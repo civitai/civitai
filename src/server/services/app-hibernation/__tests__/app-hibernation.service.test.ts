@@ -759,7 +759,11 @@ describe('account deletion', () => {
     expect(w.objects.has(rowOf(w).objectKey)).toBe(true);
 
     w.storeState.failDeletes = false;
-    const swept = await sweepOrphanedArchives({ ...w.deps, isMissingTable: () => false });
+    const swept = await sweepOrphanedArchives({
+      ...w.deps,
+      isMissingTable: () => false,
+      isUnderLegalHold: async () => false,
+    });
     expect(swept.accountsRetried).toEqual([USER]);
     expect(w.rows.size).toBe(0);
     expect([...w.objects.keys()].filter((k) => k.startsWith(`archives/${USER}/`))).toEqual([]);
@@ -835,7 +839,11 @@ describe('orphan sweep', () => {
     put(`archives/${USER}/fresh-app/${A2}.zip`, DAY - 60_000); // an attempt still in flight
     return { w, referenced };
   }
-  const deps = (w: World) => ({ ...w.deps, isMissingTable: () => false });
+  const deps = (w: World) => ({
+    ...w.deps,
+    isMissingTable: () => false,
+    isUnderLegalHold: async () => false,
+  });
 
   it('deletes only unreferenced objects older than 24 h, never a referenced key', async () => {
     const { w, referenced } = sweepWorld();
