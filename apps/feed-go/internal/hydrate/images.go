@@ -270,7 +270,8 @@ func Stats(m Metrics, ok bool) superjson.Object {
 }
 
 // TagIDs is tagIdsForImagesCache.fetch: per image, the `tags` id array. A miss falls back (the lookup
-// joins the tag cache and drops some Rekognition tags; not ported). The cache is served stale (8h ttl).
+// joins the tag cache and drops some Rekognition tags; not ported). Read with ttl 0: entries are served
+// regardless of age.
 func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, error) {
 	imageIDs = Unique(imageIDs)
 	got := s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0)

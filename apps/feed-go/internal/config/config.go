@@ -48,6 +48,10 @@ type Config struct {
 	RedisSysSentinelName     string // REDIS_SYS_SENTINEL_NAME: master group, required with SENTINELS
 	RedisSysSentinelPassword string // REDIS_SYS_SENTINEL_PASSWORD: only if Sentinel auth is on
 
+	// DBMaxConns is FEED_GO_DB_MAX_CONNS: the replica pool's connection ceiling (0 = dbpool default).
+	// A pool_max_conns in the database URL wins (internal/dbpool).
+	DBMaxConns int
+
 	// ModerationAccountID is CIVITAI_MODERATION_USER_ID: the shared moderation account, refused as a
 	// session (0 when unset or not a positive integer; the reserved username is refused regardless).
 	ModerationAccountID int
@@ -96,6 +100,7 @@ func Load() (*Config, error) {
 		hosts = append(hosts, list(os.Getenv("SERVER_DOMAIN_"+up+"_ALIASES"))...)
 		c.Hosts[color] = hosts
 	}
+	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	if n := intEnv("CIVITAI_MODERATION_USER_ID", 0); n > 0 {
 		c.ModerationAccountID = n
 	}

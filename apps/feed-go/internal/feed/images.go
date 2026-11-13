@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -120,11 +119,15 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 	}
 	if useCache {
 		if raw, err := json.Marshal(out); err == nil {
-			// Fail open: a cache write error never fails the request.
-			_ = cache.Redis.Set(ctx, key, raw, b.CacheTTL).Err()
-			for _, tag := range b.CacheTags {
-				_ = cache.Redis.SAdd(ctx, cache.Prefix+"tag:"+tag, key).Err()
-			}
+			// One pipelined round trip for the entry and its bust-tag memberships (a cluster client
+			// splits it per node). Fail open: a cache write error never fails the request.
+			_, _ = cache.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
+				p.Set(ctx, key, raw, b.CacheTTL)
+				for _, tag := range b.CacheTags {
+					p.SAdd(ctx, cache.Prefix+"tag:"+tag, key)
+				}
+				return nil
+			})
 		}
 	}
 	return out, nil
@@ -442,6 +445,3 @@ func FetchImages(ctx context.Context, db Querier, cache *QueryCache, h Hydrator,
 	page.Images = BuildImages(rows, hy, viewer, now)
 	return page, nil
 }
-
-// itoa is strconv.Itoa, kept short for keys.
-func itoa(n int) string { return strconv.Itoa(n) }

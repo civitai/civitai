@@ -62,8 +62,8 @@ func (q *ImagesQuery) viewerArg(a *sqlArgs) string {
 }
 
 // Build ports the SQL getAllImagesUncaptured assembles for this subset, clause by clause and in the
-// same order (image.service.ts ~2263-2938). Value lists use `= ANY($n)` where Node inlines `IN (…)`:
-// same rows, one bind each.
+// same order (getAllImagesUncaptured in image.service.ts). Value lists use `= ANY($n)` where Node
+// inlines `IN (…)`: same rows, one bind each.
 func (q *ImagesQuery) Build() Built {
 	a := &sqlArgs{}
 	and := []string{`i."postId" IS NOT NULL`}

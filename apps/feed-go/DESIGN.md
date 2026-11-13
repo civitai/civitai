@@ -85,7 +85,11 @@ internal/fallback    the fallback error and its reasons
 ## 3. What it reuses
 
 - **Postgres:** the same read replica the Node path reads this procedure from
-  (`DATAPACKET_DATABASE_RO_URL`, falling back to `DATABASE_REPLICA_URL`). Read-only.
+  (`DATAPACKET_DATABASE_RO_URL`, falling back to `DATABASE_REPLICA_URL`). Read-only. The pool is
+  bounded explicitly (`internal/dbpool`): at most `FEED_GO_DB_MAX_CONNS` connections (default 8,
+  sized for the shadow workers and their hydration fan-out; see the package comment), none kept open
+  when idle, a 30-minute connection lifetime and a 5-minute idle timeout. A `pool_max_conns`,
+  `pool_min_conns`, `pool_max_conn_lifetime` or `pool_max_conn_idle_time` in the database URL wins.
 - **Redis (cache cluster):** the same per-id caches, read-compatibly: plain msgpack maps
   (msgpackr's module-level `pack`, `useRecords: false`), Dates as the timestamp extension, `undefined`
   as fixext type 0, `notFound` / `debounce` markers honoured, stale entries served. **This service
