@@ -831,14 +831,16 @@ export async function cancelOverdueServiceDeal(dealId: number) {
 
 async function postOverdueChatLine(dealId: number) {
   try {
-    const [row] = await dbWrite.$queryRaw<{ chatId: number | null }[]>`
-      SELECT "chatId" FROM "ServiceDeal" WHERE "id" = ${dealId}::int`;
+    // Only a delivered round can be sent back, so Accepted always has none used.
+    const [row] = await dbWrite.$queryRaw<{ chatId: number | null; revision: boolean }[]>`
+      SELECT "chatId", "revisionsUsed" > 0 AS "revision" FROM "ServiceDeal"
+      WHERE "id" = ${dealId}::int`;
     if (!row?.chatId) return;
     await createMessage({
       userId: -1,
       chatId: row.chatId,
       contentType: 'Markdown',
-      content: dealOverdueCancelledChatLine({ dealId, days: OVERDUE_DAYS }),
+      content: dealOverdueCancelledChatLine({ dealId, days: OVERDUE_DAYS, revision: row.revision }),
     });
   } catch (error) {
     // The deal is cancelled and refunded either way.

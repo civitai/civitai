@@ -503,6 +503,8 @@ function ImageCard({
     if (disabled || e.repeat) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
+      // The document-level Space hotkey would otherwise also skip the pair this vote just ended.
+      e.stopPropagation();
       onVote();
     }
   };

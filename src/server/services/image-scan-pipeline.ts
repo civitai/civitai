@@ -57,7 +57,12 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  ingestionAfterScanErrorSql,
+  ingestionAfterVerdictSql,
+  ingestionKeptAfterVerdict,
+} from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
@@ -307,7 +312,7 @@ export async function markImageScanError({
   >`
     UPDATE "Image"
     SET
-      "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+      "ingestion" = ${ingestionAfterScanErrorSql()},
       "scanJobs" = jsonb_set(
         jsonb_set(
           jsonb_set(
@@ -706,7 +711,7 @@ export async function resolveScanOutcome({
     SET
       "updatedAt" = ${toUpdate.updatedAt},
       "pHash" = ${pHash ?? null},
-      "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+      "ingestion" = ${ingestionAfterVerdictSql(toUpdate.ingestion as string)},
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${scanLevel},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
@@ -727,7 +732,19 @@ export async function resolveScanOutcome({
   // judge write takes the greater level too, so either order ends at the higher of the two. A floor
   // above the level the audit ran at sends the image back for a rescan, so its checks run there.
   let nsfwLevel = scanLevel;
-  let ingestion = toUpdate.ingestion as ImageIngestionStatus;
+  // What the guarded assignment above left. A row loaded as NotFound is read back, because a
+  // rescan request may have moved it before the write and the Scanned effects must then run.
+  // shortcut: a row that turned NotFound after the load is still reported Scanned.
+  let ingestion = ingestionKeptAfterVerdict(
+    image.ingestion,
+    toUpdate.ingestion as ImageIngestionStatus
+  );
+  if (ingestion === ImageIngestionStatus.NotFound) {
+    const [row] = await dbWrite.$queryRaw<{ ingestion?: ImageIngestionStatus }[]>`
+      SELECT "ingestion" FROM "Image" WHERE id = ${image.id}
+    `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
+    ingestion = row?.ingestion ?? ingestion;
+  }
   if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
@@ -748,7 +765,10 @@ export async function resolveScanOutcome({
           END
         WHERE id = ${image.id}
           AND NOT "nsfwLevelLocked"
-          AND ingestion != ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+          AND ingestion NOT IN (
+            ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus"
+          )
           AND "blockedFor" IS NULL
           AND "nsfwLevel" != ${NsfwLevel.Blocked}
           AND ${floor} > "nsfwLevel"

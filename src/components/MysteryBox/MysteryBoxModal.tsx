@@ -44,6 +44,8 @@ import {
 import type { OpenPhase } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useMysteryBoxOpen, useMysteryBoxViews } from '~/components/MysteryBox/useMysteryBoxOpen';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { edgeMediaOptions, resolveEdgeImageUrl } from '~/client-utils/edge-url';
+import { reportApplicationError } from '~/utils/application-error';
 import { boxOpenClaimKey } from '@civitai/shared/mystery-box';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -416,6 +418,8 @@ function BoxContents({
   );
 }
 
+const REWARD_ART_WIDTH = 256;
+
 function OpenStage({
   view,
   color,
@@ -447,6 +451,16 @@ function OpenStage({
   const shelfPrice = reward ? shelfPrices[reward.cosmeticId] : undefined;
   const actions = boxActions(view);
   const revealed = phase === 'revealed';
+
+  // Warm the cache while the lid is still on, so the reveal's <img> doesn't start cold mid-pop.
+  const rewardUrl = reward?.url;
+  useEffect(() => {
+    if (phase !== 'glowing' || !rewardUrl) return;
+    new Image().src = resolveEdgeImageUrl(
+      rewardUrl,
+      edgeMediaOptions({ width: REWARD_ART_WIDTH })
+    ).url;
+  }, [phase, rewardUrl]);
 
   return (
     <div
@@ -502,7 +516,14 @@ function OpenStage({
                   url={reward.url}
                   fit={reward.fit as EventDecorationFit | undefined}
                   color={glow}
-                  width={256}
+                  width={REWARD_ART_WIDTH}
+                  loading="eager"
+                  onError={() =>
+                    reportApplicationError(new Error('mystery box reward art failed to load'), {
+                      name: 'mystery-box-reveal-art',
+                      message: `cosmeticId=${reward.cosmeticId} url=${reward.url}`,
+                    })
+                  }
                   className="!bg-transparent"
                 />
               )}

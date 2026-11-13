@@ -12,9 +12,10 @@
  * adapter serves them.
  */
 import { readCatalog } from '~/server/registry-adapter/catalog-source';
-import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
+import { abortableSleep } from '~/utils/errorHandling';
 import { SERVED_SCHEMAS, buildEntities } from '~/server/registry-adapter/entities';
 import {
   createMemorySnapshotStore,

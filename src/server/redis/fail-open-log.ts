@@ -9,9 +9,12 @@ import { logToAxiom, safeError } from '~/server/logging/client';
  *
  * - `defaults-firing`        getGenerationStatus / getTrainingServiceStatus
  *                            / getCreationBlockedTags fell back to schema
- *                            defaults. The first two default to
+ *                            defaults. getTrainingServiceStatus defaults to
  *                            `available=true` — if admin had disabled the
  *                            service, it now appears enabled.
+ *                            getGenerationStatus does NOT: it serves the last
+ *                            value it read (`served: 'last-known-good'`) or,
+ *                            with none, DISABLED (`served: 'fail-closed'`).
  *
  * - `tracking-write-cliff`   setToken's USER_TOKENS write failed. Next
  *                            authenticated request from that user will

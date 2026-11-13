@@ -446,9 +446,11 @@ export function guardFlagEnabled(
   return !!getFeatureFlags(ctx)[flag];
 }
 
-export const isFlagProtected = (flag: keyof FeatureAccess) =>
+/** Refuses unless the caller has at least one of `flags`. */
+export const isFlagProtected = (...flags: (keyof FeatureAccess)[]) =>
   middleware(({ ctx, next }) => {
-    if (!guardFlagEnabled(ctx, flag)) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!flags.some((flag) => guardFlagEnabled(ctx, flag)))
+      throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
   });

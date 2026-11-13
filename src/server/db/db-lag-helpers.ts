@@ -3,13 +3,33 @@ import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import { replicationLagCheckFailOpenCounter } from '~/server/prom/cluster-cache-guard.metrics';
+import {
+  ClusterCacheUnavailableError,
+  clusterCacheGuard,
+} from '~/server/redis/cluster-cache-guard';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 
 // Shared recent-write tracker (@civitai/db). Redis is injected as the flag store — the package stays
 // redis-agnostic. The Flipt global kill-switch + per-entity key scheme below stay app-side (domain).
+// The flag read goes through the cluster-cache guard, bounded at REPLICATION_LAG_CHECK_TIMEOUT_MS
+// (and short-circuited while the guard's breaker is open): a cache that cannot answer routes the
+// read to the replica — what a missing flag means — instead of holding every page read it fronts.
+// The guard owns the bound and the logging, so the tracker's own bound is off here.
 const lagTracker = createLagTracker<RedisKeyTemplateCache>({
-  store: redis,
+  store: {
+    get: (key) =>
+      clusterCacheGuard.call('db-lag-helpers.isStale', () => redis.get(key), {
+        deadlineMs: env.REPLICATION_LAG_CHECK_TIMEOUT_MS,
+      }),
+    set: (key, value, opts) => redis.set(key, value, opts),
+  },
   delaySeconds: env.REPLICATION_LAG_DELAY,
+  readTimeoutMs: 0,
+  onReadFailure: (_reason, err) => {
+    const reason = err instanceof ClusterCacheUnavailableError ? err.reason : 'error';
+    replicationLagCheckFailOpenCounter.inc({ reason });
+  },
 });
 
 type LaggingType =

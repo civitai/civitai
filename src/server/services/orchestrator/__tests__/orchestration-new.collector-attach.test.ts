@@ -67,9 +67,15 @@ vi.mock('@civitai/db', () => ({
   createLagTracker: vi.fn(() => ({})),
   loadDbEnv: vi.fn(() => ({})),
 }));
-vi.mock('~/server/services/generation/generation.service', () => ({
+vi.mock('~/server/services/generation/generation.service', async () => ({
   resolveTestingAccess: vi.fn(async () => false),
-  getGateRules: vi.fn(async () => []),
+  // An unset kill switch (schema defaults) and no gate rules, both read successfully.
+  getGenerationStatusState: vi.fn(async () => ({
+    status: (await import('~/server/schema/generation.schema')).generationStatusSchema.parse({}),
+    known: true,
+  })),
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
+  generationConfigUnavailableError: vi.fn(() => new Error('generation config unavailable')),
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
   getResourceData: vi.fn(async () => []),
 }));
@@ -84,7 +90,7 @@ import {
   validateInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { generationValidationRefusedCounter } from '~/server/prom/generation-validation.metrics';
-import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
+import type { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 

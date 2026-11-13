@@ -19,21 +19,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
   // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
   SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
-  FEED_IMAGE_EXISTENCE = 'feed-image-existence',
-  FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
-  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
-  FEED_SERVICE_PRIMARY = 'feed-service-primary',
-  // The same for the public REST images endpoint, apart so either can be rolled back alone.
-  FEED_SERVICE_REST_IMAGES = 'feed-service-rest-images',
-  // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
-  // missing, a hub stays on Meilisearch while every other shape follows the flag above.
-  FEED_SERVICE_HUBS = 'feed-service-hubs',
-  // The image feed without Meilisearch: every website and REST image-feed request goes to the feed
-  // service, whatever the three flags above say, and what the feed cannot serve is answered without
-  // the search index (an empty page, a retryable 503, or a 400 for a sort it does not have) instead
-  // of falling back. Off or missing, the flags above decide as before.
-  FEED_SERVICE_MEILI_OFF = 'feed-service-meili-off',
+  // On: the image feed's feed-service call runs behind a circuit breaker, and an anonymous first
+  // page the feed fails to answer is served from that pod's last good copy (10 min) instead of a
+  // 503 (`~/server/services/feed-primary-degrade`). DEFAULT-OFF: `isFliptSync` returns null for an
+  // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  FEED_SERVICE_DEGRADE = 'feed-service-degrade',
+  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
+  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
+  // read at most once per 5s per process (`createCachedFlagGate`).
+  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -681,6 +676,10 @@ export const getFliptCacheStats = flipt.getCacheStats;
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.
 export const getFliptClientSync = flipt.getClientSync;
+// Registers the last-known flag-state store. Called once at server boot by
+// ~/server/flipt/snapshot-store (it needs sysRedis, which this module must not import: it is in
+// the _app client graph, and ~/server/redis/client imports this module).
+export const setFliptSnapshotStore = flipt.setSnapshotStore;
 // A `FLIPT_LOCAL_OVERRIDES` value for one flag (never set in production), for a gate that reads the
 // SDK client directly and would otherwise not see it.
 export const getFliptLocalOverride = (flag: string): string | undefined =>

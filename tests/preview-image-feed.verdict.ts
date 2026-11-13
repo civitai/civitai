@@ -1,7 +1,6 @@
 /**
- * What an image.getInfinite page must look like, given the `source` it names. Shared by the
- * preview smoke (tests/preview-image-feed.spec.ts) and a unit test that feeds it the real
- * getAllImagesIndex output, so the two cannot disagree about the contract.
+ * What an image.getInfinite page must look like, given the `source` it names. Used by the
+ * preview smoke (tests/preview-image-feed.spec.ts).
  *
  *  - `retired`: the feeds index (`metrics_images_v1`) is retired and the reader refused it. Only
  *    the retirement guard stamps this source, so an empty page is acceptable here and nowhere
