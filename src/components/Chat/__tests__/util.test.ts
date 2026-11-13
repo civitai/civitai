@@ -177,6 +177,39 @@ describe('getLinkHref', () => {
   });
 });
 
+describe('a civitai.com link whose path starts with two slashes', () => {
+  // A browser reads an href of "//host/x" as another host, so these must never become one.
+  const shapes = [
+    'https://civitai.com//example.org/x',
+    'civitai.com//example.org/x',
+    'https://civitai.com/.//example.org/x',
+    'https://civitai.com/a/..//example.org/x',
+    'https://civitai.com/\\example.org/x',
+    '/.//example.org/x',
+  ];
+
+  it.each(shapes)('gives %s no href', (href) => {
+    expect(getLinkHref(href)).toBeUndefined();
+    expect(validateLink.url(href)).toBe(false);
+  });
+
+  it.each(shapes.slice(0, 5))('renders %s in a message without a link', (text) => {
+    const html = renderMessage(`see ${text}`);
+    expect(html).not.toContain('href="//');
+    expect(html).not.toContain('<a');
+  });
+
+  it('still links a normal civitai.com path, and keeps an encoded slash on the site', () => {
+    expect(getLinkHref('https://civitai.com/models/1')).toBe('/models/1');
+    expect(getLinkHref('civitai.com/models/1')).toBe('/models/1');
+    expect(getLinkHref('https://civitai.com/%2F%2Fexample.org')).toBe('/%2F%2Fexample.org');
+    expect(getLinkHref('https://civitai.com/models/1?back=https://civitai.com/x#//y')).toBe(
+      '/models/1?back=https://civitai.com/x#//y'
+    );
+    expect(renderMessage('see civitai.com/models/1')).toContain('href="/models/1"');
+  });
+});
+
 describe('chatPreviewText', () => {
   const me = 1;
   const ann = { userId: 2, user: { username: 'ann' } };

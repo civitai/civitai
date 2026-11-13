@@ -1,4 +1,5 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
@@ -87,7 +88,12 @@ export async function getHomeBlockCached(
   const cacheKey = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${homeBlock.type}:${identifier}:${domainSegment(
     domain
   )}` as const;
-  const cachedHomeBlock = await redis.packed.get<HomeBlockWithData>(cacheKey);
+  // An unreadable cache (error, timeout, open breaker) is a miss: the block is built from source.
+  const cachedHomeBlock = await clusterCacheGuard.readOr(
+    'home-block-cache.getHomeBlockCached',
+    () => redis.packed.get<HomeBlockWithData>(cacheKey),
+    null
+  );
 
   // One entry serves every clone of a source, so the stored copy carries the identity of whichever
   // row filled it first. The content is shared; the identity is not — the caller asked about THIS
@@ -118,9 +124,11 @@ export async function getHomeBlockCached(
       (homeBlockWithData as { collection?: { read?: string } } | null)?.collection?.read
     );
   if (homeBlockWithData && shareable) {
-    await redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
-      EX: CACHE_EXPIRY[homeBlock.type],
-    });
+    await clusterCacheGuard.writeBestEffort('home-block-cache.getHomeBlockCached set', () =>
+      redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
+        EX: CACHE_EXPIRY[homeBlock.type],
+      })
+    );
 
     log('getHomeBlockCached :: done getting system home blocks');
   }

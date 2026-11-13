@@ -47,7 +47,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       error(400, `Training could not start: ${err.reason}`);
     if (err instanceof TrainingSubmitError && err.status !== undefined && err.status < 500)
       error(502, `Could not start training: ${err.reason}. Try again.`);
-    error(502, 'Could not start training. Try again.');
+    // Not "try again": the run may have started and charged anyway. The server already looked for
+    // it by the batch's submit key; a Start of the same batch reuses that key, so it returns a run
+    // that landed instead of charging twice, but the user should look before starting over.
+    error(
+      502,
+      "We couldn't confirm your training started. Check your runs before starting it again; starting this same batch again won't charge twice."
+    );
   }
 
   return json({ ...batch, requested: runs?.length ?? 0 });
