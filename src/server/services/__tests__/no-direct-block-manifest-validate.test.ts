@@ -9,14 +9,18 @@ import { describe, expect, it } from 'vitest';
  * build pipeline refuses after approval. So the only reference to `validate` in production code is
  * the `this.validate(` inside `validateSubmission`.
  *
- * The scan parses each file, so a name in a comment, a string or a type (`typeof X.validate`) is
- * not a reference. It follows the class through a renamed import, a namespace import, a dynamic
- * `import()` destructure and a `const V = BlockManifestValidator` alias, and it catches
- * `validate` destructured out of the class or read as a value (`.call`, `.bind`, passed along).
+ * The scan parses each file (as `.ts` or `.tsx` by its extension; a file that does not parse
+ * cleanly fails the guard), so a name in a comment, a string or a type (`typeof X.validate`) is not
+ * a reference. It follows the class through a renamed import, a namespace import, a destructure
+ * (in a declaration or a parameter, so `.then(({ BlockManifestValidator: V }) => …)` too), a
+ * `const V = BlockManifestValidator` alias including one behind `??`, `||` or `?:`, and a subclass.
+ * It catches `validate` destructured out of the class, nested destructures included, read as a
+ * value (`.call`, `.bind`, passed along), or reached through `super`.
  *
  * Not caught: the class re-exported under another name from a file that never spells
- * `BlockManifestValidator` (files are prefiltered on that name), and rebinding other than a
- * `const`/`let`/`var` declaration (an assignment, a parameter, an object property).
+ * `BlockManifestValidator` (files are prefiltered on that name); rebinding by assignment, an object
+ * property or a positional parameter; and computed access (`Reflect.get`, a key in a variable,
+ * a rest pattern).
  */
 
 const REPO = path.resolve(__dirname, '../../../..');
@@ -56,44 +60,90 @@ function memberName(node: ts.Node): string | undefined {
   return undefined;
 }
 
-function enclosingMethod(node: ts.Node): string | undefined {
-  for (let n: ts.Node | undefined = node.parent; n; n = n.parent)
-    if (ts.isMethodDeclaration(n) && ts.isIdentifier(n.name)) return n.name.text;
+function enclosing<T extends ts.Node>(node: ts.Node, is: (n: ts.Node) => n is T): T | undefined {
+  for (let n: ts.Node | undefined = node.parent; n; n = n.parent) if (is(n)) return n;
   return undefined;
 }
 
+function bindingKey(el: ts.BindingElement): string | undefined {
+  const key = el.propertyName ?? el.name;
+  return ts.isIdentifier(key) || ts.isStringLiteralLike(key) ? key.text : undefined;
+}
+
 /**
- * Every reference to `validate` on the class in `source`, as `line: text` strings. `inDefiningClass`
- * also counts `this.validate` (the class's own static methods), allowing it only in
- * `validateSubmission`.
+ * Every reference to `validate` on the class in `source`, as `line: text` strings. `inDefiningFile`
+ * also counts `this.validate` inside the class itself, allowing it only in `validateSubmission`.
  */
-function directValidateRefs(source: string, inDefiningClass = false): string[] {
-  const sf = ts.createSourceFile('x.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function directValidateRefs(source: string, fileName = 'x.ts', inDefiningFile = false): string[] {
+  const kind = fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+  // A broken parse silently drops everything after the error, so it is a failure, not a pass.
+  const parseErrors = (sf as unknown as { parseDiagnostics?: ts.Diagnostic[] }).parseDiagnostics;
+  if (!Array.isArray(parseErrors)) throw new Error('typescript no longer exposes parseDiagnostics');
+  if (parseErrors.length > 0)
+    throw new Error(
+      `${fileName} does not parse: ${ts.flattenDiagnosticMessageText(
+        parseErrors[0].messageText,
+        ' '
+      )}`
+    );
   const classNames = new Set<string>([CLASS]);
 
   const isClassExpr = (expr: ts.Expression): boolean => {
     const e = unwrap(expr);
     if (ts.isIdentifier(e)) return classNames.has(e.text);
+    if (ts.isConditionalExpression(e)) return isClassExpr(e.whenTrue) || isClassExpr(e.whenFalse);
+    if (
+      ts.isBinaryExpression(e) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+      ].includes(e.operatorToken.kind)
+    )
+      return isClassExpr(e.left) || isClassExpr(e.right);
     // `mod.BlockManifestValidator`, `(await import('…')).BlockManifestValidator`
     return memberName(e) === CLASS;
   };
 
-  // Learn aliases of the class to a fixed point: renamed imports, `const V = <class>`, and
-  // `const { BlockManifestValidator: V } = …`.
+  const extendsClass = (cls: ts.ClassLikeDeclaration) =>
+    !!cls.heritageClauses?.some(
+      (h) =>
+        h.token === ts.SyntaxKind.ExtendsKeyword && h.types.some((t) => isClassExpr(t.expression))
+    );
+
+  // Learn aliases of the class to a fixed point: renamed imports, `const V = <class>`, a destructure
+  // `{ BlockManifestValidator: V }` anywhere (declaration or parameter), and a subclass.
   const learn = (node: ts.Node) => {
     if (ts.isImportSpecifier(node) && (node.propertyName ?? node.name).text === CLASS)
       classNames.add(node.name.text);
-    if (ts.isVariableDeclaration(node) && node.initializer) {
-      if (ts.isIdentifier(node.name) && isClassExpr(node.initializer))
-        classNames.add(node.name.text);
-      if (ts.isObjectBindingPattern(node.name))
-        for (const el of node.name.elements) {
-          const key = el.propertyName ?? el.name;
-          if (ts.isIdentifier(key) && key.text === CLASS && ts.isIdentifier(el.name))
-            classNames.add(el.name.text);
-        }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isIdentifier(node.name) &&
+      isClassExpr(node.initializer)
+    )
+      classNames.add(node.name.text);
+    if (ts.isBindingElement(node) && bindingKey(node) === CLASS && ts.isIdentifier(node.name))
+      classNames.add(node.name.text);
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && extendsClass(node)) {
+      const name =
+        node.name ??
+        (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)
+          ? node.parent.name
+          : undefined);
+      if (name && name.text !== CLASS) classNames.add(name.text);
     }
     ts.forEachChild(node, learn);
+  };
+
+  // A destructuring pattern whose value is the class: `= <class>`, or nested under a
+  // `BlockManifestValidator:` key.
+  const patternIsClass = (pattern: ts.ObjectBindingPattern): boolean => {
+    const p = pattern.parent;
+    if (ts.isVariableDeclaration(p)) return !!p.initializer && isClassExpr(p.initializer);
+    if (ts.isBindingElement(p)) return bindingKey(p) === CLASS;
+    return false;
   };
   for (let size = -1; size !== classNames.size; ) {
     size = classNames.size;
@@ -114,23 +164,27 @@ function directValidateRefs(source: string, inDefiningClass = false): string[] {
       const target = unwrap(node.expression);
       if (isClassExpr(target)) report(node);
       else if (
-        inDefiningClass &&
-        target.kind === ts.SyntaxKind.ThisKeyword &&
-        enclosingMethod(node) !== ALLOWED_OWNER
-      )
-        report(node);
-    }
-    // `const { validate } = BlockManifestValidator`
-    if (
-      ts.isVariableDeclaration(node) &&
-      node.initializer &&
-      ts.isObjectBindingPattern(node.name) &&
-      isClassExpr(node.initializer)
-    )
-      for (const el of node.name.elements) {
-        const key = el.propertyName ?? el.name;
-        if (ts.isIdentifier(key) && key.text === 'validate') report(el);
+        target.kind === ts.SyntaxKind.SuperKeyword ||
+        target.kind === ts.SyntaxKind.ThisKeyword
+      ) {
+        // `super.validate` / `this.validate` in a subclass; `this.validate` in the class itself
+        // outside validateSubmission.
+        const cls = enclosing(node, ts.isClassLike);
+        const method = enclosing(node, ts.isMethodDeclaration);
+        const inAllowedOwner =
+          !!method && ts.isIdentifier(method.name) && method.name.text === ALLOWED_OWNER;
+        if (cls && extendsClass(cls)) report(node);
+        else if (inDefiningFile && cls?.name?.text === CLASS && !inAllowedOwner) report(node);
       }
+    }
+    // `const { validate } = BlockManifestValidator`, `{ BlockManifestValidator: { validate } }`
+    if (
+      ts.isBindingElement(node) &&
+      bindingKey(node) === 'validate' &&
+      ts.isObjectBindingPattern(node.parent) &&
+      patternIsClass(node.parent)
+    )
+      report(node);
     ts.forEachChild(node, visit);
   };
   visit(sf);
@@ -162,6 +216,25 @@ describe('no production code reaches BlockManifestValidator.validate directly', 
     ['a renamed destructure', `const { validate: v } = BlockManifestValidator;\nv(m);`],
     ['.call', `BlockManifestValidator.validate.call(null, m);`],
     ['passed as a value', `manifests.map(BlockManifestValidator.validate);`],
+    ['an alias behind ??', `const V = injected ?? BlockManifestValidator;\nV.validate(m);`],
+    ['an alias behind ?:', `const V = strict ? other : BlockManifestValidator;\nV.validate(m);`],
+    [
+      'a nested destructure',
+      `const { BlockManifestValidator: { validate } } = await import('~/x');\nvalidate(m);`,
+    ],
+    [
+      'a parameter destructure',
+      `import('~/x').then(({ BlockManifestValidator: V }) => V.validate(m));`,
+    ],
+    ['a subclass', `class Strict extends BlockManifestValidator {}\nStrict.validate(m);`],
+    [
+      'super in a subclass',
+      `class Strict extends BlockManifestValidator {\n  static run(m) { return super.validate(m); }\n}`,
+    ],
+    [
+      'a call after a generic arrow',
+      `export const id = <T,>(x: T): T => x;\nBlockManifestValidator.validate(id(m));`,
+    ],
   ])('the scan sees %s', (_case, source) => {
     expect(directValidateRefs(source)).toHaveLength(1);
   });
@@ -173,6 +246,10 @@ describe('no production code reaches BlockManifestValidator.validate directly', 
     ['a type', `type R = ReturnType<typeof BlockManifestValidator.validate>;`],
     ['another object', `schema.validate(m);\nconst { validate } = other;`],
     ['this.validate outside the defining class', `this.validate(m);`],
+    [
+      'a subclass of something else',
+      `class S extends Base {\n  run() { return super.validate(); }\n}`,
+    ],
   ])('the scan ignores %s', (_case, source) => {
     expect(directValidateRefs(source)).toEqual([]);
   });
@@ -180,8 +257,18 @@ describe('no production code reaches BlockManifestValidator.validate directly', 
   it('in the defining class, this.validate is allowed only inside validateSubmission', () => {
     const cls = (method: string) =>
       `class BlockManifestValidator {\n  static validate() {}\n  static ${method}() { return this.validate(); }\n}`;
-    expect(directValidateRefs(cls('validateSubmission'), true)).toEqual([]);
-    expect(directValidateRefs(cls('validateLoosely'), true)).toHaveLength(1);
+    expect(directValidateRefs(cls('validateSubmission'), 'x.ts', true)).toEqual([]);
+    expect(directValidateRefs(cls('validateLoosely'), 'x.ts', true)).toHaveLength(1);
+    // Another class in the same file has its own `validate`.
+    const other = `class Other {\n  validate() {}\n  run() { return this.validate(); }\n}`;
+    expect(directValidateRefs(other, 'x.ts', true)).toEqual([]);
+  });
+
+  it('parses by extension and refuses a file that does not parse', () => {
+    // As .tsx this generic arrow is JSX, and the parse would swallow the call after it.
+    const generic = `const id = <T>(x: T): T => x;\nBlockManifestValidator.validate(m);`;
+    expect(directValidateRefs(generic, 'x.ts')).toHaveLength(1);
+    expect(() => directValidateRefs(generic, 'x.tsx')).toThrow(/does not parse/);
   });
 
   it('validateSubmission is the one caller of validate', () => {
@@ -194,7 +281,7 @@ describe('no production code reaches BlockManifestValidator.validate directly', 
         const source = readFileSync(f, 'utf8');
         if (!source.includes(CLASS)) return [];
         const file = rel(f);
-        return directValidateRefs(source, file === DEFINING_FILE).map((r) => `${file}:${r}`);
+        return directValidateRefs(source, file, file === DEFINING_FILE).map((r) => `${file}:${r}`);
       })
       .flat();
     expect(found, MESSAGE).toEqual([]);
