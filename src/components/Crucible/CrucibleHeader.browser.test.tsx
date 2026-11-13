@@ -147,8 +147,8 @@ describe('CrucibleHeader description links', () => {
   });
 });
 
-// "They need to be slash roots so that we don't link to .com from .red." Our own links render as
-// root-relative paths, so each site keeps its readers; links elsewhere are left as written.
+// Own-site links render as root-relative paths so each site keeps its readers (.red must not link
+// to .com); links elsewhere are left as written.
 describe('CrucibleHeader description links to our own site', () => {
   const hrefsIn = async (description: string) => {
     renderWithProviders(
@@ -171,14 +171,18 @@ describe('CrucibleHeader description links to our own site', () => {
     expect(await hrefsIn(text)).toEqual([href]);
   });
 
-  test('a same-site link opens in place, without the user-content rel', async () => {
-    await hrefsIn('Rules: /articles/38702');
-    const link = document.querySelector<HTMLAnchorElement>(
-      '[data-testid="crucible-description"] a'
-    )!;
-    expect(link.getAttribute('target')).toBeNull();
-    expect(link.getAttribute('rel')).toBeNull();
-  });
+  test.each(['Rules: /articles/38702', 'Rules: https://civitai.com/articles/38702'])(
+    'a same-site link opens in place, without the user-content rel: %s',
+    async (text) => {
+      await hrefsIn(text);
+      const link = document.querySelector<HTMLAnchorElement>(
+        '[data-testid="crucible-description"] a'
+      )!;
+      expect(link.getAttribute('href')).toBe('/articles/38702');
+      expect(link.getAttribute('target')).toBeNull();
+      expect(link.getAttribute('rel')).toBeNull();
+    }
+  );
 
   test('control: a link to another site keeps its host', async () => {
     expect(await hrefsIn('see https://example.com/articles/38702')).toEqual([

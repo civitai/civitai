@@ -55,7 +55,7 @@ export function toCurrentDomainHref(
 /**
  * `href` as a root-relative path ("/articles/1") when it is an http(s) link to one of `ownHosts`,
  * so it opens on whichever of our sites is being read. Anything else comes back untouched, and so
- * does a bare-domain link, for the same reason as above: it is the "go to the other site" link.
+ * does a bare-domain link, which is the deliberate "go to the other site" link.
  */
 export function toOwnRootRelative(href: string, ownHosts: readonly string[]): string {
   let url: URL;
