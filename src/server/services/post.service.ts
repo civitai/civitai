@@ -300,7 +300,8 @@ export const getPostsInfinite = async ({
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
-  const isModerator = user?.isModerator ?? false;
+  // One value for every moderator branch below: a narrow-scope key is not a moderator here.
+  const isModerator = asModerator ?? user?.isModerator ?? false;
   const includeCosmetics = !!include?.includes('cosmetics');
 
   let targetUser: number | undefined;
@@ -565,7 +566,7 @@ export const getPostsInfinite = async ({
   await enforceBlockedBrowsingTags(imageRules, {
     id: user?.id,
     username: user?.username,
-    isModerator: asModerator ?? user?.isModerator,
+    isModerator,
   });
   const excludedImageTagIds = new Set([
     ...(imageRules.excludedTagIds ?? []),
@@ -583,7 +584,7 @@ export const getPostsInfinite = async ({
       !(image.tagIds ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
 
   // Filter to published model versions:
-  const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
+  const filterByPermissionContent = !isOwnerRequest && !isModerator;
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
   // Get user data
   const userIds = postsRaw.map((i) => i.userId);
@@ -596,8 +597,7 @@ export const getPostsInfinite = async ({
               postIds: postsRaw.map((x) => x.id),
               // excludedIds: excludedImageIds,
               // A request that may not act as a moderator fetches images as anyone would.
-              user:
-                user?.isModerator && asModerator === false ? { ...user, isModerator: false } : user,
+              user: user && { ...user, isModerator },
               browsingLevel,
               pending,
               disablePoi,
@@ -642,7 +642,7 @@ export const getPostsInfinite = async ({
         // remove unlisted resources the user has no access to:
         .filter((p) => {
           // Allow mods and owners to view all.
-          if (user?.isModerator || p.userId === user?.id) return true;
+          if (isModerator || p.userId === user?.id) return true;
 
           // Hide posts from unpublished model versions:
           if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {

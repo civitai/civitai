@@ -106,7 +106,7 @@ export const getPostsInfiniteHandler = async ({
     if (withheld) return { items: [], nextCursor: undefined };
     if (heldLevel !== undefined) {
       const browsingLevel = Flags.intersection(input.browsingLevel, heldLevel);
-      // The feed reads 0 as no filter, so an empty intersection is an empty page.
+      // An empty intersection is an empty page; passed on, the feed would read 0 as the public level.
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       input = { ...input, browsingLevel };
     }

@@ -28,6 +28,8 @@ const h = vi.hoisted(() => ({
   hiddenTagsByUser: {} as Record<number, { id: number; hidden: boolean }[]>,
   // How many post rows the query returns: the real one returns `limit + 1`.
   rows: undefined as number | undefined,
+  // The SQL of the last post query.
+  sql: '',
 }));
 
 const POSTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((id) => ({
@@ -69,7 +71,10 @@ const IMAGES = [
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  queryCache: () => async () => POSTS.slice(0, h.rows).map((p) => ({ ...p })),
+  queryCache: () => async (query: { sql: string }) => {
+    h.sql = query.sql;
+    return POSTS.slice(0, h.rows).map((p) => ({ ...p }));
+  },
 }));
 // Mocked whole: spreading the original loads post.service first, which then binds the real one.
 vi.mock('~/server/services/image.service', () => ({
@@ -258,5 +263,36 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
     expect(result.nextCursor).toEqual(unfiltered.nextCursor);
     h.rows = 2;
     expect((await page(undefined, NsfwLevel.PG, false, 2)).nextCursor).toBeUndefined();
+  });
+
+  describe("a moderator's own visibility of posts", () => {
+    const pendingFeed = (apiKey: boolean | 'full') =>
+      caller({ id: 1, isModerator: true }, apiKey).getInfinite({
+        limit: 20,
+        sort: PostSort.Newest,
+        period: MetricTimeframe.AllTime,
+        periodMode: 'published',
+        browsingLevel: MATURE,
+        pending: true,
+      } as never);
+    const privateHidden = () => h.sql.includes(`p."availability" != 'Private'`);
+    // Others' unrated (unscanned) posts: the moderator's pending clause has no owner condition.
+    const othersUnrated = () => /OR p\."nsfwLevel" = 0\)/.test(h.sql);
+
+    it.each([
+      ['a session', false],
+      ['a full-scope key', 'full'],
+    ] as const)('keeps them through %s', async (_, apiKey) => {
+      await pendingFeed(apiKey);
+      expect(privateHidden()).toBe(false);
+      expect(othersUnrated()).toBe(true);
+    });
+
+    it("does not reach a narrow-scope key: no private posts, no other user's unscanned post", async () => {
+      await pendingFeed(true);
+      expect(privateHidden()).toBe(true);
+      expect(othersUnrated()).toBe(false);
+      expect(h.sql).toContain(`p."nsfwLevel" = 0 AND p."userId" =`);
+    });
   });
 });
