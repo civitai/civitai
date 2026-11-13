@@ -76,6 +76,8 @@ function assertReason(reason: string | null | undefined, what: string): string {
 async function lockApp(tx: RawClient, slug: string) {
   await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(${HOLD_LOCK_CLASS}::int, hashtext(${slug}))::text`;
+  // The timeout is for this wait only: the caller's later row writes keep their usual wait.
+  await tx.$executeRaw`SET LOCAL lock_timeout TO DEFAULT`;
 }
 
 export async function getOpenHoldsBySlug(
@@ -306,13 +308,30 @@ export async function releaseApproveClaim(db: RawClient, claim: ApproveClaim) {
  * The approve paths' final check, inside the transaction that flips the request to approved:
  * refuses as {@link checkHoldsBeforeApprove} does, else marks the holds overridden and records a
  * ModActivity row for each.
+ *
+ * `afterSideEffects`: the approve has already committed code past its {@link claimApprove}, so a
+ * refusal could not undo it. A hold the moderator was not shown (placed after the claim expired)
+ * is then left open, not overridden, and blocks the app's next request instead.
  */
 export async function resolveHoldsAtApprove(
   tx: RawClient,
-  input: ApproveHoldInput & { actorUserId: number }
+  input: ApproveHoldInput & { actorUserId: number; afterSideEffects?: boolean }
 ): Promise<number[]> {
   await lockApp(tx, input.slug);
-  const holds = await getOpenHoldsBySlug(tx, [input.slug]);
+  let holds = await getOpenHoldsBySlug(tx, [input.slug]);
+  if (input.afterSideEffects) {
+    const shown = new Set(input.shownHoldIds ?? []);
+    const late = holds.filter((h) => !shown.has(h.id));
+    if (late.length) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[publish-request-holds] approve of ${
+          input.slug
+        } finished past its claim; holds left open: ${late.map((h) => h.id).join(', ')}`
+      );
+      holds = holds.filter((h) => shown.has(h.id));
+    }
+  }
   const reason = assertHoldsOverridable(holds, input);
   if (!reason) return [];
   const ids = holds.map((h) => h.id);
