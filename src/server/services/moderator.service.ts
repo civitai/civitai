@@ -202,7 +202,7 @@ type SearchQueryRuleModActivity = {
 
 type PublishRequestHoldModActivity = {
   entityType: 'publishRequestHold';
-  activity: 'publishRequestHoldOverride';
+  activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
 };
 
 type CsamReportModActivity = {
