@@ -129,7 +129,7 @@ export type CrucibleContentType = (typeof CRUCIBLE_CONTENT_TYPES)[number];
 export const CRUCIBLE_MAX_SEEDED_PRIZE_POOL = 10_000_000;
 
 /**
- * The only values a crucible's `maxClipSeconds` may take. Topped just under
+ * The only values a crucible's `maxClipSeconds` may take. None exceeds
  * `constants.mediaUpload.maxVideoDurationSeconds`: a longer limit could never reject anything,
  * since no uploaded video can exceed that cap.
  */

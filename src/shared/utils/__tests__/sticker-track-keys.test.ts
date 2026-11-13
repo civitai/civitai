@@ -157,7 +157,7 @@ describe('stickerTrackRefusal on keys', () => {
     ['times out of order', [key(500), key(0)], /times must increase/],
     ['a repeated time', [key(500), key(500)], /times must increase/],
     ['a fractional time', [key(0.5)], /time out of range/],
-    ['a time past the longest video', [key(300_001)], /time out of range/],
+    ['a time past the longest video', [key(500_001)], /time out of range/],
     ['opacity above 1', [key(0, { o: 1.2 })], /o out of bounds/],
     ['a shown key fainter than a still sticker may be', [key(0, { o: 0.1 })], /o too faint/],
     ['a position off the media', [key(0, { x: -0.1 })], /x out of bounds/],
@@ -191,6 +191,7 @@ describe('stickerTrackRefusal on keys', () => {
     ['a long jump into hiding', [key(0, { ease: 'jump' }), key(10_000, { o: 0 })]],
     ['a long gap between hidden keys', [key(0, { o: 0 }), key(10_000, { o: 0 })]],
     ['a long glide between shown keys', [key(0, { o: 0.4 }), key(10_000, { x: 0.8 })]],
+    ['a key at the end of an 8-minute video', [key(0), key(480_000, { x: 0.8 })]],
     [
       'fades that add up to the limit',
       fades(STICKER_TRACK_MAX_FAINT_MS / STICKER_TRACK_MAX_FADE_MS),

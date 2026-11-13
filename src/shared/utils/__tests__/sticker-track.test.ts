@@ -5,6 +5,7 @@ import {
   momentStickerTrack,
   sampleStickerTrack,
   STICKER_TRACK_MAX_BYTES,
+  STICKER_TRACK_MAX_DURATION_MS,
   stickerTrackRefusal,
 } from '~/shared/utils/sticker-track';
 
@@ -167,7 +168,7 @@ describe('stickerTrackRefusal', () => {
         ...ok,
         x: [
           [0, 0.1],
-          [5000, 0.2],
+          [STICKER_TRACK_MAX_DURATION_MS / ok.ms + 1, 0.2],
         ],
       },
       /x: tick out of range/,

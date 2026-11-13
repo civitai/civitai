@@ -227,9 +227,9 @@ describe('stageIntent', () => {
     expect(deleteManyMock).toHaveBeenCalledWith('images', ['key-1'], {});
   });
 
-  it('refuses a video over the site length limit', async () => {
+  const serveVideo = (duration: number) => {
     const MP4 = Buffer.from([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, ...new Array(16).fill(0)]);
-    probeMock.mockResolvedValue({ width: 1080, height: 1920, duration: 300 });
+    probeMock.mockResolvedValue({ width: 1080, height: 1920, duration });
     serve(
       {
         headers: { 'content-type': 'application/json' },
@@ -237,6 +237,16 @@ describe('stageIntent', () => {
       },
       { body: MP4 }
     );
+  };
+
+  it('accepts a video of up to 8 minutes', async () => {
+    serveVideo(480);
+    await stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now });
+    expect(dbMock.dbWrite.postIntentManifest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a video over 8 minutes', async () => {
+    serveVideo(481);
     await expect(stageIntent({ manifestUrl: MANIFEST_URL, userId: 7, now })).rejects.toMatchObject({
       code: 'video-limits',
     });

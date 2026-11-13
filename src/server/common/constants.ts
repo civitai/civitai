@@ -332,7 +332,7 @@ export const constants = {
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
     maxVideoFileSize: 750 * 1024 ** 2, // 750MB
     maxVideoDimension: 3840,
-    maxVideoDurationSeconds: 245,
+    maxVideoDurationSeconds: 480,
   },
   bounties: {
     engagementTypes: ['active', 'favorite', 'tracking', 'supporter', 'awarded'],
@@ -595,7 +595,6 @@ export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
 export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
-export const maxVideoDurationSeconds = 245;
 
 export function isOrchestratorUrl(url: string) {
   try {
