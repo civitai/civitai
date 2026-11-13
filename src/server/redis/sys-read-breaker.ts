@@ -32,9 +32,6 @@ import { ErrorReply } from 'redis';
  * OPT-IN, for reads that fail open and run on every request. Never for a write, and never for a read
  * whose failure must fail closed. Every other sys read keeps the plain deadline, which never consults
  * or feeds the breaker.
- *
- * Mirrors the cluster-cache guard's breaker (same states, defaults and env shape) so the two can be
- * unified later; it lives in its own module until then.
  */
 
 export type SysReadFailureReason = 'timeout' | 'error' | 'breaker-open';

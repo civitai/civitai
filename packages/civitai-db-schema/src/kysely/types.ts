@@ -834,6 +834,7 @@ export type Article = {
   lockedProperties: Generated<string[]>;
   isOfficial: Generated<boolean>;
   status: Generated<ArticleStatus>;
+  systemCategoryId: number | null;
 };
 export type ArticleContentLinkHold = {
   articleId: number;
@@ -4536,6 +4537,14 @@ export type OauthConsent = {
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
 };
+export type OauthInvite = {
+  tokenHash: string;
+  clientId: string;
+  email: string;
+  returnUrl: string;
+  expiresAt: Timestamp;
+  createdAt: Generated<Timestamp>;
+};
 export type Outbox = {
   id: Generated<string>;
   event: string;
@@ -6867,6 +6876,7 @@ export type DB = {
   NewOrderSmite: NewOrderSmite;
   OauthClient: OauthClient;
   OauthConsent: OauthConsent;
+  OauthInvite: OauthInvite;
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;

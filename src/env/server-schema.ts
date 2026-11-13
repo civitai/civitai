@@ -124,9 +124,8 @@ export const serverSchema = z
     // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
-    // 1000: the sys client's own command-duration histogram puts about 5 in 1,000,000 sys commands
-    // above 1s in normal traffic (about 2 in 100,000 above 500ms), so a 1s bound rarely fires on a
-    // healthy store and halves what each read costs while the store is hung. Was 2000.
+    // 1000: a 1s bound rarely fires on a healthy store and halves what each read costs while the
+    // store is hung.
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
     // Process-wide breaker for the hot request-path reads that opt in with withSysReadBreaker
     // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (a timeout or a client/connection
@@ -137,6 +136,9 @@ export const serverSchema = z
     REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
     REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
     REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
+    // On: an upload route answers 503 instead of handing out a key whose issue record could not
+    // be written. Off: the key is handed out and the save-time ownership check decides.
+    UPLOAD_KEY_REFUSE_UNRECORDED: zc.booleanString.default(false),
     // Bound on the sys client's node-redis command queue. The sys client has no
     // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
     // (minutes), during which every authenticated request enqueues a MULTI that never

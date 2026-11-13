@@ -21,6 +21,7 @@ const { mockGetModelsWithVersions, mockGetVaeFiles, mockGetImages, mockGetPaidAc
 vi.mock('~/server/services/model.service', () => ({
   getModelsWithVersions: mockGetModelsWithVersions,
   getVaeFiles: mockGetVaeFiles,
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
 }));
 vi.mock('~/server/services/model-version.service', () => ({
   publicModelResponseKey: (id: number, browsingLevel: number) =>
