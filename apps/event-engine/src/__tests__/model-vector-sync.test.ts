@@ -668,6 +668,52 @@ describe('version-delete lookup against the real query and client', () => {
     }
   }, 60_000);
 
+  // Defence in depth: the site's hydration hides Private models too, but the index must not hold
+  // their name and description at all. A model turning Private must lose its point, not keep it.
+  test('a Private model gets no point, and a model turning Private loses its point', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    await pg.exec(`
+        CREATE TABLE "User" (id int PRIMARY KEY, username text);
+        CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
+        CREATE TABLE "TagsOnModels" ("modelId" int, "tagId" int);
+        CREATE TABLE "Model" (id int PRIMARY KEY, name text, type text, "checkpointType" text,
+          "nsfwLevel" int, "publishedAt" timestamp, "userId" int, description text, status text,
+          "deletedAt" timestamp, "tosViolation" boolean, minor boolean, availability text);
+        CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int, name text,
+          description text, "baseModel" text, "trainedWords" text[], status text,
+          availability text, index int);
+        INSERT INTO "User" VALUES (7, 'someone');
+        INSERT INTO "Model" VALUES
+          (1, 'Public', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public'),
+          (2, 'Private', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Private'),
+          (3, 'Soon private', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public'),
+          (4, 'Private versions only', 'LORA', NULL, 1, '2026-01-01', 7, NULL, 'Published', NULL, false, false, 'Public');
+        INSERT INTO "ModelVersion" VALUES
+          (11, 1, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (12, 1, 'secret', 'private notes', 'SDXL 1.0', '{}', 'Published', 'Private', 1),
+          (21, 2, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (31, 3, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Public', 0),
+          (41, 4, 'a', NULL, 'SDXL 1.0', '{}', 'Published', 'Private', 0);
+      `);
+    try {
+      const { store, embedder } = setup();
+      const deps = { pg, store, embedder } as unknown as ModelSyncDeps & { store: FakeStore };
+      await syncModelIds([1, 2, 3, 4], deps);
+      // Positive control: a Public model with a Public version still indexes.
+      expect([...store.points.keys()].sort()).toEqual([1, 3]);
+      expect(store.points.get(1)!.payload.versionIds).toEqual([11]);
+      expect(store.points.get(1)!.payload.search_text).not.toContain('private notes');
+
+      // What a CDC update to Model 3 triggers: a re-sync of its id.
+      await pg.exec(`UPDATE "Model" SET availability = 'Private' WHERE id = 3`);
+      expect(await syncModelIds([3], deps)).toMatchObject({ deleted: 1 });
+      expect([...store.points.keys()]).toEqual([1]);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+
   test('idsMatching filters on any of the values and follows every page', async () => {
     const calls: Array<Record<string, unknown>> = [];
     const pages = [
