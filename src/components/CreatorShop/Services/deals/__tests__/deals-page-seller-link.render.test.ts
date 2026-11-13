@@ -62,6 +62,11 @@ describe('Service Requests page seller link', () => {
     expect(render(true)).toContain('/shop/manage?tab=services');
   });
 
+  it('links a seller whose services are all hidden off this domain', () => {
+    mocks.hiddenOffDomain = 2;
+    expect(render()).toContain('/shop/manage?tab=services');
+  });
+
   it('shows a viewer with no services no link', () => {
     expect(render()).not.toContain('/shop/manage');
   });
