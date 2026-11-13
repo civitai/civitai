@@ -1,6 +1,6 @@
 import type { NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
-import { createRootPresampleIgnoreHook } from '~/server/otel-root-presample';
+import type { IncomingMessage } from 'http';
 
 /**
  * Values of `OTEL_HTTP_INSTRUMENTATION` that turn the inbound HTTP instrumentation OFF.
@@ -64,22 +64,19 @@ export function buildOtelInstrumentations(
   env: NodeJS.ProcessEnv = process.env,
   options: {
     /**
-     * The head sampler's ratio. When given, inbound requests can be pre-sampled at that ratio
-     * before the instrumentation does any span work (`otel-root-presample` flag, default off; see
-     * ~/server/otel-root-presample). Must be the SAME ratio the sampler uses, and the sampler must
-     * be wrapped in `PresampledRootSampler`, or the sampled share changes.
+     * Root pre-sampling's ignore hook (`otel-root-presample` flag, default off). Take it from
+     * `buildHeadSampling` together with the sampler and id generator it was built with; see
+     * ~/server/otel-root-presample.
      */
-    presampleRatio?: number;
+    ignoreIncomingRequestHook?: (request: IncomingMessage) => boolean;
   } = {}
 ): NodeSDKConfiguration['instrumentations'] {
   if (!isHttpInstrumentationEnabled(env)) return [];
-  const { presampleRatio } = options;
+  const { ignoreIncomingRequestHook } = options;
   return [
     new HttpInstrumentation({
       ignoreOutgoingRequestHook: () => true,
-      ...(presampleRatio === undefined
-        ? {}
-        : { ignoreIncomingRequestHook: createRootPresampleIgnoreHook(presampleRatio) }),
+      ...(ignoreIncomingRequestHook === undefined ? {} : { ignoreIncomingRequestHook }),
     }),
   ];
 }

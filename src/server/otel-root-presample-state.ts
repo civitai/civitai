@@ -3,15 +3,15 @@
 // does not pull the trace SDK into their graphs.
 //
 // On `globalThis`: the gate is installed from a dynamically imported module after the SDK starts,
-// while the hook and the sampler are built in src/instrumentation.node.ts. A module-scope copy in a
-// second emitted chunk would never see the gate (a dark, partial rollout with no error), and a mark
-// set by one copy's hook would never reach the other copy's sampler. Enrolled as SHARED_STATE in
-// scripts/server-graph-watchlist.mjs.
+// while the hook and the id generator are built in src/instrumentation.node.ts. A module-scope copy
+// in a second emitted chunk would never see the gate (a dark, partial rollout with no error), and
+// an id stashed by one copy's hook would never reach the other copy's id generator. Enrolled as
+// SHARED_STATE in scripts/server-graph-watchlist.mjs.
 
 export type RootPresampleState = {
   gate: (() => boolean) | undefined;
-  /** Set by the hook for a pre-sampled request; consumed by the next root SERVER sampling call. */
-  pendingSampled: boolean;
+  /** Set by the hook for a pre-sampled request; taken by the next root span's trace id. */
+  pendingTraceId: string | undefined;
 };
 
 declare global {
@@ -21,13 +21,10 @@ declare global {
 
 export const rootPresampleState = (globalThis.__civitaiOtelRootPresample ??= {
   gate: undefined,
-  pendingSampled: false,
+  pendingTraceId: undefined,
 });
 
-/**
- * Install (or, with `undefined`, remove) the switch. Installed once at boot; the GATE it installs
- * is what runs on every inbound request (without a `traceparent`), so that must stay cheap.
- */
+/** Runs on every inbound request without a traceparent, so the gate must stay cheap. */
 export function setRootPresampleGate(gate: (() => boolean) | undefined): void {
   rootPresampleState.gate = gate;
 }

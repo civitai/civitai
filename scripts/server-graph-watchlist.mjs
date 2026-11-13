@@ -122,7 +122,7 @@ export const WATCHLIST = [
     rule: 'SHARED_STATE',
     module: 'src/server/otel-root-presample-state.ts',
     globalKey: '__civitaiOtelRootPresample',
-    why: "The one holder of the `otel-root-presample` gate and of the one-shot mark the inbound HTTP instrumentation's hook leaves for the sampler. `src/instrumentation.node.ts` builds the hook and the sampler, while the gate is installed later from a dynamically imported module. A copy with private state never sees the gate (the flag reads ON and nothing changes, with no error), and a mark set through one copy's hook never reaches the other copy's sampler, so a pre-sampled request would be ratio-sampled a second time. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",
+    why: "The one holder of the `otel-root-presample` gate and of the trace id the inbound HTTP instrumentation's hook stashes for the root span. `src/instrumentation.node.ts` builds the hook and the tracer's id generator, while the gate is installed later from a dynamically imported module. A copy with private state never sees the gate (the flag reads ON and nothing changes, with no error), and an id stashed through one copy's hook never reaches the other copy's id generator, so a pre-sampled request would get a fresh trace id and be ratio-sampled a second time. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",
   },
   {
     rule: 'SHARED_STATE',

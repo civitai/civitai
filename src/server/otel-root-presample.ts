@@ -1,6 +1,13 @@
 import type { IncomingMessage } from 'http';
-import { SpanKind, trace, type Attributes, type Context, type Link } from '@opentelemetry/api';
-import { SamplingDecision, type Sampler, type SamplingResult } from '@opentelemetry/sdk-trace-node';
+import { ROOT_CONTEXT, SpanKind } from '@opentelemetry/api';
+import {
+  ParentBasedSampler,
+  RandomIdGenerator,
+  SamplingDecision,
+  TraceIdRatioBasedSampler,
+  type IdGenerator,
+  type Sampler,
+} from '@opentelemetry/sdk-trace-node';
 import { rootPresampleState } from '~/server/otel-root-presample-state';
 
 export { setRootPresampleGate } from '~/server/otel-root-presample-state';
@@ -8,27 +15,11 @@ export { setRootPresampleGate } from '~/server/otel-root-presample-state';
 /**
  * Root pre-sampling for inbound HTTP requests, behind the `otel-root-presample` Flipt flag.
  *
- * WHY. The head sampler (ParentBased over TraceIdRatio, src/instrumentation.node.ts) decides at the
- * request's root span, so an UNSAMPLED request still pays for everything that runs before and
- * around that decision: the HTTP instrumentation builds the full span attribute set (URL, headers,
- * user agent, net attributes), extracts context, starts the span, wires response listeners and
- * builds response attributes on close; and every Next.js and `withSpan` span under it still runs
- * the sampler and allocates ids. None of it is ever exported.
+ * Before any span work, the hook draws a new-root request's trace id and asks the ratio sampler:
+ * unsampled runs with tracing suppressed; sampled hands that id to its root span, so the decision
+ * stays a function of the trace id and a downstream hop re-applying the ratio keeps the trace.
  *
- * WHAT. With the flag on, the HTTP instrumentation's `ignoreIncomingRequestHook` makes the same
- * decision FIRST, for a request that carries no `traceparent` (a new root):
- *   - unsampled (probability 1 - ratio): the request is IGNORED. The instrumentation then runs it
- *     under suppressed tracing, so no span is built for it and every span below it short-circuits
- *     in the SDK before the sampler.
- *   - sampled (probability ratio): the hook leaves a one-shot mark, and `PresampledRootSampler`
- *     answers RECORD_AND_SAMPLED for the root SERVER span the instrumentation starts next — in the
- *     same synchronous call, so nothing can come between them. The span, its name, its attributes
- *     and its children are exactly what the ratio sampler would have produced for a sampled trace.
- * The sampled share stays `ratio` (a uniform draw against `ratio` in place of a uniform trace-id
- * draw against `ratio`), so span-derived metrics, which count what reaches the collector, keep
- * their scale.
- *
- * NOT pre-sampled (the hook returns false, the mark stays clear, the normal sampler decides):
+ * NOT pre-sampled (the hook returns false, draws nothing, and the normal sampler decides):
  *   - a request WITH a `traceparent` header: its decision is the remote-parent path of the
  *     ParentBased sampler, which this does not touch;
  *   - everything while the flag is off, unknown, or unreadable.
@@ -44,7 +35,7 @@ export { setRootPresampleGate } from '~/server/otel-root-presample-state';
  * histograms then cover only the pre-sampled requests plus those with a `traceparent`, an
  * undercount with no error. Check that nothing reads them before turning the flag on.
  *
- * State (the gate and the one-shot mark) lives in ~/server/otel-root-presample-state, on
+ * State (the gate and the stashed trace id) lives in ~/server/otel-root-presample-state, on
  * `globalThis`.
  */
 function gateOn(): boolean {
@@ -59,64 +50,98 @@ function gateOn(): boolean {
 
 /**
  * The HTTP instrumentation's `ignoreIncomingRequestHook`. Returns true (ignore: run the request
- * with tracing suppressed) only for an unsampled new-root request while the flag is on.
+ * with tracing suppressed) only for an unsampled new-root request while the flag is on. For a
+ * sampled one it stashes the drawn trace id for the root span and returns false.
+ *
+ * `rootSampler` must be the sampler the app applies to parentless spans, so the hook and the
+ * tracer cannot disagree; `buildHeadSampling` wires both from one instance.
  */
 export function createRootPresampleIgnoreHook(
-  ratio: number,
-  random: () => number = Math.random
+  rootSampler: Sampler,
+  generateTraceId: () => string
 ): (request: IncomingMessage) => boolean {
   return (request) => {
-    // Never let a mark from an earlier request survive into this one.
-    rootPresampleState.pendingSampled = false;
+    // Never let an id stashed for an earlier request reach this one.
+    rootPresampleState.pendingTraceId = undefined;
     if (!gateOn()) return false;
     if (request.headers?.traceparent !== undefined) return false;
-    if (random() < ratio) {
-      rootPresampleState.pendingSampled = true;
-      // The instrumentation starts the root span synchronously after this hook returns; a mark the
-      // span never consumed (the instrumentation threw first) must not reach any later span.
-      queueMicrotask(() => {
-        rootPresampleState.pendingSampled = false;
-      });
-      return false;
-    }
-    return true;
+    const traceId = generateTraceId();
+    const { decision } = rootSampler.shouldSample(
+      ROOT_CONTEXT,
+      traceId,
+      '',
+      SpanKind.SERVER,
+      {},
+      []
+    );
+    if (decision !== SamplingDecision.RECORD_AND_SAMPLED) return true;
+    rootPresampleState.pendingTraceId = traceId;
+    // The instrumentation starts the root span synchronously after this hook returns; an id the
+    // span never took (the instrumentation threw first) must not reach any later span.
+    queueMicrotask(() => {
+      if (rootPresampleState.pendingTraceId === traceId)
+        rootPresampleState.pendingTraceId = undefined;
+    });
+    return false;
   };
 }
 
 /**
- * Wraps the app's head sampler. Answers RECORD_AND_SAMPLED, once, for the root SERVER span of a
- * request the hook pre-sampled; delegates every other call unchanged (including the call that
- * consumes a mark it cannot apply).
+ * The tracer's id generator. Hands out the trace id the hook stashed, once, to the next span that
+ * asks for a trace id (the tracer asks only for a span WITHOUT a parent, and the next one after
+ * the hook is the instrumentation's root SERVER span). Everything else is the delegate's.
  */
-export class PresampledRootSampler implements Sampler {
-  constructor(private readonly delegate: Sampler) {}
+export class PresampledRootIdGenerator implements IdGenerator {
+  constructor(private readonly delegate: IdGenerator) {}
 
-  shouldSample(
-    context: Context,
-    traceId: string,
-    spanName: string,
-    spanKind: SpanKind,
-    attributes: Attributes,
-    links: Link[]
-  ): SamplingResult {
-    if (rootPresampleState.pendingSampled) {
-      rootPresampleState.pendingSampled = false;
-      if (spanKind === SpanKind.SERVER && trace.getSpanContext(context) === undefined) {
-        // The ratio sampler's sampled answer carries nothing else (no attributes, no trace state),
-        // so the recorded span is the same as on the normal path.
-        return { decision: SamplingDecision.RECORD_AND_SAMPLED };
-      }
+  generateTraceId(): string {
+    const stashed = rootPresampleState.pendingTraceId;
+    if (stashed !== undefined) {
+      rootPresampleState.pendingTraceId = undefined;
+      return stashed;
     }
-    return this.delegate.shouldSample(context, traceId, spanName, spanKind, attributes, links);
+    return this.delegate.generateTraceId();
   }
 
-  toString(): string {
-    return `PresampledRoot{${this.delegate.toString()}}`;
+  generateSpanId(): string {
+    return this.delegate.generateSpanId();
   }
+}
+
+/**
+ * The app's head sampling, in one place so the pre-sample hook and the tracer share ONE ratio
+ * sampler: ParentBased over TraceIdRatio(ratio), the id generator, and the ignore hook for the
+ * HTTP instrumentation. Used by src/instrumentation.node.ts and by the tests.
+ */
+export function buildHeadSampling(
+  ratio: number,
+  baseIdGenerator: IdGenerator = new RandomIdGenerator()
+): {
+  sampler: Sampler;
+  idGenerator: IdGenerator;
+  ignoreIncomingRequestHook: (request: IncomingMessage) => boolean;
+} {
+  const ratioSampler = new TraceIdRatioBasedSampler(ratio);
+  return {
+    sampler: new ParentBasedSampler({
+      root: ratioSampler,
+      // This is a PUBLIC API with no traceparent stripping at the edge, so an
+      // untrusted client could send `traceparent: ...-01` to force a sampled
+      // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
+      // would let any client defeat the sampling cap and re-saturate CPU. Apply the
+      // ratio to remote parents too. Local parents still inherit, so intra-process
+      // traces stay coherent.
+      remoteParentSampled: ratioSampler,
+    }),
+    idGenerator: new PresampledRootIdGenerator(baseIdGenerator),
+    ignoreIncomingRequestHook: createRootPresampleIgnoreHook(ratioSampler, () =>
+      baseIdGenerator.generateTraceId()
+    ),
+  };
 }
 
 /** Tests only. */
 export function resetRootPresampleForTests(): void {
   rootPresampleState.gate = undefined;
-  rootPresampleState.pendingSampled = false;
+  rootPresampleState.pendingTraceId = undefined;
 }
