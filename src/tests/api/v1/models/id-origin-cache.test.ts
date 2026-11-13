@@ -390,8 +390,9 @@ describe('GET /api/v1/models/[id] — origin-side response cache', () => {
 
     regionBox.restricted = true;
     expect(urls(await invoke({ id: '123' }))).toEqual(['pg.png']);
+    // The same id: the origin cache keeps the two levels apart.
     regionBox.restricted = false;
-    expect(urls(await invoke({ id: '124' }))).toEqual(['pg.png', 'r.png']);
+    expect(urls(await invoke({ id: '123' }))).toEqual(['pg.png', 'r.png']);
   });
 
   it('(k) keeps every answer out of the shared cache, since it depends on the region', async () => {

@@ -44,13 +44,11 @@ export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(214748364
 
 const baseUrl = getBaseUrl();
 
-// Origin-side response cache for the PUBLIC path. Cloudflare already caches this
-// endpoint at the edge (PublicEndpoint sets `s-maxage=300, swr=150`), but every
-// edge-MISS re-runs the full getModelsWithVersions pipeline — whose tail cost is a
-// cold getImagesForModelVersion CROSS JOIN LATERAL (p99 ~1.7s). This cache spares
-// that work on edge-misses. The TTL is held at CacheTTL.sm (180s) ≤ the 300s edge
-// TTL, so the origin cache introduces NO staleness beyond what the edge already
-// serves. Keyed by (modelId, browsingLevel) — browsingLevel is binary here
+// Origin-side response cache for the PUBLIC path. The response is not shared-cached at the
+// edge (its body depends on the caller's region, which the edge does not key on), so every
+// request reaches here, and each build runs the full getModelsWithVersions pipeline — whose tail
+// cost is a cold getImagesForModelVersion CROSS JOIN LATERAL (p99 ~1.7s). This cache spares that
+// work. TTL CacheTTL.sm (180s). Keyed by (modelId, browsingLevel) — browsingLevel is binary here
 // (sfwBrowsingLevelsFlag when region-restricted, else allBrowsingLevelsFlag), so
 // including its numeric flag value in the key is exact and self-documenting.
 const PUBLIC_MODEL_RESPONSE_TTL = env.IS_DATAPACKET ? CacheTTL.sm : 0;
@@ -225,8 +223,6 @@ const baseHandler = PublicEndpoint(async function handler(
 
   try {
     // Cache only when enabled (IS_DATAPACKET) AND this is the pure-public path.
-    // TTL (CacheTTL.sm = 180s) ≤ the edge s-maxage (300s), so the origin cache
-    // never serves staler than the edge already would.
     const shouldCache = PUBLIC_MODEL_RESPONSE_TTL > 0 && !isBlockScoped;
     const body = shouldCache
       ? await fetchModelResponseCached(id, browsingLevel)
@@ -277,8 +273,7 @@ async function withListableTrainingData(body: Record<string, unknown>, redCapabl
 // fail-open Redis set, and matching the key scheme bustPublicModelResponseCache
 // busts). This deliberately forgoes fetchThroughCache's distributed cold-miss
 // single-flight lock; acceptable here because this is a low-volume endpoint
-// (~0.5 req/s) that Cloudflare already fronts (s-maxage=300), so a cold-key
-// thundering herd is negligible. (See FIX 3 in the PR description for the
+// (~0.5 req/s at the time), so a cold-key thundering herd is small. (See FIX 3 in the PR description for the
 // pre-existing ~15s lock-retry 500 on fetchThroughCache itself.)
 async function fetchModelResponseCached(
   id: number,
@@ -293,9 +288,7 @@ async function fetchModelResponseCached(
     // Honor the LOGICAL ttl. fetchThroughCache stores with EX = ttl*2 (the physical
     // key lives 360s) and normally gates freshness on `cachedAt`, serving older
     // entries only as stampede-protection stale. A bare presence check here would
-    // serve entries up to 2×ttl (360s) old — PAST the 300s edge s-maxage — breaking
-    // the "origin TTL ≤ edge TTL ⇒ no new staleness" invariant (and could compound
-    // through the edge's stale-while-revalidate). Re-apply the same cachedAt gate so
+    // serve entries up to 2×ttl (360s) old. Re-apply the same cachedAt gate so
     // a logically-expired-but-physically-present entry falls through to a rebuild.
     if (cached && Date.now() - cached.cachedAt <= PUBLIC_MODEL_RESPONSE_TTL * 1000)
       return cached.data;
