@@ -17,7 +17,6 @@ export const imageFeedSearchUnavailableKeys = [
   'withMeta',
   'requiringMeta',
   'hidden',
-  'fromPlatform',
   'scheduled',
   'remixesOnly',
   'nonRemixesOnly',
@@ -48,7 +47,6 @@ export const imageFeedFilterLabels: Record<
   withMeta: 'Metadata only',
   requiringMeta: 'Requiring Metadata',
   hidden: 'Hidden',
-  fromPlatform: 'Made On-site',
   scheduled: 'Scheduled',
   remixesOnly: 'Remixes Only',
   nonRemixesOnly: 'Originals Only',
@@ -127,6 +125,7 @@ export function toSemanticImageSearchInput({
     usernames: filters.username ? [filters.username] : undefined,
     userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
+    fromPlatform: filters.fromPlatform || undefined,
     limit: 50,
   };
 }
