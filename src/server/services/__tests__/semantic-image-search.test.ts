@@ -326,6 +326,7 @@ describe.each([
     ['the minor add-on', /i\."minor" != TRUE/],
     ['hidden and blocked creators', /i\."userId" != ALL\(/],
     ['hidden tags', /FROM "TagsOnImageDetails" toi/],
+    ['the base-model licence rule', /OR NOT i\."modelRestricted"/],
   ])('%s', async (_clause, clause) => {
     const { text } = await firstImageSql();
     expect(text).toMatch(clause);
@@ -438,25 +439,14 @@ describe('filters', () => {
     expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
-  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+  it('sends Qdrant no base-model licence clause, even at NSFW levels', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
       input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
       user: { id: 501, isModerator: true } as SessionUser,
       candidateSource: source,
     });
-    const [restricted] = calls[0].filter.mustNot as {
-      must: { key: string; match: { any: unknown[] } }[];
-    }[];
-    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
-    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
-  });
-
-  it('drops the base-model rule when the gate holds no NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
-    expect(calls[0].filter.mustNot).toEqual([]);
+    expect(calls[0].filter.mustNot ?? []).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -512,9 +502,9 @@ describe('"more like this" never rates above its anchor', () => {
   });
 
   it('lifts the cap when the kill switch is on', async () => {
-    h.isFlipt.mockResolvedValue(true);
+    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-similar-anchor-cap-off');
     const { gate } = await run(PG, VIEWER);
-    expect(gate).toEqual([PG, PG13]);
+    expect(gate).toEqual([1, 2, 4, 8, 16]);
   });
 });
 
@@ -633,7 +623,17 @@ describe('the query audit and the browsing level', () => {
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
+  const clampOn = () =>
+    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-search-nonmod-clamp');
+
+  it('searches a non-moderator at their own level while the clamp switch is off', async () => {
+    const { calls } = await run({ browsingLevel: ALL_LEVELS });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+    expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
+  });
+
   it('clamps a non-moderator to the safe levels, in the index filter and in hydration', async () => {
+    clampOn();
     const seen: unknown[] = [];
     const { source, calls } = rankedSource([101]);
     h.fakeGetAllImages = async (args) => {
@@ -654,6 +654,7 @@ describe('the query audit and the browsing level', () => {
     ['R and X', 4 | 8],
     ['XXX alone', 16],
   ])('gives a non-moderator who asks only for %s the public level', async (_name, level) => {
+    clampOn();
     const seen: unknown[] = [];
     const { source, calls } = rankedSource([101]);
     h.fakeGetAllImages = async (args) => {

@@ -13,6 +13,11 @@ const h = vi.hoisted(() => ({
   includesPoi: vi.fn<(prompt?: string) => string | false>(),
   includesMinor: vi.fn<(prompt?: string) => boolean>(),
   addons: [] as unknown[],
+  isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isFlipt: h.isFlipt,
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -95,6 +100,7 @@ const ranking =
   };
 
 beforeEach(() => {
+  h.isFlipt.mockReset().mockResolvedValue(false);
   sent = [];
   h.fetched = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
@@ -264,13 +270,26 @@ describe('semantic article search: the query audit and the browsing level', () =
     ['all levels', 31, [1, 2]],
     ['NSFW levels only', 4 | 8, [1]],
   ])('clamps a non-moderator asking for %s to the safe levels', async (_name, level, expected) => {
+    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-search-nonmod-clamp');
     await run({ browsingLevel: level });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: expected });
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 
   it('clamps a signed-out visitor too', async () => {
+    h.isFlipt.mockImplementation(async (flag) => flag === 'semantic-search-nonmod-clamp');
     await run({ browsingLevel: 31, user: undefined });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
+  });
+
+  it('searches a non-moderator at their own level while the clamp switch is off', async () => {
+    await run({ browsingLevel: 31 });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+  });
+
+  it('narrows a minor query to the safe levels once the clamp is off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    await run({ browsingLevel: 31 });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
   });
 

@@ -6,12 +6,12 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
-import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
   queryVerdictLevel,
   recordRefusal,
+  isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
   type QueryRefusal,
@@ -19,10 +19,6 @@ import {
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import {
-  nsfwBrowsingLevelsArray,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -62,7 +58,11 @@ export async function searchSemanticImages({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -174,18 +174,8 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
-    // As the image search index: no NSFW images made with a base model whose license forbids it.
-    // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
-    mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
-      ? [
-          {
-            must: [
-              { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-              { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
-            ],
-          },
-        ]
-      : [],
+    // The licence rule (no NSFW on a restricted base model) is left to hydration, which applies it
+    // to every image; as a nested must_not it cost Qdrant several times the rest of the filter.
   };
 
   const query: SearchQuery = input.imageId
