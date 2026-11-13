@@ -764,15 +764,13 @@ function EditDetail() {
   };
   const namedResources = sortByModelTypes(resources).filter((x) => !!x.modelName);
 
-  // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
+  // The review stepper may target a rated resource hidden behind "Show All"; unrated ones are never hidden.
   const reviewFocus = useReviewFocusStore((state) => state.target);
   useEffect(() => {
     if (reviewFocus?.imageId !== image.id) return;
     const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
-    if (
-      visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >=
-      COLLAPSED_RESOURCE_COUNT
-    )
+    const targetIndex = visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId);
+    if (targetIndex >= COLLAPSED_RESOURCE_COUNT && !isUnrated(visible[targetIndex]))
       setShowMoreResources(true);
     useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -991,7 +989,10 @@ function EditDetail() {
                     <ResourceRow key={`${image.id}-${i}`} resource={resource} i={i} />
                   ) : null
                 )}
-                {resources.length > COLLAPSED_RESOURCE_COUNT && (
+                {(showMoreResources ||
+                  namedResources.some(
+                    (r, i) => i >= COLLAPSED_RESOURCE_COUNT && !isUnrated(r)
+                  )) && (
                   <div>
                     <Button
                       variant="light"
