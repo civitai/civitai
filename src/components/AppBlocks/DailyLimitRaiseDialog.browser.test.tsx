@@ -91,7 +91,7 @@ describe('DailyLimitRaiseDialog', () => {
   test('raises to the value shown, then reports the raise, refreshes the limit and closes', async () => {
     mocks.mutate.mockImplementation(() => mocks.mutationOpts.onSuccess());
     mount();
-    await expect.element(confirm()).toBeEnabled({ timeout: 3000 });
+    await expect.element(confirm(), { timeout: 3000 }).toBeEnabled();
     await userEvent.click(confirm());
     expect(mocks.mutate).toHaveBeenCalledWith({ appBlockId: 'apb_test', buzzBudgetPerDay: 2000 });
     await vi.waitFor(() => expect(mocks.onClose).toHaveBeenCalledTimes(1));
@@ -108,7 +108,7 @@ describe('DailyLimitRaiseDialog', () => {
       mocks.mutationOpts.onError({ message: 'Your limit for this app changed.' })
     );
     mount();
-    await expect.element(confirm()).toBeEnabled({ timeout: 3000 });
+    await expect.element(confirm(), { timeout: 3000 }).toBeEnabled();
     await userEvent.click(confirm());
     await expect
       .element(page.getByRole('alert'))
