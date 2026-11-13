@@ -6,7 +6,7 @@ export const rankPill = ({ rank, level }: { rank: string; level: number }) =>
 export const heartsLeft = ({ smites, maxSmites }: { smites: number; maxSmites: number }) =>
   Math.max(0, maxSmites - smites);
 
-type Watch = {
+export type Watch = {
   votes: number;
   watchSize: number;
   watchDone: boolean;
@@ -15,14 +15,19 @@ type Watch = {
   streak?: number;
 };
 
-/** What the Watch strip says; the cap note wins because it explains why gold stopped. */
+const capNote = 'Gold cap reached · XP still counts';
+
+/**
+ * What the Watch strip says. Before the Watch is done the cap note wins because it explains why gold stopped; once it is
+ * done the completed line leads (the streak bonus does not count against the cap) and the cap note moves to `sub`.
+ */
 export function watchStrip(daily: Watch) {
   const value = Math.min(daily.votes, daily.watchSize);
   const gold = count(daily.bonusGold);
-  const note = daily.capReached
-    ? 'Gold cap reached · XP still counts'
-    : daily.watchDone
+  const note = daily.watchDone
     ? `Watch complete, +${gold} gold streak bonus`
+    : daily.capReached
+    ? capNote
     : `+${gold} gold at the end`;
   return {
     label: `Today's Watch · ${value} of ${daily.watchSize}`,
@@ -30,6 +35,7 @@ export function watchStrip(daily: Watch) {
     max: daily.watchSize,
     done: daily.watchDone,
     note,
+    sub: daily.watchDone && daily.capReached ? capNote : undefined,
   };
 }
 
@@ -44,6 +50,18 @@ export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
   const completes = !daily.watchDone && votes >= daily.watchSize;
   const streak = completes && daily.streak !== undefined ? { streak: daily.streak + 1 } : {};
   return { ...daily, votes, watchDone: daily.watchDone || completes, ...streak };
+}
+
+/**
+ * The daily the header draws: a page's own daily (play, home) with the votes still in flight on top, the same reading the
+ * rail gets, or else the layout's copy as it came.
+ */
+export function headerDaily<T extends Watch, L>(
+  pageDaily: T | null | undefined,
+  layoutDaily: L,
+  sent: number
+): T | L {
+  return pageDaily ? withVotesSent(pageDaily, sent) : layoutDaily;
 }
 
 type Standing = {

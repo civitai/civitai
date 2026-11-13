@@ -53,9 +53,12 @@
         </svg>
         <span class="label"><b>{strip.value}</b><i>of {strip.max}</i></span>
       </span>
-      <p class="note">
-        {#if strip.done}<span class="ok"><Icon name="circle-check" size={14} /></span>{/if}{strip.note}
-      </p>
+      <div>
+        <p class="note">
+          {#if strip.done}<span class="ok"><Icon name="circle-check" size={14} /></span>{/if}{strip.note}
+        </p>
+        {#if strip.sub}<p class="sub">{strip.sub}</p>{/if}
+      </div>
     </div>
     <div class="pair">
       <div>

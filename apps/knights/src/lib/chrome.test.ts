@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accuracyLine,
   belowBarCue,
+  headerDaily,
   withVotesSent,
   withArticle,
   heartsLeft,
@@ -55,6 +56,14 @@ describe('watchStrip', () => {
     expect(watchStrip({ ...daily, capReached: true }).note).toBe(
       'Gold cap reached · XP still counts'
     );
+  });
+
+  it('says a done Watch at the gold cap is complete, with the cap note as secondary text', () => {
+    expect(watchStrip({ ...daily, votes: 10, watchDone: true, capReached: true })).toMatchObject({
+      done: true,
+      note: 'Watch complete, +500 gold streak bonus',
+      sub: 'Gold cap reached · XP still counts',
+    });
   });
 
   it('formats a large bonus with separators', () => {
@@ -239,5 +248,26 @@ describe('withVotesSent', () => {
     expect(withVotesSent({ ...daily, votes: 10, watchDone: true, streak: 5 }, 1)).toMatchObject({
       streak: 5,
     });
+  });
+});
+
+describe('headerDaily', () => {
+  it('the header streak moves with the vote that completes the Watch', () => {
+    const playDaily = { ...daily, votes: 9, streak: 4, shields: 1, maxShields: 2 };
+    const layoutDaily = { streak: 4, shields: 1, maxShields: 2 };
+    expect(headerDaily(playDaily, layoutDaily, 1)).toMatchObject({
+      streak: 5,
+      shields: 1,
+      maxShields: 2,
+    });
+    expect(headerDaily(playDaily, layoutDaily, 1).streak).toBe(withVotesSent(playDaily, 1).streak);
+  });
+
+  it("the header keeps the layout's copy untouched with no vote in flight or no page daily", () => {
+    const pageDaily = { ...daily, streak: 4, shields: 1, maxShields: 2 };
+    const layoutDaily = { streak: 3, shields: 0, maxShields: 2 };
+    expect(headerDaily(pageDaily, layoutDaily, 0)).toBe(pageDaily);
+    expect(headerDaily(null, layoutDaily, 2)).toBe(layoutDaily);
+    expect(headerDaily(undefined, undefined, 0)).toBeUndefined();
   });
 });

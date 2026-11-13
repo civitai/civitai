@@ -8,6 +8,7 @@ import {
   dismissHiddenNotices,
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
+import { DISMISS_FAILED } from '$lib/notice-copy';
 import { requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
@@ -349,7 +350,7 @@ export const actions: Actions = {
       await dismissHiddenNotices(db, locals.user.id, queueDeps.now());
     } catch (error) {
       console.error('knights: could not store the notice dismissal', { error });
-      return fail(500, { message: 'Could not dismiss the notice. Try again.', noticeFailed: true });
+      return fail(500, { message: DISMISS_FAILED, noticeFailed: true });
     }
   },
 
@@ -359,7 +360,7 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights: could not store the reset notice dismissal', { error });
       return fail(500, {
-        message: 'Could not dismiss the notice. Try again.',
+        message: DISMISS_FAILED,
         resetNoticeFailed: true,
       });
     }
@@ -383,7 +384,7 @@ export const actions: Actions = {
     const status = await requireMember(db, locals.user.id);
     if (!(await dismissProgress(seenStore, locals.user.id, status))) {
       return fail(500, {
-        message: 'Could not dismiss the notice. Try again.',
+        message: DISMISS_FAILED,
         progressFailed: true,
       });
     }

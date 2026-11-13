@@ -26,7 +26,7 @@
 <!-- Standing only: a meter never shows whether the last answer was right. -->
 <section class="meter" aria-label="Apprenticeship progress">
   <div class="row">
-    <span class="label">Level {level} of {knightLevel}<span class="long">&nbsp;·&nbsp;Apprentice</span></span>
+    <span class="label">Level {level} of {knightLevel}<span class="long">&nbsp;·&nbsp;Acolyte</span></span>
     <span
       class="accuracy"
       class:good={onBar}

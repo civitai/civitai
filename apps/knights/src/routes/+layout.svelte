@@ -5,9 +5,11 @@
   import { page } from '$app/state';
   import AppHeader from '$lib/AppHeader.svelte';
   import WhatsNewDialog from '$lib/WhatsNewDialog.svelte';
+  import { headerDaily, type Watch } from '$lib/chrome';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { WhatsNew } from '$lib/whats-new';
   import { provideWhatsNew } from '$lib/whats-new-dismiss.svelte';
+  import { provideVotesSent } from '$lib/votes-sent.svelte';
   import type { LayoutData } from './$types';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -18,7 +20,15 @@
   let status = $derived(
     (page.data.status as PlayerStatus | null | undefined) ?? data.headerStats?.status ?? undefined
   );
-  let streak = $derived((page.data.daily as Streak | null | undefined) ?? data.headerStats?.daily ?? undefined);
+  // /play's votes in flight move the header's streak in the same frame as the rail's.
+  const inFlight = provideVotesSent();
+  let streak = $derived(
+    headerDaily(
+      page.data.daily as (Streak & Watch) | null | undefined,
+      data.headerStats?.daily ?? undefined,
+      inFlight.count
+    )
+  );
   // /play keeps its own live status for the header while it is open, so the layout's copy is as old as the visit. Leaving
   // refreshes it for the pages that carry no status of their own.
   afterNavigate(({ from }) => {

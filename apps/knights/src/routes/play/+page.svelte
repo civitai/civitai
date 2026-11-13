@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { applyAction, deserialize, enhance } from '$app/forms';
   import { beforeNavigate, invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
@@ -21,7 +21,18 @@
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
+  import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
+  import {
+    DISMISS_FAILED,
+    closeNotice,
+    dismissFailedOn,
+    noticeKey,
+    noticeShowing,
+    settleNotice,
+    syncNotice,
+    type NoticeState,
+  } from './level-notice';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
@@ -69,8 +80,25 @@
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
+  // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
+  // A vote that answers after the page is gone must not take from the next visit's count.
+  const inFlight = votesSent();
+  let alive = true;
+  onDestroy(() => {
+    alive = false;
+    inFlight.count = 0;
+  });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
+  // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
+  // given right after "Onward" still records the card it appeared with.
+  const notice = $state<NoticeState>({ closed: null, failed: null });
+  let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
+  $effect(() => {
+    const key = sentNotice;
+    untrack(() => syncNotice(notice, key));
+  });
+  let levelToastShowing = $derived(noticeShowing(sentNotice, notice));
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
   const headerDialogOpen = () =>
@@ -188,6 +216,22 @@
       } finally {
         submitting = false;
         picked = null;
+      }
+    };
+  };
+
+  // Not through `submitting`: the answers stay live while the dismissal is in flight.
+  const submitDismissProgress: SubmitFunction = () => {
+    const key = sentNotice;
+    if (key) closeNotice(notice, key);
+    return async ({ result, update }) => {
+      const stored = result.type === 'success' || result.type === 'redirect';
+      if (key) settleNotice(notice, key, stored);
+      // An unanswered post would otherwise render the error page over the round.
+      if (result.type === 'error') {
+        await applyAction({ type: 'failure', status: 500, data: { message: DISMISS_FAILED, progressFailed: true } });
+      } else {
+        await update();
       }
     };
   };
@@ -359,6 +403,10 @@
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
+    const uncount = () => {
+      if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
+      counted = false;
+    };
     return postVote(key, {
       queue: votes,
       tracker,
@@ -380,8 +428,7 @@
         }
       },
       onFailure: (outcome) => {
-        if (counted) sentVotes = Math.max(0, sentVotes - 1);
-        counted = false;
+        uncount();
         tell(outcome.message);
         dropBuffered(key);
         if (outcome.resync) {
@@ -394,7 +441,7 @@
       onSettled: async () => {
         await invalidate('app:play').catch(() => {});
         // The page's data now holds the vote, so it stops being counted on top.
-        if (counted) sentVotes = Math.max(0, sentVotes - 1);
+        uncount();
       },
     });
   }
@@ -442,13 +489,11 @@
     cooling = true;
     setTimeout(() => (cooling = false), SETTLE_MS);
     const isVote = input.action.search.startsWith('?/vote');
-    if (isVote) sentVotes += 1;
+    if (isVote) inFlight.count += 1;
     void post(input.action, input.formData, key, isVote);
   };
 
-  // Votes posted in the background that the page's data does not hold yet; the Watch counts them at once.
-  let sentVotes = $state(0);
-  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, sentVotes)) : null);
+  let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, inFlight.count)) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
   beforeNavigate(({ cancel, type, to }) => {
@@ -517,13 +562,12 @@
 {/snippet}
 
 {#snippet levelToast(floating: boolean)}
-  {#if levelNotice}
+  {#if levelNotice && levelToastShowing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
       xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
-      message={form?.progressFailed ? form.message : null}
-      {submitting}
-      {submit}
+      message={form?.progressFailed && dismissFailedOn(notice, sentNotice) ? form.message : null}
+      submit={submitDismissProgress}
       {floating}
       milestone={levelNotice.milestone ?? null}
       gold={levelNotice.levelGold ?? 0}
@@ -555,7 +599,7 @@
       value={strip.value}
       max={strip.max}
       done={strip.done}
-      streak={withVotesSent(data.daily, sentVotes).streak}
+      streak={withVotesSent(data.daily, inFlight.count).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
     />
@@ -731,7 +775,7 @@
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, sentVotes)} rail={data.rail} ladder={data.ladder} />
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, inFlight.count)} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}
