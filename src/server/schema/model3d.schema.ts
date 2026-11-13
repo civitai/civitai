@@ -123,6 +123,8 @@ export type SetModel3DNsfwLevelInput = z.infer<typeof setModel3DNsfwLevelSchema>
 export const setModel3DNsfwLevelSchema = z.object({
   id: z.number().int().positive(),
   nsfwLevel: z.number().int().min(0),
+  // The thumbnail the moderator judged; the rating is refused if the model's has changed.
+  thumbnailImageId: z.number().int().positive().nullable(),
   // Ignored: a moderator rating always locks. Kept so existing callers still validate.
   lock: z.boolean().optional(),
 });

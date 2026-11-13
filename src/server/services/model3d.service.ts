@@ -770,8 +770,13 @@ export const upsertModel3D = async ({
 
     if (!isModerator) {
       const locked = new Set(existing.lockedProperties ?? []);
-      // A rating lock was judged on the current thumbnail, so it pins that too.
-      if (locked.has('nsfwLevel')) locked.add('thumbnailImageId');
+      // A moderator's rating was judged on the current thumbnail, so it pins that too.
+      if (locked.has('nsfwLevel') && data.thumbnailImageId !== undefined) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: "A moderator has rated this model, so its thumbnail can't be changed.",
+        });
+      }
       for (const key of locked) delete (data as Record<string, unknown>)[key];
       // Non-mods can't change lockedProperties either.
       lockedProperties = undefined;
@@ -1010,6 +1015,7 @@ export const deleteModel3D = async ({
 export const setModel3DNsfwLevel = async ({
   id,
   nsfwLevel,
+  thumbnailImageId,
   user,
 }: SetModel3DNsfwLevelInput & { user: SessionUser }) => {
   if (!user.isModerator) throw throwAuthorizationError();
@@ -1024,8 +1030,9 @@ export const setModel3DNsfwLevel = async ({
 
   try {
     const updated = await dbWrite.$transaction(async (tx) => {
+      // The lock pins this rating to the current thumbnail, so it must be the one judged.
       const row = await tx.model3D.update({
-        where: { id },
+        where: { id, thumbnailImageId },
         data: { nsfwLevel, lockedProperties: nextLocked },
         select: model3dDetailSelect,
       });
@@ -1043,6 +1050,12 @@ export const setModel3DNsfwLevel = async ({
     return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'The thumbnail changed since you opened this model. Reload it and rate again.',
+      });
+    }
     throw throwDbError(error);
   }
 };

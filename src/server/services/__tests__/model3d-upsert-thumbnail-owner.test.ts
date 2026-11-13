@@ -183,16 +183,24 @@ describe('upsertModel3D thumbnail ownership', () => {
   });
 
   // A moderator's rating lock pins nsfwLevel, so the thumbnail it was judged on is pinned too.
-  it('keeps the thumbnail of a model whose rating a moderator locked, unless a moderator changes it', async () => {
+  it('refuses a thumbnail change on a model whose rating a moderator locked, unless a moderator makes it', async () => {
     db.model3D.findUnique.mockResolvedValue({
       id: MODEL_ID,
       userId: owner.id,
       lockedProperties: ['nsfwLevel'],
     });
-    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
-    expect(written()).not.toHaveProperty('thumbnailImageId');
-    expect(written()).not.toHaveProperty('nsfwLevel');
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(db.model3D.update).not.toHaveBeenCalled();
     expect(queuedRatingFor()).toHaveLength(0);
+
+    // Other edits still save.
+    await upsertModel3D({ input: { ...base, id: MODEL_ID }, user: owner });
+    expect(db.model3D.update).toHaveBeenCalledTimes(1);
 
     db.model3D.update.mockClear();
     await upsertModel3D({
@@ -235,7 +243,12 @@ describe('upsertModel3D thumbnail ownership', () => {
       userId: owner.id,
       lockedProperties: [],
     });
-    await setModel3DNsfwLevel({ id: MODEL_ID, nsfwLevel: 16, user: moderator });
+    await setModel3DNsfwLevel({
+      id: MODEL_ID,
+      nsfwLevel: 16,
+      thumbnailImageId: 11,
+      user: moderator,
+    });
     const rated = db.model3D.update.mock.calls[0][0].data;
     expect(rated.nsfwLevel).toBe(16);
 
@@ -245,8 +258,43 @@ describe('upsertModel3D thumbnail ownership', () => {
       userId: owner.id,
       lockedProperties: rated.lockedProperties,
     });
-    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
-    expect(written()).not.toHaveProperty('nsfwLevel');
-    expect(written()).not.toHaveProperty('thumbnailImageId');
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(db.model3D.update).not.toHaveBeenCalled();
+  });
+
+  // The rating is locked onto whatever thumbnail the row has, so it must be the one judged.
+  it("refuses a moderator's rating if the thumbnail changed after the moderator saw it", async () => {
+    db.model3D.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      userId: owner.id,
+      lockedProperties: [],
+    });
+    db.model3D.update.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if (where.thumbnailImageId !== 12) {
+        throw new Prisma.PrismaClientKnownRequestError('No record found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      }
+      return { id: MODEL_ID };
+    });
+
+    // The row now holds thumbnail 12; the moderator judged 11.
+    await expect(
+      setModel3DNsfwLevel({ id: MODEL_ID, nsfwLevel: 1, thumbnailImageId: 11, user: moderator })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(db.model3D.update.mock.calls[0][0].where).toEqual({
+      id: MODEL_ID,
+      thumbnailImageId: 11,
+    });
+
+    await setModel3DNsfwLevel({
+      id: MODEL_ID,
+      nsfwLevel: 1,
+      thumbnailImageId: 12,
+      user: moderator,
+    });
   });
 });
