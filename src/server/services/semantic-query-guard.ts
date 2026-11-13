@@ -20,14 +20,17 @@ import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metad
 export type QueryTracker = Pick<Tracker, 'action'>;
 export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'error' | false;
 
-/** The viewer's own level; with `clamp` (the containment switch), non-moderators get the safe levels. */
+/**
+ * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
+ * levels. Only an explicit `false` lifts it: pass `await isNonModClampOn()`.
+ */
 export function resolveSemanticBrowsingLevel(
   requested: number | undefined,
   user: SessionUser | undefined,
-  clamp: boolean
+  clamp: boolean | undefined
 ) {
   const level = requested || publicBrowsingLevelsFlag;
-  if (user?.isModerator || !clamp) return level;
+  if (user?.isModerator || clamp === false) return level;
   return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
 }
 
