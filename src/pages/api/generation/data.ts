@@ -41,9 +41,9 @@ export default PublicEndpoint(
         query: queryInput.data,
         user: session?.user,
         browsingLevel: getRequestBrowsingLevel({ features, user: session?.user }),
-        // No request headers: the verified-crawler header is only stripped on proxied paths, and
-        // this route's signed-out answers are edge-cached for everyone.
-        // The credential too: a token is not a session, whatever owner or moderator presents it.
+        // The media viewer carries the credential, because a token is not a session whatever owner or
+        // moderator presents it. It carries no request headers: the verified-crawler header is only
+        // stripped on proxied paths, and this route's signed-out answers are edge-cached for everyone.
         mediaViewer: {
           ...getRequestCredential(req),
           user: session?.user,

@@ -23,16 +23,16 @@ type MediaFields = {
  */
 type Credential = Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject' | 'tokenScope'>;
 
+export type MediaCredentialViewer = Pick<Context, 'user' | 'features' | 'req'> & Credential;
+
 /**
  * Whether a single-image response may carry the media: the request's domain cap on the image's own
  * rating, always allowed for the owner and moderators on a session or a full-access key
  * (`viewerCanSeeImageMedia` adds collection managers). Not identical to `Gated`: it ignores a
  * contest's forced level and withholds mixed ratings.
  */
-export type MediaCredentialViewer = Pick<Context, 'user' | 'features' | 'req'> & Credential;
-
 export function canViewImageMedia(
-  ctx: Pick<Context, 'user' | 'features' | 'req'> & Credential,
+  ctx: MediaCredentialViewer,
   image: Pick<MediaFields, 'nsfwLevel' | 'user'>
 ) {
   if (
