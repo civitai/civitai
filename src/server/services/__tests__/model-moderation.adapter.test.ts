@@ -130,12 +130,12 @@ describe('modelModerationAdapter.applyResult', () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   });
 
-  it('flips nsfw and locks the property when a level label triggers', async () => {
+  it('flips nsfw, without locking it, when a level label triggers', async () => {
     await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
 
     const flip = flipCall();
     expect(flip).toBeDefined();
-    expect(flip?.sql).toContain('array_append');
+    expect(flip?.sql).not.toContain('array_append');
     expect(flip?.sql).toContain("'systemNsfwLock'");
     // source, the system actor on the applied record, source again, then the model id.
     expect(flip?.values).toEqual([
@@ -171,10 +171,7 @@ describe('modelModerationAdapter.applyResult', () => {
       actorRole: 'system',
       reason: 'xguard-text-moderation',
     });
-    expect(rows.find((r) => r.field === 'lockedProperties')).toMatchObject({
-      actorRole: 'system',
-      reason: 'xguard-text-moderation',
-    });
+    expect(rows.find((r) => r.field === 'lockedProperties')).toBeUndefined();
   });
 
   // A moderation write is exactly the case a replication-lag read must not miss a lock a

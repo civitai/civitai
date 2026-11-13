@@ -67,10 +67,12 @@ beforeEach(() => {
 });
 
 describe('applyModelNsfwTextScan', () => {
-  it('flips and locks nsfw, attributes it to the text scan, and notifies the owner once', async () => {
+  it('flips nsfw without locking it, attributes it to the text scan, and notifies the owner once', async () => {
     await applyModelNsfwTextScan(args(true));
-    expect(flipSql()).toContain('array_append(');
-    // Merged into meta in the same guarded write as the lock, never written back from a read.
+    // The owner keeps the rating and the .com face: only a moderator or a sexual-intent verdict locks.
+    expect(flipSql()).not.toContain('array_append');
+    expect(flipSql()).toContain(`NOT ('nsfw' = ANY(`);
+    // Merged into meta in the same guarded write, never written back from a read.
     expect(flipSql()).toMatch(
       /meta = \(CASE WHEN jsonb_typeof\(m\.meta\) = 'object' THEN m\.meta ELSE '\{\}'::jsonb END\) \|\| CASE\s+WHEN m\."sfwOnly"[\s\S]*ELSE '\{\}'::jsonb END \|\| jsonb_build_object\(\s*'systemNsfwLock', jsonb_build_object\('source', \?::text, 'at', now\(\)\)/
     );
@@ -99,13 +101,35 @@ describe('applyModelNsfwTextScan', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it('is silent on redelivery: the model is now locked', async () => {
+  it('is silent on redelivery: the model is already nsfw', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ nsfw: true, nsfwLevel: 60 }));
+    await applyModelNsfwTextScan(args(true));
+    expect(flipSql()).toBeUndefined();
+    expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('leaves the rating alone when the model has a complete .com face', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
-      model({ nsfw: true, nsfwLevel: 60, lockedProperties: ['nsfw'] })
+      model({ sfwName: 'Safe title', sfwCoverImageId: 5, nsfwLevel: NsfwLevel.PG })
     );
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toBeUndefined();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no .com cover', { sfwName: 'Safe title', sfwCoverImageId: null }],
+    ['no .com title', { sfwName: null, sfwCoverImageId: 5 }],
+    [
+      'a cover the level computation refused',
+      { sfwName: 'Safe title', sfwCoverImageId: 5, nsfwLevel: NsfwLevel.R },
+    ],
+  ])('still flips with an incomplete .com face (%s)', async (_, face) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model(face));
+    await applyModelNsfwTextScan(args(true));
+    expect(flipSql()).toBeDefined();
+    expect(createNotification).toHaveBeenCalled();
   });
 
   it('never overturns a moderator lock', async () => {
@@ -131,7 +155,7 @@ describe('applyModelNsfwTextScan', () => {
         ...base,
         outcome: { ...base.outcome, [label]: label === 'poi' ? { ...flag, names: ['A'] } : flag },
       });
-      expect(flipSql()).toContain('array_append(');
+      expect(flipSql()).toBeDefined();
       expect(createNotification).not.toHaveBeenCalled();
       expect(result).toEqual({
         deferredRatingNotice: {

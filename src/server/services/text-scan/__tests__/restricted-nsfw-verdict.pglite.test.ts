@@ -175,7 +175,7 @@ describe('the scan on a restricted model', () => {
     }
   );
 
-  it('rates an SFW-only model at once: SFW-only off, nsfw on and locked, and a lead with what it replaced', async () => {
+  it('rates an SFW-only model at once: SFW-only off, nsfw on (unlocked), and a lead with what it replaced', async () => {
     await seed({ sfwOnly: true, locked: ['category'], meta: { other: 1 } });
     expect(
       await applySystemModelNsfwFlag({ model: scanned({ sfwOnly: true }), source: 'text-scan' })
@@ -184,7 +184,7 @@ describe('the scan on a restricted model', () => {
     expect(after).toMatchObject({
       nsfw: true,
       sfwOnly: false,
-      lockedProperties: ['category', 'nsfw'],
+      lockedProperties: ['category'],
     });
     expect(after.meta.other).toBe(1);
     expect(after.meta.systemNsfwLock).toEqual({ source: 'text-scan', at: expect.any(String) });
@@ -223,7 +223,7 @@ describe('the scan on a restricted model', () => {
     expect(
       await applySystemModelNsfwFlag({ model: scanned({ minor: true }), source: 'text-scan' })
     ).toBe('applied');
-    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: [] });
   });
 
   it('still flips an unrestricted model (positive control)', async () => {
@@ -232,7 +232,7 @@ describe('the scan on a restricted model', () => {
       'applied'
     );
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
     expect(after.meta).not.toHaveProperty('restrictedNsfwVerdict');
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
   });
@@ -447,12 +447,12 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     ['poi', true],
     ['poi', false],
   ] as const)(
-    'applies a lead held as %s (SFW-only %s): nsfw on and locked, with what it replaced; Keep undoes it',
+    'applies a lead held as %s (SFW-only %s): nsfw on (unlocked), with what it replaced; Keep undoes it',
     async (restriction, sfwOnly) => {
       await seed({ sfwOnly, meta: { ...lead(restriction), other: 1 } });
       expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
       const after = await row();
-      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
       expect(after.meta).toMatchObject({
         other: 1,
         systemNsfwLock: { source: 'text-scan', at: expect.any(String) },
@@ -535,7 +535,7 @@ describe('applyHeldRestrictedVerdict, after a save unticks minor or POI', () => 
     await seed({ sfwOnly: true, meta: { restrictedNsfwVerdict: held } });
     expect(await applyHeldRestrictedVerdict(MODEL, { ownerCleared: true })).toBe('applied');
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
     expect(after.meta.restrictedNsfwVerdict).not.toHaveProperty('liftedBy');
   });
 
@@ -568,7 +568,7 @@ describe('a Private model, which must stay SFW-only', () => {
   };
   const expectApplied = async () => {
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
     expect(after.meta.systemNsfwLock).toMatchObject({ source: 'text-scan' });
     expect(after.meta.restrictedNsfwVerdict.applied.prior).toMatchObject({
       nsfw: false,
@@ -619,7 +619,7 @@ describe('a Private model, which must stay SFW-only', () => {
       })
     ).not.toBe('applied');
     const after = await row();
-    expect(after).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect(after).toMatchObject({ nsfw: true, lockedProperties: [] });
     expect(after.meta).toEqual(applied);
   });
 
@@ -878,7 +878,7 @@ describe('a lead kept while the model is still minor or POI', () => {
       await db.query(`UPDATE "Model" SET minor = false, poi = false WHERE id = $1`, [MODEL]);
       expect(await applyHeldRestrictedVerdict(MODEL)).toBe('applied');
       const after = await row();
-      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: ['nsfw'] });
+      expect(after).toMatchObject({ nsfw: true, sfwOnly: false, lockedProperties: [] });
       expect(after.meta).not.toHaveProperty('restrictedNsfwVerdictDormant');
       expect(after.meta.restrictedNsfwVerdict).toMatchObject({
         restriction: flag,
