@@ -608,7 +608,7 @@ describe('hide-lost-original-images', () => {
     expect(counts['skipped:odd-url']).toBe(1);
   });
 
-  it('skips a target whose key shape no control image has, without a HEAD', async () => {
+  it('skips a target whose key is not a bare uuid, without a HEAD', async () => {
     await db.exec(`
       UPDATE "Image" SET url = '/00000001-0000-4000-8000-000000000000' WHERE id = 1;
       UPDATE "Image" SET url = '00000002-0000-4000-8000-000000000000.jpg' WHERE id = 2;
@@ -796,6 +796,20 @@ describe('hide-lost-original-images', () => {
     calls.length = 0;
     expect(await rebust(entries, 'undo', options(), deps)).toBe(2);
     expect(calls).toEqual([{ ids: [1, 2], action: 'undo' }]);
+  });
+
+  it('parseArgs refuses an unknown flag, so a typo cannot turn a canary into a full apply', () => {
+    for (const bad of [['--limt', '1'], ['--limit=1']])
+      expect(() => parseArgs(['--ids', 'a', '--log', 'l', '--apply', ...bad])).toThrow(
+        /unknown flag/
+      );
+  });
+
+  it('refuses to run when a control image is no bare uuid, even though it HEADs present', async () => {
+    await db.exec(`UPDATE "Image" SET url = 'ab-cd-ef-gh-ij' WHERE id IN (900, 901)`);
+    const { deps } = makeDeps();
+    await expect(run(options(), GONE, deps)).rejects.toThrow(/control failed/);
+    expect(await ingestion(1)).toBe('Scanned');
   });
 
   it('parseArgs requires a log and, outside undo, an ids file', () => {

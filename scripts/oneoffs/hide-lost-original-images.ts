@@ -75,7 +75,24 @@ export type RunOptions = {
   rebust: 'hide' | 'undo' | null;
 };
 
+const KNOWN_FLAGS = new Set([
+  '--apply',
+  '--undo',
+  '--ids',
+  '--log',
+  '--limit',
+  '--chunk',
+  '--concurrency',
+  '--pause-ms',
+  '--cross-check-rerun',
+  '--include-unconfirmed',
+  '--rebust',
+]);
+
 export function parseArgs(argv: string[]): RunOptions {
+  // A typo such as `--limt 1` or `--limit=1` must not turn the one-row canary into a full apply.
+  const unknown = argv.find((a) => a.startsWith('--') && !KNOWN_FLAGS.has(a));
+  if (unknown) throw new Error(`unknown flag ${unknown.split('=')[0]}`);
   const value = (name: string) => {
     const i = argv.indexOf(`--${name}`);
     if (i < 0) return undefined;
@@ -386,7 +403,12 @@ export async function controlOk(ids: number[], deps: Pick<Deps, 'query' | 'head'
   const rows = await deps.query<{ url: string | null }>(controlSql(ids));
   // One checkable image per quantile pick, or the control no longer covers the era it vouches for.
   const checkable = rows.filter((r): r is { url: string } => !!r.url && !deps.isExternal(r.url));
-  if (!rows.length || checkable.length !== rows.length)
+  // A control that is no bare uuid cannot vouch for the uuid keys the targets must be.
+  if (
+    !rows.length ||
+    checkable.length !== rows.length ||
+    !checkable.every((r) => isProbeableMediaKey(r.url))
+  )
     return { count: 0, shapes: new Set<string>() };
   const results = await Promise.all(checkable.map((r) => deps.head(r.url).catch(() => 'error')));
   if (!results.every((r) => r === 'present')) return { count: 0, shapes: new Set<string>() };
