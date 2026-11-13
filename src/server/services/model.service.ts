@@ -138,7 +138,10 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
-import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
+import {
+  enforceBlockedBrowsingTagsForModels,
+  getShowcaseImageFilter,
+} from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
@@ -6607,27 +6610,11 @@ export async function getModelsWithVersions({
   );
   // Card images follow the viewer's browsing-settings exclusions at the request's level, also on a
   // by-id lookup, where `ignoreBrowsingAddons` only stops them deciding which models are found.
-  // Resolved onto a target of its own, which names no owner, so none of it is skipped.
-  const imageRules: {
-    browsingLevel?: number;
-    excludedTagIds?: number[];
-    disablePoi?: boolean;
-    disableMinor?: boolean;
-  } = { browsingLevel: input.browsingLevel };
-  await enforceBlockedBrowsingTagsForModels(imageRules, {
-    id: user?.id,
-    username: user?.username,
-    isModerator: user?.isModerator,
+  const showsCardImage = await getShowcaseImageFilter({
+    browsingLevel: input.browsingLevel,
+    viewer: { id: user?.id, username: user?.username, isModerator: user?.isModerator },
+    excludedTagIds: input.excludedTagIds,
   });
-  const excludedImageTagIds = new Set([
-    ...(imageRules.excludedTagIds ?? []),
-    ...(input.excludedTagIds ?? []),
-  ]);
-  const showsCardImage = (image: ImagesForModelVersions) =>
-    (!!user && image.userId === user.id) ||
-    (!(imageRules.disablePoi && image.poi) &&
-      !(imageRules.disableMinor && image.minor) &&
-      !(image.tags ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
