@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isCountablePlay, songPlayThresholdSec } from '~/shared/utils/song-play';
 import { trpc } from '~/utils/trpc';
 
@@ -11,8 +10,6 @@ export type SongPlayTrackerInput = {
   /** Seconds of audio actually played in this playback. */
   listenedSec: number;
   enabled: boolean;
-  /** The song's owner, whose own plays are not reported (the server refuses them anyway). */
-  ownerId?: number | null;
 };
 
 type PlaybackId = string | number;
@@ -32,9 +29,7 @@ export function useSongPlayTracker({
   durationSec,
   listenedSec,
   enabled,
-  ownerId,
 }: SongPlayTrackerInput) {
-  const currentUser = useCurrentUser();
   const { mutateAsync: sendStart } = trpc.track.songPlayStart.useMutation();
   const { mutateAsync: sendComplete } = trpc.track.songPlay.useMutation();
 
@@ -42,8 +37,7 @@ export function useSongPlayTracker({
   const acknowledged = useRef<{ playbackId: PlaybackId; at: number } | null>(null);
   const completedFor = useRef<PlaybackId | null>(null);
 
-  const isOwner = ownerId != null && currentUser?.id === ownerId;
-  const active = enabled && !isOwner;
+  const active = enabled;
 
   useEffect(() => {
     if (!active || songId == null || playbackId == null) return;

@@ -9,7 +9,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { isCountablePlay, SONG_PLAY_MIN_LISTEN_SEC } from '~/shared/utils/song-play';
 
 /**
- * Song plays: "Play = 30 s listened or full track if shorter; self-plays excluded." The client is
+ * Song plays: "Play = 30 s listened or full track if shorter", the owner's own plays included. The client is
  * untrusted, so the server is the only writer of the play event and enforces the rule against its
  * own clock: a start, then a complete that counts only once the rule's time has passed since it.
  *
@@ -36,9 +36,9 @@ const NOT_COUNTED = { counted: false } as const;
 async function readPublicSong(imageId: number) {
   const { imageVisibilityConditions } = await import('~/server/services/image-visibility.service');
   const [song] = await dbRead.$queryRaw<
-    { id: number; userId: number; type: MediaType; duration: unknown }[]
+    { id: number; type: MediaType; duration: unknown }[]
   >(Prisma.sql`
-    SELECT i.id, i."userId", i.type, i.metadata->'duration' AS duration
+    SELECT i.id, i.type, i.metadata->'duration' AS duration
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
     WHERE ${Prisma.join([Prisma.sql`i.id = ${imageId}`, ...imageVisibilityConditions({})], ' AND ')}
@@ -48,7 +48,7 @@ async function readPublicSong(imageId: number) {
     typeof song.duration === 'number' && Number.isFinite(song.duration) && song.duration > 0
       ? song.duration
       : null;
-  return { userId: song.userId, durationSec };
+  return { durationSec };
 }
 
 /** The song when this requester's play of it may count; null when the song or requester is refused. */
@@ -56,7 +56,6 @@ async function readCountableSong(ctx: SongPlayContext, imageId: number) {
   const song = await readPublicSong(imageId);
   if (!song) return null;
   if (ctx.user) {
-    if (ctx.user.id === song.userId) return null;
     const { getMetricExcludedUserIds } = await import(
       '~/server/services/metric-excluded-users.service'
     );

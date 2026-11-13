@@ -82,8 +82,8 @@ a tip / view / read ──►  entityMetricEvents_month
 ### Image `Play` (songs)
 
 A song play is an `entityMetricEvents` row: `entityType: 'Image'`, the song's image id,
-`metricType: 'Play'`, value 1. The rule: "Play = 30 s listened or full track if shorter; self-plays
-excluded."
+`metricType: 'Play'`, value 1. The rule: "Play = 30 s listened or full track if shorter"; the owner's own plays count
+too (user decision, 2026-11-13).
 
 - **The server is the only writer.** The client reports a start and a complete
   (`track.songPlayStart`, `track.songPlay`); `src/server/services/song-play.service.ts` decides,

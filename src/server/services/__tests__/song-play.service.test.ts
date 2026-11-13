@@ -107,6 +107,12 @@ afterEach(() => {
 });
 
 describe('song play counting', () => {
+  it('counts the song’s owner like any listener', async () => {
+    await startAt(0, { userId: OWNER_ID });
+    expect(await completeAt(30, { userId: OWNER_ID })).toEqual({ counted: true });
+    expect(track.entityMetric).toHaveBeenCalledTimes(1);
+  });
+
   it('counts a non-owner after 30 s and emits one Play metric for the song', async () => {
     expect(await startAt(0)).toEqual({ started: true });
     expect(await completeAt(30)).toEqual({ counted: true });
@@ -185,11 +191,6 @@ describe('song play counting', () => {
   describe('does not count, and writes nothing', () => {
     afterEach(() => {
       expect(track.entityMetric).not.toHaveBeenCalled();
-    });
-
-    it('for the song’s owner', async () => {
-      await startAt(0, { userId: OWNER_ID });
-      expect(await completeAt(30, { userId: OWNER_ID })).toEqual(notCounted);
     });
 
     it('for a metric-excluded user', async () => {
@@ -314,7 +315,6 @@ describe('song play counting', () => {
     it.each([
       ['a song the public cannot see', () => queryRaw.mockResolvedValue([])],
       ['an image that is not audio', () => queryRaw.mockResolvedValue(songRow({ type: 'image' }))],
-      ['the song’s owner', () => queryRaw.mockResolvedValue(songRow({ userId: LISTENER_ID }))],
       ['a metric-excluded user', () => (excluded.ids = [LISTENER_ID])],
     ])('when the start is for %s, which then records nothing', async (_, refuse) => {
       refuse();

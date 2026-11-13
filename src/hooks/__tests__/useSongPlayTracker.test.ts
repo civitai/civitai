@@ -4,7 +4,6 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import type * as Trpc from '~/utils/trpc';
-import type * as CurrentUserModule from '~/hooks/useCurrentUser';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -12,7 +11,6 @@ const act = (React as unknown as { act: typeof actType }).act;
 const h = vi.hoisted(() => ({
   start: vi.fn(),
   complete: vi.fn(),
-  viewer: null as { id: number } | null,
 }));
 
 // A derived promise per call: a spy's own returned promise is handled by the spy (it records the
@@ -27,15 +25,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'track.songPlay': { useMutation: () => ({ mutateAsync: unspied(h.complete) }) },
   }),
 }));
-vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
-  ...(await importOriginal<typeof CurrentUserModule>()),
-  useCurrentUser: () => h.viewer,
-}));
 
 import { useSongPlayTracker, type SongPlayTrackerInput } from '~/hooks/useSongPlayTracker';
 
 const SONG_ID = 501;
-const OWNER_ID = 77;
 
 let root: Root;
 let props: SongPlayTrackerInput;
@@ -63,14 +56,12 @@ beforeEach(() => {
   vi.useFakeTimers();
   h.start.mockReset().mockResolvedValue({ started: true });
   h.complete.mockReset().mockResolvedValue({ counted: true });
-  h.viewer = { id: 12 };
   props = {
     songId: SONG_ID,
     playbackId: 'p1',
     durationSec: 200,
     listenedSec: 0,
     enabled: true,
-    ownerId: OWNER_ID,
   };
   root = createRoot(document.createElement('div'));
 });
@@ -132,15 +123,6 @@ describe('useSongPlayTracker', () => {
 
   it('never calls when disabled', async () => {
     await render({ enabled: false });
-    await advance(30_000);
-    await render({ listenedSec: 30 });
-    expect(h.start).not.toHaveBeenCalled();
-    expect(h.complete).not.toHaveBeenCalled();
-  });
-
-  it('never calls for the song’s owner', async () => {
-    h.viewer = { id: OWNER_ID };
-    await render();
     await advance(30_000);
     await render({ listenedSec: 30 });
     expect(h.start).not.toHaveBeenCalled();
