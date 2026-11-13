@@ -86,6 +86,7 @@ beforeEach(async () => {
   await pg.exec(migration('20261028150000_creator_service_max_nsfw_level'));
   await pg.exec(migration('20261028170000_creator_service_offering_takedown'));
   await pg.exec(migration('20270106120000_service_offering_content_scan'));
+  await pg.exec(migration('20261016150000_text_scan_hold'));
   await pg.exec(`
     INSERT INTO "User" (id, username) VALUES (${SELLER}, 'badgesmith');
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", status, "updatedAt")
@@ -229,6 +230,24 @@ describe('releasing a held service offering from the report queue', () => {
 
   it('is null for an offering that no longer exists', async () => {
     expect(await release(new Date(), 999)).toBeNull();
+  });
+
+  it('leaves a held offering with a pending csam hold until that hold is decided', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'h', 'text', 'r', now())`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({
+      ingestion: 'Blocked',
+      changed: false,
+      csamHoldPending: true,
+    });
+    expect(recordModActivity).not.toHaveBeenCalled();
+
+    await pg.query(`UPDATE "TextScanHold" SET status = 'Dismissed'`);
+    expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
   });
 
   it('leaves a held offering edited since the moderator read it', async () => {

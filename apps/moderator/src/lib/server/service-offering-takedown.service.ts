@@ -153,19 +153,29 @@ export async function releaseServiceOffering({
   offeringId: number;
   seenUpdatedAt: Date;
   moderatorId: number;
-}): Promise<(ReportedServiceOffering & { changed: boolean }) | null> {
+}): Promise<(ReportedServiceOffering & { changed: boolean; csamHoldPending: boolean }) | null> {
+  const pendingCsamHold = () =>
+    dbWrite
+      .selectFrom('TextScanHold')
+      .select('id')
+      .where('entityType', '=', 'ServiceOffering')
+      .where('entityId', '=', offeringId)
+      .where('label', '=', 'csam')
+      .where('status', '=', 'Pending');
   const { numUpdatedRows } = await dbWrite
     .updateTable('ServiceOffering')
     .set({ ingestion: 'Scanned', scannedAt: new Date(), updatedAt: new Date() })
     .where('id', '=', offeringId)
     .where('ingestion', '=', 'Blocked')
     .where('updatedAt', '=', seenUpdatedAt)
+    .where(({ not, exists }) => not(exists(pendingCsamHold())))
     .executeTakeFirst();
 
   const offering = await selectOffering(dbWrite).where('o.id', '=', offeringId).executeTakeFirst();
   if (!offering) return null;
 
   const changed = numUpdatedRows > 0n;
+  const csamHoldPending = !changed && (await pendingCsamHold().executeTakeFirst()) !== undefined;
   if (changed)
     await recordModActivity({
       userId: moderatorId,
@@ -173,5 +183,5 @@ export async function releaseServiceOffering({
       entityId: offeringId,
       activity: 'release',
     });
-  return { ...offering, changed };
+  return { ...offering, changed, csamHoldPending };
 }

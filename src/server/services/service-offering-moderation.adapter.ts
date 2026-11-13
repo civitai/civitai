@@ -11,6 +11,7 @@ import {
   settleSkippedScan,
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
+import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
   EntityModerationStatus,
@@ -100,8 +101,7 @@ export async function blockServiceOffering(offeringId: number, current: CurrentT
     type: 'system-message',
     key: `service-offering-text-blocked-${offeringId}`,
     details: {
-      message:
-        'Your service is hidden while a moderator reviews it: its title or description did not pass our content check.',
+      message: 'Your service is hidden while a moderator reviews it.',
       url: offering.seller.username
         ? `/user/${offering.seller.username}/shop/manage?tab=services`
         : '/',
@@ -235,7 +235,8 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
     });
   },
 
-  applyTextScan: async ({ entityId, workflowId }) => {
-    await settleServiceOfferingScan(entityId, { workflowId });
-  },
+  applyTextScan: withCsamHold(ENTITY_TYPE, async ({ entityId, workflowId, outcome }) => {
+    if (outcome.csam?.detected) await blockServiceOffering(entityId, { workflowId });
+    else await settleServiceOfferingScan(entityId, { workflowId });
+  }),
 };

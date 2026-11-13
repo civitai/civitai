@@ -11,6 +11,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'ChatMessage',
   'CommentV3',
   'UserProfile',
+  'ServiceOffering',
 ] as const;
 
 export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
@@ -22,6 +23,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   CommentV3: 'Comment',
   UserProfile: 'Profile',
+  ServiceOffering: 'Service',
 };
 
 /** What a moderator can do with a pending hold, in the order the actions are offered. */

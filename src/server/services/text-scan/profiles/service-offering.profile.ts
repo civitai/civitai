@@ -4,7 +4,7 @@ import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 registerTextScanProfile({
   entityType: 'ServiceOffering',
-  labels: ['nsfw'],
+  labels: ['nsfw', 'csam'],
   load: async (ids) => {
     const rows = await dbWrite.serviceOffering.findMany({
       where: { id: { in: ids } },

@@ -32,6 +32,9 @@ vi.mock('~/server/services/text-scan/route', () => route);
 dbMock.dbWrite.$executeRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['executeRaw']>
 ) => pgliteRaw(holder.db).executeRaw(...a)) as never);
+dbMock.dbWrite.$queryRaw.mockImplementation(((
+  ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
+) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const { updateServiceOfferingNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { serviceOfferingShowableWhere, shopRatingFilter, serviceOfferingReviewState } = await import(
@@ -43,6 +46,7 @@ const { serviceOfferingModerationAdapter, scanServiceOffering } = await import(
 const { reconcileAction } = await import('~/server/jobs/service-offering-ingestion-reconcile');
 
 const MIGRATIONS = [
+  '20261016150000_text_scan_hold',
   '20261025120000_creator_services_foundation',
   '20261028150000_creator_service_max_nsfw_level',
   '20261028170000_creator_service_offering_takedown',
@@ -74,7 +78,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   vi.clearAllMocks();
   await holder.db.exec(`
-    TRUNCATE "ServiceOffering", "EntityModeration" RESTART IDENTITY CASCADE;
+    TRUNCATE "ServiceOffering", "EntityModeration", "TextScanHold" RESTART IDENTITY CASCADE;
     DELETE FROM "Image";
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (1);
@@ -441,6 +445,76 @@ describe('the moderation adapter', () => {
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
     await scan('wf-current');
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
+  });
+
+  describe('a csam verdict', () => {
+    const scan = (detected: boolean) =>
+      serviceOfferingModerationAdapter.applyTextScan!({
+        entityId: OFFERING,
+        workflowId: 'wf-current',
+        outcome: {
+          csam: { detected, reason: 'r' },
+          triggeredLabels: detected ? ['csam'] : [],
+          nsfwLevel: null,
+        } as never,
+        subject: {
+          fields: [{ heading: 'Title', text: 'Portraits' }],
+          declared: {},
+          userId: SELLER,
+        },
+        textHash: 'h',
+      });
+    const holds = () =>
+      q(`SELECT "entityType", "entityId", label, status::text AS status FROM "TextScanHold"`);
+
+    it('hides the offering', async () => {
+      await scan(true);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+      expect(
+        serviceOfferingReviewState({ ingestion: row.ingestion as never, coverImage: null })
+      ).toBe('held');
+    });
+
+    it('holds it in the csam queue before hiding it', async () => {
+      await scan(true);
+      expect(await holds()).toEqual([
+        { entityType: 'ServiceOffering', entityId: OFFERING, label: 'csam', status: 'Pending' },
+      ]);
+      expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        report.createReport.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('is not released by any later check that passes', async () => {
+      await scan(true);
+      await scan(false);
+      await apply(false);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+  });
+
+  it.each([
+    ['the fallback check', () => apply(true)],
+    [
+      'a csam verdict',
+      () =>
+        serviceOfferingModerationAdapter.applyTextScan!({
+          entityId: OFFERING,
+          workflowId: 'wf-current',
+          outcome: { csam: { detected: true, reason: 'r' }, triggeredLabels: ['csam'] } as never,
+          subject: { fields: [], declared: {}, userId: SELLER },
+          textHash: 'h',
+        }),
+    ],
+  ])('tells the seller only that a moderator is reviewing it, after %s', async (_, block) => {
+    await block();
+    expect(notifications.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        details: expect.objectContaining({
+          message: 'Your service is hidden while a moderator reviews it.',
+        }),
+      })
+    );
   });
 
   describe('submitting a check', () => {
