@@ -459,7 +459,8 @@ export const comVersionTextSweepSql = (limit: number, policy: string) => Prisma.
 
 /** Queues every model {@link comVersionTextSweepSql} finds, up to `limit`. Returns the ids queued. */
 export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIMIT) {
-  // The replica: a lagging read only re-queues a model already queued or rated, which costs nothing.
+  // The replica: lag can re-queue a model already queued or rated (a no-op) or leave a just-changed
+  // model for the next sweep, whose text stays unrated, never shown, meanwhile.
   const found = await dbRead.$queryRaw<{ modelId: number }[]>(
     comVersionTextSweepSql(limit, await getComVersionTextPolicy())
   );
