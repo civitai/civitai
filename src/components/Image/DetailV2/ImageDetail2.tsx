@@ -119,6 +119,11 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { isSongDetail } from '~/components/Music/SongDetail/SongDetailStage';
+import { SongMoreFromCard } from '~/components/Music/SongDetail/SongMoreFromCard';
+import { SongStageBackdrop } from '~/components/Music/SongDetail/SongStageBackdrop';
+import { SongUpNextButton } from '~/components/Music/SongDetail/SongUpNextButton';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -161,6 +166,7 @@ export function ImageDetail2() {
 function ImageDetail2Content() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const {
     images,
     active,
@@ -263,6 +269,7 @@ function ImageDetail2Content() {
 
   const isOwner = currentUser?.id === image.user.id;
   const canRemix = isRemixMenuVisible(image);
+  const isSong = isSongDetail(image, features);
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -398,7 +405,7 @@ function ImageDetail2Content() {
   );
 
   const isVideo = image?.type === 'video';
-  const title = `${isVideo ? 'Video' : 'Image'} posted ${
+  const title = `${isVideo ? 'Video' : isSong ? 'Song' : 'Image'} posted ${
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
@@ -431,7 +438,13 @@ function ImageDetail2Content() {
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]">
+              <div
+                className={clsx(
+                  'relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[calc(60px+var(--safe-area-inset-bottom-unpaid))]',
+                  isSong && 'isolate'
+                )}
+              >
+                {isSong && <SongStageBackdrop songId={image.id} />}
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
@@ -467,6 +480,7 @@ function ImageDetail2Content() {
                           </div>
 
                           <div className="flex shrink-0 items-center gap-1">
+                            {isSong && <SongUpNextButton buttonProps={sharedButtonProps} />}
                             {/* Disable view count  */}
                             {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -785,6 +799,7 @@ function ImageDetail2Content() {
                       >
                         <ImageDetailComments imageId={image.id} userId={image.user.id} />
                       </CollapsibleCard>
+                      {isSong && <SongMoreFromCard song={image} />}
                       <ImageContestCollectionDetails
                         key={currentUser?.id}
                         image={image}

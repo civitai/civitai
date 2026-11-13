@@ -28,6 +28,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { isSongDetail, SongDetailStage } from '~/components/Music/SongDetail/SongDetailStage';
 import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
@@ -44,6 +45,7 @@ type ImageProps = {
   name: string | null;
   metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
   eventDecoration?: WornDecoration;
+  user?: { id: number; username?: string | null };
 };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
@@ -316,6 +318,14 @@ function ImageContent({
       type: isVideo ? 'video' : 'image',
     });
   };
+
+  const song = isSongDetail(image, features) && image.user ? { ...image, user: image.user } : null;
+  if (song)
+    return (
+      <ImageGuardContent image={image} {...connect}>
+        {(safe) => <SongDetailStage image={song} revealed={safe} />}
+      </ImageGuardContent>
+    );
 
   return (
     <ImageGuardContent image={image} {...connect}>
