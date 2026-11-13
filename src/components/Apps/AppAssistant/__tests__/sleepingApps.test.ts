@@ -41,8 +41,6 @@ import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
  * options), every surface is exactly what it was.
  */
 
-const ctx = { signal: new AbortController().signal, conversationId: 'c', files: [] };
-
 const sandbox = (
   app: string,
   state: Sandbox['state'] = 'running',
@@ -267,14 +265,14 @@ describe('what the user reads when a wake fails', () => {
         open: async () => {
           throw error;
         },
-      }).tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx);
+      }).tools[CREATE_APP].execute({ name: 'Quiz night' });
     const wakeAt = async (error: unknown) =>
       tools({
         sleeping: [asleep('garden-log')],
         wake: async () => {
           throw error;
         },
-      }).tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+      }).tools[WAKE_APP].execute({ app: 'garden-log' });
     for (const [name, run] of [
       [CREATE_APP, createAt],
       [WAKE_APP, wakeAt],
@@ -326,7 +324,7 @@ describe('what the user reads when a wake fails', () => {
       },
     });
     await expect(
-      Promise.resolve(t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx))
+      Promise.resolve(t.tools[CREATE_APP].execute({ name: 'Quiz night' }))
     ).rejects.toThrow(KEEP_LIMIT);
   });
 });
@@ -351,7 +349,7 @@ describe('🔴 the limit offer never names the app being opened or woken, nor a 
         throw atLimit('garden-log');
       },
     });
-    const out = await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    const out = await t.tools[WAKE_APP].execute({ app: 'garden-log' });
     expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
     expect(limitCardOf({ name: WAKE_APP, output: out, isError: true })).toEqual({
       kind: 'sleeping',
@@ -369,7 +367,7 @@ describe('🔴 the limit offer never names the app being opened or woken, nor a 
         throw atLimit('quiz-game');
       },
     });
-    const out = await t.tools[CREATE_APP].execute({ name: 'Garden log' }, ctx);
+    const out = await t.tools[CREATE_APP].execute({ name: 'Garden log' });
     expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
   });
 
@@ -381,7 +379,7 @@ describe('🔴 the limit offer never names the app being opened or woken, nor a 
         throw atLimit('old-quiz');
       },
     });
-    expect(await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx)).toMatchObject({
+    expect(await t.tools[WAKE_APP].execute({ app: 'garden-log' })).toMatchObject({
       limitCard: { kind: 'sleeping', oldest: 'old-quiz' },
     });
   });
@@ -398,7 +396,7 @@ describe('R2-3: past the list’s rate limit, the limit offer fails CLOSED', () 
         throw atLimit;
       },
     });
-    const out = await t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx);
+    const out = await t.tools[CREATE_APP].execute({ name: 'Quiz night' });
     expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
   });
 
@@ -414,7 +412,7 @@ describe('R2-3: past the list’s rate limit, the limit offer fails CLOSED', () 
         throw new Error('unused');
       },
     });
-    const out = await t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx);
+    const out = await t.tools[CREATE_APP].execute({ name: 'Quiz night' });
     expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
   });
 
@@ -428,7 +426,7 @@ describe('R2-3: past the list’s rate limit, the limit offer fails CLOSED', () 
         throw atLimit;
       },
     });
-    expect(await t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx)).toMatchObject({
+    expect(await t.tools[CREATE_APP].execute({ name: 'Quiz night' })).toMatchObject({
       limitCard: { kind: 'sleeping', oldest: 'old-quiz' },
     });
   });
@@ -548,7 +546,7 @@ describe('the assistant’s tools with the feature OFF are exactly as before', (
     const t = tools({ apps: [sandbox('tip-calculator', 'suspended')] });
     expect(Object.keys(t.tools)).toEqual([CREATE_APP, USE_OPEN_APP]);
     expect(t.refusal(WAKE_APP)).toBeNull();
-    const result = (await t.tools[CREATE_APP].execute({ name: 'Tip calculator' }, ctx)) as {
+    const result = (await t.tools[CREATE_APP].execute({ name: 'Tip calculator' })) as {
       app: string;
     };
     expect(result.app).toBe('tip-calculator-2');
@@ -597,14 +595,14 @@ describe('the assistant’s tools with the feature ON', () => {
       wake: wakeOk,
       open,
     });
-    await t.tools[CREATE_APP].execute({ name: 'Tip calculator' }, ctx);
+    await t.tools[CREATE_APP].execute({ name: 'Tip calculator' });
     expect(open).toHaveBeenCalledWith('tip-calculator-3');
   });
 
   it('create_app naming a sleeping app makes nothing and suggests waking it', async () => {
     const open = vi.fn();
     const t = tools({ sleeping: [asleep('garden-log')], wake: wakeOk, open: open as never });
-    const result = (await t.tools[CREATE_APP].execute({ name: 'Garden log' }, ctx)) as {
+    const result = (await t.tools[CREATE_APP].execute({ name: 'Garden log' })) as {
       app: string;
       existed?: true;
       note: string;
@@ -626,7 +624,7 @@ describe('the assistant’s tools with the feature ON', () => {
         alreadyAwake: false,
         sha256: sha,
       }),
-    }).tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    }).tools[WAKE_APP].execute({ app: 'garden-log' });
     expect(woken).toMatchObject({ app: 'garden-log', woke: true, sha256: sha });
     const awake = await tools({
       sleeping: [asleep('garden-log')],
@@ -635,7 +633,7 @@ describe('the assistant’s tools with the feature ON', () => {
         created: false,
         alreadyAwake: true,
       }),
-    }).tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    }).tools[WAKE_APP].execute({ app: 'garden-log' });
     expect(awake).not.toHaveProperty('sha256');
   });
 
@@ -645,7 +643,7 @@ describe('the assistant’s tools with the feature ON', () => {
       wake: wakeOk,
       toolsReady: async () => true,
     });
-    const result = (await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx)) as {
+    const result = (await t.tools[WAKE_APP].execute({ app: 'garden-log' })) as {
       note: string;
       reopenTools?: true;
     };
@@ -660,7 +658,7 @@ describe('the assistant’s tools with the feature ON', () => {
 
   it('wake_app whose tools are not ready yet ends the reply for the user', async () => {
     const t = tools({ sleeping: [asleep('garden-log')], wake: wakeOk });
-    const result = (await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx)) as {
+    const result = (await t.tools[WAKE_APP].execute({ app: 'garden-log' })) as {
       awaitsUser?: true;
       note: string;
     };
@@ -670,10 +668,10 @@ describe('the assistant’s tools with the feature ON', () => {
 
   it('wake_app refuses an app that is not asleep, and an awake one chooses nothing', async () => {
     const t = tools({ apps: [sandbox('quiz-game')], sleeping: [], wake: wakeOk });
-    await expect(
-      Promise.resolve(t.tools[WAKE_APP].execute({ app: 'none-such' }, ctx))
-    ).rejects.toThrow(/no sleeping app called none-such/);
-    const awake = await t.tools[WAKE_APP].execute({ app: 'quiz-game' }, ctx);
+    await expect(Promise.resolve(t.tools[WAKE_APP].execute({ app: 'none-such' }))).rejects.toThrow(
+      /no sleeping app called none-such/
+    );
+    const awake = await t.tools[WAKE_APP].execute({ app: 'quiz-game' });
     expect(chosenAppOf({ name: WAKE_APP, input: {}, output: awake, isError: false })).toBeNull();
   });
 
@@ -686,7 +684,7 @@ describe('the assistant’s tools with the feature ON', () => {
         });
       },
     });
-    expect(await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx)).toMatchObject({
+    expect(await t.tools[WAKE_APP].execute({ app: 'garden-log' })).toMatchObject({
       error: sleepingLimitMessage('old-quiz'),
     });
     expect(t.refusal(WAKE_APP)).toBe(sleepingLimitMessage('old-quiz'));
@@ -702,7 +700,7 @@ describe('the assistant’s tools with the feature ON', () => {
       sleeping: [asleep('garden-log'), asleep('quiz-game')],
       wake: wakeOk,
     });
-    expect(await t.tools[LIST_APPS].execute({}, ctx)).toEqual({
+    expect(await t.tools[LIST_APPS].execute({})).toEqual({
       apps: [
         { app: 'quiz-game', state: 'paused', lastUsed: '2026-11-10T10:00:00.000Z' },
         {
