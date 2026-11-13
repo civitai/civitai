@@ -8615,7 +8615,7 @@ export const blocksRouter = router({
       const user = ctx.user as SessionUser;
       const from = input.from ? new Date(input.from) : undefined;
       const to = input.to ? new Date(input.to) : undefined;
-      // THREE concurrent reads: two in `getAuthorFeeEarningsForOwner`, one for goods. Acceptable only
+      // FOUR concurrent reads: three in `getAuthorFeeEarningsForOwner`, one for goods. Acceptable only
       // because `appDeveloperProcedure` plus the `appBlocks` flag keeps the audience tiny; measure the
       // live read pool before widening it. The pool size is deployment configuration, not set here.
       const [authorFees, goods] = await Promise.all([

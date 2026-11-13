@@ -297,7 +297,11 @@ export function AuthorFeeCard({
               testId="author-fees-pending"
             />
             <AuthorFeeTile
-              label="Paid to you"
+              label={
+                authorFees.paidWindowDays != null
+                  ? `Paid to you · last ${authorFees.paidWindowDays} days`
+                  : 'Paid to you'
+              }
               bucket={authorFees.settled}
               testId="author-fees-paid"
               color="green"
@@ -324,8 +328,11 @@ export function AuthorFeeCard({
                     {app.appBlockId}
                   </Anchor>
                   <Text size="sm">
-                    {app.settled.feeBuzz.toLocaleString()} paid ·{' '}
-                    {app.accrued.feeBuzz.toLocaleString()} pending
+                    {app.settled.feeBuzz.toLocaleString()} paid
+                    {authorFees.paidWindowDays != null
+                      ? ` (last ${authorFees.paidWindowDays} days)`
+                      : ''}{' '}
+                    · {app.accrued.feeBuzz.toLocaleString()} pending
                   </Text>
                 </Group>
               ))}

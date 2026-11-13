@@ -36,7 +36,7 @@ export type AuthorFeeEarnings = {
   recent: AuthorFeeRecentRow[];
   /**
    * Set when no range was asked for: `settled`, the per-app paid figures and `recent` then cover
-   * only the last this-many days. `accrued` is never windowed. `null` for an explicit range.
+   * only the last this-many days. `accrued` is never windowed when no range is given. `null` for an explicit range.
    */
   paidWindowDays: number | null;
 };

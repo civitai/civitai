@@ -478,7 +478,8 @@ describe('RevenuePanel — author fees', () => {
     await expect
       .element(pending.getByTestId('author-fees-pending-count'))
       .toHaveTextContent(/^3 generations · Yellow 41$/);
-    await expect.element(paid).toHaveTextContent(/^Paid to you/);
+    // The window is on the label of the figure it qualifies, not only in a footnote.
+    await expect.element(paid).toHaveTextContent(/^Paid to you · last 90 days97/);
     await expect.element(paid.getByTestId('author-fees-paid-buzz')).toHaveTextContent(/^97$/);
     await expect
       .element(paid.getByTestId('author-fees-paid-count'))
@@ -500,10 +501,10 @@ describe('RevenuePanel — author fees', () => {
 
     await expect
       .element(page.getByTestId('author-fees-app-apb_big'))
-      .toHaveTextContent(/^apb_big88 paid · 33 pending$/);
+      .toHaveTextContent(/^apb_big88 paid \(last 90 days\) · 33 pending$/);
     await expect
       .element(page.getByTestId('author-fees-app-apb_small'))
-      .toHaveTextContent(/^apb_small9 paid · 8 pending$/);
+      .toHaveTextContent(/^apb_small9 paid \(last 90 days\) · 8 pending$/);
 
     const rows = page.getByTestId('author-fees-recent').getByRole('row').elements();
     expect(rows.map((r) => r.textContent)).toEqual([
@@ -511,6 +512,20 @@ describe('RevenuePanel — author fees', () => {
       `${new Date('2026-11-11T10:00:00Z').toLocaleDateString()}apb_small8YellowPending payout`,
       `${new Date('2026-11-09T10:00:00Z').toLocaleDateString()}apb_big7BluePaid`,
     ]);
+  });
+
+  test('an explicit range (paidWindowDays null): labels carry no window qualifier', async () => {
+    mocks.revenue.current = { ...ZEROED, authorFees: { ...FEES, paidWindowDays: null } };
+    renderWithProviders(<RevenuePanel />);
+
+    await expect
+      .element(page.getByTestId('author-fees-paid-tile'))
+      .toHaveTextContent(/^Paid to you97/);
+    await expect
+      .element(page.getByTestId('author-fees-app-apb_big'))
+      .toHaveTextContent(/^apb_big88 paid · 33 pending$/);
+    expect(page.getByText(/last 90 days/i).elements()).toHaveLength(0);
+    expect(page.getByTestId('author-fees-window').elements()).toHaveLength(0);
   });
 
   test('scoped to one app: no per-app list and no App column', async () => {
