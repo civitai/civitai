@@ -65,7 +65,7 @@
   <p class="kicker">{copy.kicker} · {page.status}</p>
   <h1 id="error-title">{copy.title}</h1>
   <div class="rule" aria-hidden="true"><i></i></div>
-  <p class="body">{copy.body}</p>
+  <p class="body">{page.status === 403 && page.error?.message && page.error.message !== 'Error: 403' ? page.error.message : copy.body}</p>
   <div class="actions">
     {#if copy.retry}
       <button type="button" class="btn primary" onclick={() => location.reload()}>

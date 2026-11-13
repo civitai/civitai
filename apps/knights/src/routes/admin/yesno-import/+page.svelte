@@ -1,42 +1,19 @@
 <!-- Temporary: remove after the Knights v2 launch import -->
 <script lang="ts">
-  import { splitCsv } from '$lib/yesno-import-chunks';
+  import {
+    addChunk,
+    emptyTotals,
+    skippedText,
+    splitCsv,
+    type ChunkResponse,
+  } from '$lib/yesno-import-chunks';
 
-  type Counts = {
-    read: number;
-    toImport: number;
-    inserted: number;
-    updated: number;
-    unchanged: number;
-    refused: number;
-    skipped: number;
-    retired: number;
-  };
-  type Response = {
-    ok: boolean;
-    message?: string;
-    read: number;
-    toImport: number;
-    skipped: Record<string, number>;
-    retire: number;
-    result?: Record<'inserted' | 'updated' | 'unchanged' | 'refused' | 'retired', number>;
-  };
-
-  const empty = (): Counts => ({
-    read: 0,
-    toImport: 0,
-    inserted: 0,
-    updated: 0,
-    unchanged: 0,
-    refused: 0,
-    skipped: 0,
-    retired: 0,
-  });
+  type Response = ChunkResponse & { ok: boolean; message?: string };
 
   let file = $state<File | null>(null);
   let dryRun = $state(true);
   let running = $state(false);
-  let totals = $state(empty());
+  let totals = $state(emptyTotals());
   let errors = $state<string[]>([]);
   let progress = $state('');
   let finishedDry = $state(false);
@@ -44,7 +21,7 @@
   async function run() {
     if (!file || running) return;
     running = true;
-    totals = empty();
+    totals = emptyTotals();
     errors = [];
     finishedDry = dryRun;
     try {
@@ -62,14 +39,7 @@
             errors.push(`Chunk ${index + 1}: ${body.message ?? response.statusText}`);
             continue;
           }
-          totals.read += body.read;
-          totals.toImport += body.toImport;
-          totals.skipped += Object.values(body.skipped).reduce((a, b) => a + b, 0);
-          totals.inserted += body.result?.inserted ?? 0;
-          totals.updated += body.result?.updated ?? 0;
-          totals.unchanged += body.result?.unchanged ?? 0;
-          totals.refused += body.result?.refused ?? 0;
-          totals.retired += body.result?.retired ?? 0;
+          totals = addChunk(totals, body);
         } catch (error) {
           errors.push(`Chunk ${index + 1}: ${error instanceof Error ? error.message : 'failed'}`);
         }
@@ -130,9 +100,10 @@
       <li>Updated: {totals.updated}</li>
       <li>Unchanged: {totals.unchanged}</li>
       <li>Refused (changed but already answered): {totals.refused}</li>
+      <li>Moderated (left as a moderator set them): {totals.moderated}</li>
       <li>Retired: {totals.retired}</li>
     {/if}
-    <li>Skipped (invalid rows): {totals.skipped}</li>
+    <li>Skipped: {skippedText(totals.skipped)}</li>
   </ul>
 {/if}
 

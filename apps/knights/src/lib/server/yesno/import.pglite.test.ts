@@ -397,6 +397,23 @@ describe('importYesNo', () => {
       expect((await items())[0]).toMatchObject({ status: 'Closed', reason: 'moderator-retired' });
     });
 
+    it('counts an answered question a moderator retired as unchanged when the file row is the same, and as refused only when it differs', async () => {
+      await importYesNo(db, load(line({ id: 'a' })));
+      await mark(
+        'a',
+        '{"moderation":{"action":"retired","by":4,"note":""}}',
+        `, "status"='Closed', "reason"='moderator-retired', "voteCount"=3`
+      );
+
+      expect(await importYesNo(db, load(line({ id: 'a' })))).toMatchObject({
+        unchanged: 1,
+        refused: 0,
+      });
+      expect(
+        await importYesNo(db, load(line({ id: 'a', question: 'Is a cap worn?' })))
+      ).toMatchObject({ unchanged: 0, refused: 1 });
+    });
+
     it('closes the open reworded copies of a question the producer withdrew, and only those', async () => {
       await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
       await pg.exec(

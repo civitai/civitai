@@ -4,6 +4,7 @@ import { parseCsv } from './csv';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   isModeratedSql,
+  MODERATION_META_KEY,
   MODERATOR_RETIRED,
   REWORD_OF_META_KEY,
   YESNO_QUESTION_MAX,
@@ -38,6 +39,8 @@ export type Skipped = Partial<
 >;
 
 const MAX_ID = 200;
+/** `Image.id` is a Postgres `integer`; a larger id cannot exist, and binding it in a lookup would fail the whole chunk. */
+const MAX_IMAGE_ID = 2_147_483_647;
 const MAX_EFFECT = 40;
 const META_COLUMNS = {
   caseId: 'case_id',
@@ -102,7 +105,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
       continue;
     }
     const imageId = Number(r.image_id);
-    if (!Number.isSafeInteger(imageId) || imageId <= 0) {
+    if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_IMAGE_ID) {
       skip('bad-image');
       continue;
     }
@@ -141,6 +144,28 @@ export function toYesNoRows(records: Record<string, string>[]): {
     });
   }
   return { rows, skipped, retire };
+}
+
+/**
+ * Drops the rows whose image is not in `Image`, counting each under `skipped['bad-image']`. Nothing references `Image`
+ * from the queue, so an item for a missing image would be inserted and stay open, never served.
+ */
+export async function dropMissingImages(
+  db: Kysely<DB>,
+  rows: YesNoRow[],
+  skipped: Skipped
+): Promise<YesNoRow[]> {
+  if (rows.length === 0) return rows;
+  const found = await db
+    .selectFrom('Image')
+    .select('id')
+    .where('id', 'in', [...new Set(rows.map((r) => r.imageId))])
+    .execute();
+  const existing = new Set(found.map((f) => f.id));
+  const kept = rows.filter((r) => existing.has(r.imageId));
+  const missing = rows.length - kept.length;
+  if (missing > 0) skipped['bad-image'] = (skipped['bad-image'] ?? 0) + missing;
+  return kept;
 }
 
 export type ImportResult = {
@@ -279,9 +304,11 @@ export async function importYesNo(
   return result;
 }
 
-const sameMeta = (a: unknown, b: Record<string, string>) =>
-  JSON.stringify(Object.entries((a ?? {}) as Record<string, string>).sort()) ===
-  JSON.stringify(Object.entries(b).sort());
+/** The file never carries the moderation record a moderator's action merges into `meta`, so it is left out of the comparison. */
+const sameMeta = (a: unknown, b: Record<string, string>) => {
+  const { [MODERATION_META_KEY]: _moderation, ...stored } = (a ?? {}) as Record<string, unknown>;
+  return JSON.stringify(Object.entries(stored).sort()) === JSON.stringify(Object.entries(b).sort());
+};
 
 async function countModerated(db: Kysely<DB>, skipped: YesNoRow[]): Promise<number> {
   const found = await db
@@ -417,18 +444,20 @@ export type ChunkSummary = {
   skipped: Skipped;
   /** Withdrawn ids in the chunk; only the import acts on them. */
   retire: number;
-  /** Absent on a dry run, which never touches the database. */
+  /** Absent on a dry run, which writes nothing. */
   result?: ImportResult;
 };
 
-/** Parses one CSV chunk and, unless `dryRun`, imports it. A dry run is `toYesNoRows` alone: nothing is written. */
+/** Parses one CSV chunk and, unless `dryRun`, imports it. A dry run also reads which images exist, so its counts match the import's, but writes nothing. */
 export async function importYesNoChunk(
   db: Kysely<DB>,
   csv: string,
   { dryRun }: { dryRun: boolean }
 ): Promise<ChunkSummary> {
   const records = parseCsv(csv);
-  const { rows, skipped, retire } = toYesNoRows(records);
+  const parsed = toYesNoRows(records);
+  const { skipped, retire } = parsed;
+  const rows = await dropMissingImages(db, parsed.rows, skipped);
   const summary: ChunkSummary = {
     read: records.length,
     toImport: rows.length,

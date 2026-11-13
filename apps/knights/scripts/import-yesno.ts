@@ -3,7 +3,12 @@ import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 import { parseCsv } from '../src/lib/server/yesno/csv';
-import { formatImportSummary, importYesNo, toYesNoRows } from '../src/lib/server/yesno/import';
+import {
+  dropMissingImages,
+  formatImportSummary,
+  importYesNo,
+  toYesNoRows,
+} from '../src/lib/server/yesno/import';
 
 /**
  * Imports yes/no questions from a CSV by hand: `pnpm run import:yesno <file.csv> [--dry-run]`.
@@ -38,7 +43,12 @@ async function main() {
     max: 1,
   });
   try {
-    const result = await importYesNo(db, rows, { retire });
+    const kept = await dropMissingImages(db, rows, skipped);
+    if (kept.length < rows.length)
+      console.log(
+        `${rows.length - kept.length} more skipped as bad-image: the image does not exist.`
+      );
+    const result = await importYesNo(db, kept, { retire });
     console.log(formatImportSummary(result));
   } finally {
     await db.destroy();

@@ -1,7 +1,7 @@
 // Temporary: remove after the Knights v2 launch import
 import { describe, expect, it } from 'vitest';
 import { parseCsv } from './server/yesno/csv';
-import { splitCsv } from './yesno-import-chunks';
+import { addChunk, emptyTotals, skippedText, splitCsv } from './yesno-import-chunks';
 
 const HEADER = 'question_id,question,active_candidate';
 const row = (n: number, question = `Q${n}`) =>
@@ -65,5 +65,35 @@ describe('splitCsv', () => {
 
   it('refuses an unterminated quote instead of sending a broken chunk', () => {
     expect(() => splitCsv(body([row(0), '1,"never closed,true']), {})).toThrow(/quote/i);
+  });
+});
+
+describe('addChunk', () => {
+  it('adds up chunk responses, keeping moderated and each skip reason', () => {
+    const first = addChunk(emptyTotals(), {
+      read: 5,
+      toImport: 2,
+      skipped: { duplicate: 1, inactive: 2 },
+      result: { inserted: 1, updated: 0, unchanged: 1, refused: 0, moderated: 1, retired: 0 },
+    });
+    const totals = addChunk(first, {
+      read: 3,
+      toImport: 1,
+      skipped: { 'bad-image': 1, inactive: 1 },
+    });
+
+    expect(totals).toEqual({
+      read: 8,
+      toImport: 3,
+      inserted: 1,
+      updated: 0,
+      unchanged: 1,
+      refused: 0,
+      moderated: 1,
+      retired: 0,
+      skipped: { inactive: 3, duplicate: 1, 'bad-image': 1 },
+    });
+    expect(skippedText(totals.skipped)).toBe('5 (inactive 3, bad-image 1, duplicate 1)');
+    expect(skippedText(emptyTotals().skipped)).toBe('0');
   });
 });
