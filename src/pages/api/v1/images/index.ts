@@ -217,6 +217,9 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+    if (!Flags.hasFlag(sfwBrowsingLevelsFlag, _browsingLevel))
+      res.setHeader('Cache-Control', 'private, no-store');
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
     // A minor or SFW-only model's images are served only at its gallery's held level, and a
     // taken-down model's not at all.
