@@ -1,3 +1,4 @@
+import { prefixCacheKey } from '@civitai/redis';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
@@ -39,12 +40,19 @@ const queryRaw = dbMock.dbRead.$queryRaw as unknown as any;
 
 const track = { entityMetric: vi.fn(async () => true), view: vi.fn(async () => true) };
 
-type Listener = { userId?: number; ip?: string; music?: boolean };
-function ctxFor({ userId = LISTENER_ID, ip = '203.0.113.7', music = true }: Listener = {}) {
+type Listener = { userId?: number; ip?: string; music?: boolean; edgeAttested?: boolean };
+function ctxFor({
+  userId = LISTENER_ID,
+  ip = '203.0.113.7',
+  music = true,
+  edgeAttested = true,
+}: Listener = {}) {
+  const headers: Record<string, string> = { 'cf-connecting-ip': ip };
+  if (edgeAttested) headers['cf-ray'] = 'ray-1';
   return {
     user: userId ? ({ id: userId } as never) : undefined,
     features: { music, canViewNsfw: false } as never,
-    req: { headers: { 'cf-connecting-ip': ip } } as never,
+    req: { headers } as never,
     track: track as never,
   };
 }
@@ -67,6 +75,8 @@ async function completeAt(seconds: number, listener?: Listener) {
 const notCounted = { counted: false };
 
 let windows: Map<string, number>;
+let store: ReturnType<typeof installFakeCacheRedis>;
+const startKeys = () => [...store.keys()].filter((key) => key.includes('song-play:start:'));
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -74,7 +84,14 @@ beforeEach(() => {
   track.entityMetric.mockClear();
   track.view.mockClear();
   excluded.ids = [];
-  installFakeCacheRedis();
+  store = installFakeCacheRedis();
+  // GETDEL is one command in Redis, so the fake reads and deletes without yielding.
+  r.getDel.mockImplementation(async (key: string) => {
+    const value = store.peek(key);
+    const hit = store.get(key);
+    store.delete(key);
+    return hit && (hit.expiresAt === null || hit.expiresAt > Date.now()) ? value : null;
+  });
   windows = new Map();
   r.incrBy.mockImplementation(async (key: string, by: number) => {
     const next = (windows.get(key) ?? 0) + by;
@@ -106,6 +123,44 @@ describe('song play counting', () => {
     await startAt(0, anon);
     expect(await completeAt(30, { userId: 0, ip: '198.51.100.5' })).toEqual(notCounted);
     expect(await completeAt(31, anon)).toEqual({ counted: true });
+    expect(track.entityMetric).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts one anonymous listener across the addresses of its IPv6 /64, and not another /64', async () => {
+    await startAt(0, { userId: 0, ip: '2001:db8:1:2::a' });
+    expect(await completeAt(30, { userId: 0, ip: '2001:db8:1:3::a' })).toEqual(notCounted);
+    expect(await completeAt(31, { userId: 0, ip: '2001:db8:1:2:ffff:0:0:1' })).toEqual({
+      counted: true,
+    });
+    expect(track.entityMetric).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to 30 s when the stored duration is missing or invalid', async () => {
+    for (const [i, duration] of [null, 'abc', 0, -4].entries()) {
+      queryRaw.mockResolvedValue(songRow({ duration }));
+      const t = i * 1000;
+      await startAt(t);
+      expect(await completeAt(t + 29)).toEqual(notCounted);
+      await startAt(t + 100);
+      expect(await completeAt(t + 130)).toEqual({ counted: true });
+    }
+    expect(track.entityMetric).toHaveBeenCalledTimes(4);
+  });
+
+  it('counts a second play after the repeat window, from a new start', async () => {
+    await startAt(0);
+    expect(await completeAt(30)).toEqual({ counted: true });
+    await startAt(201);
+    expect(await completeAt(231)).toEqual({ counted: true });
+    expect(track.entityMetric).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers counted: false when the event is not emitted, and the start stays spent', async () => {
+    track.entityMetric.mockResolvedValueOnce(false);
+    await startAt(0);
+    expect(await completeAt(30)).toEqual(notCounted);
+    expect(track.entityMetric).toHaveBeenCalledTimes(1);
+    expect(await completeAt(31)).toEqual(notCounted);
     expect(track.entityMetric).toHaveBeenCalledTimes(1);
   });
 
@@ -159,10 +214,12 @@ describe('song play counting', () => {
       expect(await completeAt(30)).toEqual(notCounted);
     });
 
-    it('when a start lands between the complete reading the key and deleting it', async () => {
-      await startAt(0);
-      r.get.mockResolvedValueOnce(null);
-      expect(await completeAt(30)).toEqual(notCounted);
+    it('for anonymous callers whose address is not established, and records no start', async () => {
+      const unattested = { userId: 0, edgeAttested: false };
+      expect(await startAt(0, unattested)).toEqual({ started: false });
+      expect(await completeAt(30, unattested)).toEqual(notCounted);
+      expect(store.size).toBe(0);
+      expect(windows.size).toBe(0);
     });
 
     it('when the start is less than 30 s old, and that early complete spends the start', async () => {
@@ -179,16 +236,41 @@ describe('song play counting', () => {
       expect(await completeAt(500)).toEqual(notCounted);
     });
 
-    it('for a repeat inside the song’s length, and counts again after it', async () => {
+    it('for a repeat inside the song’s length', async () => {
       await startAt(0);
       expect(await completeAt(30)).toEqual({ counted: true });
+      track.entityMetric.mockClear();
       await startAt(31);
       expect(await completeAt(61)).toEqual(notCounted);
-      expect(track.entityMetric).toHaveBeenCalledTimes(1);
+    });
 
-      await startAt(201);
-      expect(await completeAt(231)).toEqual({ counted: true });
-      expect(track.entityMetric).toHaveBeenCalledTimes(2);
+    it('for the loser of two concurrent completes on one start', async () => {
+      const anon = { userId: 0 };
+      await startAt(0, anon);
+      // The repeat window always admits here, so only the start's consumption can refuse one.
+      const set = r.set.getMockImplementation();
+      r.set.mockImplementation(async (key: string, value: unknown, options?: { NX?: boolean }) =>
+        options?.NX ? 'OK' : set(key, value, options)
+      );
+      // Both are held at the song read, the last await before an anonymous complete consumes the
+      // start, so they reach the consumption together.
+      let arrived = 0;
+      let release = () => undefined as void;
+      const bothArrived = new Promise<void>((resolve) => (release = resolve));
+      const holdUntilBoth = async () => {
+        if (++arrived === 2) release();
+        await bothArrived;
+        return songRow();
+      };
+      queryRaw.mockImplementationOnce(holdUntilBoth).mockImplementationOnce(holdUntilBoth);
+      at(30);
+      const results = await Promise.all([
+        countSongPlay({ ctx: ctxFor(anon), imageId: SONG_ID }),
+        countSongPlay({ ctx: ctxFor(anon), imageId: SONG_ID }),
+      ]);
+      expect(results).toContainEqual({ counted: true });
+      expect(results).toContainEqual(notCounted);
+      expect(track.entityMetric).toHaveBeenCalledTimes(1);
       track.entityMetric.mockClear();
     });
 
@@ -203,7 +285,7 @@ describe('song play counting', () => {
     it('when Redis is unavailable (fail closed)', async () => {
       await startAt(0);
       const down = new Error('redis down');
-      for (const command of ['get', 'set', 'del', 'incrBy', 'ttl', 'expire'])
+      for (const command of ['get', 'getDel', 'set', 'del', 'incrBy', 'ttl', 'expire'])
         r[command].mockRejectedValue(down);
       expect(await completeAt(30)).toEqual(notCounted);
       expect(await startAt(40)).toEqual({ started: false });
@@ -216,6 +298,30 @@ describe('song play counting', () => {
 
     it('when the music flag is off for the start, which then records nothing', async () => {
       expect(await startAt(0, { music: false })).toEqual({ started: false });
+      expect(await completeAt(30)).toEqual(notCounted);
+    });
+
+    it('when the start is over its own per-actor cap, which then records nothing', async () => {
+      windows.set(
+        prefixCacheKey(`song-play:rate-limit:start:user:${LISTENER_ID}`),
+        SONG_PLAY_RATE_LIMIT_MAX
+      );
+      expect(await startAt(0)).toEqual({ started: false });
+      expect(startKeys()).toEqual([]);
+      expect(await completeAt(30)).toEqual(notCounted);
+    });
+
+    it.each([
+      ['a song the public cannot see', () => queryRaw.mockResolvedValue([])],
+      ['an image that is not audio', () => queryRaw.mockResolvedValue(songRow({ type: 'image' }))],
+      ['the song’s owner', () => queryRaw.mockResolvedValue(songRow({ userId: LISTENER_ID }))],
+      ['a metric-excluded user', () => (excluded.ids = [LISTENER_ID])],
+    ])('when the start is for %s, which then records nothing', async (_, refuse) => {
+      refuse();
+      expect(await startAt(0)).toEqual({ started: false });
+      expect(startKeys()).toEqual([]);
+      queryRaw.mockResolvedValue(songRow());
+      excluded.ids = [];
       expect(await completeAt(30)).toEqual(notCounted);
     });
   });

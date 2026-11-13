@@ -51,8 +51,7 @@ export function useSongPlayTracker({
     startedFor.current = playbackId;
     sendStart({ imageId: songId })
       .then((result) => {
-        if (result?.started && startedFor.current === playbackId)
-          acknowledged.current = { playbackId, at: Date.now() };
+        if (result?.started) acknowledged.current = { playbackId, at: Date.now() };
       })
       .catch(ignore);
   }, [active, playbackId, songId, sendStart]);

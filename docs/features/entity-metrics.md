@@ -87,14 +87,17 @@ excluded."
 
 - **The server is the only writer.** The client reports a start and a complete
   (`track.songPlayStart`, `track.songPlay`); `src/server/services/song-play.service.ts` decides,
-  against its own clock since the start, and emits through `updateEntityMetric`. The shared rule is
+  against its own clock since the start, and emits through `updateEntityMetric`; `track.songPlay`
+  answers `counted: true` only when the event was emitted. The shared rule is
   `src/shared/utils/song-play.ts`.
 - **Counted only** with the `music` flag on, for a publicly visible audio image, by someone other
-  than its owner and not on the metric-excluded list. A listener is the signed-in user, else the
-  client IP.
+  than its owner and not on the metric-excluded list; a start is refused on the same checks. A
+  listener is the signed-in user, else the client's network address; an anonymous request whose
+  address cannot be established is not counted.
 - **De-duplicated before the write**, because this pipeline does not self-heal: one start yields at
   most one play, the same listener's plays of a song are at least the song's length apart, each
-  listener is rate-limited, and when Redis is unavailable nothing is counted.
+  listener is rate-limited, and when Redis is unavailable nothing is counted. A play whose event
+  fails to emit is lost, never retried.
 - **Not read anywhere yet.** `MetricService` sums only the names in `ENTITY_METRIC_TYPES.Image`
   (`event-engine-common`), which does not list `Play`.
 - `Play` is a value of the Postgres enum `EntityMetric_MetricType_Type` because the tracker is typed

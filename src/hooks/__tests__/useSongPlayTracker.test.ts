@@ -15,11 +15,16 @@ const h = vi.hoisted(() => ({
   viewer: null as { id: number } | null,
 }));
 
+// A derived promise per call: a spy's own returned promise is handled by the spy (it records the
+// settled result), which would hide a missing catch in the hook.
+const unspied = (mutation: (input: unknown) => Promise<unknown>) => (input: unknown) =>
+  mutation(input).then((result) => result);
+
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
-    'track.songPlayStart': { useMutation: () => ({ mutateAsync: h.start }) },
-    'track.songPlay': { useMutation: () => ({ mutateAsync: h.complete }) },
+    'track.songPlayStart': { useMutation: () => ({ mutateAsync: unspied(h.start) }) },
+    'track.songPlay': { useMutation: () => ({ mutateAsync: unspied(h.complete) }) },
   }),
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
@@ -151,12 +156,22 @@ describe('useSongPlayTracker', () => {
   });
 
   it('swallows a failed complete and does not retry it', async () => {
-    h.complete.mockRejectedValue(new Error('network'));
-    await render();
-    await advance(30_000);
-    await render({ listenedSec: 30 });
-    await render({ listenedSec: 40 });
-    expect(h.complete).toHaveBeenCalledTimes(1);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      h.complete.mockRejectedValue(new Error('network'));
+      await render();
+      await advance(30_000);
+      await render({ listenedSec: 30 });
+      await render({ listenedSec: 40 });
+      // An unhandled rejection is reported after the microtask queue drains, so let real time pass.
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(h.complete).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
   });
 
   it('does not start again when the same playback is disabled and re-enabled', async () => {
