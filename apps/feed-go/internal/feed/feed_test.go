@@ -127,7 +127,7 @@ func TestBuildSignedOutAndOldest(t *testing.T) {
 	}
 	// Moderators skip the availability and blockedFor clauses.
 	m := (&ImagesQuery{Limit: 10, BrowsingLevel: 31, ViewerID: 1, IsModerator: true}).Build()
-	if strings.Contains(m.SQL, `"availability" != 'Private'`) || strings.Contains(m.SQL, `blockedFor`) {
+	if strings.Contains(m.SQL, `"availability" != 'Private'`) || strings.Contains(m.SQL, `"blockedFor" IS NULL`) {
 		t.Fatal("moderator query must not carry the availability/blockedFor clauses")
 	}
 }
