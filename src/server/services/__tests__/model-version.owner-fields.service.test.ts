@@ -326,6 +326,42 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
     expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
   });
 
+  it('does not queue it for a save that sends the stored name', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ name: 'v1' });
+
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+  });
+
+  it('queues it when an owner renames a version', async () => {
+    seedExisting();
+    storedWords(['alpha']);
+
+    await edit({ name: 'renamed' });
+
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
+  it('queues it when an owner adds a version without trigger words', async () => {
+    seedExisting();
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+    mockTx.modelVersion.create.mockResolvedValue({ id: VERSION_ID + 1, modelId: MODEL_ID });
+
+    await upsertModelVersion({
+      modelId: MODEL_ID,
+      name: 'v2',
+      baseModel: 'SD 1.5',
+      trainedWords: [],
+      isModerator: false,
+    } as never);
+
+    expect(mockTx.modelVersion.create).toHaveBeenCalled();
+    expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+  });
+
   it('queues it when an owner adds a version with trigger words', async () => {
     seedExisting();
     dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
