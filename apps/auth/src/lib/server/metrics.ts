@@ -139,8 +139,9 @@ export const authInternalParity = new Gauge({
 
 /**
  * Session revocation checks that failed open (the token was treated as not revoked) because the shared session
- * store errored or did not answer within the read deadline, by reason. A sustained rise means sign-outs and bans
- * are not being enforced on the hub while the store is unhealthy.
+ * store errored or did not answer within the read deadline, and no revocation marker the hub had already read
+ * applied, by reason. A sustained rise means sign-outs and bans are not being enforced on the hub while the
+ * store is unhealthy.
  */
 export const hubRevocationFailOpenTotal = new Counter({
   name: 'hub_revocation_failopen_total',
@@ -148,3 +149,19 @@ export const hubRevocationFailOpenTotal = new Counter({
   labelNames: ['reason'] as const,
   registers: [register],
 });
+
+/**
+ * Every session revocation check the hub answered without the store, by verdict: `deny_cached` (a revocation
+ * marker the hub had already read applied, so the session was refused) or `allow_unknown` (none applied, so it
+ * was allowed and also counted in hub_revocation_failopen_total).
+ */
+export const hubRevocationDegradedTotal = new Counter({
+  name: 'hub_session_revocation_degraded_total',
+  help:
+    'Hub session revocation checks answered without the session store, labeled by verdict ' +
+    '(deny_cached|allow_unknown).',
+  labelNames: ['verdict'] as const,
+  registers: [register],
+});
+for (const verdict of ['deny_cached', 'allow_unknown'] as const)
+  hubRevocationDegradedTotal.inc({ verdict }, 0);

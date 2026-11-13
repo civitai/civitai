@@ -18,7 +18,7 @@ const h = await vi.hoisted(async () => {
     hGet: (async () => null) as (key: string, field: string) => Promise<string | null>,
     get: (async () => null) as (key: string) => Promise<string | null>,
   };
-  return { kp, store, failOpen: [] as string[] };
+  return { kp, store, failOpen: [] as string[], degraded: [] as string[] };
 });
 
 vi.mock('$lib/server/redis', () => ({
@@ -30,6 +30,9 @@ vi.mock('$lib/server/redis', () => ({
 }));
 vi.mock('$lib/server/metrics', () => ({
   hubRevocationFailOpenTotal: { inc: ({ reason }: { reason: string }) => h.failOpen.push(reason) },
+  hubRevocationDegradedTotal: {
+    inc: ({ verdict }: { verdict: string }) => h.degraded.push(verdict),
+  },
 }));
 
 import { createSessionSigner, SESSION_REGISTRY_KEYS } from '@civitai/auth';
@@ -57,6 +60,7 @@ afterEach(() => {
   h.store.hGet = async () => null;
   h.store.get = async () => null;
   h.failOpen.length = 0;
+  h.degraded.length = 0;
 });
 
 describe('hub verifier revocation check', () => {
@@ -68,6 +72,7 @@ describe('hub verifier revocation check', () => {
     await expect(verifier.verifyToken(token)).resolves.toMatchObject({ jti: 'jti-7' });
     expect(Date.now() - started).toBeLessThan(1000);
     expect(h.failOpen).toEqual(['timeout']);
+    expect(h.degraded).toEqual(['allow_unknown']);
   }, 10_000);
 
   it('a store error fails open and counts an error', async () => {
@@ -83,5 +88,23 @@ describe('hub verifier revocation check', () => {
       key === SESSION_REGISTRY_KEYS.tokenState && field === 'jti-7' ? 'invalid' : null;
     await expect(verifier.verifyToken(token)).resolves.toBeNull();
     expect(h.failOpen).toEqual([]);
+  });
+
+  it('a session the hub has read as revoked stays refused when the store then fails', async () => {
+    h.store.hGet = async (key, field) =>
+      key === SESSION_REGISTRY_KEYS.tokenState && field === 'jti-7' ? 'invalid' : null;
+    await expect(verifier.verifyToken(token)).resolves.toBeNull();
+
+    h.store.hGet = async () => {
+      throw new Error('ECONNRESET');
+    };
+    await expect(verifier.verifyToken(token)).resolves.toBeNull();
+    expect(h.degraded).toEqual(['deny_cached']);
+    // Refused, so not a fail-open.
+    expect(h.failOpen).toEqual([]);
+
+    // The store answers again and no longer has the marker: the record follows it.
+    h.store.hGet = async () => null;
+    await expect(verifier.verifyToken(token)).resolves.toMatchObject({ jti: 'jti-7' });
   });
 });

@@ -21,6 +21,9 @@ export default defineConfig(({ mode }) => {
         '@civitai/db-schema',
         '@civitai/email',
         '@civitai/redis',
+        // @civitai/auth imports @civitai/shared/env-switch; the hub does not depend on it directly, so it
+        // must be bundled rather than resolved from the runtime node_modules.
+        '@civitai/shared',
       ],
     },
   };

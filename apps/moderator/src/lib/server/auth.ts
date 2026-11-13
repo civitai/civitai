@@ -9,15 +9,17 @@ import { logToAxiom, safeError } from './axiom';
 import { getSysRedis } from './redis';
 
 // Same event shape as the main app's logSysRedisFailOpen, so its sysredis-fail-open alerts also see this app.
+// `verdict` is what the shared check answered from the markers it had already read (deny_cached|allow_unknown).
 export const isRevoked = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
-  onError: (err) => {
+  onError: (err, _reason, _claims, verdict) => {
     logToAxiom({
       ...safeError(err),
       name: 'sysredis-fail-open',
       type: 'warning',
       subtype: 'read-degraded',
       fn: 'spoke isRevoked',
+      verdict,
     }).catch(() => undefined);
   },
 });

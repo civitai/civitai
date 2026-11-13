@@ -1615,6 +1615,9 @@ importers:
       '@civitai/redis':
         specifier: workspace:*
         version: link:../civitai-redis
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../civitai-shared
       jose:
         specifier: ^6.0.11
         version: 6.0.12

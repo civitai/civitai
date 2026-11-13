@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@civitai/redis": "workspace:*",
+    "@civitai/shared": "workspace:*",
     "jose": "^6.0.11",
     "zod": "^4.6.6"
   },
