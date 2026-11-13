@@ -128,6 +128,9 @@ describe('upsertModel3D thumbnail ownership', () => {
   it('queues a rating recompute when the thumbnail is set or cleared, and only then', async () => {
     await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
     expect(queuedRatingFor()).toEqual([expect.objectContaining({ entityId: MODEL_ID })]);
+    // Inside the write's transaction, so a failed enqueue rolls the save back instead of
+    // reporting failure for a committed row.
+    expect(enqueueJobs.mock.calls[0][1]).toBe(db);
 
     enqueueJobs.mockClear();
     await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner });
@@ -140,5 +143,20 @@ describe('upsertModel3D thumbnail ownership', () => {
     enqueueJobs.mockClear();
     await upsertModel3D({ input: { ...base, id: MODEL_ID }, user: owner });
     expect(queuedRatingFor()).toHaveLength(0);
+  });
+
+  // A lock set by its owner would stop the rating job from ever touching the row.
+  it("ignores lockedProperties from a non-moderator on create and update, and keeps a moderator's", async () => {
+    const locked = { ...base, lockedProperties: ['nsfwLevel'] };
+    await upsertModel3D({ input: locked, user: owner });
+    expect(written().lockedProperties).toBeUndefined();
+
+    db.model3D.create.mockClear();
+    await upsertModel3D({ input: { ...locked, id: MODEL_ID }, user: owner });
+    expect(written().lockedProperties).toBeUndefined();
+
+    db.model3D.update.mockClear();
+    await upsertModel3D({ input: locked, user: moderator });
+    expect(written().lockedProperties).toEqual(['nsfwLevel']);
   });
 });

@@ -757,8 +757,8 @@ export const upsertModel3D = async ({
   // can't quietly publish a draft.
   if (!isModerator) delete (data as Record<string, unknown>).status;
 
-  // Strip locked props on update for non-mods.
-  let lockedProperties: string[] | undefined = data.lockedProperties;
+  // Only moderators set locks, on create as well as update.
+  let lockedProperties: string[] | undefined = isModerator ? data.lockedProperties : undefined;
   let existing: { id: number; userId: number; lockedProperties: string[] } | null = null;
   if (id) {
     existing = await dbWrite.model3D.findUnique({
@@ -787,11 +787,15 @@ export const upsertModel3D = async ({
   }
 
   // nsfwLevel is derived from the thumbnail; the image-scan path only re-derives when the image changes.
-  const queueNsfwRecomputeOnThumbnailChange = async (model3dId: number) => {
+  const queueNsfwRecomputeOnThumbnailChange = async (
+    model3dId: number,
+    tx: Prisma.TransactionClient
+  ) => {
     if (data.thumbnailImageId === undefined) return;
-    await enqueueJobs([
-      { entityId: model3dId, entityType: EntityType.Model3D, type: JobQueueType.UpdateNsfwLevel },
-    ]);
+    await enqueueJobs(
+      [{ entityId: model3dId, entityType: EntityType.Model3D, type: JobQueueType.UpdateNsfwLevel }],
+      tx
+    );
   };
 
   const writeData: Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput = {
@@ -821,9 +825,9 @@ export const upsertModel3D = async ({
           }
         }
 
+        await queueNsfwRecomputeOnThumbnailChange(row.id, tx);
         return row;
       });
-      await queueNsfwRecomputeOnThumbnailChange(updated.id);
       return updated;
     }
 
@@ -841,10 +845,10 @@ export const upsertModel3D = async ({
         });
       }
 
+      await queueNsfwRecomputeOnThumbnailChange(row.id, tx);
       return row;
     });
 
-    await queueNsfwRecomputeOnThumbnailChange(created.id);
     return created;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
