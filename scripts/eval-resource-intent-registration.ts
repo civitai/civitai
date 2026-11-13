@@ -596,16 +596,16 @@ export function preregistrationOverrides(params: RetrievalRunParams): string[] {
  * ARRAY.
  *
  * Which images may enter the study at all — and so have their prompt sent to the
- * vendor: the conditions the retired images search index used (`imageWhere`)
+ * vendor: the conditions the retired images search index filtered on
  * (the publicly searchable image: not in a review queue, not ToS-violating, minor or POI,
  * in a post that is published, not scheduled, and neither Private nor Unsearchable),
  * plus public meta, a non-empty prompt, no `blockedFor`, the window, and NO attached model
  * flagged POI or minor — an image's own `poi`/`minor` flags are derived from its models
  * only at scan time, so a model flagged since does not reach them.
- * ⚠️ `ingestion = 'Scanned'` is deliberately STRICTER than `imageWhere`'s
- * `imageReviewedSql()`, which also admits locked-rating images whose scan never ran — do
- * not "align" it. Requires the caller to join `"Post" p ON p.id = i."postId"`. One
- * fragment, used by both queries.
+ * ⚠️ `ingestion = 'Scanned'` is deliberately STRICTER than the shared
+ * `imageReviewedSql()` (`~/server/common/image-visibility`) that index applied, which
+ * also admits locked-rating images whose scan never ran — do not "align" it. Requires
+ * the caller to join `"Post" p ON p.id = i."postId"`. One fragment, used by both queries.
  */
 const GOLDSET_ELIGIBLE_IMAGE = (days: number) => Prisma.sql`
       i."createdAt" > now() - make_interval(days => ${days}::int)
