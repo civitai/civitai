@@ -57,7 +57,7 @@ export function hasSettledScanSnapshot(entry: {
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the policy may come to read the entry
 export function refuseUnjudgedVaultFile(entry: { id: number; url: string }) {
-  return false;
+  return true;
 }
 
 export const failedScanFileWhere: Prisma.ModelFileWhereInput = {

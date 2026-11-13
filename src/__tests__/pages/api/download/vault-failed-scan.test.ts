@@ -174,12 +174,13 @@ describe('/api/download/vault/[vaultItemId] — a file that failed its scan', ()
     expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
   });
 
-  it('still serves a model file whose version was deleted', async () => {
+  it('refuses a file with no row and no scan snapshot', async () => {
     dbMock.dbRead.modelFile.findUnique.mockResolvedValue(null);
     dbMock.dbRead.modelFile.findMany.mockResolvedValue([]);
     const { promise, res } = run();
     await promise;
-    expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
   });
 
   describe('a file whose own row is gone, judged by its vault snapshot', () => {
