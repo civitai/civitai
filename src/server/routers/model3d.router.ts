@@ -1,3 +1,4 @@
+import { booleanString } from '~/utils/zod-helpers';
 import {
   router,
   publicProcedure,
@@ -201,6 +202,7 @@ export const model3dRouter = router({
         browsingLevel: relatedPostsBrowsingLevel(ctx, input.browsingLevel),
         // Unrated content is never served where the domain serves only safe levels.
         servesUnrated: domainServableLevels(ctx) === allBrowsingLevelsFlag,
+        disableHidden: booleanString().optional().safeParse(ctx.req.cookies?.disableHidden).data,
       })
     ),
 

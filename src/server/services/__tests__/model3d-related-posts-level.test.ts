@@ -24,6 +24,7 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getBrowsingSettingAddons: async () => h.addons,
+  getBlockedBrowsingTags: async () => [],
 }));
 
 const { getModel3DRelatedPosts } = await import('~/server/services/model3d.service');
@@ -374,6 +375,33 @@ describe('getModel3DRelatedPosts, with hidden tags', () => {
     // A tag the viewer only voted on, not hid, hides nothing.
     h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: false }] };
     expect((await coverOf({ id: 77 }))[30]).toBe(first30);
+  });
+
+  it('an R+ post whose only passing cover carries a child tag is not listed for an R viewer', async () => {
+    const CHILD = 300;
+    rows = [
+      post(40, R, [image(R, { userId: STRANGER, tags: tagged(CHILD) })], { userId: STRANGER }),
+      // Control: the same post without the tag is listed.
+      post(41, R, [image(R, { userId: STRANGER })], { userId: STRANGER }),
+    ];
+    h.addons = [{ type: 'some', nsfwLevels: [R, X, XXX], excludedTagIds: [CHILD] }];
+    const ids = (await page({ id: 77 }, R, { limit: 50 })).items.map((p) => p.id);
+    expect(ids).toEqual([41]);
+  });
+
+  it("keeps covers with a tag the viewer hid when they turned hiding off; the site's tags still apply", async () => {
+    h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: true }] };
+    h.addons = [{ type: 'some', nsfwLevels: [PG], excludedTagIds: [SITE_HIDDEN] }];
+    const { items } = await getModel3DRelatedPosts({
+      input: { model3dId: MODEL3D, limit: 50 },
+      user: { id: 77 } as never,
+      browsingLevel: publicBrowsingLevelsFlag,
+      disableHidden: true,
+    });
+    const covers = Object.fromEntries(items.map((p) => [p.id, p.images[0]?.id ?? null]));
+    expect(covers[30]).toBe(first30);
+    expect(covers).toHaveProperty('31');
+    expect(covers).not.toHaveProperty('33');
   });
 
   it("hides a site-hidden tag at the viewer's level, except on the viewer's own image", async () => {

@@ -75,8 +75,7 @@ import {
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
-import { getBrowsingSettingAddons } from '~/server/services/system-cache';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 
 type SessionUser = {
   id: number;
@@ -1637,6 +1636,7 @@ export const getModel3DRelatedPosts = async ({
   user,
   browsingLevel = publicBrowsingLevelsFlag,
   servesUnrated = false,
+  disableHidden = false,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
@@ -1644,6 +1644,8 @@ export const getModel3DRelatedPosts = async ({
   browsingLevel?: number;
   /** Whether this domain may serve unrated (level 0) content; the SFW domain may not. */
   servesUnrated?: boolean;
+  /** The viewer turned off hiding their own hidden tags (the `disableHidden` setting). */
+  disableHidden?: boolean;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
@@ -1692,16 +1694,23 @@ export const getModel3DRelatedPosts = async ({
       poi: false,
       minor: false,
     };
-    // As the image feeds: never a cover carrying a tag the viewer hid, nor one of the site's hidden
-    // tags at this level unless it is the viewer's own image.
-    const [hidden, addonData] = await Promise.all([
-      getAllHiddenForUser({ userId: viewerId }),
-      getBrowsingSettingAddons(),
+    // As the post feed: never a cover carrying a tag the viewer hid (unless they turned hiding
+    // off), nor one the browsing settings exclude at this level unless it is the viewer's own image.
+    const siteRules: { browsingLevel?: number; excludedTagIds?: number[] } = {
+      browsingLevel: level,
+    };
+    const [hidden] = await Promise.all([
+      disableHidden ? undefined : getAllHiddenForUser({ userId: viewerId }),
+      enforceBlockedBrowsingTags(siteRules, {
+        id: viewerId,
+        username: user?.username,
+        isModerator,
+      }),
     ]);
-    const hiddenTagIds = hidden.hiddenTags.filter((tag) => tag.hidden).map((tag) => tag.id);
-    const systemTagIds = resolveBrowsingSettingsAddons(addonData, level, {
-      isModerator,
-    }).excludedTagIds;
+    const hiddenTagIds = (hidden?.hiddenTags ?? [])
+      .filter((tag) => tag.hidden)
+      .map((tag) => tag.id);
+    const systemTagIds = siteRules.excludedTagIds ?? [];
     const withoutTags = (tagIds: number[]): Prisma.ImageWhereInput => ({
       tags: { none: { tagId: { in: tagIds }, disabled: false } },
     });

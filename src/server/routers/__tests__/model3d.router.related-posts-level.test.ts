@@ -25,14 +25,15 @@ const { model3dRouter } = await import('../model3d.router');
 const caller = (
   user: Record<string, unknown> | undefined,
   canViewNsfw: boolean,
-  isGreen = !canViewNsfw
+  isGreen = !canViewNsfw,
+  cookies: Record<string, string> = {}
 ) =>
   model3dRouter.createCaller({
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req: { headers: {}, cookies },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
     features: { model3dFeed: true, canViewNsfw, isGreen },
@@ -88,5 +89,16 @@ describe('model3d.getRelatedPosts', () => {
     };
     expect(await servesUnrated(true)).toBe(false);
     expect(await servesUnrated(false)).toBe(true);
+  });
+
+  it("passes the viewer's disableHidden setting from its cookie", async () => {
+    const disableHidden = async (cookies: Record<string, string>) => {
+      related.mockClear();
+      await caller({ id: 7 }, true, false, cookies).getRelatedPosts({ model3dId: 1 });
+      return (related.mock.calls[0][0] as { disableHidden?: boolean }).disableHidden;
+    };
+    expect(await disableHidden({ disableHidden: 'true' })).toBe(true);
+    expect(await disableHidden({ disableHidden: 'false' })).toBe(false);
+    expect(await disableHidden({})).toBeFalsy();
   });
 });
