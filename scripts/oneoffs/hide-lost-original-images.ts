@@ -14,7 +14,7 @@
  *     requested after scanned, both: shown separately), skipped:<reason> (not-scanned, needs-review,
  *     blocked-for, tos, minor, poi, image-hold, owner-hold, pending-collection-item, open-report,
  *     open-post-report, article-image, app-listing-asset, crucible-image, external-url, odd-url,
- *     head-error, now-200, and one per DISPLAY_REFS reason: a confirmed-404 image shown as a
+ *     head-error, now-200, recheck-ok, and one per DISPLAY_REFS reason: a confirmed-404 image shown as a
  *     display asset or ImageConnection stays visible with broken bytes, on purpose; each is its own
  *     count), raced-out,
  *     still-404, no-row, would-hide.
@@ -38,6 +38,8 @@
  *   --chunk <n>               Ids per step, 1-500 (default 200).
  *   --concurrency <n>         HEADs in flight, 1-20 (default 10).
  *   --pause-ms <n>            Pause between chunks (default 1000).
+ *   --recheck-ms <n>          Wait before the second HEAD of a row that read missing (default 5000).
+ *   --ids-sha <hash>          Required with --apply: the `ids sha256` the dry run printed.
  *   --rebust hide|undo        With --apply, catch search and caches up for the log's rows (after a
  *                             stop that said "run --rebust"). Writes search and caches, not Image.
  *   --include-unconfirmed     Undo and rebust also act on log rows never confirmed hidden.
@@ -68,6 +70,10 @@ export type RunOptions = {
   chunk: number;
   concurrency: number;
   pauseMs: number;
+  /** Wait before the second HEAD of a row that read missing. */
+  recheckMs: number;
+  /** sha256 of the normalised ids the dry run printed; --apply must carry it. */
+  idsSha: string | null;
   crossCheckRerun: boolean;
   /** Undo and rebust also act on rows only intended, never confirmed hidden. */
   includeUnconfirmed: boolean;
@@ -88,6 +94,8 @@ const VALUE_FLAGS = new Set([
   '--chunk',
   '--concurrency',
   '--pause-ms',
+  '--recheck-ms',
+  '--ids-sha',
   '--rebust',
 ]);
 
@@ -128,6 +136,8 @@ export function parseArgs(argv: string[]): RunOptions {
     chunk: int('chunk', 200, 1, MAX_CHUNK),
     concurrency: int('concurrency', 10, 1, 20),
     pauseMs: int('pause-ms', 1000, 0, 600_000),
+    recheckMs: int('recheck-ms', 5000, 0, 600_000),
+    idsSha: value('ids-sha') ?? null,
     crossCheckRerun: argv.includes('--cross-check-rerun'),
     rebust: null,
     includeUnconfirmed: argv.includes('--include-unconfirmed'),
@@ -213,6 +223,11 @@ export const DISPLAY_REFS: { reason: string; table: string; columns: string[] }[
     table: 'ChallengeEntryComparison',
     columns: ['imageIdA', 'imageIdB', 'firstSeatImageId', 'winnerImageId'],
   },
+  // Moderator and removal queues: a row here is someone's pending work on the image. Kept.
+  { reason: 'csam-queue-set-aside', table: 'CsamQueueSetAside', columns: ['imageId'] },
+  { reason: 'image-removal-confirmation', table: 'ImageRemovalConfirmation', columns: ['imageId'] },
+  { reason: 'scan-label-item', table: 'ScanLabelItem', columns: ['imageId'] },
+  { reason: 'image-rating-request', table: 'ImageRatingRequest', columns: ['imageId'] },
   // Moderation Lead: any entityType (bounty and bounty entry included); when unsure, keep.
   { reason: 'image-connection', table: 'ImageConnection', columns: ['imageId'] },
 ];
@@ -492,9 +507,28 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
         })
       )
     );
-    const gone = eligible.filter((_, n) => {
+    const missing = eligible.filter((_, n) => {
       if (heads[n] === 'missing') return true;
       bump(counts, heads[n] === 'present' ? 'skipped:now-200' : 'skipped:head-error');
+      return false;
+    });
+    // One 404 is not proof: a transient one would hide a live image. Only a row that reads missing
+    // again, after a wait, counts as lost.
+    if (missing.length) await deps.sleep(options.recheckMs);
+    const again = await Promise.all(
+      missing.map((r) =>
+        limit(async () => {
+          try {
+            return await deps.head(r.url);
+          } catch {
+            return 'error' as const;
+          }
+        })
+      )
+    );
+    const gone = missing.filter((_, n) => {
+      if (again[n] === 'missing') return true;
+      bump(counts, 'skipped:recheck-ok');
       return false;
     });
     bump(counts, 'still-404', gone.length);
@@ -657,6 +691,17 @@ export function readLog(file: string): LogEntry[] {
   });
 }
 
+export const idsSha = (ids: number[]) => createHash('sha256').update(ids.join('\n')).digest('hex');
+
+/**
+ * A write must name the list the dry run printed, so a stale or wrong ids file cannot be applied
+ * to by mistake. The ids are already sorted and deduplicated by readIds.
+ */
+export function assertIdsSha(options: RunOptions, ids: number[]) {
+  if (options.apply && options.idsSha !== idsSha(ids))
+    throw new Error('--apply needs --ids-sha equal to the ids sha256 the dry run printed');
+}
+
 export function readIds(file: string) {
   const ids = [
     ...new Set(
@@ -741,6 +786,8 @@ async function main() {
   else {
     const ids = readIds(options.idsFile as string);
     if (!ids.length) throw new Error('ids file is empty');
+    assertIdsSha(options, ids);
+    deps.log(`ids sha256: ${idsSha(ids)}`);
     for (const l of siblingLogs(logFile))
       deps.log(
         `other run log: ${l.name}: ${l.entries} lines, ${l.unconfirmed} unconfirmed (one run at a time)`

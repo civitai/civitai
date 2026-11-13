@@ -8,23 +8,32 @@ import type * as LegalHold from '~/server/services/legal-hold.service';
 
 // The real hold predicates have their own suites; here a held image is one listed in "ImageHeld",
 // a held owner one listed in "OwnerHeld".
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof LegalHold>()),
-  // An image on post 777 stands for a predicate that comes back NULL: read that as held.
-  captureImageHeldSql: (alias: string) =>
-    Prisma.sql`(CASE WHEN ${Prisma.raw(alias)}."postId" = 777 THEN NULL ELSE ${Prisma.raw(
-      alias
-    )}.id IN (SELECT "imageId" FROM "ImageHeld") END)`,
-  // Owner 13 stands for a predicate that comes back NULL: the script must read that as held.
-  ownerHeldSql: (owner: Prisma.Sql) =>
-    Prisma.sql`(CASE WHEN ${owner} = 13 THEN NULL ELSE ${owner} IN (SELECT "userId" FROM "OwnerHeld") END)`,
-}));
+const realHold = vi.hoisted(() => ({ on: false }));
+
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof LegalHold>();
+  return {
+    ...actual,
+    // An image on post 777 stands for a predicate that comes back NULL: read that as held.
+    // `realHold.on` swaps in the real predicate, for the tests of what it covers.
+    captureImageHeldSql: (alias: string) => {
+      if (realHold.on) return actual.captureImageHeldSql(alias);
+      const a = Prisma.raw(alias);
+      return Prisma.sql`(CASE WHEN ${a}."postId" = 777 THEN NULL ELSE ${a}.id IN (SELECT "imageId" FROM "ImageHeld") END)`;
+    },
+    // Owner 13 stands for a predicate that comes back NULL: the script must read that as held.
+    ownerHeldSql: (owner: Prisma.Sql) =>
+      Prisma.sql`(CASE WHEN ${owner} = 13 THEN NULL ELSE ${owner} IN (SELECT "userId" FROM "OwnerHeld") END)`,
+  };
+});
 
 import {
   actedOn,
   appendDurable,
   keyShape,
   CROSS_CHECK_EXPIRES,
+  assertIdsSha,
+  idsSha,
   parseArgs,
   readIds,
   siblingLogs,
@@ -79,6 +88,10 @@ const EXPECTED_REFS: [reason: string, table: string, column: string][] = [
   ['challenge-entry-comparison', 'ChallengeEntryComparison', 'imageIdB'],
   ['challenge-entry-comparison', 'ChallengeEntryComparison', 'firstSeatImageId'],
   ['challenge-entry-comparison', 'ChallengeEntryComparison', 'winnerImageId'],
+  ['csam-queue-set-aside', 'CsamQueueSetAside', 'imageId'],
+  ['image-removal-confirmation', 'ImageRemovalConfirmation', 'imageId'],
+  ['scan-label-item', 'ScanLabelItem', 'imageId'],
+  ['image-rating-request', 'ImageRatingRequest', 'imageId'],
   ['image-connection', 'ImageConnection', 'imageId'],
 ];
 const REF_TABLES = [...new Set(EXPECTED_REFS.map(([, table]) => table))];
@@ -108,6 +121,8 @@ beforeAll(async () => {
     CREATE TABLE app_listing_screenshots (image_id int);
     CREATE TABLE "Crucible" ("imageId" int, "heroImageId" int);
     CREATE TABLE "CrucibleEntry" ("imageId" int);
+    CREATE TABLE "CsamReport" (images jsonb NOT NULL DEFAULT '[]', status text);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int);
   `);
 });
 
@@ -122,7 +137,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "PostReport", "Article", app_listings, app_listing_screenshots;
+    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "CsamReport", "EvidenceHoldImage", "Report", "ImageReport", "PostReport", "Article", app_listings, app_listing_screenshots;
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
       (1,'00000001-0000-4000-8000-000000000000',10,100),(2,'00000002-0000-4000-8000-000000000000',10,100),(3,'00000003-0000-4000-8000-000000000000',11,101),
       (900,'f0000900-0000-4000-8000-000000000000',12,102),(901,'f0000901-0000-4000-8000-000000000000',12,102);
@@ -150,6 +165,8 @@ const options = (over: Partial<RunOptions> = {}): RunOptions => ({
   chunk: 200,
   concurrency: 4,
   pauseMs: 0,
+  recheckMs: 0,
+  idsSha: null,
   crossCheckRerun: false,
   rebust: null,
   includeUnconfirmed: false,
@@ -768,6 +785,63 @@ describe('hide-lost-original-images', () => {
       expect(counts.hidden).toBe(2);
     }
   );
+
+  // The real hold predicate, not the mock: a CsamReport that lists the image holds it whatever the
+  // report's own status (Moderation Lead: never hide an image with a CsamReport, any status).
+  it.each(['Pending', 'Actioned', 'Unactioned', 'Processing', null])(
+    'leaves an image alone that a CsamReport lists, report status %s',
+    async (status) => {
+      // The script builds its hold SQL when it loads, so load a copy with the real predicate.
+      realHold.on = true;
+      vi.resetModules();
+      try {
+        const real = await import('../oneoffs/hide-lost-original-images');
+        await db.query(`INSERT INTO "CsamReport" (images, status) VALUES ($1::jsonb, $2)`, [
+          JSON.stringify([{ id: 1 }, '2']),
+          status,
+        ]);
+        const { deps } = makeDeps();
+        const counts = await real.run(options(), GONE, deps);
+        expect(await ingestion(1)).toBe('Scanned');
+        expect(await ingestion(2)).toBe('Scanned');
+        expect(await ingestion(3)).toBe('NotFound');
+        expect(counts['skipped:image-hold']).toBe(2);
+      } finally {
+        realHold.on = false;
+        vi.resetModules();
+      }
+    }
+  );
+
+  it('hides a row only if a second HEAD, after a wait, also reads missing', async () => {
+    const seen = new Map<string, number>();
+    const waits: number[] = [];
+    const { deps } = makeDeps({
+      head: async (url) => {
+        const n = (seen.get(url) ?? 0) + 1;
+        seen.set(url, n);
+        if (url === '00000001-0000-4000-8000-000000000000') return n === 1 ? 'missing' : 'present';
+        return url.startsWith('0000000') ? 'missing' : 'present';
+      },
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    const counts = await run(options({ recheckMs: 7 }), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(await ingestion(2)).toBe('NotFound');
+    expect(counts['skipped:recheck-ok']).toBe(1);
+    expect(waits).toContain(7);
+  });
+
+  it('assertIdsSha refuses an apply whose --ids-sha is not the hash of the ids', () => {
+    const ids = [1, 2, 3];
+    expect(() => assertIdsSha(options({ idsSha: null }), ids)).toThrow(/--ids-sha/);
+    expect(() => assertIdsSha(options({ idsSha: idsSha([1, 2, 4]) }), ids)).toThrow(/--ids-sha/);
+    expect(() => assertIdsSha(options({ idsSha: idsSha(ids) }), ids)).not.toThrow();
+    // A dry run needs no hash: it is where the hash comes from.
+    expect(() => assertIdsSha(options({ apply: false, idsSha: null }), ids)).not.toThrow();
+  });
 
   it('does not call ids unread under --limit no-row', async () => {
     const { deps } = makeDeps();
