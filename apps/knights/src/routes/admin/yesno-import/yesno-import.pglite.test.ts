@@ -173,6 +173,34 @@ describe('POST /admin/yesno-import', () => {
     expect(stored.rows.map((r) => r.externalId)).toEqual(['a']);
   });
 
+  it('imports the valid copy of a question id whose first copy points at a missing image, and skips that one as bad-image', async () => {
+    await seedImage(pg, 11);
+    const csv = [HEADER, line('a', { image: '2147483000' }), line('a', { image: '11' })].join('\n');
+    const dry = await post(moderator, { csv, dryRun: true });
+    expect(dry.body).toMatchObject({ read: 2, toImport: 1 });
+    expect(dry.body.skipped).toEqual({ 'bad-image': 1 });
+
+    const real = await post(moderator, { csv, dryRun: false });
+    expect(real.body).toMatchObject({ read: 2, toImport: 1 });
+    expect(real.body.skipped).toEqual({ 'bad-image': 1 });
+    expect(real.body.result).toMatchObject({ inserted: 1 });
+    const stored = await pg.query<{ externalId: string; imageId: number }>(
+      `SELECT "externalId", "imageId" FROM "KnightsQueueItem"`
+    );
+    expect(stored.rows).toEqual([{ externalId: 'a', imageId: 11 }]);
+  });
+
+  it('still skips the second of two copies with existing images as a duplicate', async () => {
+    await seedImage(pg, 11);
+    const csv = [HEADER, line('a'), line('a', { image: '11' })].join('\n');
+    const { body } = await post(moderator, { csv, dryRun: false });
+    expect(body).toMatchObject({ read: 2, toImport: 1 });
+    expect(body.skipped).toEqual({ duplicate: 1 });
+    expect(body.result).toMatchObject({ inserted: 1 });
+    const stored = await pg.query<{ imageId: number }>(`SELECT "imageId" FROM "KnightsQueueItem"`);
+    expect(stored.rows).toEqual([{ imageId: 10 }]);
+  });
+
   it('rejects a malformed payload with 400', async () => {
     expect((await post(moderator, 'not json')).status).toBe(400);
     expect((await post(moderator, { csv: 5, dryRun: false })).status).toBe(400);

@@ -24,7 +24,7 @@ async function main() {
   if (!file) throw new Error('Pass the path of the CSV file.');
 
   const records = parseCsv(readFileSync(file, 'utf8'));
-  const { rows, skipped, retire } = toYesNoRows(records);
+  const { rows, skipped, retire, spares } = toYesNoRows(records);
   const players = rows.filter((r) => r.audience === 'players').length;
   console.log(
     `${records.length} rows read: ${rows.length} to import (${players} for players, ${
@@ -43,11 +43,10 @@ async function main() {
     max: 1,
   });
   try {
-    const kept = await dropMissingImages(db, rows, skipped);
-    if (kept.length < rows.length)
-      console.log(
-        `${rows.length - kept.length} more skipped as bad-image: the image does not exist.`
-      );
+    const badImage = skipped['bad-image'] ?? 0;
+    const kept = await dropMissingImages(db, rows, skipped, spares);
+    const missing = (skipped['bad-image'] ?? 0) - badImage;
+    if (missing > 0) console.log(`${missing} more skipped as bad-image: the image does not exist.`);
     const result = await importYesNo(db, kept, { retire });
     console.log(formatImportSummary(result));
   } finally {

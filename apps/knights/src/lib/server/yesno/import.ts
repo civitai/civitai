@@ -79,6 +79,8 @@ export function toYesNoRows(records: Record<string, string>[]): {
   skipped: Skipped;
   /** Ids of rows the producer no longer marks active; an open question with one of these is retired by the import. */
   retire: string[];
+  /** Well-formed later copies of an id, counted as `duplicate`; `dropMissingImages` uses one when the first copy's image is missing. */
+  spares: YesNoRow[];
 } {
   const retire: string[] = [];
   const skipped: Skipped = {};
@@ -87,6 +89,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
   };
   const seen = new Set<string>();
   const rows: YesNoRow[] = [];
+  const spares: YesNoRow[] = [];
 
   for (const r of records) {
     if ((r.active_candidate ?? '').trim().toLowerCase() !== 'true') {
@@ -100,71 +103,82 @@ export function toYesNoRows(records: Record<string, string>[]): {
       skip('bad-id');
       continue;
     }
+    const row = toYesNoRow(r, externalId);
     if (seen.has(externalId)) {
       skip('duplicate');
+      if (typeof row !== 'string') spares.push(row);
       continue;
     }
-    const imageId = Number(r.image_id);
-    if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_IMAGE_ID) {
-      skip('bad-image');
-      continue;
-    }
-    const axis = clip(r.axis, 60).toLowerCase();
-    if (!isAxis(axis)) {
-      skip('bad-axis');
-      continue;
-    }
-    const audience = AUDIENCE_OF_KIND[clip(r.kind, 40)];
-    if (!audience) {
-      skip('bad-kind');
-      continue;
-    }
-    const prompt = clip(r.question, YESNO_QUESTION_MAX);
-    if (!prompt) {
-      skip('bad-question');
+    if (typeof row === 'string') {
+      skip(row);
       continue;
     }
     seen.add(externalId);
-    rows.push({
-      externalId,
-      imageId,
-      axis,
-      audience,
-      prompt,
-      yesEffect: clip(r.yes_effect, MAX_EFFECT) || null,
-      noEffect: clip(r.no_effect, MAX_EFFECT) || null,
-      meta: {
-        ...Object.fromEntries(
-          Object.entries(META_COLUMNS).map(([name, column]) => [name, clip(r[column], 120)])
-        ),
-        // A cleaned-up CSV rewords a producer question under a new id; this links it back, the way a
-        // moderator reword does. Left out when empty: the moderator tools treat any value as a reword.
-        ...(idOf(r.reword_of) ? { [REWORD_OF_META_KEY]: idOf(r.reword_of) } : {}),
-      },
-    });
+    rows.push(row);
   }
-  return { rows, skipped, retire };
+  return { rows, skipped, retire, spares };
+}
+
+/** One active record as a row, or the reason it is skipped. */
+function toYesNoRow(r: Record<string, string>, externalId: string): YesNoRow | keyof Skipped {
+  const imageId = Number(r.image_id);
+  if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_IMAGE_ID) return 'bad-image';
+  const axis = clip(r.axis, 60).toLowerCase();
+  if (!isAxis(axis)) return 'bad-axis';
+  const audience = AUDIENCE_OF_KIND[clip(r.kind, 40)];
+  if (!audience) return 'bad-kind';
+  const prompt = clip(r.question, YESNO_QUESTION_MAX);
+  if (!prompt) return 'bad-question';
+  return {
+    externalId,
+    imageId,
+    axis,
+    audience,
+    prompt,
+    yesEffect: clip(r.yes_effect, MAX_EFFECT) || null,
+    noEffect: clip(r.no_effect, MAX_EFFECT) || null,
+    meta: {
+      ...Object.fromEntries(
+        Object.entries(META_COLUMNS).map(([name, column]) => [name, clip(r[column], 120)])
+      ),
+      // A cleaned-up CSV rewords a producer question under a new id; this links it back, the way a
+      // moderator reword does. Left out when empty: the moderator tools treat any value as a reword.
+      ...(idOf(r.reword_of) ? { [REWORD_OF_META_KEY]: idOf(r.reword_of) } : {}),
+    },
+  };
 }
 
 /**
  * Drops the rows whose image is not in `Image`, counting each under `skipped['bad-image']`. Nothing references `Image`
- * from the queue, so an item for a missing image would be inserted and stay open, never served.
+ * from the queue, so an item for a missing image would be inserted and stay open, never served. A dropped row is
+ * replaced by the first of its `spares` whose image exists, which then no longer counts as a `duplicate`.
  */
 export async function dropMissingImages(
   db: Kysely<DB>,
   rows: YesNoRow[],
-  skipped: Skipped
+  skipped: Skipped,
+  spares: YesNoRow[] = []
 ): Promise<YesNoRow[]> {
   if (rows.length === 0) return rows;
   const found = await db
     .selectFrom('Image')
     .select('id')
-    .where('id', 'in', [...new Set(rows.map((r) => r.imageId))])
+    .where('id', 'in', [...new Set([...rows, ...spares].map((r) => r.imageId))])
     .execute();
   const existing = new Set(found.map((f) => f.id));
-  const kept = rows.filter((r) => existing.has(r.imageId));
-  const missing = rows.length - kept.length;
-  if (missing > 0) skipped['bad-image'] = (skipped['bad-image'] ?? 0) + missing;
+  const kept: YesNoRow[] = [];
+  for (const row of rows) {
+    if (existing.has(row.imageId)) {
+      kept.push(row);
+      continue;
+    }
+    skipped['bad-image'] = (skipped['bad-image'] ?? 0) + 1;
+    const spare = spares.find((s) => s.externalId === row.externalId && existing.has(s.imageId));
+    if (!spare) continue;
+    kept.push(spare);
+    skipped.duplicate = (skipped.duplicate ?? 0) - 1;
+    if (!skipped.duplicate) delete skipped.duplicate;
+  }
   return kept;
 }
 
@@ -457,7 +471,7 @@ export async function importYesNoChunk(
   const records = parseCsv(csv);
   const parsed = toYesNoRows(records);
   const { skipped, retire } = parsed;
-  const rows = await dropMissingImages(db, parsed.rows, skipped);
+  const rows = await dropMissingImages(db, parsed.rows, skipped, parsed.spares);
   const summary: ChunkSummary = {
     read: records.length,
     toImport: rows.length,
