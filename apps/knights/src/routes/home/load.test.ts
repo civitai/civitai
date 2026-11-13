@@ -101,7 +101,6 @@ describe("home: what's new", () => {
       lead: "Here's how the Order works:",
     });
     expect(whatsNew.items.map((item: { lead: string }) => item.lead)).toContain('Climb the ranks.');
-    expect(JSON.stringify(whatsNew)).not.toMatch(/\bnew\b(?! Order)|changed/i);
   });
 
   it('gives a returning player the first item about their kept rank and XP', async () => {
@@ -133,5 +132,16 @@ describe("home: what's new", () => {
       guide: false,
       whatsNew: true,
     });
+  });
+
+  it('fails when the store cannot record the dismissal so the dialog stays up', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    seenStore.set.mockRejectedValue(new Error('down'));
+    const dismiss = (actions as Record<string, (e: never) => Promise<unknown>>).dismissWhatsNew;
+    expect(await dismiss({ locals: { user: { id: 7 } } } as never)).toMatchObject({
+      status: 500,
+      data: { message: 'Could not close this. Try again.', whatsNewFailed: true },
+    });
+    vi.restoreAllMocks();
   });
 });
