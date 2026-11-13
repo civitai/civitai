@@ -721,11 +721,19 @@ export function readIds(file: string) {
   return ids.sort((a, b) => a - b);
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
+export async function main(argv: string[] = process.argv.slice(2)) {
+  const options = parseArgs(argv);
   // Prisma query logging would print the id arrays this script sends.
   if (/prisma/.test(process.env.LOGGING ?? ''))
     throw new Error('unset LOGGING (prisma query logging prints the target ids)');
+  // Read and checked before anything connects: a write that does not name the dry run's list stops
+  // here. This call is the gate; a test runs main() to keep it (do not move it below the imports).
+  const ids = options.undo || options.rebust ? [] : readIds(options.idsFile as string);
+  if (!options.undo && !options.rebust) {
+    if (!ids.length) throw new Error('ids file is empty');
+    assertIdsSha(options, ids);
+    console.log(`ids sha256: ${idsSha(ids)}`);
+  }
   const { dbWrite } = await import('~/server/db/client');
   const { getImageUploadBackend, headObject } = await import('~/utils/s3-utils');
   const { sleep } = await import('~/server/utils/concurrency-helpers');
@@ -785,10 +793,6 @@ async function main() {
   if (options.rebust) await rebust(acted(), options.rebust, options, deps);
   else if (options.undo) await undo(acted(), options, deps);
   else {
-    const ids = readIds(options.idsFile as string);
-    if (!ids.length) throw new Error('ids file is empty');
-    assertIdsSha(options, ids);
-    deps.log(`ids sha256: ${idsSha(ids)}`);
     for (const l of siblingLogs(logFile))
       deps.log(
         `other run log: ${l.name}: ${l.entries} lines, ${l.unconfirmed} unconfirmed (one run at a time)`

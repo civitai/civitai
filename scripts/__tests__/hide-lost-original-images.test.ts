@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as LegalHold from '~/server/services/legal-hold.service';
@@ -31,6 +34,7 @@ import {
   actedOn,
   appendDurable,
   keyShape,
+  main,
   CROSS_CHECK_EXPIRES,
   assertIdsSha,
   idsSha,
@@ -848,6 +852,24 @@ describe('hide-lost-original-images', () => {
     expect(await ingestion(1)).toBe('Scanned');
     expect(counts['skipped:head-error']).toBe(1);
     expect(counts['skipped:recheck-ok']).toBeUndefined();
+  });
+
+  // Runs main(), the real entry: the gate is its call to assertIdsSha, which assertIdsSha's own test
+  // cannot see. Whoever deletes that call (or moves it below the imports that connect to the
+  // database) makes this fail.
+  it('main refuses --apply without a matching --ids-sha, before anything connects', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-lost-'));
+    try {
+      const idsFile = path.join(dir, 'ids');
+      const logFile = path.join(dir, 'run.log');
+      fs.writeFileSync(idsFile, '3\n1\n2\n1\n');
+      const base = ['--ids', idsFile, '--log', logFile, '--apply'];
+      await expect(main(base)).rejects.toThrow(/--ids-sha/);
+      await expect(main([...base, '--ids-sha', idsSha([1, 2, 4])])).rejects.toThrow(/--ids-sha/);
+      expect(fs.existsSync(logFile)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('assertIdsSha refuses an apply whose --ids-sha is not the hash of the ids', () => {
