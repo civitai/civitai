@@ -150,9 +150,22 @@ describe('the csam hold decision record, against the real label store', () => {
       });
     });
 
+    it.each(['remove', 'remove_ban'] as const)(
+      'is held from readers by a %s decision, even if its scan never marked it held',
+      async (decision) => {
+        await decide(decision);
+        expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
+          where: { id: 31 },
+          data: { csamHeld: true },
+        });
+      }
+    );
+
     it('stays held when removed, its content kept', async () => {
       await decide('remove');
-      expect(dbMock.dbWrite.postText.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.postText.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { csamHeld: false } })
+      );
       expect(dbMock.dbWrite.postText.delete).not.toHaveBeenCalled();
       // The control: the removal was decided and recorded.
       expect(await labels()).toEqual([
