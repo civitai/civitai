@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
  * article.getById by region: a restricted region gets the same NOT_FOUND as a missing article for
@@ -45,17 +46,30 @@ function article(nsfwLevel: number, imageLevels: number[] = []) {
   };
 }
 
+const session = { apiKeyId: null, tokenScope: TokenScope.Full };
+const scopedKey = {
+  apiKeyId: 5,
+  apiKeyType: ApiKeyType.User,
+  subject: { type: 'apiKey' as const, id: 5 },
+  tokenScope: TokenScope.ArticlesRead,
+};
+const oauthToken = {
+  apiKeyId: 6,
+  apiKeyType: ApiKeyType.Access,
+  subject: { type: 'oauth' as const, id: 'client-1' },
+  tokenScope: TokenScope.Full,
+};
+
 const member = { id: 2, isModerator: false, tier: 'free', muted: false, bannedAt: null };
 const moderator = { id: 1, isModerator: true, tier: 'free', muted: false, bannedAt: null };
 const owner = { id: OWNER_ID, isModerator: false, tier: 'free', muted: false, bannedAt: null };
 
 /** A signed-out caller's context is edge-cacheable (createContext), as in production. */
-function fakeCtx(user: unknown) {
+function fakeCtx(user: unknown, credential: Record<string, unknown> = session) {
   return {
     acceptableOrigin: true,
     user,
-    apiKeyId: null,
-    tokenScope: TokenScope.Full,
+    ...credential,
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
     cache: user
@@ -66,9 +80,17 @@ function fakeCtx(user: unknown) {
   };
 }
 
-async function getById(restricted: boolean, user?: unknown) {
+async function getById(
+  restricted: boolean,
+  user?: unknown,
+  {
+    credential = session,
+    ssr = false,
+  }: { credential?: Record<string, unknown>; ssr?: boolean } = {}
+) {
   mockIsRegionRestricted.mockReturnValue(restricted);
-  const ctx = fakeCtx(user);
+  // The server-side render's helpers build their context with no cache.
+  const ctx = { ...fakeCtx(user, credential), ...(ssr ? { cache: null } : {}) };
   const caller = articleRouter.createCaller(ctx as never);
   const result = await caller.getById({ id: 7 }).then(
     (value) => ({ value, error: undefined }),
@@ -127,6 +149,28 @@ describe('article.getById by region', () => {
     mockGetArticleById.mockResolvedValue(article(R));
     const { value } = await getById(true, user);
     expect(value?.content).toBe('<p>body</p>');
+  });
+
+  it.each([
+    ['a scoped key', scopedKey],
+    ['an OAuth token', oauthToken],
+  ])('is NOT_FOUND for a moderator on %s in a restricted region', async (_, credential) => {
+    mockGetArticleById.mockResolvedValue(article(R));
+    const { error } = await getById(true, moderator, { credential });
+    expect((error as TRPCError).code).toBe('NOT_FOUND');
+  });
+
+  it('still serves its owner an R article on a scoped key in a restricted region', async () => {
+    mockGetArticleById.mockResolvedValue(article(R));
+    const { value } = await getById(true, owner, { credential: scopedKey });
+    expect(value?.content).toBe('<p>body</p>');
+  });
+
+  it('works in the server-side render, whose context has no cache', async () => {
+    mockGetArticleById.mockResolvedValue(article(R));
+    expect((await getById(false, undefined, { ssr: true })).value?.content).toBe('<p>body</p>');
+    const restricted = await getById(true, undefined, { ssr: true });
+    expect((restricted.error as TRPCError).code).toBe('NOT_FOUND');
   });
 
   it('is NOT_FOUND for a signed-in member in a restricted region', async () => {

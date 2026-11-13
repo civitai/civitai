@@ -146,7 +146,9 @@ export const articleRouter = router({
       // (as on /api/v1/articles/[id]), its owner and moderators excepted, and the answer stays out of
       // the edge cache, which does not key on region.
       if (!isArticleServableWhenRestricted(article)) {
-        const viewerMayRead = ctx.user?.isModerator || ctx.user?.id === article.userId;
+        // A moderator only on a session or a full-access personal key, as for moderatorProcedure.
+        const viewerMayRead =
+          eventViewerOf(ctx).isModerator || (!!ctx.user && ctx.user.id === article.userId);
         if (!viewerMayRead && isRegionRestricted(getRegion(ctx.req)))
           throw throwNotFoundError(`No article with id ${input.id}`);
         if (ctx.cache) {
