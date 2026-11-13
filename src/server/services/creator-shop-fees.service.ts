@@ -21,6 +21,7 @@ import { getTransactionByExternalId, refundTransaction } from '~/server/services
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 /**
  * A read failure is deliberately NOT swallowed into the defaults. The fee is charged
@@ -79,14 +80,8 @@ export const SUBMISSION_ALREADY_COMPLETED_MESSAGE =
  *
  * Without a key: charged under a new id (no dedup), then `write` in its own transaction.
  *
- * With a key:
- * - the charge is chargeByExternalId's, outside any transaction: a fee the ledger already holds
- *   under the key is this submission's, continued from without a balance check;
- * - then, under the key's lock (buzz-charge-lock.ts) in a short transaction that `write` also uses:
- *   a fee already recorded on a listing paid for that listing (a lost response, a concurrent
- *   request, or other content under a reused key), so this submission is refused; a refunded fee
- *   is refused; otherwise the listing is written;
- * - a failed write refunds the fee unless another request recorded it meanwhile.
+ * With a key: a fee already recorded on a listing paid for that listing, so this submission is
+ * refused.
  */
 export async function withSubmissionFee<T>(
   {
@@ -142,7 +137,10 @@ export async function withSubmissionFee<T>(
         LIMIT 1`
     ).length > 0;
   const isRefunded = async () =>
-    !!(await getTransactionByExternalId(`refund-${transactionId}`, CHARGE_LOCKED_READ));
+    !!(await getTransactionByExternalId(
+      refundExternalTransactionId(transactionId),
+      CHARGE_LOCKED_READ
+    ));
 
   let writeFailed = false;
   try {

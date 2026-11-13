@@ -6,6 +6,6 @@ export const donateToGoalInput = z.object({
   donationGoalId: z.number(),
   // Minted by the client once per donation and resent on its retries: the charge's ledger ids
   // derive from it, so a retry after an unanswered donation cannot charge again. Optional: without
-  // one, every call is a new donation under a new id, with no dedup.
+  // it each call charges under a new id (no dedup).
   idempotencyKey: z.string().uuid().optional(),
 });

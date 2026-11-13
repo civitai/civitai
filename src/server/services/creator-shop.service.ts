@@ -113,6 +113,7 @@ import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pa
 import { reviewMysteryPack } from '~/server/services/creator-mystery-pack-approve.service';
 import { lockShopItem } from '~/server/services/creator-shop-lock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 // The shop-item shape, which already carries the creator and lister for
 // attribution. Only used by the creator storefront.
@@ -2562,7 +2563,7 @@ async function refundPurchasePrefix(input: {
   return {
     refundedTransactions: reversed.map((leg) => ({
       originalTransactionId: leg.transactionId,
-      refundTransactionId: `refund-${leg.transactionId}`,
+      refundTransactionId: refundExternalTransactionId(leg.transactionId),
       accountType: leg.accountType,
       amount: leg.amount,
       originalExternalTransactionId: leg.externalTransactionId,
