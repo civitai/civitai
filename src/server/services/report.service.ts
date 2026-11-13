@@ -64,6 +64,13 @@ import {
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
+import { chargeByPrefix, prefixWasRefunded } from '~/server/services/buzz-keyed-charge';
+import {
+  CHARGE_LOCKED_READ,
+  CHARGE_LOCKED_REFUND,
+  recordKeyedCharge,
+} from '~/server/services/buzz-charge-lock';
 import {
   APPEAL_ALREADY_PENDING,
   getAppealRefusal,
@@ -964,6 +971,27 @@ const getAppealPrefix = (userId: number) =>
   `appeal-${userId}-${new Date().getTime()}-${randomUUID().slice(0, 8)}`;
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 
+const APPEAL_FEE = 100;
+
+/**
+ * The appeal fee's external id prefix for one appeal. With the client's key (a uuid, minted once per
+ * appeal and resent on its retries) it is the same on every retry, so the ledger holds one charge
+ * for it. The user comes first, then the appealed entity, so a key can only ever name this user's
+ * fee for this entity. `appeal-k-` keeps it apart from the keyless form (`appeal-<userId>-…`), which
+ * a prefix lookup or refund could otherwise match. Still `appeal-`, so `refundAppealFee` refunds it
+ * by prefix.
+ */
+export function appealFeeTransactionPrefix(
+  userId: number,
+  entityType: EntityType,
+  entityId: number,
+  idempotencyKey: string | undefined
+) {
+  return idempotencyKey
+    ? `appeal-k-${userId}-${entityType}-${entityId}-${idempotencyKey}`
+    : getAppealPrefix(userId);
+}
+
 export async function createEntityAppeal({
   entityId,
   entityType,
@@ -972,6 +1000,7 @@ export async function createEntityAppeal({
   buzzType,
   skipFee,
   context,
+  idempotencyKey,
 }: Omit<CreateEntityAppealInput, 'locks'> & {
   userId: number;
   buzzType: BuzzSpendType;
@@ -979,6 +1008,35 @@ export async function createEntityAppeal({
   context?: LockReviewContext;
 }) {
   let buzzTransactionId: string | null = null;
+
+  const writeAppeal = async (tx: Prisma.TransactionClient, feeTransactionId: string | null) => {
+    switch (entityType) {
+      case EntityType.Image: {
+        // The handler refuses any flagged image off a replica read. This re-checks only the
+        // moderator-only flag, under the row lock, so one set in between is never overwritten.
+        const updated = await tx.$executeRaw`
+          UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
+          WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+        `;
+        if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
+        break;
+      }
+      default:
+        // Do nothing
+        break;
+    }
+
+    return tx.appeal.create({
+      data: {
+        entityId,
+        entityType,
+        appealMessage: message,
+        userId,
+        buzzTransactionId: feeTransactionId,
+        context,
+      },
+    });
+  };
 
   if (!skipFee) {
     // check if user has more than 3 pending or rejected appeal in the last 30 days
@@ -989,18 +1047,51 @@ export async function createEntityAppeal({
     });
 
     if (appealsCount >= 3) {
-      const prefix = getAppealPrefix(userId);
-      const data = await withRetries(() =>
+      const charge = (prefix: string) =>
         createMultiAccountBuzzTransaction({
-          amount: 100,
+          amount: APPEAL_FEE,
           fromAccountId: userId,
           toAccountId: 0,
           type: TransactionType.Appeal,
           fromAccountTypes: [buzzType],
           description: `Appeal fee for ${entityType} ${entityId}`,
           externalTransactionIdPrefix: prefix,
-        })
-      );
+        });
+
+      if (idempotencyKey !== undefined) {
+        // Charged once per appeal across the user's retries, then recorded once under the key's
+        // lock; see chargeByPrefix and recordKeyedCharge.
+        const prefix = appealFeeTransactionPrefix(userId, entityType, entityId, idempotencyKey);
+        const feeContext = { userId, amount: APPEAL_FEE };
+        await chargeByPrefix(prefix, feeContext, {
+          reusable: true,
+          charge: () => charge(prefix),
+          declined: () =>
+            throwBadRequestError('There was an error creating the appeal transaction.'),
+        });
+        return recordKeyedCharge(prefix, feeContext, {
+          findRecorded: (tx) =>
+            tx.appeal.findFirst({ where: { userId, buzzTransactionId: prefix } }),
+          isRefunded: () => prefixWasRefunded(prefix, feeContext, CHARGE_LOCKED_READ),
+          record: (tx) => writeAppeal(tx, prefix),
+          refund: () =>
+            refundMultiAccountTransaction(
+              {
+                externalTransactionIdPrefix: prefix,
+                description: `Refund appeal fee for ${entityType} ${entityId}`,
+              },
+              CHARGE_LOCKED_REFUND
+            ),
+          // Lost the race on the one-Pending-appeal-per-entity index to a concurrent submit.
+          recordFailed: (error) =>
+            isPrismaUniqueViolation(error)
+              ? new TRPCError({ code: 'BAD_REQUEST', message: APPEAL_ALREADY_PENDING })
+              : error,
+        });
+      }
+
+      const prefix = appealFeeTransactionPrefix(userId, entityType, entityId, undefined);
+      const data = await withRetries(() => charge(prefix));
 
       if (data.transactionCount === 0) {
         throw new Error('There was an error creating the appeal transaction.');
@@ -1011,27 +1102,7 @@ export async function createEntityAppeal({
   }
 
   try {
-    const appeal = await dbWrite.$transaction(async (tx) => {
-      switch (entityType) {
-        case EntityType.Image: {
-          // The handler refuses any flagged image off a replica read. This re-checks only the
-          // moderator-only flag, under the row lock, so one set in between is never overwritten.
-          const updated = await tx.$executeRaw`
-            UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
-            WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
-          `;
-          if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
-          break;
-        }
-        default:
-          // Do nothing
-          break;
-      }
-
-      return tx.appeal.create({
-        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId, context },
-      });
-    });
+    const appeal = await dbWrite.$transaction((tx) => writeAppeal(tx, buzzTransactionId));
 
     return appeal;
   } catch (error) {

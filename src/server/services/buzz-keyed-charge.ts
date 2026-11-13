@@ -1,11 +1,14 @@
+import type { BuzzReadOptions } from '@civitai/buzz';
 import { writeMayHaveLanded } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import {
   createBuzzTransaction,
+  getMultiAccountTransactionsByPrefix,
   getTransactionByExternalId,
   resendBuzzTransaction,
 } from '~/server/services/buzz.service';
+import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
@@ -151,4 +154,103 @@ export async function chargeByExternalId(
   if (refund) throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
 
   return { transactionId };
+}
+
+type PrefixChargeContext = { userId: number; amount?: number };
+
+/**
+ * Whether any leg under `prefix` has been refunded. A read that fails says nothing about it, so it
+ * is "may have gone through". `opts` bounds the read (`CHARGE_LOCKED_READ` under the charge lock).
+ */
+export async function prefixWasRefunded(
+  prefix: string,
+  context: PrefixChargeContext,
+  opts?: BuzzReadOptions
+): Promise<boolean> {
+  try {
+    const { reversed } = await (opts
+      ? getPrefixRefundState(prefix, opts)
+      : getPrefixRefundState(prefix));
+    return reversed.length > 0;
+  } catch (lookupError) {
+    throw paymentOutcomeUnknown(
+      { externalTransactionId: prefix, ...context },
+      'refund lookup failed',
+      {
+        lookupError,
+      }
+    );
+  }
+}
+
+/**
+ * The prefix twin of `chargeByExternalId`, for a charge made through the multi-account endpoint
+ * (`charge`, which files its legs under `prefix`). Charges once per action when the prefix derives
+ * from a client key. Resolves with `replayed`: true when the ledger already held this action's
+ * legs, so an earlier request under the same key charged them.
+ *
+ * Every charge: a failure that provably moved nothing is `declined`. Any other failure is an
+ * unknown outcome, resent once under the same prefix (the ledger answers a leg it holds as
+ * `duplicate` and moves nothing); a resend that fails too is `PAYMENT_OUTCOME_UNKNOWN_MESSAGE`.
+ *
+ * `reusable` (the prefix derives from a client key, so an earlier request may have sent it):
+ * - The prefix is looked up FIRST. The multi-account endpoint checks the total balance before it
+ *   looks at ids, so a resend after a first charge that spent the balance is refused; held legs
+ *   are this action's charge and the flow continues from them. `beforeCharging` (the app's own
+ *   balance or eligibility checks) runs only when nothing is held, for the same reason.
+ * - Held legs may have been refunded by an earlier request that failed to record them: refunded
+ *   money is not a charge, so that is refused with a 400 and the client starts a new action.
+ *
+ * The caller records the charge under `withChargeKeyLock` (see `recordKeyedCharge`), which checks
+ * the refund state again under the lock.
+ */
+export async function chargeByPrefix(
+  prefix: string,
+  context: PrefixChargeContext,
+  {
+    charge,
+    reusable,
+    beforeCharging,
+    declined,
+  }: {
+    charge: () => Promise<{ transactionIds?: { duplicate?: boolean | null }[] | null }>;
+    reusable: boolean;
+    beforeCharging?: () => Promise<unknown>;
+    declined: (error?: unknown) => Error;
+  }
+): Promise<{ replayed: boolean }> {
+  const outcomeContext = { externalTransactionId: prefix, ...context };
+
+  let replayed = false;
+  if (reusable) {
+    try {
+      replayed = (await getMultiAccountTransactionsByPrefix(prefix)).length > 0;
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(outcomeContext, 'lookup before charging failed', { lookupError });
+    }
+  }
+
+  if (!replayed) {
+    await beforeCharging?.();
+    let sent: Awaited<ReturnType<typeof charge>>;
+    try {
+      sent = await charge();
+    } catch (error) {
+      if (chargeWasDeclined(error)) throw declined(error);
+      try {
+        sent = await charge();
+      } catch (resendError) {
+        throw paymentOutcomeUnknown(outcomeContext, 'resend failed after unknown outcome', {
+          error,
+          resendError,
+        });
+      }
+    }
+    if (!sent.transactionIds?.length) throw declined();
+    replayed = sent.transactionIds.some((leg) => leg.duplicate === true);
+  }
+
+  if (reusable && replayed && (await prefixWasRefunded(prefix, context)))
+    throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+  return { replayed };
 }
