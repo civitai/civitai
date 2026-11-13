@@ -763,6 +763,7 @@ describe('account deletion', () => {
       ...w.deps,
       isMissingTable: () => false,
       isUnderLegalHold: async () => false,
+      areUnderLegalHold: async (ids: number[]) => new Map(ids.map((id) => [id, false])),
     });
     expect(swept.accountsRetried).toEqual([USER]);
     expect(w.rows.size).toBe(0);
@@ -837,12 +838,16 @@ describe('orphan sweep', () => {
     put(`archives/${USER}/gone-app/${A2}.zip`, DAY + 1); // never committed, old
     put(`archives/${OTHER_USER}/x-app/old.kept.zip`, 3 * DAY); // superseded, delete failed
     put(`archives/${USER}/fresh-app/${A2}.zip`, DAY - 60_000); // an attempt still in flight
-    return { w, referenced };
+    // Old and unreferenced, but under no user prefix: nobody's hold can be cleared, so it stays.
+    put(NO_OWNER, 3 * DAY);
+    return { w, referenced, put };
   }
+  const NO_OWNER = 'archives/foo/x.zip';
   const deps = (w: World) => ({
     ...w.deps,
     isMissingTable: () => false,
     isUnderLegalHold: async () => false,
+    areUnderLegalHold: async (ids: number[]) => new Map(ids.map((id) => [id, false])),
   });
 
   it('deletes only unreferenced objects older than 24 h, never a referenced key', async () => {
@@ -853,7 +858,7 @@ describe('orphan sweep', () => {
       `archives/${OTHER_USER}/x-app/old.kept.zip`,
     ]);
     expect([...w.objects.keys()].sort()).toEqual(
-      [referenced, `${referenced}.secrets`, `archives/${USER}/fresh-app/${A2}.zip`].sort()
+      [referenced, `${referenced}.secrets`, `archives/${USER}/fresh-app/${A2}.zip`, NO_OWNER].sort()
     );
   });
 
@@ -865,24 +870,68 @@ describe('orphan sweep', () => {
     expect([...w.objects.keys()].sort()).toEqual(before);
   });
 
-  it.each([
-    ['under a legal hold', true],
-    ['whose hold cannot be read', null],
-  ])('an old orphan of a user %s is KEPT; a non-held user’s is removed', async (_label, hold) => {
+  it('an old key with no user prefix is kept', async () => {
     const { w } = sweepWorld();
-    const lookups: number[] = [];
-    const res = await sweepOrphanedArchives({
-      ...deps(w),
-      isUnderLegalHold: async (userId) => {
-        lookups.push(userId);
-        return userId === USER ? hold : false;
-      },
-    });
+    const res = await sweepOrphanedArchives(deps(w));
+    expect(res.orphans).not.toContain(NO_OWNER);
+    expect(w.objects.has(NO_OWNER)).toBe(true);
+  });
+
+  it.each([
+    ['answered as held', async (ids: number[]) => new Map(ids.map((id) => [id, id === USER]))],
+    [
+      'left out of the answer',
+      async (ids: number[]) => new Map(ids.filter((id) => id !== USER).map((id) => [id, false])),
+    ],
+  ])('an old orphan of a user %s is KEPT; a cleared user’s is removed', async (_label, answer) => {
+    const { w } = sweepWorld();
+    const res = await sweepOrphanedArchives({ ...deps(w), areUnderLegalHold: answer });
     expect(res.orphans).toEqual([`archives/${OTHER_USER}/x-app/old.kept.zip`]);
     expect(w.objects.has(`archives/${USER}/gone-app/${A2}.zip`)).toBe(true);
     expect(w.objects.has(`archives/${OTHER_USER}/x-app/old.kept.zip`)).toBe(false);
-    // One lookup per user, however many of their objects are old.
-    expect(lookups.sort()).toEqual([USER, OTHER_USER].sort());
+  });
+
+  it('a hold lookup that fails clears nobody: no orphan is deleted', async () => {
+    const { w } = sweepWorld();
+    const before = [...w.objects.keys()].sort();
+    const res = await sweepOrphanedArchives({
+      ...deps(w),
+      areUnderLegalHold: async () => {
+        throw new Error('database unavailable');
+      },
+    });
+    expect(res.orphans).toEqual([]);
+    expect([...w.objects.keys()].sort()).toEqual(before);
+  });
+
+  it('each user is looked up ONCE per run, even with old orphans in two listing batches', async () => {
+    const { w, put } = sweepWorld();
+    // 1,000 old orphans of another user push USER's second orphan into the NEXT listing batch.
+    const FILLER = 6909;
+    for (let i = 0; i < 1_000; i++) put(`archives/${FILLER}/f-app/${i}.zip`, 2 * DAY);
+    put(`archives/${USER}/second-app/${A2}.zip`, 2 * DAY);
+    const lookups: number[][] = [];
+    let listingBatches = 0;
+    const realReferenced = w.deps.repo.referencedKeys;
+    w.deps.repo.referencedKeys = async (keys) => {
+      listingBatches++;
+      return realReferenced(keys);
+    };
+    await sweepOrphanedArchives({
+      ...deps(w),
+      areUnderLegalHold: async (ids) => {
+        lookups.push([...ids]);
+        return new Map(ids.map((id) => [id, false]));
+      },
+    });
+    const all = lookups.flat();
+    expect(all.filter((id) => id === USER)).toEqual([USER]);
+    expect(all.filter((id) => id === FILLER)).toEqual([FILLER]);
+    expect(all.filter((id) => id === OTHER_USER)).toEqual([OTHER_USER]);
+    // Positive control: the fixture really spans two listing batches, and USER's second orphan,
+    // in the second one, really went (its owner was answered once, from the first).
+    expect(listingBatches).toBe(2);
+    expect(w.objects.has(`archives/${USER}/second-app/${A2}.zip`)).toBe(false);
   });
 
   it('an unreadable reference set aborts the sweep instead of deleting blind', async () => {

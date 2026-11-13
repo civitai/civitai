@@ -32,16 +32,18 @@ export const sweepHibernationObjectsJob = createJob(
     ]);
     const deps = await defaultHibernationDeps();
     if (!deps.store) return { skipped: 'no archive store configured' as const };
-    const [{ isMissingTableError }, { isAccountUnderLegalHold }] = await Promise.all([
-      import('~/server/services/blocks/app-access.service'),
-      import('~/server/services/legal-hold.service'),
-    ]);
+    const [{ isMissingTableError }, { isAccountUnderLegalHold, areAccountsUnderLegalHold }] =
+      await Promise.all([
+        import('~/server/services/blocks/app-access.service'),
+        import('~/server/services/legal-hold.service'),
+      ]);
     // A failure (a missing table included) is rethrown by not catching it: the job runner counts
     // it as a failed run and logs it.
     const result = await sweepOrphanedArchives({
       ...deps,
       isMissingTable: isMissingTableError,
       isUnderLegalHold: isAccountUnderLegalHold,
+      areUnderLegalHold: areAccountsUnderLegalHold,
     });
     const summary = {
       scanned: result.scanned,

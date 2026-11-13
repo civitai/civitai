@@ -29,6 +29,8 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   assertAccountNotUnderLegalHold: async () => ({ markerView: false }),
   isAccountUnderLegalHold: async () => h.hold,
+  areAccountsUnderLegalHold: async (ids: number[]) =>
+    new Map(ids.map((id) => [id, h.hold !== false])),
 }));
 vi.mock('~/server/services/apps/doc-store-maintenance.instance', () => ({
   getDocStoreMaintenance: () => ({ wipeAccount: vi.fn() }),

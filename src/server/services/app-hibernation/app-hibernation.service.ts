@@ -676,6 +676,11 @@ export async function sweepOrphanedArchives(
      * not be read, and counts as held.
      */
     isUnderLegalHold: (userId: number) => Promise<boolean | null>;
+    /**
+     * The same check for many users in one lookup (`areAccountsUnderLegalHold`): `true` is held.
+     * A user it leaves out, or a lookup that throws, counts as held.
+     */
+    areUnderLegalHold: (userIds: number[]) => Promise<Map<number, boolean>>;
   },
   opts: { dryRun?: boolean; accountBatch?: number } = {}
 ): Promise<SweepResult> {
@@ -726,7 +731,7 @@ export async function sweepOrphanedArchives(
   result.scanned = listed.length;
   const old = listed.filter((o) => o.lastModified.getTime() <= cutoff).map((o) => o.key);
   // The legal hold applies here too: an orphan under a held user's prefix is never deleted. One
-  // lookup per distinct user per run, however many of their objects are old.
+  // batched lookup per listing batch, covering only users not already answered this run.
   const held = new Map<number, boolean>();
   for (let i = 0; i < old.length; i += 1000) {
     const batch = old.slice(i, i + 1000);
@@ -735,11 +740,15 @@ export async function sweepOrphanedArchives(
     const unknown = [
       ...new Set(unreferenced.map(archiveOwner).filter((u): u is number => u !== null)),
     ].filter((u) => !held.has(u));
-    for (let j = 0; j < unknown.length; j += HOLD_LOOKUP_CONCURRENCY) {
-      const chunk = unknown.slice(j, j + HOLD_LOOKUP_CONCURRENCY);
-      // An unreadable hold (`null`) counts as held.
-      const answers = await Promise.all(chunk.map((u) => deps.isUnderLegalHold(u)));
-      chunk.forEach((u, k) => held.set(u, answers[k] !== false));
+    if (unknown.length > 0) {
+      let answers: Map<number, boolean> | null = null;
+      try {
+        answers = await deps.areUnderLegalHold(unknown);
+      } catch {
+        answers = null; // a failed lookup clears nobody
+      }
+      // Only an explicit `false` clears a user.
+      for (const u of unknown) held.set(u, answers?.get(u) !== false);
     }
     const orphans: string[] = [];
     for (const key of unreferenced) {
@@ -753,9 +762,6 @@ export async function sweepOrphanedArchives(
   }
   return result;
 }
-
-/** How many legal-hold lookups the orphan pass runs at once. */
-const HOLD_LOOKUP_CONCURRENCY = 10;
 
 /** The user id of an `archives/<userId>/…` key, or `null` for any other key. */
 function archiveOwner(key: string): number | null {
