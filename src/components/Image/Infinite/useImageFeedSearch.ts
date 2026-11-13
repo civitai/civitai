@@ -1,8 +1,14 @@
-import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
+import { useRouter } from 'next/router';
+import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
+import {
+  normalizeFeedQuery,
+  parseFeedSearchSort,
+} from '~/components/Image/Infinite/image-feed-search';
 import { useFeedImageItems, useImageQueryParams } from '~/components/Image/image.utils';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
 const idleInput: SemanticImageSearchInput = { query: '', browsingLevel: 0, limit: 50 };
@@ -13,6 +19,24 @@ export function useImageFeedSearchQuery() {
   const { query } = useImageQueryParams();
   if (!features.feedSearch) return undefined;
   return normalizeFeedQuery(query.query);
+}
+
+/**
+ * The feed search's sort (`?searchSort=`) and whether the viewer may pick one. Without
+ * `imageSearchNewestSort` it is always Best match, whatever the URL says.
+ */
+export function useImageFeedSearchSort() {
+  const router = useRouter();
+  const features = useFeatureFlags();
+  const selectable = !!features.imageSearchNewestSort;
+  const sort = selectable ? parseFeedSearchSort(router.query.searchSort) : undefined;
+  const setSort = (next: ImageFeedSearchSort | undefined) =>
+    void router.replace(
+      { pathname: router.pathname, query: removeEmpty({ ...router.query, searchSort: next }) },
+      undefined,
+      { shallow: true, scroll: false }
+    );
+  return { sort, selectable, setSort };
 }
 
 /** The images feed answered by the semantic search, in the shape the feed renders. */

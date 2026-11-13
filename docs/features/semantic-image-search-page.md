@@ -87,7 +87,9 @@ With it on:
 
 - On /images the header bar filters the feed on Enter or blur (`?query=`), answered by
   `semanticImageSearch.search`. The feed's filters the index can apply carry into the search; the
-  rest are greyed under "Not available while searching". Sort is locked to Best match.
+  rest are greyed under "Not available while searching". Sort is locked to Best match, unless
+  `imageSearchNewestSort` (Flipt key `image-search-newest-sort`, dark) is on: then the sort menu
+  also offers Newest (`?searchSort=newest`), sent as `sort: 'newest'`.
 - /search/images redirects to /images with its query, user, base model and tags.
 - A refused query (illegal, profane on green, real people with POI off, blocked words) is never
   searched, typed or arriving by link; the feed shows the search page's warning instead.

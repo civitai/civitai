@@ -8,11 +8,20 @@ import {
   imageFeedFilterLabels,
   imageFeedSearchUnavailableKeys,
 } from '~/components/Image/Infinite/image-feed-search';
-import { useImageFeedSearchQuery } from '~/components/Image/Infinite/useImageFeedSearch';
+import {
+  useImageFeedSearchQuery,
+  useImageFeedSearchSort,
+} from '~/components/Image/Infinite/useImageFeedSearch';
 import { Tooltip } from '~/components/MantineOverlays';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SortFilter } from '../SortFilter';
+
+// Newest orders the best matches by date; it never widens them to every new image.
+const searchSortOptions = [
+  { label: 'Best match', value: 'best-match' },
+  { label: 'Newest', value: 'newest' },
+];
 
 export function ImageFeedFilters({
   hideMediaTypes,
@@ -21,6 +30,7 @@ export function ImageFeedFilters({
 }: GroupProps & { hideMediaTypes?: boolean; hideTools?: boolean }) {
   const currentUser = useCurrentUser();
   const searchQuery = useImageFeedSearchQuery();
+  const searchSort = useImageFeedSearchSort();
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
@@ -35,7 +45,14 @@ export function ImageFeedFilters({
         ) : (
           <FollowedFilter type="images" variant="button" />
         ))}
-      {searchQuery ? (
+      {searchQuery && searchSort.selectable ? (
+        <SelectMenuV2
+          label={searchSort.sort === 'newest' ? 'Newest' : 'Best match'}
+          value={searchSort.sort ?? 'best-match'}
+          options={searchSortOptions}
+          onClick={(value) => searchSort.setSort(value === 'newest' ? value : undefined)}
+        />
+      ) : searchQuery ? (
         // The search ranks by match only; a feed sort would be a promise it can't keep.
         <Tooltip label="Clear the search to sort the feed" withArrow>
           <div>

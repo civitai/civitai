@@ -91,6 +91,13 @@ export function ignoredWhileSearching(filters: FeedFilters) {
   return keys.filter((key) => isActive(filters[key]));
 }
 
+export type ImageFeedSearchSort = 'newest';
+
+/** The feed's `?searchSort=`: Newest, or undefined for the search's own Best match order. */
+export function parseFeedSearchSort(value: unknown): ImageFeedSearchSort | undefined {
+  return value === 'newest' ? value : undefined;
+}
+
 export function normalizeFeedQuery(query: string | undefined) {
   const text = query?.replace(/\s+/g, ' ').trim().slice(0, SEMANTIC_QUERY_MAX_LENGTH);
   return text || undefined;
@@ -110,11 +117,13 @@ export function toSemanticImageSearchInput({
   query,
   filters,
   browsingLevel,
+  sort,
   now,
 }: {
   query: string;
   filters: FeedFilters;
   browsingLevel: number;
+  sort?: ImageFeedSearchSort;
   now?: Date;
 }): SemanticImageSearchInput {
   return {
@@ -127,6 +136,7 @@ export function toSemanticImageSearchInput({
     usernames: filters.username ? [filters.username] : undefined,
     userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
+    sort,
     limit: 50,
   };
 }
