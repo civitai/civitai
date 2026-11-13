@@ -9593,6 +9593,7 @@ enum EntityMetric_MetricType_Type {
   Comment
   Collection
   Buzz
+  Play
 }
 
 model EntityMetric {
