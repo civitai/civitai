@@ -650,8 +650,10 @@ export type SweepResult = {
   accountObjectsRemoved: number;
   /** Objects listed under the archives prefix. */
   scanned: number;
-  /** Objects older than {@link ORPHAN_MIN_AGE_MS} that no row references. */
+  /** Objects older than {@link ORPHAN_MIN_AGE_MS} that no row references (and were removed). */
   orphans: string[];
+  /** Such objects KEPT because their user is under a legal hold (or it could not be read). */
+  orphansHeld: number;
   dryRun: boolean;
 };
 
@@ -662,7 +664,7 @@ export type SweepResult = {
  *   1. every deleted account that still has rows gets {@link deleteSleepingAppsForAccount} again,
  *      unless it is under a legal hold (or the hold cannot be read): then nothing is touched;
  *   2. every object under the archives prefix older than {@link ORPHAN_MIN_AGE_MS} that NO row
- *      references is deleted. A referenced key is never touched, whatever its age; an unreadable
+ *      references is deleted, unless its user is under a legal hold (or it cannot be read). A referenced key is never touched, whatever its age; an unreadable
  *      reference set aborts the run (it throws) rather than deleting blind.
  * `dryRun` reports what it would do and changes nothing.
  */
@@ -686,6 +688,7 @@ export async function sweepOrphanedArchives(
     accountObjectsRemoved: 0,
     scanned: 0,
     orphans: [],
+    orphansHeld: 0,
     dryRun,
   };
   if (!deps.store) return result;
@@ -722,12 +725,40 @@ export async function sweepOrphanedArchives(
   const listed = await deps.store.list(ARCHIVE_PREFIX);
   result.scanned = listed.length;
   const old = listed.filter((o) => o.lastModified.getTime() <= cutoff).map((o) => o.key);
+  // The legal hold applies here too: an orphan under a held user's prefix is never deleted. One
+  // lookup per distinct user per run, however many of their objects are old.
+  const held = new Map<number, boolean>();
   for (let i = 0; i < old.length; i += 1000) {
     const batch = old.slice(i, i + 1000);
     const referenced = await deps.repo.referencedKeys(batch);
-    const orphans = batch.filter((k) => !referenced.has(k));
+    const unreferenced = batch.filter((k) => !referenced.has(k));
+    const unknown = [
+      ...new Set(unreferenced.map(archiveOwner).filter((u): u is number => u !== null)),
+    ].filter((u) => !held.has(u));
+    for (let j = 0; j < unknown.length; j += HOLD_LOOKUP_CONCURRENCY) {
+      const chunk = unknown.slice(j, j + HOLD_LOOKUP_CONCURRENCY);
+      // An unreadable hold (`null`) counts as held.
+      const answers = await Promise.all(chunk.map((u) => deps.isUnderLegalHold(u)));
+      chunk.forEach((u, k) => held.set(u, answers[k] !== false));
+    }
+    const orphans: string[] = [];
+    for (const key of unreferenced) {
+      const owner = archiveOwner(key);
+      // A key under no user prefix has no owner to clear: keep it.
+      if (owner === null || held.get(owner)) result.orphansHeld += 1;
+      else orphans.push(key);
+    }
     if (orphans.length > 0 && !dryRun) await deps.store.deleteMany(orphans);
     result.orphans.push(...orphans);
   }
   return result;
+}
+
+/** How many legal-hold lookups the orphan pass runs at once. */
+const HOLD_LOOKUP_CONCURRENCY = 10;
+
+/** The user id of an `archives/<userId>/…` key, or `null` for any other key. */
+function archiveOwner(key: string): number | null {
+  const m = /^archives\/(\d+)\//.exec(key);
+  return m ? Number(m[1]) : null;
 }

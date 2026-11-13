@@ -18,8 +18,9 @@ import { createJob } from './job';
  * references. It is gated on the archive store instead: with none configured it does nothing.
  *
  * A deleted account under a legal hold (or whose hold cannot be read) is skipped and counted.
- * Logs one line per run with its counts. Quietly skipped while the table does not exist yet. Any
- * other error fails the run (rethrown, so the job runner counts and logs it); the next run retries.
+ * The orphan pass keeps a held user's objects too. Logs one line per run with its counts. Any error
+ * (a missing table included) fails the run: the job runner counts and logs it, and the next run
+ * retries.
  */
 export const sweepHibernationObjectsJob = createJob(
   'sweep-hibernation-objects',
@@ -35,22 +36,17 @@ export const sweepHibernationObjectsJob = createJob(
       import('~/server/services/blocks/app-access.service'),
       import('~/server/services/legal-hold.service'),
     ]);
-    let result;
-    try {
-      result = await sweepOrphanedArchives({
-        ...deps,
-        isMissingTable: isMissingTableError,
-        isUnderLegalHold: isAccountUnderLegalHold,
-      });
-    } catch (error) {
-      // Before the hand-applied migration exists there is nothing to sweep: say nothing.
-      if (isMissingTableError(error)) return { skipped: 'table missing' as const };
-      // Anything else is a FAILED run: rethrown, so the job runner counts and logs it.
-      throw error;
-    }
+    // A failure (a missing table included) is rethrown by not catching it: the job runner counts
+    // it as a failed run and logs it.
+    const result = await sweepOrphanedArchives({
+      ...deps,
+      isMissingTable: isMissingTableError,
+      isUnderLegalHold: isAccountUnderLegalHold,
+    });
     const summary = {
       scanned: result.scanned,
       removed: result.orphans.length,
+      orphansHeld: result.orphansHeld,
       deletedAccountsFinished: result.accountsRetried.length,
       deletedAccountRowsFinished: result.accountRowsFinished,
       deletedAccountObjectsRemoved: result.accountObjectsRemoved,

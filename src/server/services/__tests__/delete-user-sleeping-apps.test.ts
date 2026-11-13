@@ -151,6 +151,7 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       scanned: 0,
       removed: 0,
+      orphansHeld: 0,
       deletedAccountsFinished: 1,
       deletedAccountRowsFinished: 1,
       deletedAccountObjectsRemoved: 2,
@@ -168,6 +169,7 @@ describe('deleteUser — sleeping apps', () => {
     expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
       scanned: 2,
       removed: 0,
+      orphansHeld: 0,
       deletedAccountsFinished: 0,
       deletedAccountRowsFinished: 0,
       deletedAccountObjectsRemoved: 0,
@@ -204,15 +206,15 @@ describe('deleteUser — sleeping apps', () => {
     expect(h.store.objects.size).toBe(2);
   });
 
-  it('the sweep job is quietly skipped while the table does not exist yet', async () => {
+  it('a missing table is a FAILED run too, never a quiet skip', async () => {
     h.repo.repo.deletedAccountsWithRows = async () => {
       throw Object.assign(new Error('relation "app_sandbox_hibernations" does not exist'), {
         code: '42P01',
       });
     };
-    expect(await (await sweepHibernationObjectsJob.run({} as never)).result).toEqual({
-      skipped: 'table missing',
-    });
+    await expect((await sweepHibernationObjectsJob.run({} as never)).result).rejects.toThrow(
+      /does not exist/
+    );
   });
 
   it('a sweep that fails is a FAILED run (the job runner counts it), not a quiet success', async () => {

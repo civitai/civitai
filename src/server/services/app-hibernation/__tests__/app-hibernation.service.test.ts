@@ -865,6 +865,26 @@ describe('orphan sweep', () => {
     expect([...w.objects.keys()].sort()).toEqual(before);
   });
 
+  it.each([
+    ['under a legal hold', true],
+    ['whose hold cannot be read', null],
+  ])('an old orphan of a user %s is KEPT; a non-held user’s is removed', async (_label, hold) => {
+    const { w } = sweepWorld();
+    const lookups: number[] = [];
+    const res = await sweepOrphanedArchives({
+      ...deps(w),
+      isUnderLegalHold: async (userId) => {
+        lookups.push(userId);
+        return userId === USER ? hold : false;
+      },
+    });
+    expect(res.orphans).toEqual([`archives/${OTHER_USER}/x-app/old.kept.zip`]);
+    expect(w.objects.has(`archives/${USER}/gone-app/${A2}.zip`)).toBe(true);
+    expect(w.objects.has(`archives/${OTHER_USER}/x-app/old.kept.zip`)).toBe(false);
+    // One lookup per user, however many of their objects are old.
+    expect(lookups.sort()).toEqual([USER, OTHER_USER].sort());
+  });
+
   it('an unreadable reference set aborts the sweep instead of deleting blind', async () => {
     const { w } = sweepWorld();
     const before = [...w.objects.keys()].sort();
