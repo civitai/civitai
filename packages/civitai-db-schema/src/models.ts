@@ -5198,10 +5198,6 @@ export interface ReportAutomated {
   createdAt: Date;
 }
 
-export interface RestrictedBaseModels {
-  baseModel: string;
-}
-
 export interface Challenge {
   id: number;
   startsAt: Date;
