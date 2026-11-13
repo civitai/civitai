@@ -31,6 +31,7 @@ export function fakeStore(log: string[]) {
   const times = new Map<string, Date>();
   const state = { failDeletes: false, failPuts: false };
   const store: ArchiveStore = {
+    canPresign: true,
     presignPut: async (key) => `https://store.test/put/${key}`,
     head: async (key) => {
       const o = objects.get(key);

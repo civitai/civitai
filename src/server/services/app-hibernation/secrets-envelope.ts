@@ -23,10 +23,8 @@ const ALGORITHM = 'aes-256-gcm';
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const KEY_BYTES = 32;
-/** `v2.<kid>.<base64>`: the key id names the master key that wrapped it. */
+/** `v2.<kid>.<base64>`: the key id names the master key that wrapped it. The only format. */
 const WRAPPED_V2 = 'v2';
-/** `v1.<base64>`: no key id (the first format); unwrapped by trying every key on the ring. */
-const WRAPPED_V1 = 'v1';
 const KID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 /** The AAD a secrets blob is sealed with. */
@@ -133,38 +131,20 @@ export function wrapDataKey(ring: MasterKeyring, b: Binding, dataKey: Buffer): s
 }
 
 /**
- * Unwraps a stored data key with the master key its id names (`v2`), or with whichever key on the
- * ring opens it (`v1`, no id). Throws on an unknown key id, a wrong key, a wrong binding or
- * tampering.
+ * Unwraps a stored data key with the master key its id names. Throws on any other format, an
+ * unknown key id, a wrong key, a wrong binding or tampering.
  */
 export function unwrapDataKey(ring: MasterKeyring, b: Binding, wrapped: string): Buffer {
-  const aad = wrapAad(b.userId, b.appKey, b.attemptId);
   const parts = wrapped.split('.');
-  let key: Buffer | undefined;
-  if (parts[0] === WRAPPED_V2 && parts.length === 3 && parts[1] && parts[2]) {
-    const master = ring.keys.get(parts[1]);
-    if (!master) throw new Error('secrets: wrapped under an unknown master key id');
-    key = open(master, aad, Buffer.from(parts[2], 'base64'));
-  } else if (parts[0] === WRAPPED_V1 && parts.length === 2 && parts[1]) {
-    const sealed = Buffer.from(parts[1], 'base64');
-    for (const master of ring.keys.values()) {
-      try {
-        key = open(master, aad, sealed);
-        break;
-      } catch {
-        // Not this key; try the next.
-      }
-    }
-    if (!key) throw new Error('secrets: no master key on the ring opens this wrapped key');
-  } else {
+  if (parts[0] !== WRAPPED_V2 || parts.length !== 3 || !parts[1] || !parts[2])
     throw new Error('secrets: unknown wrapped-key format');
-  }
+  const master = ring.keys.get(parts[1]);
+  if (!master) throw new Error('secrets: wrapped under an unknown master key id');
+  const key = open(
+    master,
+    wrapAad(b.userId, b.appKey, b.attemptId),
+    Buffer.from(parts[2], 'base64')
+  );
   if (key.length !== KEY_BYTES) throw new Error('secrets: unwrapped key is not 32 bytes');
   return key;
-}
-
-/** A `v1` wrapped key (no key id), as the first format wrote it. Kept for the compatibility test. */
-export function wrapDataKeyV1(masterKey: Buffer, b: Binding, dataKey: Buffer): string {
-  const sealed = seal(masterKey, wrapAad(b.userId, b.appKey, b.attemptId), dataKey);
-  return `${WRAPPED_V1}.${sealed.toString('base64')}`;
 }

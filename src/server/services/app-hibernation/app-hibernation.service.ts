@@ -8,6 +8,7 @@ import {
   ARCHIVE_PUT_TTL_SECONDS,
   ArchiveObjectTooLarge,
   archiveObjectKeys,
+  keptObjectKeys,
   userArchivePrefix,
 } from '~/utils/app-archive-s3';
 import type { SleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
@@ -247,6 +248,8 @@ export async function beginHibernation(
   if (refusal)
     return { kind: 'limit', limit: refusal, oldest: await oldestOf(deps, input.userId, input.app) };
 
+  // No public endpoint, no upload URL: refuse before recording anything.
+  if (!cfg.store.canPresign) return { kind: 'not-configured' };
   const keys = archiveObjectKeys(input.userId, input.app, input.attemptId);
   const stored = await deps.attempts.claim(
     {
@@ -331,19 +334,27 @@ export async function commitHibernation(
   const cfg = configured(deps);
   if (!cfg) return { kind: 'not-configured' };
 
-  const kept = archiveObjectKeys(attempt.userId, attempt.appKey, attempt.attemptId);
+  // THIS invocation's own kept keys. Two overlapping commits of one attempt (a slow one and the
+  // sandbox service's retry) never write the same object: each copies and seals into its own keys,
+  // the row write under the per-user lock picks the winner, and the loser deletes its own objects.
+  const kept = keptObjectKeys(
+    attempt.userId,
+    attempt.appKey,
+    attempt.attemptId,
+    randomBytes(8).toString('hex')
+  );
   const context = { userId: attempt.userId, app: attempt.appKey, attemptId: attempt.attemptId };
   const uploads = [attempt.archiveKey];
-  const all = [...uploads, kept.keptArchive, kept.keptSecrets];
+  const mine = [kept.keptArchive, kept.keptSecrets];
   const refuse = async (result: CommitResult): Promise<CommitResult> => {
-    await discard(cfg.store, all, deps, context);
+    await discard(cfg.store, [...uploads, ...mine], deps, context);
     return result;
   };
 
   // A retry of a commit that already landed: answer from the row, before touching storage (the
   // uploads were deleted when it landed).
   const already = await deps.repo.get(attempt.userId, attempt.appKey);
-  if (already && already.objectKey === kept.keptArchive) {
+  if (already && already.attemptId === attempt.attemptId) {
     if (already.sha256 === input.sha256) return { kind: 'committed', sha256: input.sha256 };
     await discard(cfg.store, uploads, deps, context);
     return { kind: 'mismatch', reason: 'attempt already committed' };
@@ -406,15 +417,16 @@ export async function commitHibernation(
   };
 
   // 2. Account, lineage and upsert, serialised per user and against an account deletion.
-  // `superseded` is set only when this commit wrote the row.
+  // `superseded` is set only when THIS invocation wrote the row.
   type Outcome = { result: CommitResult; superseded?: string[] };
   const outcome = await deps.repo.commit<Outcome>(
     attempt.userId,
     attempt.appKey,
     (existing, usage, account) => {
       if (account !== 'active') return { result: { result: { kind: 'account-closed' } } };
-      if (existing && existing.objectKey === kept.keptArchive) {
-        // A concurrent retry landed first. Idempotent only for the same content.
+      if (existing && existing.attemptId === attempt.attemptId) {
+        // Another invocation of THIS attempt landed first: it is the winner. Answer committed
+        // only for the same content; either way our own objects are deleted below.
         return existing.sha256 === input.sha256
           ? { result: { result: { kind: 'committed', sha256: input.sha256 } } }
           : { result: { result: { kind: 'mismatch', reason: 'attempt already committed' } } };
@@ -438,15 +450,14 @@ export async function commitHibernation(
   );
 
   const result = outcome.result;
-  if (result.kind === 'committed') {
-    // 3. Only now delete what the new row superseded, and the upload.
-    const toDelete = [...(outcome.superseded ?? []), ...(outcome.superseded ? uploads : [])];
-    await discard(cfg.store, toDelete, deps, context);
+  if (outcome.superseded) {
+    // 3. We wrote the row. Only now delete what it superseded, and the upload.
+    await discard(cfg.store, [...outcome.superseded, ...uploads], deps, context);
     return result;
   }
-  if (result.kind === 'mismatch') {
-    // Our kept keys are the row's: delete only the uploads.
-    await discard(cfg.store, uploads, deps, context);
+  if (result.kind === 'committed' || result.kind === 'mismatch') {
+    // We lost to another invocation of this attempt: its objects are the row's, ours go.
+    await discard(cfg.store, [...uploads, ...mine], deps, context);
     return result;
   }
   if (result.kind === 'limit')
@@ -476,14 +487,19 @@ const ticketHash = (ticket: string) => createHash('sha256').update(ticket).diges
 
 export type MintWakeTicketResult =
   | { kind: 'disabled' }
+  | { kind: 'account-closed' }
   | { kind: 'not-found' }
   | { kind: 'ok'; ticket: string; sha256: string; expiresAt: string };
 
 /**
  * A one-time ticket releasing one sleeping app's secrets to the sandbox service, for the archive
- * the wake restores. Mint it ONLY when the user themselves starts a wake (the wake procedure, which
- * arrives with the UI); the ticket goes to the sandbox service with the seed and is redeemed once,
+ * the wake restores; the ticket goes to the sandbox service with the seed and is redeemed once,
  * within {@link WAKE_TICKET_TTL_SECONDS}, by `/api/internal/app-hibernation/secrets`.
+ *
+ * Refused unless the account is active, read from its `User` row (`deletedAt` / `bannedAt`), as
+ * begin and commit do. "Only when the user themselves starts a wake" is NOT enforced here: this
+ * function cannot tell who called it. It is enforced by its only caller, the wake procedure that
+ * arrives with the UI, which must call it from the signed-in user's own request and nowhere else.
  */
 export async function mintWakeTicket(
   userId: number,
@@ -491,6 +507,7 @@ export async function mintWakeTicket(
   deps: HibernationDeps
 ): Promise<MintWakeTicketResult> {
   if (!(await enabledFor(deps, userId))) return { kind: 'disabled' };
+  if ((await deps.repo.accountState(userId)) !== 'active') return { kind: 'account-closed' };
   const row = await deps.repo.get(userId, app);
   if (!row) return { kind: 'not-found' };
   const ticket = randomBytes(32).toString('base64url');
@@ -510,6 +527,7 @@ export async function mintWakeTicket(
 export type RestoreSecretsResult =
   | { kind: 'disabled' }
   | { kind: 'not-configured' }
+  | { kind: 'account-closed' }
   | { kind: 'ticket' }
   | { kind: 'not-found' }
   | { kind: 'stale' }
@@ -531,6 +549,8 @@ export async function restoreSleepingAppSecrets(
   if (!(await enabledFor(deps, input.userId))) return { kind: 'disabled' };
   const cfg = configured(deps);
   if (!cfg) return { kind: 'not-configured' };
+  // Re-checked at release: an account deleted or banned after the ticket was minted gets nothing.
+  if ((await deps.repo.accountState(input.userId)) !== 'active') return { kind: 'account-closed' };
   const granted = await deps.tickets.take(ticketHash(input.ticket));
   if (
     !granted ||

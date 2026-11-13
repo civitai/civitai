@@ -8,22 +8,27 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
+import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
-import {
-  isAcceptableSeedUrl,
-  seedStoreClient,
-  seedStoreConfig,
-  type SeedStoreConfig,
-} from '~/utils/fork-seed-s3';
+import { isAcceptableSeedUrl, seedStoreClient, seedStoreConfig } from '~/utils/fork-seed-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
 
 /**
  * APP HIBERNATE — the store a sleeping app's workspace archive and its encrypted `.env*` blob are
- * kept in (`APP_ARCHIVE_S3_*`). It shares `fork-seed-s3.ts`'s config and client: the sandbox service
- * downloads a wake's seed from this store, and it accepts seeds only from allowlisted https hosts
- * with no port, so the same endpoint rule applies. One difference matters:
- * these objects are the ONLY copy of the user's app, so nothing here expires them and every delete
- * is explicit (a superseded archive after a commit, a deleted sleeping app, a deleted account).
+ * kept in (`APP_ARCHIVE_S3_*`). These objects are the ONLY copy of the user's app, so nothing here
+ * expires them and every delete is explicit (a superseded archive after a commit, a deleted
+ * sleeping app, a deleted account, the orphan sweep).
+ *
+ * TWO ENDPOINTS for one bucket:
+ *   - `APP_ARCHIVE_S3_ENDPOINT` for every call civitai makes itself (head, copy, get/hash, put,
+ *     list, delete). It may be plain http and carry a port.
+ *   - `APP_ARCHIVE_S3_PUBLIC_ENDPOINT` ONLY to presign the URLs handed to the sandbox service. The
+ *     sandbox service accepts seeds only from allowlisted https hosts with no port, so this one
+ *     follows `fork-seed-s3.ts`'s rule (and shares its config check and client), and every
+ *     presigned URL is checked against it. Unset or not https/portless, nothing is presigned (the
+ *     hibernation endpoints answer `not_configured`); civitai never falls back to presigning on
+ *     the in-cluster endpoint.
  *
  * Every key lives under {@link ARCHIVE_PREFIX}: the store's credential is scoped to that prefix.
  * The sandbox service never holds a credential; it gets presigned URLs only.
@@ -33,37 +38,72 @@ export const ARCHIVE_PREFIX = 'archives/';
 
 /** How long the sandbox service has to upload an archive (or the secrets blob) after `begin`. */
 export const ARCHIVE_PUT_TTL_SECONDS = 15 * 60;
-export type ArchiveStoreConfig = SeedStoreConfig;
+export type ArchiveStoreConfig = {
+  /** In-cluster: civitai's own calls. http or https, any port. */
+  endpoint: string;
+  /** Public: presigned URLs only. https and no port, or `null` (nothing can be presigned). */
+  publicEndpoint: string | null;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+};
 
 /**
- * The store's settings, or `null` when this environment has none (every value is required) or
- * the endpoint is one the sandbox service would refuse (not https, or with a port).
+ * The store's settings, or `null` when this environment has no in-cluster endpoint, bucket or
+ * key (every one is required). A public endpoint that is unset, or that the sandbox service would
+ * refuse (not https, or with a port), leaves `publicEndpoint` null: civitai's own calls (account
+ * deletion and the sweep included) still work, and nothing is presigned.
  */
 export function archiveStoreConfig(): ArchiveStoreConfig | null {
-  return seedStoreConfig({
-    endpoint: env.APP_ARCHIVE_S3_ENDPOINT,
-    bucket: env.APP_ARCHIVE_S3_BUCKET,
-    accessKeyId: env.APP_ARCHIVE_S3_ACCESS_KEY_ID,
-    secretAccessKey: env.APP_ARCHIVE_S3_SECRET_ACCESS_KEY,
+  const endpoint = env.APP_ARCHIVE_S3_ENDPOINT;
+  const bucket = env.APP_ARCHIVE_S3_BUCKET;
+  const accessKeyId = env.APP_ARCHIVE_S3_ACCESS_KEY_ID;
+  const secretAccessKey = env.APP_ARCHIVE_S3_SECRET_ACCESS_KEY;
+  if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null;
+  try {
+    const u = new URL(endpoint);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  } catch {
+    return null;
+  }
+  const publicStore = seedStoreConfig({
+    endpoint: env.APP_ARCHIVE_S3_PUBLIC_ENDPOINT,
+    bucket,
+    accessKeyId,
+    secretAccessKey,
   });
+  return {
+    endpoint,
+    publicEndpoint: publicStore?.endpoint ?? null,
+    bucket,
+    accessKeyId,
+    secretAccessKey,
+  };
 }
 
 /**
- * The object keys of one hibernation attempt. civitai builds them; no caller names a key.
- *
- *   archive        the UPLOAD key `begin` presigns a PUT for.
- *   keptArchive    the key a commit copies the upload to and records.
- *   keptSecrets    the key a commit stores the `.env*` blob at, after sealing it itself.
- * No presigned URL ever names a kept key, so nothing outside civitai can overwrite a committed
- * archive or its secrets (an upload URL stays valid for its whole TTL, commit or not).
+ * The UPLOAD key of one hibernation attempt: the one `begin` presigns a PUT for. civitai builds
+ * every key; no caller names one.
  */
 export function archiveObjectKeys(userId: number, appKey: string, attemptId: string) {
-  const base = `${ARCHIVE_PREFIX}${userId}/${appKey}/${attemptId}`;
-  return {
-    archive: `${base}.zip`,
-    keptArchive: `${base}.kept.zip`,
-    keptSecrets: `${base}.kept.secrets`,
-  };
+  return { archive: `${ARCHIVE_PREFIX}${userId}/${appKey}/${attemptId}.zip` };
+}
+
+/**
+ * The keys ONE commit invocation writes: the copy of the upload it verifies and records, and the
+ * `.env*` blob it seals. `invocation` is random per call, so two overlapping commits of one attempt
+ * (a slow one and its retry) never write the same object. No presigned URL ever names a kept key,
+ * so nothing outside civitai can overwrite a committed archive or its secrets. Both sit under the
+ * user's prefix, so account deletion and the orphan sweep find them.
+ */
+export function keptObjectKeys(
+  userId: number,
+  appKey: string,
+  attemptId: string,
+  invocation: string
+) {
+  const base = `${ARCHIVE_PREFIX}${userId}/${appKey}/${attemptId}.${invocation}`;
+  return { keptArchive: `${base}.kept.zip`, keptSecrets: `${base}.kept.secrets` };
 }
 
 /** Thrown by `hash` / `read` once an object streams past the byte limit they were given. */
@@ -79,7 +119,12 @@ export function userArchivePrefix(userId: number): string {
  * against an in-memory store; {@link createArchiveStore} is the S3 implementation.
  */
 export interface ArchiveStore {
-  /** A presigned PUT the sandbox service will accept (https, the endpoint's host, no port). */
+  /** Whether a public endpoint is configured, so URLs can be presigned for the sandbox service. */
+  readonly canPresign: boolean;
+  /**
+   * A presigned PUT on the PUBLIC endpoint (https, its host, no port). Throws when there is no
+   * public endpoint: it never falls back to the in-cluster one.
+   */
   presignPut(key: string, ttlSeconds?: number): Promise<string>;
   /** The object's size, or `null` when it does not exist. */
   head(key: string): Promise<{ bytes: number } | null>;
@@ -108,8 +153,28 @@ function isNotFound(err: unknown): boolean {
 /** Upper bound on list pages, so a misbehaving store cannot spin a delete forever. */
 const MAX_LIST_PAGES = 1_000;
 
-export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
-  const s3 = seedStoreClient(config);
+/**
+ * The S3 implementation. `requestHandler` replaces the in-cluster client's transport (tests use
+ * it to see where a direct call goes without a network).
+ */
+export function createArchiveStore(
+  config: ArchiveStoreConfig,
+  opts: { requestHandler?: S3ClientConfig['requestHandler'] } = {}
+): ArchiveStore {
+  const credentials = { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey };
+  // Every call civitai makes itself.
+  const s3 = newS3Client({
+    endpoint: config.endpoint,
+    region: 'us-east-1',
+    credentials,
+    forcePathStyle: true,
+    ...(opts.requestHandler ? { requestHandler: opts.requestHandler } : {}),
+  });
+  // Presigning only; a client on the public endpoint, never used to send a request.
+  const publicEndpoint = config.publicEndpoint;
+  const presigner = publicEndpoint
+    ? seedStoreClient({ endpoint: publicEndpoint, bucket: config.bucket, ...credentials })
+    : null;
   const Bucket = config.bucket;
 
   const getBody = async (key: string): Promise<Readable | null> => {
@@ -123,12 +188,15 @@ export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
   };
 
   return {
+    canPresign: !!presigner,
     async presignPut(key, ttlSeconds = ARCHIVE_PUT_TTL_SECONDS) {
-      const url = await getSignedUrl(s3, new PutObjectCommand({ Bucket, Key: key }), {
+      if (!presigner || !publicEndpoint)
+        throw new Error('no public archive endpoint: nothing can be presigned');
+      const url = await getSignedUrl(presigner, new PutObjectCommand({ Bucket, Key: key }), {
         expiresIn: ttlSeconds,
       });
-      if (!isAcceptableSeedUrl(url, config.endpoint))
-        throw new Error('presigned archive URL is not on the configured https endpoint');
+      if (!isAcceptableSeedUrl(url, publicEndpoint))
+        throw new Error('presigned archive URL is not on the public https endpoint');
       return url;
     },
     async head(key) {

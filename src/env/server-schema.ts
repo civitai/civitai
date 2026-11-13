@@ -1374,11 +1374,15 @@ export const serverSchema = z
     // with any of them unset, every hibernation endpoint answers 503 and nothing is archived.
     // The feature is also dark behind the `app-hibernate` Flipt flag regardless.
     //
-    // The archive store: the bucket a sleeping app's workspace zip and its encrypted `.env*` blob
+    // The archive store: the bucket a sleeping app's workspace zip and its sealed `.env*` blob
     // are kept in, under `archives/`, with NO lifecycle rule (the objects are the only copy).
-    // The sandbox service uploads and downloads through presigned URLs, so the endpoint must be
-    // one it can reach; path-style addressing keeps the presigned URL's host equal to it.
+    // APP_ARCHIVE_S3_ENDPOINT is for civitai's own calls (it may be plain http with a port).
+    // APP_ARCHIVE_S3_PUBLIC_ENDPOINT is used ONLY to presign the URLs handed to the sandbox
+    // service: https with no port (anything else counts as unset), and path-style, so a presigned
+    // URL's host is its host. Unset, nothing is presigned and hibernation answers 503; civitai
+    // never presigns on the in-cluster endpoint instead.
     APP_ARCHIVE_S3_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_PUBLIC_ENDPOINT: z.string().url().optional(),
     APP_ARCHIVE_S3_BUCKET: z.string().optional(),
     APP_ARCHIVE_S3_ACCESS_KEY_ID: z.string().optional(),
     APP_ARCHIVE_S3_SECRET_ACCESS_KEY: z.string().optional(),

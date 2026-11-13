@@ -8,7 +8,6 @@ import {
   sealSecrets,
   unwrapDataKey,
   wrapDataKey,
-  wrapDataKeyV1,
   type MasterKeyring,
 } from '~/server/services/app-hibernation/secrets-envelope';
 
@@ -76,13 +75,12 @@ describe('secrets envelope', () => {
     );
   });
 
-  it('a v1 wrapped key (no key id) still unwraps, with whichever listed key opens it', () => {
-    const dataKey = newDataKey();
-    const v1 = wrapDataKeyV1(K_OLD, BINDING, dataKey);
-    expect(v1.startsWith('v1.')).toBe(true);
-    const r = ring(`k2:${b64(K_NEW)},k1:${b64(K_OLD)}`);
-    expect(unwrapDataKey(r, BINDING, v1).equals(new Uint8Array(dataKey))).toBe(true);
-    expect(() => unwrapDataKey(ring(`k2:${b64(K_NEW)}`), BINDING, v1)).toThrow();
+  it('only the v2 format with a key id is read: a value without a key id is refused', () => {
+    const r = ring(`k1:${b64(K_OLD)}`);
+    const wrapped = wrapDataKey(r, BINDING, newDataKey());
+    const body = wrapped.split('.')[2];
+    expect(() => unwrapDataKey(r, BINDING, `v1.${body}`)).toThrow(/unknown wrapped-key format/);
+    expect(() => unwrapDataKey(r, BINDING, `v2.${body}`)).toThrow(/unknown wrapped-key format/);
   });
 
   it('a wrapped key or a blob moved to another user or app does not open', () => {

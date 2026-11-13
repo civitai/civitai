@@ -161,6 +161,8 @@ export function restoreSecretsAnswer(r: RestoreSecretsResult): Answer {
       return disabled;
     case 'not-configured':
       return notConfigured;
+    case 'account-closed':
+      return accountClosed;
     case 'ticket':
       return {
         status: 403,
