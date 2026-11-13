@@ -287,7 +287,10 @@ type BidImageFilter = (image: { nsfwLevel: number; userId: number }) => boolean;
 
 function capCreatorAvatar<U extends BidCreator>(user: U, keep: BidImageFilter): U {
   const picture = user.profilePicture;
-  const shown = picture && keep({ nsfwLevel: picture.nsfwLevel, userId: user.id }) ? picture : null;
+  const shown =
+    picture && picture.nsfwLevel !== 0 && keep({ nsfwLevel: picture.nsfwLevel, userId: user.id })
+      ? picture
+      : null;
   return { ...user, image: null, profilePicture: shown };
 }
 

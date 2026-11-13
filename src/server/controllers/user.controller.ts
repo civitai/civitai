@@ -179,7 +179,8 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
-import { profileImageSelect } from '~/server/selectors/image.selector';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -969,11 +970,15 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
         // model id per creator just to take `.length`. The only consumer
         // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
         _count: { select: { models: { where: { status: 'Published' } } } },
-        profilePicture: { select: profileImageSelect },
+        profilePicture: { select: { url: true, nsfwLevel: true, type: true } },
       },
     });
+    const items = results.items.map((item) => ({
+      ...item,
+      profilePicture: avatarAtLevel(item.profilePicture, publicBrowsingLevelsFlag),
+    }));
 
-    return getPagingData(results, take, page);
+    return getPagingData({ ...results, items }, take, page);
   } catch (error) {
     throw throwDbError(error);
   }

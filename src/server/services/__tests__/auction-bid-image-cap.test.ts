@@ -150,6 +150,15 @@ describe('auction bid creator avatars', () => {
 
   it('a bid-change signal carries only a public avatar', () => {
     expect(creator(publicSignalData(withAvatar(NsfwLevel.R) as never))?.profilePicture).toBeNull();
+    expect(
+      creator(publicSignalData(withAvatar(NsfwLevel.PG) as never))?.profilePicture
+    ).toMatchObject({ url: 'avatar.png' });
+  });
+
+  it('an uncapped viewer still gets no unrated avatar', () => {
+    const uncapped = { user: { id: 6 }, features: { canViewNsfw: true } };
+    const out = capAuctionBidImages(withAvatar(0) as never, bidImagesFor(uncapped as never));
+    expect(creator(out)?.profilePicture).toBeNull();
   });
 });
 
