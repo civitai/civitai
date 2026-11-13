@@ -13,6 +13,7 @@ import {
   requestSentMessage,
   roundLabel,
   sheetEventText,
+  closeCommentLabel,
   visibleDealActions,
 } from '~/components/CreatorShop/Services/deals/deal-ui';
 import {
@@ -347,5 +348,31 @@ describe('deal list status badge', () => {
   it('leaves deals no moderator settled on their status label', () => {
     expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Cancelled');
     expect(dealStatusBadge({ status: 'Completed' })).toBe('Complete');
+  });
+});
+
+describe('close comments on the accountability sheet', () => {
+  it('prints a label, never the raw code the server wrote', () => {
+    const cancelled = (comment: string | null) => ({
+      type: 'Cancelled',
+      actorRole: 'buyer',
+      comment,
+    });
+    expect(sheetEventText(cancelled('withdrawn'), 'buyer', 'Cancelled').comment).toBe(
+      'Request withdrawn by the buyer'
+    );
+    for (const code of Object.keys(closeCommentLabel))
+      expect(
+        sheetEventText({ ...cancelled(code), type: 'Completed' }, 'seller', 'x').comment
+      ).not.toBe(code);
+  });
+
+  it('leaves a typed comment, an unknown code and a code on another event type alone', () => {
+    const ev = (type: string, comment: string | null) => ({ type, actorRole: 'buyer', comment });
+    expect(sheetEventText(ev('Cancelled', 'changed plans'), 'buyer', 'x').comment).toBe(
+      'changed plans'
+    );
+    expect(sheetEventText(ev('Cancelled', null), 'buyer', 'x').comment).toBeNull();
+    expect(sheetEventText(ev('Revision', 'withdrawn'), 'buyer', 'x').comment).toBe('withdrawn');
   });
 });

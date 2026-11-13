@@ -36,6 +36,7 @@ import {
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { backoffDelay } from '~/utils/backoff';
 
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
 const SEARCH_RETRY_MAX_DELAY_MS = 60_000;
@@ -245,7 +246,7 @@ function ImagesFeed({
   const retryDelay = isSlow
     ? SEARCH_ABORT_THRESHOLD_MS - SEARCH_SLOW_THRESHOLD_MS
     : isError || debugRetryActive
-    ? Math.min(baseDelay * Math.pow(2, retryAttempt), SEARCH_RETRY_MAX_DELAY_MS)
+    ? backoffDelay(retryAttempt, { baseMs: baseDelay, maxMs: SEARCH_RETRY_MAX_DELAY_MS })
     : 0;
 
   // In debug mode we block real fetches so isFetching never toggles — treat it

@@ -68,6 +68,16 @@ export const setServiceOfferingStatusSchema = z.object({
   affirmedTermsVersion: z.string().optional(),
 });
 
+export const serviceOfferingFeedSorts = ['newest', 'price_asc', 'price_desc'] as const;
+export type ServiceOfferingFeedSort = (typeof serviceOfferingFeedSorts)[number];
+export type GetServiceOfferingFeedInput = z.infer<typeof getServiceOfferingFeedSchema>;
+export const getServiceOfferingFeedSchema = z.object({
+  browsingLevel: z.number().int().optional(),
+  sort: z.enum(serviceOfferingFeedSorts).default('newest'),
+  cursor: z.number().int().positive().optional(),
+  limit: z.number().int().min(1).max(50).default(24),
+});
+
 export type GetShopServiceOfferingsInput = z.infer<typeof getShopServiceOfferingsSchema>;
 export const getShopServiceOfferingsSchema = z.object({
   userId: z.number().int().positive(),

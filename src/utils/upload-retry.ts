@@ -1,4 +1,5 @@
 import { constants } from '~/server/common/constants';
+import { backoffDelay } from '~/utils/backoff';
 
 export type UploadPartError = {
   status: number | null;
@@ -55,10 +56,6 @@ const PART_STALL_TIMEOUT_MS = 30_000;
  * progress delta nor elapsed wall clock can separate the two, because no bytes move while
  * hidden either; only `visibilityState` can. So time spent hidden does not count as silence,
  * and a part that is genuinely dead is given away one full window after the tab comes back.
- *
- * 🔴 Lives HERE rather than inside the hook for the reason `isTerminalCompleteStatus` below
- * gives: `s3-upload.store.ts` has the same missing timeout, and the one predicate that was
- * open-coded in both went wrong in one of them.
  */
 export function createPartStallWatchdog(onStall: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -149,12 +146,9 @@ export function describePartFailure(
  * must fit the single-shot body cap or, above it, the chunked relay's image size cap; and
  * a cancelled upload has an owner, not a fallback.
  *
- * 🔴 `userAborted` MEANS "THE PERSON PRESSED CANCEL" — never "this upload's abort signal
- * has been tripped". The two are not the same thing and confusing them made this whole
- * predicate inert: the multipart worker tears its own upload down (cancelling the signal
- * and every in-flight part xhr) BEFORE the caller reaches this gate, so a caller passing
- * its abort signal here reports `true` on every failure, including the network-layer ones
- * this exists for. Pass a flag the internal teardown does not set.
+ * 🔴 `userAborted` MEANS "THE PERSON PRESSED CANCEL". Take it from the signal handed to
+ * `transferParts`, which teardown leaves alone. An internal teardown signal reads `true` on every
+ * failure, including the network-layer ones this gate exists for, and makes the fallback inert.
  */
 export function selectRelayFallback(
   err: UploadPartError | null | undefined,
@@ -173,12 +167,9 @@ export function selectRelayFallback(
  * The terminal row state for an upload that gave up: did the PERSON stop it, or did it
  * fail?
  *
- * 🔴 `userAborted` is the same flag `selectRelayFallback` takes and means the same
- * thing — the person pressed cancel — and passing an upload's abort signal is the same
- * mistake here, with a different symptom. Both clients tear their own upload down on a
- * fatal part failure, so a status line reading that signal reports EVERY failed upload as
- * a cancel: a user whose connection died gets the row they would have got by pressing
- * cancel themselves, and the failure disappears from anything counting errors.
+ * 🔴 `userAborted` is the same flag `selectRelayFallback` takes: the person pressed cancel. Reading
+ * an internal teardown signal instead reports EVERY failed upload as a cancel and hides the failure
+ * from anything counting errors.
  *
  * 🔴 `fatal.aborted` is checked as well, not instead: it catches the ordinary cancel,
  * where the cancelled part xhr rejects with `aborted`. `userAborted` catches the cancel
@@ -190,12 +181,8 @@ export function selectRelayFallback(
  * answers "why did the transfer stop". Collapsing the second into the first would delete
  * the diagnostic signal that field exists to carry.
  *
- * 🔴 Lives HERE for the reason `isTerminalCompleteStatus` below gives: this is the second
- * predicate both upload clients need, it was open-coded in both, and the first one that
- * was open-coded in both went wrong in one of them. It is NOT called
- * `resolveTerminal*` — `isTerminalCompleteStatus` further down this file means a
- * different "terminal" (an HTTP status that must not be re-POSTed), and both clients
- * import the two of them two lines apart, which is exactly where a reader mis-binds.
+ * It is NOT called `resolveTerminal*`: `isTerminalCompleteStatus` further down this file
+ * means a different "terminal" (an HTTP status that must not be re-POSTed).
  *
  * 🔴 The flag is NAMED rather than positional, matching `selectRelayFallback`. Every
  * candidate expression at the call site is some `.signal.aborted` and they all typecheck,
@@ -235,11 +222,6 @@ export function shouldRetryPartError(err: UploadPartError) {
  * after the first hit a session the first attempt may already have consumed, so they
  * come back `NoSuchUpload` and the client acts on that branch's verdict instead of the
  * real one — a silent-loss event gets relabelled "already finalized or aborted".
- *
- * 🔴 Lives HERE, in the one module both upload clients already import, because it was
- * previously open-coded in `s3-upload.store.ts` and simply MISSING from
- * `useS3Upload.tsx` — where a terminal status was re-POSTed 4 times, 200 ms apart. One
- * predicate, one place: a second copy is how that divergence happened.
  */
 export function isTerminalCompleteStatus(status: number) {
   return status === 400 || status === 409 || status === 422;
@@ -257,6 +239,5 @@ export function getPartRetryDelay(err: UploadPartError, attempt: number) {
     }
   }
   // Exponential backoff with jitter: ~1s, 2s, 4s + up to 1s jitter
-  const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
-  return base + Math.random() * 1000;
+  return backoffDelay(attempt, { baseMs: 1000, maxMs: MAX_BACKOFF_MS, jitterMs: 1000 });
 }
