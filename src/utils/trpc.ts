@@ -37,6 +37,11 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
+import {
+  getFeedGoTransportEnabled,
+  GO_TRANSPORT_PROCEDURES,
+  GO_TRANSPORT_URL,
+} from '~/utils/trpc-go-transport';
 
 const url = '/api/trpc';
 
@@ -353,32 +358,6 @@ export function shouldBatch(op: {
 }
 
 /**
- * Procedures the `feedGoTransport` flag sends to `GO_TRANSPORT_URL` instead of `/api/trpc`, so an
- * exact-path route can hand them to the Go port (`apps/feed-go`) for a per-user cohort. Each must
- * also be in `NEVER_BATCH_PROCEDURES`: a batched request names several procedures in one path and
- * could not be routed by path at all.
- */
-export const GO_TRANSPORT_PROCEDURES: ReadonlySet<string> = new Set([
-  'image.getImagesAsPostsInfinite',
-]);
-
-/**
- * The separate path. `next.config.mjs` rewrites it back to `/api/trpc/:path*`, so with no route in
- * front of it the request still reaches this app: turning the flag on can never strand a request.
- */
-export const GO_TRANSPORT_URL = '/api/trpc-go';
-
-/**
- * Module-scoped toggle for the Go transport, written by `FeatureFlagsProvider` from the
- * `feedGoTransport` flag (default OFF). Mutable module state for the same reason as
- * `trpcBatchingEnabled`: the terminating link is built once and re-reads it per operation.
- */
-let feedGoTransportEnabled = false;
-export function setFeedGoTransportEnabled(enabled: boolean) {
-  feedGoTransportEnabled = enabled;
-}
-
-/**
  * Send this operation over the Go transport only when ALL hold:
  *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
  *  - the `feedGoTransport` flag is on for this user,
@@ -389,7 +368,7 @@ export function setFeedGoTransportEnabled(enabled: boolean) {
 export function shouldUseGoTransport(op: { type: string; path: string; input: unknown }) {
   return (
     op.type === 'query' &&
-    feedGoTransportEnabled &&
+    getFeedGoTransportEnabled() &&
     GO_TRANSPORT_PROCEDURES.has(op.path) &&
     isAuthedBrowser() &&
     !shouldSendQueryAsPost(op)

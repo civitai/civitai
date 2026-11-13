@@ -1,7 +1,8 @@
 import { useSession } from '~/providers/SessionProvider';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { type FeatureAccess } from '~/server/services/feature-flags.service';
-import { setFeedGoTransportEnabled, setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { setTrpcBatchingEnabled, trpc } from '~/utils/trpc';
+import { setFeedGoTransportEnabled } from '~/utils/trpc-go-transport';
 import { setTrpcUnifiedBatchWindowEnabled } from '~/utils/trpc-batch-window';
 import { setSiteSearchProxyEnabled } from '~/components/Search/site-search-transport';
 import { setSemanticArticleSearchEnabled } from '~/components/Search/semanticArticleSearchFlag';

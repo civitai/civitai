@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { NEVER_BATCH_PROCEDURES, setTrpcBatchingEnabled, trpcVanilla } from '~/utils/trpc';
 import {
   GO_TRANSPORT_PROCEDURES,
   GO_TRANSPORT_URL,
-  NEVER_BATCH_PROCEDURES,
   setFeedGoTransportEnabled,
-  setTrpcBatchingEnabled,
-  trpcVanilla,
-} from '~/utils/trpc';
+} from '~/utils/trpc-go-transport';
 
 /**
  * WIRE-LEVEL coverage for the `feedGoTransport` flag: with it on, a signed-in browser sends
