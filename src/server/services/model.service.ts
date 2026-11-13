@@ -6885,9 +6885,12 @@ export async function setModelShowcaseCollection({
   collectionId,
   userId,
   isModerator,
+  modelAlreadyInCollection,
 }: SetModelCollectionShowcaseInput & {
   userId: number;
   isModerator?: boolean;
+  /** The caller has already written this model's item into the collection; nothing to add. */
+  modelAlreadyInCollection?: boolean;
 }) {
   const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
@@ -6896,7 +6899,7 @@ export async function setModelShowcaseCollection({
   if (!isModerator && isRemovedWithOwner(model.meta)) throw removedWithOwnerEditError();
 
   // Add first so a refused add leaves the showcase unchanged.
-  if (collectionId != null)
+  if (collectionId != null && !modelAlreadyInCollection)
     await addModelToShowcaseCollection({ modelId: id, collectionId, userId, isModerator });
 
   const updated = await updateModelById({
@@ -7051,6 +7054,7 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
     isModerator,
+    modelAlreadyInCollection: true,
   });
 
   // Bust caches
