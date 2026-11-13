@@ -445,14 +445,36 @@ describe('filters', () => {
     expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
-  it('sends Qdrant no base-model licence clause, even at NSFW levels', async () => {
+  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
       input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
       user: { id: 501, isModerator: true } as SessionUser,
       candidateSource: source,
     });
-    expect(calls[0].filter.mustNot ?? []).toEqual([]);
+    const [restricted] = calls[0].filter.mustNot as {
+      must: { key: string; match: { any: unknown[] } }[];
+    }[];
+    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
+    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the base-model rule for a non-moderator searching at an NSFW level', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+    expect(calls[0].filter.mustNot).toHaveLength(1);
+  });
+
+  it('drops the base-model rule when the gate holds no NSFW level', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(calls[0].filter.mustNot).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -654,6 +676,12 @@ describe('the query audit and the browsing level', () => {
     const { calls } = await run({ browsingLevel: ALL_LEVELS });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), true);
+  });
+
+  it('lifts the clamp when the key is present and disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    const { calls } = await run({ browsingLevel: ALL_LEVELS });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
   });
 
   it.each([

@@ -19,9 +19,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
   // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
   SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
-  // On: every non-moderator semantic search is held at the safe levels (the containment clamp).
-  // Off: they search at their own browsing level. Read fail-closed (`isNonModClampOn`): a missing
-  // key, an evaluation error or no client keeps the clamp on, so the key must exist, disabled.
+  // Enabled: every non-moderator semantic search is held at the safe levels (the containment
+  // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
+  // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead

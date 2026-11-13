@@ -293,6 +293,12 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
   });
 
+  it('lifts the clamp when the key is present and disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    await run({ browsingLevel: 31 });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+  });
+
   it.each([
     ['the client is unavailable', () => (h.fliptClient = null)],
     [
