@@ -62,6 +62,21 @@ describe('restart', () => {
     expect(restartCareer).not.toHaveBeenCalled();
   });
 
+  it('answers 400 to a body that is not a form, and restarts nothing', async () => {
+    const response = await POST({
+      request: new Request('http://knights.test/career', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"confirmed":',
+      }),
+      locals: { user: { id: 7 } },
+    } as never);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ ok: false });
+    expect(restartCareer).not.toHaveBeenCalled();
+  });
+
   it('tells the player when the restart failed and clears no counters', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     restartCareer.mockRejectedValue(new Error('down'));
