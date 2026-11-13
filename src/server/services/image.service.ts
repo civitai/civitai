@@ -3367,7 +3367,8 @@ async function serveImagesFromFeedService(
       }
     )
   );
-  if (served.ok) {
+  // A stale page (feed-primary-degrade) is not an answer the feed gave for this request.
+  if (served.ok && !served.page.stale) {
     void feedRequestCapture().record(searchInput, {
       source: 'getImagesFromSearch',
       filterMode: 'feed',
@@ -3379,8 +3380,11 @@ async function serveImagesFromFeedService(
   return served;
 }
 
+// `breaker`: the feed-service circuit is open (feed-primary-degrade) and no last good page was
+// held for the request, so the call was not made.
 const isTransientFeedReason = (reason: string) =>
-  ['timeout', 'error', 'hydrate:error'].includes(reason) || /^status:5\d\d$/.test(reason);
+  ['timeout', 'error', 'hydrate:error', 'breaker'].includes(reason) ||
+  /^status:5\d\d$/.test(reason);
 
 /**
  * Filters the feed has no dimension for, dropped rather than refused. The remix filters were
