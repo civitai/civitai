@@ -11,6 +11,7 @@ import type * as TrpcReactQuery from '@trpc/react-query';
 import type * as Masonry from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import type * as Trpc from '~/utils/trpc';
 import { ImagesInfiniteContent } from '~/components/Image/Infinite/ImagesInfinite';
+import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -21,6 +22,7 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchInputs: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
+  feedIncludes: [] as (string[] | undefined)[],
   periodWrites: [] as unknown[],
 }));
 
@@ -69,8 +71,9 @@ vi.mock('~/components/Image/Infinite/useImageFeedSearch', async (importOriginal)
 vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUtils>()),
   useImageFilters: () => ({ ...useSavedFilters(), ...useUrlQuery() }),
-  useQueryImages: (_filters: unknown, options: { enabled?: boolean }) => {
+  useQueryImages: (filters: { include?: string[] }, options: { enabled?: boolean }) => {
     state.feedEnabled.push(options.enabled);
+    state.feedIncludes.push(filters.include);
     return { ...result([1, 2, 3]), debugRetryActive: false, debugDelayMs: 0 };
   },
 }));
@@ -109,7 +112,7 @@ vi.mock('~/providers/FiltersProvider', async (importOriginal) => ({
 vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', async (importOriginal) => ({
   ...(await importOriginal<typeof Masonry>()),
   MasonryColumnsVirtual: ({ data }: { data: { id: number }[] }) => (
-    <ul>
+    <ul data-creator-hidden={useImagesContext().hideCreator ? 'true' : 'false'}>
       {data.map((item) => (
         <li key={item.id}>image {item.id}</li>
       ))}
@@ -123,6 +126,7 @@ describe('ImagesInfinite with a search', () => {
     state.refusal = undefined;
     state.searchInputs = [];
     state.feedEnabled = [];
+    state.feedIncludes = [];
     state.periodWrites = [];
     savedFilters.reset();
     localStorage.clear();
@@ -136,6 +140,21 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon' });
     expect(page.getByText('image 1', { exact: true }).query()).toBeNull();
     expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('requests creator pictures on the feed and skips them when the creator is hidden', async () => {
+    useRouter().query = {};
+    const screen = await renderWithProviders(<ImagesInfiniteContent />);
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.feedIncludes.at(-1)).toContain('profilePictures');
+    const hidden = () =>
+      page.getByText('image 1', { exact: true }).element().closest('ul')?.dataset.creatorHidden;
+    expect(hidden()).toBe('false');
+    await screen.rerender(<ImagesInfiniteContent hideCreator />);
+    expect(state.feedIncludes.at(-1)).not.toContain('profilePictures');
+    expect(hidden()).toBe('true');
+    await screen.rerender(<ImagesInfiniteContent />);
+    expect(hidden()).toBe('false');
   });
 
   const postedAfters = () =>

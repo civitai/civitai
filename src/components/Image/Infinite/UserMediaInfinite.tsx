@@ -229,6 +229,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 // Under a jump the feed is empty on one side of a month, not empty.
                 showEmptyCta={isSameUser && !jumpToEmpty}
                 emptyMessage={jumpToEmpty}
+                hideCreator={!viewingReactions}
               />
             )}
           </Stack>

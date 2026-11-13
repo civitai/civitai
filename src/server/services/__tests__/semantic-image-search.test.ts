@@ -20,7 +20,9 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 const h = vi.hoisted(() => {
   return {
     queryWithTimeout: vi.fn(),
-    fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
+    fakeGetAllImages: undefined as
+      | undefined
+      | ((input: { ids: number[]; include?: string[] }) => unknown),
     stripBenignPhrases: vi.fn(async (text: string) => text),
     includesInappropriate:
       vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
@@ -158,6 +160,22 @@ beforeEach(() => {
 });
 
 describe('a stale index cannot surface a hidden image', () => {
+  it('returns the creator picture with hydrated search results', async () => {
+    const picture = { id: 900, url: 'creator-avatar', nsfwLevel: PG };
+    h.fakeGetAllImages = async ({ ids, include }) => ({
+      items: ids.map((id) => ({
+        id,
+        user: { id: 50, profilePicture: include?.includes('profilePictures') ? picture : null },
+      })),
+    });
+    const { source } = rankedSource([101]);
+    const { items } = await searchSemanticImages({
+      input: input(),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(items[0].user.profilePicture).toEqual(picture);
+  });
   // The index still holds all of these; Postgres says only the first, third and last are visible.
   const BLOCKED = 102;
   const UNPUBLISHED_POST = 104;

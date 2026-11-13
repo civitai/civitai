@@ -29,6 +29,7 @@ import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -326,18 +327,32 @@ function ImagesCardContent({
                       </Text>
                     </div>
                   ) : (
-                    <div className="absolute bottom-1 right-1">
+                    <div className="pointer-events-none absolute inset-x-2 bottom-2 flex items-end gap-2">
+                      {safe && !contextProps.hideCreator && (
+                        <div className="pointer-events-auto min-w-0 flex-1">
+                          <UserAvatarSimple
+                            {...image.user}
+                            classNames={{
+                              avatar: cardClasses.creatorAvatar,
+                              namePill: cardClasses.creatorPill,
+                              namePillPlate: cardClasses.creatorPillPlate,
+                            }}
+                          />
+                        </div>
+                      )}
                       {features.imageCardInfoButton && data.hasMeta && (
-                        <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                          <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
-                            <IconInfoCircle
-                              color="white"
-                              opacity={0.9}
-                              strokeWidth={2.5}
-                              size={20}
-                            />
-                          </div>
-                        </ImageMetaPopover2>
+                        <div className="pointer-events-auto ml-auto shrink-0">
+                          <ImageMetaPopover2 imageId={data.id} type={data.type}>
+                            <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
+                              <IconInfoCircle
+                                color="white"
+                                opacity={0.9}
+                                strokeWidth={2.5}
+                                size={20}
+                              />
+                            </div>
+                          </ImageMetaPopover2>
+                        </div>
                       )}
                     </div>
                   )
