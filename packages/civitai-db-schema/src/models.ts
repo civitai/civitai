@@ -2238,6 +2238,7 @@ export interface OauthClient {
   connectListings?: AppListing[];
   workerClient?: WorkerClient | null;
   workerDevices?: WorkerDevice[];
+  invites?: OauthInvite[];
 }
 
 export interface WorkerClient {
@@ -2940,6 +2941,16 @@ export interface OauthConsent {
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface OauthInvite {
+  tokenHash: string;
+  clientId: string;
+  client?: OauthClient;
+  email: string;
+  returnUrl: string;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 export interface TrustedSpokeDomain {
