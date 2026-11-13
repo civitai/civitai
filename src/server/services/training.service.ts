@@ -13,6 +13,7 @@ import {
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { env } from '~/env/server';
 import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
@@ -223,10 +224,25 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   return response.data?.jobs?.[0]?.result;
 };
 
+/** Shown when the training status cannot be read and this process has never read it. */
+export const TRAINING_STATUS_UNKNOWN_MESSAGE =
+  'Training is temporarily unavailable. Please try again in a few minutes.';
+
+// The last status this process read. The "training paused" flag is a moderator control on a paid
+// submit, so a failed read must not turn an operator's pause back into "available". No age bound:
+// while sysRedis is unreachable the stored value cannot change either.
+let lastKnownTrainingStatus: TrainingServiceStatus | undefined;
+
+/** For tests: forget the last-known training status. */
+export function __resetTrainingStatusLastKnownForTests() {
+  lastKnownTrainingStatus = undefined;
+}
+
 export async function getTrainingServiceStatus() {
-  // Fail open: symmetric with the three getGenerationStatus fixes in this
-  // PR. A sysRedis outage shouldn't crash the training status endpoint or
-  // training submission. Falls back to the schema's '{}' default.
+  // A sysRedis outage must not crash the training status endpoint or training submission, and must
+  // not read as "available" either: a failed read serves the last status this process read, and
+  // "paused" (TRAINING_STATUS_UNKNOWN_MESSAGE) when there is none. TRAINING_STATUS_FAIL_CLOSED=off
+  // restores the previous fall-back to the schema's '{}' default (available).
   // Note on Buffer-vs-string asymmetry (see PR #2697): sysRedis.hGet is typed
   // `string | null` but the HA/Sentinel client returns a Buffer for
   // BLOB_STRING replies. `JSON.parse` accepts a Buffer in Node ≥18 (we run
@@ -243,13 +259,29 @@ export async function getTrainingServiceStatus() {
       sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)
     );
   } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
-    raw = undefined;
+    if (!env.TRAINING_STATUS_FAIL_CLOSED) {
+      logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err, {
+        served: 'defaults',
+      });
+      return trainingServiceStatusSchema.parse({}) as TrainingServiceStatus;
+    }
+    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err, {
+      served: lastKnownTrainingStatus ? 'last-known-good' : 'paused',
+    });
+    return (
+      lastKnownTrainingStatus ??
+      (trainingServiceStatusSchema.parse({
+        available: false,
+        message: TRAINING_STATUS_UNKNOWN_MESSAGE,
+      }) as TrainingServiceStatus)
+    );
   }
   const result = trainingServiceStatusSchema.safeParse(JSON.parse(raw ?? '{}'));
-  if (!result.success) return trainingServiceStatusSchema.parse({});
-
-  return result.data as TrainingServiceStatus;
+  const status = (
+    result.success ? result.data : trainingServiceStatusSchema.parse({})
+  ) as TrainingServiceStatus;
+  lastKnownTrainingStatus = status;
+  return status;
 }
 
 export async function setTrainingServiceStatus(input: {

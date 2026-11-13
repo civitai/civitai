@@ -24,6 +24,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  delete process.env.TRAINING_STATUS_FAIL_CLOSED;
 });
 
 describe('getTrainingServiceStatus', () => {
@@ -80,6 +81,37 @@ describe('getTrainingServiceStatus', () => {
     const pending = mod.getTrainingServiceStatus();
     await vi.advanceTimersByTimeAsync(2500);
     await expect(pending).resolves.toMatchObject({
+      available: false,
+      message: mod.TRAINING_STATUS_UNKNOWN_MESSAGE,
+    });
+  });
+
+  it.each(['off', 'OFF', '0', 'false'])(
+    'TRAINING_STATUS_FAIL_CLOSED=%s restores the old fail-open read ("available")',
+    async (value) => {
+      process.env.TRAINING_STATUS_FAIL_CLOSED = value;
+      hGet.mockResolvedValueOnce(PAUSED);
+      await mod.getTrainingServiceStatus();
+      hGet.mockRejectedValue(new Error('sys redis is down'));
+      await expect(mod.getTrainingServiceStatus()).resolves.toEqual({
+        available: true,
+        message: null,
+        blockedModels: [],
+        blockedModelReasons: {},
+      });
+    }
+  );
+
+  it('TRAINING_STATUS_FAIL_CLOSED=off: a never-read status is available too', async () => {
+    process.env.TRAINING_STATUS_FAIL_CLOSED = 'off';
+    hGet.mockRejectedValue(new Error('sys redis is down'));
+    await expect(mod.getTrainingServiceStatus()).resolves.toMatchObject({ available: true });
+  });
+
+  it('an unknown TRAINING_STATUS_FAIL_CLOSED value keeps the fail-closed read', async () => {
+    process.env.TRAINING_STATUS_FAIL_CLOSED = 'on';
+    hGet.mockRejectedValue(new Error('sys redis is down'));
+    await expect(mod.getTrainingServiceStatus()).resolves.toMatchObject({
       available: false,
       message: mod.TRAINING_STATUS_UNKNOWN_MESSAGE,
     });

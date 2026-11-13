@@ -271,6 +271,23 @@ describe('blocks.submitWorkflow — global generation kill switch', () => {
     expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
   });
 
+  it.each(['textToImage', 'customComfy', 'workflow', 'step'] as const)(
+    'BLOCKS_ENFORCE_GENERATION_STATUS off: the %s kind is not refused by a disabled switch',
+    async (kind) => {
+      setEnv({ ORCHESTRATOR_MODE: 'prod', BLOCKS_ENFORCE_GENERATION_STATUS: false });
+      storedStatus = { mode: 'disabled', message: OPERATOR_MESSAGE };
+      const error = await submit(BODIES[kind]);
+      expect(error).not.toMatchObject({ message: OPERATOR_MESSAGE });
+      expect(killSwitchReads()).toBe(0);
+    }
+  );
+
+  it('BLOCKS_ENFORCE_GENERATION_STATUS off: textToImage reaches the branch behind it', async () => {
+    setEnv({ ORCHESTRATOR_MODE: 'prod', BLOCKS_ENFORCE_GENERATION_STATUS: false });
+    storedStatus = { mode: 'disabled', message: OPERATOR_MESSAGE };
+    await expect(submit(BODIES.textToImage)).resolves.toMatchObject({ message: NEXT_REFUSAL });
+  });
+
   it('leaves the training kind to the training status, not the generation switch', async () => {
     storedStatus = { mode: 'disabled', message: OPERATOR_MESSAGE };
     // A body that passes input validation, so the refusal below is the training arm's own.

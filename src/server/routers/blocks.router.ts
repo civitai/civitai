@@ -6991,7 +6991,10 @@ export const blocksRouter = router({
       if (subjectId != null) await assertAccountNotRestricted(subjectId);
       // The global generation kill switch, as onsite generation applies it, ahead of every
       // generation kind. Training is governed by its own status (checked on its arm), as onsite.
-      if (input.body.kind !== 'training') await assertBlockGenerationAllowed(subjectId);
+      // BLOCKS_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+      if (input.body.kind !== 'training' && env.BLOCKS_ENFORCE_GENERATION_STATUS) {
+        await assertBlockGenerationAllowed(subjectId);
+      }
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path

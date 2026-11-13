@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
+import { env } from '~/env/server';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -348,7 +349,8 @@ export interface PromptClassification {
    * The external classifier's failure message when it threw. It fails OPEN — the verdict is then
    * computed as though it had not flagged — so this is the only trace that it did not actually
    * clear the text. Reporting it is the caller's job; this function records nothing.
-   * `auditPromptServer` refuses (503) any verdict carrying it that would otherwise let a submit through.
+   * `auditPromptServer` refuses (503) any verdict carrying it that would otherwise let a submit through
+   * (unless PROMPT_CHECK_FAIL_CLOSED is off).
    */
   externalError: { message: string } | null;
 }
@@ -601,7 +603,9 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // lists alone. It is refused as a retry-able 503: never submitted, never counted toward the
     // user's blocks. A hard block, or an unacknowledged soft one, keeps its own refusal below.
     // Not reached when the classifier is not configured (that returns "not flagged", no error).
+    // PROMPT_CHECK_FAIL_CLOSED=off restores the previous pass-through.
     if (
+      env.PROMPT_CHECK_FAIL_CLOSED &&
       verdict.externalError &&
       (verdict.outcome === 'pass' || (verdict.outcome === 'soft' && acknowledgedSoftBlock))
     ) {

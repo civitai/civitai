@@ -43,6 +43,7 @@ import type { PromptTrigger } from '~/utils/metadata/audit';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const UNAVAILABLE = 'The prompt check is temporarily unavailable. Please try again in a moment.';
 
@@ -88,6 +89,7 @@ beforeEach(() => {
   mockAuditPromptEnriched.mockReturnValue({ blockedFor: [], triggers: [], success: true });
   // The blocked-prompt list exists, so a counted block appends to it rather than re-seeding.
   redisMock.sysRedis.exists.mockResolvedValue(1);
+  resetEnv();
 });
 
 describe('auditPromptServer — external classifier unavailable', () => {
@@ -145,6 +147,25 @@ describe('auditPromptServer — external classifier unavailable', () => {
     // Positive control for `expectNotCounted`: a counted block IS seen by the same probes.
     expect(redisMock.sysRedis.lPush).toHaveBeenCalled();
     expect(mockProhibited).toHaveBeenCalled();
+  });
+
+  it('PROMPT_CHECK_FAIL_CLOSED off: a classifier error passes the prompt through, as before', async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    classifierDown();
+    await expect(auditPromptServer(options)).resolves.toBeUndefined();
+    expect(mockModeratePrompt).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'external-moderation-error' })
+    );
+  });
+
+  it('PROMPT_CHECK_FAIL_CLOSED off: an acknowledged soft block proceeds on a classifier error', async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    flagWith(SOFT);
+    classifierDown();
+    await expect(
+      auditPromptServer({ ...options, acknowledgedSoftBlock: true })
+    ).resolves.toBeUndefined();
   });
 
   it('CONTROL: a classifier that answers "not flagged" lets the prompt through', async () => {
