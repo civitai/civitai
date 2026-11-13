@@ -2,10 +2,7 @@
 // `session-client.ts` injects `isRevoked` into `createSessionClient`, so a logged-out / banned token is
 // rejected even on a `session:data2` cache hit (the cache holds the rich user, not the token's validity).
 //
-// The revocation check is the package registry's, so every app reads the same markers. When the read fails,
-// the verdict comes from the markers this process has already read (the package's revocation record): a known
-// revocation still holds, and a session with none known is allowed, so a sysRedis blip never 500s or signs
-// out every authed request.
+// The revocation check is the package registry's, so every app reads the same markers.
 import {
   createAuthVerifier,
   createRevocationCheck,
