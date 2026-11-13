@@ -18,6 +18,8 @@ const searchIndexes = {
   bounty: bountiesSearchIndex,
   collection: collectionsSearchIndex,
   comic: comicsSearchIndex,
+  // Images have only the metrics index now that images_v6 is gone; the moderator app still syncs them.
+  image: imagesMetricsSearchIndex,
   model: modelsSearchIndex,
   tool: toolsSearchIndex,
   user: usersSearchIndex,
@@ -63,10 +65,6 @@ export default WebhookEndpoint(async (req, res) => {
   const updates = ids.map((id) => ({ id, action: queueAction }));
 
   await index.queueUpdate(updates, { reason: 'internal-api' });
-
-  // Images live in two indexes (main + metrics) — keep both in sync, matching the main app's
-  // queueImageSearchIndexUpdate.
-  if (entityType === 'image') await imagesMetricsSearchIndex.queueUpdate(updates);
 
   return res.status(200).json({ ok: true, entityType, count: ids.length });
 });
