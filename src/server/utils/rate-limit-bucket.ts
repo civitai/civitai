@@ -55,12 +55,73 @@ export function rateLimitBucket(
 type RateLimitBucket = ReturnType<typeof rateLimitBucket>;
 
 /**
+ * 🔴 Router keys whose rate-limited procedures FAIL CLOSED when the store is unreadable: buzz,
+ * payments and generation/orchestrator (training runs and auto-label are orchestrator jobs paid in
+ * buzz). There the limiter refuses with a 503 rather than admit on a per-process count the store
+ * cannot confirm — an operator decision: money paths do not degrade open, even partly.
+ *
+ * Every other rate-limiting router is listed in RATE_LIMIT_FALLBACK_SCOPES and uses the
+ * per-process fallback below. The two lists are a LEDGER: a test fails until every router that
+ * rate-limits a procedure is in exactly one of them, so a new money router cannot silently inherit
+ * the fallback. A new procedure in a fail-closed router is fail-closed with no further step.
+ */
+export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
+  'buzz',
+  'nowPayments',
+  'generation',
+  'orchestrator',
+  'training',
+];
+
+/** Routers whose rate-limited procedures use the per-process fallback count. See above. */
+export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
+  'appCollaborators',
+  'appFeedback',
+  'appListings',
+  'appStorage',
+  'article',
+  'blockImageUpload',
+  'blocks',
+  'commentv3',
+  'content',
+  'cosmetic',
+  'creatorServiceDealFile',
+  'crucible',
+  'event',
+  'feedback',
+  'hatTurf',
+  'hiddenPreferences',
+  'model',
+  'placement',
+  'platformFeedback',
+  'post',
+  'postIntent',
+  'prize',
+  'reaction',
+  'remixApp',
+  'report',
+  'resourceLoad',
+  'semanticArticleSearch',
+  'semanticImageSearch',
+  'user',
+];
+
+const failClosedScopes = new Set(FAIL_CLOSED_RATE_LIMIT_SCOPES);
+
+/** The scope's router key — before the first `.` (tRPC path) or `:` (bucket key) — is fail-closed. */
+export function isFailClosedRateLimitScope(scope: string) {
+  return failClosedScopes.has(scope.split(/[.:]/, 1)[0]);
+}
+
+/**
  * Attempts counted in THIS process while the store (the cluster cache) is unavailable — a read that
  * fails, times out, or is short-circuited by the cluster-cache breaker. Abuse prevention must not
  * switch off with the store, and failing every rate-limited call would turn a cache outage into an
  * outage of every procedure that has a limit, so the limiter keeps counting here instead: each
  * process enforces the full rule on the attempts it saw, a finite limit (at most the rule × the
  * number of processes) rather than none.
+ *
+ * Not for FAIL_CLOSED_RATE_LIMIT_SCOPES, which refuse instead (see above).
  *
  * Only filled while degraded, and discarded in effect once the store answers again (the store's own
  * history is authoritative then). Bounded: past LOCAL_BUCKETS_MAX buckets the oldest is dropped, so
@@ -154,11 +215,16 @@ export async function peekRateLimit({
 export async function claimRateLimitAttempt({
   rules,
   keyName,
+  scope = keyName,
   user,
   req,
 }: {
   rules: RateLimit[] | UsageLimitRef;
   keyName: string;
+  /** The procedure this attempt is for — its tRPC path (`router.procedure`) or `router:...`. Decides
+   * fail-closed vs fallback (see FAIL_CLOSED_RATE_LIMIT_SCOPES). Defaults to `keyName`; the tRPC
+   * middleware passes the path, so a `sharedKey` can never move a procedure out of its router. */
+  scope?: string;
   user: SessionUser | undefined;
   req: NextApiRequest;
 }): Promise<() => Promise<void>> {
@@ -173,6 +239,12 @@ export async function claimRateLimitAttempt({
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
   const { attempts, degraded } = await readAttemptsOrLocal(bucket);
+  if (degraded && isFailClosedRateLimitScope(scope)) {
+    throw new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'This is temporarily unavailable. Please try again in a moment.',
+    });
+  }
 
   const now = Date.now();
   const usages = evaluateRateLimitWindow(validLimits, attempts, now);

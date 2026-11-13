@@ -279,10 +279,10 @@ type FetchThroughCacheOptions = {
   // routinely `${prefix}:${id}`, so using it directly would be unbounded label cardinality.
   // Ignored entirely unless `compress` is on (nothing else records codec time).
   cacheName?: string;
-  // When FETCH_THROUGH_CACHE_SERVE_STALE is on, an origin error during a refresh is answered with
-  // the expired entry if one is still cached (entries live ttl*2). Pass `false` for a value a caller
-  // must never see expired — a balance, a permission, anything a decision is made on. Ignored while
-  // the switch is off.
+  // OPT-IN: `true` lets an origin error during a refresh be answered with the expired entry if one
+  // is still cached (entries live ttl*2) — only while FETCH_THROUGH_CACHE_SERVE_STALE is on. Off by
+  // default for every caller, so nothing that makes a decision on the value (a balance, a
+  // permission) can be handed an expired one by the global switch alone.
   serveStaleOnError?: boolean;
 };
 type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
@@ -421,16 +421,16 @@ export async function fetchThroughCache<T>(
   // (set result, release lock) are swallowed so a Redis stall on the WRITE side never
   // turns a successful origin fetch into a 500.
   //
-  // Serve-stale (FETCH_THROUGH_CACHE_SERVE_STALE, dark): an origin error during a REFRESH — there
-  // is an expired entry, since a fresh one returned above — answers with that entry instead of the
-  // error, unless the caller opted out. Counted per cache name and logged. With no entry, or the
-  // switch off, the error propagates exactly as before.
+  // Serve-stale (opt-in per caller, and only while FETCH_THROUGH_CACHE_SERVE_STALE is on): an
+  // origin error during a REFRESH — there is an expired entry, since a fresh one returned above —
+  // answers with that entry instead of the error. Counted per cache name and logged. Otherwise the
+  // error propagates exactly as before.
   try {
     const data = await fetchFn();
     await writeFetchThroughEntry(key, data, { ttl, compress, cacheName }, 'fetchThroughCache');
     return data;
   } catch (err) {
-    if (cachedData && env.FETCH_THROUGH_CACHE_SERVE_STALE && options.serveStaleOnError !== false) {
+    if (cachedData && options.serveStaleOnError === true && env.FETCH_THROUGH_CACHE_SERVE_STALE) {
       fetchThroughCacheStaleServedCounter.inc({ cache_name: cacheName ?? 'unnamed' });
       logSysRedisFailOpen('read-degraded', 'fetchThroughCache origin (served stale)', err, {
         key,

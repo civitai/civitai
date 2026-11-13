@@ -179,6 +179,8 @@ export function rateLimit<TInput = any>(
     const recordAttempt = await claimRateLimitAttempt({
       rules,
       keyName: options?.sharedKey ?? path.replace('.', ':'),
+      // The procedure's own router decides fail-closed vs fallback, whatever bucket it shares.
+      scope: path,
       user: ctx.user,
       req: ctx.req,
     });

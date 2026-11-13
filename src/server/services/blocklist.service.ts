@@ -60,8 +60,8 @@ async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {
  * 1. a copy younger than BLOCKLIST_CACHE_TTL — the staleness the cache itself already allows — is
  *    served as is, sparing the database a read per check during the outage;
  * 2. otherwise the row is read from the database;
- * 3. if that fails too, the last copy of any age is served;
- * 4. with no copy at all, the database error is thrown: the caller fails closed.
+ * 3. if that fails too, the database error is thrown: the caller fails closed. A copy older than
+ *    the TTL is staler than the cache itself would ever serve, so it is never used.
  */
 const lastKnown = new Map<string, { dto: BlocklistDTO; at: number }>();
 
@@ -77,14 +77,9 @@ function remember(type: string, dto: BlocklistDTO) {
 async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<BlocklistDTO> {
   const known = lastKnown.get(type);
   if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000) return known.dto;
-  try {
-    const row = await readBlocklistRow(type);
-    remember(type, row);
-    return row;
-  } catch (error) {
-    if (known) return known.dto;
-    throw error;
-  }
+  const row = await readBlocklistRow(type);
+  remember(type, row);
+  return row;
 }
 
 /**

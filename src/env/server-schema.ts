@@ -198,7 +198,8 @@ export const serverSchema = z
     REDIS_CACHE_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
     REDIS_CACHE_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
     // fetchThroughCache: when the origin fetch throws and an expired entry is still cached, answer
-    // with that entry instead of the error (callers can opt out). Dark by default.
+    // with that entry instead of the error — only for callers that opt in (serveStaleOnError: true).
+    // Dark by default.
     FETCH_THROUGH_CACHE_SERVE_STALE: zc.booleanString.default(false),
     // Bound on the replication-lag flag read (db/db-lag-helpers.ts). A read that misses it or
     // fails routes to the replica, which is what a missing flag already does. 0 disables the bound.
