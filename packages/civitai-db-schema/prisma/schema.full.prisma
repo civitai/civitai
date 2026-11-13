@@ -2985,6 +2985,7 @@ model OauthClient {
   connectListings          AppListing[]
   workerClient             WorkerClient?
   workerDevices            WorkerDevice[]
+  invites                  OauthInvite[]
 
   @@index([userId])
 }
@@ -5088,6 +5089,20 @@ model OauthConsent {
   updatedAt DateTime    @default(now()) @updatedAt
 
   @@unique([userId, clientId])
+}
+
+/// An emailed sign-in invite from a system app (auth hub POST /api/auth/invite). Only the token's hash is
+/// stored; the row is deleted when the link is used, so a link signs in once.
+model OauthInvite {
+  tokenHash String      @id
+  clientId  String
+  client    OauthClient @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  email     String
+  returnUrl String
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
+
+  @@index([clientId, email])
 }
 
 // First-party spoke domain registry for the OAuth cross-domain login flow (replaces AUTH_SPOKE_ORIGINS).

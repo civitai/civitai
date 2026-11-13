@@ -15,9 +15,10 @@ import { env } from '~/env/server';
  * by Promise.race) and is capped by the sys client's `commandsQueueMaxLength`;
  * `disableOfflineQueue` keeps the reconnect path clear.
  *
- * NOTE: this only bounds the awaited READ it wraps. Awaited sys WRITES on a half-open
- * are not raced here — they are bounded by `commandsQueueMaxLength` (heap) and are
- * fail-open / best-effort at their call sites.
+ * NOTE: it bounds only the awaited command it wraps. Most awaited sys WRITES are not wrapped:
+ * on a half-open they are bounded only by `commandsQueueMaxLength` (heap), and their call
+ * sites treat them as best-effort. A write whose outcome a caller acts on can be wrapped too:
+ * `recordUploadKeyOwner` races its upload key issue record so a stalled write counts as failed.
  *
  * `ms` defaults to REDIS_SYS_READ_TIMEOUT_MS; pass an explicit value in tests. `<= 0`
  * disables the guard (returns the promise unchanged).
