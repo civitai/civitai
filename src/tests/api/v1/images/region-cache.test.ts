@@ -66,6 +66,7 @@ describe('/api/v1/images shared cache by region', () => {
     ['a model gallery at X only', { modelId: '1', browsingLevel: '8' }],
     ['a model gallery at XXX only', { modelId: '1', browsingLevel: '16' }],
     ['a model gallery at nsfw=Blocked', { modelId: '1', nsfw: 'Blocked' }],
+    ['a model gallery at nsfw=Mature', { modelId: '1', nsfw: 'Mature' }],
     ['a level wider than 32 bits', { modelId: '1', browsingLevel: String(2 ** 32 + 1) }],
     ['a fractional level', { modelId: '1', browsingLevel: '1.5' }],
     ['a negative level', { modelId: '1', browsingLevel: '-1' }],
@@ -82,6 +83,7 @@ describe('/api/v1/images shared cache by region', () => {
     ['a model gallery at the default level', { modelId: '1' }],
     ['a model gallery at the SFW levels', { modelId: '1', browsingLevel: '3' }],
     ['a feed at nsfw=None', { nsfw: 'None' }],
+    ['a feed at nsfw=Soft', { nsfw: 'Soft' }],
   ])('keeps the public cache for %s', async (_, query) => {
     for (const { statusCode, cacheControl } of await bothRegions(query)) {
       expect(statusCode).toBe(200);
