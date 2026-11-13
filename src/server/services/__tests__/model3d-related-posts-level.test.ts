@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
+import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -94,6 +95,8 @@ const POSTS = [
   post(15, R, [image(R, { id: 9001 }), image(R)]),
   // Blocked alone is no level a viewer browses at.
   post(16, Blocked, [image(Blocked)]),
+  // A post level that has drifted from its images: rated XXX, its one image PG.
+  post(17, XXX, [image(PG)]),
 ];
 const RESTRICTED_MATURE = new Set([9001]);
 
@@ -164,6 +167,12 @@ describe('getModel3DRelatedPosts', () => {
     });
   });
 
+  it("goes by the post's own level, even where a PG cover would pass", async () => {
+    expect((await listed(undefined, publicBrowsingLevelsFlag)).some((p) => p.id === 17)).toBe(
+      false
+    );
+  });
+
   it('lists an R viewer nothing that shares only X or XXX', async () => {
     expect((await listed({ id: 77 }, R)).map((p) => p.id)).toEqual([15, 4]);
     // Post 15's first image is a restricted model's mature one: the next is its cover.
@@ -174,6 +183,7 @@ describe('getModel3DRelatedPosts', () => {
 
   it("lists a mature viewer's level, still without the unrated post", async () => {
     expect(await listed({ id: 77 }, allBrowsingLevelsFlag | Blocked, { limit: 50 })).toEqual([
+      { id: 17, cover: PG },
       { id: 15, cover: R },
       { id: 13, cover: PG },
       { id: 12, cover: XXX },
@@ -245,6 +255,15 @@ describe('relatedPostsBrowsingLevel', () => {
         allBrowsingLevelsFlag
       )
     ).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('holds a verified crawler with nothing asked to PG where mature content is allowed', () => {
+    const crawler = {
+      user: undefined,
+      features: { canViewNsfw: true, isGreen: false },
+      req: { headers: { [VERIFIED_BOT_HEADER]: 'googlebot' } },
+    } as never;
+    expect(relatedPostsBrowsingLevel(crawler, undefined)).toBe(publicBrowsingLevelsFlag);
   });
 
   it("reads a signed-in mature viewer's saved level when none is asked, and what they ask for otherwise", () => {
