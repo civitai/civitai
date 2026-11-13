@@ -18,11 +18,13 @@ export const childLabelImageIdsSql = (after: number) => Prisma.sql`
     AND "imageId" > ${after}
 `;
 
-/** Which of these images WD14 also tagged. */
+/** Which of these images WD14 also tagged (enabled tags, as the cache lookup reads them). */
 export const wd14ImageIdsSql = (imageIds: number[]) => Prisma.sql`
   SELECT DISTINCT "imageId"
   FROM "TagsOnImageDetails"
-  WHERE "imageId" = ANY(${imageIds}::int[]) AND "source" = 'WD14'::"TagSource"
+  WHERE "imageId" = ANY(${imageIds}::int[])
+    AND "source" = 'WD14'::"TagSource"
+    AND "disabled" = false
 `;
 
 /** Models with a version whose posts hold these images. */
@@ -37,7 +39,7 @@ export const modelIdsForImagesSql = (imageIds: number[]) => Prisma.sql`
 /**
  * Collections whose search document can show one of these images: as its cover, or through an item
  * that is the image, its post, a model in `modelIds`, an article it covers or a 3D model it is the
- * thumbnail of. One pass over CollectionItem.
+ * thumbnail of. Each item column is its own branch, so the indexed ones use their index.
  */
 export const collectionIdsForImagesSql = (imageIds: number[], modelIds: number[]) => Prisma.sql`
   WITH posts AS (
@@ -50,13 +52,14 @@ export const collectionIdsForImagesSql = (imageIds: number[], modelIds: number[]
   )
   SELECT c.id FROM "Collection" c WHERE c."imageId" = ANY(${imageIds}::int[])
   UNION
-  SELECT ci."collectionId" AS id
-  FROM "CollectionItem" ci
-  WHERE ci."imageId" = ANY(${imageIds}::int[])
-    OR ci."postId" IN (SELECT id FROM posts)
-    OR ci."modelId" = ANY(${modelIds}::int[])
-    OR ci."articleId" IN (SELECT id FROM articles)
-    OR ci."model3dId" IN (SELECT id FROM models3d)
+  SELECT "collectionId" FROM "CollectionItem" WHERE "imageId" = ANY(${imageIds}::int[])
+  UNION
+  SELECT "collectionId" FROM "CollectionItem" WHERE "modelId" = ANY(${modelIds}::int[])
+  UNION
+  SELECT "collectionId" FROM "CollectionItem" WHERE "model3dId" IN (SELECT id FROM models3d)
+  UNION
+  SELECT "collectionId" FROM "CollectionItem"
+  WHERE "postId" IN (SELECT id FROM posts) OR "articleId" IN (SELECT id FROM articles)
 `;
 
 const ids = async (sql: Prisma.Sql) =>
@@ -94,9 +97,12 @@ export type ChildLabelReindexOptions = {
 
 /**
  * step=bust rewrites each selected image's tagIdsForImagesCache entry from the database
- * (`refresh`), then reads it back: `verified` counts entries now holding a child tag id. If none of
- * the first chunk's do, the run stops: the deployed lookup still drops the label.
- * step=reindex queues the models and collections whose search documents can carry those images.
+ * (`refresh`), then reads it back: `verified` counts entries now holding a child tag id (`refreshed`
+ * counts ids sent; refresh swallows its own errors). If any of the first chunk's lack it, the run
+ * stops: the deployed lookup still drops the label.
+ * step=reindex first reads back up to 50 selected entries and stops unless all hold a child tag
+ * (dryRun reports the count), then queues the models and collections whose search documents can
+ * carry those images.
  * dryRun counts and writes nothing.
  */
 export async function runChildLabelReindex({
@@ -118,13 +124,16 @@ export async function runChildLabelReindex({
       for (const [index, chunk] of chunks.entries()) {
         await tagIdsForImagesCache.refresh(chunk);
         refreshed += chunk.length;
-        const entries = await tagIdsForImagesCache.fetch(chunk, { bypassLocal: true });
+        const entries = await tagIdsForImagesCache.fetch(chunk, {
+          bypassLocal: true,
+          writeBack: false,
+        });
         const ok = chunk.filter((id) =>
           entries[id]?.tags.some((tagId) => CHILD_TAG_IDS.includes(tagId))
         ).length;
         verified += ok;
         lastImageId = chunk[chunk.length - 1];
-        if (index === 0 && ok === 0)
+        if (index === 0 && ok < chunk.length)
           return {
             step,
             dryRun,
@@ -133,7 +142,7 @@ export async function runChildLabelReindex({
             refreshed,
             verified,
             lastImageId,
-            aborted: 'refreshed entries hold no child tag: the deployed lookup still drops it',
+            aborted: 'a refreshed entry lacks the child tag: the deployed lookup still drops it',
           };
       }
     }
@@ -147,6 +156,24 @@ export async function runChildLabelReindex({
       lastImageId,
     };
   }
+
+  // Documents are rebuilt from the cache, so a reindex waits until a sample reads back fixed.
+  const probe = imageIds.slice(0, Math.min(chunkSize, 50));
+  const probeEntries = probe.length
+    ? await tagIdsForImagesCache.fetch(probe, { bypassLocal: true, writeBack: false })
+    : {};
+  const probeVerified = probe.filter((id) =>
+    probeEntries[id]?.tags.some((tagId) => CHILD_TAG_IDS.includes(tagId))
+  ).length;
+  if (!dryRun && probeVerified < probe.length)
+    return {
+      step,
+      dryRun,
+      images: imageIds.length,
+      probe: probe.length,
+      probeVerified,
+      aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
+    };
 
   const modelIds = imageIds.length ? await ids(modelIdsForImagesSql(imageIds)) : [];
   const collectionIds = imageIds.length
@@ -166,6 +193,8 @@ export async function runChildLabelReindex({
     step,
     dryRun,
     images: imageIds.length,
+    probe: probe.length,
+    probeVerified,
     models,
     collections: collectionIds.length,
     collectionsQueued,

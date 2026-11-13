@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { Prisma } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 /**
  * The child-label reindex route's work, with its SQL run on an in-memory Postgres (only the columns
@@ -18,7 +19,7 @@ const { refresh, fetch, queueModelsReindex, collectionsQueueUpdate } = vi.hoiste
     dryRun: opts.dryRun,
     modelCount: ids.length,
   })),
-  collectionsQueueUpdate: vi.fn(async (_items: { id: number }[]) => undefined),
+  collectionsQueueUpdate: vi.fn(async (_items: { id: number; action: string }[]) => undefined),
 }));
 vi.mock('~/server/redis/caches', () => ({ tagIdsForImagesCache: { refresh, fetch } }));
 vi.mock('~/server/search-index', () => ({
@@ -29,6 +30,7 @@ vi.mock('~/server/search-index/queue-models-reindex', () => ({ queueModelsReinde
 const { runChildLabelReindex } = await import('~/server/services/child-label-reindex.service');
 
 const CHILD = childBrowsingTagIds[0];
+const CHILD_2 = childBrowsingTagIds[1];
 const OTHER = 9002;
 
 let db: PGlite;
@@ -63,21 +65,25 @@ beforeEach(async () => {
     if (++queries > 50) throw new Error('query loop did not end');
     return (await db.query(sql.text, sql.values as unknown[])).rows;
   }) as never);
-  // The fixed lookup: every refreshed entry holds the child tag.
-  fetch.mockImplementation(async (ids: number[]) =>
-    Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001, CHILD] }]))
+  // The fixed lookup: a refreshed entry holds the child tag, read past the per-process L1 only.
+  fetch.mockImplementation(async (ids: number[], opts?: { bypassLocal?: boolean }) =>
+    Object.fromEntries(
+      ids.map((id) => [id, { imageId: id, tags: opts?.bypassLocal ? [9001, CHILD] : [9001] }])
+    )
   );
   await db.exec(`
     TRUNCATE "TagsOnImageDetails", "Image", "Post", "ModelVersion", "Article", "Model3D",
       "Collection", "CollectionItem";
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", source, disabled) VALUES
-      (1, ${CHILD}, 'Rekognition', false), (1, 9001, 'WD14', false),
-      (2, ${CHILD}, 'Rekognition', false), (2, 9001, 'WD14', false),
       (3, ${CHILD}, 'Rekognition', false), (3, 9001, 'WD14', false),
+      (2, ${CHILD}, 'Rekognition', false), (2, ${CHILD_2}, 'Rekognition', false),
+      (2, 9001, 'WD14', false),
+      (1, ${CHILD}, 'Rekognition', false), (1, 9001, 'WD14', false), (1, 9005, 'WD14', false),
       (10, ${CHILD}, 'Rekognition', false),
       (11, ${CHILD}, 'Rekognition', true), (11, 9001, 'WD14', false),
       (12, ${OTHER}, 'Rekognition', false), (12, 9001, 'WD14', false),
-      (13, ${CHILD}, 'WD14', false);
+      (13, ${CHILD}, 'WD14', false),
+      (14, ${CHILD}, 'Rekognition', false), (14, 9001, 'WD14', true);
     INSERT INTO "Image" (id, "postId") VALUES (1, 100), (2, 200), (3, NULL), (10, 300), (20, 200);
     INSERT INTO "Post" (id, "modelVersionId") VALUES (100, 1000), (200, NULL), (300, 3000);
     INSERT INTO "ModelVersion" (id, "modelId") VALUES (1000, 50), (3000, 60);
@@ -99,14 +105,20 @@ beforeEach(async () => {
 });
 
 const refreshedIds = () => refresh.mock.calls.flatMap(([ids]) => ids);
-const queuedCollections = () =>
-  collectionsQueueUpdate.mock.calls.flatMap(([items]) => items.map((x) => x.id)).sort();
+const queuedCollections = () => {
+  const items = collectionsQueueUpdate.mock.calls.flatMap(([items]) => items);
+  expect(items.every((x) => x.action === SearchIndexUpdateQueueAction.Update)).toBe(true);
+  return items.map((x) => x.id).sort();
+};
 
 describe('child-label reindex: bust', () => {
   it('refreshes only Rekognition child labels, enabled, on images WD14 also tagged', async () => {
     await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
     // 10: no WD14. 11: label disabled. 12: not a child tag. 13: child tag from WD14 itself.
+    // 14: its only WD14 tag is disabled, so the cache lookup never drops its label.
+    // Ascending and once each, whatever the row order and however many tags an image has.
     expect(refreshedIds()).toEqual([1, 2, 3]);
+    expect(fetch).toHaveBeenCalledWith(expect.any(Array), { bypassLocal: true, writeBack: false });
     expect(queueModelsReindex).not.toHaveBeenCalled();
     expect(collectionsQueueUpdate).not.toHaveBeenCalled();
   });
@@ -141,7 +153,35 @@ describe('child-label reindex: bust', () => {
     );
     const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
     expect(refresh).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ refreshed: 2, verified: 0, aborted: expect.any(String) });
+    expect(result).toMatchObject({
+      refreshed: 2,
+      verified: 0,
+      lastImageId: 2,
+      aborted: expect.any(String),
+    });
+  });
+
+  it('stops when any entry of the first chunk lacks the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [id, { imageId: id, tags: id === 1 ? [9001] : [9001, CHILD] }])
+      )
+    );
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ verified: 1, aborted: expect.any(String) });
+  });
+
+  it('counts per image and does not stop when only a later chunk lacks the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [id, { imageId: id, tags: id === 3 ? [9001] : [9001, CHILD] }])
+      )
+    );
+    const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ refreshed: 3, verified: 2, lastImageId: 3 });
+    expect(result).not.toHaveProperty('aborted');
   });
 
   it('a dry run counts and refreshes nothing', async () => {
@@ -166,6 +206,17 @@ describe('child-label reindex: reindex', () => {
   it('queues collections in chunks of chunkSize', async () => {
     await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 4 });
     expect(collectionsQueueUpdate.mock.calls.map(([items]) => items.length)).toEqual([4, 3]);
+  });
+
+  it('refuses to queue while cached entries still lack the child tag', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(fetch).toHaveBeenCalledWith([1, 2, 3], { bypassLocal: true, writeBack: false });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ probe: 3, probeVerified: 0, aborted: expect.any(String) });
   });
 
   it('a dry run counts and queues nothing', async () => {
