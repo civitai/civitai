@@ -239,13 +239,14 @@ export const getModel3DById = async ({
     // Visibility rules:
     // - Mods see everything.
     // - Owner sees their own (any status).
-    // - Public sees Published and not-Deleted.
+    // - Public sees Published, not-Deleted and not removed by a moderator.
     const isOwner = !!user && model3d.userId === user.id;
     if (!isModerator && !isOwner) {
       if (model3d.status !== Model3DStatus.Published) {
         throw throwNotFoundError(`No 3D model with id ${id}`);
       }
       if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
+      if (model3d.tosViolation) throw throwNotFoundError(`No 3D model with id ${id}`);
     }
 
     // The signed-in user's own recommend (thumbs-up), so the detail page can
@@ -481,6 +482,11 @@ export const getModel3DsInfinite = async ({
         // exactly this for mod-viewing-someone-else's drafts).
         AND.push({ status: Model3DStatus.Published });
       }
+    }
+
+    // A model a moderator removed shows only to its owner and to moderators.
+    if (!isModerator) {
+      AND.push({ OR: [{ tosViolation: false }, ...(user ? [{ userId: user.id }] : [])] });
     }
 
     if (userId) AND.push({ userId });
