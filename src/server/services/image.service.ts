@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { decreaseDate } from '~/utils/date-helpers';
 import { ownerHeld } from '~/server/services/legal-hold.service';
+import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -7150,26 +7151,18 @@ async function getFailedEntryDrafts({
         type,
         ingestion: ImageIngestionStatus.Error,
         blockedFor: null,
+        nsfwLevel: { not: NsfwLevel.Blocked },
         createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
         ...entryDraftImageWhere(),
       },
       take: limit,
       orderBy: { id: 'desc' },
     });
-    const hashes = rows.flatMap((row) => (row.pHash != null ? [row.pHash] : []));
-    const blocked = hashes.length
-      ? new Set(
-          (
-            await dbRead.blockedImage.findMany({
-              where: { hash: { in: hashes } },
-              select: { hash: true },
-            })
-          ).map((x) => x.hash)
-        )
-      : new Set<bigint>();
-    return rows
-      .filter((row) => row.pHash == null || !blocked.has(row.pHash))
-      .map(({ pHash: _pHash, ...row }) => row);
+    // Near matches on the live blocklist; any failed lookup lists nothing (the catch below).
+    const blocked = await Promise.all(
+      rows.map((row) => (row.pHash != null ? getIsImageBlocked(row.pHash) : false))
+    );
+    return rows.filter((_row, i) => !blocked[i]).map(({ pHash: _pHash, ...row }) => row);
   } catch (error) {
     logToAxiom({
       type: 'error',

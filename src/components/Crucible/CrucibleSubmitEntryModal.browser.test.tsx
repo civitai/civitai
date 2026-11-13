@@ -644,15 +644,25 @@ describe('CrucibleSubmitEntryModal — an upload whose scan fails', () => {
         expect.objectContaining({ title: 'Processing failed' })
       )
     );
+    const tileOf = (id: number) =>
+      document
+        .querySelector<HTMLElement>(`[data-testid="entry-media"][data-src="image-${id}"]`)!
+        .closest<HTMLElement>('.group')!;
+    await vi.waitFor(() => expect(tileOf(77).textContent).toContain('Processing failed'));
     expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
-    const tile = document
-      .querySelector<HTMLElement>('[data-testid="entry-media"][data-src="image-77"]')!
-      .closest<HTMLElement>('.group')!;
-    expect(tile.textContent).toContain('Processing failed');
+    expect(plainSubmit()!.textContent, 'not picked for the entrant').not.toMatch(/Submit [1-9]/);
 
-    tile.click();
-    await vi.waitFor(() => expect(plainSubmit()!.disabled).toBe(true));
-    expect(plainSubmit()!.textContent).not.toContain('Submit 1 Entry');
+    tileOf(77).click();
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    expect(plainSubmit()!.textContent).not.toMatch(/Submit [1-9]/);
+    // Positive control: a scanned upload beside it does select, so the click above was real.
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Error }, image(78)];
+    await view.rerender(<CrucibleSubmitEntryModal {...props} />);
+    await vi.waitFor(() => expect(tileOf(78)).toBeTruthy());
+    tileOf(78).click();
+    await vi.waitFor(() => expect(plainSubmit()!.textContent).toMatch(/Submit [1-9]/));
+    expect(plainSubmit()!.textContent).toContain('Submit 1 Entry');
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
   });
 });
 

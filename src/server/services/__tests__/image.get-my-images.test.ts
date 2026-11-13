@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
+import { NsfwLevel } from '~/server/common/enums';
 import { MediaType } from '~/shared/utils/prisma/enums';
+
+const { getIsImageBlocked } = vi.hoisted(() => ({
+  getIsImageBlocked: vi.fn<(hash: bigint) => Promise<boolean>>(),
+}));
+vi.mock('~/server/services/blocked-image-hash', () => ({ getIsImageBlocked }));
 
 const findMany = dbMock.dbRead.image.findMany;
 const { getMyImages } = await import('~/server/services/image.service');
@@ -61,7 +68,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     findMany.mock.calls.map(([args]) => args).find((args) => args.where.ingestion === 'Error');
 
   const holdCheck = dbMock.dbWrite.$queryRaw;
-  const blockedHashes = dbMock.dbRead.blockedImage.findMany;
+  const blockedHashes = getIsImageBlocked;
 
   beforeEach(() => {
     findMany.mockImplementation(async ({ where }) =>
@@ -70,7 +77,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     holdCheck.mockReset();
     holdCheck.mockResolvedValue([{ held: false }] as never);
     blockedHashes.mockReset();
-    blockedHashes.mockResolvedValue([]);
+    blockedHashes.mockResolvedValue(false);
   });
 
   const listForEntry = (cursor?: number) =>
@@ -109,6 +116,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     const { items } = await listForEntry(800);
     expect(items.map((x) => x.id)).toEqual([800]);
     expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it('leaves callers that list unpublished media too without them', async () => {
@@ -120,6 +128,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
       includeEntryDrafts: true,
     });
     expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it('leaves other published-only callers without failed uploads', async () => {
@@ -130,6 +139,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
       publishedOnly: true,
     });
     expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it('checks the hold of the caller, and only lists failed uploads the caller owns', async () => {
@@ -139,6 +149,12 @@ describe('getMyImages — entry drafts whose scan failed', () => {
       (value) => value.values ?? [value]
     );
     expect(boundValues).toContain(42);
+    // The statement as Postgres gets it: the owner the hold SQL reads is the caller.
+    const [strings, ...values] = holdCheck.mock.calls[0] as unknown as [string[], ...unknown[]];
+    const statement = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    expect(statement.sql).toMatch(/FROM \(SELECT \?::int AS "userId"\) m$/);
+    expect(statement.sql).toContain('m."userId"');
+    expect(statement.values.filter((value) => value === 42)).toEqual([42]);
     for (const [args] of findMany.mock.calls) expect(args.where.userId).toBe(42);
   });
 
@@ -147,6 +163,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     const { items } = await listForEntry();
     expect(items.map((x) => x.id)).toEqual([800]);
     expect(errorQueryOf()).toBeUndefined();
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 
   it('lists none when the hold cannot be read', async () => {
@@ -156,8 +173,44 @@ describe('getMyImages — entry drafts whose scan failed', () => {
   });
 
   it('leaves out a failed upload that a block reason was written on', async () => {
+    const rows = [
+      { id: 904, ingestion: 'Error', blockedFor: 'reason' },
+      { id: 905, ingestion: 'Error', blockedFor: null },
+    ];
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error'
+        ? rows
+            .filter((row) => !('blockedFor' in where) || row.blockedFor === where.blockedFor)
+            .map(({ blockedFor: _blockedFor, ...row }) => row)
+        : [listed]
+    );
+    const { items } = await listForEntry();
+    expect(items.map((x) => x.id)).toEqual([905, 800]);
+  });
+
+  it('leaves out a failed upload rated Blocked, even with no block reason written', async () => {
     await listForEntry();
-    expect(errorQueryOf()?.where).toMatchObject({ blockedFor: null });
+    expect(errorQueryOf()?.where).toMatchObject({ nsfwLevel: { not: NsfwLevel.Blocked } });
+  });
+
+  it('pages by the main listing alone: failed uploads never move the cursor', async () => {
+    findMany.mockImplementation(async ({ where }) =>
+      where.ingestion === 'Error'
+        ? [
+            { id: 950, ingestion: 'Error' },
+            { id: 10, ingestion: 'Error' },
+          ]
+        : [{ id: 900 }, { id: 800 }, { id: 700 }]
+    );
+    const { items, nextCursor } = await getMyImages({
+      userId: 42,
+      mediaTypes: [MediaType.video],
+      limit: 2,
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
+    expect(nextCursor).toBe(700);
+    expect(items.map((x) => x.id)).toEqual([950, 900, 800, 10]);
   });
 
   it('leaves out a failed upload on a blocked hash, and never returns the hash', async () => {
@@ -170,12 +223,10 @@ describe('getMyImages — entry drafts whose scan failed', () => {
           ]
         : [listed]
     );
-    blockedHashes.mockResolvedValue([{ hash: BigInt(7) }] as never);
+    blockedHashes.mockImplementation(async (hash) => hash === BigInt(7));
     const { items } = await listForEntry();
     expect(items.map((x) => x.id)).toEqual([903, 902, 800]);
-    expect(blockedHashes).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { hash: { in: [BigInt(7), BigInt(8)] } } })
-    );
+    expect(blockedHashes.mock.calls.map(([hash]) => hash)).toEqual([BigInt(7), BigInt(8)]);
     for (const item of items) expect(item).not.toHaveProperty('pHash');
   });
 
