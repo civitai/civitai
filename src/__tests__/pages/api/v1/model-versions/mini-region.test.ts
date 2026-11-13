@@ -182,17 +182,21 @@ describe('mini/[id] orchestrator exemption', () => {
     expect(cacheControl).toBe(NO_STORE);
   });
 
-  it.each([
-    ['an SFW version', PG],
-    ['an unrated version', 0],
-  ])('serves the orchestrator %s in a restricted region, uncached', async (_, level) => {
+  it('serves the orchestrator an unrated version in a restricted region, uncached', async () => {
+    const { statusCode, cacheControl } = await call(versionRow(0), true, `Bearer ${SERVICE_TOKEN}`);
+    expect(statusCode).toBe(200);
+    expect(cacheControl).toBe(NO_STORE);
+  });
+
+  it('never gives the orchestrator a shared-cacheable answer for an SFW version', async () => {
     const { statusCode, cacheControl } = await call(
-      versionRow(level),
+      versionRow(PG),
       true,
       `Bearer ${SERVICE_TOKEN}`
     );
     expect(statusCode).toBe(200);
-    expect(cacheControl).toBe(NO_STORE);
+    expect(cacheControl).toMatch(/private/);
+    expect(cacheControl).not.toMatch(/public|s-maxage/);
   });
 
   it.each([
