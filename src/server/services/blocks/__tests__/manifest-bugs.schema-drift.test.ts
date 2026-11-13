@@ -180,7 +180,11 @@ describe('BlockManifestValidator — bugs outside a new submission (lenient)', (
 
   it('validateSubmission passes the option through', async () => {
     const res = await BlockManifestValidator.validateSubmission(
-      manifestWith({ bugs: { url: 'https://example.com/s' } }),
+      // A surface (`page`): the submission gate requires one.
+      manifestWith({
+        page: { path: '/', title: 'My App' },
+        bugs: { url: 'https://example.com/s' },
+      }),
       APP_CTX,
       LENIENT
     );

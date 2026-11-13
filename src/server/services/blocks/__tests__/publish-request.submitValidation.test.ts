@@ -62,7 +62,14 @@ const VALID = {
   contentRating: 'g',
   scopes: [],
   iframe: { minHeight: 300, maxHeight: 800, resizable: true, sandbox: 'allow-scripts' },
+  page: { path: '/', title: 'My App' },
 };
+
+/** The submit refusal for a manifest with no surface, spelled as a literal. */
+const NO_SURFACE =
+  'manifest must declare at least one surface: add a "page" object for a full-page app ' +
+  '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
+  'model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])';
 
 async function bundle(manifest: Record<string, unknown>): Promise<Buffer> {
   const zip = new JSZip();
@@ -126,6 +133,38 @@ describe('submitVersion — deep manifest validation at submit', () => {
     expect(storage.commitFiles).not.toHaveBeenCalled();
     expect(db.createPublishRequest).not.toHaveBeenCalled();
     expect(followUps.onNewPendingSubmission).not.toHaveBeenCalled();
+  });
+
+  // The build refuses a manifest declaring neither a page nor a non-empty targets array, after a
+  // moderator approved it; submit refuses it first.
+  it.each<[string, Record<string, unknown>]>([
+    ['neither key', {}],
+    ['an empty targets array', { targets: [] }],
+    ['a null page', { page: null }],
+    ['an empty targets array and an array page', { targets: [], page: [] }],
+  ])('refuses a manifest with no surface (%s), naming the keys to add', async (_case, extra) => {
+    const { page: _page, ...noSurface } = VALID;
+    const err = await submitVersion({
+      bundleBuffer: await bundle({ ...noSurface, ...extra }),
+      submittedByUserId: 1,
+      submitterIsModerator: false,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ManifestValidationRefusal);
+    expect((err as InstanceType<typeof ManifestValidationRefusal>).errors).toContain(NO_SURFACE);
+    expect(storage.commitFiles).not.toHaveBeenCalled();
+    expect(db.createPublishRequest).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a slot-only manifest (non-empty targets, no page) is queued', async () => {
+    const { page: _page, ...noPage } = VALID;
+    await expect(
+      submitVersion({
+        bundleBuffer: await bundle({ ...noPage, targets: [{ slotId: 'model.sidebar_top' }] }),
+        submittedByUserId: 1,
+        submitterIsModerator: false,
+      })
+    ).resolves.toMatchObject({ slug: 'my-app' });
+    await settleFollowUps();
   });
 
   it('a subsequent version is validated against the LIVE client’s origins, as at approve', async () => {
