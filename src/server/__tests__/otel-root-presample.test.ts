@@ -230,16 +230,17 @@ describe('PresampledRootSampler with no mark', () => {
 });
 
 describe('buildOtelInstrumentations wiring', () => {
+  // `NODE_ENV` is a required key of `NodeJS.ProcessEnv` here, so `{}` does not typecheck.
+  const TEST_ENV: NodeJS.ProcessEnv = { NODE_ENV: 'test' };
   const built: HttpInstrumentation[] = [];
   afterEach(() => {
     for (const inst of built.splice(0)) inst.disable();
   });
 
   it('installs the pre-sample hook when given the ratio', () => {
-    const [http] = buildOtelInstrumentations(
-      {},
-      { presampleRatio: RATIO }
-    ) as HttpInstrumentation[];
+    const [http] = buildOtelInstrumentations(TEST_ENV, {
+      presampleRatio: RATIO,
+    }) as HttpInstrumentation[];
     built.push(http);
     const hook = http.getConfig().ignoreIncomingRequestHook;
     expect(hook).toBeTypeOf('function');
@@ -254,7 +255,7 @@ describe('buildOtelInstrumentations wiring', () => {
   });
 
   it('installs no incoming hook without the ratio (unchanged default)', () => {
-    const [http] = buildOtelInstrumentations({}) as HttpInstrumentation[];
+    const [http] = buildOtelInstrumentations(TEST_ENV) as HttpInstrumentation[];
     built.push(http);
     expect(http.getConfig().ignoreIncomingRequestHook).toBeUndefined();
   });
