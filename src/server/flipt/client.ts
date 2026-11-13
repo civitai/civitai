@@ -219,6 +219,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Replaces the retired opt-in `hot-path-fetch-timeouts`, whose value no longer
   // has any effect.
   OUTBOUND_FETCH_TIMEOUTS_OFF = 'outbound-fetch-timeouts-off',
+  // getAvailableOAuthProviders: serve an expired provider list at once and refresh it in the
+  // background, and skip the hub for 30s after a failed fetch. DEFAULT-OFF: null (absent flag,
+  // uninitialised client) keeps the plain behaviour, a bounded refetch that falls back to the last
+  // list on failure.
+  OAUTH_PROVIDERS_SERVE_STALE = 'oauth-providers-serve-stale',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with

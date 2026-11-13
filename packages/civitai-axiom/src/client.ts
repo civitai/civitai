@@ -66,8 +66,9 @@ export type AxiomLogger = {
   logToAxiom: (data: MixedObject, datastream?: string) => Promise<void>;
   /**
    * Resolve once every Axiom dual-write this logger started has an outcome (landed, failed, or
-   * passed its AXIOM_INGEST_TIMEOUT_MS budget). `logToAxiom` no longer waits for the dual-write, so
-   * a short-lived process that must ship its last events before exiting awaits this instead.
+   * passed its AXIOM_INGEST_TIMEOUT_MS budget), so at most that long. Used by tests today. It is
+   * also the shutdown hook a short-lived process would await before exiting, since `logToAxiom`
+   * no longer waits for the dual-write, but nothing in production calls it yet.
    */
   flush: () => Promise<void>;
   safeError: typeof safeError;
@@ -457,8 +458,8 @@ export function createAxiomLogger(
        * resolve. The rejection handler on the race's `.then` is unreachable today and is kept only
        * as a belt. Pinned by the NO UNHANDLED REJECTION test.
        */
-      // 🔴 NOT AWAITED. The caller gets control back as soon as the stderr line above is written;
-      // the dual-write finishes in the background. The 2 s race below now bounds how long we wait
+      // 🔴 NOT AWAITED, unless AXIOM_AWAIT_UPLOADS=true (end of this block). The caller gets control
+      // back as soon as the stderr line above is written; the dual-write finishes in the background. The 2 s race below now bounds how long we wait
       // for an OUTCOME to report, not how long the caller waits. Over the in-flight cap the Axiom
       // copy is dropped rather than queued: an unbounded queue in front of a stalled endpoint is
       // the pile-up the cap exists to prevent.
@@ -497,6 +498,9 @@ export function createAxiomLogger(
       );
       pendingOutcomes.add(outcome);
       void outcome.then(() => pendingOutcomes.delete(outcome));
+      // Off-switch (AXIOM_AWAIT_UPLOADS=true): wait for the outcome, which the race bounds at
+      // AXIOM_INGEST_TIMEOUT_MS. This is the behaviour before the dual-write stopped being awaited.
+      if (config.awaitUploads) await outcome;
     } else {
       console.log('logToAxiom', sendData);
     }
