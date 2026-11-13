@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { pack } from 'msgpackr';
 import type { NextApiRequest } from 'next';
 import { isDev, isPreview, isTest } from '~/env/other';
+import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -128,43 +129,91 @@ export function isFailClosedRateLimitScope(scope: string) {
  *
  * Not for FAIL_CLOSED_RATE_LIMIT_SCOPES, which refuse instead (see above).
  *
- * Only filled while degraded, and cleared on the first read the store answers again (the store's
- * own history is authoritative then). Bounded: past LOCAL_BUCKETS_MAX buckets the oldest is dropped, so
- * an outage under a flood of distinct callers costs bounded memory.
+ * Per bucket: a read the store answers drops only THAT bucket's local count (the store's history
+ * is authoritative for it now). Never the whole map — in a partial outage (one shard down, or reads
+ * timing out intermittently) another bucket's successful read would otherwise wipe the count of a
+ * bucket whose reads keep failing, and that bucket would never reach its limit.
+ *
+ * Bounded memory, two ways: an entry expires once its newest attempt is older than the bucket's
+ * longest window (swept at most every LOCAL_SWEEP_INTERVAL_MS; a read needs no expiry check, since
+ * the window evaluation ignores attempts outside it), and past LOCAL_BUCKETS_MAX buckets the least
+ * recently written is dropped, so an outage under a flood of distinct callers costs bounded memory.
  */
 const LOCAL_BUCKETS_MAX = 50_000;
-const localAttempts = new Map<string, number[]>();
+const LOCAL_SWEEP_INTERVAL_MS = 60_000;
+type LocalBucket = { attempts: number[]; expiresAt: number };
+const localAttempts = new Map<string, LocalBucket>();
+let localBucketsMax = LOCAL_BUCKETS_MAX;
+let lastLocalSweepAt = 0;
 const localKeyOf = (bucket: RateLimitBucket) => `${bucket.cacheKey}|${bucket.hashKey}`;
+
+function sweepExpiredLocalBuckets(now: number) {
+  if (now - lastLocalSweepAt < LOCAL_SWEEP_INTERVAL_MS) return;
+  lastLocalSweepAt = now;
+  for (const [key, entry] of localAttempts) if (entry.expiresAt <= now) localAttempts.delete(key);
+}
 
 function recordLocalAttempt(bucket: RateLimitBucket, at: number, longestPeriodSec: number) {
   const key = localKeyOf(bucket);
-  const kept = (localAttempts.get(key) ?? []).filter((x) => x > at - longestPeriodSec * 1000);
+  const windowMs = longestPeriodSec * 1000;
+  const kept = (localAttempts.get(key)?.attempts ?? []).filter((x) => x > at - windowMs);
   kept.push(at);
   // Re-insert so Map order tracks recency; evict the least recently written past the cap.
   localAttempts.delete(key);
-  localAttempts.set(key, kept);
-  if (localAttempts.size > LOCAL_BUCKETS_MAX) {
+  localAttempts.set(key, { attempts: kept, expiresAt: at + windowMs });
+  sweepExpiredLocalBuckets(at);
+  while (localAttempts.size > localBucketsMax) {
     const oldest = localAttempts.keys().next().value;
-    if (oldest !== undefined) localAttempts.delete(oldest);
+    if (oldest === undefined) break;
+    localAttempts.delete(oldest);
   }
 }
 
+/** Test seam: the number of buckets held locally, and a reset (optionally with a smaller cap). */
+export function __localRateLimitBucketCountForTests() {
+  return localAttempts.size;
+}
+export function __resetLocalRateLimitBucketsForTests(opts: { maxBuckets?: number } = {}) {
+  localAttempts.clear();
+  lastLocalSweepAt = 0;
+  localBucketsMax = opts.maxBuckets ?? LOCAL_BUCKETS_MAX;
+}
+
+/**
+ * The bucket read for a FAIL-CLOSED scope waits this long (instead of the guard's default
+ * REDIS_CACHE_READ_DEADLINE_MS) before failing, because there a failed read is a 503 rather than a
+ * fallback count: a merely slow read or a short event-loop stall must not refuse a payment. Only a
+ * store that stays silent this long — an outage — fails closed. Off, like every guard deadline,
+ * when REDIS_CACHE_READ_DEADLINE_MS=0.
+ */
+export const FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS = 2000;
+
+const failClosedReadDeadlineMs = () =>
+  env.REDIS_CACHE_READ_DEADLINE_MS > 0 ? FAIL_CLOSED_RATE_LIMIT_READ_DEADLINE_MS : 0;
+
 /** The bucket's attempts, from the store when it answers, else this process's local count. */
 async function readAttemptsOrLocal(
-  bucket: RateLimitBucket
+  bucket: RateLimitBucket,
+  failClosed: boolean
 ): Promise<{ attempts: number[]; degraded: boolean }> {
   try {
     const stored = await clusterCacheGuard.call(
       'rate-limit-bucket.read',
       () => redis.packed.hGet<number[]>(bucket.cacheKey, bucket.hashKey),
-      { logExtra: { cacheKey: bucket.cacheKey } }
+      {
+        logExtra: { cacheKey: bucket.cacheKey },
+        ...(failClosed ? { deadlineMs: failClosedReadDeadlineMs() } : {}),
+      }
     );
-    // The store answers again: its history is authoritative, so drop the outage's local counts
-    // rather than hold that memory until the next outage.
-    if (localAttempts.size > 0) localAttempts.clear();
+    // The store answers for this bucket again: its history is authoritative, so drop this
+    // bucket's local count — only this one (see localAttempts).
+    localAttempts.delete(localKeyOf(bucket));
     return { attempts: stored ?? [], degraded: false };
   } catch {
-    return { attempts: [...(localAttempts.get(localKeyOf(bucket)) ?? [])], degraded: true };
+    return {
+      attempts: [...(localAttempts.get(localKeyOf(bucket))?.attempts ?? [])],
+      degraded: true,
+    };
   }
 }
 
@@ -246,8 +295,9 @@ export async function claimRateLimitAttempt({
   if (validLimits.length === 0) return async () => undefined;
   const bucket = rateLimitBucket(keyName, user, req);
   const { cacheKey, hashKey } = bucket;
-  const { attempts, degraded } = await readAttemptsOrLocal(bucket);
-  if (degraded && isFailClosedRateLimitScope(scope)) {
+  const failClosed = isFailClosedRateLimitScope(scope);
+  const { attempts, degraded } = await readAttemptsOrLocal(bucket, failClosed);
+  if (degraded && failClosed) {
     throw new TRPCError({
       code: 'SERVICE_UNAVAILABLE',
       message: 'This is temporarily unavailable. Please try again in a moment.',
