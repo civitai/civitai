@@ -56,12 +56,12 @@ function ctxFor({
   user,
   canViewNsfw,
   bot,
-  scopedToken,
+  token,
 }: {
   user?: { id: number; isModerator?: boolean };
   canViewNsfw: boolean;
   bot?: 'googlebot';
-  scopedToken?: boolean;
+  token?: 'scoped' | 'full';
 }) {
   // `cache: null` is what the SSR helpers pass (getServerProxySSGHelpers).
   return {
@@ -69,12 +69,12 @@ function ctxFor({
     features: { canViewNsfw },
     req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
     cache: null,
-    // A personal key limited to reading models; no key fields is a browser session.
-    ...(scopedToken && {
+    // A personal key, full-access or limited to reading models; no key fields is a browser session.
+    ...(token && {
       apiKeyId: 9,
       apiKeyType: 'User',
       subject: { type: 'apiKey', id: 9 },
-      tokenScope: TokenScope.ModelsRead,
+      tokenScope: token === 'full' ? TokenScope.Full : TokenScope.ModelsRead,
     }),
   } as unknown as HandlerCtx;
 }
@@ -116,11 +116,13 @@ describe('getImageHandler', () => {
     }
   });
 
-  it("holds a collection manager to the cap on a scoped token, as the image's owner is", async () => {
+  it('holds a collection manager to the cap on a scoped token but not a full-access one', async () => {
     manages.mockImplementation(async ({ userId }) => userId === 42);
     try {
-      const judge = ctxFor({ canViewNsfw: false, user: { id: 42 }, scopedToken: true });
-      expect(await urlFor(judge, NsfwLevel.R)).toBeNull();
+      const scoped = ctxFor({ canViewNsfw: false, user: { id: 42 }, token: 'scoped' });
+      expect(await urlFor(scoped, NsfwLevel.R)).toBeNull();
+      const full = ctxFor({ canViewNsfw: false, user: { id: 42 }, token: 'full' });
+      expect(await urlFor(full, NsfwLevel.R)).toBe('media-key');
     } finally {
       manages.mockImplementation(async () => false);
     }

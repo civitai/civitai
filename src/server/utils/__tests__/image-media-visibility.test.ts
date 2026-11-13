@@ -219,6 +219,7 @@ describe('canViewImageMedia owner and moderator exemption from the domain cap', 
     expect(canSee({ user: { id: 5, isModerator: true } })).toBe(true);
     expect(canSee({ user: { id: KEY_OWNER } })).toBe(true);
     expect(canSee({ user: { id: 5, isModerator: true }, ...key(TokenScope.Full) })).toBe(true);
+    expect(canSee({ user: { id: KEY_OWNER }, ...key(TokenScope.Full) })).toBe(true);
   });
 
   it('holds a moderator or the owner to the cap on a scoped token', () => {
