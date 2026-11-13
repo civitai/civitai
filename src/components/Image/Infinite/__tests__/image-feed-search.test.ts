@@ -22,6 +22,7 @@ describe('toSemanticImageSearchInput', () => {
         username: 'someone',
         userId: 7,
         period: MetricTimeframe.Week,
+        fromPlatform: true,
         tools: [9],
         techniques: [3],
         remixesOnly: true,
@@ -38,6 +39,7 @@ describe('toSemanticImageSearchInput', () => {
       usernames: ['someone'],
       userIds: [7],
       postedAfter: new Date('2026-11-04T15:00:00Z'),
+      fromPlatform: true,
       limit: 50,
     });
   });
