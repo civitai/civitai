@@ -381,13 +381,13 @@ describe('/api/v1/images served by the feed service', () => {
 
       it('is a retryable 503 without calling the feed once the breaker is open', async () => {
         h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
-        for (let i = 0; i < 10; i++) expect((await get({})).statusCode).toBe(503);
-        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(10);
+        for (let i = 0; i < 20; i++) expect((await get({})).statusCode).toBe(503);
+        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(20);
         h.meiliOffCounted.length = 0;
         const res = await get({});
         expect(res.statusCode).toBe(503);
         expect(res.headers['retry-after']).toBe('2');
-        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(10);
+        expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(20);
         expect(h.meiliOffCounted).toEqual([
           { answer: 'unavailable', reason: 'breaker', route: 'rest' },
         ]);
@@ -396,9 +396,14 @@ describe('/api/v1/images served by the feed service', () => {
       it('serves the last good first page when the feed fails', async () => {
         expect((await get({})).statusCode).toBe(200);
         h.fetchFeedPrimary.mockRejectedValue(new Error('refused'));
+        h.counted.length = 0;
         const res = await get({});
         expect(res.statusCode).toBe(200);
         expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+        // The feed's failure is still counted as one, and the stale page is not recorded as a
+        // page the feed served.
+        expect(h.counted).toEqual([{ outcome: 'error', reason: 'fetch', route: 'rest' }]);
+        expect(h.record).toHaveBeenCalledTimes(1);
       });
     });
 

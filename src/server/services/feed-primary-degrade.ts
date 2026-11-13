@@ -10,11 +10,14 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  *
  * - A circuit breaker, the same state machine as withSignals (src/server/signals/wrapper.ts) and
  *   withMeili, reduced to one backend and no queue:
- *     CLOSED → (BREAKER.threshold failures within BREAKER.windowMs) → OPEN
+ *     CLOSED → (at least BREAKER.minCalls calls within BREAKER.windowMs, and more than
+ *               BREAKER.failureRate of them failed) → OPEN
  *     OPEN → (BREAKER.cooldownMs elapsed) → HALF_OPEN, one trial call
  *     HALF_OPEN → trial succeeds → CLOSED;  trial fails → OPEN (new cooldown)
  *   A failure is a thrown fetch (timeout, refused) or a 5xx answer. A 4xx is the feed refusing a
- *   query, not the feed being down, and never counts. While OPEN the call is not made at all.
+ *   query, not the feed being down, and counts as a good call. A rate rather than a count, so one
+ *   client repeating a query that always fails cannot open it for everyone else on the pod. While
+ *   OPEN the call is not made at all.
  *
  * - A last-good page cache for ANONYMOUS FIRST PAGES only (no viewer, no cursor/offset/time cut),
  *   keyed by the exact feed query string, with one LRU per route: the website's default pages are
@@ -29,7 +32,12 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  * runtime, and each copy would otherwise keep its own breaker and cache.
  */
 
-export const FEED_BREAKER = { threshold: 10, windowMs: 30_000, cooldownMs: 15_000 } as const;
+export const FEED_BREAKER = {
+  minCalls: 20,
+  failureRate: 0.5,
+  windowMs: 30_000,
+  cooldownMs: 15_000,
+} as const;
 export const FEED_LAST_GOOD = {
   ttlMs: 10 * 60_000,
   maxEntries: { website: 500, rest: 100 },
@@ -43,6 +51,8 @@ type DegradeState = {
   widenTimeout: () => boolean;
   breaker: {
     state: BreakerState;
+    // Unix ms of each call (and of each failed one) while CLOSED, oldest first, pruned to the window.
+    calls: number[];
     failures: number[];
     cooldownUntil: number;
     // When the HALF_OPEN trial started, or 0. A trial older than the cooldown is treated as lost
@@ -63,7 +73,7 @@ function state(): DegradeState {
     widenTimeout: createCachedFlagGate(
       readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_SERVICE_TIMEOUT_WIDEN)
     ),
-    breaker: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialStartedAt: 0 },
+    breaker: { state: 'CLOSED', calls: [], failures: [], cooldownUntil: 0, trialStartedAt: 0 },
     lastGood: { website: new Map(), rest: new Map() },
   });
 }
@@ -90,6 +100,7 @@ function transition(next: BreakerState, now: number) {
   b.trialStartedAt = 0;
   if (next === 'OPEN') b.cooldownUntil = now + FEED_BREAKER.cooldownMs;
   if (next === 'CLOSED') {
+    b.calls = [];
     b.failures = [];
     b.cooldownUntil = 0;
   }
@@ -123,11 +134,23 @@ export function recordFeedCall(admission: FeedAdmission, failed: boolean) {
     transition(failed ? 'OPEN' : 'CLOSED', now);
     return;
   }
-  if (!failed || b.state !== 'CLOSED') return;
+  if (b.state !== 'CLOSED') return;
   const cutoff = now - FEED_BREAKER.windowMs;
-  b.failures = b.failures.filter((t) => t >= cutoff);
-  b.failures.push(now);
-  if (b.failures.length >= FEED_BREAKER.threshold) transition('OPEN', now);
+  pruneBefore(b.calls, cutoff);
+  pruneBefore(b.failures, cutoff);
+  b.calls.push(now);
+  if (failed) b.failures.push(now);
+  if (
+    b.calls.length >= FEED_BREAKER.minCalls &&
+    b.failures.length > b.calls.length * FEED_BREAKER.failureRate
+  )
+    transition('OPEN', now);
+}
+
+function pruneBefore(timestamps: number[], cutoff: number) {
+  let i = 0;
+  while (i < timestamps.length && timestamps[i] < cutoff) i++;
+  if (i) timestamps.splice(0, i);
 }
 
 // Params that page or time-cut a feed; a query carrying any of them is not a first page.

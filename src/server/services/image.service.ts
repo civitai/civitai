@@ -3367,7 +3367,8 @@ async function serveImagesFromFeedService(
       }
     )
   );
-  if (served.ok) {
+  // A stale page (feed-primary-degrade) is not an answer the feed gave for this request.
+  if (served.ok && !served.page.stale) {
     void feedRequestCapture().record(searchInput, {
       source: 'getImagesFromSearch',
       filterMode: 'feed',

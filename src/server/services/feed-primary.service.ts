@@ -246,12 +246,12 @@ export async function serveFromFeed<T extends { id: number }>(
   let stale = false;
   let answer: FeedAnswer;
   const admission = degrade ? admitFeedCall() : undefined;
+  // feed_primary_requests_total counts what the feed did (served, timeout, error, breaker, ...);
+  // a stale page served in its place is counted in feed_primary_last_good_total instead.
   if (admission && !admission.admitted) {
+    count('breaker');
     const cached = readLastGood(lastGoodRoute, cacheKey, 'breaker');
-    if (!cached) {
-      count('breaker');
-      return { ok: false, reason: 'breaker' };
-    }
+    if (!cached) return { ok: false, reason: 'breaker' };
     answer = cached;
     stale = true;
   } else {
@@ -269,20 +269,24 @@ export async function serveFromFeed<T extends { id: number }>(
       answer = { status: 0, ms: 0, ids: [] };
     }
     if (admission) recordFeedCall(admission, failure !== undefined);
+    // Counted whether or not a stale page then answers, so the timeout and error rates stay the
+    // feed's own (they are what the timeout off-switch is decided on).
+    if (failure === 'timeout') count('timeout');
+    else if (failure === 'error') count('error', 'fetch');
+    else if (failure) count('error', failure);
     const cached =
       failure && degrade ? readLastGood(lastGoodRoute, cacheKey, reasonLabel(failure)) : undefined;
     if (cached) {
       answer = cached;
       stale = true;
-    } else if (failure === 'timeout' || failure === 'error') {
-      count(failure, failure === 'error' ? 'fetch' : '');
+    } else if (failure) {
       return { ok: false, reason: failure };
     } else if (cacheKey && answer.status === 200) {
       writeLastGood(lastGoodRoute, cacheKey, answer);
     }
   }
   if (answer.status !== 200) {
-    count('error', `status:${answer.status}`);
+    if (answer.status < 500) count('error', `status:${answer.status}`);
     if (answer.status === 400) logRefused(mapping.query, answer.error, deps.route);
     return { ok: false, reason: `status:${answer.status}` };
   }
@@ -294,7 +298,7 @@ export async function serveFromFeed<T extends { id: number }>(
   }
   const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
   const served = (data: T[]): FeedPrimaryResult<T> => {
-    count(stale ? 'stale' : 'served');
+    if (!stale) count('served');
     const page: FeedPrimaryPage<T> = { data, nextCursor, feedMs: answer.ms, route: answer.route };
     return { ok: true, page: stale ? { ...page, stale: true } : page };
   };

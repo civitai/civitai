@@ -26,7 +26,8 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   };
 });
 
-const THRESHOLD = 10;
+// The breaker needs this many calls in its window, and more than half of them failing.
+const MIN_CALLS = 20;
 const COOLDOWN_MS = 15_000;
 const TTL_MS = 10 * 60_000;
 
@@ -75,63 +76,100 @@ describe('feed-service request timeout', () => {
 });
 
 describe('feed-service circuit breaker', () => {
-  it(`opens after ${THRESHOLD} failures and stops calling the feed`, async () => {
+  it('does not open on a few failing calls among many good ones', async () => {
+    let n = 0;
+    // One call in four fails: a single client repeating a query the feed cannot answer.
+    const fetchFeed = vi.fn(async () =>
+      n++ % 4 === 3 ? Promise.reject(new Error('x')) : answer([1])
+    );
+    for (let i = 0; i < MIN_CALLS * 3; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS * 3);
+  });
+
+  it('opens once more than half of at least 20 calls in the window failed', async () => {
+    // Signed in, so the good calls leave no last-good page to answer the open breaker with.
+    const viewer = { ...anon, currentUserId: 7 };
+    const fetchFeed = vi.fn(async () => answer([1]));
+    for (let i = 0; i < 9; i++) await serveFromFeed(viewer, { fetchFeed, hydrate });
+    fetchFeed.mockRejectedValue(new Error('refused'));
+    for (let i = 0; i < 11; i++) await serveFromFeed(viewer, { fetchFeed, hydrate });
+    expect(fetchFeed).toHaveBeenCalledTimes(20);
+    expect(await serveFromFeed(viewer, { fetchFeed, hydrate })).toEqual({
+      ok: false,
+      reason: 'breaker',
+    });
+    expect(fetchFeed).toHaveBeenCalledTimes(20);
+  });
+
+  it('never opens on fewer calls than the minimum, however many fail', async () => {
     const fetchFeed = down();
-    for (let i = 0; i < THRESHOLD; i++)
+    for (let i = 0; i < MIN_CALLS - 1; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
+    expect(await serveFromFeed(anon, { fetchFeed, hydrate })).toEqual({
+      ok: false,
+      reason: 'error',
+    });
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS);
+  });
+
+  it(`opens after ${MIN_CALLS} failing calls and stops calling the feed`, async () => {
+    const fetchFeed = down();
+    for (let i = 0; i < MIN_CALLS; i++)
       expect(await serveFromFeed(anon, { fetchFeed, hydrate })).toEqual({
         ok: false,
         reason: 'error',
       });
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS);
 
     const started = performance.now();
     const r = await serveFromFeed(anon, { fetchFeed, hydrate });
     expect(performance.now() - started).toBeLessThan(50);
     expect(r).toEqual({ ok: false, reason: 'breaker' });
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS);
   });
 
   it('counts 5xx answers and not 4xx ones', async () => {
     const refused = vi.fn(async () => answer([], { status: 400 }));
-    for (let i = 0; i < THRESHOLD + 2; i++)
+    for (let i = 0; i < MIN_CALLS + 5; i++)
       await serveFromFeed(anon, { fetchFeed: refused, hydrate });
-    expect(refused).toHaveBeenCalledTimes(THRESHOLD + 2);
+    expect(refused).toHaveBeenCalledTimes(MIN_CALLS + 5);
 
+    delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
     const sick = vi.fn(async () => answer([], { status: 503 }));
-    for (let i = 0; i < THRESHOLD; i++) await serveFromFeed(anon, { fetchFeed: sick, hydrate });
+    for (let i = 0; i < MIN_CALLS; i++) await serveFromFeed(anon, { fetchFeed: sick, hydrate });
     expect(await serveFromFeed(anon, { fetchFeed: sick, hydrate })).toEqual({
       ok: false,
       reason: 'breaker',
     });
-    expect(sick).toHaveBeenCalledTimes(THRESHOLD);
+    expect(sick).toHaveBeenCalledTimes(MIN_CALLS);
   });
 
   it('does not open on failures spread wider than the window', async () => {
     const fetchFeed = down();
-    for (let i = 0; i < THRESHOLD * 2; i++) {
+    for (let i = 0; i < MIN_CALLS * 2; i++) {
       await serveFromFeed(anon, { fetchFeed, hydrate });
-      vi.setSystemTime(Date.now() + 3_500);
+      // 2.1s apart: 15 calls fit in the 30s window, fewer than the minimum; 29 would fit in 60s.
+      vi.setSystemTime(Date.now() + 2_100);
     }
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD * 2);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS * 2);
   });
 
   it('half-opens after the cooldown: one trial, closing on success', async () => {
     const fetchFeed = down();
-    for (let i = 0; i < THRESHOLD; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
+    for (let i = 0; i < MIN_CALLS; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
     vi.setSystemTime(Date.now() + COOLDOWN_MS - 1);
     await serveFromFeed(anon, { fetchFeed, hydrate });
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS);
 
     vi.setSystemTime(Date.now() + 1);
     fetchFeed.mockResolvedValue(answer([4]));
     expect((await serveFromFeed(anon, { fetchFeed, hydrate })).ok).toBe(true);
     expect((await serveFromFeed(anon, { fetchFeed, hydrate })).ok).toBe(true);
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD + 2);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS + 2);
   });
 
   it('lets one trial through at a time, and re-opens when it fails', async () => {
     const fetchFeed = down();
-    for (let i = 0; i < THRESHOLD; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
+    for (let i = 0; i < MIN_CALLS; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
     vi.setSystemTime(Date.now() + COOLDOWN_MS);
 
     let settle: (a: FeedAnswer) => void = () => undefined;
@@ -143,7 +181,7 @@ describe('feed-service circuit breaker', () => {
     });
     settle(answer([], { status: 502 }));
     expect(await trial).toEqual({ ok: false, reason: 'status:502' });
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD + 1);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS + 1);
 
     // Re-opened: a fresh cooldown before the next trial.
     vi.setSystemTime(Date.now() + COOLDOWN_MS - 1);
@@ -151,14 +189,14 @@ describe('feed-service circuit breaker', () => {
       ok: false,
       reason: 'breaker',
     });
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD + 1);
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS + 1);
   });
 
   it('[invariant] with the flag off every request still reaches the feed', async () => {
     flag.on = false;
     const fetchFeed = down();
-    for (let i = 0; i < THRESHOLD + 5; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
-    expect(fetchFeed).toHaveBeenCalledTimes(THRESHOLD + 5);
+    for (let i = 0; i < MIN_CALLS + 5; i++) await serveFromFeed(anon, { fetchFeed, hydrate });
+    expect(fetchFeed).toHaveBeenCalledTimes(MIN_CALLS + 5);
   });
 });
 
@@ -183,11 +221,12 @@ describe('last-good page for anonymous first pages', () => {
     await prime();
     const sick = vi.fn(async () => answer([], { status: 500 }));
     expect((await serveFromFeed(anon, { fetchFeed: sick, hydrate })).ok).toBe(true);
-    for (let i = 1; i < THRESHOLD; i++) await serveFromFeed(anon, { fetchFeed: sick, hydrate });
-    expect(sick).toHaveBeenCalledTimes(THRESHOLD);
+    // The priming success is the window's first call, so the 19th failure makes 20 calls.
+    for (let i = 1; i < MIN_CALLS - 1; i++) await serveFromFeed(anon, { fetchFeed: sick, hydrate });
+    expect(sick).toHaveBeenCalledTimes(MIN_CALLS - 1);
     const r = await serveFromFeed(anon, { fetchFeed: sick, hydrate });
     expect(r.ok && r.page.data.map((d) => d.id)).toEqual([9, 5]);
-    expect(sick).toHaveBeenCalledTimes(THRESHOLD);
+    expect(sick).toHaveBeenCalledTimes(MIN_CALLS - 1);
   });
 
   it('is gone after its TTL', async () => {
