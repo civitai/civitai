@@ -54,9 +54,6 @@ export const dbEnvSchema = z.object({
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
-  // Replica → primary fallback for read clients when the replica is unreachable. Dark by default.
-  DATABASE_REPLICA_FALLBACK: booleanString.default(false),
-  DATABASE_REPLICA_FALLBACK_MAX: intString(1).default(4),
   IS_DATAPACKET: booleanString.default(false),
   PODNAME: z.string().optional(),
   LOGGING: commaDelimitedStringArray,
@@ -90,8 +87,6 @@ function buildEnv() {
     poolIdleTimeout: parsed.data.DATABASE_POOL_IDLE_TIMEOUT,
     readTimeout: parsed.data.DATABASE_READ_TIMEOUT,
     writeTimeout: parsed.data.DATABASE_WRITE_TIMEOUT,
-    replicaFallback: parsed.data.DATABASE_REPLICA_FALLBACK,
-    replicaFallbackMax: parsed.data.DATABASE_REPLICA_FALLBACK_MAX,
     isDatapacket: parsed.data.IS_DATAPACKET,
     podName: parsed.data.PODNAME,
     logging: parsed.data.LOGGING,

@@ -68,11 +68,6 @@ export const serverSchema = z
     DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
     DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
     DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
-    // Mirrors packages/civitai-db/src/env.ts: replica → primary read fallback, dark by default.
-    DATABASE_REPLICA_FALLBACK: z
-      .preprocess((x) => x === true || x === 'true', z.boolean())
-      .default(false),
-    DATABASE_REPLICA_FALLBACK_MAX: intString(1).default(4),
     REDIS_URL: z.url(),
     REDIS_CLUSTER: z.preprocess((x) => x === 'true', z.boolean().default(false)),
     REDIS_CLUSTER_NODES: z.string().optional(), // Comma-separated list of cluster node URLs for redundant discovery

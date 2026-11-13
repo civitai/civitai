@@ -103,6 +103,20 @@ describe('cancellableQuery cancel path', () => {
     expect(c.options.connectionTimeoutMillis).toBeGreaterThan(0);
   });
 
+  it('targets the server the pool connects to — the backend pid is only meaningful there', async () => {
+    // Two pools on different servers: each cancel must go to its own pool's server, so a cancel can
+    // never send pg_cancel_backend(pid) to a server where that pid is an unrelated backend.
+    const replica = 'postgresql://user:pass@replica-host:6543/testdb';
+    for (const conn of [CONN, replica]) {
+      h.reset();
+      const pool = createPool({ connectionString: conn, ssl: false });
+      const handle = await pool.cancellableQuery('SELECT 1');
+      await handle.cancel();
+      expect(h.state.clients).toHaveLength(1);
+      expect(h.state.clients[0].options.connectionString).toBe(conn);
+    }
+  });
+
   it('is a no-op once the query has already settled (done flag)', async () => {
     const pool = createPool({ connectionString: CONN, ssl: false });
     const handle = await pool.cancellableQuery('SELECT 1');

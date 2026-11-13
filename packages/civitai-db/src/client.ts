@@ -3,18 +3,12 @@
 import type { Prisma } from '@civitai/db-schema';
 import { PrismaClient } from '@civitai/db-schema';
 import { loadDbEnv, type DbConfig } from './env';
-import { runPrismaReadWithFallback, type ReplicaFallback } from './replica-fallback';
 
 export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
 export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   /** Structured slow-query telemetry (the old logToAxiom call). Injected by the app. */
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
-  /**
-   * When set (and the read URL differs from the write URL), a model read on `dbRead` whose replica
-   * connection fails is re-run on `dbWrite`, bounded by the fallback's cap. See ./replica-fallback.
-   */
-  readFallback?: ReplicaFallback;
 };
 
 /**
@@ -24,7 +18,7 @@ export type CreatePrismaClientsOptions = Partial<DbConfig> & {
  * that calls this. See the `~/server/db/client` shim.
  */
 export function createPrismaClients(options: CreatePrismaClientsOptions = {}): PrismaClients {
-  const { onSlowQuery, readFallback, ...envOverrides } = options;
+  const { onSlowQuery, ...envOverrides } = options;
   const config = { ...loadDbEnv(), ...envOverrides };
 
   const singleClient = config.replicaUrl === config.databaseUrl;
@@ -85,32 +79,14 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
   };
 
   const dbWrite = createPrismaClient({ readonly: false });
-  const baseRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
-  // Interactive transactions on dbRead go through this too: a fallback read then runs on dbWrite,
-  // outside the transaction — whose replica connection is already gone.
-  const dbRead =
-    readFallback && !singleClient
-      ? (baseRead.$extends({
-          name: 'replica-fallback',
-          query: {
-            $allModels: {
-              $allOperations: (params) =>
-                runPrismaReadWithFallback(
-                  params as Parameters<typeof runPrismaReadWithFallback>[0],
-                  dbWrite,
-                  readFallback
-                ),
-            },
-          },
-        }) as unknown as PrismaClient)
-      : baseRead;
+  const dbRead = singleClient ? dbWrite : createPrismaClient({ readonly: true });
 
   if (config.logging.includes('prisma-slow-write'))
     // @ts-ignore - necessary to get the query event
     dbWrite.$on('query', logFor('write'));
   if (config.logging.includes('prisma-slow-read'))
     // @ts-ignore - necessary to get the query event
-    baseRead.$on('query', logFor('read'));
+    dbRead.$on('query', logFor('read'));
 
   return { dbRead, dbWrite };
 }
