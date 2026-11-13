@@ -833,6 +833,8 @@ export async function signDevScopedPageToken(opts: {
     buzzBudget: opts.buzzBudget,
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // The minter's own view is not consulted on a forced-SFW token: the ceiling is the level.
+    viewerBrowsingLevel: FORCED_SFW_CEILING,
     dev: true,
     ...(opts.reviewRunForReal === true ? { reviewRunForReal: true } : {}),
   });
@@ -902,6 +904,8 @@ export async function signPrivateRunPageToken(opts: {
     buzzBudget: opts.buzzBudget,
     domain: null,
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    // The minter's own view is not consulted on a forced-SFW token: the ceiling is the level.
+    viewerBrowsingLevel: FORCED_SFW_CEILING,
     // 🔴 NO `dev: true`. See divergence 1 above. This is not an omission.
     privateRun: true,
     privateRunAudience: opts.audience,

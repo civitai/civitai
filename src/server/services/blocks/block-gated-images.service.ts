@@ -3,6 +3,7 @@ import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   contentRatingFromNsfwLevel,
+  effectiveBrowsingCeiling,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   type OffsiteRatingValue,
@@ -105,8 +106,9 @@ export function resolveViewerBrowsingLevel(claims: {
   maxBrowsingLevel?: number | null;
   viewerBrowsingLevel?: number | null;
 }): number {
+  if (typeof claims.maxBrowsingLevel !== 'number') return publicBrowsingLevelsFlag;
   const selectable = onlySelectableLevels(
-    (claims.maxBrowsingLevel ?? 0) & (claims.viewerBrowsingLevel ?? 0)
+    effectiveBrowsingCeiling(claims.maxBrowsingLevel, claims.viewerBrowsingLevel)
   );
   return selectable || publicBrowsingLevelsFlag;
 }

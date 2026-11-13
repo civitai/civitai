@@ -341,6 +341,15 @@ describe('resolveViewerBrowsingLevel', () => {
     );
   });
 
+  it('🔴 a negative viewer claim never widens to the domain ceiling', () => {
+    expect(
+      resolveViewerBrowsingLevel({
+        maxBrowsingLevel: allBrowsingLevelsFlag,
+        viewerBrowsingLevel: -1,
+      })
+    ).toBe(publicBrowsingLevelsFlag);
+  });
+
   it('a PG viewer on an all-levels domain gets PG, not the domain ceiling', () => {
     expect(
       resolveViewerBrowsingLevel({

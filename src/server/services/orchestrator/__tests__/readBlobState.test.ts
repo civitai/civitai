@@ -29,10 +29,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   redis.exists.mockResolvedValue(0 as never);
   redis.setNxKeepTtlWithEx.mockResolvedValue(true as never);
-  fetchThroughCache.mockImplementation((_key: string, fetcher: () => Promise<unknown>) =>
-    fetcher()
-  );
+  fetchThroughCache.mockImplementation((_key: string, fetcher: () => Promise<unknown>) => {
+    lastRefill = fetcher;
+    return fetcher();
+  });
 });
+
+/** The refill the cache was handed. It must throw for anything that is not a verdict, or the cache would store it. */
+let lastRefill: (() => Promise<unknown>) | undefined;
+const refillIsNotCached = () => expect(lastRefill!()).rejects.toThrow();
 
 const backedOff = () =>
   expect(redis.setNxKeepTtlWithEx).toHaveBeenCalledWith(
@@ -79,6 +84,7 @@ describe('readBlobState', () => {
     headBlob.mockResolvedValue(answered(503));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
     expect(redis.setNxKeepTtlWithEx).not.toHaveBeenCalled();
+    await refillIsNotCached();
   });
 
   it.each([500, 404])('🔴 a %i is pending and backs off', async (status) => {
@@ -90,6 +96,7 @@ describe('readBlobState', () => {
   it('🔴 a 200 with neither a level nor a block is pending', async () => {
     headBlob.mockResolvedValue(answered(200, { Location: 'https://cdn/b1' }));
     expect(await readBlobState('b1')).toEqual({ verdict: 'pending' });
+    await refillIsNotCached();
   });
 
   it('🔴 a refill held by another request (the cache throws) is pending', async () => {
