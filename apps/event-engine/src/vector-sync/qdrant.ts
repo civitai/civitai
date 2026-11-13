@@ -100,10 +100,13 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     return new VectorStore(qdrantClient(), config.vectorSync.collection);
   }
 
+  async exists() {
+    return (await idempotent(() => this.client.collectionExists(this.collection))).exists;
+  }
+
   /** Creates the collection, payload indexes and alias if missing. Safe to re-run. */
   async bootstrap({ alias = config.vectorSync.alias }: { alias?: string } = {}) {
-    const { exists } = await idempotent(() => this.client.collectionExists(this.collection));
-    if (!exists) {
+    if (!(await this.exists())) {
       // Mirrors the configuration the vector-search benchmark measured.
       await this.client.createCollection(this.collection, {
         vectors: { size: VECTOR_DIMENSIONS, distance: 'Cosine', on_disk: true },

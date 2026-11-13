@@ -22,6 +22,8 @@ type Fake = {
 function result(req: IncomingMessage) {
   const path = req.url ?? '';
   if (path.endsWith('/points/count')) return { count: 7 };
+  if (path.endsWith('/exists')) return { exists: true };
+  if (path === '/aliases') return { aliases: [{ alias_name: 'a', collection_name: 'c' }] };
   if (path.endsWith('/points/scroll')) return { points: [{ id: 3 }], next_page_offset: null };
   if (req.method === 'POST' && path.endsWith('/points')) return [{ id: 3, payload: { a: 1 } }];
   if (req.method === 'GET' && path === '/collections/c') {
@@ -97,6 +99,7 @@ describe('VectorStore on a pooled socket the server already closed', () => {
     ['idsMatching', (s) => s.idsMatching('a', [1]), [3]],
     ['idsInRange', (s) => s.idsInRange(0, 10), [3]],
     ['isStamped', (s) => s.isStamped(), true],
+    ['exists', (s) => s.exists(), true],
   ];
   test.each(calls)('%s is retried once', async (_name, call, expected) => {
     const fake = await fakeQdrant(['ok', 'drop']);
@@ -106,6 +109,56 @@ describe('VectorStore on a pooled socket the server already closed', () => {
     await expect(call(store)).resolves.toEqual(expected);
     expect(fake.requests).toHaveLength(3);
     expect(fake.requests[2]).toBe(fake.requests[1]);
+  });
+
+  // Bootstrap of an existing collection with no indexes to add: three reads, each wrapped.
+  test.each([
+    ['collectionExists', 1, 'GET /collections/c/exists'],
+    ['getCollection', 2, 'GET /collections/c'],
+    ['getAliases', 3, 'GET /aliases'],
+  ])('bootstrap retries %s once', async (_name, dropAt, request) => {
+    const replies: Reply[] = ['ok'];
+    replies[dropAt] = 'drop';
+    const fake = await fakeQdrant(replies);
+    const client = new QdrantClient({ url: fake.url, checkCompatibility: false });
+    const store = new VectorStore<Record<string, unknown>>(client, 'c', {
+      indexes: [],
+      quantile: 1,
+    });
+    await client.getCollection('c');
+
+    await store.bootstrap({ alias: 'a' });
+    const expected = [
+      'GET /collections/c',
+      'GET /collections/c/exists',
+      'GET /collections/c',
+      'GET /aliases',
+    ];
+    // The dropped request goes out a second time, right after itself.
+    expected.splice(dropAt, 0, request);
+    expect(fake.requests).toEqual(expected);
+  });
+
+  test('recording a model stamp retries its metadata update once', async () => {
+    // The stored stamp lacks the video profile, so it is written, then read back.
+    const fake = await fakeQdrant(['ok', 'ok', 'drop']);
+    const { client, store } = storeFor(fake);
+    await client.getCollection('c');
+
+    await store.assertModel({
+      model: 'wemm-2b',
+      modelRevision: 'r',
+      profile: 'p',
+      videoProfile: 'v',
+      dimensions: 256,
+    });
+    expect(fake.requests).toEqual([
+      'GET /collections/c',
+      'GET /collections/c',
+      'PATCH /collections/c',
+      'PATCH /collections/c',
+      'GET /collections/c',
+    ]);
   });
 
   test('a second consecutive dropped socket surfaces the error (one retry, not two)', async () => {
