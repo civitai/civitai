@@ -10,15 +10,17 @@ import {
 // The services filter by what the domain may be sent; only the router knows the domain. A router
 // that passed the wrong level would leak mature services to the SFW site with every service test green.
 
-const { mockGetMine, mockGetForShop } = vi.hoisted(() => ({
+const { mockGetMine, mockGetForShop, mockGetFeed } = vi.hoisted(() => ({
   mockGetMine: vi.fn(),
   mockGetForShop: vi.fn(),
+  mockGetFeed: vi.fn(),
 }));
 
 vi.mock('~/server/services/creator-service.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorServiceService>()),
   getMyServiceOfferings: mockGetMine,
   getShopServiceOfferings: mockGetForShop,
+  getServiceOfferingFeed: mockGetFeed,
 }));
 
 // The flag gate reads `getFeatureFlags(ctx)` (Flipt), not `ctx.features`; turned on here so the
@@ -48,6 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetMine.mockResolvedValue({ items: [], hiddenOffDomain: 0 });
   mockGetForShop.mockResolvedValue([]);
+  mockGetFeed.mockResolvedValue({ items: [] });
 });
 
 describe('creator service router: what the domain may be sent', () => {
@@ -75,5 +78,18 @@ describe('creator service router: what the domain may be sent', () => {
   it("holds a viewer's own level to the SFW site's cap there, however high it is", async () => {
     await callerOn(true).getForShop({ userId: 9 });
     expect(mockGetForShop.mock.calls[0][0].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  // The feed hides the sellers this viewer hid or is blocked with: it has to know who is asking.
+  it.each([
+    ['the SFW site', true, sfwBrowsingLevelsFlag],
+    ['civitai.red', false, allBrowsingLevelsFlag],
+  ] as const)('the services feed on %s', async (_, green, level) => {
+    await callerOn(green).getFeed({});
+    expect(mockGetFeed.mock.calls[0][0]).toMatchObject({
+      viewerId: 7,
+      servable: level,
+      browsingLevel: level,
+    });
   });
 });

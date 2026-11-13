@@ -22,11 +22,23 @@ const chQuery = vi.fn();
 const fileRows = vi.fn(async (): Promise<unknown[]> => []);
 let pageGranted = true;
 
+/** Every `orderBy` the query builder was given, in order. */
+const orderBys: unknown[][] = [];
+const limits: unknown[] = [];
 // A query builder whose every call chains, ending in `fileRows`.
 const chain: object = new Proxy(
   {},
   {
-    get: (_, prop) => (prop === 'then' ? undefined : prop === 'execute' ? fileRows : () => chain),
+    get: (_, prop) =>
+      prop === 'then'
+        ? undefined
+        : prop === 'execute'
+        ? fileRows
+        : (...args: unknown[]) => {
+            if (prop === 'orderBy') orderBys.push(args);
+            if (prop === 'limit') limits.push(args[0]);
+            return chain;
+          },
   }
 );
 
@@ -62,6 +74,11 @@ const {
   invalidatePendingWorkflowGates,
   getDatasetItemStates,
   MAX_PENDING_CANDIDATES,
+  getTrainingReviewQueue,
+  invalidateTrainingReviewQueue,
+  countTrainingDataReview,
+  MAX_PAUSED_VERSIONS,
+  resetTrainingQueueCaches,
 } = await import('../training-moderation.service');
 const { releaseModerationGate, probeOrchestratorBlob } = await import('../orchestrator');
 const { mapBounded, someBounded } = await import('../bounded');
@@ -163,9 +180,13 @@ beforeEach(() => {
   chQuery.mockReset();
   fileRows.mockReset();
   fileRows.mockResolvedValue([]);
+  orderBys.length = 0;
+  limits.length = 0;
   pageGranted = true;
   clearTrainingWorkflowBlobCache();
   invalidatePendingWorkflowGates();
+  invalidateTrainingReviewQueue();
+  resetTrainingQueueCaches();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -568,6 +589,227 @@ describe('getPendingWorkflowGates', () => {
       ledgerUnavailable: true,
       workflowFilterUnavailable: false,
       truncated: false,
+    });
+  });
+});
+
+describe('getTrainingReviewQueue', () => {
+  const run = (owner: number, n: number) => `${owner}-2026100512000${n}123-v${n}`;
+  const W1 = run(1, 1); // under review
+  const W2 = run(2, 2); // alive, already ruled on
+  const W3 = run(3, 3); // orchestrator no longer has it
+  const W4 = run(4, 4); // under review
+  const version = (id: number) => ({
+    id,
+    name: `v${id}`,
+    createdAt: new Date('2026-10-01T00:00:00Z'),
+    modelId: 100 + id,
+    modelName: `model ${id}`,
+  });
+
+  /** The version query answers first, then the `Training Data` file lookup. */
+  function db(versions: unknown[], files: unknown[]) {
+    fileRows.mockResolvedValueOnce(versions).mockResolvedValueOnce(files);
+  }
+
+  const byId = (url: URL) => decodeURIComponent(url.pathname.split('/').pop()!);
+  function orchestratorFor(state: Record<string, string | 404>) {
+    route = (url) => {
+      const s = state[byId(url)];
+      if (s === undefined) return new Response(null, { status: 599 });
+      if (s === 404) return new Response(null, { status: 404 });
+      return json(workflow({ id: byId(url), moderationStatus: s }));
+    };
+  }
+
+  function standard() {
+    // Ids out of order on purpose: the queue must sort, not trust the query.
+    db(
+      [version(4), version(2), version(1), version(3), version(5)],
+      [file(11, 1, W1), file(12, 2, W2), file(13, 3, W3), file(14, 4, W4)]
+    );
+    orchestratorFor({ [W1]: 'UnderReview', [W2]: 'Approved', [W3]: 404, [W4]: 'UnderReview' });
+  }
+
+  it('lists under-review versions first, then the rest, oldest first within each, without 404s', async () => {
+    standard();
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => [i.id, i.underReview])).toEqual([
+      [1, true],
+      [4, true],
+      [2, false],
+    ]);
+    expect(queue.workflowFilterUnavailable).toBe(false);
+    expect(queue.truncated).toBe(false);
+  });
+
+  it('checks the run awaiting the gate, not the version’s most complete run', async () => {
+    const FINISHED = run(6, 1);
+    const GATED = run(6, 2);
+    db(
+      [version(6)],
+      [file(21, 6, FINISHED, '2026-10-02T00:00:00Z'), file(22, 6, GATED)].map((f, i) =>
+        i === 0
+          ? {
+              ...f,
+              metadata: {
+                trainingResults: {
+                  ...f.metadata.trainingResults,
+                  epochs: [{}],
+                  history: [{}],
+                  submittedAt: 'x',
+                  startedAt: 'x',
+                },
+              },
+            }
+          : f
+      )
+    );
+    orchestratorFor({ [FINISHED]: 'Approved', [GATED]: 'UnderReview' });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items).toEqual([
+      expect.objectContaining({ id: 6, workflowId: GATED, underReview: true }),
+    ]);
+    // The picker takes the first pending file, so the lookup's order decides between two.
+    expect(orderBys).toContainEqual(['id', 'asc']);
+  });
+
+  it('keeps every row, unchecked, and says so when the orchestrator is unreachable', async () => {
+    db([version(1), version(2)], [file(11, 1, W1), file(12, 2, W2)]);
+    route = () => {
+      throw new TypeError('fetch failed');
+    };
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => [i.id, i.checked])).toEqual([
+      [1, false],
+      [2, false],
+    ]);
+    expect(queue.workflowFilterUnavailable).toBe(true);
+  });
+
+  it('lists a run it cannot make sense of as unchecked, not as answered', async () => {
+    db([version(1)], [file(11, 1, W1)]);
+    route = () => json({ ...workflow({ id: W1 }), steps: [] });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.items.map((i) => [i.id, i.checked])).toEqual([[1, false]]);
+    expect(queue.workflowFilterUnavailable).toBe(true);
+    // An answer, not a failure: the build is held rather than redone on every load.
+    db([version(1)], [file(11, 1, W1)]);
+    await getTrainingReviewQueue();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not hold a build with an unchecked row', async () => {
+    db([version(1)], [file(11, 1, W1)]);
+    route = () => new Response(null, { status: 503 });
+    expect((await getTrainingReviewQueue()).workflowFilterUnavailable).toBe(true);
+    db([version(1)], [file(11, 1, W1)]);
+    orchestratorFor({ [W1]: 'UnderReview' });
+    expect((await getTrainingReviewQueue()).items).toEqual([
+      expect.objectContaining({ id: 1, underReview: true, checked: true }),
+    ]);
+  });
+
+  it('says the oldest were not checked when there are more Paused versions than one build reads', async () => {
+    db(
+      Array.from({ length: MAX_PAUSED_VERSIONS + 1 }, (_, n) => version(n + 1)),
+      []
+    );
+    route = () => new Response(null, { status: 599 });
+    const queue = await getTrainingReviewQueue();
+    expect(queue.truncated).toBe(true);
+    // Newest kept: gone-workflow rows stay Paused and pile up at the old end.
+    expect(orderBys[0]).toEqual(['mv.id', 'desc']);
+    expect(limits[0]).toBe(MAX_PAUSED_VERSIONS + 1);
+  });
+
+  describe('countTrainingDataReview', () => {
+    const GATE = run(9, 9);
+    function gates(ids: string[]) {
+      chQuery.mockImplementation(async (sql: string) =>
+        sql.includes("type = 'training'") ? ids.map((workflowId) => ({ workflowId })) : []
+      );
+    }
+
+    it('counts under-review versions plus pending workflow gates, not the stale Paused row', async () => {
+      standard();
+      gates([GATE]);
+      const versionRoute = route;
+      route = (url, init) =>
+        byId(url) === GATE ? json(workflow({ id: GATE })) : versionRoute(url, init);
+      expect(await countTrainingDataReview()).toBe(3);
+    });
+
+    it('is unknown, not zero, when the orchestrator is unreachable', async () => {
+      db([version(1)], [file(11, 1, W1)]);
+      gates([]);
+      route = () => {
+        throw new TypeError('fetch failed');
+      };
+      expect(await countTrainingDataReview()).toBeNull();
+    });
+
+    it.each([
+      [
+        'the version list is truncated',
+        () => {
+          // No training files: every row drops as gone, so only truncation is partial.
+          db(
+            Array.from({ length: MAX_PAUSED_VERSIONS + 1 }, (_, n) => version(n + 1)),
+            []
+          );
+          gates([]);
+          route = () => new Response(null, { status: 599 });
+        },
+      ],
+      [
+        'a gate could not be checked',
+        () => {
+          gates([GATE]);
+          route = () => new Response(null, { status: 599 });
+        },
+      ],
+      [
+        'the gate candidates are truncated',
+        () => {
+          gates(
+            Array.from(
+              { length: MAX_PENDING_CANDIDATES + 1 },
+              (_, n) => `${n + 1}-20261005123456789`
+            )
+          );
+          route = () => new Response(null, { status: 404 });
+        },
+      ],
+    ])('is unknown when %s', async (_, arrange) => {
+      arrange();
+      expect(await countTrainingDataReview()).toBeNull();
+    });
+
+    it('counts a version whose run answered unreadably as listed, not as unknown', async () => {
+      db([version(1), version(4)], [file(11, 1, W1), file(14, 4, W4)]);
+      gates([]);
+      route = (url) =>
+        byId(url) === W1
+          ? json({ ...workflow({ id: W1 }), steps: [] })
+          : json(workflow({ id: W4, moderationStatus: 'UnderReview' }));
+      expect(await countTrainingDataReview()).toBe(1);
+    });
+
+    it('is unknown when one version did not answer, even beside an unreadable one', async () => {
+      db([version(1), version(4)], [file(11, 1, W1), file(14, 4, W4)]);
+      gates([]);
+      route = (url) =>
+        byId(url) === W1
+          ? json({ ...workflow({ id: W1 }), steps: [] })
+          : new Response(null, { status: 503 });
+      expect(await countTrainingDataReview()).toBeNull();
+    });
+
+    it('is unknown when the gate ledger cannot be read', async () => {
+      standard();
+      chQuery.mockRejectedValue(new Error('clickhouse down'));
+      expect(await countTrainingDataReview()).toBeNull();
     });
   });
 });
@@ -1043,6 +1285,9 @@ describe('the pending queue is bounded and shared', () => {
     expect(result.workflowFilterUnavailable).toBe(true);
   });
 
+  const readsOf = (id: string) =>
+    fetchMock.mock.calls.filter(([u]) => decodeURIComponent(String(u)).endsWith(`/${id}`)).length;
+
   it('serves concurrent and repeat loads from one build, until a ruling clears it', async () => {
     ledgerOf(ids);
     route = (url) => json(workflow({ id: byIdOf(url) }));
@@ -1050,31 +1295,95 @@ describe('the pending queue is bounded and shared', () => {
     await getPendingWorkflowGates();
     expect(a).toBe(b);
     expect(chQuery).toHaveBeenCalledTimes(3); // one build: three ledger queries
+    expect(readsOf(ids[0])).toBe(1);
 
-    // A ruling made here clears it, so the ruled run does not linger in the queue.
+    // A ruling made here clears it: every run is read again. The ledger list is kept.
     orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })]);
     await rule(true);
     route = (url) => json(workflow({ id: byIdOf(url) }));
     await getPendingWorkflowGates();
-    expect(chQuery).toHaveBeenCalledTimes(6);
+    expect(readsOf(ids[0])).toBe(2);
+    expect(chQuery).toHaveBeenCalledTimes(3);
   });
 
-  it('does not hold on to a ledger failure', async () => {
-    chQuery.mockRejectedValueOnce(new Error('down'));
-    route = () => new Response(null, { status: 599 });
+  it('does not keep a build made while the ruled run still read under review', async () => {
+    ledgerOf([WF]);
+    let midRuling: Promise<unknown> | undefined;
+    // Kicked off between the release and the re-reads, while WF still reads under review.
+    recordModActivity.mockImplementationOnce(() => {
+      midRuling = getPendingWorkflowGates();
+    });
+    orchestrator([workflow(), workflow(), workflow({ moderationStatus: 'Approved' })]);
+    expect(await rule(true, { delays: [0, 0] })).toMatchObject({ ok: true });
+    expect((await midRuling) as { items: unknown[] }).toMatchObject({
+      items: [{ workflowId: WF }],
+    });
+    expect((await getPendingWorkflowGates()).items).toEqual([]);
+  });
+
+  it('does not hold a build with an unchecked run', async () => {
+    ledgerOf(ids);
+    route = () => new Response(null, { status: 503 });
+    expect((await getPendingWorkflowGates()).workflowFilterUnavailable).toBe(true);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    const again = await getPendingWorkflowGates();
+    expect(again.workflowFilterUnavailable).toBe(false);
+    expect(chQuery).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not hold a build made while the ledger could not be read', async () => {
+    chQuery.mockRejectedValueOnce(new Error('clickhouse down'));
     expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(true);
+    const calls = chQuery.mock.calls.length;
     ledgerOf([]);
     expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(false);
+    expect(chQuery.mock.calls.length).toBeGreaterThan(calls);
   });
 
-  it('expires after its window', async () => {
-    ledgerOf([]);
-    route = () => new Response(null, { status: 599 });
+  it('re-reads runs after its window, and the ledger only after the ledger window', async () => {
+    ledgerOf(ids);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
     await getPendingWorkflowGates();
     vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(Date.now() + 31_000);
+    const start = Date.now();
+    vi.setSystemTime(start + 60_000);
+    await getPendingWorkflowGates();
+    expect(readsOf(ids[0])).toBe(2);
+    expect(chQuery).toHaveBeenCalledTimes(3);
+    vi.setSystemTime(start + 2 * 60_000 + 1_000);
     await getPendingWorkflowGates();
     expect(chQuery).toHaveBeenCalledTimes(6);
+  });
+
+  it('lets the badge reuse a build the page would rebuild', async () => {
+    const V = '9-20261005123456789-v';
+    const paused = () =>
+      fileRows
+        .mockResolvedValueOnce([
+          { id: 1, name: 'v1', createdAt: new Date(), modelId: 1, modelName: 'm' },
+        ])
+        .mockResolvedValueOnce([file(11, 1, V)]);
+    ledgerOf(ids);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    paused();
+    expect(await countTrainingDataReview()).toBe(4);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 90_000);
+    expect(await countTrainingDataReview()).toBe(4);
+    expect([readsOf(ids[0]), readsOf(V)]).toEqual([1, 1]);
+    paused();
+    await Promise.all([getPendingWorkflowGates(), getTrainingReviewQueue()]);
+    expect([readsOf(ids[0]), readsOf(V)]).toEqual([2, 2]);
+  });
+
+  it('rebuilds for the badge once its build is over 2 minutes old', async () => {
+    ledgerOf(ids);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    await countTrainingDataReview();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 2 * 60_000 + 1_000);
+    await countTrainingDataReview();
+    expect(readsOf(ids[0])).toBe(2);
   });
 });
 
