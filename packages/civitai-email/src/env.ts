@@ -11,6 +11,8 @@ const schema = z.object({
   EMAIL_USER: z.string().optional(),
   EMAIL_PASS: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  // `off` sends without the connect/greeting/socket timeouts client.ts sets (nodemailer's own defaults).
+  EMAIL_TIMEOUTS: z.string().optional(),
 });
 
 function buildEnv() {

@@ -1,6 +1,7 @@
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
 import { captchaVerificationsTotal } from '$lib/server/metrics';
+import { outboundTimeoutSignal } from './outbound-timeout';
 import { logToAxiom } from '$lib/server/axiom';
 
 // Fire-and-forget Axiom line for a captcha rejection, so the failure BREAKDOWN (which reason dominates) is
@@ -137,7 +138,7 @@ export async function verifyCaptchaToken(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ secret, response: token, remoteip: ip }),
       // A hung siteverify fails closed through the catch below instead of holding the sign-in.
-      signal: AbortSignal.timeout(SITEVERIFY_TIMEOUT_MS),
+      signal: outboundTimeoutSignal(SITEVERIFY_TIMEOUT_MS),
     });
     if (!res.ok) {
       console.error('captcha verify rejected', { reason: 'siteverify-http', status: res.status });

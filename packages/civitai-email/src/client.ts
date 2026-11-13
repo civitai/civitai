@@ -27,10 +27,10 @@ function getClient(): Transporter | null {
         auth: { user: env.EMAIL_USER!, pass: env.EMAIL_PASS! },
         // Nodemailer waits 2 min to connect, 30 s for the greeting and 10 min of socket silence by
         // default, and callers (the auth hub's sign-in) await the send. A healthy relay greets in
-        // milliseconds.
-        connectionTimeout: 5_000,
-        greetingTimeout: 5_000,
-        socketTimeout: 30_000,
+        // milliseconds. EMAIL_TIMEOUTS=off restores nodemailer's defaults.
+        ...(env.EMAIL_TIMEOUTS === 'off'
+          ? {}
+          : { connectionTimeout: 5_000, greetingTimeout: 5_000, socketTimeout: 30_000 }),
       })
     : null;
   return _client;

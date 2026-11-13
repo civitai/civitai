@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import { env } from '$env/dynamic/private';
+import { outboundTimeoutSignal } from './outbound-timeout';
 // Shared cross-app contract: the provider id set is defined once in @civitai/auth (the main app references the
 // same ids to render buttons + deep-link here). This file owns the hub-only OAuth config/secrets for each.
 import type { ProviderId } from '@civitai/auth';
@@ -333,7 +334,7 @@ export async function exchangeCode(
     method: 'POST',
     headers,
     body,
-    signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
+    signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`[${provider.id}] token exchange failed: ${res.status}`);
   const json = (await res.json()) as { access_token?: string; scope?: string };
@@ -351,7 +352,7 @@ export async function fetchProfile(
   if (provider.userAgent) headers['user-agent'] = provider.userAgent;
   const res = await fetch(provider.userinfoUrl, {
     headers,
-    signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
+    signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`[${provider.id}] userinfo failed: ${res.status}`);
   const json = (await res.json()) as Record<string, unknown>;
@@ -364,7 +365,7 @@ export async function fetchProfile(
     try {
       const eRes = await fetch(provider.emailsUrl, {
         headers,
-        signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
+        signal: outboundTimeoutSignal(PROVIDER_FETCH_TIMEOUT_MS),
       });
       if (eRes.ok) {
         const emails = (await eRes.json()) as Array<{

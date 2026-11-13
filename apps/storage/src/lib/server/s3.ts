@@ -28,16 +28,15 @@ export type S3BackendConfig = {
 };
 
 /**
- * The bounds every client this service builds gets. The SDK defaults are no connect timeout, no socket
- * timeout and 3 attempts, so a store that accepts a connection and never answers holds the request (and
- * the caller's own retries on top) indefinitely. `requestTimeoutMs` is socket INACTIVITY, not total
- * duration, so a transfer that keeps moving bytes is never cut off. Same numbers as the main app's
- * `src/utils/s3-client-factory.ts`.
+ * The timeouts every client this service builds gets. The SDK sets no connect timeout and no socket
+ * timeout, so a store that accepts a connection and never answers holds the request (and the caller's own
+ * retries on top) indefinitely. `requestTimeoutMs` is socket INACTIVITY, not total duration, so a transfer
+ * that keeps moving bytes is never cut off. Attempts stay at the SDK default (3). Same numbers as the main
+ * app's `src/utils/s3-client-factory.ts`, and the same off-switch: `S3_CLIENT_TIMEOUTS=off`.
  */
 export const S3_CLIENT_BOUNDS = {
   connectionTimeoutMs: 3_000,
   requestTimeoutMs: 30_000,
-  maxAttempts: 2,
 };
 export type S3ClientBounds = typeof S3_CLIENT_BOUNDS;
 
@@ -46,24 +45,32 @@ export type S3ClientOptions = {
   downloadExpiration?: number;
   /** Overrides {@link S3_CLIENT_BOUNDS} (tests). */
   bounds?: S3ClientBounds;
+  /** Overrides the SDK's attempt count (tests). */
+  maxAttempts?: number;
 };
 
 /** The SDK client for one backend, with {@link S3_CLIENT_BOUNDS} unless `bounds` overrides them. */
 export function buildS3Client(
   config: S3BackendConfig,
-  bounds: S3ClientBounds = S3_CLIENT_BOUNDS
+  bounds: S3ClientBounds = S3_CLIENT_BOUNDS,
+  maxAttempts?: number
 ): S3Client {
+  const timeoutsOff = process.env.S3_CLIENT_TIMEOUTS === 'off';
   return new S3Client({
     credentials: { accessKeyId: config.accessKey, secretAccessKey: config.secretKey },
     endpoint: config.endpoint,
     // R2/custom S3-compatible endpoints ignore region, but the SDK requires a value.
     region: config.region ?? 'us-east-1',
     ...(config.forcePathStyle ? { forcePathStyle: true } : {}),
-    maxAttempts: bounds.maxAttempts,
-    requestHandler: {
-      connectionTimeout: bounds.connectionTimeoutMs,
-      requestTimeout: bounds.requestTimeoutMs,
-    },
+    ...(maxAttempts ? { maxAttempts } : {}),
+    ...(timeoutsOff
+      ? {}
+      : {
+          requestHandler: {
+            connectionTimeout: bounds.connectionTimeoutMs,
+            requestTimeout: bounds.requestTimeoutMs,
+          },
+        }),
   });
 }
 
@@ -88,7 +95,7 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
   const uploadExpiration = options.uploadExpiration ?? DEFAULT_UPLOAD_EXPIRATION;
   const downloadExpiration = options.downloadExpiration ?? DEFAULT_DOWNLOAD_EXPIRATION;
 
-  const client = buildS3Client(config, options.bounds);
+  const client = buildS3Client(config, options.bounds, options.maxAttempts);
 
   const endpointHost = new URL(config.endpoint).hostname;
 
