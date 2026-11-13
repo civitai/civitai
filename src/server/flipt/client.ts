@@ -676,6 +676,10 @@ export const getFliptCacheStats = flipt.getCacheStats;
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.
 export const getFliptClientSync = flipt.getClientSync;
+// Registers the last-known flag-state store. Called once at server boot by
+// ~/server/flipt/snapshot-store (it needs sysRedis, which this module must not import: it is in
+// the _app client graph, and ~/server/redis/client imports this module).
+export const setFliptSnapshotStore = flipt.setSnapshotStore;
 // A `FLIPT_LOCAL_OVERRIDES` value for one flag (never set in production), for a gate that reads the
 // SDK client directly and would otherwise not see it.
 export const getFliptLocalOverride = (flag: string): string | undefined =>
