@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   user: { id: 9, username: 'seller' } as { id: number; username: string } | null,
   offerings: [] as { id: number }[],
   hiddenOffDomain: 0,
+  creatorShop: true,
   enabled: [] as boolean[],
 }));
 
@@ -19,6 +20,9 @@ vi.mock('~/server/services/creator-service.service', () => ({ hasOpenServiceDeal
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/components/CreatorShop/Services/deals/ServiceDealsList', () => ({
   ServiceDealsList: ({ role }: { role: string }) => createElement('div', { 'data-list': role }),
+}));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ creatorShop: mocks.creatorShop }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
 vi.mock('~/components/CreatorShop/Services/creator-service.util', () => ({
@@ -41,6 +45,7 @@ beforeEach(() => {
   mocks.user = { id: 9, username: 'seller' };
   mocks.offerings = [];
   mocks.hiddenOffDomain = 0;
+  mocks.creatorShop = true;
   mocks.enabled = [];
 });
 
@@ -58,6 +63,12 @@ describe('Service Requests page seller link', () => {
   });
 
   it('shows a viewer with no services no link', () => {
+    expect(render()).not.toContain('/shop/manage');
+  });
+
+  it('shows no link while the shop is off, since Manage would send the seller to their profile', () => {
+    mocks.offerings = [{ id: 1 }];
+    mocks.creatorShop = false;
     expect(render()).not.toContain('/shop/manage');
   });
 

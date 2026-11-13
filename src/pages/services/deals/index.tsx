@@ -6,6 +6,7 @@ import { useQueryMyServices } from '~/components/CreatorShop/Services/creator-se
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { hasOpenServiceDeal } from '~/server/services/creator-service.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -19,6 +20,8 @@ export default function MyServiceRequestsPage({ openOnly }: { openOnly: boolean 
   const status = tab === 'closed' ? 'closed' : 'open';
   const user = useCurrentUser();
   const { offerings, hiddenOffDomain } = useQueryMyServices(!!user);
+  // The Manage page sends everyone to their profile while the shop is off, so don't offer the link then.
+  const { creatorShop } = useFeatureFlags();
   const sellsServices = offerings.length > 0 || hiddenOffDomain > 0;
 
   return (
@@ -35,7 +38,7 @@ export default function MyServiceRequestsPage({ openOnly }: { openOnly: boolean 
                 ? 'Services are paused. Your open deals are still here, so you can finish or close them.'
                 : "Services you've requested from creators, and where each one stands."}
             </Text>
-            {user?.username && sellsServices && (
+            {creatorShop && user?.username && sellsServices && (
               <Text size="sm">
                 Requests to your services are on your shop page:{' '}
                 <Anchor
