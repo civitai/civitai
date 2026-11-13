@@ -163,9 +163,9 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
         (${VIEWER}, 'viewer', NULL, NULL, NULL)
     `);
     await prisma.$executeRawUnsafe(`
-      INSERT INTO ${t('Model3D')} (id, "userId", status, "deletedAt") VALUES
-        (${M3D_VISIBLE}, ${OWNER}, 'Published', NULL),
-        (${M3D_DELETED}, ${COLLAB_A}, 'Deleted', '2026-02-03 04:05:06.789')
+      INSERT INTO ${t('Model3D')} (id, "userId", status, "deletedAt", "tosViolation") VALUES
+        (${M3D_VISIBLE}, ${OWNER}, 'Published', NULL, false),
+        (${M3D_DELETED}, ${COLLAB_A}, 'Deleted', '2026-02-03 04:05:06.789', true)
     `);
     await prisma.$executeRawUnsafe(`
       INSERT INTO ${t('Post')} (id, "userId", "model3dId") VALUES
@@ -322,6 +322,7 @@ describe.skipIf(!parityUrl)('hot reads 5: Kysely returns exactly what Prisma ret
           userId: COLLAB_A,
           status: 'Deleted',
           deletedAt: new Date('2026-02-03T04:05:06.789Z'),
+          tosViolation: true,
         },
       });
       expect(await readPostModel3dViaKysely(kysely, POST_NO_M3D)).toStrictEqual({ model3d: null });

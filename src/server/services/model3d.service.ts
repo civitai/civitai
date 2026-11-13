@@ -252,14 +252,17 @@ export const getModel3DById = async ({
     // - Mods see everything.
     // - Owner sees their own (any status).
     // - Public sees Published, not-Deleted and not removed by a moderator.
-    const isOwner = !!user && model3d.userId === user.id;
-    if (!isModerator && !isOwner) {
-      if (model3d.status !== Model3DStatus.Published) {
-        throw throwNotFoundError(`No 3D model with id ${id}`);
-      }
-      if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
-      if (model3d.tosViolation) throw throwNotFoundError(`No 3D model with id ${id}`);
-    }
+    if (
+      !canViewModel3d({
+        status: model3d.status,
+        deletedAt: model3d.deletedAt,
+        tosViolation: model3d.tosViolation,
+        ownerId: model3d.userId,
+        userId: user?.id,
+        isModerator,
+      })
+    )
+      throw throwNotFoundError(`No 3D model with id ${id}`);
 
     // The signed-in user's own recommend (thumbs-up), so the detail page can
     // render the gold thumbs-up toggle in its correct state.
@@ -1244,6 +1247,7 @@ export const getModel3DFiles = async ({
       userId: true,
       status: true,
       deletedAt: true,
+      tosViolation: true,
       files: {
         select: model3dFileSelect,
         orderBy: [
@@ -1255,13 +1259,17 @@ export const getModel3DFiles = async ({
   });
   if (!model3d) throw throwNotFoundError(`No 3D model with id ${input.id}`);
 
-  const isOwner = !!user && model3d.userId === user.id;
-  if (!isModerator && !isOwner) {
-    if (model3d.status !== Model3DStatus.Published) {
-      throw throwNotFoundError(`No 3D model with id ${input.id}`);
-    }
-    if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${input.id}`);
-  }
+  if (
+    !canViewModel3d({
+      status: model3d.status,
+      deletedAt: model3d.deletedAt,
+      tosViolation: model3d.tosViolation,
+      ownerId: model3d.userId,
+      userId: user?.id,
+      isModerator,
+    })
+  )
+    throw throwNotFoundError(`No 3D model with id ${input.id}`);
 
   // Sign each file URL. Two URL shapes can land in Model3DFile.url:
   //   - **Full URL** (e.g. https://civitai-media-uploads.s3.../key.glb) — this
@@ -1323,6 +1331,7 @@ export const getModel3DByPostId = async ({
           userId: true,
           status: true,
           deletedAt: true,
+          tosViolation: true,
           thumbnailImage: { select: { id: true, url: true, name: true } },
         },
       },
@@ -1335,6 +1344,7 @@ export const getModel3DByPostId = async ({
     !canViewModel3d({
       status: model3d.status,
       deletedAt: model3d.deletedAt,
+      tosViolation: model3d.tosViolation,
       ownerId: model3d.userId,
       userId,
       isModerator,
@@ -1371,6 +1381,7 @@ export const getVisibleModel3DIdForPost = async ({
     !canViewModel3d({
       status: model3d.status,
       deletedAt: model3d.deletedAt,
+      tosViolation: model3d.tosViolation,
       ownerId: model3d.userId,
       userId,
       isModerator,
@@ -1402,7 +1413,7 @@ export const getVisibleModel3DIds = async ({
   if (!ids.length) return new Set();
   const rows = await dbRead.model3D.findMany({
     where: { id: { in: ids } },
-    select: { id: true, userId: true, status: true, deletedAt: true },
+    select: { id: true, userId: true, status: true, deletedAt: true, tosViolation: true },
   });
   const visible = new Set<number>();
   for (const row of rows) {
@@ -1410,6 +1421,7 @@ export const getVisibleModel3DIds = async ({
       canViewModel3d({
         status: row.status,
         deletedAt: row.deletedAt,
+        tosViolation: row.tosViolation,
         ownerId: row.userId,
         userId,
         isModerator,
@@ -1649,11 +1661,11 @@ export const getModel3DRelatedPosts = async ({
       canViewModel3d({
         status: model3d.status,
         deletedAt: model3d.deletedAt,
+        tosViolation: model3d.tosViolation,
         ownerId: model3d.userId,
         userId: viewerId,
         isModerator,
-      }) &&
-      (!model3d.tosViolation || isModerator || model3d.userId === viewerId);
+      });
     if (!visible) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
 
     // A post's level is its images' combined level: it is listed when it shares a level with the

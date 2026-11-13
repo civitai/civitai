@@ -1,9 +1,9 @@
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 /**
- * Pure visibility rule shared by every Model3D read surface. Mirrors
- * `getModel3DById`: mods see everything, the owner sees their own (any
- * status), the public sees only Published + not-Deleted.
+ * Pure visibility rule shared by every Model3D read surface: mods see everything, the owner sees
+ * their own (any status, removed or not), the public sees only Published, not-Deleted and not
+ * removed by a moderator.
  *
  * Kept in its own dependency-light module (only the Prisma enum) so it's
  * trivially unit-testable, and so the SAME predicate gates both the chip lookup
@@ -14,12 +14,14 @@ import { Model3DStatus } from '~/shared/utils/prisma/enums';
 export const canViewModel3d = ({
   status,
   deletedAt,
+  tosViolation,
   ownerId,
   userId,
   isModerator = false,
 }: {
   status: Model3DStatus;
   deletedAt: Date | null;
+  tosViolation: boolean;
   ownerId: number;
   userId?: number;
   isModerator?: boolean;
@@ -29,5 +31,6 @@ export const canViewModel3d = ({
   if (isOwner) return true;
   if (status !== Model3DStatus.Published) return false;
   if (deletedAt) return false;
+  if (tosViolation) return false;
   return true;
 };

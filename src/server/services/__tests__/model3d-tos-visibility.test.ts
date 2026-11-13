@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { getModel3DById, getModel3DsInfinite } from '~/server/services/model3d.service';
+import {
+  getModel3DById,
+  getModel3DByPostId,
+  getModel3DFiles,
+  getModel3DsInfinite,
+  getVisibleModel3DIds,
+} from '~/server/services/model3d.service';
+import { getModel3DReviews } from '~/server/services/model3d-review.service';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 type Row = Record<string, unknown>;
@@ -20,6 +27,23 @@ function matches(row: Row, where: Where): boolean {
   });
 }
 
+/** Only the columns a query's `select` asks for, as Prisma returns them. */
+const pick = (row: Row | undefined, select?: Record<string, unknown>): Row | null => {
+  if (!row) return null;
+  if (Array.isArray(row)) return row.map((r) => pick(r, select)) as never;
+  if (!select) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([key, want]) => want && key in row)
+      .map(([key, want]) => [
+        key,
+        typeof want === 'object' && (want as { select?: Record<string, unknown> }).select
+          ? pick(row[key] as Row, (want as { select: Record<string, unknown> }).select)
+          : row[key],
+      ])
+  );
+};
+
 const OWNER = 5;
 const base = {
   userId: OWNER,
@@ -33,7 +57,7 @@ const base = {
 const ROWS: Row[] = [
   { ...base, id: 1, tosViolation: false },
   { ...base, id: 2, tosViolation: true },
-];
+].map((row) => ({ ...row, files: [] }));
 
 const anon = null;
 const stranger = { id: 6 };
@@ -41,11 +65,17 @@ const owner = { id: OWNER };
 const moderator = { id: 1, isModerator: true };
 
 beforeEach(() => {
-  dbMock.dbRead.model3D.findUnique.mockImplementation(
-    (async ({ where }: { where: Where }) => ROWS.find((r) => r.id === where.id) ?? null) as never
-  );
-  dbMock.dbRead.model3D.findMany.mockImplementation((async ({ where }: { where: Where }) =>
-    ROWS.filter((r) => matches(r, where))) as never);
+  type Args = { where: Where; select?: Record<string, unknown> };
+  dbMock.dbRead.model3D.findUnique.mockImplementation((async ({ where, select }: Args) =>
+    pick(
+      ROWS.find((r) => r.id === where.id),
+      select
+    )) as never);
+  dbMock.dbRead.model3D.findMany.mockImplementation((async ({ where, select }: Args) =>
+    ROWS.filter((r) => matches(r, where)).map((r) => pick(r, select))) as never);
+  // A post linked to the removed model.
+  dbMock.dbRead.post.findUnique.mockImplementation((async ({ select }: Args) =>
+    pick({ model3d: ROWS[1] }, select)) as never);
   dbMock.dbRead.model3DReview.findUnique.mockResolvedValue(null as never);
   dbMock.dbRead.model3DReview.findMany.mockResolvedValue([] as never);
 });
@@ -83,4 +113,66 @@ describe('a 3D model a moderator removed', () => {
     } as never);
     expect(items.map((m) => m.id).sort()).toEqual(ids);
   });
+});
+
+describe("a removed 3D model's other reads", () => {
+  const hidden = [
+    ['anonymous', anon],
+    ['another user', stranger],
+  ] as const;
+  const shown = [
+    ['its owner', owner],
+    ['a moderator', moderator],
+  ] as const;
+
+  it.each(hidden)('its files are not found for %s', async (_, user) => {
+    await expect(getModel3DFiles({ input: { id: 2 }, user: user as never })).rejects.toThrow(
+      /No 3D model/
+    );
+    // An unflagged model's files are (control).
+    await expect(getModel3DFiles({ input: { id: 1 }, user: user as never })).resolves.toBeDefined();
+  });
+
+  it.each(shown)('its files are served to %s', async (_, user) => {
+    await expect(getModel3DFiles({ input: { id: 2 }, user: user as never })).resolves.toBeDefined();
+  });
+
+  it.each([...hidden.map(([w, u]) => [w, u, false]), ...shown.map(([w, u]) => [w, u, true])])(
+    'its post chip, for %s, shows only when allowed',
+    async (_, user, shows) => {
+      const viewer = user as { id?: number; isModerator?: boolean } | null;
+      const chip = await getModel3DByPostId({
+        postId: 7,
+        userId: viewer?.id,
+        isModerator: viewer?.isModerator,
+      });
+      expect(chip?.id ?? null).toBe(shows ? 2 : null);
+    }
+  );
+
+  it.each([...hidden.map(([w, u]) => [w, u, [1]]), ...shown.map(([w, u]) => [w, u, [1, 2]])])(
+    'attaches to an image feed, for %s, only the models they may see',
+    async (_, user, ids) => {
+      const viewer = user as { id?: number; isModerator?: boolean } | null;
+      const visible = await getVisibleModel3DIds({
+        model3dIds: [1, 2],
+        userId: viewer?.id,
+        isModerator: viewer?.isModerator,
+      });
+      expect([...visible].sort()).toEqual(ids);
+    }
+  );
+
+  it.each([...hidden.map(([w, u]) => [w, u, 0]), ...shown.map(([w, u]) => [w, u, 1])])(
+    'its reviews are listed for %s only when allowed',
+    async (_, user, count) => {
+      dbMock.dbRead.model3DReview.findMany.mockResolvedValue([{ id: 50 }] as never);
+      dbMock.dbRead.model3DReview.count.mockResolvedValue(1 as never);
+      const page = await getModel3DReviews({
+        input: { model3dId: 2, limit: 10, page: 1 } as never,
+        user: user as never,
+      });
+      expect(page.items).toHaveLength(count);
+    }
+  );
 });

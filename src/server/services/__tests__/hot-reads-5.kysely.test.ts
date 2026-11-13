@@ -131,6 +131,7 @@ describe('getVisibleModel3DIdForPost', () => {
       model3dUserId: OWNER,
       model3dStatus: 'Published',
       model3dDeletedAt: null,
+      model3dTosViolation: false,
     } as never);
     await expect((await load())({ postId: POST, userId: USER })).resolves.toBe(ID);
     expect(q.getPostModel3d.mock.calls).toEqual([[kyselyRead, POST]]);
@@ -145,6 +146,7 @@ describe('getVisibleModel3DIdForPost', () => {
       model3dUserId: OWNER,
       model3dStatus: 'Draft',
       model3dDeletedAt: null,
+      model3dTosViolation: false,
     } as never);
     await expect((await load())({ postId: POST, userId: USER })).resolves.toBeNull();
   });

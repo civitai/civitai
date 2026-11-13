@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { canViewModel3d } from '~/server/services/model3d.visibility';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -213,6 +214,24 @@ export const getModel3DReviews = async ({
   try {
     const { model3dId, username, hasDetails } = input;
     const { take, skip } = getPagination(input.limit, input.page);
+
+    // A model the viewer may not see has no reviews to them, as a model that does not exist.
+    const model3d = await dbRead.model3D.findUnique({
+      where: { id: model3dId },
+      select: { userId: true, status: true, deletedAt: true, tosViolation: true },
+    });
+    if (
+      !model3d ||
+      !canViewModel3d({
+        status: model3d.status,
+        deletedAt: model3d.deletedAt,
+        tosViolation: model3d.tosViolation,
+        ownerId: model3d.userId,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      })
+    )
+      return getPagingData({ items: [], count: 0 }, take, input.page);
 
     const where: Prisma.Model3DReviewWhereInput = {
       model3dId,
