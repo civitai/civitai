@@ -490,12 +490,6 @@ describe('mini/[id] ?epoch= from the query string', () => {
     h.variant.value = 'enforce';
   });
 
-  it('serves the epoch the query string names', async () => {
-    const { status, body } = await ask({ epoch: '5' });
-    expect(status).toBe(200);
-    expect(body.downloadUrls).toEqual([EARLY]);
-  });
-
   it('serves the named epoch from epochs written as epochNumber', async () => {
     const v2 = {
       ...twoEpochs,
@@ -534,26 +528,32 @@ describe('mini/[id] ?epoch= from the query string', () => {
     expect((await ask({ epoch })).status).toBe(400);
   });
 
-  describe.each(['log', 'enforce', 'off'])(
+  describe.each(['log', 'enforce', 'enforce-anon', 'off'])(
     '%s: only the owner, a moderator or the service token picks the epoch',
     (variant) => {
       beforeEach(() => {
         h.variant.value = variant === 'off' ? null : variant;
       });
 
+      // Only the callers the mode serves; a refused one is covered by the gate tests above.
       const held = (
         [
           ['a signed-out caller', anonymous],
           ['a signed-in caller with no grant', stranger],
           ['a grantee', grantee],
         ] as const
-      ).filter(([, caller]) => variant !== 'enforce' || caller === grantee);
+      ).filter(
+        ([, caller]) =>
+          (variant !== 'enforce' || caller === grantee) &&
+          (variant !== 'enforce-anon' || caller !== anonymous)
+      );
 
       it.each(held)('%s gets the no-param response whatever ?epoch= holds', async (_, caller) => {
         const unnamed = await request(caller, {}, twoEpochs);
         for (const epoch of ['5', '10', '99', '', 'latest', '5.5', ['5', '10']])
           expect(
-            await request(caller, {}, twoEpochs, undefined, { epoch: epoch as string })
+            await request(caller, {}, twoEpochs, undefined, { epoch: epoch as string }),
+            `?epoch=${JSON.stringify(epoch)}`
           ).toEqual(unnamed);
       });
 
@@ -561,10 +561,13 @@ describe('mini/[id] ?epoch= from the query string', () => {
         ['the owner', owner],
         ['a moderator', moderator],
         ['the service token', service],
-      ])('%s still gets the epoch it names', async (_, caller) => {
-        const { status, body } = await request(caller, {}, twoEpochs, undefined, { epoch: '5' });
+      ])('%s still gets the epoch it names, kept out of shared caches', async (_, caller) => {
+        const { status, body, cacheControl } = await request(caller, {}, twoEpochs, undefined, {
+          epoch: '5',
+        });
         expect(status).toBe(200);
         expect(body.downloadUrls).toEqual([EARLY]);
+        expect(cacheControl).toBe('private, no-store');
       });
     }
   );
