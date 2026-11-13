@@ -8,6 +8,8 @@ import {
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { env } from '~/env/server';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 
 /**
  * Preset image generation
@@ -280,6 +282,22 @@ function graphInputOf(args: GraphInputArgs, forWhatIf: boolean) {
 }
 
 /**
+ * The generation kill switch for a preset action that commits work before it submits: comics'
+ * smart create, which queues panels for the job to submit later. Same rule and off-switch as
+ * `submitPresetImageGen`, so a refused caller is turned away before anything is written instead
+ * of leaving panels that fail later. A switch that cannot be read is refused, as it is there.
+ */
+export async function assertPresetGenerationAllowed(
+  user: Pick<SessionUser, 'isModerator' | 'tier'>
+): Promise<void> {
+  if (!env.PRESET_ENFORCE_GENERATION_STATUS) return;
+  const generation = await import('~/server/services/generation/generation.service');
+  const { status, known } = await generation.getGenerationStatusState();
+  if (!known) throw generation.generationConfigUnavailableError();
+  assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+}
+
+/**
  * Submit a preset image generation through the generation graph.
  *
  * `generateFromGraph` audits the prompt internally and enriches the resource
@@ -317,7 +335,7 @@ export async function submitPresetImageGen(
   } = args;
   const input = graphInputOf(args, false);
 
-  const { externalCtx } = await buildGenerationContext(
+  const { externalCtx, status } = await buildGenerationContext(
     user.tier ?? 'free',
     flags,
     { id: user.id, isModerator: user.isModerator },
@@ -327,6 +345,12 @@ export async function submitPresetImageGen(
     // on-site and the App Blocks numbers.
     'preset'
   );
+  // The global generation kill switch, as onsite applies it, for every preset entry point (comics,
+  // iterate, remix apps, article reframe, the queued comic-panels job), which all submit here.
+  // PRESET_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+  if (env.PRESET_ENFORCE_GENERATION_STATUS) {
+    assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  }
 
   return generateFromGraph({
     input,
@@ -358,7 +382,7 @@ export async function whatIfPresetImageGen(
   const { user, token, currencies, flags } = args;
   const input = graphInputOf(args, true);
 
-  const { externalCtx } = await buildGenerationContext(
+  const { externalCtx, status } = await buildGenerationContext(
     user.tier ?? 'free',
     flags,
     { id: user.id, isModerator: user.isModerator },
@@ -368,6 +392,10 @@ export async function whatIfPresetImageGen(
     // on-site and the App Blocks numbers.
     'preset'
   );
+  // As onsite refuses `whatIfFromGraph`: no price for a generation the switch would refuse.
+  if (env.PRESET_ENFORCE_GENERATION_STATUS) {
+    assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  }
 
   const result = await whatIfFromGraph({
     input,

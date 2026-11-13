@@ -306,6 +306,23 @@ describe('tags that cannot be browsed', () => {
   });
 });
 
+describe('Made On-site', () => {
+  it('applies Made On-site to hydration only, not the anchor check', async () => {
+    const hydrated: unknown[] = [];
+    h.fakeGetAllImages = async (args) => {
+      hydrated.push((args as { fromPlatform?: boolean }).fromPlatform);
+      return visibleOnly(new Set([5]))(args);
+    };
+    const { source } = rankedSource([5]);
+    await searchSemanticImages({
+      input: input({ fromPlatform: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(hydrated).toEqual([undefined, true]);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],

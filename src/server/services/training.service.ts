@@ -228,12 +228,8 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
 export const TRAINING_STATUS_UNKNOWN_MESSAGE =
   'Training is temporarily unavailable. Please try again in a few minutes.';
 
-// The last status this process read. The "training paused" flag is a moderator control on a paid
-// submit, so a failed read must not turn an operator's pause back into "available". No age bound,
-// and that is a trade-off, not a guarantee: a pod cut off from sysRedis keeps serving its
-// last-known value for as long as the outage lasts, so a pause (or an un-pause) a moderator saves
-// meanwhile, through a pod that can still reach sysRedis, is not seen by the cut-off pod until its
-// reads succeed again.
+// Last status this process read. No age bound: a pod cut off from sysRedis keeps serving it, so a
+// pause or un-pause saved meanwhile is not seen until reads succeed.
 let lastKnownTrainingStatus: TrainingServiceStatus | undefined;
 
 /** For tests: forget the last-known training status. */
@@ -252,10 +248,6 @@ export async function getTrainingServiceStatusState(): Promise<{
   status: TrainingServiceStatus;
   known: boolean;
 }> {
-  // A sysRedis outage must not crash the training status endpoint or training submission, and must
-  // not read as "available" either: a failed read serves the last status this process read, and
-  // "paused" (TRAINING_STATUS_UNKNOWN_MESSAGE) when there is none. TRAINING_STATUS_FAIL_CLOSED=off
-  // restores the previous fall-back to the schema's '{}' default (available).
   // Note on Buffer-vs-string asymmetry (see PR #2697): sysRedis.hGet is typed
   // `string | null` but the HA/Sentinel client returns a Buffer for
   // BLOB_STRING replies. `JSON.parse` accepts a Buffer in Node ≥18 (we run

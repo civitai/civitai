@@ -132,7 +132,7 @@ export async function searchSemanticImages({
   const fetchVisible = async (
     ids: number[],
     level: number,
-    filters: { tags?: number[]; excludedTagIds: number[] }
+    filters: { tags?: number[]; excludedTagIds: number[]; fromPlatform?: boolean }
   ) => {
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
@@ -167,8 +167,12 @@ export async function searchSemanticImages({
     const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
     return work.finally(() => end());
   };
+  // "Made On-site" is judged from the image's meta, so only hydration applies it.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
-    timed('hydrate', fetchVisible(ids, level, { tags: tagIds, excludedTagIds }));
+    timed(
+      'hydrate',
+      fetchVisible(ids, level, { tags: tagIds, excludedTagIds, fromPlatform: input.fromPlatform })
+    );
   const cachedSource = withCandidateCache(
     IMAGE_COLLECTION,
     candidateSource,

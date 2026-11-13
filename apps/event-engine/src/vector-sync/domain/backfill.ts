@@ -129,7 +129,7 @@ export async function runBackfill<P extends DomainPayload>(
   try {
     if (!args.dryRun) await store.bootstrap({ alias: domain.alias() });
     // A dry run creates nothing, so before the first real run there is no collection to read.
-    const { exists } = await store.client.collectionExists(store.collection);
+    const exists = await store.exists();
     const empty = { payloadFields: async () => new Map(), idsInRange: async () => [] };
     const result = await backfillDomain(domain, args, {
       pg,
