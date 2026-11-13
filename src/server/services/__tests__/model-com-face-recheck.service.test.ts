@@ -192,6 +192,17 @@ describe('the .com face listing re-check', () => {
     expect(counts.allowed).toBe(1);
   });
 
+  it('retries an unrated version text even when the intent check detected the listing', async () => {
+    arrange({ fresh: [MODEL_ID] });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await processComFaceRechecks(NOW);
+
+    expect(counts.unavailable).toBe(1);
+    expect(savedRetry()).toMatchObject({ attempt: 1 });
+  });
+
   it('retries when the version rating gets no verdict', async () => {
     arrange({ fresh: [MODEL_ID] });
     mockPreviewComFaceIntent.mockResolvedValue(intent(false));

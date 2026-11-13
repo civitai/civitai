@@ -70,8 +70,8 @@ async function fallBackFromQueue(modelId: number) {
   );
 }
 
-/** `unavailable`: the version rating got no verdict. `intent-unavailable`: only the intent check
- *  did, which is recorded, never acted on. */
+/** `unavailable`: the version rating got no verdict. `intent-unavailable`: the listing intent check
+ *  got no verdict. */
 type RecheckResult =
   | 'skipped'
   | 'allowed'
@@ -101,8 +101,8 @@ async function readModel(modelId: number) {
 /**
  * Re-checks a model's face after a listing edit. The version names and trigger words, which .com
  * shows unchanged, are rated as the .com title is; a mature rating takes the face off .com (the .com
- * cover is cleared, the .com title and description stay). The .red listing's intent verdict is
- * only logged: the .red text does not decide the .com face.
+ * cover is cleared, the .com title and description stay). The listing intent verdict is recorded
+ * for moderators.
  */
 export async function recheckComFace(modelId: number): Promise<RecheckResult> {
   const model = await readModel(modelId);

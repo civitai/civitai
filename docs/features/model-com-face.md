@@ -81,8 +81,8 @@ moderators and never sent to the owner. A check that could not run says so, sepa
 
 ## Listing re-check
 
-When the owner saves the face, or edits the .red title, description or trigger words of a model with
-a .com face, a job (`model-com-face-recheck.service.ts`) checks it again. The version names and
+When the owner saves the face, edits the .red title, description, version names or trigger words,
+or adds a version to a model with a .com face, a job (`model-com-face-recheck.service.ts`) checks it again. The version names and
 trigger words, which .com shows unchanged, are rated as the .com title is; a mature rating takes the
 face off .com: the .com cover is cleared, the .com title and description stay, and
 `meta.comFaceRemoved` records it. The editor shows the owner a notice on both tabs; for a non-mature model, which stays
