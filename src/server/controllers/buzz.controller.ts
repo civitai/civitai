@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { notCommerciallyAvailableMessage, stopsCreatorEarnings } from '~/server/common/constants';
 import dayjs from '~/shared/utils/dayjs';
@@ -32,6 +33,8 @@ import {
 } from '~/server/services/buzz.service';
 import { chargeWasDeclined, paymentOutcomeUnknown } from '~/server/services/buzz-keyed-charge';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
+import { logToAxiom } from '~/server/logging/client';
+import { claimTipIdempotency } from '~/server/utils/block-tip-rate-limit';
 import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -283,12 +286,12 @@ export async function createBuzzTipTransactionHandler({
     // Looked up BEFORE the balance check: a leg that already moved spent the balance this check
     // reads, and refusing its retry as "insufficient funds" tells the client to start a new tip.
     //
-    // No lock and no transaction here: the ledger decides which request moved each leg (the
-    // other gets a conflict), and only the mover writes the tip record. There is no per-key
-    // record to check, and `upsertBuzzTip` adds to a running total, so it is never re-run for a
-    // leg an earlier request moved. The one case two requests can both record is a first send
-    // with a lost response, resolved by its resend, while a second request with the same key
-    // moves the same legs.
+    // No lock and no transaction here. A leg found here was moved by an earlier request and is
+    // never recorded again (`upsertBuzzTip` adds to a running total, and nothing records which
+    // request recorded a leg). The batch answer alone cannot decide who records the rest: a
+    // second request whose lookup ran before the first one committed can be answered with the
+    // first one's legs as successes. So, with a key, only the request that wins the record claim
+    // below writes the tip record, notification and metric.
     const alreadyMoved = new Set<string>();
     if (keyed) {
       const existing = await Promise.all(
@@ -353,7 +356,12 @@ export async function createBuzzTipTransactionHandler({
     const dedupedAmount = (transactions.length - settled.length) * amount;
     const deduped = settled.length === 0 && dedupedAmount > 0;
 
-    if (settled.length > 0) {
+    // One request per key writes the record (see the lookup above). The claim is the App Blocks
+    // tip endpoint's Redis claim (claimTipIdempotency), under its own scope so it never collides
+    // with the endpoint's claim for the same key.
+    const mayRecord =
+      settled.length > 0 && (!keyed || (await claimTipRecord(ctx.user.id, sharedId)));
+    if (mayRecord) {
       if (entityType && entityId) {
         // TODO: We might wanna notify contributors, but hardly a priority right now imho.
         await upsertBuzzTip({
@@ -442,6 +450,35 @@ export async function resolveFailedTipBatch(
   )
     throw paymentOutcomeUnknown(context, 'tip legs unaccounted for after resend', { error });
   return { transactions: sent.map((t) => t.externalTransactionId), conflicts: [] };
+}
+
+/** The record claim's scope: no `:`, as claimTipIdempotency's key requires. */
+const TIP_RECORD_CLAIM_SCOPE = 'tip-record';
+
+/**
+ * Whether this request writes the tip record for `sharedId`: the first claimant does; a claim held
+ * by another request (in progress, for its 10-minute TTL) means that request recorded it.
+ *
+ * FAIL OPEN on a Redis error: the record is written. The worst case is a duplicate tip record,
+ * notification and metric; the Buzz itself moved once either way (the ledger dedupes the legs).
+ */
+async function claimTipRecord(userId: number, sharedId: string) {
+  try {
+    // The key is a hash of the tip's id: hex, inside the claim's charset, and one per tip.
+    const key = createHash('sha256').update(sharedId).digest('hex');
+    const claim = await claimTipIdempotency(userId, TIP_RECORD_CLAIM_SCOPE, key, 'record');
+    return claim.state === 'acquired';
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'tip-record-claim',
+      message: 'tip record claim failed; recording anyway',
+      userId,
+      sharedId,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+    return true;
+  }
 }
 
 export async function getBuzzAccountTransactionsHandler({

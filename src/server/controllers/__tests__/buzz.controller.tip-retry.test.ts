@@ -56,6 +56,7 @@ vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
 
 import { createBuzzTipTransactionHandler } from '../buzz.controller';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Literal: the user-facing contract.
 const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
@@ -81,6 +82,7 @@ const imageTip = (idempotencyKey?: string, amount = 100) =>
 
 let ledger: ReturnType<typeof createFakeBuzzLedger>;
 let locks = createFakeAdvisoryLocks();
+const claims = new Map<string, string>();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -92,6 +94,20 @@ beforeEach(() => {
   mockUpdateEntityMetric.mockResolvedValue(undefined);
   // Reset, not just cleared: a once-queued answer a test never reached must not leak.
   for (const fn of Object.values(buzz)) fn.mockReset();
+  // The record claim's store: SET NX semantics.
+  claims.clear();
+  redisMock.sysRedis.set.mockImplementation((async (
+    key: string,
+    value: string,
+    options?: { NX?: boolean }
+  ) => {
+    if (options?.NX && claims.has(key)) return null;
+    claims.set(key, value);
+    return 'OK';
+  }) as never);
+  redisMock.sysRedis.get.mockImplementation(
+    (async (key: string) => claims.get(key) ?? null) as never
+  );
   ledger = createFakeBuzzLedger();
   locks = createFakeAdvisoryLocks();
   dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => Promise<unknown>) =>
@@ -256,5 +272,37 @@ describe('on-site tip across an unknown outcome', () => {
     expect(mockUpdateEntityMetric).toHaveBeenCalledTimes(1);
     // The ledger gave the legs to one request; the other was answered as a replay.
     expect(results.filter((r) => r.deduped)).toHaveLength(1);
+  });
+
+  // A service that answers a leg it already holds as a success (with the existing id) makes the
+  // batch answer ambiguous: here the first request commits between the second one's lookup and
+  // its write, and both are answered with the leg as moved. One of them records.
+  it("the first request committing between the second one's lookup and write: one tip record", async () => {
+    ledger.setReplayShape('existing-id');
+    ledger.queueFault('hang');
+    const first = imageTip(KEY);
+    while (!ledger.isHung()) await settle();
+    buzz.getTransactionByExternalId.mockImplementationOnce(async () => {
+      // The second request's lookup has run (nothing held yet); now the first one commits.
+      ledger.releaseHung();
+      await first;
+      return null;
+    });
+
+    await imageTip(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
+    expect(mockUpdateEntityMetric).toHaveBeenCalledTimes(1);
+  });
+
+  // Fail open: without the claim store the tip is still recorded; the Buzz moved once regardless.
+  it('records anyway when the claim store is down', async () => {
+    redisMock.sysRedis.set.mockRejectedValue(new Error('redis down') as never);
+
+    await imageTip(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(mockUpsertBuzzTip).toHaveBeenCalledTimes(1);
   });
 });

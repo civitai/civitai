@@ -1,7 +1,19 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { refundUnlessRecorded, withChargeKeyLock } from '~/server/services/buzz-charge-lock';
+import { TRPCError } from '@trpc/server';
+import {
+  CHARGE_LOCK_WAIT,
+  CHARGE_LOCK_WAIT_MS,
+  CHARGE_LOCKED_READ,
+  CHARGE_LOCKED_REFUND,
+  CHARGE_RECORD_TRANSACTION_TIMEOUT_MS,
+  CHARGE_STATEMENT_TIMEOUT,
+  CHARGE_STATEMENT_TIMEOUT_MS,
+  recordStepError,
+  refundUnlessRecorded,
+  withChargeKeyLock,
+} from '~/server/services/buzz-charge-lock';
 
 // Literal: the user-facing contract.
 const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
@@ -41,7 +53,7 @@ describe('withChargeKeyLock', () => {
     expect(run).toHaveBeenCalledTimes(1);
     // A short transaction: database work, a bounded ledger read, and at most a bounded refund.
     expect((dbMock.dbWrite.$transaction.mock.calls[0] as unknown[])[1]).toEqual({
-      timeout: 20_000,
+      timeout: 45_000,
     });
   });
 
@@ -131,6 +143,50 @@ describe('refundUnlessRecorded', () => {
         }
       )
     ).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+    });
+  });
+});
+
+// The budget in buzz-charge-lock.ts, pinned: everything that can run under the lock ends before
+// the transaction deadline releases it, with margin.
+describe('the record lock budget', () => {
+  it('the longest path under the lock fits inside the transaction deadline', () => {
+    expect(CHARGE_LOCK_WAIT).toBe(`${CHARGE_LOCK_WAIT_MS / 1000}s`);
+    expect(CHARGE_STATEMENT_TIMEOUT).toBe(`${CHARGE_STATEMENT_TIMEOUT_MS / 1000}s`);
+    // One attempt each: a retry would multiply the deadline.
+    expect(CHARGE_LOCKED_REFUND.retries).toBe(0);
+    expect(CHARGE_LOCKED_READ.retries).toBe(0);
+
+    const refundCheckReads = 2; // a donation: its prefix list, then its one leg's refund
+    const worstCase =
+      CHARGE_LOCK_WAIT_MS +
+      CHARGE_STATEMENT_TIMEOUT_MS + // the record check
+      refundCheckReads * CHARGE_LOCKED_READ.timeoutMs +
+      CHARGE_LOCKED_REFUND.timeoutMs;
+    expect(worstCase).toBe(31_000);
+    expect(CHARGE_RECORD_TRANSACTION_TIMEOUT_MS - worstCase).toBeGreaterThanOrEqual(10_000);
+  });
+});
+
+describe('recordStepError', () => {
+  const context = { externalTransactionId: 'k', userId: 1 };
+
+  it('passes a refusal through', () => {
+    const refusal = new TRPCError({ code: 'BAD_REQUEST', message: 'already completed' });
+    expect(recordStepError(refusal, context)).toBe(refusal);
+  });
+
+  it.each([
+    [
+      'a Prisma pool timeout',
+      new Prisma.PrismaClientKnownRequestError('p', { code: 'P2024', clientVersion: 't' }),
+    ],
+    ['a server error', new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'x' })],
+    ['a plain error', new Error('boom')],
+  ])('turns %s into "may have gone through"', (_, error) => {
+    expect(recordStepError(error, context)).toMatchObject({
       code: 'INTERNAL_SERVER_ERROR',
       message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
     });

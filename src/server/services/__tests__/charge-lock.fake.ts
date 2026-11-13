@@ -13,9 +13,31 @@ export function createFakeAdvisoryLocks() {
   const taken: string[] = [];
   let open = 0;
   let onNextLock: (() => Promise<void> | void) | undefined;
+  let expiredWhileRunning = 0;
 
-  async function transaction<T>(run: (tx: unknown) => Promise<T>, tx: Record<string, unknown>) {
+  /**
+   * `options.timeout` behaves like Prisma's interactive-transaction deadline: when it passes with
+   * `run` still pending, the transaction is rolled back and its locks are released, while `run`
+   * itself carries on (nothing cancels the work it is awaiting).
+   */
+  async function transaction<T>(
+    run: (tx: unknown) => Promise<T>,
+    tx: Record<string, unknown>,
+    options?: { timeout?: number }
+  ) {
     const mine: (() => void)[] = [];
+    let settled = false;
+    const releaseAll = () => {
+      for (const release of mine.splice(0)) release();
+    };
+    const deadline =
+      options?.timeout !== undefined
+        ? setTimeout(() => {
+            if (settled) return;
+            expiredWhileRunning++;
+            releaseAll();
+          }, options.timeout)
+        : undefined;
     const $executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
       if (!strings.join('').includes('pg_advisory_xact_lock')) return 0;
       const key = String(values[0]);
@@ -36,8 +58,10 @@ export function createFakeAdvisoryLocks() {
     try {
       return await run({ ...tx, $executeRaw });
     } finally {
+      settled = true;
+      if (deadline) clearTimeout(deadline);
       open--;
-      for (const release of mine) release();
+      releaseAll();
     }
   }
 
@@ -46,6 +70,8 @@ export function createFakeAdvisoryLocks() {
     transaction,
     taken: () => [...taken],
     open: () => open,
+    /** Transactions whose deadline passed while their work was still running (locks released). */
+    expiredWhileRunning: () => expiredWhileRunning,
     /** Runs `fn` as the next lock is granted: what another request did just before this one got it. */
     onNextLock: (fn: () => Promise<void> | void) => {
       onNextLock = fn;

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeBuzzLedger, insufficientFunds } from './buzz-ledger.fake';
 import { createFakeAdvisoryLocks, settle } from './charge-lock.fake';
@@ -78,13 +79,20 @@ beforeEach(() => {
 
   // The keyed path records on the lock's transaction.
   locks = createFakeAdvisoryLocks();
-  dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => Promise<unknown>) =>
-    locks.transaction(cb, {
-      donation: {
-        create: (args: unknown) => dbMock.dbWrite.donation.create(args as never),
-        findFirst: (args: unknown) => dbMock.dbWrite.donation.findFirst(args as never),
+  dbMock.dbWrite.$transaction.mockImplementation(((
+    cb: (tx: unknown) => Promise<unknown>,
+    options?: { timeout?: number }
+  ) =>
+    locks.transaction(
+      cb,
+      {
+        donation: {
+          create: (args: unknown) => dbMock.dbWrite.donation.create(args as never),
+          findFirst: (args: unknown) => dbMock.dbWrite.donation.findFirst(args as never),
+        },
       },
-    })) as never);
+      options
+    )) as never);
 
   // Reset, not just cleared: a once-queued answer a test never reached must not leak.
   for (const fn of Object.values(buzz)) fn.mockReset();
@@ -291,5 +299,23 @@ describe('a donation across an unknown outcome', () => {
     // and nothing was recorded. Never a donation on refunded money.
     expect(ledger.charges()).toHaveLength(1);
     expect(donations.length + ledger.refunds().length).toBe(1);
+  });
+
+  // After the charge, a record step that fails without a refusal says nothing about the record.
+  it('no pooled connection for the record is "may have gone through", with no refund', async () => {
+    dbMock.dbWrite.$transaction.mockImplementationOnce((() =>
+      Promise.reject(
+        new Prisma.PrismaClientKnownRequestError('pool', { code: 'P2024', clientVersion: 'test' })
+      )) as never);
+
+    await expect(donate(KEY)).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+    });
+    expect(ledger.refunds()).toHaveLength(0);
+
+    await donate(KEY);
+    expect(ledger.charges()).toHaveLength(1);
+    expect(donations).toHaveLength(1);
   });
 });

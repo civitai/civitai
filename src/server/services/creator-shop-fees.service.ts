@@ -7,7 +7,8 @@ import { normalizeCreatorShopFees } from '~/server/schema/creator-shop.schema';
 import type { Prisma } from '@prisma/client';
 import {
   CHARGE_LOCKED_READ,
-  CHARGE_LOCKED_REFUND_TIMEOUT_MS,
+  CHARGE_LOCKED_REFUND,
+  recordStepError,
   refundUnlessRecorded,
   withChargeKeyLock,
 } from '~/server/services/buzz-charge-lock';
@@ -172,11 +173,12 @@ export async function withSubmissionFee<T>(
         isRecorded: isListed,
         isRefunded,
         refund: () =>
-          refundTransaction(transactionId, refundDescription, undefined, {
-            timeoutMs: CHARGE_LOCKED_REFUND_TIMEOUT_MS,
-          }),
+          refundTransaction(transactionId, refundDescription, undefined, CHARGE_LOCKED_REFUND),
       });
-    throw error;
+    // A failed write was refunded (or left to the request that recorded it): the write's own
+    // error. Anything else after the charge: recordStepError.
+    if (writeFailed) throw error;
+    throw recordStepError(error, { externalTransactionId, ...context });
   }
 }
 

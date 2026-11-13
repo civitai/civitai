@@ -1,4 +1,4 @@
-import { BuzzApiError } from '@civitai/buzz';
+import { BuzzApiError, DEFAULT_WRITE_RETRIES } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 
 /**
@@ -44,6 +44,8 @@ export function createFakeBuzzLedger() {
   let seq = 0;
   let releaseHung: () => void = () => undefined;
   let hung = false;
+  let refundsHang = false;
+  let replayShape: 'conflict' | 'existing-id' = 'conflict';
 
   const balanceOf = (userId: number) => balances.get(userId) ?? Infinity;
   const write = (input: Write) => {
@@ -84,6 +86,17 @@ export function createFakeBuzzLedger() {
     },
     setBalance: (userId: number, balance: number) => balances.set(userId, balance),
     balanceOf,
+    /** Refund calls are never answered (see refundTransaction). */
+    hangRefunds: () => {
+      refundsHang = true;
+    },
+    /**
+     * How the batch reports a leg it already holds: `conflict` (civitai-buzz master) or
+     * `existing-id`, listed as a success with the existing id (a service that pre-checks ids).
+     */
+    setReplayShape: (shape: 'conflict' | 'existing-id') => {
+      replayShape = shape;
+    },
     /** True while a `hang` write is waiting. */
     isHung: () => hung,
     /** Lets a `hang` write commit and answer. */
@@ -115,7 +128,9 @@ export function createFakeBuzzLedger() {
         const transactions: string[] = [];
         const conflicts: string[] = [];
         for (const input of inputs) {
-          if (held.has(input.externalTransactionId)) conflicts.push(input.externalTransactionId);
+          const replayed = held.get(input.externalTransactionId);
+          if (replayed && replayShape === 'existing-id') transactions.push(replayed.transactionId);
+          else if (replayed) conflicts.push(input.externalTransactionId);
           else if (balanceOf(input.fromAccountId) >= input.amount) transactions.push(write(input));
         }
         return { transactions, conflicts };
@@ -181,7 +196,23 @@ export function createFakeBuzzLedger() {
         ? { amount: t.amount, fromAccountId: t.fromAccountId, toAccountId: t.toAccountId }
         : null;
     },
-    refundTransaction: async (transactionId: string) => {
+    /**
+     * Models the client's refund call: `1 + retries` attempts (the client's default retry budget
+     * when the caller passes none), each ending at `timeoutMs`. With `hangRefunds()`, no attempt
+     * is answered, so every one ends at its deadline.
+     */
+    refundTransaction: async (
+      transactionId: string,
+      _description?: string,
+      _details?: unknown,
+      opts?: { timeoutMs?: number; retries?: number }
+    ) => {
+      if (refundsHang) {
+        const attempts = 1 + (opts?.retries ?? DEFAULT_WRITE_RETRIES);
+        for (let i = 0; i < attempts; i++)
+          await new Promise((resolve) => setTimeout(resolve, opts?.timeoutMs ?? 10 * 60_000));
+        throw timeoutError();
+      }
       const original = [...held.values()].find((t) => t.transactionId === transactionId);
       if (!original) throw new Error(`no transaction ${transactionId}`);
       write({ ...original, externalTransactionId: `refund-${transactionId}` });

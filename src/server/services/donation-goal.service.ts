@@ -35,7 +35,8 @@ import {
 import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
 import {
   CHARGE_LOCKED_READ,
-  CHARGE_LOCKED_REFUND_TIMEOUT_MS,
+  CHARGE_LOCKED_REFUND,
+  recordStepError,
   refundUnlessRecorded,
   withChargeKeyLock,
 } from '~/server/services/buzz-charge-lock';
@@ -409,7 +410,7 @@ export const donateToGoal = async ({
         externalTransactionIdPrefix,
         description: `Refund for failed donation to ${goal.title}`,
       },
-      keyed ? { timeoutMs: CHARGE_LOCKED_REFUND_TIMEOUT_MS } : undefined
+      keyed ? CHARGE_LOCKED_REFUND : undefined
     );
 
   if (!keyed) {
@@ -442,7 +443,7 @@ export const donateToGoal = async ({
       }
     });
   } catch (error) {
-    if (!recordFailed) throw error;
+    if (!recordFailed) throw recordStepError(error, outcomeContext);
     await refundUnlessRecorded(externalTransactionIdPrefix, lockContext, {
       isRecorded,
       isRefunded: () => isRefunded(CHARGE_LOCKED_READ),

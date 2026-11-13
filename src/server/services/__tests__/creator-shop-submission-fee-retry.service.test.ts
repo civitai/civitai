@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -39,18 +40,21 @@ dbMock.dbWrite.keyValue.findUnique.mockImplementation((...args: unknown[]) =>
 // Every transaction goes through the fake advisory locks, so two requests with one key serialise
 // the way they do on the primary.
 let locks = createFakeAdvisoryLocks();
-dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => Promise<unknown>) =>
-  locks.transaction(cb, {
-    cosmetic: { create: mocks.cosmeticCreate },
-    cosmeticShopItem: { create: mocks.shopItemCreate },
-    cosmeticShopItemCosmetic: { createMany: mocks.packMemberCreate },
-    // The listed-fee check: a listing of this submitter whose meta records this fee.
-    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const sql = strings.join('?');
-      if (!sql.includes(`meta->>'submissionTxId'`)) throw new Error(`unexpected query: ${sql}`);
-      return values[0] === USER && listedTxIds.has(String(values[1])) ? [{ id: 1 }] : [];
-    },
-  })) as never);
+const txClient = () => ({
+  cosmetic: { create: mocks.cosmeticCreate },
+  cosmeticShopItem: { create: mocks.shopItemCreate },
+  cosmeticShopItemCosmetic: { createMany: mocks.packMemberCreate },
+  // The listed-fee check: a listing of this submitter whose meta records this fee.
+  $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const sql = strings.join('?');
+    if (!sql.includes(`meta->>'submissionTxId'`)) throw new Error(`unexpected query: ${sql}`);
+    return values[0] === USER && listedTxIds.has(String(values[1])) ? [{ id: 1 }] : [];
+  },
+});
+dbMock.dbWrite.$transaction.mockImplementation(((
+  cb: (tx: unknown) => Promise<unknown>,
+  options?: { timeout?: number }
+) => locks.transaction(cb, txClient(), options)) as never);
 
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => buzz);
@@ -400,6 +404,115 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     // nothing was listed. Never a listing on refunded money.
     expect(ledger.charges()).toHaveLength(1);
     expect(listedTxIds.size + ledger.refunds().length).toBe(1);
+  });
+
+  // The refund after a failed write is the one Buzz call made under the lock. The transaction's
+  // deadline releases the lock; if that could pass while the refund was still being attempted, a
+  // same-key retry could record on money the refund then takes back. The refund's attempts must
+  // all end inside the deadline, whatever the Buzz service does.
+  describe('a refund the Buzz service never answers', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('ends before the record transaction does, so the lock is never released under it', async () => {
+      vi.useFakeTimers();
+      ledger.hangRefunds();
+      mocks.shopItemCreate.mockRejectedValueOnce(new Error('write failed'));
+
+      const submitted = site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(await submitted).toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+      });
+      expect(buzz.refundTransaction).toHaveBeenCalledTimes(1);
+      expect(locks.expiredWhileRunning()).toBe(0);
+    });
+  });
+
+  // After the charge, every failure of the record step that is not a refusal says nothing about
+  // whether the record was written: "may have gone through", no refund, and the charge left for a
+  // retry to continue from.
+  describe('a record step that fails after the charge', () => {
+    const prismaError = (code: string, meta?: Record<string, unknown>) =>
+      new Prisma.PrismaClientKnownRequestError('boom', { code, clientVersion: 'test', meta });
+    const failures: [string, () => void][] = [
+      [
+        'no pooled connection (P2024)',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce((() =>
+            Promise.reject(prismaError('P2024'))) as never),
+      ],
+      [
+        'the transaction failing to start (P2028)',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce((() =>
+            Promise.reject(prismaError('P2028'))) as never),
+      ],
+      [
+        'a statement timeout in the listed check',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce(((
+            cb: (tx: unknown) => Promise<unknown>
+          ) =>
+            locks.transaction(cb, {
+              $queryRaw: () => Promise.reject(prismaError('P2010', { code: '57014' })),
+            })) as never),
+      ],
+      [
+        'a SET under the lock failing',
+        () =>
+          dbMock.dbWrite.$transaction.mockImplementationOnce(((
+            cb: (tx: unknown) => Promise<unknown>
+          ) =>
+            cb({
+              $executeRaw: () => Promise.reject(prismaError('P2010', { code: '25P02' })),
+            })) as never),
+      ],
+    ];
+
+    it.each(failures)('%s is "may have gone through", with no refund', async (_, arrange) => {
+      arrange();
+
+      const error = await site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+
+      expect(error).toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+      });
+      expect(ledger.charges()).toHaveLength(1);
+      expect(ledger.refunds()).toHaveLength(0);
+      expect(buzz.refundTransaction).not.toHaveBeenCalled();
+
+      // The key is kept, and its retry continues from the charge.
+      await site.submit({ idempotencyKey: KEY });
+      expect(ledger.charges()).toHaveLength(1);
+      expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    });
+
+    // The work ran, then COMMIT failed: whether the listing exists is unknown. The retry reads it
+    // (here it was kept) and is told the submission is complete; no second listing either way.
+    it('the commit failing is "may have gone through", with no refund', async () => {
+      dbMock.dbWrite.$transaction.mockImplementationOnce((async (
+        cb: (tx: unknown) => Promise<unknown>
+      ) => {
+        await locks.transaction(cb, txClient());
+        throw prismaError('P2028');
+      }) as never);
+
+      const error = await site.submit({ idempotencyKey: KEY }).catch((e: unknown) => e);
+
+      expect(error).toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
+      });
+      expect(buzz.refundTransaction).not.toHaveBeenCalled();
+      await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+        message: ALREADY_COMPLETED,
+      });
+      expect(ledger.charges()).toHaveLength(1);
+      expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('charges a new submission (a new key) again', async () => {
