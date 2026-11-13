@@ -2227,6 +2227,12 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  FLIPT: {
+    // `system:flipt:snapshot:<FLIPT_ENVIRONMENT>` — the last Flipt evaluation snapshot a process
+    // fetched live (JSON), and `…:meta` beside it ({ savedAt, etag }). A process that cannot reach
+    // Flipt at startup evaluates from it. Written by @civitai/flipt's createKvSnapshotStore.
+    SNAPSHOT: 'system:flipt:snapshot',
+  },
   DOWNLOAD_LINK: {
     // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
     // fetches). The raw id is never stored.

@@ -46,13 +46,14 @@ export type OrchestratorBlobLike = {
   width?: number | null;
   height?: number | null;
   nsfwLevel?: string | null;
+  blockedReason?: string | null;
 };
 
 /**
- * Blobs → `StepOutputMedia[]`, applying the availability + non-empty-url filter.
+ * Blobs → `StepOutputMedia[]`, applying the availability, block and non-empty-url filter.
  *
  * 🔴 EXPORTED SO EVERY ENTRY USES ONE COPY OF THE FILTER. The rule — "only blobs
- * that are `available` with a non-null url are surfaced; pending/blocked ones
+ * that are `available`, not blocked, with a non-null url are surfaced; pending/blocked ones
  * are dropped rather than handing the block dead links" — is the same rule the
  * two `workflow.service` extractors already applied inline. A per-entry
  * reimplementation is how one copy gets a fix and the others don't.
@@ -71,7 +72,7 @@ export function mediaFromBlobs(
     blobs == null ? [] : Array.isArray(blobs) ? blobs : [blobs as OrchestratorBlobLike];
   const media: StepOutputMedia[] = [];
   for (const blob of list) {
-    if (!isSurfaceableBlob(blob)) continue;
+    if (!isSurfaceableBlob(blob) || isBlockedBlob(blob)) continue;
     media.push({
       url: blob.url,
       width: typeof blob.width === 'number' ? blob.width : null,
@@ -91,6 +92,15 @@ function isSurfaceableBlob(
   blob: OrchestratorBlobLike | null | undefined
 ): blob is OrchestratorBlobLike & { url: string } {
   return !!blob && !!blob.available && typeof blob.url === 'string' && blob.url.length > 0;
+}
+
+/**
+ * 🔴 Checked apart from `available`: a videoGen output reports `available: true`
+ * even when the orchestrator has blocked it.
+ */
+function isBlockedBlob(blob: OrchestratorBlobLike) {
+  const reason = blob.blockedReason;
+  return typeof reason === 'string' && reason.length > 0 && reason.toLowerCase() !== 'none';
 }
 
 /** Deep enough for every native, registered and pass-through output shape. */
@@ -118,6 +128,7 @@ export function withEveryBlobSurfaceable(output: unknown, depth = 0): unknown {
     return {
       ...blob,
       available: true,
+      blockedReason: null,
       url: typeof blob.url === 'string' && blob.url.length > 0 ? blob.url : 'probe:withheld',
     };
   }

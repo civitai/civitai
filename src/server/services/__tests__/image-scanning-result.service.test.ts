@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as AxisRating from '~/server/services/image-axis-rating.service';
 import {
   classifyImageScanFailure,
   ImageScanFailureClass,
@@ -16,21 +15,14 @@ const pipeline = vi.hoisted(() => ({
   resolveScanOutcome: vi.fn(),
   sendIngestionSignal: vi.fn(),
 }));
-const {
-  mockRecordAudit,
-  mockRemoveJobQueue,
-  mockFanOut,
-  mockRecordFlag,
-  mockLabelPrompt,
-  mockWriteAxes,
-} = vi.hoisted(() => ({
-  mockRecordAudit: vi.fn(),
-  mockRemoveJobQueue: vi.fn(),
-  mockFanOut: vi.fn(),
-  mockRecordFlag: vi.fn(),
-  mockLabelPrompt: vi.fn(),
-  mockWriteAxes: vi.fn(),
-}));
+const { mockRecordAudit, mockRemoveJobQueue, mockFanOut, mockRecordFlag, mockLabelPrompt } =
+  vi.hoisted(() => ({
+    mockRecordAudit: vi.fn(),
+    mockRemoveJobQueue: vi.fn(),
+    mockFanOut: vi.fn(),
+    mockRecordFlag: vi.fn(),
+    mockLabelPrompt: vi.fn(),
+  }));
 
 // The pipeline imports the whole ingestion stack, and its stages run for real in
 // image-scan-result.test.ts, so this suite pins only what this service passes them.
@@ -50,11 +42,6 @@ vi.mock('~/server/services/scan-label-flag.service', () => ({
 }));
 vi.mock('~/server/services/upload-prompt-scan.service', () => ({
   labelUploadPrompt: mockLabelPrompt,
-}));
-// Its SQL runs for real in image-axis-rating.sql.behavior.test.ts.
-vi.mock('~/server/services/image-axis-rating.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof AxisRating>()),
-  writeRatedAxes: mockWriteAxes,
 }));
 
 import {
@@ -358,27 +345,28 @@ describe('processImageScanningWorkflow', () => {
     hashStep,
   ];
 
-  it('stores the axes of a rated scan with the workflow and its completion time', async () => {
+  // The verdict UPDATE writes them; its SQL runs for real in image-nsfw-axes.sql.behavior.test.ts.
+  it('hands the axes of a rated scan to the verdict write', async () => {
     await deliver('succeeded', withRating(ratingV2()));
 
-    expect(mockWriteAxes).toHaveBeenCalledWith({
-      imageId: 7,
-      axes: { sexual: 3, violence: 1, rater: 'radio-alpha', raterVersion: 'c0ffee' },
-      workflowId: 'wf',
-      completedAt: 'end',
-    });
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: 'wf',
+        axes: { sexual: 3, violence: 1, rater: 'radio-alpha', raterVersion: 'c0ffee' },
+      })
+    );
   });
 
-  // No row is how an image the rater never saw stays apart from a rated one.
-  it('stores nothing for a scan without axes', async () => {
+  it('hands no axes to the verdict write for a scan without them', async () => {
     await deliver('succeeded', withRating(undefined));
-    expect(mockWriteAxes).not.toHaveBeenCalled();
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ axes: undefined })
+    );
   });
 
-  it('leaves the verdict and every stage the same whether or not the scan has axes', async () => {
+  it('leaves every other stage the same whether or not the scan has axes', async () => {
     const stages = [
       pipeline.buildAndInsertScanTags,
-      pipeline.resolveScanOutcome,
       pipeline.applyIngestionSideEffects,
       pipeline.sendIngestionSignal,
       pipeline.markImageScanError,
@@ -392,45 +380,6 @@ describe('processImageScanningWorkflow', () => {
     const unrated = await run(undefined);
     const rated = await run(ratingV2());
     expect(rated).toEqual(unrated);
-    expect(pipeline.resolveScanOutcome).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    ['rejects', () => Promise.reject(new Error('relation "ImageAxisRating" does not exist'))],
-    [
-      'throws',
-      () => {
-        throw new Error('writer broke');
-      },
-    ],
-  ])('still records the moderator label when the axis writer %s', async (_, fail) => {
-    mockWriteAxes.mockImplementationOnce(fail as never);
-    const refusedRated = {
-      ...refusedStep,
-      output: { ...refusedStep.output, ratingV2: ratingV2() },
-    };
-    await expect(deliver('succeeded', [refusedRated, hashStep])).resolves.toBeUndefined();
-
-    expect(mockWriteAxes).toHaveBeenCalledTimes(1);
-    expect(mockRecordFlag).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not fail the scan when storing the axes fails', async () => {
-    mockWriteAxes.mockRejectedValueOnce(new Error('relation "ImageAxisRating" does not exist'));
-    await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
-
-    expect(pipeline.markImageScanError).not.toHaveBeenCalled();
-    expect(pipeline.applyIngestionSideEffects).toHaveBeenCalledTimes(1);
-    expect(pipeline.sendIngestionSignal).toHaveBeenCalledWith(
-      expect.objectContaining({ ingestion: 'Scanned' })
-    );
-  });
-
-  it('still stores the axes when a side effect after the verdict fails', async () => {
-    pipeline.applyIngestionSideEffects.mockRejectedValueOnce(new Error('side effect down'));
-    await expect(deliver('succeeded', withRating(ratingV2()))).resolves.toBeUndefined();
-
-    expect(mockWriteAxes).toHaveBeenCalledWith(expect.objectContaining({ imageId: 7 }));
   });
 });
 

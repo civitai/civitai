@@ -9,6 +9,7 @@ import { routing } from '~/components/Search/useSearchState';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
@@ -44,10 +45,13 @@ const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets:
 // used to render the banner (the swallowed error never reaches
 // `useInstantSearch().status`).
 const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
-  createResilientSearchClient(withSemanticArticleSearch(withSemanticImageSearch(meilisearch)), {
-    onError: () => searchAvailability.setUnavailable(true),
-    onSuccess: () => searchAvailability.setUnavailable(false),
-  })
+  createResilientSearchClient(
+    withSemanticComicSearch(withSemanticArticleSearch(withSemanticImageSearch(meilisearch))),
+    {
+      onError: () => searchAvailability.setUnavailable(true),
+      onSuccess: () => searchAvailability.setUnavailable(false),
+    }
+  )
 );
 
 // #region [ImageGuardContext]

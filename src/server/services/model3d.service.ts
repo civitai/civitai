@@ -361,8 +361,18 @@ export const ensureModel3DFromWorkflow = async ({
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
-    const sourceImageId =
-      typeof meta.sourceImageId === 'number' ? (meta.sourceImageId as number) : undefined;
+    // Workflow metadata is user-patchable: keep the source image only if it is the caller's own.
+    const claimedSourceImageId =
+      Number.isInteger(meta.sourceImageId) && (meta.sourceImageId as number) > 0
+        ? (meta.sourceImageId as number)
+        : undefined;
+    const sourceImage = claimedSourceImageId
+      ? await dbRead.image.findUnique({
+          where: { id: claimedSourceImageId },
+          select: { userId: true },
+        })
+      : null;
+    const sourceImageId = sourceImage?.userId === user.id ? claimedSourceImageId : undefined;
 
     await handlePolyGenWorkflowResult({
       workflowId: input.workflowId,
@@ -749,8 +759,8 @@ export const upsertModel3D = async ({
   // can't quietly publish a draft.
   if (!isModerator) delete (data as Record<string, unknown>).status;
 
-  // Strip locked props on update for non-mods.
-  let lockedProperties: string[] | undefined = data.lockedProperties;
+  // Only moderators set locks, on create as well as update.
+  let lockedProperties: string[] | undefined = isModerator ? data.lockedProperties : undefined;
   let existing: { id: number; userId: number; lockedProperties: string[] } | null = null;
   if (id) {
     existing = await dbWrite.model3D.findUnique({
@@ -762,11 +772,52 @@ export const upsertModel3D = async ({
 
     if (!isModerator) {
       const locked = new Set(existing.lockedProperties ?? []);
+      // A moderator's rating was judged on the current thumbnail, so it pins that too.
+      if (locked.has('nsfwLevel') && data.thumbnailImageId !== undefined) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message:
+            "A moderator has rated this model, so its thumbnail can't be changed. Contact support if you need to change it.",
+        });
+      }
       for (const key of locked) delete (data as Record<string, unknown>)[key];
       // Non-mods can't change lockedProperties either.
       lockedProperties = undefined;
     }
   }
+
+  // Moderators included: the thumbnail must be one of the model owner's images.
+  let thumbnailNsfwLevel: number | undefined;
+  if (data.thumbnailImageId != null) {
+    const ownerId = existing?.userId ?? user.id;
+    const image = await dbWrite.image.findUnique({
+      where: { id: data.thumbnailImageId },
+      select: { userId: true, nsfwLevel: true, postId: true },
+    });
+    // Unposted only: the thumbnail rating fast paths (updateModel3DNsfwLevelForThumbnailImage,
+    // apps/moderator image-nsfw-level) skip posted images.
+    if (!image || image.userId !== ownerId || image.postId != null)
+      throw throwBadRequestError('Invalid thumbnail image.');
+    thumbnailNsfwLevel = image.nsfwLevel;
+  } else if (data.thumbnailImageId === null) {
+    thumbnailNsfwLevel = 0;
+  }
+  // Rate from the new thumbnail in the same write, as updateModel3DNsfwLevels would, so a
+  // published model is never served at the previous thumbnail's level while the job is queued.
+  const ratingLocked = (lockedProperties ?? existing?.lockedProperties ?? []).includes('nsfwLevel');
+  const nsfwLevel = ratingLocked ? undefined : thumbnailNsfwLevel;
+
+  // nsfwLevel is derived from the thumbnail; the image-scan path only re-derives when the image changes.
+  const queueNsfwRecomputeOnThumbnailChange = async (
+    model3dId: number,
+    tx: Prisma.TransactionClient
+  ) => {
+    if (data.thumbnailImageId === undefined) return;
+    await enqueueJobs(
+      [{ entityId: model3dId, entityType: EntityType.Model3D, type: JobQueueType.UpdateNsfwLevel }],
+      tx
+    );
+  };
 
   const writeData: Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput = {
     ...data,
@@ -774,13 +825,18 @@ export const upsertModel3D = async ({
     generationParams: (generationParams as Prisma.InputJsonValue) ?? undefined,
     meta: (meta as Prisma.InputJsonValue) ?? undefined,
     lockedProperties,
+    ...(nsfwLevel !== undefined && { nsfwLevel }),
   } as Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput;
+
+  const guardRatingLock = !isModerator && data.thumbnailImageId !== undefined;
 
   try {
     if (id) {
       const updated = await dbWrite.$transaction(async (tx) => {
         const row = await tx.model3D.update({
-          where: { id },
+          // A moderator may lock the rating after the lock read above; refuse rather than
+          // swap the thumbnail under a locked rating.
+          where: guardRatingLock ? { id, NOT: { lockedProperties: { has: 'nsfwLevel' } } } : { id },
           data: writeData,
           select: model3dDetailSelect,
         });
@@ -795,6 +851,7 @@ export const upsertModel3D = async ({
           }
         }
 
+        await queueNsfwRecomputeOnThumbnailChange(row.id, tx);
         return row;
       });
       return updated;
@@ -814,12 +871,23 @@ export const upsertModel3D = async ({
         });
       }
 
+      await queueNsfwRecomputeOnThumbnailChange(row.id, tx);
       return row;
     });
 
     return created;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (
+      guardRatingLock &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    ) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'This model changed while you were saving. Reload it and try again.',
+      });
+    }
     throw throwDbError(error);
   }
 };
@@ -943,16 +1011,17 @@ export const deleteModel3D = async ({
 // ---------------------------------------------------------------------------
 
 /**
- * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. When
- * `lock` is true we also append `'nsfwLevel'` to `lockedProperties` so the
- * batch recompute (`updateModel3DNsfwLevels`) skips this row going forward.
+ * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. Like a moderator's
+ * image rating (`nsfwLevelLocked`), it always locks: `'nsfwLevel'` is added to
+ * `lockedProperties`, so neither the batch recompute (`updateModel3DNsfwLevels`) nor the
+ * owner (who then can't change the thumbnail) can move it. The `lock` input is ignored.
  *
  * Denormalized `Model3DMetric.nsfwLevel` is updated in lockstep.
  */
 export const setModel3DNsfwLevel = async ({
   id,
   nsfwLevel,
-  lock,
+  thumbnailImageId,
   user,
 }: SetModel3DNsfwLevelInput & { user: SessionUser }) => {
   if (!user.isModerator) throw throwAuthorizationError();
@@ -963,14 +1032,13 @@ export const setModel3DNsfwLevel = async ({
   });
   if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
 
-  const nextLocked = lock
-    ? Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']))
-    : existing.lockedProperties;
+  const nextLocked = Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']));
 
   try {
     const updated = await dbWrite.$transaction(async (tx) => {
+      // The lock pins this rating to the current thumbnail, so it must be the one judged.
       const row = await tx.model3D.update({
-        where: { id },
+        where: { id, AND: [{ thumbnailImageId }] },
         data: { nsfwLevel, lockedProperties: nextLocked },
         select: model3dDetailSelect,
       });
@@ -988,6 +1056,12 @@ export const setModel3DNsfwLevel = async ({
     return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'The thumbnail changed since you opened this model. Reload it and rate again.',
+      });
+    }
     throw throwDbError(error);
   }
 };

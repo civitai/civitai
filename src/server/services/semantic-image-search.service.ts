@@ -19,7 +19,10 @@ import {
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsArray,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -172,14 +175,17 @@ export async function searchSemanticImages({
       lte: input.postedBefore?.toISOString(),
     },
     // As the image search index: no NSFW images made with a base model whose license forbids it.
-    mustNot: [
-      {
-        must: [
-          { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-          { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
-        ],
-      },
-    ],
+    // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
+    mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
+      ? [
+          {
+            must: [
+              { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
+              { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
+            ],
+          },
+        ]
+      : [],
   };
 
   const query: SearchQuery = input.imageId
@@ -190,7 +196,7 @@ export async function searchSemanticImages({
   let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
-      const result = await candidateSource({ query, filter, offset, limit });
+      const result = await candidateSource({ query, filter, offset, limit, sort: input.sort });
       // The service embeds its spelling correction, not the text audited above.
       if (correctedRefusal === undefined && result.correctedQuery !== undefined)
         correctedRefusal =

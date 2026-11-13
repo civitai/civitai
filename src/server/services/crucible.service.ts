@@ -17,6 +17,7 @@ import {
   PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { crucibleScannedSql } from '~/server/services/crucible-visibility.sql';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
@@ -664,8 +665,7 @@ const greenSiteSql = (isGreen: boolean) =>
 
 /** Crucible `c` with cover `i`, as list surfaces may show it to a viewer at `viewerLevel`. */
 const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
-  c.ingestion = ${CrucibleIngestionStatus.Scanned}::"CrucibleIngestionStatus"
-  AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+  ${crucibleScannedSql}
   ${
     viewerLevel > 0 && !Flags.intersects(viewerLevel, nsfwBrowsingLevelsFlag)
       ? Prisma.sql`AND NOT c."textNsfw"`

@@ -374,6 +374,45 @@ describe('getArticleByShareToken: cover and viewer', () => {
   });
 });
 
+describe('getArticleByShareToken: body images', () => {
+  it('🔴 returns this article’s linked body images with the fields their guard reads', async () => {
+    const linked = {
+      id: 501,
+      url: 'uuid-r',
+      nsfwLevel: 4,
+      userId: AUTHOR,
+      hash: 'h',
+      width: 8,
+      height: 10,
+    };
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([
+      { image: { ...linked, ingestion: 'Scanned' } },
+    ] as never);
+
+    const result = await read();
+
+    expect(result.status === 'ok' && result.article.contentImages).toEqual([linked]);
+    expect(dbMock.dbWrite.imageConnection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { entityId: ARTICLE, entityType: 'Article' },
+        select: {
+          image: {
+            select: expect.objectContaining({
+              id: true,
+              url: true,
+              nsfwLevel: true,
+              userId: true,
+              hash: true,
+              width: true,
+              height: true,
+            }),
+          },
+        },
+      })
+    );
+  });
+});
+
 describe('createArticleShareLink', () => {
   const create = (userId = AUTHOR) =>
     createArticleShareLink({ articleId: ARTICLE, expiresInDays: 7, userId });

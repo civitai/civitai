@@ -161,7 +161,7 @@ export function shapeModelHit(
   return rest;
 }
 
-type ComicHit = Record<string, unknown> & {
+export type ComicHit = Record<string, unknown> & {
   coverImageNsfwLevel?: unknown;
   _formatted?: Record<string, unknown>;
 };
@@ -170,7 +170,7 @@ type ComicHit = Record<string, unknown> & {
  * A capped site gets a cover only when every level it carries is inside the cap, stricter than
  * model images (any overlap). An unrated cover counts as outside.
  */
-function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
+export function shapeComicHit(hit: ComicHit, browsingLevelCap: number | undefined) {
   if (browsingLevelCap === undefined) return hit;
   const level = Number(hit.coverImageNsfwLevel) || 0;
   if (level > 0 && (level & ~browsingLevelCap) === 0) return hit;

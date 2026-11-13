@@ -360,7 +360,8 @@ async function makeBundle(files: Record<string, string | Buffer>): Promise<Buffe
 function manifest(over: Record<string, unknown> = {}) {
   // Default shape covers the minimum fields BlockManifestValidator requires
   // (so approveRequest's H-4 pre-validation accepts the manifest by default
-  // and individual tests opt into invalid shapes via `over`).
+  // and individual tests opt into invalid shapes via `over`). That includes a
+  // surface (`page`), which the submission validator requires.
   return {
     blockId: 'hello',
     version: '0.1.0',
@@ -374,6 +375,7 @@ function manifest(over: Record<string, unknown> = {}) {
       resizable: true,
       sandbox: 'allow-scripts',
     },
+    page: { path: '/', title: 'Hello World' },
     ...over,
   };
 }

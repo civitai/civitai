@@ -48,7 +48,10 @@ vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
   ...(await importOriginal<typeof HotReads6>()),
   getModelVersionPrivacyRow: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: mockGetVaeFiles }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: mockGetVaeFiles,
+  holdShowcaseImages: async (byVersion: unknown) => byVersion,
+}));
 vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersion: mockGetImages,
 }));
