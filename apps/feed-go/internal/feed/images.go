@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -79,11 +80,13 @@ func (c *QueryCache) Key(b Built) string {
 	return c.Prefix + "feed-go:getAllImages:v1:" + base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 }
 
-// statementTimeout is IMAGE_FEED_STATEMENT_TIMEOUT_MS.
-const statementTimeout = 20 * time.Second
+// statementTimeout is IMAGE_FEED_STATEMENT_TIMEOUT_MS. A var only so tests can shorten it.
+var statementTimeout = 20 * time.Second
 
-// FetchRows runs the page query through the cache. A statement timeout yields an empty page, as Node
-// answers it.
+// FetchRows runs the page query through the cache. A query that runs past statementTimeout yields an
+// empty page (never cached), as Node answers a statement timeout (getAllImages: "feeds can accept an
+// empty page after a timeout"), so a slow replica is not handed on to the Node app to run again. Only
+// this query's own deadline does that: a cancelled or expired caller context is still an error.
 func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]RawImage, error) {
 	useCache := cache != nil && cache.Enabled && cache.Redis != nil && b.CacheTTL > 0
 	var key string
@@ -96,14 +99,23 @@ func FetchRows(ctx context.Context, db Querier, cache *QueryCache, b Built) ([]R
 			}
 		}
 	}
-	qctx, cancel := context.WithTimeout(ctx, statementTimeout+2*time.Second)
+	qctx, cancel := context.WithTimeout(ctx, statementTimeout)
 	defer cancel()
+	timedOut := func() bool {
+		return ctx.Err() == nil && errors.Is(qctx.Err(), context.DeadlineExceeded)
+	}
 	rows, err := db.Query(qctx, b.SQL, b.Args...)
 	if err != nil {
+		if timedOut() {
+			return []RawImage{}, nil
+		}
 		return nil, err
 	}
 	out, err := scanRows(rows)
 	if err != nil {
+		if timedOut() {
+			return []RawImage{}, nil
+		}
 		return nil, err
 	}
 	if useCache {

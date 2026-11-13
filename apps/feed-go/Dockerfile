@@ -4,8 +4,7 @@
 #   docker build -f apps/feed-go/Dockerfile -t civitai-feed-go apps/feed-go
 #
 # Runtime needs real env vars (see .env.example); there is no .env loading in the binary.
-# TODO(release): pin both base images by digest, as the Node apps' Dockerfiles do, when the
-# tag-webhook build is wired (DESIGN.md "Deploy prerequisites").
+# Both base images are pinned by digest, as the Node apps' Dockerfiles do.
 
 FROM golang:1.26-alpine@sha256:30b1e546a9c7fa3b747c2bdba3a0c7bdf3a02ebb4c5b8405d2f948d7e8aac4ec AS build
 WORKDIR /src

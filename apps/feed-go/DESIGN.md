@@ -129,11 +129,18 @@ the authenticated viewer or for nobody.
 - The rich session user (moderator flag, ban) is read from the shared session cache; the cached entry
   must carry the same id as the token, or the request falls back. A cleared entry falls back. A cache
   miss falls back (Node would fetch the user from the auth hub).
+- The shared moderation account (`CIVITAI_MODERATION_USER_ID`, or the reserved username in any casing)
+  is never a session, as in `refuseModerationAccountSession`: refused by the token's `sub` before any
+  lookup, and again by the resolved user's id or username. Signed out.
 - A banned user is served as signed out, but the response stays private (not edge-cacheable), as in
   `createContext`.
 - Only a response computed with **no** session user gets the public cache headers. Every per-viewer
   clause binds the verified id; signed out binds `NULL`, which makes each carve-out false.
 - API keys / OAuth tokens fall back: they carry scopes and change the moderator rule (`moderatorView`).
+- On the public route, a request whose `Origin` (else `Referer`) host is not on the app's allow-list
+  (`SERVER_DOMAIN_*` hosts and aliases, `TRPC_ORIGINS`, `NEXTAUTH_URL`; `isAcceptableOrigin`) is handed
+  to the Node app before anything is computed, so it answers as it does today (401 in production for a
+  cookie caller). The shadow endpoint does not apply it: Node only samples requests it already accepted.
 - The shadow endpoint receives the original `Cookie` header and verifies it the same way — it never
   trusts an identity asserted by the caller.
 
@@ -257,7 +264,12 @@ will show.
   withheld creator cosmetics, read the primary, or join the tag cache — not ported), metric hashes
   (ClickHouse populate not ported), session users (auth hub fetch not ported), gallery settings
   (rebuild not ported);
-- bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests.
+- bearer tokens, two session cookies, verified crawlers, POST (`methodOverride`) requests;
+- public requests from an origin the app's allow-list does not hold (reason `origin`, see §4).
+
+**Matched behaviour worth knowing:** a page query that runs past the 20s statement timeout answers an
+empty page, as Node does, rather than falling back (which would run the same slow query a second time
+on Node).
 
 **Divergences the comparator will show:**
 - `referentialEqualities` and opaque-object key order (not visible after decode; excluded by design);
@@ -275,8 +287,13 @@ will show.
 
 ## 10. Measurement plan — CPU per call, Go vs Node, same traffic
 
-Shadow mode gives both sides the same requests. During it the Go process does nothing but compute
-shadow answers, so its CPU per call is a plain ratio:
+Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
+shadow samples, so its CPU per call is a plain ratio. **That ratio is an UPPER BOUND for serving:**
+each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
+to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That comparison
+overhead is included in `process_cpu_seconds_total` and is not separated out, so a measured Go
+figure below Node's is conservative, and a figure near Node's does not by itself show Go is no
+cheaper.
 
 ```promql
 # Go: CPU seconds per computed answer (shadow), GC and runtime included.
@@ -295,14 +312,20 @@ Node's side is the per-procedure CPU attribution already used to rank tRPC proce
 measurement that identified this one), read over the same window for
 `image.getImagesAsPostsInfinite`. To compare like with like:
 
-- read Go's ratio only over answered requests (fallbacks cost Go almost nothing and Node everything);
+- read Go's ratio only over answered requests. A fallback is NOT free for Go: one raised before the
+  query (input shape, bearer token, origin) is cheap, but one raised during hydration (a cosmetics,
+  metrics, tag-id, frame, event-decoration, session or gallery miss) comes after the page query and
+  the parallel lookups, and in the post loop after earlier pages. That CPU lands in the numerator with
+  no served request in the denominator, so it is a second reason Go's figure is an upper bound; read
+  the fallback-reason rate beside it;
 - run both reads over the same windows and compare medians across several windows, not one;
 - note what Go does **not** pay yet: cache write-back, ClickHouse populates, auth-hub fetches — all
   rare misses that Node pays and Go falls back on. The fallback rate bounds how much this can matter;
 - add the extra Redis and Postgres reads Go makes in shadow mode to the cost side when the sample
   rate is raised (shadowing doubles the read work for sampled requests).
 
-The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity.
+The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity,
+with Go's side read as an upper bound (it includes the shadow decode and compare, above).
 
 ## 11. Deploy prerequisites (infrastructure repo, later)
 
@@ -312,13 +335,14 @@ None of this is in this PR.
   the Node apps, the build context is `apps/feed-go/` (a self-contained Go module, see `Dockerfile`).
   `scripts/release-app.mjs` reads the version from a `package.json`; this app has none, so it needs a
   small variant (a `VERSION` file, or a version-only `package.json` plus its lockfile importer) before
-  a release can be cut. Pin both Dockerfile base images by digest at that point.
+  a release can be cut. Both Dockerfile base images are already pinned by digest.
 - **Workload:** a Deployment on the same pool class as the Node API pods it is compared with, two
   container ports (public 8080, internal 9090), liveness/readiness on `:9090/healthz`.
 - **Services:** an internal Service for 9090 (metrics scrape + shadow posts from the Node pods); a
   public route for 8080 only when serving starts.
 - **Secrets / env:** the replica URL, both Redis URLs (plus `REDIS_SYS_SENTINELS` /
-  `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI, the
+  `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI,
+  `CIVITAI_MODERATION_USER_ID` (§4), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `IMAGE_QUERY_CACHING`, the flag mirrors, and
   `FEED_GO_FALLBACK_URL` (the in-cluster Node service) once serving.
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system

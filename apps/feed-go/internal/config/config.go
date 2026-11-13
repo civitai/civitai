@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -46,6 +47,13 @@ type Config struct {
 	RedisSysSentinels        string // REDIS_SYS_SENTINELS: comma-separated host[:port]
 	RedisSysSentinelName     string // REDIS_SYS_SENTINEL_NAME: master group, required with SENTINELS
 	RedisSysSentinelPassword string // REDIS_SYS_SENTINEL_PASSWORD: only if Sentinel auth is on
+
+	// ModerationAccountID is CIVITAI_MODERATION_USER_ID: the shared moderation account, refused as a
+	// session (0 when unset or not a positive integer; the reserved username is refused regardless).
+	ModerationAccountID int
+	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
+	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
+	AllowedOriginHosts map[string]bool
 }
 
 // Load reads the environment.
@@ -88,6 +96,10 @@ func Load() (*Config, error) {
 		hosts = append(hosts, list(os.Getenv("SERVER_DOMAIN_"+up+"_ALIASES"))...)
 		c.Hosts[color] = hosts
 	}
+	if n := intEnv("CIVITAI_MODERATION_USER_ID", 0); n > 0 {
+		c.ModerationAccountID = n
+	}
+	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
 		return nil, err
@@ -126,6 +138,43 @@ func (c *Config) CookieNames() []string {
 	return append(names, host)
 }
 
+// AllowedOriginHosts builds the origin allow-list the app's isAcceptableOrigin checks: the server
+// hosts (as configured, lowercased), plus the host of each TRPC_ORIGINS URL and of NEXTAUTH_URL.
+func AllowedOriginHosts(hosts browsing.HostColors, trpcOrigins []string, nextAuthURL string) map[string]bool {
+	out := map[string]bool{}
+	for _, hs := range hosts {
+		for _, h := range hs {
+			if h != "" {
+				out[strings.ToLower(h)] = true
+			}
+		}
+	}
+	urls := append([]string{nextAuthURL}, trpcOrigins...)
+	for _, u := range urls {
+		if h := HostFromURL(u); h != "" {
+			out[h] = true
+		}
+	}
+	return out
+}
+
+// HostFromURL is hostFromUrl (origin-helpers.ts): the lowercased host[:port] of an absolute URL, or ""
+// when the value is empty or not an absolute URL.
+func HostFromURL(v string) string {
+	if v == "" {
+		return ""
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	// WHATWG URL drops a scheme's default port from `host`.
+	if p := u.Port(); (u.Scheme == "https" && p == "443") || (u.Scheme == "http" && p == "80") {
+		return strings.ToLower(u.Hostname())
+	}
+	return strings.ToLower(u.Host)
+}
+
 // ParseRegionRules parses REGION_RESTRICTION_CONFIG: `REGION:YYYY-MM-DD,...` (the last colon splits,
 // so `US:TX:2026-01-01` is region `US:TX`).
 func ParseRegionRules(s string) ([]browsing.RegionRule, error) {
@@ -139,7 +188,10 @@ func ParseRegionRules(s string) ([]browsing.RegionRule, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid region restriction date %q: %w", part, err)
 		}
-		out = append(out, browsing.RegionRule{Region: strings.ToUpper(part[:i]), Effective: t})
+		// region-blocking.ts reads the date as its END of day, UTC (`${date}T23:59:59.999Z`): the
+		// restriction starts once that instant is reached, not at the start of the day.
+		eff := t.Add(24*time.Hour - time.Millisecond)
+		out = append(out, browsing.RegionRule{Region: strings.ToUpper(part[:i]), Effective: eff})
 	}
 	return out, nil
 }

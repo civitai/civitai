@@ -13,6 +13,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/shadow"
@@ -39,6 +40,10 @@ type Server struct {
 	Log      *slog.Logger
 	// ShadowQueue bounds concurrent shadow comparisons; a full queue drops (never blocks Node).
 	ShadowQueue chan struct{}
+	// AllowedOrigins is the app's origin allow-list (config.AllowedOriginHosts). A public request whose
+	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
+	// answers it (401 in production), and this service never serves one the app would refuse.
+	AllowedOrigins map[string]bool
 }
 
 // computed is one answer.
@@ -100,10 +105,30 @@ func countryOf(r *http.Request) string {
 	return r.Header.Get("cf-ipcountry")
 }
 
+// AcceptableOrigin is isAllowedOriginRequest (src/server/utils/origin-helpers.ts): the Origin header's
+// host, else the Referer's, must be on the allow-list; neither header means not acceptable.
+func AcceptableOrigin(r *http.Request, allowed map[string]bool) bool {
+	host := config.HostFromURL(r.Header.Get("Origin"))
+	if host == "" {
+		host = config.HostFromURL(r.Header.Get("Referer"))
+	}
+	return host != "" && allowed[host]
+}
+
 // ServeHTTP is the public route.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	c, err := s.compute(r.Context(), r)
+	var (
+		c   *computed
+		err error
+	)
+	if AcceptableOrigin(r, s.AllowedOrigins) {
+		c, err = s.compute(r.Context(), r)
+	} else {
+		// The app's answer differs by environment and credential (non-production and bearer callers
+		// are accepted, a cookie caller in production is refused): never decided here.
+		err = fallback.New("origin")
+	}
 	if err == nil {
 		trpc.WriteResult(w, c.payload, c.ttl)
 		s.Metrics.Requests.WithLabelValues("serve", "served").Inc()
@@ -147,22 +172,26 @@ func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxShadowBody))
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	var req ShadowRequest
-	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
-		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
+	// Take a queue slot BEFORE reading the body: a full queue drops the sample without buffering up to
+	// maxShadowBody for it, so concurrent callers cannot hold more bodies than there are workers.
 	select {
 	case s.ShadowQueue <- struct{}{}:
 	default:
 		s.Metrics.ShadowDropped.Inc()
 		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxShadowBody))
+	if err != nil {
+		<-s.ShadowQueue
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var req ShadowRequest
+	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
+		<-s.ShadowQueue
+		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)

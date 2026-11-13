@@ -130,7 +130,16 @@ func TestVerifyRejects(t *testing.T) {
 		})),
 		"lineage older than 90 days": sign(t, k, "ES256", with(func(m map[string]any) { m["iat0"] = now.Add(-91 * 24 * time.Hour).UnixMilli() })),
 		"no user id":                 sign(t, k, "ES256", with(func(m map[string]any) { delete(m, "sub") })),
-		"not a jws":                  "abc.def",
+		// resolveSessionUser reads only `sub`: a legacy `user.id` claim never names the viewer.
+		"user.id without sub": sign(t, k, "ES256", with(func(m map[string]any) {
+			delete(m, "sub")
+			m["user"] = map[string]any{"id": 77}
+		})),
+		"non-numeric sub with user.id": sign(t, k, "ES256", with(func(m map[string]any) {
+			m["sub"] = "abc"
+			m["user"] = map[string]any{"id": 77}
+		})),
+		"not a jws": "abc.def",
 	}
 	for name, tok := range cases {
 		if c, err := v.Verify(context.Background(), tok); err == nil {
@@ -224,5 +233,41 @@ func TestTokenFromCookieHeader(t *testing.T) {
 	}
 	if SessionCookieName(true) != "__Secure-civ-token" || SessionCookieName(false) != "civ-token" {
 		t.Fatal("cookie names")
+	}
+}
+
+func TestIsModerationAccount(t *testing.T) {
+	const configured = 9131
+	if !IsModerationAccount(configured, "someone", configured) {
+		t.Fatal("the configured id must be refused")
+	}
+	if !IsModerationAccount(55, "civitaimoderation", configured) || !IsModerationAccount(55, "CivitaiModeration", 0) {
+		t.Fatal("the reserved username must be refused in any casing, with or without a configured id")
+	}
+	if IsModerationAccount(55, "someone", configured) || IsModerationAccount(configured, "someone", 0) {
+		t.Fatal("other users, and any id when none is configured, must pass")
+	}
+}
+
+func TestResolveRefusesTheModerationAccountBySub(t *testing.T) {
+	now := time.Now()
+	k := newKey(t, "k1")
+	var fetches int32
+	srv := jwksServer(t, &fetches, k)
+	claims := baseClaims(now)
+	claims["sub"] = "9131"
+	tok := sign(t, k, "ES256", claims)
+	r := &Resolver{
+		Verifier:            &Verifier{Issuer: issuer, JWKSURL: srv.URL, Now: func() time.Time { return now }},
+		CookieNames:         []string{"civ-token"},
+		ModerationAccountID: 9131,
+		// Sessions is nil: reaching the session-cache read would panic, so a pass proves the refusal
+		// happens on the token's sub, before any lookup.
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/trpc/x", nil)
+	req.Header.Set("Cookie", "civ-token="+tok)
+	u, err := r.Resolve(context.Background(), req)
+	if u != nil || err != nil {
+		t.Fatalf("moderation account session: got %+v, %v; want signed out", u, err)
 	}
 }

@@ -92,8 +92,9 @@ func run(log *slog.Logger) error {
 		Revocation: &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, OnFailOpen: func(err error) {
 			log.Warn("revocation read failed open", "err", err)
 		}},
-		Sessions:    packed,
-		CookieNames: cfg.CookieNames(),
+		Sessions:            packed,
+		CookieNames:         cfg.CookieNames(),
+		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{
 		DB:       pool,
@@ -108,13 +109,14 @@ func run(log *slog.Logger) error {
 		},
 	}
 	srv := &server.Server{
-		Resolver:    resolver,
-		Deps:        deps,
-		Hosts:       cfg.Hosts,
-		RegionRules: cfg.RegionRules,
-		Metrics:     metrics,
-		Log:         log,
-		ShadowQueue: make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		Resolver:       resolver,
+		Deps:           deps,
+		Hosts:          cfg.Hosts,
+		RegionRules:    cfg.RegionRules,
+		Metrics:        metrics,
+		Log:            log,
+		ShadowQueue:    make(chan struct{}, max(cfg.ShadowWorkers, 1)),
+		AllowedOrigins: cfg.AllowedOriginHosts,
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)

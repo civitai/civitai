@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -30,6 +31,23 @@ type Resolver struct {
 	CookieNames []string
 	// SessionReadTimeout bounds the session-cache read (400ms in session-client.ts).
 	SessionReadTimeout time.Duration
+	// ModerationAccountID is CIVITAI_MODERATION_USER_ID (0 = unset): the shared moderation account,
+	// which nobody signs in as. See IsModerationAccount.
+	ModerationAccountID int
+}
+
+// ModerationAccountUsername is MODERATION_ACCOUNT_USERNAME (packages/civitai-auth).
+const ModerationAccountUsername = "CivitaiModeration"
+
+// IsModerationAccount is isModerationAccountUser (packages/civitai-auth/src/moderation-account.ts):
+// true for the shared moderation account, by its configured id (when configuredID > 0) or by its
+// username in any casing, so a missing id still refuses it. The app's getHubSession refuses a session
+// for that account (refuseModerationAccountSession): signed out.
+func IsModerationAccount(id int, username string, configuredID int) bool {
+	if configuredID > 0 && id == configuredID {
+		return true
+	}
+	return strings.EqualFold(username, ModerationAccountUsername)
 }
 
 // Resolve returns the viewer, or nil when signed out. A non-nil error is always a fallback.
@@ -57,10 +75,22 @@ func (r *Resolver) Resolve(ctx context.Context, req *http.Request) (*SessionUser
 	if err != nil {
 		return nil, nil // not a valid session: signed out, as getHubSession treats it
 	}
+	// session-verifier.ts isRevoked: the moderation account's token is revoked by its sub alone.
+	if IsModerationAccount(claims.UserID(), "", r.ModerationAccountID) {
+		return nil, nil
+	}
 	if r.Revocation != nil && r.Revocation.IsRevoked(ctx, claims) {
 		return nil, nil
 	}
-	return r.user(ctx, claims.UserID())
+	u, err := r.user(ctx, claims.UserID())
+	if err != nil {
+		return nil, err
+	}
+	// getHubSession: refused by the resolved user's id or username.
+	if IsModerationAccount(u.ID, u.Username, r.ModerationAccountID) {
+		return nil, nil
+	}
+	return u, nil
 }
 
 func (r *Resolver) user(ctx context.Context, id int) (*SessionUser, error) {

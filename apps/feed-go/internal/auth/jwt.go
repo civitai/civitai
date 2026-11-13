@@ -51,42 +51,34 @@ type Claims struct {
 	ImpExp         *float64        `json:"impExp"`
 	Sid            string          `json:"sid"`
 	Iat0           *float64        `json:"iat0"`
-	User           *struct {
-		ID json.RawMessage `json:"id"`
-	} `json:"user"`
-	Iss     string          `json:"iss"`
-	Aud     json.RawMessage `json:"aud"`
-	Exp     *float64        `json:"exp"`
-	Nbf     *float64        `json:"nbf"`
-	Purpose json.RawMessage `json:"purpose"`
+	Iss            string          `json:"iss"`
+	Aud            json.RawMessage `json:"aud"`
+	Exp            *float64        `json:"exp"`
+	Nbf            *float64        `json:"nbf"`
+	Purpose        json.RawMessage `json:"purpose"`
 }
 
-// UserID returns the numeric user id from `sub` (or the legacy `user.id`), or 0.
+// UserID returns the numeric user id from `sub`, or 0. Only `sub`: resolveSessionUser
+// (packages/civitai-auth/src/session-client.ts) takes `Number(claims.sub)` and treats anything else as
+// an invalid session, so a legacy `user.id` claim never names the viewer. (The revocation check reads
+// `sub ?? user.id`, which equals `sub` for every token Verify accepts, since Verify requires it.)
 func (c *Claims) UserID() int {
-	for _, raw := range []json.RawMessage{c.Sub, userID(c)} {
-		if len(raw) == 0 {
-			continue
+	raw := c.Sub
+	if len(raw) == 0 {
+		return 0
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
 		}
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			if n, err := strconv.Atoi(s); err == nil && n > 0 {
-				return n
-			}
-			continue
-		}
-		var n float64
-		if json.Unmarshal(raw, &n) == nil && n > 0 && n == float64(int(n)) {
-			return int(n)
-		}
+		return 0
+	}
+	var n float64
+	if json.Unmarshal(raw, &n) == nil && n > 0 && n == float64(int(n)) {
+		return int(n)
 	}
 	return 0
-}
-
-func userID(c *Claims) json.RawMessage {
-	if c.User == nil {
-		return nil
-	}
-	return c.User.ID
 }
 
 // FamilyID mirrors familyId(): the root session's jti.
