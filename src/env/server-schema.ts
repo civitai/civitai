@@ -125,7 +125,18 @@ export const serverSchema = z
     // once written nor any MULTI sub-command — so on a silent half-open a sys read parks
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
-    REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+    // 1000: a 1s bound rarely fires on a healthy store and halves what each read costs while the
+    // store is hung.
+    REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
+    // Process-wide breaker for the hot request-path reads that opt in with withSysReadBreaker
+    // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (a timeout or a client/connection
+    // error; an error reply from the store does not count), those
+    // reads reject at once instead of waiting out the deadline, until COOLDOWN passes and one probe
+    // read succeeds. Dark by default — while off, they wait on the client as before. Plain
+    // withSysReadDeadline reads never consult it.
+    REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
+    REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
+    REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
     // On: an upload route answers 503 instead of handing out a key whose issue record could not
     // be written. Off: the key is handed out and the save-time ownership check decides.
     UPLOAD_KEY_REFUSE_UNRECORDED: zc.booleanString.default(false),

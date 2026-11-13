@@ -228,7 +228,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
   // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
   // The deadline only BOUNDS a silent half-open (which would otherwise park each
-  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // awaited read ~11min): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving the same fail-closed
   // direction. See STEP-6 report's promptAuditing note.
   const exists = await withSysReadDeadline(sysRedis.exists(key));
 

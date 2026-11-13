@@ -53,6 +53,7 @@ vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: h.sysRedis,
   withSysReadDeadline: <T>(p: Promise<T>) => p, // transparent in tests (matches rate-limiting.test.ts)
+  withSysReadBreaker: <T>(p: Promise<T>) => p,
 }));
 // session-invalidation marks TOKEN_STATE via the atomic eval helper (hSetMultiWithTTL); the
 // fake sysRedis above has no `eval`, so stub the helper to write straight to the in-memory hash.

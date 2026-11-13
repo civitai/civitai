@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
 import { createSessionSigner, type SessionSigner } from '../sign';
 import { createAuthVerifier } from '../verify';
-import { createRevocationCheck } from '../revocation-check';
+import {
+  createRevocationCheck,
+  DEFAULT_REVOCATION_READ_TIMEOUT_MS,
+  revocationReadTimeoutMs,
+} from '../revocation-check';
 import { SESSION_REGISTRY_KEYS } from '../session-registry-keys';
 import type { SessionRegistryRedis } from '../session-registry';
 
@@ -86,5 +90,121 @@ describe('createRevocationCheck', () => {
       timeoutMs: 20,
     });
     expect(await check({ jti: 'j1', sub: '7' } as never)).toBe(false);
+  });
+});
+
+describe('createRevocationCheck deadline and reporting', () => {
+  const claims = { jti: 'j1', sub: '7', user: { id: 7 } } as never;
+  const hang = { hGet: () => new Promise(() => {}), get: () => new Promise(() => {}) };
+  const hung = () => hang as unknown as SessionRegistryRedis;
+  afterEach(() => {
+    delete process.env.REDIS_SYS_READ_TIMEOUT_MS;
+  });
+
+  it('defaults to 1000ms from REDIS_SYS_READ_TIMEOUT_MS, read per call, falling back when unset or invalid', () => {
+    expect(DEFAULT_REVOCATION_READ_TIMEOUT_MS).toBe(1000);
+    expect(revocationReadTimeoutMs()).toBe(1000);
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '250';
+    expect(revocationReadTimeoutMs()).toBe(250);
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '0';
+    expect(revocationReadTimeoutMs()).toBe(0);
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = 'soon';
+    expect(revocationReadTimeoutMs()).toBe(1000);
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = ' ';
+    expect(revocationReadTimeoutMs()).toBe(1000);
+  });
+
+  it('with no timeoutMs, a hung read is released at REDIS_SYS_READ_TIMEOUT_MS and reported as a timeout', async () => {
+    process.env.REDIS_SYS_READ_TIMEOUT_MS = '30';
+    const onError = vi.fn();
+    const onOutcome = vi.fn();
+    const check = createRevocationCheck({ redis: hung, onError, onOutcome });
+    const started = Date.now();
+    expect(await check(claims)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims);
+    expect(onOutcome).toHaveBeenCalledWith('timeout', expect.any(Number));
+  });
+
+  it('reads a timeoutMs getter on every check', async () => {
+    let ms = 5000;
+    const check = createRevocationCheck({ redis: hung, timeoutMs: () => ms });
+    ms = 25;
+    const started = Date.now();
+    expect(await check(claims)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('a store error is reported as an error; an answered read as a hit', async () => {
+    const onError = vi.fn();
+    const onOutcome = vi.fn();
+    const failing = createRevocationCheck({
+      redis: () =>
+        ({
+          hGet: () => Promise.reject(new Error('down')),
+          get: () => Promise.resolve(null),
+        } as never),
+      onError,
+      onOutcome,
+    });
+    expect(await failing(claims)).toBe(false);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'error', claims);
+    expect(onOutcome).toHaveBeenLastCalledWith('error', expect.any(Number));
+
+    const healthy = createRevocationCheck({ redis: () => store(), onError, onOutcome });
+    expect(await healthy(claims)).toBe(false);
+    expect(onOutcome).toHaveBeenLastCalledWith('hit', expect.any(Number));
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('a bound hook replaces the built-in race; its timeout-tagged rejection is a timeout', async () => {
+    const onError = vi.fn();
+    const bound = vi.fn((_read: Promise<boolean>, _ms: number) =>
+      Promise.reject(Object.assign(new Error('skipped'), { reason: 'timeout' }))
+    );
+    const check = createRevocationCheck({ redis: hung, timeoutMs: 1234, bound, onError });
+    expect(await check(claims)).toBe(false);
+    expect(bound).toHaveBeenCalledWith(expect.any(Promise), 1234);
+    expect(onError).toHaveBeenCalledWith(expect.any(Error), 'timeout', claims);
+  });
+
+  it('a breaker-open rejection from the bound hook is its own reason; any other tag is an error', async () => {
+    const onError = vi.fn();
+    const onOutcome = vi.fn();
+    const rejectWith = (reason: string) => () =>
+      Promise.reject(Object.assign(new Error('skipped'), { reason }));
+    const open = createRevocationCheck({
+      redis: hung,
+      bound: rejectWith('breaker-open'),
+      onError,
+      onOutcome,
+    });
+    expect(await open(claims)).toBe(false);
+    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'breaker-open', claims);
+    expect(onOutcome).toHaveBeenLastCalledWith('breaker-open', expect.any(Number));
+
+    const other = createRevocationCheck({
+      redis: hung,
+      bound: rejectWith('other'),
+      onError,
+      onOutcome,
+    });
+    expect(await other(claims)).toBe(false);
+    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'error', claims);
+    expect(onOutcome).toHaveBeenLastCalledWith('error', expect.any(Number));
+  });
+
+  it('a throwing observer never turns a fail-open into a throw', async () => {
+    const check = createRevocationCheck({
+      redis: hung,
+      timeoutMs: 10,
+      onError: () => {
+        throw new Error('observer');
+      },
+      onOutcome: () => {
+        throw new Error('observer');
+      },
+    });
+    expect(await check(claims)).toBe(false);
   });
 });

@@ -136,3 +136,15 @@ export const authInternalParity = new Gauge({
     this.set({ app: 'hub' }, env.AUTH_INTERNAL_TOKEN ? 1 : 0);
   },
 });
+
+/**
+ * Session revocation checks that failed open (the token was treated as not revoked) because the shared session
+ * store errored or did not answer within the read deadline, by reason. A sustained rise means sign-outs and bans
+ * are not being enforced on the hub while the store is unhealthy.
+ */
+export const hubRevocationFailOpenTotal = new Counter({
+  name: 'hub_revocation_failopen_total',
+  help: 'Hub session revocation checks that failed open, labeled by reason (timeout|error).',
+  labelNames: ['reason'] as const,
+  registers: [register],
+});
