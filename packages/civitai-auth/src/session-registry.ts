@@ -99,8 +99,7 @@ export interface SessionRegistry {
 }
 
 const DEFAULT_TTL = 30 * 24 * 60 * 60;
-/** The revocation markers' default lifetime (`markerTtlSeconds`). */
-export const DEFAULT_MARKER_TTL = 91 * 24 * 60 * 60;
+const DEFAULT_MARKER_TTL = 91 * 24 * 60 * 60;
 // 500 is ~87x the observed mean tracked-token count and above 99.9% of accounts.
 const DEFAULT_MAX_TOKENS_PER_USER = 500;
 const DEFAULT_MAX_EVICTIONS_PER_TRACK = 50;

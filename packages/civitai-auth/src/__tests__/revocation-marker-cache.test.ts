@@ -5,18 +5,13 @@ import type { SessionRegistryRedis } from '../session-registry';
 const TOKEN_STATE = 'session:token-state';
 const USER_CUT = 'session:user-cut';
 
-function setup(opts: { maxEntries?: number; ttlMs?: number } = {}) {
-  let clock = 1_000_000;
+function setup(opts: { maxEntries?: number } = {}) {
   const values = new Map<string, unknown>();
   const upstream = {
     hGet: vi.fn(async (key: string, field: string) => values.get(`${key}|${field}`) ?? null),
     get: vi.fn(async (key: string) => values.get(key) ?? null),
   };
-  const cache = createRevocationMarkerCache({
-    maxEntries: opts.maxEntries ?? 100,
-    ttlMs: opts.ttlMs ?? 60_000,
-    now: () => clock,
-  });
+  const cache = createRevocationMarkerCache({ maxEntries: opts.maxEntries ?? 100 });
   return {
     cache,
     // The sys client can return Buffers where the type says string, so the fake returns `unknown`.
@@ -24,9 +19,6 @@ function setup(opts: { maxEntries?: number; ttlMs?: number } = {}) {
     reader: cache.reader(),
     upstream,
     values,
-    advance: (ms: number) => {
-      clock += ms;
-    },
   };
 }
 
@@ -117,33 +109,6 @@ describe('createRevocationMarkerCache', () => {
       expect(await reader.get(`${USER_CUT}:1`)).toBe('1000');
       expect(await reader.get(`${USER_CUT}:4`)).toBe('4000');
       expect(await reader.get(`${USER_CUT}:5`)).toBe('5000');
-    });
-  });
-
-  describe('expiry', () => {
-    it('drops an entry ttlMs after the read that recorded it', async () => {
-      const { cache, observed, reader, values, advance } = setup({ ttlMs: 60_000 });
-      values.set(`${USER_CUT}:7`, '5000');
-      await observed.get(`${USER_CUT}:7`);
-
-      advance(59_999);
-      expect(await reader.get(`${USER_CUT}:7`)).toBe('5000');
-      advance(1);
-      expect(await reader.get(`${USER_CUT}:7`)).toBeNull();
-      expect(cache.size).toBe(0);
-    });
-
-    it('a fresh read restarts the clock; a lookup does not', async () => {
-      const { observed, reader, values, advance } = setup({ ttlMs: 60_000 });
-      values.set(`${USER_CUT}:7`, '5000');
-      await observed.get(`${USER_CUT}:7`);
-      advance(40_000);
-      expect(await reader.get(`${USER_CUT}:7`)).toBe('5000'); // lookup only
-      await observed.get(`${USER_CUT}:7`); // re-recorded at +40s
-      advance(50_000); // +90s overall, +50s since the re-read
-      expect(await reader.get(`${USER_CUT}:7`)).toBe('5000');
-      advance(10_000);
-      expect(await reader.get(`${USER_CUT}:7`)).toBeNull();
     });
   });
 

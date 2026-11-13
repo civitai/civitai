@@ -1,10 +1,5 @@
-import { isEnvSwitchOff } from '@civitai/shared/env-switch';
 import { createRevocationMarkerCache } from './revocation-marker-cache';
-import {
-  createSessionRegistry,
-  DEFAULT_MARKER_TTL,
-  type SessionRegistryRedis,
-} from './session-registry';
+import { createSessionRegistry, type SessionRegistryRedis } from './session-registry';
 import { SESSION_REGISTRY_KEYS } from './session-registry-keys';
 import type { SessionClaims } from './types';
 
@@ -16,32 +11,17 @@ import type { SessionClaims } from './types';
 // When the read fails (an error, the deadline, or the caller's breaker refusing it) the verdict comes from
 // the revocation markers this check has already read (revocation-marker-cache.ts): a revocation seen here
 // still denies, and a session with no known marker is allowed, as before. Signing everyone out during a
-// store outage is not the policy. SESSION_REVOCATION_CACHE=off (or 0/false) turns the record off and restores
-// the plain fail-open.
+// store outage is not the policy. `markerCache: false` (each app maps its SESSION_REVOCATION_CACHE=off|0|false
+// to it) turns the record off and restores the plain fail-open.
 
 /**
- * The record's size bound. Entries are short strings (a key and `invalid` or a timestamp), so this is a few
- * MB at most; only revoking token/family states and cut timestamps are held.
+ * The record's size bound, least recently used evicted first. Entries are short strings (a key and `invalid`
+ * or a timestamp), so this is a few MB at most; only revoking token/family states and cut timestamps are held.
+ * There is no time-based expiry: a held marker only ever revokes tokens signed before it (or the one token or
+ * family it names), so keeping it longer cannot deny a session the store would allow, and a process restart
+ * empties the record.
  */
 export const REVOCATION_MARKER_CACHE_MAX_ENTRIES = 20_000;
-/** A session token's lifetime: the AUTH_SESSION_MAX_AGE default (30d). */
-const SESSION_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
-/**
- * How long an entry is kept after the read that last saw it: the shorter of a token's lifetime and a
- * marker's. A marker not read for that long can only revoke tokens that have already expired.
- */
-export const REVOCATION_MARKER_CACHE_TTL_MS = Math.min(
-  SESSION_TOKEN_LIFETIME_MS,
-  DEFAULT_MARKER_TTL * 1000
-);
-
-/**
- * Whether the record of seen revocation markers is on. Read per call from SESSION_REVOCATION_CACHE: on by
- * default, and `off`, `0` or `false` turns it off (`@civitai/shared/env-switch`).
- */
-export function revocationCacheEnabled(): boolean {
-  return !isEnvSwitchOff(process.env.SESSION_REVOCATION_CACHE);
-}
 
 /**
  * The deadline when REDIS_SYS_READ_TIMEOUT_MS is unset: the same default as the main app's system-Redis read
@@ -76,6 +56,12 @@ export type RevocationDegradedVerdict = 'deny_cached' | 'allow_unknown';
 export interface RevocationCheckConfig {
   /** The shared session store (`getSysRedis()`). A getter, so building the check never connects. */
   redis: () => SessionRegistryRedis;
+  /**
+   * Keep a record of the revocation markers read, and answer from it when a read fails (default true). Read
+   * once when the check is built. `false` records nothing and every failed read allows, as before the record.
+   * Apps map SESSION_REVOCATION_CACHE=off|0|false to `false`.
+   */
+  markerCache?: boolean;
   /**
    * Read deadline in ms, or a getter read on every check. Defaults to `revocationReadTimeoutMs()`
    * (REDIS_SYS_READ_TIMEOUT_MS, else 1000). `<= 0` turns the deadline off.
@@ -135,29 +121,21 @@ const quietly = (fn: () => void) => {
 export function createRevocationCheck(
   config: RevocationCheckConfig
 ): (claims: SessionClaims) => Promise<boolean> {
-  let store: SessionRegistryRedis | undefined;
-  let plainRegistry: ReturnType<typeof createSessionRegistry> | undefined;
-  let observedRegistry: ReturnType<typeof createSessionRegistry> | undefined;
-  const markers = createRevocationMarkerCache({
-    maxEntries: REVOCATION_MARKER_CACHE_MAX_ENTRIES,
-    ttlMs: REVOCATION_MARKER_CACHE_TTL_MS,
-  });
+  const cacheOn = config.markerCache ?? true;
+  const markers = createRevocationMarkerCache({ maxEntries: REVOCATION_MARKER_CACHE_MAX_ENTRIES });
   // The same predicate over the markers seen so far. Its reads are in memory and never touch the store.
   const seenRegistry = createSessionRegistry({
     redis: markers.reader(),
     keys: SESSION_REGISTRY_KEYS,
   });
-  const registryFor = (cacheOn: boolean) => {
-    store ??= config.redis();
-    if (!cacheOn) {
-      plainRegistry ??= createSessionRegistry({ redis: store, keys: SESSION_REGISTRY_KEYS });
-      return plainRegistry;
-    }
-    observedRegistry ??= createSessionRegistry({
-      redis: markers.observe(store),
+  let registry: ReturnType<typeof createSessionRegistry> | undefined;
+  const registryOf = () => {
+    if (registry) return registry;
+    const store = config.redis();
+    return (registry = createSessionRegistry({
+      redis: cacheOn ? markers.observe(store) : store,
       keys: SESSION_REGISTRY_KEYS,
-    });
-    return observedRegistry;
+    }));
   };
   const timeoutOf = (): number => {
     const t = config.timeoutMs;
@@ -169,9 +147,8 @@ export function createRevocationCheck(
   return async (claims) => {
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
-    const cacheOn = revocationCacheEnabled();
     try {
-      const revoked = await bound(registryFor(cacheOn).isRevoked(claims), timeoutOf());
+      const revoked = await bound(registryOf().isRevoked(claims), timeoutOf());
       quietly(() => config.onOutcome?.('hit', seconds()));
       return revoked;
     } catch (err) {

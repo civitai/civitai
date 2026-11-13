@@ -21,8 +21,8 @@ import type { SessionRegistryRedis } from './session-registry';
  * here, not a replica, so with the store down an unseen revocation is still not applied. The caller decides
  * what to do about that (today: allow, and report it).
  *
- * Bounded both ways: at most `maxEntries` entries, least recently used evicted first, and each entry expires
- * `ttlMs` after the read that last recorded it. Recording is synchronous and in memory; the wrapped client
+ * Bounded by size: at most `maxEntries` entries, least recently used evicted first. There is no time-based
+ * expiry (see REVOCATION_MARKER_CACHE_MAX_ENTRIES). Recording is synchronous and in memory; the wrapped client
  * makes no extra network call.
  */
 export interface RevocationMarkerCache {
@@ -30,15 +30,12 @@ export interface RevocationMarkerCache {
   observe(redis: SessionRegistryRedis): SessionRegistryRedis;
   /** A client that answers hGet/get from the record alone. It never touches the network. */
   reader(): SessionRegistryRedis;
-  /** Entries currently held, expired ones included until they are next touched. */
+  /** Entries currently held. */
   readonly size: number;
 }
 
 export interface RevocationMarkerCacheOptions {
   maxEntries: number;
-  ttlMs: number;
-  /** Clock injection (tests). */
-  now?: () => number;
 }
 
 // Hash keys and field names never contain NUL, so a hash entry cannot collide with a plain key.
@@ -57,16 +54,15 @@ const readOnly = () => {
 export function createRevocationMarkerCache(
   options: RevocationMarkerCacheOptions
 ): RevocationMarkerCache {
-  const { maxEntries, ttlMs } = options;
-  const now = options.now ?? (() => Date.now());
+  const { maxEntries } = options;
   // A Map iterates in insertion order, so re-inserting on every touch keeps the first key the least recently
   // used one.
-  const entries = new Map<string, { value: string; expiresAt: number }>();
+  const entries = new Map<string, string>();
 
   function record(entry: string, value: string | null) {
     entries.delete(entry);
     if (value == null) return;
-    entries.set(entry, { value, expiresAt: now() + ttlMs });
+    entries.set(entry, value);
     while (entries.size > maxEntries) {
       const oldest = entries.keys().next().value;
       if (oldest === undefined) break;
@@ -76,11 +72,10 @@ export function createRevocationMarkerCache(
 
   function lookup(entry: string): string | null {
     const hit = entries.get(entry);
-    if (!hit) return null;
+    if (hit === undefined) return null;
     entries.delete(entry);
-    if (hit.expiresAt <= now()) return null;
     entries.set(entry, hit);
-    return hit.value;
+    return hit;
   }
 
   const unsupported = { hSet: readOnly, hDel: readOnly, set: readOnly };

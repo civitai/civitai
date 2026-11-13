@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 
@@ -35,6 +35,7 @@ vi.mock('~/server/redis/client', async () => ({
 }));
 
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';
+import { envMock } from '~/__tests__/mocks';
 import type * as Verifier from '../session-verifier';
 
 // Loaded fresh per test: the shared check keeps the revocation markers it has read, so a marker one test
@@ -52,6 +53,8 @@ beforeEach(async () => {
   vi.resetModules();
   ({ isRevoked } = await import('../session-verifier'));
 });
+
+afterEach(() => envMock.reset());
 
 describe('isRevoked — bounded revocation read (leg 3)', () => {
   it('returns false and records outcome "hit" when the token is not revoked', async () => {
@@ -147,6 +150,20 @@ describe('isRevoked — bounded revocation read (leg 3)', () => {
       expect(h.observeRevocationDegraded).toHaveBeenLastCalledWith('allow_unknown');
     }
   );
+
+  it('with SESSION_REVOCATION_CACHE off, a failed read fails open even for a revocation already read', async () => {
+    envMock.set({ SESSION_REVOCATION_CACHE: false });
+    vi.resetModules();
+    ({ isRevoked } = await import('../session-verifier'));
+    h.hGet.mockImplementation(async (key: string, field: string) =>
+      key === REDIS_SYS_KEYS.SESSION.TOKEN_STATE && field === 't7' ? 'invalid' : null
+    );
+    expect(await isRevoked(claims())).toBe(true);
+
+    h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'));
+    expect(await isRevoked(claims())).toBe(false);
+    expect(h.observeRevocationDegraded).toHaveBeenCalledWith('allow_unknown');
+  });
 
   it('returns false without reading when the token has no jti', async () => {
     expect(await isRevoked(claims({ jti: undefined }))).toBe(false);

@@ -800,6 +800,10 @@ export const serverSchema = z
     // TRAINING_STATUS_FAIL_CLOSED: a failed training-status read serves the last status read, or
     // "paused" when there is none; off restores "available" (getTrainingServiceStatus).
     TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
+    // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain
+    // fail-open, with nothing recorded.
+    SESSION_REVOCATION_CACHE: z.string().optional().transform(isEnvSwitchOn),
     // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
     // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
     // visible as the instant its series appear — which is the only thing that distinguishes "no

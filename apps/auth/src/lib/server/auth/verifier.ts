@@ -3,7 +3,7 @@ import {
   createRevocationCheck,
   type SessionRegistryRedis,
 } from '@civitai/auth';
-import { hubRevocationDegradedTotal, hubRevocationFailOpenTotal } from '../metrics';
+import { hubRevocationDeniedCachedTotal, hubRevocationFailOpenTotal } from '../metrics';
 import { getSysRedis } from '../redis';
 
 // The shared revocation check (the same one the main app and the spokes use). When the read fails it answers
@@ -13,9 +13,12 @@ import { getSysRedis } from '../redis';
 // as the registry's no-op fallback.
 const checkRevocation = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+  // SESSION_REVOCATION_CACHE=off|0|false (any case) turns off the record of seen revocations; anything else,
+  // unset included, keeps it on. The same parse as @civitai/shared/env-switch, which the hub does not depend on.
+  markerCache: !/^(off|0|false)$/i.test((process.env.SESSION_REVOCATION_CACHE ?? '').trim()),
   onError: (_err, reason, _claims, verdict) => {
-    hubRevocationDegradedTotal.inc({ verdict });
-    if (verdict === 'allow_unknown') hubRevocationFailOpenTotal.inc({ reason });
+    if (verdict === 'deny_cached') hubRevocationDeniedCachedTotal.inc({ reason });
+    else hubRevocationFailOpenTotal.inc({ reason });
   },
 });
 

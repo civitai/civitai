@@ -57,7 +57,6 @@ export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from 
 export {
   createRevocationCheck,
   DEFAULT_REVOCATION_READ_TIMEOUT_MS,
-  revocationCacheEnabled,
   revocationReadTimeoutMs,
 } from './revocation-check';
 export type {

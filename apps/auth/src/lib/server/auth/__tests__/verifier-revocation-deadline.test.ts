@@ -18,7 +18,7 @@ const h = await vi.hoisted(async () => {
     hGet: (async () => null) as (key: string, field: string) => Promise<string | null>,
     get: (async () => null) as (key: string) => Promise<string | null>,
   };
-  return { kp, store, failOpen: [] as string[], degraded: [] as string[] };
+  return { kp, store, failOpen: [] as string[], deniedCached: [] as string[] };
 });
 
 vi.mock('$lib/server/redis', () => ({
@@ -30,8 +30,8 @@ vi.mock('$lib/server/redis', () => ({
 }));
 vi.mock('$lib/server/metrics', () => ({
   hubRevocationFailOpenTotal: { inc: ({ reason }: { reason: string }) => h.failOpen.push(reason) },
-  hubRevocationDegradedTotal: {
-    inc: ({ verdict }: { verdict: string }) => h.degraded.push(verdict),
+  hubRevocationDeniedCachedTotal: {
+    inc: ({ reason }: { reason: string }) => h.deniedCached.push(reason),
   },
 }));
 
@@ -60,7 +60,7 @@ afterEach(() => {
   h.store.hGet = async () => null;
   h.store.get = async () => null;
   h.failOpen.length = 0;
-  h.degraded.length = 0;
+  h.deniedCached.length = 0;
 });
 
 describe('hub verifier revocation check', () => {
@@ -72,7 +72,7 @@ describe('hub verifier revocation check', () => {
     await expect(verifier.verifyToken(token)).resolves.toMatchObject({ jti: 'jti-7' });
     expect(Date.now() - started).toBeLessThan(1000);
     expect(h.failOpen).toEqual(['timeout']);
-    expect(h.degraded).toEqual(['allow_unknown']);
+    expect(h.deniedCached).toEqual([]);
   }, 10_000);
 
   it('a store error fails open and counts an error', async () => {
@@ -99,8 +99,8 @@ describe('hub verifier revocation check', () => {
       throw new Error('ECONNRESET');
     };
     await expect(verifier.verifyToken(token)).resolves.toBeNull();
-    expect(h.degraded).toEqual(['deny_cached']);
-    // Refused, so not a fail-open.
+    expect(h.deniedCached).toEqual(['error']);
+    // Refused, so not a fail-open: each failed read is counted once, in one of the two.
     expect(h.failOpen).toEqual([]);
 
     // The store answers again and no longer has the marker: the record follows it.

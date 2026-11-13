@@ -29,6 +29,7 @@ const checkRevocation = createRevocationCheck({
   redis: () => sysRedis as unknown as SessionRegistryRedis,
   timeoutMs: () => env.REDIS_SYS_READ_TIMEOUT_MS,
   bound: (read, ms) => withSysReadBreaker(read, ms),
+  markerCache: env.SESSION_REVOCATION_CACHE,
   onOutcome: (outcome, seconds) => observeSessionLeg('revocation', outcome, seconds),
   onError: (err, _reason, claims, verdict) => {
     observeRevocationDegraded(verdict);

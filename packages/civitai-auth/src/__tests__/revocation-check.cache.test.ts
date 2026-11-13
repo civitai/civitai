@@ -1,9 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRevocationCheck,
   REVOCATION_MARKER_CACHE_MAX_ENTRIES,
-  REVOCATION_MARKER_CACHE_TTL_MS,
-  revocationCacheEnabled,
   type RevocationCheckConfig,
 } from '../revocation-check';
 import { impersonatorCutKey, type SessionRegistryRedis } from '../session-registry';
@@ -85,13 +83,11 @@ let breaker: { open: boolean };
 let onError: ReturnType<typeof vi.fn<NonNullable<RevocationCheckConfig['onError']>>>;
 let check: (claims: SessionClaims) => Promise<boolean>;
 
-beforeEach(() => {
-  delete process.env.SESSION_REVOCATION_CACHE;
-  store = fakeStore();
-  breaker = { open: false };
-  onError = vi.fn<NonNullable<RevocationCheckConfig['onError']>>();
-  check = createRevocationCheck({
+/** A check over `store`, with the deadline race unless `breaker.open`. `markerCache` as given (default on). */
+function build(markerCache?: boolean) {
+  return createRevocationCheck({
     redis: () => store.redis,
+    markerCache,
     timeoutMs: 20,
     // The built-in deadline race, unless the breaker is open: then the read is refused without waiting.
     bound: (read, ms) =>
@@ -108,10 +104,13 @@ beforeEach(() => {
           ]),
     onError,
   });
-});
+}
 
-afterEach(() => {
-  delete process.env.SESSION_REVOCATION_CACHE;
+beforeEach(() => {
+  store = fakeStore();
+  breaker = { open: false };
+  onError = vi.fn<NonNullable<RevocationCheckConfig['onError']>>();
+  check = build();
 });
 
 describe.each(outages)('createRevocationCheck while the store $name', ({ reason, start }) => {
@@ -201,8 +200,8 @@ describe.each(outages)('createRevocationCheck while the store $name', ({ reason,
     expect(await check(claims())).toBe(false);
   });
 
-  it('with SESSION_REVOCATION_CACHE=off, fails open exactly as before the record', async () => {
-    process.env.SESSION_REVOCATION_CACHE = 'off';
+  it('with markerCache: false, fails open exactly as before the record', async () => {
+    check = build(false);
     store.setHash(K.tokenState, 't7', 'invalid');
     expect(await check(claims())).toBe(true); // the answered read is unchanged
 
@@ -212,33 +211,24 @@ describe.each(outages)('createRevocationCheck while the store $name', ({ reason,
   });
 });
 
-describe('createRevocationCheck off-switch', () => {
-  it.each(['off', '0', 'false', ' OFF '])(
-    'SESSION_REVOCATION_CACHE=%j turns the record off',
-    (v) => {
-      process.env.SESSION_REVOCATION_CACHE = v;
-      expect(revocationCacheEnabled()).toBe(false);
-    }
-  );
-
-  it.each([undefined, '', 'on', '1', 'true', 'disabled'])(
-    'SESSION_REVOCATION_CACHE=%j leaves it on',
-    (v) => {
-      if (v === undefined) delete process.env.SESSION_REVOCATION_CACHE;
-      else process.env.SESSION_REVOCATION_CACHE = v;
-      expect(revocationCacheEnabled()).toBe(true);
-    }
-  );
-
-  it('records nothing while off, so turning it back on mid-outage knows no marker read while it was off', async () => {
-    process.env.SESSION_REVOCATION_CACHE = 'off';
+describe('createRevocationCheck markerCache option', () => {
+  it('is on when not given', async () => {
+    check = build(undefined);
     store.setHash(K.tokenState, 't7', 'invalid');
     expect(await check(claims())).toBe(true);
+    store.state.mode = 'rejects';
+    expect(await check(claims())).toBe(true);
+  });
 
-    delete process.env.SESSION_REVOCATION_CACHE;
+  it('when false, wraps nothing: the store is read directly and nothing is recorded', async () => {
+    check = build(false);
+    store.setHash(K.tokenState, 't7', 'invalid');
+    store.setString(USER_CUT_7, '5000');
+    expect(await check(claims())).toBe(true);
     store.state.mode = 'rejects';
     expect(await check(claims())).toBe(false);
-    expect(onError).toHaveBeenLastCalledWith(expect.any(Error), 'error', claims(), 'allow_unknown');
+    expect(await check(claims({ jti: 'pre-ban' }))).toBe(false);
+    expect(onError.mock.calls.map((c) => c[3])).toEqual(['allow_unknown', 'allow_unknown']);
   });
 });
 
@@ -260,16 +250,14 @@ describe('createRevocationCheck with the store answering', () => {
       return [store.calls.hGet.mock.calls.length, store.calls.get.mock.calls.length];
     };
     const on = await reads();
-    process.env.SESSION_REVOCATION_CACHE = 'off';
+    check = build(false);
     const off = await reads();
     // token state + family state; ALL + user cut + impersonator's user cut + impersonation cut.
     expect(on).toEqual([2, 4]);
     expect(off).toEqual(on);
   });
 
-  it('is bounded to 20k entries, each kept 30 days after the read that last saw it', () => {
-    // 30d is the session token lifetime; the markers live 91d, and the shorter of the two applies.
+  it('is bounded to 20k entries', () => {
     expect(REVOCATION_MARKER_CACHE_MAX_ENTRIES).toBe(20_000);
-    expect(REVOCATION_MARKER_CACHE_TTL_MS).toBe(30 * 24 * 60 * 60 * 1000);
   });
 });
