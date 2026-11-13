@@ -95,9 +95,12 @@ export function samplerCatalogEcosystems(): string[] {
   });
 }
 
-/** The version ids the generator's model picker lists for `ecosystem`, or none. */
-function listedVersionIds(ecosystem: string): number[] {
-  const probe = probeField('model', { workflow: SAMPLER_PROBE_WORKFLOW, ecosystem }, PROBE_CTX);
+/** The version ids the generator's model picker lists for `ecosystem` on `workflow`, or none. */
+export function listedVersionIds(
+  ecosystem: string,
+  workflow: string = SAMPLER_PROBE_WORKFLOW
+): number[] {
+  const probe = probeField('model', { workflow, ecosystem }, PROBE_CTX);
   if (probe.kind !== 'present') return [];
   const versions = (probe.meta as { versions?: VersionGroup } | undefined)?.versions;
   if (!versions || !Array.isArray(versions.options)) return [];
