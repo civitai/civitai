@@ -91,12 +91,16 @@ describe('/api/mod/tipalti-resync-payee', () => {
     expect(resync).not.toHaveBeenCalled();
   });
 
-  it('refuses a non-moderator', async () => {
-    session.current = { user: { id: 5, isModerator: false, bannedAt: null, permissions: [] } };
+  it.each([
+    ['a non-moderator', { isModerator: false, bannedAt: null }],
+    ['a banned moderator', { isModerator: true, bannedAt: new Date() }],
+  ])('refuses %s', async (_label, user) => {
+    session.current = { user: { id: 5, permissions: [], ...user } };
 
-    const { status } = await call('POST', { userIds: '7', execute: 'true' });
+    const { status, body } = await call('POST', { userIds: '7', execute: 'true' });
 
-    expect(status).toBeGreaterThanOrEqual(401);
+    expect(status).toBe(403);
+    expect(body.error).toBe('Moderator role required');
     expect(resync).not.toHaveBeenCalled();
   });
 });
