@@ -228,6 +228,11 @@ export type AppBlockEndpoint =
   // catalog searches. Same bucket, different question when it fails.
   | 'gated_images'
   | 'generation_resources'
+  // The per-family sampler catalog (`GET /api/v1/blocks/generation-samplers`). Its OWN label
+  // rather than folding into 'generation_resources': that route is an id-keyed replica read,
+  // this one is a static in-memory answer, so merging them would put a constant-time read
+  // into the p95 of the only one of the two that touches the database.
+  | 'generation_samplers'
   // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
   // OWN label rather than folding into 'generation_resources': that route is a
   // bounded id-keyed rehydrate, this one is up to two sequential vendor round trips (up to three calls)
