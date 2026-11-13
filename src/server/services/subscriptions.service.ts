@@ -1,8 +1,13 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
 import { listUserSubscriptionRows } from '@civitai/db-queries/placement';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  getMembershipPaymentMethod,
+  summarizePrepaidTokens,
+} from '~/shared/utils/membership-history';
+import { getPrepaidTokens } from '~/shared/utils/subscription-tokens';
 import { inStripeKeyMode, stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import {
   subscriptionProductMetadataSchema,
@@ -32,9 +37,12 @@ import {
   type MembershipTier,
 } from '~/shared/utils/subscription-tokens';
 import {
+  badStateSubscriptionStatuses,
   BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
   getBuzzMembershipPrice,
   isMembershipActive,
+  recoverableBadSubscriptionStatuses,
+  terminalSubscriptionStatuses,
 } from '~/shared/utils/buzz-membership';
 
 // const baseUrl = getBaseUrl();
@@ -125,6 +133,9 @@ export const getPlans = async ({
 
 export type SubscriptionPlan = Awaited<ReturnType<typeof getPlans>>[number];
 
+const getSubscriptionTier = (productMeta: SubscriptionProductMetadata | undefined) =>
+  (productMeta?.[env.TIER_METADATA_KEY as keyof SubscriptionProductMetadata] ?? 'free') as string;
+
 export const getUserSubscription = async ({
   userId,
   buzzType,
@@ -191,18 +202,14 @@ export const getUserSubscription = async ({
         })
       : null);
 
-  // Statuses that always exclude a subscription (terminal states)
-  const terminalStatuses = ['canceled', 'incomplete_expired'];
-  // Statuses that are bad but can be recovered (show to user if includeBadState is true)
-  const recoverableBadStatuses = ['past_due', 'unpaid'];
-
   if (!subscription) return null;
 
   // Exclude terminal statuses unless includeCanceled is true
-  if (!includeCanceled && terminalStatuses.includes(subscription.status)) return null;
+  if (!includeCanceled && terminalSubscriptionStatuses.includes(subscription.status)) return null;
 
   // Exclude recoverable bad statuses unless includeBadState is true
-  if (!includeBadState && recoverableBadStatuses.includes(subscription.status)) return null;
+  if (!includeBadState && recoverableBadSubscriptionStatuses.includes(subscription.status))
+    return null;
 
   const productMeta = subscriptionProductMetadataSchema.parse(subscription.product.metadata);
 
@@ -219,10 +226,8 @@ export const getUserSubscription = async ({
       unitAmount: subscription.price.unitAmount ?? 0,
       interval: subscription.price.interval as 'month' | 'year',
     },
-    isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
-      subscription.status
-    ),
-    tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
+    isBadState: badStateSubscriptionStatuses.includes(subscription.status),
+    tier: getSubscriptionTier(productMeta),
     productMeta,
     product: {
       ...subscription.product,
@@ -234,7 +239,7 @@ export const getUserSubscription = async ({
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
 
 const activeSubscriptionStatuses = {
-  notIn: ['canceled', 'incomplete_expired', 'past_due', 'unpaid'],
+  notIn: [...terminalSubscriptionStatuses, ...recoverableBadSubscriptionStatuses],
 };
 
 const userSubscriptionSelect = {
@@ -290,10 +295,8 @@ const toUserSubscription = (subscription: UserSubscriptionRow) => {
       unitAmount: subscription.price.unitAmount ?? 0,
       interval: subscription.price.interval as 'month' | 'year',
     },
-    isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
-      subscription.status
-    ),
-    tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
+    isBadState: badStateSubscriptionStatuses.includes(subscription.status),
+    tier: getSubscriptionTier(productMeta),
     productMeta,
   };
 };
@@ -309,6 +312,118 @@ export const getAllUserSubscriptions = async (userId: number) => {
 };
 
 export type AllUserSubscriptions = Awaited<ReturnType<typeof getAllUserSubscriptions>>;
+
+const membershipHistorySelect = {
+  id: true,
+  subscriptionId: true,
+  buzzType: true,
+  productId: true,
+  status: true,
+  metadata: true,
+  cancelAtPeriodEnd: true,
+  cancelAt: true,
+  canceledAt: true,
+  startedAt: true,
+  currentPeriodStart: true,
+  currentPeriodEnd: true,
+  endedAt: true,
+  closedReason: true,
+} satisfies Prisma.CustomerSubscriptionHistorySelect;
+
+type MembershipHistoryEntry = Prisma.CustomerSubscriptionHistoryGetPayload<{
+  select: typeof membershipHistorySelect;
+}> & { key: string };
+
+const readSubscriptionHistory = async (userId: number) => {
+  try {
+    return await dbRead.customerSubscriptionHistory.findMany({
+      where: { userId },
+      select: membershipHistorySelect,
+    });
+  } catch (error) {
+    // P2021: the table's migration hasn't been applied yet; the live rows still answer.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021') return [];
+    throw error;
+  }
+};
+
+/**
+ * Every membership the user has had, from CustomerSubscriptionHistory (kept by a trigger, since
+ * CustomerSubscription only holds each slot's current state). A live row with no open history
+ * row of its own — the trigger missed it and reconcile hasn't run yet — is shown from the live row.
+ */
+export const getUserMembershipHistory = async ({ userId }: { userId: number }) => {
+  const [history, liveSubscriptions] = await Promise.all([
+    readSubscriptionHistory(userId),
+    dbRead.customerSubscription.findMany({ where: { userId }, select: userSubscriptionSelect }),
+  ]);
+
+  // Matched on id too: a stale open row for an older subscription must not hide the live one.
+  const openSubscriptions = new Set(
+    history
+      .filter((entry) => !entry.closedReason)
+      .map((entry) => `${entry.buzzType}:${entry.subscriptionId}`)
+  );
+  const entries: MembershipHistoryEntry[] = [
+    ...history.map((entry) => ({ ...entry, key: `history-${entry.id}` })),
+    ...liveSubscriptions
+      .filter(
+        (subscription) => !openSubscriptions.has(`${subscription.buzzType}:${subscription.id}`)
+      )
+      .map((subscription) => ({
+        ...subscription,
+        id: 0,
+        key: `live-${subscription.id}`,
+        subscriptionId: subscription.id,
+        productId: subscription.product.id,
+        startedAt: subscription.createdAt,
+        closedReason: null,
+      })),
+  ];
+
+  const products = await dbRead.product.findMany({
+    where: { id: { in: [...new Set(entries.map((entry) => entry.productId))] } },
+    select: { id: true, name: true, metadata: true, provider: true },
+  });
+  const productsById = new Map(products.map((product) => [product.id, product]));
+
+  return entries
+    .map((entry) => {
+      const product = productsById.get(entry.productId);
+      const productMeta = subscriptionProductMetadataSchema.safeParse(product?.metadata ?? {});
+      return {
+        id: entry.key,
+        slot: entry.buzzType,
+        productName: product?.name ?? 'Membership',
+        tier: productMeta.success ? getSubscriptionTier(productMeta.data) : 'free',
+        paymentMethod: getMembershipPaymentMethod({
+          slot: entry.buzzType,
+          provider: product?.provider ?? '',
+          productMetadata: product?.metadata,
+          metadata: entry.metadata,
+        }),
+        status: entry.status,
+        closedReason: entry.closedReason,
+        cancelAt: entry.cancelAt,
+        cancelAtPeriodEnd: entry.cancelAtPeriodEnd,
+        canceledAt: entry.canceledAt,
+        endedAt: entry.endedAt,
+        startedAt: entry.startedAt,
+        currentPeriodStart: entry.currentPeriodStart,
+        currentPeriodEnd: entry.currentPeriodEnd,
+        prepaidTokens: summarizePrepaidTokens(
+          getPrepaidTokens({ metadata: entry.metadata as SubscriptionMetadata })
+        ),
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(!!a.closedReason) - Number(!!b.closedReason) ||
+        b.currentPeriodEnd.getTime() - a.currentPeriodEnd.getTime()
+    );
+};
+
+export type UserMembershipHistory = Awaited<ReturnType<typeof getUserMembershipHistory>>;
 
 /**
  * Get the highest tier subscription for a user
@@ -659,7 +774,7 @@ const commitBuzzMembership = async ({
       const conflicting = await tx.customerSubscription.findFirst({
         where: {
           userId,
-          status: { notIn: ['canceled', 'incomplete_expired'] },
+          status: { notIn: terminalSubscriptionStatuses },
           currentPeriodEnd: { gt: now.toDate() },
         },
         select: { id: true },
@@ -856,7 +971,7 @@ export const purchaseMembershipWithBuzz = async ({
 export const liveBuzzMembershipWhere = (userId: number) => ({
   userId,
   buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
-  status: { notIn: ['canceled', 'incomplete_expired'] },
+  status: { notIn: terminalSubscriptionStatuses },
 });
 const endedSubscriptionData = (now: Date) => ({
   status: 'canceled',

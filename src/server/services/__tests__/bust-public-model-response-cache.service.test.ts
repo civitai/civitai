@@ -81,8 +81,8 @@ const mockDbWrite = dbMock.dbWrite;
 const mockRedisDel = redisMock.redis.del;
 
 const keysFor = (id: number) => [
-  `packed:caches:public-model-response:${id}:${allBrowsingLevelsFlag}`,
-  `packed:caches:public-model-response:${id}:${sfwBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${allBrowsingLevelsFlag}`,
+  `packed:caches:public-model-response:v2:${id}:${sfwBrowsingLevelsFlag}`,
 ];
 
 beforeEach(() => {

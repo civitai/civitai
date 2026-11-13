@@ -15,6 +15,7 @@
     "./clickhouse-ip-filters": "./src/clickhouse-ip-filters.ts",
     "./clickup-url": "./src/clickup-url.ts",
     "./lazy": "./src/lazy.ts",
+    "./env-switch": "./src/env-switch.ts",
     "./type-guards": "./src/type-guards.ts",
     "./moderator-paths": "./src/moderator-paths.ts",
     "./missing-media": "./src/missing-media.ts",

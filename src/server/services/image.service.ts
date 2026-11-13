@@ -1,4 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { decreaseDate } from '~/utils/date-helpers';
+import { ownerHeld } from '~/server/services/legal-hold.service';
+import { canCheckBlockedImageHash, getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import { pendingViewerImageSql } from '~/server/services/collection-review.sql';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
@@ -176,6 +179,7 @@ import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
+  entryDraftImageWhere,
   imageSelect,
   publishedImageWhere,
   publishedOrEntryDraftImageWhere,
@@ -1847,12 +1851,12 @@ export const ingestImage = async ({
       UPDATE "Image"
       SET
         "scanRequestedAt" = ${scanRequestedAt},
-        "scanJobs" = CASE
-          WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
-            ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
-          ELSE
-            ${scanJobsJson}::jsonb
-        END
+        -- The last failure moves to lastFailure, so the cron keeps this row's retry ceiling
+        -- while the new scan is in flight; error itself is cleared, ending any 429 run.
+        "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
+          'retryCount', "scanJobs"->'retryCount',
+          'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
+        ))
       WHERE id = ${id}
     `;
   imageScanSubmittedCounter.inc({ lane, result: 'success' });
@@ -4253,6 +4257,8 @@ export const getImagesForModelVersion = async ({
   excludedTagIds,
   excludedIds,
   excludedUserIds,
+  excludePoi,
+  excludeMinor,
   imagesPerVersion = 1,
   include = [],
   user,
@@ -4264,6 +4270,8 @@ export const getImagesForModelVersion = async ({
   excludedTagIds?: number[];
   excludedIds?: number[];
   excludedUserIds?: number[];
+  excludePoi?: boolean;
+  excludeMinor?: boolean;
   imagesPerVersion?: number;
   include?: Array<'meta' | 'tags'>;
   user?: SessionUser;
@@ -4306,6 +4314,8 @@ export const getImagesForModelVersion = async ({
   if (!!excludedUserIds?.length) {
     imageWhere.push(Prisma.sql`i."userId" != ALL(${excludedUserIds}::int[])`);
   }
+  if (excludePoi) imageWhere.push(Prisma.sql`i.poi IS NOT TRUE`);
+  if (excludeMinor) imageWhere.push(Prisma.sql`i.minor IS NOT TRUE`);
   // With no user (the shared imagesForModelVersionsCache), this drops every blocked image.
   imageWhere.push(...imageBlockedForConditions({ userId, isModerator }));
 
@@ -7192,6 +7202,71 @@ export async function createImageResources({
   return resources;
 }
 
+// `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+// over a crucible's maxClipSeconds before the user spends a click on them.
+const myImagesSelect = {
+  id: true,
+  url: true,
+  meta: true,
+  metadata: true,
+  createdAt: true,
+  type: true,
+  nsfwLevel: true,
+  ingestion: true,
+} satisfies Prisma.ImageSelect;
+
+/**
+ * The caller's own uploads whose scan failed, from the crucible entry modal's unpublished drafts:
+ * without them the modal would lose such an upload without a word. Its own query, first page only:
+ * an OR on ingestion would stop getMyImages' semi-join on Post. These were never scanned, so it
+ * lists only what the owner's other checks would let them see, and nothing when those checks
+ * cannot be read.
+ */
+async function getFailedEntryDrafts({
+  userId,
+  type,
+  limit,
+}: {
+  userId: number;
+  type: Prisma.ImageWhereInput['type'];
+  limit: number;
+}) {
+  try {
+    const held = await ownerHeld(dbWrite, Prisma.sql`FROM (SELECT ${userId}::int AS "userId") m`);
+    if (held) return [];
+    const rows = await dbRead.image.findMany({
+      select: { ...myImagesSelect, pHash: true },
+      where: {
+        userId,
+        type,
+        ingestion: ImageIngestionStatus.Error,
+        blockedFor: null,
+        nsfwLevel: { not: NsfwLevel.Blocked },
+        createdAt: { gte: decreaseDate(new Date(), 7, 'days') },
+        ...entryDraftImageWhere(),
+      },
+      take: limit,
+      orderBy: { id: 'desc' },
+    });
+    // Near matches on the live blocklist; any failed lookup lists nothing (the catch below), and a
+    // hashed row is left out when the blocklist cannot be read at all.
+    const canCheck = canCheckBlockedImageHash();
+    const blocked = await Promise.all(
+      rows.map((row) =>
+        row.pHash == null ? false : canCheck ? getIsImageBlocked(row.pHash) : true
+      )
+    );
+    return rows.filter((_row, i) => !blocked[i]).map(({ pHash: _pHash, ...row }) => row);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'failed-entry-drafts',
+      message: (error as Error).message,
+    }).catch(() => undefined);
+    return [];
+  }
+}
+
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
@@ -7201,26 +7276,16 @@ export const getMyImages = async ({
   cursor = 0,
 }: GetMyImagesInput & { userId: number }) => {
   const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
+  const type = {
+    in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
+  };
 
   try {
-    const media = await dbRead.image.findMany({
-      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
-      // over a crucible's maxClipSeconds before the user spends a click on them.
-      select: {
-        id: true,
-        url: true,
-        meta: true,
-        metadata: true,
-        createdAt: true,
-        type: true,
-        nsfwLevel: true,
-        ingestion: true,
-      },
+    const mediaQuery = dbRead.image.findMany({
+      select: myImagesSelect,
       where: {
         userId,
-        type: {
-          in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
-        },
+        type,
         postId: { not: null },
         // Published-only callers render still-scanning images as pending rather than hiding them.
         ingestion: publishedOnly
@@ -7236,6 +7301,11 @@ export const getMyImages = async ({
       cursor: cursor ? { id: cursor } : undefined,
       orderBy: { id: 'desc' },
     });
+    const failedEntryDraftsQuery =
+      publishedOnly && includeEntryDrafts && !cursor
+        ? getFailedEntryDrafts({ userId, type, limit })
+        : Promise.resolve([]);
+    const [media, failedEntryDrafts] = await Promise.all([mediaQuery, failedEntryDraftsQuery]);
 
     let nextCursor: number | undefined;
     if (media.length > limit) {
@@ -7244,7 +7314,9 @@ export const getMyImages = async ({
     }
 
     return {
-      items: media,
+      items: failedEntryDrafts.length
+        ? [...media, ...failedEntryDrafts].sort((a, b) => b.id - a.id)
+        : media,
       nextCursor,
     };
   } catch (error) {

@@ -20,12 +20,10 @@
 //
 // ⚠️ "CANNOT ALTER A VERDICT" IS A STATEMENT ABOUT THIS CODE, NOT ABOUT THE VENDOR. There is one
 // indirect path, named here rather than left for someone to rediscover: the probe DOUBLES the
-// request rate against a shared per-organisation quota. Measured on production 2026-09-07 the live
-// call runs ~4.3 req/s, so `SAMPLE=1.0` adds ~4.3 req/s (~371k requests/day). If that were ever
-// enough to provoke vendor 429s they would land on the LIVE calls too — and the live call is
-// FAIL-SOFT, so a rate-limited moderation request proceeds as `flagged:false` and silently drops
-// the external layer. At the measured volume the margin is wide, so this is a mechanism note and
-// not a prediction. It is still the reason to arm at a LOW sample rate rather than at 1.0.
+// request rate against a shared per-organisation quota (`SAMPLE=1.0` doubles it). If that were ever
+// enough to provoke vendor 429s they would land on the LIVE calls too — and a failed live call
+// refuses that generation submit with a 503 (`auditPromptServer` fails closed), so vendor 429s
+// would become refused submits. That is the reason to arm at a LOW sample rate rather than at 1.0.
 //
 // 🔴 THERE IS NO IN-PROCESS KILL SWITCH. `env` is parsed once at process start, so disarming needs a
 // POD ROLLOUT — editing the ConfigMap alone changes nothing on already-running pods. Budget for

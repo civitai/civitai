@@ -43,9 +43,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatActionsV1 as ChatActions } from '~/components/Chat/ChatActionsV1';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import {
+  chatLinkifyOptions,
   getLinkHref,
   isExternalChatLink,
-  linkifyOptions,
   loadMotion,
   showsChatModeratorMark,
 } from '~/components/Chat/util';
@@ -54,6 +54,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -832,9 +833,10 @@ function ChatInputBox({
 }
 
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
+  const { ownHosts } = useCurrentDomainHosts();
   if (!href) return <Title order={6}>{title}</Title>;
 
-  if (isExternalChatLink(href)) {
+  if (isExternalChatLink(href, ownHosts)) {
     return (
       <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
         <Title order={6}>{title}</Title>
@@ -850,6 +852,7 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
+  const { ownHosts } = useCurrentDomainHosts();
   let contentObj: {
     title: string | null;
     description: string | null;
@@ -866,7 +869,7 @@ const EmbedMessage = ({ content }: { content: string }) => {
 
   if (!title && !description && !image) return <></>;
 
-  const modHref = getLinkHref(href);
+  const modHref = getLinkHref(href, ownHosts);
 
   return (
     <Group
@@ -1108,6 +1111,7 @@ function ChatMessageContent({
 }) {
   const scannable = stripStickerTokens(content);
   const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+  const { ownHosts } = useCurrentDomainHosts();
 
   if (!content.length) return <>{fallback ?? null}</>;
 
@@ -1116,7 +1120,7 @@ function ChatMessageContent({
   if (cleaned !== scannable)
     return (
       <Text component="span">
-        <Linkify options={linkifyOptions}>{cleaned}</Linkify>
+        <Linkify options={chatLinkifyOptions(ownHosts)}>{cleaned}</Linkify>
       </Text>
     );
 
@@ -1135,7 +1139,7 @@ function ChatMessageContent({
               />
             ) : (
               <Text component="span" key={idx}>
-                <Linkify options={linkifyOptions}>{part.value}</Linkify>
+                <Linkify options={chatLinkifyOptions(ownHosts)}>{part.value}</Linkify>
               </Text>
             )
           )}

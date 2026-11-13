@@ -200,8 +200,6 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
-export type ImageAxisSource = "rated" | "moderator";
-
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -796,6 +794,28 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface CustomerSubscriptionHistory {
+  id: number;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: JsonValue;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: Date | null;
+  canceledAt: Date | null;
+  startedAt: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  endedAt: Date | null;
+  closedAt: Date | null;
+  closedReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface MembershipGift {
@@ -1774,7 +1794,6 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
-  axisRating?: ImageAxisRating | null;
 }
 
 export interface ImageTagForReview {
@@ -4957,22 +4976,6 @@ export interface ImageAudioScan {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
-}
-
-export interface ImageAxisRating {
-  imageId: number;
-  image?: Image;
-  source: ImageAxisSource;
-  sexualLevel: number | null;
-  sexualHighWater: number | null;
-  violenceLevel: number | null;
-  languageLevel: number | null;
-  rater: string | null;
-  raterVersion: string | null;
-  ratedAt: Date;
-  workflowId: string | null;
-  setBy: number | null;
-  updatedAt: Date;
 }
 
 export interface ScanLabelVote {

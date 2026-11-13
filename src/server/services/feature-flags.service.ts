@@ -99,6 +99,10 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
+  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Edge rules keyed on
+  // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
+  // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -452,6 +456,8 @@ const featureFlags = createFeatureFlags({
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Comic search on /search/comics, the same way.
+  semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {

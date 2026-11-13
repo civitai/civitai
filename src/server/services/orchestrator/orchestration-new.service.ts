@@ -131,6 +131,7 @@ import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt, randomUUID } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
 import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
@@ -1955,21 +1956,28 @@ export async function generateFromGraph({
       // XGuard scan against the same input so moderators can review whether
       // XGuard would have agreed — feeds the "should XGuard replace the
       // legacy gate?" decision. Doesn't gate the rethrow.
-      createXGuardModerationRequest({
-        mode: 'prompt',
-        entityType: 'prompt',
-        positivePrompt: promptText,
-        negativePrompt,
-        userId,
-        recordForReview: true,
-      }).catch((e) => {
-        logToAxiom({
-          type: 'error',
-          name: 'generation-xguard-scan',
-          message: (e as Error).message,
+      //
+      // Not when the audit could not run (its retry-able 503, see isPromptCheckUnavailable):
+      // nothing blocked the prompt, so there is no verdict for XGuard to compare against, and
+      // `recordForReview` would queue a moderator review item for a prompt nobody refused.
+      // PROMPT_CHECK_FAIL_CLOSED=off restores the scan on that 503 too.
+      if (!isPromptCheckUnavailable(err)) {
+        createXGuardModerationRequest({
+          mode: 'prompt',
+          entityType: 'prompt',
+          positivePrompt: promptText,
+          negativePrompt,
           userId,
-        }).catch();
-      });
+          recordForReview: true,
+        }).catch((e) => {
+          logToAxiom({
+            type: 'error',
+            name: 'generation-xguard-scan',
+            message: (e as Error).message,
+            userId,
+          }).catch();
+        });
+      }
       throw err;
     }
   }

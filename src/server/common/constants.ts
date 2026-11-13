@@ -543,14 +543,11 @@ export const constants = {
     // Hosts a chat link may point at, matched exactly against the parsed hostname
     // (see `src/components/Chat/util.tsx`). Links to these hosts are rendered in-app.
     civHosts: chatCivHosts(),
-    // Off-site hosts chat will link (and preview server-side). Exact hostnames only.
-    externalHosts: [
-      'github.com',
-      'twitter.com',
-      'x.com',
-      'civitai.red',
-      'education.civitai.com',
-    ].flatMap((host) => [host, `www.${host}`]),
+    // Off-site hosts chat will link (and preview server-side). Exact hostnames only. Our other
+    // sites (civitai.red, civitai.green) come from the domain config: see `isExternalChatLink`.
+    externalHosts: ['github.com', 'twitter.com', 'x.com', 'education.civitai.com'].flatMap(
+      (host) => [host, `www.${host}`]
+    ),
   },
   entityCollaborators: {
     maxCollaborators: 15,

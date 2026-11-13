@@ -817,11 +817,6 @@ export const AppealCategory = {
   Other: 'Other',
 } as const;
 export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
-export const ImageAxisSource = {
-  rated: 'rated',
-  moderator: 'moderator',
-} as const;
-export type ImageAxisSource = (typeof ImageAxisSource)[keyof typeof ImageAxisSource];
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',

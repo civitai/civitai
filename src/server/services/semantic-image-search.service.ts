@@ -12,6 +12,7 @@ import {
   anchorBrowsingLevel,
   queryVerdictLevel,
   recordRefusal,
+  isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
   type QueryRefusal,
@@ -62,7 +63,11 @@ export async function searchSemanticImages({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -125,7 +130,7 @@ export async function searchSemanticImages({
   const fetchVisible = async (
     ids: number[],
     level: number,
-    filters: { tags?: number[]; excludedTagIds: number[] }
+    filters: { tags?: number[]; excludedTagIds: number[]; fromPlatform?: boolean }
   ) => {
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
@@ -156,8 +161,9 @@ export async function searchSemanticImages({
     if (!user?.isModerator && !(await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SIMILAR_ANCHOR_CAP_OFF)))
       level = anchorBrowsingLevel(browsingLevel, anchor.nsfwLevel);
   }
+  // "Made On-site" is judged from the image's meta, so only hydration applies it.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
-    fetchVisible(ids, level, { tags: tagIds, excludedTagIds });
+    fetchVisible(ids, level, { tags: tagIds, excludedTagIds, fromPlatform: input.fromPlatform });
 
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
@@ -176,6 +182,8 @@ export async function searchSemanticImages({
     },
     // As the image search index: no NSFW images made with a base model whose license forbids it.
     // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
+    // Kept here, not only in hydration: Image."modelRestricted" is set by an hourly job, so a new
+    // image would pass hydration until it runs.
     mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
       ? [
           {

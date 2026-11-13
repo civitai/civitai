@@ -792,8 +792,8 @@ export async function createBuzzTransaction(
     fromAccountType?: BuzzAccountType;
     insufficientFundsErrorMsg?: string;
   },
-  // Optional per-call overrides. Absent, the client's write defaults apply: a 10s bound, and a
-  // retry only when the request provably never left.
+  // Optional per-call overrides. Absent, the client's write defaults apply: no deadline (the call
+  // waits for Buzz's answer), and a retry only when the request provably never left.
   opts?: BuzzWriteOptions
 ) {
   if (entityType && entityId && toAccountId === undefined) {

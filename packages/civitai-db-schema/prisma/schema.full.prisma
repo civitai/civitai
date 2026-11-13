@@ -700,6 +700,36 @@ model CustomerSubscription {
   @@unique([userId, buzzType])
 }
 
+/// One row per membership, kept by a trigger on CustomerSubscription (which holds only the
+/// current state of each slot). At most one open row (closedAt null) per (userId, buzzType);
+/// that partial unique index and the trigger live only in the migration
+/// 20261122120000_customer_subscription_history. Never write this table from the app.
+/// No relation to User on purpose: an FK locks "User" while it validates.
+model CustomerSubscriptionHistory {
+  id                 Int       @id @default(autoincrement())
+  userId             Int
+  subscriptionId     String
+  buzzType           String
+  productId          String
+  priceId            String
+  status             String
+  metadata           Json      @default("{}")
+  cancelAtPeriodEnd  Boolean   @default(false)
+  cancelAt           DateTime?
+  canceledAt         DateTime?
+  startedAt          DateTime
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  endedAt            DateTime?
+  /// Set when the live row moved on: 'removed' | 'replaced' | 'plan-changed' | 'restarted'
+  closedAt           DateTime?
+  closedReason       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now())
+
+  @@index([userId])
+}
+
 enum PaymentProvider {
   Stripe
   Paddle
@@ -2191,6 +2221,10 @@ model Image {
   nsfw              NsfwLevel               @default(None)
   nsfwLevel         Int                     @default(0)
   nsfwLevelLocked   Boolean                 @default(false)
+  // Rating axes as one-hot bit groups: sexual 0-4, violence 5-9, language 10-12, sexual high-water
+  // 13-17, bit 18 set by a moderator. NULL: not rated by an axis-capable rater. Raw SQL only, so
+  // Prisma never selects it and code may deploy before the migration. src/server/services/image-nsfw-axes.ts.
+  nsfwAxes          Int? // @no-type
   tosViolation      Boolean                 @default(false)
   analysis          Json?
   generationProcess ImageGenerationProcess?
@@ -2266,7 +2300,6 @@ model Image {
   storylineSparks        Storyline[]            @relation("StorylineSparkImage")
   storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
-  axisRating             ImageAxisRating?
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -8087,36 +8120,6 @@ model ImageAudioScan {
   completedAt   DateTime? @db.Timestamptz(3)
 
   @@index([flagged, createdAt])
-}
-
-enum ImageAxisSource {
-  rated
-  moderator
-}
-
-/// Current rating axes of an image from an axis-capable rater, or a moderator. No row means the
-/// image was not rated on axes. A scan never overwrites a moderator row. Nothing reads it to
-/// filter, rate or hide media yet.
-model ImageAxisRating {
-  imageId         Int             @id
-  image           Image           @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  source          ImageAxisSource
-  sexualLevel     Int?            @db.SmallInt
-  /// Highest sexualLevel any scan has rated; only a moderator lowers it.
-  sexualHighWater Int?            @db.SmallInt
-  violenceLevel   Int?            @db.SmallInt
-  /// No rater produces a language axis yet.
-  languageLevel   Int?            @db.SmallInt
-  /// The rater's modelRef; null on a moderator row.
-  rater           String?
-  /// The rater checkpoint's sha256; null on a moderator row.
-  raterVersion    String?
-  /// The scan workflow's completion time; an older result never replaces a newer one.
-  ratedAt         DateTime        @db.Timestamptz(3)
-  workflowId      String?
-  /// The moderator's user id on a moderator row.
-  setBy           Int?
-  updatedAt       DateTime        @default(now()) @updatedAt @db.Timestamptz(3)
 }
 
 model ScanLabelVote {

@@ -81,14 +81,15 @@ moderators and never sent to the owner. A check that could not run says so, sepa
 
 ## Listing re-check
 
-When the owner edits the .red title, description or trigger words of a model with a .com face, a
-job (`model-com-face-recheck.service.ts`) checks the listing again. A flagged listing takes the face
-off .com: the .com cover is cleared, the .com title and description stay, and
-`meta.comFaceRemoved` records it. The editor shows the owner a notice on both tabs; for a
-non-mature model, which stays on .com, it says only that the .com cover was removed.
+When the owner saves the face, edits the .red title, description, version names or trigger words,
+or adds a version to a model with a .com face, a job (`model-com-face-recheck.service.ts`) checks it again. The version names and
+trigger words, which .com shows unchanged, are rated as the .com title is; a mature rating takes the
+face off .com: the .com cover is cleared, the .com title and description stay, and
+`meta.comFaceRemoved` records it. The editor shows the owner a notice on both tabs; for a non-mature model, which stays
+on .com, it says only that the .com cover was removed.
 
 The marker goes when the owner sets a .com cover again (through the save checks), turns the face
-off, or edits the .red listing so that it passes. That edit gets one check, once the owner has
+off, or edits the listing so that it passes both checks. That edit gets one check, once the owner has
 stopped editing for two minutes; no verdict keeps the marker. The old cover is not put back.
 Creator Studio's Make Safe can draft a removed face again.
 

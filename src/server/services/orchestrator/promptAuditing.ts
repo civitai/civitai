@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { constants } from '~/server/common/constants';
+import { env } from '~/env/server';
 import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -12,8 +13,9 @@ import {
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
-import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import {
   auditPromptEnriched,
   isBlankAuditInput,
@@ -70,10 +72,6 @@ const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
-
-// The 503 when the prompt check itself could not run (see auditPromptServer).
-const PROMPT_CHECK_UNAVAILABLE_MESSAGE =
-  'The prompt check is temporarily unavailable. Please try again in a moment.';
 
 // Shown for a regex refusal that names neither a trigger nor a reason (see classifyPromptServer).
 const UNSPECIFIED_REGEX_REFUSAL = 'Prompt failed the content audit';
@@ -227,7 +225,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
   // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
   // The deadline only BOUNDS a silent half-open (which would otherwise park each
-  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // awaited read ~11min): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving the same fail-closed
   // direction. See STEP-6 report's promptAuditing note.
   const exists = await withSysReadDeadline(sysRedis.exists(key));
 
@@ -347,6 +345,8 @@ export interface PromptClassification {
    * The external classifier's failure message when it threw. It fails OPEN — the verdict is then
    * computed as though it had not flagged — so this is the only trace that it did not actually
    * clear the text. Reporting it is the caller's job; this function records nothing.
+   * `auditPromptServer` refuses (503) any verdict carrying it that would otherwise let a submit through
+   * (unless PROMPT_CHECK_FAIL_CLOSED is off).
    */
   externalError: { message: string } | null;
 }
@@ -596,7 +596,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       userId,
       message: (e as Error)?.message,
     }).catch(() => undefined);
-    throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE, e);
+    throw new PromptCheckUnavailableError(e);
   }
 
   // The classifier fails open on an external-moderation error and leaves reporting it to us.
@@ -606,6 +606,26 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       type: 'error',
       message: verdict.externalError.message,
     });
+  }
+
+  // 🔴 FAIL CLOSED when the external classifier could not answer. Whatever this audit would let
+  // through — a pass, or a soft block the user acknowledged — has then been checked by the word
+  // lists alone. It is refused as a retry-able 503: never submitted, never counted toward the
+  // user's blocks. A hard block, or an unacknowledged soft one, keeps its own refusal below.
+  // Not reached when the classifier is not configured (that returns "not flagged", no error).
+  // PROMPT_CHECK_FAIL_CLOSED=off restores the previous pass-through.
+  if (
+    env.PROMPT_CHECK_FAIL_CLOSED &&
+    verdict.externalError &&
+    (verdict.outcome === 'pass' || (verdict.outcome === 'soft' && acknowledgedSoftBlock))
+  ) {
+    logToAxiom({
+      name: 'prompt-check-unavailable',
+      type: 'error',
+      userId,
+      message: verdict.externalError.message,
+    }).catch(() => undefined);
+    throw new PromptCheckUnavailableError();
   }
 
   if (verdict.outcome === 'pass') return;
