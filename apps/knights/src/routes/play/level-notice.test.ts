@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   closeNotice,
+  dismissFailedOn,
   noticeKey,
   noticeShowing,
   settleNotice,
@@ -8,7 +9,7 @@ import {
   type NoticeState,
 } from './level-notice';
 
-const fresh = (): NoticeState => ({ closed: null });
+const fresh = (): NoticeState => ({ closed: null, failed: null });
 const level6 = noticeKey({ rank: 'Acolyte', level: 6 });
 const level10 = noticeKey({ rank: 'Acolyte', level: 10 });
 
@@ -51,5 +52,28 @@ describe('level notice', () => {
     syncNotice(state, null);
     syncNotice(state, level6);
     expect(noticeShowing(level6, state)).toBe(true);
+  });
+
+  it("a failed dismissal's error shows on its own card, not on a later one", () => {
+    const state = fresh();
+    closeNotice(state, level6);
+    settleNotice(state, level6, false);
+    expect(dismissFailedOn(state, level6)).toBe(true);
+    syncNotice(state, level10);
+    expect(dismissFailedOn(state, level10)).toBe(false);
+  });
+
+  it('no dismissal error once the card is dismissed, or when the same standing comes back later', () => {
+    const state = fresh();
+    closeNotice(state, level6);
+    settleNotice(state, level6, false);
+    closeNotice(state, level6);
+    settleNotice(state, level6, true);
+    expect(dismissFailedOn(state, level6)).toBe(false);
+
+    settleNotice(state, level6, false);
+    syncNotice(state, null);
+    syncNotice(state, level6);
+    expect(dismissFailedOn(state, level6)).toBe(false);
   });
 });

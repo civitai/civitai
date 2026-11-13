@@ -7,7 +7,8 @@ const KEY = Symbol('votes-sent');
 
 /** Created by the root layout, so each request on the server and each tab in the browser has its own count. */
 export function provideVotesSent(): VotesSent {
-  return setContext<VotesSent>(KEY, $state({ count: 0 }));
+  const sent = $state<VotesSent>({ count: 0 });
+  return setContext(KEY, sent);
 }
 
 export const votesSent = () => getContext<VotesSent>(KEY);

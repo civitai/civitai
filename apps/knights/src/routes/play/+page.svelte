@@ -26,6 +26,7 @@
   import {
     DISMISS_FAILED,
     closeNotice,
+    dismissFailedOn,
     noticeKey,
     noticeShowing,
     settleNotice,
@@ -79,11 +80,19 @@
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
+  // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
+  // A vote that answers after the page is gone must not take from the next visit's count.
+  const inFlight = votesSent();
+  let alive = true;
+  onDestroy(() => {
+    alive = false;
+    inFlight.count = 0;
+  });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
   // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
   // given right after "Onward" still records the card it appeared with.
-  const notice = $state<NoticeState>({ closed: null });
+  const notice = $state<NoticeState>({ closed: null, failed: null });
   let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
   $effect(() => {
     const key = sentNotice;
@@ -394,6 +403,10 @@
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
+    const uncount = () => {
+      if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
+      counted = false;
+    };
     return postVote(key, {
       queue: votes,
       tracker,
@@ -415,8 +428,7 @@
         }
       },
       onFailure: (outcome) => {
-        if (counted) inFlight.count = Math.max(0, inFlight.count - 1);
-        counted = false;
+        uncount();
         tell(outcome.message);
         dropBuffered(key);
         if (outcome.resync) {
@@ -429,7 +441,7 @@
       onSettled: async () => {
         await invalidate('app:play').catch(() => {});
         // The page's data now holds the vote, so it stops being counted on top.
-        if (counted) inFlight.count = Math.max(0, inFlight.count - 1);
+        uncount();
       },
     });
   }
@@ -481,9 +493,6 @@
     void post(input.action, input.formData, key, isVote);
   };
 
-  // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
-  const inFlight = votesSent();
-  onDestroy(() => (inFlight.count = 0));
   let strip = $derived(data.mode === 'queue' ? watchStrip(withVotesSent(data.daily, inFlight.count)) : null);
   let watching = $derived(data.mode === 'queue' && !paused && Boolean(view) && watchInProgress(data.daily));
 
@@ -557,7 +566,7 @@
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
       xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
-      message={form?.progressFailed ? form.message : null}
+      message={form?.progressFailed && dismissFailedOn(notice, sentNotice) ? form.message : null}
       submit={submitDismissProgress}
       {floating}
       milestone={levelNotice.milestone ?? null}
