@@ -7,12 +7,15 @@
 
   let {
     recap,
+    noticeShown,
     message,
     submitting,
     submit,
     onguide,
   }: {
     recap: Recap;
+    /** The milestone card is up: continuing records it as seen. */
+    noticeShown: boolean;
     message: string | null;
     submitting: boolean;
     submit: SubmitFunction;
@@ -69,6 +72,7 @@
 
   <div class="actions">
     <form method="POST" action="?/continueCheckpoint" use:enhance={submit}>
+      {#if noticeShown}<input type="hidden" name="noticeShown" value="1" />{/if}
       <button type="submit" class="primary" disabled={submitting}>Continue</button>
     </form>
   </div>

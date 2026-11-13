@@ -611,6 +611,7 @@
             <input type="hidden" name="kind" value={data.apprentice.item.kind} />
             <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
             <input type="hidden" name="version" value={data.apprentice.item.version ?? ''} />
+            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
             {#each data.apprentice.options as option, index (option.value)}
               {@render pill(option, index, false, false)}
             {/each}
@@ -628,6 +629,7 @@
       {@render levelToast(false)}
       <CheckpointRecap
         recap={data.apprentice}
+        noticeShown={!!levelNotice}
         message={formMessage}
         {submitting}
         submit={submitCheckpoint}
