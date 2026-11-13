@@ -242,6 +242,13 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={generationHub}
+        name="videoUpscaler"
+        render={({ value, meta, onChange }) => (
+          <SelectInput label="Upscaler" value={value} onChange={onChange} options={meta?.options} />
+        )}
+      />
+      <Controller
+        graph={generationHub}
         name="scaleFactor"
         render={({ value, meta, onChange }) => (
           <ScaleFactorInput

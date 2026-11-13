@@ -209,7 +209,7 @@ describe('video-enhance: scale factor remembered per source size', () => {
       url: 'https://example.com/a.mp4',
       metadata: { width, height, fps: 30, duration: 5 },
     });
-    store.set({ workflow: 'vid2vid:upscale' });
+    store.set({ workflow: 'vid2vid:upscale', videoUpscaler: 'flashvsr' });
     store.set({ video: video(640, 360) });
     store.set({ scaleFactor: 3 });
     expectValid(store, 'small video');
@@ -223,7 +223,7 @@ describe('video-enhance: scale factor remembered per source size', () => {
 
   it('refuses a factor that would exceed the ceiling for this source', () => {
     const store = makeStore();
-    store.set({ workflow: 'vid2vid:upscale' });
+    store.set({ workflow: 'vid2vid:upscale', videoUpscaler: 'flashvsr' });
     store.set({
       video: {
         url: 'https://example.com/a.mp4',
