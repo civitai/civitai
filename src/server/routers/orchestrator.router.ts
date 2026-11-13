@@ -78,6 +78,7 @@ import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-itera
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
+  assertPresetGenerationAllowed,
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
@@ -850,6 +851,8 @@ export const orchestratorRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the paid prompt enhancement below, so a refused caller is charged nothing.
+      await assertPresetGenerationAllowed(ctx.user as SessionUser);
       await assertGenerationInputsUsable({
         urls: [input.sourceImageUrl, ...(input.referenceImages ?? []).map((ref) => ref.url)],
         userId: ctx.user.id,

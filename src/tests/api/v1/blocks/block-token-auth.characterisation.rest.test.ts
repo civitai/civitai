@@ -328,6 +328,11 @@ const ROUTES: Record<string, RouteSpec> = {
     query: { ids: '1' },
     scope: null,
   },
+  'src/pages/api/v1/blocks/generation-samplers.ts': {
+    load: () => import('~/pages/api/v1/blocks/generation-samplers'),
+    method: 'GET',
+    scope: null,
+  },
   'src/pages/api/v1/blocks/goods/purchase.ts': {
     load: () => import('~/pages/api/v1/blocks/goods/purchase'),
     method: 'POST',
@@ -895,9 +900,9 @@ const REFUSAL_STATUSES = [401, 403, 405, 429];
  *   - `wrong method, no bearer`: 405 everywhere the handler checks the method first. The
  *     exception is `tools.ts`, which checks the token FIRST and answers 401.
  *   - `revoked AND not approved`: REST reports `revoked` (revocation runs before approval).
- *   - `missing scope` on the any-token routes (gated-images, generation-resources, images,
- *     models, resource-intent, tools, user-checkpoint/set): admitted — those routes declare no
- *     `requiredScope`.
+ *   - `missing scope` on the any-token routes (gated-images, generation-resources,
+ *     generation-samplers, images, models, resource-intent, tools, user-checkpoint/set):
+ *     admitted — those routes declare no `requiredScope`.
  *   - `hub OAuth token`: with OAuth tokens enabled, the middleware synthesises claims for a
  *     hub-issued access token and admits it; routes that re-verify the RAW bearer as a block
  *     JWT (app-storage, shared-storage, workflows, user-checkpoint) then refuse it with their
@@ -906,9 +911,9 @@ const REFUSAL_STATUSES = [401, 403, 405, 429];
  *   - `missing approval row` / `dev token, no approval row`: the middleware SERVES (admitted —
  *     REST's deliberate difference from the bridge); app-storage and shared-storage routes then
  *     refuse in their own second resolver (`app block not found`).
- *   - `approval row read throws`: 503 `app block status unavailable`, except on the five routes
- *     declaring `onApprovalLookupFailure: 'serve'` (generation-resources, images, models, tools,
- *     models/[id]), which are admitted.
+ *   - `approval row read throws`: 503 `app block status unavailable`, except on the routes
+ *     declaring `onApprovalLookupFailure: 'serve'` (generation-resources, generation-samplers,
+ *     images, models, tools, models/[id]), which are admitted.
  *   - `consent …`: the token carries a consent-gated scope, so the marker is consulted on every
  *     scoped route. A revoked/unavailable marker refuses only routes whose OWN scope is
  *     revokable (403 `consent_revoked` / 503 `permission_state_unavailable`); routes whose
@@ -2553,6 +2558,68 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       ['getResourceData([1])'],
       []
     ),
+  },
+  // The 200 body is the whole sampler catalog, derived from the generation graph, so the
+  // admitted cells are PASSED rather than pinned verbatim here; its shape and contents are
+  // pinned in `src/tests/api/v1/blocks/generation-samplers-endpoint.test.ts`. No limiter: the
+  // route is deliberately not rate-limited (see its header), so `rate limited` is served.
+  'src/pages/api/v1/blocks/generation-samplers.ts': {
+    'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),
+    'wrong method, no bearer': X(405, { error: 'Method not allowed' }, false, [], [], null),
+    'non-JWT bearer (OAuth tokens off)': X(
+      401,
+      { error: 'Block token required' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'runtime flag off, valid JWT': X(401, { error: 'Block token required' }, false, [], [], null),
+    'bad JWT': X(401, { error: 'invalid block token' }, false, [], [], null),
+    revoked: X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'revoked AND not approved': X(
+      403,
+      { error: 'block instance revoked', code: 'instance_revoked' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'missing scope': PASSED(true, [], [], []),
+    'token carries an unknown scope': PASSED(true, [], [], ['made:up:scope']),
+    'anonymous subject': PASSED(true, [], [], []),
+    'ai:write:budgeted without a positive buzzBudget': PASSED(true, [], [], []),
+    'rate limited': PASSED(true, [], [], []),
+    'hub OAuth token': PASSED(true, [], [], []),
+    'missing approval row': PASSED(true, [], [], []),
+    'approval row read throws': PASSED(true, [], [], []),
+    'consent revoked for the route scope': PASSED(true, [], [], ['buzz:read:self']),
+    'consent marker unavailable': PASSED(true, [], [], ['buzz:read:self']),
+    'consent marker unavailable AND not approved': X(
+      403,
+      { error: 'app block is not approved', code: 'app_not_approved' },
+      false,
+      [],
+      [],
+      null
+    ),
+    'dev token, no approval row': PASSED(true, [], [], []),
+    'private-run token, row not approved': PASSED(true, [], [], []),
   },
   'src/pages/api/v1/blocks/goods/purchase.ts': {
     'no bearer': X(401, { error: 'Block token required' }, false, [], [], null),

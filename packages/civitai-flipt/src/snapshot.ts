@@ -150,7 +150,10 @@ export function createKvSnapshotStore({
 }: {
   kv: FliptSnapshotKv;
   key: string;
-  /** Stored keys expire after this; `load` also refuses anything older. */
+  /**
+   * Stored keys expire after this. `load` does not check the age itself: it returns whatever is
+   * stored, and the client refuses a snapshot older than its `snapshotMaxAgeMs`.
+   */
   maxAgeMs: number;
   refreshIntervalMs: number;
   maxBytes?: number;

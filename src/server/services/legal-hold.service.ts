@@ -459,6 +459,28 @@ async function readAccountHolds(
   return [...held].map(([userId, legsHeld]) => ({ userId, legs: legsHeld, markerView }));
 }
 
+/**
+ * Whether each of `userIds` is under a legal hold, in ONE batched lookup (`readAccountHolds`).
+ * Never throws: a lookup that fails, or that leaves a user out, answers `true` (held) for every user
+ * it could not clear, so a caller deleting on `false` deletes nothing it cannot prove is clear.
+ */
+export async function areAccountsUnderLegalHold(userIds: number[]): Promise<Map<number, boolean>> {
+  const answer = new Map(userIds.map((id) => [id, true]));
+  if (userIds.length === 0) return answer;
+  try {
+    for (const hold of await readAccountHolds(userIds))
+      if (answer.has(hold.userId)) answer.set(hold.userId, hold.legs.length > 0);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+  }
+  return answer;
+}
+
 export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHoldLeg[]> {
   return (await getAccountLegalHold(userId)).legs;
 }

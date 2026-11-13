@@ -228,6 +228,8 @@ export type AppBlockEndpoint =
   // catalog searches. Same bucket, different question when it fails.
   | 'gated_images'
   | 'generation_resources'
+  // Own label: a static in-memory read must not sit in generation_resources' (replica) p95.
+  | 'generation_samplers'
   // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
   // OWN label rather than folding into 'generation_resources': that route is a
   // bounded id-keyed rehydrate, this one is up to two sequential vendor round trips (up to three calls)
