@@ -156,7 +156,7 @@ try {
 // it starts at once. It runs the same runHealthChecks() as the probes, for metrics only: nothing
 // reads its result, so it cannot change readiness. It runs in every process that runs this file,
 // which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
-// calls register()). HEALTH_METRICS_INTERVAL_MS <= 0 turns it off. See ~/server/health/metrics-loop.
+// calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
 const warmupModule = import('~/server/warmup');
 void warmupModule
   .then((m) => m.runWarmup())

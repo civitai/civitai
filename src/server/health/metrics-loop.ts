@@ -31,25 +31,25 @@
 // The start is offset by a random fraction of one interval so pods that boot together do not run
 // their checks in lockstep against the same databases.
 //
-// Config: HEALTH_METRICS_INTERVAL_MS (default 15000). Zero or negative turns the loop off; a value
-// that is not a number falls back to the default.
+// Config: HEALTH_METRICS_INTERVAL_MS. DARK BY DEFAULT: the loop runs only when it is set to a
+// positive number of milliseconds (15000 is the intended value). Unset, empty, not a number, zero,
+// negative, or above Node's timer ceiling all mean off.
 
 import { getLastProbeRunStartedAt, runHealthChecks } from '~/server/health/dependency-checks';
 
-export const DEFAULT_HEALTH_METRICS_INTERVAL_MS = 15_000;
 const LOG_PREFIX = '[health-metrics-loop]';
 // Node's timer ceiling (2^31 - 1 ms). A larger delay is not honoured: Node warns and fires the
 // timer after 1ms, which would turn a "basically never" setting into a hot loop. Treated as off.
 const MAX_TIMER_MS = 2_147_483_647;
 
 /**
- * HEALTH_METRICS_INTERVAL_MS → interval in ms, or null when the loop is switched off (zero,
- * negative, or above Node's timer ceiling).
+ * HEALTH_METRICS_INTERVAL_MS → interval in ms, or null when the loop is off: unset, empty, not a
+ * number, zero, negative, or above Node's timer ceiling. Off is the default.
  */
 export function resolveHealthMetricsIntervalMs(raw: string | undefined): number | null {
-  if (raw === undefined || raw.trim() === '') return DEFAULT_HEALTH_METRICS_INTERVAL_MS;
+  if (raw === undefined || raw.trim() === '') return null;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return DEFAULT_HEALTH_METRICS_INTERVAL_MS;
+  if (!Number.isFinite(parsed)) return null;
   if (parsed <= 0 || parsed > MAX_TIMER_MS) return null;
   return Math.floor(parsed);
 }
@@ -94,7 +94,9 @@ export function startHealthMetricsLoop(options: HealthMetricsLoopOptions = {}): 
         ? options.intervalMs
         : resolveHealthMetricsIntervalMs(process.env.HEALTH_METRICS_INTERVAL_MS);
     if (intervalMs === null || !(intervalMs > 0) || intervalMs > MAX_TIMER_MS) {
-      console.log(`${LOG_PREFIX} off (HEALTH_METRICS_INTERVAL_MS <= 0 or above the timer limit)`);
+      console.log(
+        `${LOG_PREFIX} off (HEALTH_METRICS_INTERVAL_MS unset, not positive, or too large)`
+      );
       return null;
     }
 

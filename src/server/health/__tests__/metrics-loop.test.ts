@@ -49,7 +49,6 @@ import {
   runHealthChecks,
 } from '~/server/health/dependency-checks';
 import {
-  DEFAULT_HEALTH_METRICS_INTERVAL_MS,
   resolveHealthMetricsIntervalMs,
   startHealthMetricsLoop,
   startHealthMetricsLoopWhenWarm,
@@ -154,7 +153,9 @@ describe('health metrics loop — scheduling', () => {
     let current = deferred();
     const run = vi.fn(() => current.promise);
 
-    start({ intervalMs: 1_000, random: () => 0, run, lastProbeRunStartedAt: neverProbed });
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', '1000');
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    start({ random: () => 0, run, lastProbeRunStartedAt: neverProbed });
     await vi.advanceTimersByTimeAsync(3_500);
     expect(run).toHaveBeenCalledTimes(1);
 
@@ -178,7 +179,9 @@ describe('health metrics loop — scheduling', () => {
     vi.useFakeTimers();
     const run = vi.fn(async () => undefined);
 
-    start({ intervalMs: 15_000, random: () => 0.5, run, lastProbeRunStartedAt: neverProbed });
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', '15000');
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    start({ random: () => 0.5, run, lastProbeRunStartedAt: neverProbed });
     await vi.advanceTimersByTimeAsync(7_499);
     expect(run).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -191,8 +194,9 @@ describe('health metrics loop — scheduling', () => {
     let clock = 100_000;
     let lastProbe = clock - 5_000;
 
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', '15000');
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
     start({
-      intervalMs: 15_000,
       random: () => 0,
       run,
       now: () => clock,
@@ -230,13 +234,37 @@ describe('health metrics loop — failure isolation', () => {
 });
 
 describe('health metrics loop — off-switch and process lifetime', () => {
-  it('parses HEALTH_METRICS_INTERVAL_MS: <= 0 is off, garbage or unset is the default', () => {
+  it('parses HEALTH_METRICS_INTERVAL_MS: only a positive number turns it on; everything else is off', () => {
+    expect(resolveHealthMetricsIntervalMs('15000')).toBe(15_000);
+    expect(resolveHealthMetricsIntervalMs('30000')).toBe(30_000);
     expect(resolveHealthMetricsIntervalMs('0')).toBeNull();
     expect(resolveHealthMetricsIntervalMs('-1')).toBeNull();
-    expect(resolveHealthMetricsIntervalMs('30000')).toBe(30_000);
-    expect(resolveHealthMetricsIntervalMs('soon')).toBe(DEFAULT_HEALTH_METRICS_INTERVAL_MS);
-    expect(resolveHealthMetricsIntervalMs(undefined)).toBe(DEFAULT_HEALTH_METRICS_INTERVAL_MS);
-    expect(resolveHealthMetricsIntervalMs('')).toBe(DEFAULT_HEALTH_METRICS_INTERVAL_MS);
+    expect(resolveHealthMetricsIntervalMs('soon')).toBeNull();
+    expect(resolveHealthMetricsIntervalMs(undefined)).toBeNull();
+    expect(resolveHealthMetricsIntervalMs('')).toBeNull();
+  });
+
+  it('is DARK by default: with HEALTH_METRICS_INTERVAL_MS unset it starts nothing and never runs', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', undefined);
+    const run = vi.fn(async () => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(start({ random: () => 0, run, lastProbeRunStartedAt: neverProbed })).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('HEALTH_METRICS_INTERVAL_MS=15000 runs it every 15s', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', '15000');
+    const run = vi.fn(async () => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    start({ random: () => 0, run, lastProbeRunStartedAt: neverProbed });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it('HEALTH_METRICS_INTERVAL_MS=0 starts nothing and never runs the checks', async () => {
