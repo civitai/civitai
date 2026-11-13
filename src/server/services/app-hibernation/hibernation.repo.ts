@@ -44,6 +44,8 @@ export type AccountState = 'active' | 'deleted' | 'banned' | 'missing';
 export type CommitDecision<T> = { write?: HibernationRow; result: T };
 
 export interface HibernationRepo {
+  /** The user's sleeping apps, most recently put to sleep first. */
+  list(userId: number): Promise<HibernationRow[]>;
   get(userId: number, appKey: string): Promise<HibernationRow | null>;
   /**
    * The user's oldest sleeping app (earliest `hibernated_at`, ties by key), leaving out
@@ -67,6 +69,12 @@ export interface HibernationRepo {
   ): Promise<T>;
   /** The account's state, read from its `User` row on the primary. */
   accountState(userId: number): Promise<AccountState>;
+  /**
+   * Deletes the user's row for `appKey` and answers it (`null` when there was none). Under the
+   * same per-user lock as {@link commit}, so a delete and a commit of the user's apps never
+   * interleave.
+   */
+  remove(userId: number, appKey: string): Promise<HibernationRow | null>;
   removeAll(userId: number): Promise<HibernationRow[]>;
   /** Which of `keys` a row records (as its archive or its secrets object). */
   referencedKeys(keys: string[]): Promise<Set<string>>;
@@ -125,6 +133,14 @@ export function fromDb(r: DbRow): HibernationRow {
  * (`__tests__/hibernation.repo.sql.test.ts`).
  */
 export const hibernationSql = {
+  list: (userId: number) => Prisma.sql`
+    SELECT ${COLUMNS} FROM "app_sandbox_hibernations"
+    WHERE "user_id" = ${userId}
+    ORDER BY "hibernated_at" DESC, "app_key" ASC`,
+  remove: (userId: number, appKey: string) => Prisma.sql`
+    DELETE FROM "app_sandbox_hibernations"
+    WHERE "user_id" = ${userId} AND "app_key" = ${appKey}
+    RETURNING ${COLUMNS}`,
   oldest: (userId: number, excludeAppKey: string) => Prisma.sql`
     SELECT "app_key", "hibernated_at" FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId} AND "app_key" <> ${excludeAppKey}
@@ -223,6 +239,19 @@ export type SqlRunner = {
 
 export function createHibernationRepo(db: SqlRunner): HibernationRepo {
   return {
+    async list(userId) {
+      // The primary: a list read right after a commit or a delete must show it.
+      return (await db.query<DbRow>(hibernationSql.list(userId))).map(fromDb);
+    },
+
+    async remove(userId, appKey) {
+      return db.transaction(async (tx) => {
+        await tx(hibernationSql.lock(userId));
+        const rows = await tx<DbRow>(hibernationSql.remove(userId, appKey));
+        return rows[0] ? fromDb(rows[0]) : null;
+      });
+    },
+
     async oldest(userId, excludeAppKey) {
       const rows = await db.query<OldestDbRow>(hibernationSql.oldest(userId, excludeAppKey));
       return rows[0] ? fromOldestDb(rows[0]) : null;

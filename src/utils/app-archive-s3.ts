@@ -38,6 +38,11 @@ export const ARCHIVE_PREFIX = 'archives/';
 
 /** How long the sandbox service has to upload an archive (or the secrets blob) after `begin`. */
 export const ARCHIVE_PUT_TTL_SECONDS = 15 * 60;
+/**
+ * How long a wake's presigned GET of an archive is valid: the wake ticket's lifetime
+ * (`WAKE_TICKET_TTL_SECONDS`), so a seed and its ticket expire together.
+ */
+export const ARCHIVE_GET_TTL_SECONDS = 10 * 60;
 export type ArchiveStoreConfig = {
   /** In-cluster: civitai's own calls. http or https, any port. */
   endpoint: string;
@@ -153,6 +158,11 @@ export interface ArchiveStore {
    * public endpoint: it never falls back to the in-cluster one.
    */
   presignPut(key: string, ttlSeconds?: number): Promise<string>;
+  /**
+   * A presigned GET on the PUBLIC endpoint: the seed a wake restores from. Same rule as
+   * {@link presignPut}: throws when there is no public endpoint, never falls back.
+   */
+  presignGet(key: string, ttlSeconds?: number): Promise<string>;
   /** The object's size, or `null` when it does not exist. */
   head(key: string): Promise<{ bytes: number } | null>;
   /**
@@ -220,6 +230,16 @@ export function createArchiveStore(
       if (!presigner || !publicEndpoint)
         throw new Error('no public archive endpoint: nothing can be presigned');
       const url = await getSignedUrl(presigner, new PutObjectCommand({ Bucket, Key: key }), {
+        expiresIn: ttlSeconds,
+      });
+      if (!isAcceptableSeedUrl(url, publicEndpoint))
+        throw new Error('presigned archive URL is not on the public https endpoint');
+      return url;
+    },
+    async presignGet(key, ttlSeconds = ARCHIVE_GET_TTL_SECONDS) {
+      if (!presigner || !publicEndpoint)
+        throw new Error('no public archive endpoint: nothing can be presigned');
+      const url = await getSignedUrl(presigner, new GetObjectCommand({ Bucket, Key: key }), {
         expiresIn: ttlSeconds,
       });
       if (!isAcceptableSeedUrl(url, publicEndpoint))

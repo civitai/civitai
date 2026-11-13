@@ -345,6 +345,33 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
 });
 // The server runner's Restart preview: the page's look for a live preview, the runner's restart,
 // and what the pane is handed (`restart`).
+/** App hibernate: the sleeping list, civitai's procedures and the wake/sleep the page asks for. */
+const hib = vi.hoisted(() => ({
+  sleeping: [] as {
+    app: string;
+    bytes: number;
+    lastActivityAt: string | null;
+    hibernatedAt: string;
+  }[],
+  /** `enabled` of every listMine read the page made. */
+  listReads: [] as unknown[],
+  getWakeSeed: vi.fn(async (input: { app: string }) => ({
+    app: input.app,
+    url: `https://archive.example/${input.app}.zip`,
+    sha256: 'd'.repeat(64),
+    bytes: 512,
+    ticket: `ticket-for-${input.app}-0123456789`,
+    expiresAt: '2026-11-13T12:10:00.000Z',
+  })),
+  deleteMine: vi.fn(async (input: { app: string }) => ({ deleted: input.app })),
+  deleteOldest: vi.fn(async (input: { app: string }) => ({ deleted: input.app })),
+  /** Each wake the page asked for, with the seed it fetched for it. */
+  wakes: [] as { app: string; seed: unknown }[],
+  /** The next wakes throw these, in turn. */
+  wakeRejects: [] as unknown[],
+  sleeps: [] as string[],
+  sleepReject: null as unknown,
+}));
 const r = vi.hoisted(() => ({
   /** `fetchPreviewFrame`: unanswered unless a test says otherwise, so no pane appears by itself. */
   probe: vi.fn<(blockId: string) => Promise<unknown>>(),
@@ -495,6 +522,39 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
           error: m.openError,
         },
         suspend: { mutate: m.suspend, isPending: false, error: null },
+        // App hibernate: the wake asks civitai for its seed as the real one does, then creates.
+        wake: {
+          mutateAsync: async ({
+            app,
+            getSeed,
+          }: {
+            app: string;
+            getSeed: (app: string) => Promise<unknown>;
+          }) => {
+            const seed = await getSeed(app);
+            hib.wakes.push({ app, seed });
+            const reject = hib.wakeRejects.shift();
+            if (reject) throw reject;
+            const made = sandbox(`sbx-woken-${app}`, { app, state: 'starting' });
+            m.list = [...m.list, made];
+            hib.sleeping = hib.sleeping.filter((s) => s.app !== app);
+            rerender();
+            return { sandbox: made, created: true, alreadyAwake: false };
+          },
+          isPending: false,
+          variables: undefined,
+        },
+        sleep: {
+          mutate: (
+            name: string,
+            opts?: { onSuccess?: () => void; onError?: (error: unknown) => void }
+          ) => {
+            hib.sleeps.push(name);
+            if (hib.sleepReject) opts?.onError?.(hib.sleepReject);
+            else opts?.onSuccess?.();
+          },
+          isPending: false,
+        },
         remove: {
           mutate: (name: string, opts?: { onSuccess?: () => void }) => {
             m.remove(name);
@@ -535,13 +595,31 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
     reason?: unknown;
   }) => m.toasts.push({ kind: 'error', title, message: reason ?? error.message }),
 }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcMod>()),
-  trpc: makeTrpcProxy({
-    'blocks.startDevTunnel': { useMutation: () => ({ mutateAsync: m.start }) },
-    'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: m.stop }) },
-  }),
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const real = await importOriginal<typeof TrpcMod>();
+  const appHibernation = {
+    getWakeSeed: { mutate: hib.getWakeSeed },
+    deleteMine: { mutate: hib.deleteMine },
+    deleteOldestAndContinue: { mutate: hib.deleteOldest },
+  };
+  return {
+    ...real,
+    trpc: makeTrpcProxy({
+      'blocks.startDevTunnel': { useMutation: () => ({ mutateAsync: m.start }) },
+      'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: m.stop }) },
+      'appHibernation.listMine': {
+        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
+          hib.listReads.push(opts?.enabled);
+          return { data: opts?.enabled ? hib.sleeping : undefined };
+        },
+      },
+    }),
+    trpcVanilla: new Proxy(real.trpcVanilla, {
+      get: (target, key) =>
+        key === 'appHibernation' ? appHibernation : Reflect.get(target, key, target),
+    }),
+  };
+});
 
 const {
   APP_LIST_REFRESH_TIMEOUT_MS,
@@ -3791,5 +3869,243 @@ describe('AppAssistantWorkspace Submit for review', () => {
     );
     expect(button(shown)).toBeNull();
     expect(submits).toHaveLength(1);
+  });
+});
+
+describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
+  const OLD = ago(30);
+  const asleep = (app: string, days = 10) => ({
+    app,
+    bytes: 2_048,
+    lastActivityAt: ago(days),
+    hibernatedAt: OLD,
+  });
+  const dialog = () => page.getByRole('dialog', { name: 'Apps' });
+  const sleepingLimit = (oldest: string) =>
+    new SandboxApiError(
+      'sandbox limit (3) reached; delete one first',
+      409,
+      'limit',
+      'sleeping_limit',
+      {
+        limit: { kind: 'apps', limit: 5, used: 5 },
+        oldest: { app: oldest, hibernatedAt: OLD },
+      }
+    );
+
+  beforeEach(() => {
+    hib.sleeping = [];
+    hib.listReads = [];
+    hib.getWakeSeed.mockClear();
+    hib.deleteMine.mockClear();
+    hib.deleteOldest.mockClear();
+    hib.wakes = [];
+    hib.wakeRejects = [];
+    hib.sleeps = [];
+    hib.sleepReject = null;
+  });
+
+  async function mountHibernate(hibernate: boolean) {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate={hibernate} />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  }
+
+  test('FLAG OFF: nothing is read, no Sleeping row, no Wake or Put to sleep, the tools and copy as before', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended', expiresAt: ago(-5) })];
+    await mountHibernate(false);
+    expect(hib.listReads.length).toBeGreaterThan(0);
+    expect(hib.listReads.every((enabled) => enabled === false)).toBe(true);
+    expect(Object.keys(m.chat!.tools)).not.toContain('wake_app');
+    expect(Object.keys(m.chat!.tools)).not.toContain('list_apps');
+    expect(m.chat!.instructions()).not.toMatch(/sleep|wake_app/i);
+    await switcher().click();
+    await expect.element(dialog().getByText(/deleted in 5 days if unused/)).toBeVisible();
+    await expect
+      .element(dialog().getByText(/and is deleted after 14 days unused\.$/))
+      .toBeVisible();
+    expect(document.querySelector('[role="dialog"]')!.textContent).not.toMatch(
+      /Sleeping|Wake|garden-log|goes to sleep/
+    );
+    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Delete app' })).toBeVisible();
+    expect(page.getByRole('menuitem', { name: /Put to sleep/ }).elements()).toHaveLength(0);
+    expect(hib.getWakeSeed).not.toHaveBeenCalled();
+  });
+
+  test('NEGATIVE CONTROL, FLAG ON: the same apps show a Sleeping row with Wake, and the sleep wording', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended', expiresAt: ago(-5) })];
+    await mountHibernate(true);
+    expect(hib.listReads).toContain(true);
+    expect(Object.keys(m.chat!.tools)).toEqual(expect.arrayContaining(['list_apps', 'wake_app']));
+    expect(m.chat!.instructions()).toContain('sleeping apps: garden-log');
+    await switcher().click();
+    await expect
+      .element(dialog().getByText('Sleeping · last used 10 days ago', { exact: true }))
+      .toBeVisible();
+    await expect.element(dialog().getByRole('button', { name: 'Wake garden-log' })).toBeVisible();
+    await expect.element(dialog().getByText(/goes to sleep in 5 days if unused/)).toBeVisible();
+    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
+    await expect.element(page.getByRole('menuitem', { name: /Put to sleep/ })).toBeVisible();
+  });
+
+  test('a live app always wins over a sleeping record of the same app', async () => {
+    hib.sleeping = [asleep('app-aaaa'), asleep('garden-log')];
+    await mountHibernate(true);
+    await switcher().click();
+    expect(
+      dialog()
+        .getByRole('button', { name: /^Wake / })
+        .elements()
+    ).toHaveLength(1);
+    await expect.element(dialog().getByRole('button', { name: 'Wake garden-log' })).toBeVisible();
+  });
+
+  test('Wake: one click fetches the seed and ticket, wakes it under the same key and opens it with its chat', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    localStorage.clear();
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await vi.waitFor(() => expect(hib.wakes).toHaveLength(1));
+    expect(hib.getWakeSeed).toHaveBeenCalledWith({ app: 'garden-log' });
+    expect(hib.wakes[0]).toMatchObject({
+      app: 'garden-log',
+      seed: { ticket: 'ticket-for-garden-log-0123456789' },
+    });
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    // The next reply is told the app's dependencies need installing again.
+    expect(m.chat!.instructions()).toMatch(/garden-log was just woken from sleep.*npm install/);
+  });
+
+  test('a wake at the sleeping-app limit offers to delete the oldest; nothing is deleted until confirmed, then it wakes', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('old-quiz', 60)];
+    hib.wakeRejects = [sleepingLimit('old-quiz')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    const offer = dialog().getByRole('button', { name: 'Delete old-quiz to continue' });
+    await expect.element(offer).toBeVisible();
+    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    await offer.click();
+    // The confirmation: Keep it deletes nothing.
+    await page.getByRole('button', { name: 'Keep it' }).click();
+    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    await offer.click();
+    await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
+    await vi.waitFor(() => expect(hib.deleteOldest).toHaveBeenCalledWith({ app: 'old-quiz' }));
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(hib.wakes).toHaveLength(2));
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+  });
+
+  test('when the only apps that could make room cannot sleep, the wake says which and why', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    hib.wakeRejects = [
+      new SandboxApiError(
+        'sandbox limit (3) reached; delete one first',
+        409,
+        'limit',
+        'kept_apps',
+        {
+          kept: [{ name: 'sbx-aaaaaaaaaaaa', app: 'app-aaaa', reason: 'archive_too_large' }],
+        }
+      ),
+    ];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect.element(dialog().getByText(/app-aaaa too large to put to sleep/)).toBeVisible();
+    expect(hib.deleteOldest).not.toHaveBeenCalled();
+  });
+
+  test('a wake whose secrets could not be fetched says so in plain words', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    hib.wakeRejects = [
+      new SandboxApiError(
+        'civitai could not return the app’s secrets; retry',
+        503,
+        'unavailable',
+        'secrets_unavailable'
+      ),
+    ];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect
+      .element(dialog().getByText(/saved settings could not be fetched just now/))
+      .toBeVisible();
+    expect(document.querySelector('[role="dialog"]')!.textContent).not.toMatch(/civitai|secrets/);
+  });
+
+  test('Delete app on a sleeping row asks first, then deletes only that app', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('old-quiz')];
+    await mountHibernate(true);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    await vi.waitFor(() => expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log' }));
+    expect(hib.deleteMine).toHaveBeenCalledTimes(1);
+  });
+
+  test('deleting a woken app deletes its kept sleeping record too, so it does not come back as Sleeping', async () => {
+    // Woken earlier: civitai kept its record, hidden while the app is awake.
+    hib.sleeping = [asleep('app-bbbb')];
+    await mountHibernate(true);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
+    await vi.waitFor(() => expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'app-bbbb' }));
+  });
+
+  test('Put to sleep asks the service and shows the app going to sleep', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await mountHibernate(true);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /Put to sleep/ }).click();
+    expect(hib.sleeps).toEqual(['sbx-bbbbbbbbbbbb']);
+    await expect.element(dialog().getByText('Going to sleep…', { exact: true })).toBeVisible();
+  });
+
+  test('THE CARD: the assistant hit the sleeping-app limit; delete the oldest after a confirm, and the request continues', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    await mountHibernate(true);
+    await userSends('Make a quiz night app');
+    m.openReject = sleepingLimit('old-quiz');
+    const gated = gateToolSet(m.chat!.tools as never, {
+      conversationId: 'c',
+      gate: (name, input, context) => m.chat!.beforeToolCall!(name, input, context) as never,
+      onResult: (result) => m.chat!.onToolResult!(result),
+    });
+    await Promise.resolve(
+      gated.create_app.execute!({ name: 'Quiz night' }, {
+        toolCallId: 't-1',
+        messages: [],
+      } as never)
+    ).catch(() => undefined);
+    m.openReject = null;
+    const card = page.getByRole('region', { name: 'Make room for this app' });
+    await expect.element(card).toBeVisible();
+    expect(page.getByRole('region', { name: 'Free up a slot' }).elements()).toHaveLength(0);
+    await card.getByRole('button', { name: 'Delete old-quiz to continue' }).click();
+    expect(hib.deleteOldest).not.toHaveBeenCalled();
+    await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
+    await vi.waitFor(() => expect(hib.deleteOldest).toHaveBeenCalledWith({ app: 'old-quiz' }));
+    // Delete → askAgain is several async hops: the 1s default fails on a loaded runner.
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), {
+      timeout: 5_000,
+    });
+    await expect.element(card).not.toBeInTheDocument();
   });
 });

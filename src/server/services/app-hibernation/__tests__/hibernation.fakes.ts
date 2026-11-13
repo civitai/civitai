@@ -33,6 +33,7 @@ export function fakeStore(log: string[]) {
   const store: ArchiveStore = {
     canPresign: true,
     presignPut: async (key) => `https://store.test/put/${key}`,
+    presignGet: async (key) => `https://store.test/get/${key}`,
     head: async (key) => {
       const o = objects.get(key);
       return o ? { bytes: o.length } : null;
@@ -88,6 +89,21 @@ export function fakeRepo(log: string[]) {
   };
   const accountOf = (userId: number) => accounts.get(userId) ?? 'active';
   const repo: HibernationRepo = {
+    list: async (userId) =>
+      [...rows.values()]
+        .filter((r) => r.userId === userId)
+        .sort(
+          (a, b) =>
+            b.hibernatedAt.getTime() - a.hibernatedAt.getTime() || a.appKey.localeCompare(b.appKey)
+        ),
+    remove: async (userId, appKey) => {
+      const had = rows.get(id(userId, appKey)) ?? null;
+      if (had) {
+        rows.delete(id(userId, appKey));
+        log.push(`remove-row ${userId}/${appKey}`);
+      }
+      return had;
+    },
     oldest: async (userId, exclude) => {
       const mine = [...rows.values()]
         .filter((r) => r.userId === userId && r.appKey !== exclude)

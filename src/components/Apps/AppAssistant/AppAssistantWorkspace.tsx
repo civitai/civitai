@@ -47,9 +47,14 @@ import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFe
 import {
   SANDBOX_RESULT_LIMIT,
   SANDBOX_SERVER_LABEL,
+  WAKE_APP,
+  WakeSeedError,
   chosenAppOf,
   createAppFeedbackSource,
   createSourceSaveScheduler,
+  limitCardOf,
+  sleepingNotLive,
+  type WakeResult,
 } from '@civitai/app-assistant';
 import { saveAppSource } from '~/components/Apps/AppAssistant/appSourceSave';
 import { appChatOf, appOfChat, rememberAppChat } from '~/components/Apps/AppAssistant/appChats';
@@ -78,6 +83,11 @@ import {
   createBrowserCoverDeps,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
+import {
+  AppActionError,
+  SleepingAppRow,
+  SleepingLimitCard,
+} from '~/components/Apps/AppAssistant/SleepingApps';
 import { PausedAppNotice } from '~/components/Apps/AppAssistant/PausedAppNotice';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 import {
@@ -182,6 +192,8 @@ export const RESUME_ASK_TIMEOUT_MS = 3 * 60_000;
  * polling does (a stalled poll once left the page on "Starting…" long after the app ran).
  */
 export const APP_START_POLL_MS = 3_000;
+/** How often the lists are read while an app the user put to sleep is being archived. */
+const GOING_TO_SLEEP_POLL_MS = 5_000;
 /** How long the page keeps asking before it says the start is taking long and offers Check again. */
 export const APP_START_TIMEOUT_MS = 5 * 60_000;
 
@@ -227,12 +239,29 @@ export async function retryWhenReady(
   }
 }
 
+/**
+ * App hibernate: civitai's seed for waking one of the signed-in user's sleeping apps, its one-time
+ * wake ticket included. A refusal becomes a `WakeSeedError` the wake can tell apart.
+ */
+async function fetchWakeSeed(app: string) {
+  try {
+    return await trpcVanilla.appHibernation.getWakeSeed.mutate({ app });
+  } catch (error) {
+    const code = (error as { data?: { code?: unknown } } | null)?.data?.code;
+    throw new WakeSeedError(
+      error instanceof Error ? error.message : 'No wake seed',
+      code === 'NOT_FOUND' ? 'not_found' : code === 'CONFLICT' ? 'changed' : 'unavailable'
+    );
+  }
+}
+
 export function AppAssistantWorkspace({
   canPreview,
   sandboxUrl,
   subagents = false,
   remoteRunner = false,
   userId = null,
+  hibernate = false,
 }: {
   canPreview: boolean;
   /** The hosted sandbox service's base URL, from the server; null when not configured. */
@@ -245,6 +274,11 @@ export function AppAssistantWorkspace({
    */
   remoteRunner?: boolean;
   userId?: number | null;
+  /**
+   * App hibernate (the `app-hibernate` flag): sleeping apps in the list with Wake, Put to sleep in
+   * an app's menu, and the assistant's `list_apps` and `wake_app`. Off, none of it is read or shown.
+   */
+  hibernate?: boolean;
 }) {
   // A revoke surfaces as `consent_required` on the next mint, for any purpose; show the turn-on card
   // rather than leaving every call failing.
@@ -280,6 +314,17 @@ export function AppAssistantWorkspace({
   );
   const sandboxes = useSandboxes(sandboxClient);
   const apps = sandboxes.list.data ?? [];
+  // APP HIBERNATE: the user's sleeping apps. A live sandbox always wins over a record of its app.
+  const sleepingList = trpc.appHibernation.listMine.useQuery(undefined, {
+    enabled: hibernate && !!sandboxClient,
+    refetchInterval: 60_000,
+  });
+  const sleeping = useMemo(
+    () => (hibernate ? sleepingNotLive(sandboxes.list.data ?? [], sleepingList.data ?? []) : []),
+    [hibernate, sandboxes.list.data, sleepingList.data]
+  );
+  // Apps the user woke on this page: their dependencies need installing again (the instructions).
+  const wokenApps = useRef(new Set<string>());
 
   const [activeName, setActiveName] = useState<string | null>(null);
   const active = apps.find((s) => s.name === activeName) ?? null;
@@ -304,7 +349,8 @@ export function AppAssistantWorkspace({
   const pickedOnLoad = useRef(false);
   // The message the user sent last in this chat: the one a kept-apps refusal answered.
   const lastSent = useRef<string | null>(null);
-  type Slot = { message: string | null; deleting: boolean; error: unknown };
+  /** `oldest` (app hibernate): the sleeping-app limit, offering to delete the oldest sleeping app. */
+  type Slot = { message: string | null; deleting: boolean; error: unknown; oldest?: string };
   const [slot, setSlot] = useState<Slot | null>(null);
   const slotRef = useRef(slot);
   slotRef.current = slot;
@@ -369,14 +415,30 @@ export function AppAssistantWorkspace({
   const stopDevTunnel = trpc.blocks.stopDevTunnel.useMutation();
 
   // The chat reads tools and instructions through these on every call, so neither has to be rebuilt.
-  const live = useRef({ active, session, canPreview, apps: sandboxes.list.data });
-  live.current = { active, session, canPreview, apps: sandboxes.list.data };
+  const live = useRef({
+    active,
+    session,
+    canPreview,
+    apps: sandboxes.list.data,
+    sleeping: sleepingList.data,
+  });
+  live.current = {
+    active,
+    session,
+    canPreview,
+    apps: sandboxes.list.data,
+    sleeping: hibernate ? sleepingList.data : undefined,
+  };
   const stopRef = useRef(stopDevTunnel.mutateAsync);
   stopRef.current = stopDevTunnel.mutateAsync;
   const startRef = useRef(startDevTunnel.mutateAsync);
   startRef.current = startDevTunnel.mutateAsync;
   const openRef = useRef(sandboxes.open.mutateAsync);
   openRef.current = sandboxes.open.mutateAsync;
+  // Wakes a sleeping app (set below): shared by the list's Wake and the assistant's wake_app.
+  const wakeRef = useRef<(app: string) => Promise<WakeResult>>(() =>
+    Promise.reject(new WakeSeedError('Not ready', 'unavailable'))
+  );
 
   // On the server runner, a reload (or opening an app) shows no preview until a reply starts one, so
   // the page looks for a live one itself (`probedApp`) and, finding none, offers the runner's Restart
@@ -432,14 +494,39 @@ export function AppAssistantWorkspace({
           setActiveName(opened.sandbox.name);
           return opened;
         },
+        ...(hibernate
+          ? {
+              sleeping: () => live.current.sleeping,
+              wake: async (app: string) => {
+                const woken = await wakeRef.current(app);
+                live.current.active = woken.sandbox;
+                setActiveName(woken.sandbox.name);
+                return woken;
+              },
+            }
+          : {}),
       }),
-    []
+    [hibernate]
   );
   // The store cover's listing refresh after a press attaches one. Read through a ref, so a new utils
   // object never rebuilds the gate (and with it, its state).
   const utils = trpc.useUtils();
   const trpcUtils = useRef(utils);
   trpcUtils.current = utils;
+  // civitai's seed and one-time wake ticket (minted from this signed-in user's own request), then
+  // the seeded create; the sleeping list is read again either way.
+  // Read only when a wake runs: with the flag off nothing here touches the wake at all.
+  const sandboxesRef = useRef(sandboxes);
+  sandboxesRef.current = sandboxes;
+  wakeRef.current = async (app: string) => {
+    try {
+      const woken = await sandboxesRef.current.wake.mutateAsync({ app, getSeed: fetchWakeSeed });
+      if (!woken.alreadyAwake) wokenApps.current.add(app);
+      return woken;
+    } finally {
+      void trpcUtils.current.appHibernation.listMine.invalidate();
+    }
+  };
   // Each change the assistant makes to the open app's files is committed to the app's source repo
   // (its git history) once the reply pauses. On the server runner the runner saves; the page only
   // hears of the calls, so it saves nothing then.
@@ -541,8 +628,16 @@ export function AppAssistantWorkspace({
         canPreview: live.current.canPreview,
         previewHost: live.current.session?.host ?? null,
         ...(remoteRunner ? { runner: 'remote' as const } : {}),
+        ...(hibernate
+          ? {
+              sleeping: sleepingNotLive(live.current.apps ?? [], live.current.sleeping ?? []).map(
+                (s) => s.app
+              ),
+              woken: !!live.current.active && wokenApps.current.has(live.current.active.app),
+            }
+          : {}),
       }),
-    [remoteRunner]
+    [remoteRunner, hibernate]
   );
 
   // The server runner holds the tools and the gate; the page tells it which app is open, and signs
@@ -552,10 +647,14 @@ export function AppAssistantWorkspace({
     () =>
       appAssistantRemoteRunnerFor(
         remoteRunner,
-        () => ({ app: live.current.active?.app ?? null }),
+        () => {
+          const app = live.current.active?.app ?? null;
+          // App hibernate: the runner's instructions say a woken app needs its dependencies again.
+          return hibernate && app && wokenApps.current.has(app) ? { app, woken: true } : { app };
+        },
         () => runnerCredentials
       ),
-    [remoteRunner, runnerCredentials]
+    [remoteRunner, runnerCredentials, hibernate]
   );
   // On the runner, create_app opens an app the page did not: it follows, once its list has it. And
   // the runner's start_preview says only which block it shows and where (never the tunnel's id):
@@ -569,6 +668,20 @@ export function AppAssistantWorkspace({
       // In the browser and from the runner alike: the card offering to free a slot.
       if (isKeepLimitResult(result))
         setSlot((shown) => shown ?? { message: lastSent.current, deleting: false, error: null });
+      else if (hibernate) {
+        // App hibernate's limits: a kept app to delete, or the oldest sleeping app.
+        const card = limitCardOf(result);
+        if (card)
+          setSlot(
+            (shown) =>
+              shown ?? {
+                message: lastSent.current,
+                deleting: false,
+                error: null,
+                ...(card.kind === 'sleeping' ? { oldest: card.oldest } : {}),
+              }
+          );
+      }
       if (!remoteRunner || result.isError) return;
       const preview = runnerPreviewAction(result);
       if (preview && 'show' in preview)
@@ -579,7 +692,8 @@ export function AppAssistantWorkspace({
         if (live.current.session) setDevServerUp((n) => n + 1);
         return;
       }
-      if (result.name !== CREATE_APP) return;
+      // On the runner, a wake_app (app hibernate) opens the woken app as create_app opens a new one.
+      if (result.name !== CREATE_APP && result.name !== WAKE_APP) return;
       const app = (result.output as { app?: unknown } | null)?.app;
       if (typeof app !== 'string') return;
       void refetchRef.current().then(({ data }) => {
@@ -590,7 +704,7 @@ export function AppAssistantWorkspace({
         setActiveName(opened.name);
       });
     },
-    [gate, remoteRunner, showPreview, stopPreview]
+    [gate, remoteRunner, showPreview, stopPreview, hibernate]
   );
 
   // The token goes only to the configured sandbox service, whatever URL a response names.
@@ -1164,6 +1278,9 @@ export function AppAssistantWorkspace({
     // A new app deleted while its reply waits for its tools: they will not come.
     const app = live.current.apps?.find((s) => s.name === name)?.app;
     if (app) toolsWaiters.current.get(app)?.(false);
+    // App hibernate: a woken app's sleeping record is kept (hidden while it is awake); deleting the
+    // app deletes that too, or it would come back in the list as Sleeping.
+    if (app && live.current.sleeping?.some((s) => s.app === app)) void forgetSleeping(app);
     appTools.forget(name);
     if (name === activeName) setActiveName(null);
   };
@@ -1206,6 +1323,108 @@ export function AppAssistantWorkspace({
       // A chat that cannot ask it again now gives it back to the user to send instead.
       if (!(chat.canSend && (await chat.askAgain()))) chat.giveBack(message);
     });
+  // APP HIBERNATE: Wake, Put to sleep and deleting a sleeping app, from the list; and the limit
+  // card's delete of the oldest sleeping app. Unreachable with the flag off.
+  type AppIssue = {
+    app: string;
+    action: 'wake' | 'sleep' | 'delete';
+    name?: string;
+    error: unknown;
+  };
+  const [appIssue, setAppIssue] = useState<AppIssue | null>(null);
+  const [deletingSleeping, setDeletingSleeping] = useState<string | null>(null);
+  const [goingToSleep, setGoingToSleep] = useState<string[]>([]);
+  const waking =
+    hibernate && sandboxes.wake.isPending ? sandboxes.wake.variables?.app ?? null : null;
+  const deleteSleepingApp = async (app: string, why: 'user' | 'limit') => {
+    setDeletingSleeping(app);
+    try {
+      const procedure =
+        why === 'limit'
+          ? trpcVanilla.appHibernation.deleteOldestAndContinue
+          : trpcVanilla.appHibernation.deleteMine;
+      await procedure.mutate({ app });
+    } finally {
+      setDeletingSleeping(null);
+      void utils.appHibernation.listMine.invalidate();
+    }
+  };
+  /** A deleted kept app's sleeping record, if any; one already gone is not an error. */
+  async function forgetSleeping(app: string) {
+    await trpcVanilla.appHibernation.deleteMine.mutate({ app }).catch(() => undefined);
+    void trpcUtils.current.appHibernation.listMine.invalidate();
+  }
+  const wakeByHand = async (app: string) => {
+    setAppIssue(null);
+    try {
+      const woken = await wakeRef.current(app);
+      // The same app key: its chat on this browser comes back with it.
+      followChat(app, !!live.current.active);
+      setActiveName(woken.sandbox.name);
+      setSwitcherOpen(false);
+    } catch (error) {
+      setAppIssue({ app, action: 'wake', error });
+    }
+  };
+  const sleepByHand = (target: Sandbox) => {
+    setAppIssue(null);
+    sandboxes.sleep.mutate(target.name, {
+      onSuccess: () => setGoingToSleep((names) => [...names, target.name]),
+      onError: (error) =>
+        setAppIssue({ app: target.app, action: 'sleep', name: target.name, error }),
+    });
+  };
+  const deleteSleepingByHand = (app: string) => {
+    setAppIssue(null);
+    deleteSleepingApp(app, 'user').catch((error) => setAppIssue({ app, action: 'delete', error }));
+  };
+  /** The issue's offer to delete the oldest sleeping app, then the wake or sleep again. */
+  const deleteOldestThenRetry = async (oldest: string) => {
+    const issue = appIssue;
+    try {
+      await deleteSleepingApp(oldest, 'limit');
+    } catch (error) {
+      if (issue) setAppIssue({ ...issue, error });
+      return;
+    }
+    if (issue?.action === 'wake') return wakeByHand(issue.app);
+    const target = issue?.name ? live.current.apps?.find((s) => s.name === issue.name) : null;
+    if (target) sleepByHand(target);
+    else setAppIssue(null);
+  };
+  /** The limit card's delete of the oldest sleeping app; then the request carries on by itself. */
+  const freeSleepingSlot = async (oldest: string) => {
+    setSlot((shown) => shown && { ...shown, deleting: true, error: null });
+    try {
+      await deleteSleepingApp(oldest, 'limit');
+    } catch (error) {
+      setSlot((shown) => shown && { ...shown, deleting: false, error });
+      return;
+    }
+    const message = slotRef.current?.message ?? null;
+    const chat = chatRef.current;
+    setSlot(null);
+    if (!message || !chat) return;
+    if (!(chat.canSend && (await chat.askAgain()))) chat.giveBack(message);
+  };
+  // An app going to sleep leaves the list once it is archived: both lists are read again until then.
+  useEffect(() => {
+    if (goingToSleep.length === 0) return;
+    const poll = setInterval(() => {
+      void refetchRef.current({ cancelRefetch: false });
+      void trpcUtils.current.appHibernation.listMine.invalidate();
+    }, GOING_TO_SLEEP_POLL_MS);
+    return () => clearInterval(poll);
+  }, [goingToSleep.length]);
+  useEffect(() => {
+    const listed = sandboxes.list.data;
+    if (!listed) return;
+    setGoingToSleep((names) => {
+      const still = names.filter((name) => listed.some((s) => s.name === name));
+      return still.length === names.length ? names : still;
+    });
+  }, [sandboxes.list.data]);
+
   // A failed start is told on its app's notice, until another app is opened.
   useEffect(() => setStartError(null), [activeName]);
   // The paused notice stays with an app it showed paused while that app starts.
@@ -1318,7 +1537,7 @@ export function AppAssistantWorkspace({
 
   return (
     <div ref={fillRef} className={clsx('flex flex-col gap-3', classes.workspace)}>
-      {(active || apps.length > 0) && (
+      {(active || apps.length > 0 || sleeping.length > 0) && (
         <Popover
           opened={switcherOpen}
           onChange={setSwitcherOpen}
@@ -1359,6 +1578,37 @@ export function AppAssistantWorkspace({
               onExport={(sandbox) => void exportApp(sandbox)}
               starting={startingApp}
               exporting={exporting}
+              {...(hibernate
+                ? {
+                    onSleep: sleepByHand,
+                    goingToSleep,
+                    sleepingRows: (
+                      <>
+                        {sleeping.map((app) => (
+                          <SleepingAppRow
+                            key={`sleeping:${app.app}`}
+                            app={app}
+                            waking={waking === app.app}
+                            busy={deletingSleeping === app.app}
+                            onWake={(key) => void wakeByHand(key)}
+                            onDelete={deleteSleepingByHand}
+                          />
+                        ))}
+                        {appIssue && (
+                          <li className="list-none">
+                            <AppActionError
+                              action={appIssue.action}
+                              app={appIssue.app}
+                              error={appIssue.error}
+                              deleting={deletingSleeping !== null}
+                              onDeleteOldest={(oldest) => void deleteOldestThenRetry(oldest)}
+                            />
+                          </li>
+                        )}
+                      </>
+                    ),
+                  }
+                : {})}
             />
           </Popover.Dropdown>
         </Popover>
@@ -1435,7 +1685,14 @@ export function AppAssistantWorkspace({
               ) : null
             }
             threadEnd={
-              slot ? (
+              slot?.oldest ? (
+                <SleepingLimitCard
+                  oldest={slot.oldest}
+                  deleting={slot.deleting}
+                  error={slot.error}
+                  onDelete={(oldest) => void freeSleepingSlot(oldest)}
+                />
+              ) : slot ? (
                 <FreeUpSlotCard
                   apps={apps}
                   deleting={slot.deleting}

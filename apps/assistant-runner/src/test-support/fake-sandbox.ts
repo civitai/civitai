@@ -82,6 +82,8 @@ export class FakeSandboxService {
   readonly deleteBeforeOpen = new Set<string>();
   /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
   keepLimit = Infinity;
+  /** Every seeded create's `seed`, as sent (a fork, or a wake with its ticket). */
+  readonly seeds: { app: string; seed: Record<string, unknown> }[] = [];
   readonly tools = new Map<string, FakeToolBody>();
   /** The host each sandbox's tunnel runs to (by sandbox name), as `tunnel_status` reports it. */
   readonly tunnelHosts = new Map<string, string>();
@@ -195,6 +197,20 @@ export class FakeSandboxService {
       const app = String((body as { app?: unknown } | undefined)?.app ?? '');
       if (this.deleteBeforeOpen.delete(app)) this.remove(app);
       const found = this.sandboxes.find((s) => s.app === app);
+      // A seeded create only creates, as the service's: an existing app is `already_exists`.
+      const seed = (body as { seed?: Record<string, unknown> } | undefined)?.seed;
+      if (seed) {
+        this.seeds.push({ app, seed });
+        if (found)
+          return json(409, {
+            error: 'a sandbox for this app already exists',
+            code: 'already_exists',
+          });
+        return json(201, {
+          ...this.#view(this.add(app, 'starting')),
+          seed: { files: 3, skipped: [] },
+        });
+      }
       if (found) {
         if (found.state === 'suspended') found.state = 'starting';
         return json(200, this.#view(found));
