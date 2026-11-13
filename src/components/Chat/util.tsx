@@ -27,7 +27,8 @@ export const isExternalChatLink = (href: string) => {
   return !!url && constants.chat.externalHosts.includes(url.hostname);
 };
 
-// `path` comes from a parsed URL, so "\\" and dot segments are already folded into "//".
+// The URL parser folds "\" and dot segments into "//"; reject a leading "//" (another host).
+// The "\" check is kept as defence in depth.
 const isSameSitePath = (path: string) => path === '/' || /^\/[^/\\]/.test(path);
 
 const civitaiChatLinkPath = (href: string) => {
