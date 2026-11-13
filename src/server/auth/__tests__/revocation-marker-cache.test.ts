@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createRevocationMarkerCache } from '../revocation-marker-cache';
+import { createRevocationMarkerCache, type RevocationReadRedis } from '../revocation-marker-cache';
 
 const TOKEN_STATE = 'session:token-state';
 const USER_CUT = 'session:user-cut';
@@ -18,7 +18,8 @@ function setup(opts: { maxEntries?: number; ttlMs?: number } = {}) {
   });
   return {
     cache,
-    observed: cache.observe(upstream),
+    // The sys client can return Buffers where the type says string, so the fake returns `unknown`.
+    observed: cache.observe(upstream as unknown as RevocationReadRedis),
     reader: cache.reader(),
     upstream,
     values,
