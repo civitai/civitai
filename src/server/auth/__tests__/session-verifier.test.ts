@@ -3,7 +3,7 @@ import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 
 // Leg 3 of the SPOF fix: the sysRedis revocation read (the shared createRevocationCheck) is bounded by
-// withSysReadBreaker and FAILS OPEN on a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
+// withRevocationReadBreaker and FAILS OPEN on a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
 const h = vi.hoisted(() => ({
   observeSessionLeg: vi.fn(),
   hGet: vi.fn(),
@@ -23,11 +23,11 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: h.logSysRe
 // copies drift silently: this factory used to declare TOKEN_STATE as 'sys:token-state' and
 // ALL as 'sys:all' while production uses 'session:token-state' and 'session:all', so the
 // suite exercised keys Redis never sees and could not have caught a key-name regression.
-// The client and the withSysReadBreaker control surface stay overridden.
+// The client and the revocation read's bound (h.withSysReadBreaker is its control surface) stay overridden.
 vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: { hGet: h.hGet, get: h.get },
-  withSysReadBreaker: h.withSysReadBreaker,
+  withRevocationReadBreaker: h.withSysReadBreaker,
 }));
 
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';

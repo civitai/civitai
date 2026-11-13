@@ -11,7 +11,7 @@ import {
 } from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 import { env } from '~/env/server';
-import { sysRedis, withSysReadBreaker } from '~/server/redis/client';
+import { sysRedis, withRevocationReadBreaker } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { refuseModerationAccountSession } from './moderation-account';
 import { observeSessionLeg } from './session-metrics';
@@ -25,7 +25,8 @@ import { observeSessionLeg } from './session-metrics';
 const checkRevocation = createRevocationCheck({
   redis: () => sysRedis as unknown as SessionRegistryRedis,
   timeoutMs: () => env.REDIS_SYS_READ_TIMEOUT_MS,
-  bound: (read, ms) => withSysReadBreaker(read, ms),
+  // Its own breaker: one the other hot reads open would refuse this read while the store still answers.
+  bound: (read, ms) => withRevocationReadBreaker(read, ms),
   onOutcome: (outcome, seconds) => observeSessionLeg('revocation', outcome, seconds),
   onError: (err, _reason, claims) =>
     logSysRedisFailOpen('read-degraded', 'session-verifier isRevoked', err, {
