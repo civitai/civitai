@@ -6,6 +6,7 @@ import type { SemanticChallengeSearchInput } from '~/server/schema/semantic-chal
 import { getInfiniteChallenges } from '~/server/services/challenge.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
+  isNonModClampOn,
   queryVerdictLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
@@ -66,7 +67,11 @@ export async function searchSemanticChallenges({
     nextCursor: undefined,
     correctedQuery: undefined,
   };
-  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
   if (browsingLevelCap !== undefined)
     browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
   const addonData = await getBrowsingSettingAddons();

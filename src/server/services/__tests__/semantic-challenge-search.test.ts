@@ -13,6 +13,14 @@ const h = vi.hoisted(() => ({
   // Ids the feed's own query drops (its visibility rule says no).
   hidden: new Set<number>(),
   includesInappropriate: vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | false>(),
+  evalBoolean: vi.fn<() => { enabled: unknown }>(),
+  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+}));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -92,6 +100,9 @@ beforeEach(() => {
   h.feedCalls = [];
   h.hidden = new Set();
   h.includesInappropriate.mockReset().mockReturnValue(false);
+  // The containment switch reads enabled (clamped) unless a test lifts it.
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: true });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
 });
 
 describe('searchSemanticChallenges', () => {
@@ -119,6 +130,32 @@ describe('searchSemanticChallenges', () => {
     await result;
     expect((filters[0].gate as { nsfwLevels: number[] }).nsfwLevels).toEqual([1]);
     expect(h.feedCalls[0]).toMatchObject({ browsingLevel: 1 });
+  });
+
+  describe('the non-moderator clamp', () => {
+    const viewer = { id: 500, isModerator: false } as SessionUser;
+    const ALL = 31;
+    const SAFE = 3;
+
+    it('holds a signed-in non-moderator to the safe levels while the switch is on', async () => {
+      const { result } = run([1], { user: viewer, input: { browsingLevel: ALL } });
+      await result;
+      expect(h.feedCalls[0]).toMatchObject({ browsingLevel: SAFE });
+    });
+
+    it('holds the clamp when the switch cannot be read', async () => {
+      h.fliptClient = null;
+      const { result } = run([1], { user: viewer, input: { browsingLevel: ALL } });
+      await result;
+      expect(h.feedCalls[0]).toMatchObject({ browsingLevel: SAFE });
+    });
+
+    it('searches at their own level once the switch is disabled', async () => {
+      h.evalBoolean.mockReturnValue({ enabled: false });
+      const { result } = run([1], { user: viewer, input: { browsingLevel: ALL } });
+      await result;
+      expect(h.feedCalls[0]).toMatchObject({ browsingLevel: ALL });
+    });
   });
 
   it('on green, user challenges must be paid in green', async () => {
