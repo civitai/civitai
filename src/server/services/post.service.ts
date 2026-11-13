@@ -352,7 +352,10 @@ export const getPostsInfinite = async ({
       where: { id: modelVersionId },
       select: { model: { select: { poi: true, userId: true } } },
     });
-    if (version && !canViewPoiModel(version.model.poi, version.model.userId, user))
+    if (
+      version &&
+      !canViewPoiModel(version.model.poi, version.model.userId, user && { ...user, isModerator })
+    )
       return { items: [] };
 
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);

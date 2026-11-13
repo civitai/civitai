@@ -4,6 +4,7 @@ import type * as Caches from '~/server/redis/caches';
 import type * as ModelService from '~/server/services/model.service';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { PostSort } from '~/server/common/enums';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
@@ -30,6 +31,8 @@ const h = vi.hoisted(() => ({
   rows: undefined as number | undefined,
   // The SQL of the last post query.
   sql: '',
+  // Extra post rows the query returns (for a post on an unpublished model version).
+  extraPosts: [] as Record<string, unknown>[],
 }));
 
 const POSTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((id) => ({
@@ -67,13 +70,14 @@ const IMAGES = [
   image(91, 9, { nsfwLevel: NsfwLevel.Blocked }),
   image(92, 9, { nsfwLevel: 0 }), // unrated
   image(101, 10, { ingestion: 'Blocked' }), // only its creator and moderators get it
+  image(111, 11), // on post 11, which is on an unpublished model version
 ];
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
   queryCache: () => async (query: { sql: string }) => {
     h.sql = query.sql;
-    return POSTS.slice(0, h.rows).map((p) => ({ ...p }));
+    return [...POSTS.slice(0, h.rows), ...h.extraPosts].map((p) => ({ ...p }));
   },
 }));
 // Mocked whole: spreading the original loads post.service first, which then binds the real one.
@@ -115,6 +119,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof Caches>()),
   userBasicCache: { fetch: vi.fn(async () => ({})) },
   postStatCache: { fetch: vi.fn(async () => ({})) },
+  modelVersionAccessCache: { fetch: vi.fn(async () => ({ 500: { status: 'Draft' } })) },
 }));
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
@@ -183,6 +188,8 @@ beforeEach(() => {
   ] satisfies BrowsingSettingsAddon[];
   h.hiddenTagsByUser = { [VIEWER.id]: [{ id: VIEWER_HIDDEN_TAG, hidden: true }] };
   h.rows = undefined;
+  h.extraPosts = [];
+  h.sql = '';
 });
 
 describe('post.getInfinite applies tag exclusions on the server', () => {
@@ -293,6 +300,59 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
       expect(privateHidden()).toBe(true);
       expect(othersUnrated()).toBe(false);
       expect(h.sql).toContain(`p."nsfwLevel" = 0 AND p."userId" =`);
+    });
+
+    const asModerator = async (apiKey: boolean | 'full', extra: Record<string, unknown>) =>
+      caller({ id: 1, isModerator: true }, apiKey).getInfinite({
+        limit: 20,
+        sort: PostSort.Newest,
+        period: MetricTimeframe.AllTime,
+        periodMode: 'published',
+        browsingLevel: MATURE,
+        ...extra,
+      } as never);
+    const THROUGH = [
+      ['a session', false, true],
+      ['a full-scope key', 'full', true],
+      ['a narrow-scope key', true, false],
+    ] as const;
+
+    it.each(THROUGH)(
+      "on another user's profile, %s sees their drafts: %s",
+      async (_, apiKey, yes) => {
+        dbMock.dbRead.user.findFirst.mockResolvedValue({ id: CREATOR } as never);
+        await asModerator(apiKey, { username: `user${CREATOR}`, draftOnly: true });
+        // As a WHERE condition: the cursor's CASE also reads `"publishedAt" IS NULL`.
+        expect(/AND\s+p\."publishedAt" IS NULL/.test(h.sql)).toBe(yes);
+        expect(h.sql.includes(`p."publishedAt" <= NOW()`)).toBe(!yes);
+      }
+    );
+
+    it.each(THROUGH)(
+      'a post on an unpublished model version, through %s, is listed: %s',
+      async (_, apiKey, yes) => {
+        h.extraPosts = [{ ...POSTS[0], id: 11, cursorId: 11, modelVersionId: 500 }];
+        const { items } = await asModerator(apiKey, {});
+        expect(items.some((p) => p.id === 11)).toBe(yes);
+      }
+    );
+
+    it.each(THROUGH)(
+      "a POI model version's posts, through %s, are served: %s",
+      async (_, apiKey, yes) => {
+        dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({
+          model: { poi: true, userId: CREATOR },
+        } as never);
+        const { items } = await asModerator(apiKey, { modelVersionId: 500 });
+        expect(items.length > 0).toBe(yes);
+      }
+    );
+
+    it.each(THROUGH)('fetches images, through %s, as a moderator: %s', async (_, apiKey, yes) => {
+      const { getImagesForPosts } = await import('~/server/services/image.service');
+      vi.mocked(getImagesForPosts).mockClear();
+      await asModerator(apiKey, {});
+      expect(vi.mocked(getImagesForPosts).mock.calls[0][0].user?.isModerator).toBe(yes);
     });
   });
 });
