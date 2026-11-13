@@ -74,26 +74,34 @@ export type BuzzLogFn = (message: string, ...args: unknown[]) => void;
 
 /** Default bound on a read (GET). A per-call `timeoutMs` overrides it. */
 export const DEFAULT_READ_TIMEOUT_MS = 10_000;
-/** Default bound on a single-transaction write. A per-call `timeoutMs` overrides it. */
-export const DEFAULT_WRITE_TIMEOUT_MS = 10_000;
-/** Default bound on the batch write, which carries up to hundreds of transactions in one body. */
-export const DEFAULT_BATCH_WRITE_TIMEOUT_MS = 60_000;
+// Writes (single, multi, batch and refunds) get NO default bound from this client (the runtime's
+// own fetch transport timeouts still apply underneath every call): a write the client
+// stops waiting for has an unknown outcome, because the service may still commit it, and a caller
+// that reads the throw as "not charged" lets the user pay again on retry. Bounding one is the
+// caller's decision (`timeoutMs` per call, or `transactionTimeoutMs` on the client), and a caller
+// that makes it must resolve a timeout by external id before reporting a failure.
 /** Reads retry once: a second GET is harmless, a fourth against a struggling service is load. */
 export const DEFAULT_READ_RETRIES = 1;
 /** Writes retry only failures `isSafeToRetry` accepts, so a budget of 3 costs milliseconds. */
 export const DEFAULT_WRITE_RETRIES = 3;
 
 /**
- * Off-switch for the default deadlines above (not for the write retry rule, which is a correctness
- * fix, not a tuning knob). `BUZZ_CLIENT_UNBOUNDED=true` restores the old unbounded waits for every
- * call that does not pass its own `timeoutMs`. Read per request, so it needs no client rebuild.
+ * Off-switch for the default read deadline above (not for the write retry rule, which is a
+ * correctness rule, not a tuning knob). `BUZZ_CLIENT_UNBOUNDED=true` makes
+ * every call that does not pass its own `timeoutMs` wait without a deadline, including one that
+ * would otherwise use the client's `readTimeoutMs` or `transactionTimeoutMs`. Read per request, so
+ * it needs no client rebuild.
  */
 function defaultDeadlinesDisabled() {
   return process.env.BUZZ_CLIENT_UNBOUNDED === 'true';
 }
 
 export type CreateBuzzClientOptions = Partial<BuzzConfig> & {
-  /** Default request timeout for single-transaction writes (default `DEFAULT_WRITE_TIMEOUT_MS`). */
+  /**
+   * Default request timeout for every write: single, multi, batch and refunds. Absent means no
+   * deadline: the call waits for the service's answer. Set it only where every write's caller
+   * resolves a timeout by external id (see `BuzzWriteOptions`).
+   */
   transactionTimeoutMs?: number;
   /** Default request timeout for reads (default `DEFAULT_READ_TIMEOUT_MS`). */
   readTimeoutMs?: number;
@@ -151,11 +159,12 @@ export type BuzzRefundMultiTransactionInput = {
 /**
  * Per-call overrides for a write.
  *
- * `timeoutMs` defaults to the client's write bound. A caller that holds a lock while it waits
- * needs "this request is no longer in flight" to become true at some point; without a timeout
- * there is no such point, and no lock TTL can be sized against it. A write that times out has an
- * UNKNOWN outcome: the server may still commit it. Resolve it by external id, never by resending
- * under a fresh one.
+ * `timeoutMs` defaults to the client's `transactionTimeoutMs`, which is absent unless the client
+ * was built with one: by default a write waits for the service's answer. A caller that holds a
+ * lock while it waits needs "this request is no longer in flight" to become true at some point;
+ * without a timeout there is no such point, and no lock TTL can be sized against it, so such a
+ * caller passes its own. A write that times out has an UNKNOWN outcome: the server may still
+ * commit it. Resolve it by external id, never by resending under a fresh one.
  */
 export type BuzzWriteOptions = {
   timeoutMs?: number;
@@ -174,8 +183,8 @@ export type BuzzWriteOptions = {
    * restart refuses connections for a few seconds, and absorbing that here costs
    * milliseconds where a caller's own retry loop is usually far coarser.
    *
-   * Absent, writes use `isSafeToRetry`. It used to be "retry everything", which re-sent a write
-   * the server had already committed whenever the response was a 5xx or never arrived.
+   * Absent, writes use `isSafeToRetry`. "Retry everything" would re-send a write the server had
+   * already committed whenever the response was a 5xx or never arrived.
    */
   shouldRetry?: (error: unknown) => boolean;
 };
@@ -299,7 +308,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     retries,
     log,
     mapError,
-    transactionTimeoutMs = DEFAULT_WRITE_TIMEOUT_MS,
+    transactionTimeoutMs,
     readTimeoutMs = DEFAULT_READ_TIMEOUT_MS,
     ...envOverrides
   } = options;
@@ -313,7 +322,8 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   /** Low-level request. Returns parsed JSON; on a non-2xx status throws (mapped via
    *  `mapError` when provided, else `BuzzApiError`). With `opts.allow404`, a 404 resolves to
    *  `null` instead of throwing. Defaults follow the method: a GET/HEAD is a read (read bound,
-   *  `isRetryableRead`), anything else a write (write bound, `isSafeToRetry`). */
+   *  `isRetryableRead`), anything else a write (`transactionTimeoutMs` if the client has one, else
+   *  no deadline; `isSafeToRetry`). */
   async function request<T = unknown>(
     urlPart: string,
     init?: RequestInit,
@@ -551,12 +561,7 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
     return post(
       '/transactions',
       transactions.map((t) => toApiTransaction(t)),
-      {
-        ...opts,
-        timeoutMs:
-          opts?.timeoutMs ??
-          (defaultDeadlinesDisabled() ? undefined : DEFAULT_BATCH_WRITE_TIMEOUT_MS),
-      }
+      opts
     ) as Promise<CreateTransactionsResponse>;
   };
 
@@ -567,13 +572,21 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
       opts
     ) as Promise<CreateMultiTransactionResponse>;
 
+  // The two refunds have different retry rules, on purpose for now.
+  //
+  // `refundMultiTransaction` takes the write rule (`isSafeToRetry`): a 5xx or a lost response is
+  // not re-sent. docs/features/buzz-accounts.md says the prefix refund answers 409 when any leg
+  // already has a refund, which would make a re-send harmless, but a caller in this repo
+  // (apps/moderator refundAppealFee) passes `isSafeToRetry` explicitly on the opposite assumption.
+  // This client has nothing that settles which is right, so it does not change the rule.
   const refundMultiTransaction = (body: BuzzRefundMultiTransactionInput, opts?: BuzzWriteOptions) =>
     post('/multi-transactions/refund', body, opts) as Promise<RefundMultiTransactionResponse>;
 
-  // Refunds keep the old retry-everything rule, unlike other writes. A missed refund leaves a user
-  // charged for something they never got; a duplicate refund attempt is one the service can reject
-  // (it answers 409 when a refund for the transaction already exists). So here a retry is the safer
-  // side of an unknown outcome, the opposite of a charge.
+  // `refundTransaction` retries every failure, unlike other writes. A missed refund leaves a user
+  // charged for something they never got. Callers in this repo (src/server/services/
+  // buzz-prefix-refund.ts) expect a repeat refund to be answered 200 or 409 rather than paid twice,
+  // and treat a 409 as done only when `refund-<transactionId>` is on the ledger. That expectation is
+  // theirs; this client does not check it.
   const refundTransaction = (transactionId: string, body: BuzzRefundTransactionInput = {}) =>
     post(`/transactions/${transactionId}/refund`, body, {
       shouldRetry: () => true,
