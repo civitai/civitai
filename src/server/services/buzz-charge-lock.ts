@@ -19,7 +19,10 @@ import { isPrismaLockTimeout } from '~/server/utils/errorHandling';
  *
  * No table and no migration: the lock is `pg_advisory_xact_lock` on a 64-bit hash of the key
  * (`hashtextextended`). Single-key advisory locks do not overlap the two-key ones other callers in
- * this repo take (`lockItemHolder`).
+ * this repo take (`lockItemHolder`); among the single-key ones, the keys are prefixed charge ids,
+ * so a collision needs a 64-bit hash collision. Taken first in its transaction; the one lock ever
+ * taken under it is the mystery pack creator lock, so there is no lock-order cycle (the ledger in
+ * free-placement.service.test.ts lists every advisory lock caller).
  *
  * Bounded everywhere, because this holds a pooled connection:
  * - the wait for the lock is `CHARGE_LOCK_WAIT`; past it the request is told the payment may have

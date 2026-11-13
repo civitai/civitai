@@ -595,7 +595,12 @@ describe('the advisory locks have exactly one call site', () => {
   // markClaimPaid's claim row lock, so a mystery box open's ownership read sees any shop grant;
   // never nested inside another advisory lock.
   // creator-mystery-pack takes one per creator (0x434d0001) around the live-pack count and the pack
-  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions.
+  // writes in submit, revise, withdraw and the price cut; the only lock in those transactions, except
+  // a keyed submit, where it is taken inside buzz-charge-lock's lock (always that one first).
+  // buzz-charge-lock takes one per keyed charge (one-arg hashtextextended of the charge's external
+  // id or prefix: creator-shop-submit-…, donation-k-…, tip:… / block-tip:…) around the charge, its
+  // record and any refund. Taken first in its transaction; the only other lock ever taken under it
+  // is the creator lock above, so there is no cycle.
   // creator-mystery-pack-approve takes the same lock through its `lockCreator` for a moderator's
   // verdict, then the box row FOR NO KEY UPDATE; never nested inside another advisory lock.
   // text-scan/csam-hold-decision takes the bare article id on purpose: it is article.service.ts's
@@ -617,6 +622,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/apps/storage-migration-run.service.ts',
     'services/article.service.ts',
     'services/blocks/review-autodeploy.service.ts',
+    'services/buzz-charge-lock.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/creator-mystery-pack.service.ts',
