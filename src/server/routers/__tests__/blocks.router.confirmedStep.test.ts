@@ -71,6 +71,10 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   queryWorkflows: vi.fn(),
   deleteWorkflow: vi.fn(),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
 }));

@@ -125,6 +125,10 @@ vi.mock('~/server/services/blocks/user-app-surface.service', async (importOrigin
   ...(await importOriginal<typeof SurfaceModule>()),
   recordScopeInvocation: (...a: unknown[]) => h.recordScopeInvocation(...(a as [])),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
