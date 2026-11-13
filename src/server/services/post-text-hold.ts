@@ -44,7 +44,7 @@ export const unheldPostTextUpdateSql = (id: number, content: string, resetLevel:
   Prisma.sql`UPDATE "PostText" t
     SET content = ${content}, ${Prisma.raw(
     resetLevel ? '"nsfwLevel" = 0, ' : ''
-  )}"updatedAt" = now()
+  )}"updatedAt" = now() AT TIME ZONE 'UTC'
     WHERE t.id = ${id} AND NOT post_text_held(t.id, t."csamHeld", t."postId", t."userId")`;
 
 /** The refusal of a change to held text: an owner is never told why (`OWNER_CONTENT_KEPT`). */

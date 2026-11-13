@@ -41,7 +41,9 @@ BEGIN
   END IF;
 END $$;
 
--- 2. Held text is kept. post_text_held is also what the app asks before a delete
+-- 2. Held text is kept. An earlier three-argument version is dropped, so no looser one stays.
+DROP FUNCTION IF EXISTS post_text_held(BOOLEAN, INTEGER, INTEGER);
+-- post_text_held is also what the app asks before a delete
 -- (src/server/services/post-text-hold.ts), so the two refuse the same rows.
 CREATE OR REPLACE FUNCTION post_text_held(
   text_id INTEGER, csam_held BOOLEAN, post_id INTEGER, author_id INTEGER
@@ -51,9 +53,9 @@ DECLARE
   marked BOOLEAN := false;
 BEGIN
   -- `csamHeld` keeps the text from readers for good; as a delete hold it stands until a moderator
-  -- confirms the hold AND a CSAM report quotes the post. From then on that report's own retention
-  -- (below) holds the text, and ends when the report stops holding. A report on the author alone
-  -- does not count: an old one would end the hold on text confirmed long after it.
+  -- confirms the hold AND a CSAM report captured the post's text after the hold was raised. From
+  -- then on that report's own retention (below) holds the text, and ends when the report stops
+  -- holding. An older report, or one on the author or a comment alone, never captured this text.
   IF csam_held AND (
     EXISTS (
       SELECT 1 FROM "TextScanHold" h
@@ -66,9 +68,17 @@ BEGIN
         AND h.status = 'Confirmed'
     )
     OR NOT EXISTS (
-      SELECT 1 FROM "CsamReport" r
-      WHERE jsonb_typeof(r.details -> 'contextText') = 'array'
-        AND r.details -> 'contextText' @> jsonb_build_array(jsonb_build_object('postId', post_id))
+      -- The post's text as a report captured it after the hold was raised, so with this text in it.
+      SELECT 1
+      FROM "TextScanHold" h
+      JOIN "CsamReport" r ON jsonb_typeof(r.details -> 'contextText') = 'array'
+      CROSS JOIN LATERAL jsonb_array_elements(r.details -> 'contextText') c
+      WHERE h."entityType" = 'PostText' AND h."entityId" = text_id AND h.label = 'csam'
+        AND h.status = 'Confirmed'
+        AND c ->> 'source' = 'postDescription'
+        AND c ->> 'postId' = post_id::text
+        AND (c ->> 'capturedAt') ~ '^\d{4}-\d{2}-\d{2}T'
+        AND (c ->> 'capturedAt')::timestamptz >= h."createdAt" AT TIME ZONE 'UTC'
     )
   ) THEN
     RETURN true;

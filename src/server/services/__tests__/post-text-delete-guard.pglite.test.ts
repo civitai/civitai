@@ -28,7 +28,8 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "TextScanHold" (
   "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-  "label" TEXT NOT NULL, "status" TEXT NOT NULL
+  "label" TEXT NOT NULL, "status" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 -- Stands in for the view: the trigger only reads its "userId".
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
@@ -187,7 +188,8 @@ describe('PostText delete trigger', () => {
 describe('a CSAM hold on the text', () => {
   const decide = (id: number, status: 'Pending' | 'Confirmed' | 'Dismissed') =>
     pg.query(
-      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', $1, 'csam', $2)`,
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status, "createdAt")
+       VALUES ('PostText', $1, 'csam', $2, now() - interval '1 day')`,
       [id, status]
     );
   const del = (id: number) => pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
@@ -198,7 +200,20 @@ describe('a CSAM hold on the text', () => {
     await expect(del(id)).rejects.toThrow(/held/);
   });
 
-  const citing = JSON.stringify({ contextText: [{ source: 'postDescription', id: 1, postId: 1 }] });
+  /** A report's capture of post 1's text, taken now: after the holds above were raised. */
+  const capture = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      contextText: [
+        {
+          source: 'postDescription',
+          id: 1,
+          postId: 1,
+          capturedAt: new Date().toISOString(),
+          ...over,
+        },
+      ],
+    });
+  const citing = capture();
 
   it("holds it, once confirmed with a report quoting its post, for the report's retention and then lets it go", async () => {
     const id = await addText(1, { csamHeld: true });
@@ -222,6 +237,24 @@ describe('a CSAM hold on the text', () => {
     );
     await expect(del(id)).rejects.toThrow(/held/);
     // The control: a report as old that quotes the post has ended its retention.
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [citing]);
+    await del(id);
+    expect(await texts()).toEqual([]);
+  });
+
+  it("isn't let go by a report that captured the post before the hold, or only a comment on it", async () => {
+    const id = await addText(1, { csamHeld: true });
+    await decide(id, 'Confirmed');
+    await pg.query(
+      `INSERT INTO "CsamReport" ("userId", details, "reportSentAt", "archivedAt") VALUES ($1, $2, now() - interval '400 days', now())`,
+      [OTHER, capture({ capturedAt: new Date(Date.now() - 2 * 86_400_000).toISOString() })]
+    );
+    await expect(del(id)).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "CsamReport" SET details = $1`, [
+      capture({ source: 'comment', id: 77 }),
+    ]);
+    await expect(del(id)).rejects.toThrow(/held/);
+    // The control: a capture of the post's text after the hold, its report as old.
     await pg.query(`UPDATE "CsamReport" SET details = $1`, [citing]);
     await del(id);
     expect(await texts()).toEqual([]);
