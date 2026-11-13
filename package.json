@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.491",
+  "version": "5.1.495",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -153,7 +153,7 @@
     "@civitai/mod-utils": "workspace:*",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
-    "@civitai/orchestration-client": "0.2.3",
+    "@civitai/orchestration-client": "0.2.4",
     "@civitai/sdk": "^0.24.0",
     "@civitai/shared": "workspace:*",
     "@clavata/sdk": "^0.2.3",

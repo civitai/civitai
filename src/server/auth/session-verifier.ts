@@ -2,8 +2,7 @@
 // `session-client.ts` injects `isRevoked` into `createSessionClient`, so a logged-out / banned token is
 // rejected even on a `session:data2` cache hit (the cache holds the rich user, not the token's validity).
 //
-// The revocation check is the package registry's, so every app reads the same markers. Reads
-// fail OPEN — a sysRedis blip must not 500 every authed request.
+// The revocation check is the package registry's, so every app reads the same markers.
 import {
   createAuthVerifier,
   createRevocationCheck,
@@ -11,27 +10,33 @@ import {
 } from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 import { env } from '~/env/server';
-import { sysRedis, withSysReadBreaker } from '~/server/redis/client';
+import { sysRedis, withRevocationReadBreaker } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { refuseModerationAccountSession } from './moderation-account';
-import { observeSessionLeg } from './session-metrics';
+import { observeRevocationDegraded, observeSessionLeg } from './session-metrics';
 
 // The shared revocation check (the same one the hub and the spokes use), bounded by the sys read deadline
 // (REDIS_SYS_READ_TIMEOUT_MS, default 1000ms): the sys client carries NO socketTimeout, so on a silent
 // half-open this read could park the whole authed request until the client's backstop. It runs on every
 // authenticated request, so it also goes through the read breaker: once the breaker has tripped (when
-// enabled) a hung store costs this read ~0ms instead of a deadline per request. Fails OPEN (not revoked) on
-// a timeout, an open breaker or an error — a revocation-check failure must never block login.
+// enabled) a hung store costs this read ~0ms instead of a deadline per request. On a timeout, an open breaker
+// or an error the package answers from the markers it has already read, and allows a session with none known —
+// a revocation-check failure must never block login.
 const checkRevocation = createRevocationCheck({
   redis: () => sysRedis as unknown as SessionRegistryRedis,
   timeoutMs: () => env.REDIS_SYS_READ_TIMEOUT_MS,
-  bound: (read, ms) => withSysReadBreaker(read, ms),
+  // Its own breaker: one the other hot reads open would refuse this read while the store still answers.
+  bound: (read, ms) => withRevocationReadBreaker(read, ms),
+  markerCache: env.SESSION_REVOCATION_CACHE,
   onOutcome: (outcome, seconds) => observeSessionLeg('revocation', outcome, seconds),
-  onError: (err, _reason, claims) =>
+  onError: (err, _reason, claims, verdict) => {
+    observeRevocationDegraded(verdict);
     logSysRedisFailOpen('read-degraded', 'session-verifier isRevoked', err, {
       tokenId: claims.jti,
       userId: claims.user?.id,
-    }),
+      verdict,
+    });
+  },
 });
 
 export async function isRevoked(claims: SessionClaims): Promise<boolean> {

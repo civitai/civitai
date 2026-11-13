@@ -31,13 +31,16 @@ export async function resolveSharedArticleRequest({
 }) {
   res.setHeader('Cache-Control', 'private, no-store');
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+
+  // The rendered URL holds no token. The policy sticks to the document, and no-referrer here would
+  // strip Origin from the page's own tRPC calls, which the API then rejects.
+  if (/^[1-9]\d{0,9}$/.test(key) || key === SHARED_UNAVAILABLE_KEY) {
+    res.setHeader('Referrer-Policy', 'same-origin');
+    const articleId = key === SHARED_UNAVAILABLE_KEY ? null : Number(key);
+    return { props: { articleId: articleId as number | null }, suppressAds: true };
+  }
+
   res.setHeader('Referrer-Policy', 'no-referrer');
-
-  if (/^[1-9]\d{0,9}$/.test(key))
-    return { props: { articleId: Number(key) as number | null }, suppressAds: true };
-  if (key === SHARED_UNAVAILABLE_KEY)
-    return { props: { articleId: null as number | null }, suppressAds: true };
-
   const opened = shareTokenSchema.safeParse(key).success ? await open(key) : null;
   if (opened) {
     const maxAge = Math.max(0, Math.floor((new Date(opened.expiresAt).getTime() - now) / 1000));

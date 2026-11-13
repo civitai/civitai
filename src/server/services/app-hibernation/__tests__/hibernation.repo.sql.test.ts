@@ -258,6 +258,21 @@ describe('app_sandbox_hibernations SQL', () => {
     );
   });
 
+  it('deletedAccountsWithRows rotates: with a batch of one, every deleted account is reached', async () => {
+    await db.exec(`INSERT INTO "User" ("id", "deletedAt") VALUES (9404, now()), (9505, now())`);
+    for (const id of [9202, 9404, 9505])
+      await run(
+        hibernationSql.upsert(row({ userId: id, objectKey: `archives/${id}/tip-calculator/x.zip` }))
+      );
+    const seen = new Set<number>();
+    // A fixed order would answer the same account every time; 60 draws of 1 from 3 miss one
+    // with probability 3 * (2/3)^60, about 1e-10.
+    for (let i = 0; i < 60 && seen.size < 3; i++)
+      for (const r of await run<{ userId: number }>(hibernationSql.deletedAccountsWithRows(1)))
+        seen.add(r.userId);
+    expect([...seen].sort()).toEqual([9202, 9404, 9505]);
+  });
+
   it('deletedAccountsWithRows lists only deleted users that still have rows', async () => {
     await run(hibernationSql.upsert(row()));
     await run(
@@ -364,5 +379,62 @@ describe('hibernationRepo.commit (the real transaction)', () => {
       apps: 1,
       bytes: 4_321,
     });
+  });
+});
+
+describe('hibernationRepo.list and remove (the user’s own sleeping apps)', () => {
+  it('list is the user’s rows only, most recently put to sleep first, ties by key', async () => {
+    const at = (iso: string) => new Date(iso);
+    const put = (userId: number, appKey: string, hibernatedAt: string) =>
+      run(
+        hibernationSql.upsert(
+          row({
+            userId,
+            appKey,
+            objectKey: `archives/${userId}/${appKey}/a.kept.zip`,
+            hibernatedAt: at(hibernatedAt),
+          })
+        )
+      );
+    await put(9101, 'old-app', '2026-09-01T00:00:00.000Z');
+    await put(9101, 'zed-app', '2026-11-01T00:00:00.000Z');
+    await put(9101, 'new-app', '2026-11-01T00:00:00.000Z');
+    await put(9202, 'not-mine', '2026-12-01T00:00:00.000Z');
+    const repo = createHibernationRepo(pgliteRunner());
+    expect((await repo.list(9101)).map((r) => r.appKey)).toEqual(['new-app', 'zed-app', 'old-app']);
+    expect((await repo.list(9303)).length).toBe(0);
+  });
+
+  it('remove deletes one row of that user under the user’s lock, and answers it', async () => {
+    await run(hibernationSql.upsert(row()));
+    await run(
+      hibernationSql.upsert(row({ userId: 9202, objectKey: 'archives/9202/tip-calculator/x.zip' }))
+    );
+    const lockedWhileDeleting: { objid: number }[][] = [];
+    const repo = createHibernationRepo(
+      pgliteRunner(async (text, tx) => {
+        if (/^\s*DELETE/.test(text))
+          lockedWhileDeleting.push(await tx<{ objid: number }>(rawSql(ADVISORY)));
+      })
+    );
+    expect(await repo.remove(9101, 'none-such')).toBeNull();
+    const removed = await repo.remove(9101, 'tip-calculator');
+    expect(removed?.objectKey).toBe(row().objectKey);
+    expect(await get(9101, 'tip-calculator')).toBeNull();
+    expect(await get(9202, 'tip-calculator')).not.toBeNull();
+    expect(lockedWhileDeleting).toHaveLength(2);
+    for (const held of lockedWhileDeleting)
+      expect(held).toEqual([{ classid: LOCK_NS, objid: 9101, granted: true }]);
+  });
+
+  it('remove with a sha256 removes only a row still recording that archive', async () => {
+    await run(hibernationSql.upsert(row()));
+    const repo = createHibernationRepo(pgliteRunner());
+    expect(await repo.remove(9101, 'tip-calculator', 'b'.repeat(64))).toBeNull();
+    expect(await get(9101, 'tip-calculator')).not.toBeNull();
+    expect((await repo.remove(9101, 'tip-calculator', 'a'.repeat(64)))?.sha256).toBe(
+      'a'.repeat(64)
+    );
+    expect(await get(9101, 'tip-calculator')).toBeNull();
   });
 });

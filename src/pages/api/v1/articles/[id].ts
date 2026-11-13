@@ -12,6 +12,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
 
 /**
  * GET /api/v1/articles/[id] — public article detail.
@@ -80,15 +81,9 @@ export default MixedAuthEndpoint(async function handler(
     // pins published-only visibility for every caller (no owner-draft branch), so
     // the response is caller-independent.
     const article = await getArticleById({ id });
-    // A restricted region is served an article only when it and every connected (Civitai-hosted)
-    // image in its body are rated SFW; unrated fails closed. The images count too because a
-    // moderator's override sets the article's own level. Answered as the same 404 as a missing
-    // article.
-    if (restricted) {
-      const levels = [article.nsfwLevel, ...(article.contentImages ?? []).map((i) => i.nsfwLevel)];
-      if (!levels.every((level) => !!level && Flags.hasFlag(sfwBrowsingLevelsFlag, level)))
-        throw throwNotFoundError(`No article with id ${id}`);
-    }
+    // Answered as the same 404 as a missing article.
+    if (restricted && !isArticleServableWhenRestricted(article))
+      throw throwNotFoundError(`No article with id ${id}`);
 
     // moderatorNsfwLevel is a moderator-only override the service includes for the
     // edit form; strip it so it never leaks through the public REST payload.
