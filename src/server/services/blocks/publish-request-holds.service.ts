@@ -277,7 +277,6 @@ export async function claimApprove(
 ): Promise<ApproveClaim> {
   await lockApp(tx, input.slug);
   assertHoldsOverridable(await getOpenHoldsBySlug(tx, [input.slug]), input);
-  // Under the app lock: a live claim means another approve of this app is running.
   if (await liveClaimExists(tx, input.slug))
     throw new PublishRequestHeldError(
       'Another approve of this app is already running. Wait for it to finish, then reload.',

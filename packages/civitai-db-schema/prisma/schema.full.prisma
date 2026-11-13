@@ -4081,7 +4081,7 @@ model AppReviewAgentReport {
 // App review holds: a moderator or agent's open check on an app's pending publish requests;
 // approve is refused while one is open unless overridden with a reason. RAW SQL ONLY
 // (`publish-request-holds.service.ts`). Scoped by slug, so a withdraw + resubmit keeps the hold.
-// CHECKs and the partial index live in migration `20270106120000_app_publish_request_holds`,
+// CHECKs and the partial index live in migration `20270114120000_app_publish_request_holds`,
 // applied by hand.
 // @no-type
 model AppPublishRequestHold {

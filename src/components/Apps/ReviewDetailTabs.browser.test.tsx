@@ -121,7 +121,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       }),
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
-        // The approve bar reads the app's review holds; none here.
         listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },

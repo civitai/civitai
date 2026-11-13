@@ -140,7 +140,6 @@ vi.mock('~/utils/trpc', () => {
       useUtils: () => utils,
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
-        // The approve bar reads the app's review holds; none here.
         listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: {

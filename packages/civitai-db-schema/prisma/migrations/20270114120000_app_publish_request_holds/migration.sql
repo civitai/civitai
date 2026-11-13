@@ -3,7 +3,7 @@
 -- ============================================================
 -- NOT AUTO-APPLIED. A human runs this file against the main civitai database, dev first, then
 -- production, BEFORE the release that reads it rolls out. The approve paths fail closed while
--- this table is absent (approve is refused with a message naming the missing table); the review
+-- these tables are absent (approve is refused with a message saying the holds could not be read); the review
 -- queue's hold badge fails open.
 --
 -- ADDITIVE ONLY. Two new, empty tables and their indexes; no existing table, column or row changes,
