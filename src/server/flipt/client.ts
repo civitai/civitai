@@ -260,6 +260,16 @@ export enum FLIPT_FEATURE_FLAGS {
   // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off:
   // `evaluateBoolean` throws and `isFliptSync` swallows it, at most once per refresh per process.
   OTEL_WITHSPAN_SKIP_UNSAMPLED = 'otel-withspan-skip-unsampled',
+  // Lets the inbound HTTP instrumentation make the head-sampling decision BEFORE it does any span
+  // work, for a request with no `traceparent`: unsampled requests then run with tracing suppressed
+  // (no span built at all), sampled ones are recorded exactly as before, at the same ratio. See
+  // `src/server/otel-root-presample.ts`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
+  // or an uninitialized client, which keeps today's behaviour. Global boolean, evaluated with no
+  // entity or context, read at most once per 5s per process. A flip reaches each process after the
+  // Flipt config poll, the eval cache and the gate's 5s cache.
+  //
+  // Add the key (enabled: false) to flag state before flipping it. A missing key just reads as off.
+  OTEL_ROOT_PRESAMPLE = 'otel-root-presample',
   // Picks how `getFeatureFlagsLazy` (feature-flags.service.ts) builds the per-request flag
   // object: ON = one small instance of a class whose prototype carries the per-key getters,
   // defined once at module load; OFF = a fresh object with one getter defined per flag key on
