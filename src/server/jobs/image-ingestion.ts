@@ -123,6 +123,8 @@ type IngestImageRow = IngestImageInput & {
    * A successful submit clears `scanJobs.error`, and with it this.
    */
   rateLimitedSince: Date | null;
+  /** True once a successful re-submit has moved the error to `lastFailure`: a scan is in flight. */
+  resubmitted: boolean;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -190,6 +192,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
            CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
              THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
            END as "rateLimitedSince",
+           (i."scanJobs" ? 'lastFailure' AND NOT i."scanJobs" ? 'error') as "resubmitted",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -217,7 +220,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const errorRetryDue = (img: IngestImageRow) =>
     !!img.scanRequestedAt &&
     new Date(img.scanRequestedAt).getTime() <=
-      decreaseDate(now, getImageScanRetryDelayMinutes(img.failureClass), 'minutes').getTime();
+      decreaseDate(
+        now,
+        // An in-flight re-submit waits the full delay: the shorter transient one is a failure
+        // cooldown, and would duplicate the workflow of any scan slower than it.
+        getImageScanRetryDelayMinutes(img.resubmitted ? null : img.failureClass),
+        'minutes'
+      ).getTime();
 
   // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
   // trigger queues a new image immediately, but `ingestImage` stamps
@@ -439,9 +448,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // `pendingImages` -> `processedIds`, so not pruned), so next run they are
   // re-pulled and handled as Error.
   if (agedOutPendingIds.length > 0) {
+    // Dropping lastFailure gives the aged-out row the unknown cap, not an earlier episode's.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
       WHERE id = ANY(${agedOutPendingIds})
         AND ingestion = 'Pending'::"ImageIngestionStatus"
     `;

@@ -171,19 +171,27 @@ describe('an Error row re-submitted successfully, over real rows', () => {
       status: 200,
       useImageScanning: false,
     });
-  const insertError = async (id: number, retryCount: number) => {
+  // A reason the classifier does not recognise, so only the stored class can make it transient.
+  const transientFailure = {
+    failureType: 'send-fail',
+    failureClass: 'transient',
+    reason: 'unrecognised reply',
+  };
+  const insertError = async (
+    id: number,
+    scanJobs: object,
+    { requestedAgo = 30 * 60 * 1000, ingestion = 'Error', createdAgo = 2 * HOUR } = {}
+  ) => {
     await pg.query(
       `INSERT INTO "Image" (id, url, width, height, "createdAt", "scanRequestedAt", ingestion, "scanJobs")
-       VALUES ($1, $2, 100, 100, $3, $4, 'Error', $5)`,
+       VALUES ($1, $2, 100, 100, $3, $4, $5, $6)`,
       [
         id,
         `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee${id}/a.png`,
-        ago(2 * HOUR),
-        ago(30 * 60 * 1000),
-        {
-          retryCount,
-          error: { failureType: 'send-fail', failureClass: 'transient', reason: 'timeout' },
-        },
+        ago(createdAgo),
+        ago(requestedAgo),
+        ingestion,
+        scanJobs,
       ]
     );
     await pg.query(
@@ -200,8 +208,10 @@ describe('an Error row re-submitted successfully, over real rows', () => {
     await ingestImages.run({} as never).result;
   };
 
+  beforeEach(() => dbMock.dbRead.jobQueue.findMany.mockReset());
+
   it('stays queued past the unknown cap while its re-submitted scan is in flight', async () => {
-    await insertError(20, 12);
+    await insertError(20, { retryCount: 12, error: transientFailure });
     succeed();
 
     await runCron([20]);
@@ -215,12 +225,67 @@ describe('an Error row re-submitted successfully, over real rows', () => {
     expect(scanJobs.error).toBeUndefined();
   });
 
+  it('keeps its class through a second re-submit', async () => {
+    await insertError(
+      22,
+      { retryCount: 12, workflowId: 'wf-first', lastFailure: transientFailure },
+      { requestedAgo: 90 * 60 * 1000 }
+    );
+    succeed();
+
+    await runCron([22]);
+    expect(mockCreateImageIngestionRequest).toHaveBeenCalledTimes(1);
+    await runCron([22]);
+
+    expect(await queued(22)).toBe(true);
+  });
+
   it('control: one past the transient cap is pruned', async () => {
-    await insertError(21, 30);
+    await insertError(21, { retryCount: 30, error: transientFailure });
 
     await runCron([21]);
 
     expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
     expect(await queued(21)).toBe(false);
+  });
+
+  it('control: the same row with no failure on record takes the unknown cap and is pruned', async () => {
+    await insertError(23, { retryCount: 12 });
+
+    await runCron([23]);
+
+    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
+    expect(await queued(23)).toBe(false);
+  });
+
+  it('waits the full delay, not the transient one, while a re-submitted scan is in flight', async () => {
+    await insertError(24, {
+      retryCount: 12,
+      workflowId: 'wf-first',
+      lastFailure: transientFailure,
+    });
+    succeed();
+
+    await runCron([24]);
+
+    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
+    expect(await queued(24)).toBe(true);
+  });
+
+  it('an aged-out Pending row drops the earlier failure and takes the unknown cap', async () => {
+    await insertError(
+      25,
+      { retryCount: 12, workflowId: 'wf-first', lastFailure: transientFailure },
+      { ingestion: 'Pending', createdAgo: 8 * HOUR }
+    );
+
+    await runCron([25]);
+    const { ingestion, scanJobs } = await row(25);
+    expect(ingestion).toBe('Error');
+    expect(scanJobs.lastFailure).toBeUndefined();
+    await runCron([25]);
+
+    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
+    expect(await queued(25)).toBe(false);
   });
 });
