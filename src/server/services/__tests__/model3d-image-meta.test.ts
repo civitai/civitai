@@ -107,6 +107,8 @@ const MODEL = {
 };
 
 beforeEach(() => {
+  // No image is a restricted model's mature one, unless a test says so.
+  dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
   // The source image is one the viewer may see.
   dbMock.dbRead.image.findUnique.mockResolvedValue({
     nsfwLevel: 1,
@@ -210,6 +212,14 @@ describe("a 3D model's source image", () => {
     ['flagged poi', { poi: true }],
   ])('is not returned to another viewer when %s', async (_, state) => {
     for (const user of [null, { id: 6 }]) expect(await sourceFor(user, state)).toBeNull();
+  });
+
+  it("is not returned to another viewer when it is a restricted model's mature image", async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 2 }] as never);
+    for (const user of [null, { id: 6 }])
+      expect(await sourceFor(user, { nsfwLevel: 4 }, 1 | 4)).toBeNull();
+    // Its owner still sees it.
+    expect(await sourceFor({ id: 5 }, { nsfwLevel: 4 }, 1 | 4)).toBe(2);
   });
 
   it('is returned to another viewer when it passes (control), and at their level', async () => {

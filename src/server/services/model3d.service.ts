@@ -290,7 +290,9 @@ export const getModel3DById = async ({
         !state.needsReview &&
         !state.minor &&
         !state.poi &&
-        parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel)).includes(state.nsfwLevel);
+        parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel)).includes(state.nsfwLevel) &&
+        // Nor a mature image of a restricted model, which the image feeds never show.
+        !(await restrictedMatureImageIds([sourceImage.id])).has(sourceImage.id);
       if (!shown) sourceImage = null;
     }
 

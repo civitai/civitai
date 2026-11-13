@@ -102,4 +102,11 @@ describe('lists filtered by browsing level, after a settings change', () => {
     expect(h.resets.getForShop).not.toHaveBeenCalled();
     expect(h.resets.getRelatedPosts).not.toHaveBeenCalled();
   });
+
+  test("turning hiding off or on drops only a 3D model's related posts", async () => {
+    await change({ disableHidden: true });
+    expect(h.resets.getRelatedPosts).toHaveBeenCalledTimes(1);
+    expect(h.resets.getPosted).not.toHaveBeenCalled();
+    expect(h.resets.getForShop).not.toHaveBeenCalled();
+  });
 });

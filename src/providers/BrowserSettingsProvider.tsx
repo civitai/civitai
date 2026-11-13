@@ -55,6 +55,8 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
         void queryUtils.creatorService.getForShop.reset();
         void queryUtils.model3d.getRelatedPosts.reset();
       }
+      // A 3D model's related posts also leave out the viewer's hidden tags unless hiding is off.
+      if (variables.disableHidden !== undefined) void queryUtils.model3d.getRelatedPosts.reset();
 
       // Patch every confirmed field into the getSettings React Query cache so
       // `CivitaiSessionProvider` sees the user's intent immediately, instead

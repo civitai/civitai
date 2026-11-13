@@ -8,12 +8,14 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // leave every viewer at the service's PG default, and one that passed the input through would
 // let a request ask past its cap.
 
-const { related } = vi.hoisted(() => ({
+const { related, byId } = vi.hoisted(() => ({
   related: vi.fn(async (..._: unknown[]) => ({ items: [], nextCursor: undefined })),
+  byId: vi.fn(async (..._: unknown[]) => ({ id: 1 })),
 }));
 vi.mock('~/server/services/model3d.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Model3DService>()),
   getModel3DRelatedPosts: related,
+  getModel3DById: byId,
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -100,5 +102,21 @@ describe('model3d.getRelatedPosts', () => {
     expect(await disableHidden({ disableHidden: 'true' })).toBe(true);
     expect(await disableHidden({ disableHidden: 'false' })).toBe(false);
     expect(await disableHidden({})).toBeFalsy();
+  });
+
+  it("hands a 3D model page the viewer's own capped level, for its source image", async () => {
+    const levelFor = async (user: Record<string, unknown> | undefined, canViewNsfw: boolean) => {
+      byId.mockClear();
+      await caller(user, canViewNsfw).getById({ id: 1 });
+      return (byId.mock.calls[0][0] as { browsingLevel?: number }).browsingLevel;
+    };
+    const mature = {
+      id: 7,
+      isModerator: false,
+      showNsfw: true,
+      browsingLevel: NsfwLevel.PG | NsfwLevel.R,
+    };
+    expect(await levelFor(undefined, true)).toBe(NsfwLevel.PG);
+    expect(await levelFor(mature, true)).toBe(NsfwLevel.PG | NsfwLevel.R);
   });
 });
