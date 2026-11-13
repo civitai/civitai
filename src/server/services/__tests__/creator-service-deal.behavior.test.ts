@@ -2470,13 +2470,13 @@ describe('content checks', () => {
   );
 
   it.each([
-    ['unscanned', 'Pending', null],
-    ['blocked', 'Blocked', null],
-    ['held for review', 'Scanned', 'minor'],
+    ['unscanned', 'Pending', null, false],
+    ['blocked', 'Blocked', null, false],
+    ['held for review', 'Scanned', 'minor', false],
     ['taken down', 'Scanned', null, true],
   ] as const)(
     'takes no request with a cover that is %s',
-    async (_, ingestion, needsReview, tos = false) => {
+    async (_, ingestion, needsReview, tos) => {
       await cover(ingestion, PG, needsReview, tos);
       await expect(request()).rejects.toThrow(/Service not found/);
     }

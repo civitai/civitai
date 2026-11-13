@@ -323,6 +323,9 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ResourceReview.releasedAt',
       'Feedback.appSourceCommit',
       'Feedback.appSourceDirty',
+      'ServiceOffering.declaredNsfwLevel',
+      'ServiceOffering.scanWorkflowId',
+      'ServiceOffering.scannedAt',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.
