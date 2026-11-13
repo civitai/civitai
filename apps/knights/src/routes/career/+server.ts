@@ -29,10 +29,16 @@ const refuse = (status: number, message: string) => json({ ok: false, message },
 export const POST: RequestHandler = async ({ request, locals }) => {
   // Restarting clears smites, so it counts as judging.
   if ((await getStanding(db, locals.user.id)).muted) return refuse(403, MUTED_MESSAGE);
-  const form = await request.formData();
-  if (form.get('confirmed') !== 'yes') {
-    return refuse(400, 'Confirm that you want to restart your career.');
+  const unconfirmed = () => refuse(400, 'Confirm that you want to restart your career.');
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch (error) {
+    // `formData()` throws a TypeError for a body it cannot parse as a form.
+    if (error instanceof TypeError) return unconfirmed();
+    throw error;
   }
+  if (form.get('confirmed') !== 'yes') return unconfirmed();
 
   let outcome: { reset: boolean };
   try {
