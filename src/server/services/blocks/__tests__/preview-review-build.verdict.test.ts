@@ -65,16 +65,32 @@ describe('preview e2e: review-build verdict', () => {
 
 describe('preview e2e: the automatic-build budget', () => {
   it('a spent budget blocks the build, and the message says the budget is spent', () => {
-    expect(
-      budgetBlocksReviewBuild(
-        { available: true, scope: 'fixture-slug', limit: 10, remaining: 0 },
-        'ci-smoke-pub-pr-1'
-      )
-    ).toBe(
-      'The automatic review-build budget for ci-smoke-pub-pr-1 is spent for today ' +
-        "(scope fixture-slug, limit 10/day): the submission's review build would not start, " +
-        'so the manifest check was not exercised.'
+    const msg = budgetBlocksReviewBuild(
+      {
+        available: true,
+        scope: 'fixture-slug',
+        counter: 'fixture-slug',
+        limit: 20,
+        remaining: 0,
+      },
+      'ci-smoke-pub-pr-1'
     );
+    expect(msg).toMatch(/budget for ci-smoke-pub-pr-1 is spent for today/);
+    expect(msg).toMatch(/\(counter fixture-slug, limit 20\/day\)/);
+  });
+
+  it("a spent fixture TOTAL is named as the total, not misreported as the slug's", () => {
+    const msg = budgetBlocksReviewBuild(
+      {
+        available: true,
+        scope: 'fixture-slug',
+        counter: 'fixture-total',
+        limit: 200,
+        remaining: 0,
+      },
+      'ci-smoke-pub-pr-1'
+    );
+    expect(msg).toMatch(/\(counter fixture-total, limit 200\/day\)/);
   });
 
   it('an unreadable budget blocks the build too', () => {
@@ -86,7 +102,7 @@ describe('preview e2e: the automatic-build budget', () => {
   it('CONTROL: one build left does not block', () => {
     expect(
       budgetBlocksReviewBuild(
-        { available: true, scope: 'account', limit: 20, remaining: 1 },
+        { available: true, scope: 'account', counter: 'account', limit: 20, remaining: 1 },
         'ci-x'
       )
     ).toBeNull();
@@ -97,7 +113,13 @@ describe('preview e2e: the automatic-build budget', () => {
       slug: 'ci-x',
       timeoutMs: 300_000,
       lastState: null,
-      budgetAfter: { available: true, scope: 'account', limit: 20, remaining: 0 },
+      budgetAfter: {
+        available: true,
+        scope: 'account',
+        counter: 'account',
+        limit: 20,
+        remaining: 0,
+      },
     });
     expect(msg).toMatch(/^No review-build verdict for ci-x within 300s \(last state: none\)\. /);
     expect(msg).toMatch(/budget for ci-x is spent for today/);
@@ -108,7 +130,13 @@ describe('preview e2e: the automatic-build budget', () => {
       slug: 'ci-x',
       timeoutMs: 300_000,
       lastState: 'preview-building',
-      budgetAfter: { available: true, scope: 'account', limit: 20, remaining: 0 },
+      budgetAfter: {
+        available: true,
+        scope: 'account',
+        counter: 'account',
+        limit: 20,
+        remaining: 0,
+      },
     });
     expect(msg).toMatch(/still queued or running/);
     expect(msg).not.toMatch(/budget/);

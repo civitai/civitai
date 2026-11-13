@@ -114,8 +114,8 @@ function previewSlug(): string {
 const SLUG = previewSlug();
 const CANONICAL_SRC = `https://${SLUG}.${APPS_DOMAIN}/`;
 
-// A review build takes about a minute; the rest is room for a queue behind the platform's
-// build slots. Kept well under the per-test timeout below.
+// Room for the build plus a queue behind the platform's build slots. Kept well under the
+// per-test timeout below.
 const REVIEW_BUILD_TIMEOUT_MS = 5 * 60_000;
 const REVIEW_BUILD_POLL_MS = 5_000;
 

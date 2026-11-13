@@ -987,9 +987,23 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
     expect(await readAutoBuildBudget(FIXTURE, 'ci-new')).toEqual({
       available: true,
       scope: 'fixture-slug',
+      counter: 'fixture-total',
       limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY,
       remaining: 0,
     });
+  });
+
+  it("a refused fixture attempt charges nothing: the slug and the fixture's total are unchanged", async () => {
+    const counts = realCounters();
+    counts.set(slugKey('ci-a'), AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
+    counts.set(totalKey(), 37);
+    expect(await submitN(3, FIXTURE, 'ci-a')).toEqual([
+      'budget-refused',
+      'budget-refused',
+      'budget-refused',
+    ]);
+    expect(counts.get(slugKey('ci-a'))).toBe(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
+    expect(counts.get(totalKey())).toBe(37);
   });
 
   it('CONTROL: one build under the total ceiling still starts', async () => {
@@ -1045,6 +1059,7 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
     expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toEqual({
       available: true,
       scope: 'fixture-slug',
+      counter: 'fixture-slug',
       limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
       remaining: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
     });
@@ -1052,14 +1067,15 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
     expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toMatchObject({
       remaining: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY - 3,
     });
-    // Past the limit (the refused take also counted) it reads 0, never negative.
+    // At the limit it reads 0; the refused takes past it were given back, so it never goes negative.
     await submitN(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY, FIXTURE, 'ci-a');
     expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toMatchObject({ remaining: 0 });
     // The reads themselves took nothing.
-    expect(counts.get(slugKey('ci-a'))).toBe(3 + AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
+    expect(counts.get(slugKey('ci-a'))).toBe(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
     expect(await readAutoBuildBudget(9, 'app-one')).toEqual({
       available: true,
       scope: 'account',
+      counter: 'account',
       limit: AUTO_REVIEW_BUILDS_PER_USER_PER_DAY,
       remaining: AUTO_REVIEW_BUILDS_PER_USER_PER_DAY,
     });

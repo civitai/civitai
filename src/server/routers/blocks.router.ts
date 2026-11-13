@@ -2405,8 +2405,7 @@ export const blocksRouter = router({
    * The caller's remaining AUTOMATIC review builds today for `slug`, without spending one
    * (review-autodeploy.service `readAutoBuildBudget`). `remaining: 0` means the next submission's
    * review preview waits for a moderator instead of building on its own. Only the caller's own
-   * budget is readable. The preview e2e smoke reads it to fail with "budget spent" rather than
-   * time out.
+   * budget is readable.
    */
   getMyAutoReviewBuildBudget: appDeveloperProcedure
     .use(enforceAppBlocksFlag)

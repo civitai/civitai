@@ -10,6 +10,8 @@
  * the failed step in its error ("review build failed at manifest check (...)").
  */
 
+import type { StoredReviewPreviewState } from '~/shared/constants/app-review-preview.constants';
+
 /** The fields of `blocks.getReviewStatus` this reads. */
 export type ReviewStatusLike = {
   state: string | null;
@@ -18,13 +20,16 @@ export type ReviewStatusLike = {
 
 /** `blocks.getMyAutoReviewBuildBudget`. */
 export type AutoBuildBudgetLike =
-  | { available: true; scope: string; limit: number; remaining: number }
+  | { available: true; scope: string; counter: string; limit: number; remaining: number }
   | { available: false; scope: string };
 
 export type ReviewBuildVerdict = { done: false } | { done: true; pass: boolean; message: string };
 
 /** States that prove the build (and so its manifest check) succeeded. */
-const BUILD_PASSED_STATES = ['preview-deploying', 'preview-live'];
+const BUILD_PASSED_STATES: readonly string[] = [
+  'preview-deploying',
+  'preview-live',
+] satisfies readonly StoredReviewPreviewState[];
 
 /**
  * Whether the automatic build can start at all, read BEFORE submitting. `null` when it can;
@@ -41,7 +46,7 @@ export function budgetBlocksReviewBuild(budget: AutoBuildBudgetLike, slug: strin
   if (budget.remaining <= 0) {
     return (
       `The automatic review-build budget for ${slug} is spent for today ` +
-      `(scope ${budget.scope}, limit ${budget.limit}/day): the submission's review build ` +
+      `(counter ${budget.counter}, limit ${budget.limit}/day): the submission's review build ` +
       'would not start, so the manifest check was not exercised.'
     );
   }
