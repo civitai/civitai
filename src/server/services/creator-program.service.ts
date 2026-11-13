@@ -30,6 +30,7 @@ import {
   getTopContributors,
   getTransactionByExternalId,
   getUserBuzzAccount,
+  refundTransaction,
 } from '~/server/services/buzz.service';
 import {
   getBankableAmount,
@@ -83,6 +84,19 @@ import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
 import { userUpdateCounter } from '~/server/prom/client';
 import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
+import {
+  chargeByExternalId,
+  PAYMENT_REFUNDED_MESSAGE,
+  paymentOutcomeUnknown,
+} from '~/server/services/buzz-keyed-charge';
+import {
+  CHARGE_LOCKED_READ,
+  CHARGE_LOCKED_REFUND,
+  recordStepError,
+  refundUnlessRecorded,
+  withChargeKeyLock,
+} from '~/server/services/buzz-charge-lock';
+import { TRPCError } from '@trpc/server';
 
 type UserCapCacheItem = {
   id: number;
@@ -515,7 +529,27 @@ async function getFlippedPhaseStatus() {
   return decodeRedisString(await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES));
 }
 
-export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpendType) {
+/**
+ * The ledger id of one deposit into the bank. With the client's key (a uuid, minted once per
+ * deposit and resent on its retries) it is the same on every retry, so the ledger holds one
+ * deposit for it. The user id comes first and has no '-', so one user's key never names another
+ * user's deposit. Without a key there is no id (the ledger client mints one per call, no dedup).
+ */
+export function bankDepositTransactionId(userId: number, idempotencyKey: string) {
+  return `creator-bank-deposit-${userId}-${idempotencyKey}`;
+}
+
+/** The ledger id of one cash withdrawal's burn, as `bankDepositTransactionId` for a deposit. */
+export function cashWithdrawalTransactionId(userId: number, idempotencyKey: string) {
+  return `creator-cash-withdrawal-${userId}-${idempotencyKey}`;
+}
+
+export async function bankBuzz(
+  userId: number,
+  amount: number,
+  buzzType: BuzzSpendType,
+  idempotencyKey?: string
+) {
   if (buzzType === 'blue') {
     throw throwBadRequestError('You cannot bank Blue Buzz.');
   }
@@ -555,11 +589,53 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (isBankingClosed(phases)) throw new Error('Banking phase is closed');
 
+  const monthAccount = getMonthAccount();
+  const bankAccountType = getBankAccountType(buzzType);
+  // A function, not a value: `amount` is clamped below, and the deposit sends the clamped amount.
+  const deposit = () => ({
+    amount,
+    fromAccountId: userId,
+    fromAccountType: buzzType,
+    toAccountId: monthAccount,
+    toAccountType: bankAccountType,
+    type: TransactionType.Bank,
+    description: 'Banked for Creator Program',
+  });
+  const keyedId =
+    idempotencyKey !== undefined ? bankDepositTransactionId(userId, idempotencyKey) : undefined;
+  const declinedMessage = 'Unable to bank this amount';
+
   // The limits are read and spent in one critical section: two deposits racing past the same
-  // check would bank twice the remaining amount.
+  // check would bank twice the remaining amount. It also keeps two requests with one key from
+  // depositing at the same time.
   const deposited = await withDistributedLock(
     { key: `creator-program:bank:${userId}`, ttl: 30, autoRenew: true, maxRetries: 0 },
     async () => {
+      // With a key, a deposit the ledger already holds is this action's, from an earlier request
+      // whose answer was lost. Looked up BEFORE the cap and bankable checks: they read a banked
+      // total that already includes it, and would clamp or refuse a retry whose Buzz moved.
+      if (keyedId !== undefined) {
+        let held: unknown;
+        try {
+          held = await getTransactionByExternalId(keyedId);
+        } catch (lookupError) {
+          throw paymentOutcomeUnknown(
+            { externalTransactionId: keyedId, userId, amount },
+            'deposit lookup before checks failed',
+            { lookupError }
+          );
+        }
+        if (held) {
+          // Resends under the held id (moves nothing) and refuses a deposit since refunded.
+          await chargeByExternalId(
+            { ...deposit(), externalTransactionId: keyedId },
+            { reusable: true, declinedMessage }
+          );
+          await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+          return true;
+        }
+      }
+
       const banked = await getBankedBalance(userId, { fresh: true });
       if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
       const bankable = await getBankableAmount(userId, banked.total);
@@ -572,24 +648,30 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
       }
       if (amount <= 0) throw new Error('Amount exceeds cap');
 
-      const monthAccount = getMonthAccount();
-      const bankAccountType = getBankAccountType(buzzType);
-      await createBuzzTransaction({
-        amount,
-        fromAccountId: userId,
-        fromAccountType: buzzType,
-        toAccountId: monthAccount,
-        toAccountType: bankAccountType,
-        type: TransactionType.Bank,
-        description: 'Banked for Creator Program',
-      });
+      if (keyedId !== undefined) {
+        // An unknown outcome is resent once under the same id; a resend that fails too is "may
+        // have gone through" and the client keeps its key. The ledger is the deposit's only
+        // record (the banked total is read from it), so there is no row to write under a lock.
+        await chargeByExternalId(
+          { ...deposit(), externalTransactionId: keyedId },
+          { reusable: true, declinedMessage }
+        );
+      } else {
+        await createBuzzTransaction(deposit());
+      }
 
       await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
       return true;
     }
   );
   // Null also means Redis could not take the lock, not only that another deposit holds it.
-  if (!deposited) throw throwBadRequestError("Couldn't start your deposit. Try again in a moment.");
+  if (!deposited) {
+    const message = "Couldn't start your deposit. Try again in a moment.";
+    // With a key, the request holding the lock may be this same deposit: a 429, so the client
+    // keeps the key and its next attempt is answered from that deposit instead of making another.
+    if (keyedId !== undefined) throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message });
+    throw throwBadRequestError(message);
+  }
 
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
@@ -893,7 +975,7 @@ export async function findCashWithdrawalByRefCode(refCode: string) {
   return candidates[0];
 }
 
-export async function withdrawCash(userId: number, amount: number) {
+export async function withdrawCash(userId: number, amount: number, idempotencyKey?: string) {
   // Check setup for withdrawal
   const user = await dbWrite.user.findFirstOrThrow({
     where: { id: userId },
@@ -935,6 +1017,7 @@ export async function withdrawCash(userId: number, amount: number) {
   // Determine withdrawal amount
   const fee = getWithdrawalFee(amount, cash.paymentMethod);
   const toWithdraw = amount - fee;
+  const method = userPaymentConfiguration.tipaltiWithdrawalMethod;
 
   // We will use this to keep track of our progress in the code below:
   const data = {
@@ -945,46 +1028,64 @@ export async function withdrawCash(userId: number, amount: number) {
     updated: false,
   };
 
-  try {
-    // Create withdrawal record
-    const { id } = await dbWrite.cashWithdrawal.create({
-      data: {
-        userId,
-        amount: toWithdraw,
-        fee,
-        status: CashWithdrawalStatus.InternalValue,
-        method: userPaymentConfiguration.tipaltiWithdrawalMethod,
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    data.withdrawalId = id;
-
-    // Burn full amount
-    const { transactionId } = await createBuzzTransaction({
+  if (idempotencyKey !== undefined) {
+    const recorded = await burnAndRecordKeyedWithdrawal({
+      userId,
       amount,
-      fromAccountId: userId,
-      fromAccountType: 'cashSettled',
-      toAccountId: 0,
-      toAccountType: 'yellow',
-      type: TransactionType.Withdrawal,
-      description: 'Withdrawal request',
+      toWithdraw,
+      fee,
+      method,
+      externalTransactionId: cashWithdrawalTransactionId(userId, idempotencyKey),
     });
+    // An earlier request with this key recorded the withdrawal and sent (or is sending) it.
+    if (!recorded.created) return;
+    data.withdrawalId = recorded.id;
+    data.transactionId = recorded.transactionId;
+  }
 
-    if (!transactionId) {
-      throw new Error('Failed to create transaction');
+  try {
+    if (idempotencyKey === undefined) {
+      // Create withdrawal record
+      const { id } = await dbWrite.cashWithdrawal.create({
+        data: {
+          userId,
+          amount: toWithdraw,
+          fee,
+          status: CashWithdrawalStatus.InternalValue,
+          method,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      data.withdrawalId = id;
+
+      // Burn full amount
+      const { transactionId } = await createBuzzTransaction({
+        amount,
+        fromAccountId: userId,
+        fromAccountType: 'cashSettled',
+        toAccountId: 0,
+        toAccountType: 'yellow',
+        type: TransactionType.Withdrawal,
+        description: 'Withdrawal request',
+      });
+
+      if (!transactionId) {
+        throw new Error('Failed to create transaction');
+      }
+
+      data.transactionId = transactionId as string;
+
+      // Update withdrawal record
+      await dbWrite.$executeRaw`
+        UPDATE "CashWithdrawal"
+        SET "transactionId" = ${transactionId}, status = 'InternalValue'
+        WHERE id = ${id};
+      `;
     }
-
-    data.transactionId = transactionId as string;
-
-    // Update withdrawal record
-    await dbWrite.$executeRaw`
-      UPDATE "CashWithdrawal"
-      SET "transactionId" = ${transactionId}, status = 'InternalValue'
-      WHERE id = ${id};
-    `;
+    const id = data.withdrawalId;
 
     // Create tipalti payment
     const refCode = await ensureWithdrawalRefCode(id, userId);
@@ -1078,6 +1179,120 @@ export async function withdrawCash(userId: number, amount: number) {
 
     throw e;
   }
+}
+
+/**
+ * A keyed withdrawal's burn and its CashWithdrawal row, each exactly once per key.
+ *
+ * The burn is charged under `externalTransactionId` outside any transaction (`chargeByExternalId`:
+ * looked up first, so a retry whose burn landed continues from it; an unknown outcome resent once
+ * under the same id). Then a short transaction under the key's lock: a row already holding this
+ * burn means an earlier request with the key recorded the withdrawal (`created: false`); a burn
+ * refunded meanwhile is refused; otherwise the row is written here, holding the burn's id. A row
+ * that fails to write has its burn refunded under the same lock unless another request recorded it.
+ *
+ * For a row that already exists: sent to Tipalti (it has a payment batch) is done; still
+ * `InternalValue` with no batch is another request with the key in flight, "may have gone through";
+ * anything else was undone (the failure path cancels it after refunding the burn), a 400.
+ */
+async function burnAndRecordKeyedWithdrawal({
+  userId,
+  amount,
+  toWithdraw,
+  fee,
+  method,
+  externalTransactionId,
+}: {
+  userId: number;
+  amount: number;
+  toWithdraw: number;
+  fee: number;
+  method: CashWithdrawalMethod;
+  externalTransactionId: string;
+}): Promise<{ created: false } | { created: true; id: string; transactionId: string }> {
+  const { transactionId } = await chargeByExternalId(
+    {
+      amount,
+      fromAccountId: userId,
+      fromAccountType: 'cashSettled',
+      toAccountId: 0,
+      toAccountType: 'yellow',
+      type: TransactionType.Withdrawal,
+      description: 'Withdrawal request',
+      externalTransactionId,
+    },
+    { reusable: true, declinedMessage: 'Unable to withdraw this amount' }
+  );
+
+  const context = { userId, amount };
+  const outcomeContext = { externalTransactionId, ...context };
+  // `transactionId` is unique on CashWithdrawal; scoped to the user as well.
+  const findRecorded = (tx: Prisma.TransactionClient) =>
+    tx.cashWithdrawal.findFirst({
+      where: { userId, transactionId },
+      select: { id: true, status: true, metadata: true },
+    });
+  const isRefunded = async () =>
+    !!(await getTransactionByExternalId(
+      refundExternalTransactionId(transactionId),
+      CHARGE_LOCKED_READ
+    ));
+
+  let recordFailed = false;
+  let recorded: Awaited<ReturnType<typeof findRecorded>> | { id: string; created: true };
+  try {
+    recorded = await withChargeKeyLock(externalTransactionId, context, async (tx) => {
+      const existing = await findRecorded(tx);
+      if (existing) return existing;
+      let refunded: boolean;
+      try {
+        refunded = await isRefunded();
+      } catch (lookupError) {
+        throw paymentOutcomeUnknown(outcomeContext, 'refund check before recording failed', {
+          lookupError,
+        });
+      }
+      if (refunded) throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+      try {
+        const { id } = await tx.cashWithdrawal.create({
+          data: {
+            userId,
+            amount: toWithdraw,
+            fee,
+            status: CashWithdrawalStatus.InternalValue,
+            method,
+            transactionId,
+          },
+          select: { id: true },
+        });
+        return { id, created: true as const };
+      } catch (error) {
+        recordFailed = true;
+        throw error;
+      }
+    });
+  } catch (error) {
+    if (!recordFailed) throw recordStepError(error, outcomeContext);
+    await refundUnlessRecorded(externalTransactionId, context, {
+      isRecorded: async (tx) => !!(await findRecorded(tx)),
+      isRefunded,
+      refund: () =>
+        refundTransaction(
+          transactionId,
+          'Failed to record your withdrawal request.',
+          undefined,
+          CHARGE_LOCKED_REFUND
+        ),
+    });
+    throw error;
+  }
+
+  if ('created' in recorded) return { created: true, id: recorded.id, transactionId };
+  if ((recorded.metadata as CashWithdrawalMetadataSchema | null)?.paymentBatchId)
+    return { created: false };
+  if (recorded.status === CashWithdrawalStatus.InternalValue)
+    throw paymentOutcomeUnknown(outcomeContext, 'another request with this key is sending it');
+  throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
 }
 
 export async function getPoolParticipants(month?: Date, includeNegativeAmounts = false) {
