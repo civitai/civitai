@@ -23,6 +23,12 @@ const VALID_MANIFEST = {
   },
 };
 
+/**
+ * VALID_MANIFEST plus a surface (a `page`), which `validateSubmission` also requires: a manifest
+ * declaring neither a page nor a non-empty targets array fails its build.
+ */
+const SUBMITTABLE_MANIFEST = { ...VALID_MANIFEST, page: { path: '/', title: 'Test Block' } };
+
 // H-8: the validator gates iframe.src against the app's registered
 // OauthClient.allowedOrigins. Tests that expect VALID_MANIFEST to pass must
 // supply an AppContext whose allowedOrigins covers blocks.civitai.com — the
@@ -848,14 +854,14 @@ describe('BlockManifestValidator', () => {
      */
     it('is NOT exempted by the moderator APPROVE relaxation', async () => {
       const manifest = {
-        ...VALID_MANIFEST,
+        ...SUBMITTABLE_MANIFEST,
         auth: 'oauth',
         scopes: ['models:read:self', 'apps:storage:shared:read'],
       };
       // POSITIVE CONTROL that the knob is real and IS being passed: the sensitive-scope rule
       // it governs really does stop firing under the same options object.
       const sensitive = await BlockManifestValidator.validateSubmission(
-        { ...VALID_MANIFEST, scopes: ['models:read:self', 'apps:storage:shared:write'] },
+        { ...SUBMITTABLE_MANIFEST, scopes: ['models:read:self', 'apps:storage:shared:write'] },
         APP_CTX,
         { enforceSensitiveScopeJustification: false }
       );
@@ -1249,7 +1255,7 @@ describe('BlockManifestValidator', () => {
       });
 
       it('APPROVE context is exempted through validateSubmission too', async () => {
-        const manifest = { ...VALID_MANIFEST, scopes: ['collections:read:private'] };
+        const manifest = { ...SUBMITTABLE_MANIFEST, scopes: ['collections:read:private'] };
         const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX, {
           enforceSensitiveScopeJustification: false,
         });
@@ -1406,7 +1412,10 @@ describe('BlockManifestValidator', () => {
   // is what every manifest-SUBMISSION path calls (git-push webhook, developer
   // API, blocks.updateManifest, publish-request approve).
   describe('validateSubmission — settings pattern ReDoS gate', () => {
-    const withSettings = (settings: Record<string, unknown>) => ({ ...VALID_MANIFEST, settings });
+    const withSettings = (settings: Record<string, unknown>) => ({
+      ...SUBMITTABLE_MANIFEST,
+      settings,
+    });
     const stringField = (extra: Record<string, unknown>) => ({
       scope: 'publisher',
       type: 'string',
@@ -1417,7 +1426,9 @@ describe('BlockManifestValidator', () => {
     });
 
     it('accepts a normal manifest with no settings', async () => {
-      expect(await BlockManifestValidator.validateSubmission(VALID_MANIFEST, APP_CTX)).toEqual({
+      expect(
+        await BlockManifestValidator.validateSubmission(SUBMITTABLE_MANIFEST, APP_CTX)
+      ).toEqual({
         valid: true,
       });
     });
