@@ -120,6 +120,12 @@ export const WATCHLIST = [
   },
   {
     rule: 'SHARED_STATE',
+    module: 'src/server/otel-root-presample-state.ts',
+    globalKey: '__civitaiOtelRootPresample',
+    why: "The one holder of the `otel-root-presample` gate and of the one-shot mark the inbound HTTP instrumentation's hook leaves for the sampler. `src/instrumentation.node.ts` builds the hook and the sampler, while the gate is installed later from a dynamically imported module. A copy with private state never sees the gate (the flag reads ON and nothing changes, with no error), and a mark set through one copy's hook never reaches the other copy's sampler, so a pre-sampled request would be ratio-sampled a second time. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",
+  },
+  {
+    rule: 'SHARED_STATE',
     module: 'packages/civitai-telemetry/src/redis-command-metrics.ts',
     globalKey: '__civitaiRedisCommandMetricsState',
     why: "The one holder of the batch gate, the latched in-flight gauge mode (and its resolver) and the per-metric-instance accumulators behind the redis command metrics (`redis_commands_inflight`, `redis_command_duration_seconds`). `src/instrumentation.node.ts` installs the gate and the gauge-mode resolver ONCE at boot, and the bridge that `src/server/prom/client.ts` publishes (from whichever copy evaluates last) writes into the accumulators that the metric's collect() flushes. A copy holding private state never sees the gate or the resolver (so it latches the gauge to per-command for good while the flag reads on), and its accumulators are flushed only by a collect() that another copy may have replaced, so samples are lost with no error. Vitest cannot see this (it loads each module once), so this gate is the only check that can.",

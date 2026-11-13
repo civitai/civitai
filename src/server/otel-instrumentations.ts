@@ -1,5 +1,6 @@
 import type { NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { createRootPresampleIgnoreHook } from '~/server/otel-root-presample';
 
 /**
  * Values of `OTEL_HTTP_INSTRUMENTATION` that turn the inbound HTTP instrumentation OFF.
@@ -60,8 +61,25 @@ export function isHttpInstrumentationEnabled(env: NodeJS.ProcessEnv = process.en
  *     read differently; span metrics that drop `next.bubble` spans do not.
  */
 export function buildOtelInstrumentations(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  options: {
+    /**
+     * The head sampler's ratio. When given, inbound requests can be pre-sampled at that ratio
+     * before the instrumentation does any span work (`otel-root-presample` flag, default off; see
+     * ~/server/otel-root-presample). Must be the SAME ratio the sampler uses, and the sampler must
+     * be wrapped in `PresampledRootSampler`, or the sampled share changes.
+     */
+    presampleRatio?: number;
+  } = {}
 ): NodeSDKConfiguration['instrumentations'] {
   if (!isHttpInstrumentationEnabled(env)) return [];
-  return [new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })];
+  const { presampleRatio } = options;
+  return [
+    new HttpInstrumentation({
+      ignoreOutgoingRequestHook: () => true,
+      ...(presampleRatio === undefined
+        ? {}
+        : { ignoreIncomingRequestHook: createRootPresampleIgnoreHook(presampleRatio) }),
+    }),
+  ];
 }

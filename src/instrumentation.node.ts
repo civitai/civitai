@@ -23,6 +23,7 @@ import {
   buildOtelInstrumentations,
   isHttpInstrumentationEnabled,
 } from '~/server/otel-instrumentations';
+import { PresampledRootSampler } from '~/server/otel-root-presample';
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
@@ -240,16 +241,21 @@ if (!OTEL_ENABLED) {
     const sampleRatio =
       Number.isFinite(parsedRatio) && parsedRatio >= 0 && parsedRatio <= 1 ? parsedRatio : 0.1;
     const ratioSampler = new TraceIdRatioBasedSampler(sampleRatio);
-    const sampler = new ParentBasedSampler({
-      root: ratioSampler,
-      // This is a PUBLIC API with no traceparent stripping at the edge, so an
-      // untrusted client could send `traceparent: ...-01` to force a sampled
-      // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
-      // would let any client defeat the sampling cap and re-saturate CPU — the
-      // exact failure this change prevents. Apply the ratio to remote parents
-      // too. Local parents still inherit, so intra-process traces stay coherent.
-      remoteParentSampled: ratioSampler,
-    });
+    // `PresampledRootSampler` delegates every call to the ParentBased sampler below, except the
+    // root span of an inbound request the HTTP instrumentation's hook already pre-sampled at the
+    // same ratio (`otel-root-presample` flag, default off — see ~/server/otel-root-presample).
+    const sampler = new PresampledRootSampler(
+      new ParentBasedSampler({
+        root: ratioSampler,
+        // This is a PUBLIC API with no traceparent stripping at the edge, so an
+        // untrusted client could send `traceparent: ...-01` to force a sampled
+        // decision. ParentBased's default `remoteParentSampled` is AlwaysOn, which
+        // would let any client defeat the sampling cap and re-saturate CPU — the
+        // exact failure this change prevents. Apply the ratio to remote parents
+        // too. Local parents still inherit, so intra-process traces stay coherent.
+        remoteParentSampled: ratioSampler,
+      })
+    );
     console.log(`[instrumentation.node] OTEL trace sampling ratio: ${sampleRatio}`);
     console.log(
       `[instrumentation.node] OTEL inbound HTTP instrumentation: ${
@@ -318,7 +324,7 @@ if (!OTEL_ENABLED) {
       // HttpInstrumentation (inbound-only) unless OTEL_HTTP_INSTRUMENTATION=off. The choice,
       // and what turning it off does and does not remove, is documented in
       // ~/server/otel-instrumentations.
-      instrumentations: buildOtelInstrumentations(),
+      instrumentations: buildOtelInstrumentations(process.env, { presampleRatio: sampleRatio }),
     });
 
     sdk.start();
@@ -333,6 +339,10 @@ if (!OTEL_ENABLED) {
         m.registerWithSpanSkipUnsampledGate();
         console.log(
           '[instrumentation.node] withSpan skip-unsampled gate armed (flag-controlled: otel-withspan-skip-unsampled)'
+        );
+        m.registerRootPresampleGate();
+        console.log(
+          '[instrumentation.node] root pre-sample gate armed (flag-controlled: otel-root-presample)'
         );
       })
       .catch((err) => {
