@@ -379,12 +379,22 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
   if (MEDIA_REF_CONSUMERS.has(type)) return true;
   if (!isPlainObject(input)) return false;
   if (type === 'videogen') {
+    if (hasRecasedTwin(input, 'engine')) return false;
     return typeof input.engine === 'string' && SCANNED_VIDEO_GEN_ENGINES.has(input.engine);
   }
   if (type === 'composemedia') {
-    return isPlainObject(input.output) && input.output.type === 'video';
+    if (hasRecasedTwin(input, 'output') || !isPlainObject(input.output)) return false;
+    return !hasRecasedTwin(input.output, 'type') && input.output.type === 'video';
   }
   return false;
+}
+
+/**
+ * Whether `object` also carries `key` under another casing. Which twin the
+ * orchestrator binds is not something this repo can know, so the check refuses.
+ */
+function hasRecasedTwin(object: Record<string, unknown>, key: string): boolean {
+  return Object.keys(object).some((k) => k !== key && k.toLowerCase() === key);
 }
 
 /** A reference path that ends on a text field (`TEXT_REF_LEAVES`), never on media. */
@@ -395,8 +405,18 @@ export function isTextRefPath(path: unknown): boolean {
   return !!last && TEXT_REF_LEAVES.has(last.toLowerCase());
 }
 
-const MEDIA_LIKE_SEGMENT =
-  /url|uri|blob|^id$|Id$|^(images?|videos?|frames|svg|audio|model|mesh|samples?|preview|thumbnail)$/i;
+/**
+ * A path segment or field name that may hold media: a url, a blob, an id or a
+ * media container. `Id` and `Uri` are matched by case so `grid`, `paid` and
+ * `security` stay plain names.
+ */
+export function isMediaLikeSegment(segment: string): boolean {
+  return (
+    /url|blob|^uri|uris?$|^ids?$|^(images?|videos?|frames|svg|audio|model|mesh|samples?|preview|thumbnail)$/i.test(
+      segment
+    ) || /Uri|(Id|ID)s?$/.test(segment)
+  );
+}
 
 /**
  * Whether a reference may reach media. Another step's output (or a repeat
@@ -409,12 +429,18 @@ export function refMayReachMedia(source: string, path: unknown): boolean {
   return path
     .split(/[.[\]]+/)
     .filter(Boolean)
-    .some((segment) => MEDIA_LIKE_SEGMENT.test(segment));
+    .some(isMediaLikeSegment);
 }
 
-/** The first input key naming an output destination, at any depth, or `null`. */
-function findWriteTargetKey(value: unknown, depth = 0): string | null {
-  if (typeof value !== 'object' || value === null || depth > WORKFLOW_INPUT_DEPTH_MAX) return null;
+const TOO_DEEP = Symbol('too deep');
+
+/**
+ * The first key naming an output destination, at any depth, or `null`. Past
+ * `WORKFLOW_INPUT_DEPTH_MAX` it returns `TOO_DEEP` rather than stop looking.
+ */
+function findWriteTargetKey(value: unknown, depth = 0): string | typeof TOO_DEEP | null {
+  if (typeof value !== 'object' || value === null) return null;
+  if (depth > WORKFLOW_INPUT_DEPTH_MAX) return TOO_DEEP;
   if (Array.isArray(value)) {
     for (const entry of value) {
       const found = findWriteTargetKey(entry, depth + 1);
@@ -513,7 +539,10 @@ function checkStepInput(
   sources: ReadonlySet<string>,
   state: WalkState
 ): string | null {
-  if (findWriteTargetKey(input)) return WRITE_TARGET_ERROR;
+  const writeTarget = findWriteTargetKey(input);
+  if (writeTarget === TOO_DEEP)
+    return `input is nested deeper than ${WORKFLOW_INPUT_DEPTH_MAX} levels`;
+  if (writeTarget) return WRITE_TARGET_ERROR;
   state.mediaRefsAllowed = acceptsMediaRefs(stepType, input);
   if (isMergeStepType(stepType)) {
     const mergeSources = readMergeSources(input);
@@ -582,6 +611,19 @@ export function resolveBlockWorkflowGraph(body: {
     errorCode: 'workflow_ref_invalid',
     error: `workflow step ${index}: ${problem}`,
   });
+  // A `$arguments` reference resolves to whatever the arguments hold, so a
+  // destination key there reaches a step input the per-step check never saw.
+  const argumentsTarget = findWriteTargetKey(body.arguments);
+  if (argumentsTarget) {
+    return {
+      ok: false,
+      errorCode: 'workflow_ref_invalid',
+      error:
+        argumentsTarget === TOO_DEEP
+          ? `workflow arguments are nested deeper than ${WORKFLOW_INPUT_DEPTH_MAX} levels`
+          : `workflow arguments: ${WRITE_TARGET_ERROR}`,
+    };
+  }
 
   const steps: ResolvedBlockWorkflowStep[] = [];
   const earlier = new Set<string>([WORKFLOW_ARGUMENTS_REF]);

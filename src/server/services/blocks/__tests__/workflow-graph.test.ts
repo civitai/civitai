@@ -5,6 +5,7 @@ import {
   isMergeStepType,
   isRepeatStepType,
   MEDIA_REF_ANALYSERS,
+  isMediaLikeSegment,
   MEDIA_REF_ERROR,
   resolveBlockWorkflowGraph,
   SCANNED_VIDEO_GEN_ENGINES,
@@ -774,6 +775,48 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     if (!r.ok) expect(r.error).toBe(`workflow step 0: ${MEDIA_REF_ERROR}`);
   });
 
+  it.each([
+    'imageUrl',
+    'src.uri',
+    'blob',
+    'blobId',
+    'id',
+    'images',
+    'images[0]',
+    'video',
+    'frames',
+    'model',
+    'mesh',
+    'samples.0',
+    'thumbnail',
+    'imageId',
+    'blobIDs',
+    'sourceUri',
+  ])('🔴 a non-generator may not take `$arguments` path "%s"', (path) => {
+    mediaRefused([step({ $type: 'chatCompletion', input: { x: ref('$arguments', path) } })], 0);
+  });
+
+  it('🔴 a merge field sourced from `$arguments` follows the same rule', () => {
+    const merge = (path: string) =>
+      step({
+        $type: 'merge',
+        input: {
+          onMissing: 'fail',
+          fields: { x: { $ref: '$arguments', path, reduce: 'first' } },
+        },
+      });
+    mediaRefused([merge('images[0].url')], 0);
+    expect(resolved([merge('caption')])).toHaveLength(1);
+  });
+
+  it('CONTROL: a non-generator may take the app’s own text and scalar `$arguments`', () => {
+    for (const path of ['prompt', 'strength', 'settings.steps', 'grid', 'paid', 'security']) {
+      expect(
+        resolved([step({ $type: 'chatCompletion', input: { x: ref('$arguments', path) } })])
+      ).toHaveLength(1);
+    }
+  });
+
   it('🔴 refuses any input key naming an output destination, at any depth and in any case', () => {
     for (const input of [
       { sourceUrl: 'https://a', destinationUrl: 'https://b' },
@@ -783,6 +826,40 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
       const r = refusal([step({ $type: 'transcode', input })]);
       expect(r.error).toBe(`workflow step 0: ${WRITE_TARGET_ERROR}`);
     }
+  });
+
+  it('🔴 refuses a destination key in the workflow arguments, or arguments too deep to check', () => {
+    const graph = (args: Record<string, unknown>) =>
+      resolveBlockWorkflowGraph({
+        steps: [step({ $type: 'transcode', input: { opts: ref('$arguments', 'opts') } })],
+        arguments: args,
+      });
+    const r = graph({ opts: { destinationUrl: 'https://b' } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe(`workflow arguments: ${WRITE_TARGET_ERROR}`);
+    let deep: Record<string, unknown> = { destinationUrl: 'https://b' };
+    for (let i = 0; i < WORKFLOW_INPUT_DEPTH_MAX + 1; i += 1) deep = { a: deep };
+    const d = graph({ opts: deep });
+    expect(d.ok).toBe(false);
+    if (!d.ok) expect(d.error).toContain('workflow arguments are nested deeper than');
+    expect(graph({ opts: { quality: 'high' } }).ok).toBe(true);
+  });
+
+  it('🔴 refuses media into videoGen or composeMedia when a gating key has a re-cased twin', () => {
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', Engine: 'kling', images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+    const compose = (input: Record<string, unknown>) =>
+      step({ $type: 'composeMedia', input: { ...input, elements: [{ url: ref('gen') }] } });
+    mediaRefused([gen, compose({ output: { type: 'video' }, Output: { type: 'audio' } })], 1);
+    mediaRefused([gen, compose({ output: { type: 'video', TYPE: 'audio' } })], 1);
   });
 
   it('every orchestrator input type field naming a destination is one this refuses', () => {
@@ -805,8 +882,6 @@ describe('analysers that may take media', () => {
     require.resolve('@civitai/orchestration-client/dist/generated/types.gen.d.ts'),
     'utf8'
   );
-  const MEDIA_LIKE =
-    /url|uri|blob|^id$|Id$|^(images?|videos?|frames|svg|audio|model|mesh|samples?|preview|thumbnail)$/i;
 
   function typeBody(name: string): string | null {
     const m = typesSource.match(new RegExp(`^export type ${name} = `, 'm'));
@@ -831,7 +906,7 @@ describe('analysers that may take media', () => {
     const found: string[] = [];
     for (const [, key, type] of body.matchAll(/(\w+)\??:\s*([^;]+);/g)) {
       const at = [...path, key].join('.');
-      if (MEDIA_LIKE.test(key)) found.push(`${name}.${at}`);
+      if (isMediaLikeSegment(key)) found.push(`${name}.${at}`);
       for (const [, ref] of type.matchAll(/\b([A-Z]\w+)\b/g)) {
         if (/Blob$/.test(ref)) found.push(`${name}.${at}: ${ref}`);
         if (typeBody(ref)?.trim().startsWith('{'))

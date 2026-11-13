@@ -187,7 +187,7 @@ function isOrchestratorBlobLike(value: unknown): boolean {
  * app controls nesting through `merge`, so a forwarded subtree past the cap would
  * carry unwalked blobs raw. A legitimate output that reaches the cap loses that
  * subtree instead, and `civitai_app_block_output_truncated_total` counts it.
-
+ *
  * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
  * walked value is the orchestrator's JSON-parsed `step.output`, so it is acyclic.
  * What it is NOT is depth-limited: V8 parses JSON iteratively (ten million
