@@ -23,12 +23,13 @@ export async function nextRefreshIds(
 type RefreshQueue = {
   lanes: Map<string, { add(ref: DomainRef): void }>;
   readonly isFull: boolean;
+  flush(): Promise<void>;
 };
 
 /**
- * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane. A pass stops
- * early when the queue fills or a read fails and resumes on the next tick; a tick is skipped while
- * the previous pass runs or the queue is full.
+ * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane, flushing the
+ * queue whenever it fills. A failed read or flush stops the pass, and the next tick resumes it from
+ * the same cursor; a tick is skipped while the previous pass runs.
  */
 export function startRefreshers(
   domains: Domain<any>[],
@@ -43,17 +44,18 @@ export function startRefreshers(
     let running = false;
     const pass = async () => {
       do {
+        if (queue.isFull) await queue.flush();
         const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
         for (const id of ids) lane.add({ id });
         cursor = next;
-      } while (cursor !== 0 && !queue.isFull);
+      } while (cursor !== 0);
     };
     return [
       setInterval(() => {
-        if (running || queue.isFull) return;
+        if (running) return;
         running = true;
         pass()
-          .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh read failed`))
+          .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh pass stopped`))
           .finally(() => {
             running = false;
           });

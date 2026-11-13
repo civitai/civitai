@@ -41,27 +41,6 @@ describe('refresh walk timers', () => {
     }
   });
 
-  test('a full queue skips the tick', async () => {
-    vi.useFakeTimers();
-    try {
-      const added: number[] = [];
-      const queue = {
-        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
-        isFull: true,
-      };
-      const timers = startRefreshers(
-        [domain('storyline', { everyMs: 1000, batch: 2 })],
-        queue as never,
-        { query: async () => ({ rows: [{ id: 1 }] }) } as never
-      );
-      await vi.advanceTimersByTimeAsync(3000);
-      expect(added).toEqual([]);
-      for (const t of timers) clearInterval(t);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   test('a failed read keeps the cursor, and a pass still running holds the next tick', async () => {
     vi.useFakeTimers();
     try {
@@ -102,18 +81,69 @@ describe('refresh walk timers', () => {
     }
   });
 
-  test('a queue that fills stops the pass, and the next tick resumes it', async () => {
+  test('a queue that fills is flushed and the pass finishes within the tick', async () => {
     vi.useFakeTimers();
     try {
       const added: number[] = [];
+      const pending = new Set<number>();
       const ids = [1, 2, 3, 4, 5];
+      let flushes = 0;
+      const queue = {
+        lanes: new Map([
+          ['storyline', { add: (r: { id: number }) => void (added.push(r.id), pending.add(r.id)) }],
+        ]),
+        get isFull() {
+          return pending.size >= 2;
+        },
+        flush: async () => {
+          flushes++;
+          pending.clear();
+        },
+      };
+      const pg = {
+        query: async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: ids
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        }),
+      };
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 2 })],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([1, 2, 3, 4, 5]);
+      expect(flushes).toBe(2);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a failed flush stops the pass, and the next tick resumes from the same cursor', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const cursors: number[] = [];
+      const ids = [1, 2, 3, 4, 5];
+      let full = false;
+      let flushFails = true;
       const queue = {
         lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
-        isFull: false,
+        get isFull() {
+          return full;
+        },
+        flush: async () => {
+          if (flushFails) throw new Error('qdrant down');
+          full = false;
+        },
       };
       const pg = {
         query: async (_sql: string, [cursor, batch]: [number, number]) => {
-          queue.isFull = cursor === 0; // full after the first read only
+          cursors.push(cursor);
+          if (cursor === 0) full = true;
           return {
             rows: ids
               .filter((id) => id > cursor)
@@ -129,9 +159,10 @@ describe('refresh walk timers', () => {
       );
       await vi.advanceTimersByTimeAsync(1000);
       expect(added).toEqual([1, 2]);
-      queue.isFull = false;
+      flushFails = false;
       await vi.advanceTimersByTimeAsync(1000);
       expect(added).toEqual([1, 2, 3, 4, 5]);
+      expect(cursors).toEqual([0, 2, 4]);
       for (const t of timers) clearInterval(t);
     } finally {
       vi.useRealTimers();
