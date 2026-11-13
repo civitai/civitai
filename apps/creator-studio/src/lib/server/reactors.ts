@@ -88,8 +88,8 @@ export const preLaunchImageReactionListed = (viewerId: number) => sql`
     )))`;
 
 /**
- * Only a scanned, safe-level profile picture not held for CSAM review, as the main app's `servableProfilePictureSql`;
- * the legacy User.image is unmoderated. Reads alias `p` (Image).
+ * Only a scanned, safe-level profile picture, never one held for CSAM review (which the main app's
+ * `servableProfilePictureSql` also excludes); the legacy User.image is unmoderated. Reads alias `p` (Image).
  */
 export const safeProfilePictureUrl = () => sql`
   CASE
