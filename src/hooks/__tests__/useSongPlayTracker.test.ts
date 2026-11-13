@@ -124,6 +124,47 @@ describe('useSongPlayTracker', () => {
     expect(h.complete).toHaveBeenCalledTimes(1);
   });
 
+  it('counts a short song whose last time report falls just short of its end', async () => {
+    // `timeupdate` fires a few times a second, so the last report of a 12 s song can read 11.8;
+    // the next song starts in the same update as `ended`, so nothing renders at 12.
+    await render({ durationSec: 12 });
+    await advance(11_800);
+    await render({ listenedSec: 11.8 });
+    await render({ songId: 502, playbackId: 'p2', durationSec: 200, listenedSec: 0 });
+    await advance(1_000);
+    expect(h.complete).toHaveBeenCalledTimes(1);
+    expect(h.complete).toHaveBeenCalledWith({ imageId: SONG_ID });
+  });
+
+  it('does not count a short song left well before its end', async () => {
+    await render({ durationSec: 12 });
+    await advance(10_000);
+    await render({ listenedSec: 10 });
+    await render({ songId: 502, playbackId: 'p2', durationSec: 200, listenedSec: 0 });
+    await advance(5_000);
+    expect(h.complete).not.toHaveBeenCalled();
+  });
+
+  it('sends a held complete before the next playback starts (repeat-one of a short song)', async () => {
+    // The server keys a start by listener and song: a replay's start sent first would replace the
+    // one the held complete is measured against.
+    const calls: string[] = [];
+    h.start.mockImplementation(async () => (calls.push('start'), { started: true }));
+    h.complete.mockImplementation(async () => (calls.push('complete'), { counted: true }));
+    let answer: (value: { started: boolean }) => void = () => undefined;
+    h.start.mockImplementationOnce(
+      () => (calls.push('start'), new Promise((resolve) => (answer = resolve)))
+    );
+    await render({ durationSec: 12 });
+    await advance(500);
+    await act(async () => answer({ started: true }));
+    await advance(11_500);
+    await render({ listenedSec: 12 });
+    await render({ playbackId: 'p2', listenedSec: 0 });
+    await advance(1_000);
+    expect(calls).toEqual(['start', 'complete', 'start']);
+  });
+
   it('never calls when disabled', async () => {
     await render({ enabled: false });
     await advance(30_000);
