@@ -37,7 +37,10 @@ import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
-import { getShowcaseImageFilter } from '~/server/services/blocked-browsing-tags.service';
+import {
+  getShowcaseImageFilter,
+  resolveShowcaseExclusions,
+} from '~/server/services/blocked-browsing-tags.service';
 import {
   allBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -189,14 +192,27 @@ export default MixedAuthEndpoint(async function handler(
   }
 });
 
-/** A version's showcase at `browsingLevel`, with the tags its exclusions read. */
-export const getVersionShowcaseImages = (modelVersionIds: number[], browsingLevel: number) =>
-  getImagesForModelVersion({
+/**
+ * A version's showcase at `browsingLevel`, with the tags `getShowcaseImageFilter` reads. Tags excluded
+ * at every region's level are also left out in SQL, so they don't use up the per-version limit; one
+ * excluded only above SFW stays in, for `showcaseVariesByRegion` to see.
+ */
+export async function getVersionShowcaseImages(modelVersionIds: number[], browsingLevel: number) {
+  const [withinSfw, withinAll] = await Promise.all([
+    resolveShowcaseExclusions({ browsingLevel: sfwBrowsingLevelsFlag }),
+    resolveShowcaseExclusions({ browsingLevel: allBrowsingLevelsFlag }),
+  ]);
+  const excludedTagIds = withinSfw.excludedTagIds.filter((id) =>
+    withinAll.excludedTagIds.includes(id)
+  );
+  return getImagesForModelVersion({
     modelVersionIds,
     include: ['meta', 'tags'],
     imagesPerVersion: 10,
     browsingLevel,
+    excludedTagIds,
   });
+}
 
 const aboveSfw = (nsfwLevel: number) => (nsfwLevel & ~sfwBrowsingLevelsFlag) !== 0;
 
@@ -252,7 +268,8 @@ export async function prepareModelVersionResponse(
   if (!primaryFile) return null;
 
   images ??= await getVersionShowcaseImages([version.id], browsingLevel);
-  images = images.filter(await getShowcaseImageFilter({ browsingLevel }));
+  const shows = await getShowcaseImageFilter({ browsingLevel });
+  images = images.filter((image) => (image.nsfwLevel & browsingLevel) !== 0 && shows(image));
   images = (
     await holdShowcaseImages(
       { [version.id]: { images } },
@@ -379,12 +396,17 @@ export async function resModelVersionDetails(
 ) {
   const hidden =
     !!modelVersion && (await getHiddenModelVersionIds([modelVersion], getViewer)).size > 0;
-  if (!modelVersion || hidden) return res.status(404).json({ error: 'Model not found' });
+  const browsingLevel = apiBrowsingLevel(req);
+  if (!modelVersion || hidden) {
+    // A region held to SFW is refused versions the others are served.
+    if (browsingLevel !== allBrowsingLevelsFlag)
+      res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(404).json({ error: 'Model not found' });
+  }
 
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
-  const browsingLevel = apiBrowsingLevel(req);
   const showSfwFace = showsSfwFace(browsingLevel);
   const images = await getVersionShowcaseImages([modelVersion.id], browsingLevel);
   const body = await prepareModelVersionResponse(
@@ -401,7 +423,7 @@ export async function resModelVersionDetails(
   // Nor a response that varies by region, which the shared cache doesn't key on.
   if (
     isPrivateModelVersion(modelVersion) ||
-    (showSfwFace && modelVersion.model.sfwName != null) ||
+    modelVersion.model.sfwName != null ||
     (await showcaseVariesByRegion(modelVersion.nsfwLevel, images))
   )
     res.setHeader('Cache-Control', 'private, no-store');

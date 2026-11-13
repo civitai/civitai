@@ -94,20 +94,26 @@ const UNKNOWN_TAGS_PG = {
 
 let showcase: ReturnType<typeof image>[] = [];
 
-/** As the SQL does: only the requested levels, and tags only when asked for. */
+/** As the SQL does: the requested levels, no excluded tag, the limit, and tags only when asked for. */
 function fakeGetImages({
   browsingLevel,
+  excludedTagIds = [],
+  imagesPerVersion = 1,
   include = [],
 }: {
   browsingLevel?: number;
+  excludedTagIds?: number[];
+  imagesPerVersion?: number;
   include?: string[];
 }) {
   return showcase
     .filter((i) => !browsingLevel || (i.nsfwLevel & browsingLevel) !== 0)
+    .filter((i) => !(i.tags ?? []).some((t) => excludedTagIds.includes(t)))
+    .slice(0, imagesPerVersion)
     .map(({ tags, ...i }) => (include.includes('tags') ? { ...i, tags } : i));
 }
 
-function modelVersion(nsfwLevel: number) {
+function modelVersion(nsfwLevel: number, sfwName: string | null = null) {
   return {
     id: VERSION,
     modelId: 77,
@@ -133,6 +139,7 @@ function modelVersion(nsfwLevel: number) {
     metrics: [],
     model: {
       name: 'M',
+      sfwName,
       type: 'LORA',
       nsfw: false,
       poi: false,
@@ -185,9 +192,13 @@ async function call(route: Route, host: string) {
   return { res, version: res.body?.[0] };
 }
 
-function serve(versionNsfwLevel: number, images: ReturnType<typeof image>[]) {
+function serve(
+  versionNsfwLevel: number,
+  images: ReturnType<typeof image>[],
+  sfwName: string | null = null
+) {
   showcase = images;
-  const version = modelVersion(versionNsfwLevel);
+  const version = modelVersion(versionNsfwLevel, sfwName);
   dbMock.dbRead.$queryRaw.mockResolvedValue([version]);
   dbMock.dbRead.modelFile.findFirst.mockResolvedValue({ modelVersion: version });
   dbMock.dbRead.modelFile.findMany.mockResolvedValue([{ modelVersion: version }]);
@@ -223,9 +234,32 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
       const { version } = await call(route, host);
       expect(servedIds(version)).toEqual([UNTAGGED_PG.id]);
     });
+
+    it('resolves the exclusions at the SFW level for a region held to it', async () => {
+      region.restricted = true;
+      serve(NsfwLevel.PG, [UNTAGGED_PG, CHILD_PG]);
+      const { version } = await call(route, host);
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id, CHILD_PG.id]);
+    });
+
+    it('does not let excluded images use up the ten-image showcase', async () => {
+      const people = Array.from({ length: 10 }, (_, i) =>
+        image({ id: 100 + i, nsfwLevel: NsfwLevel.PG, tags: [PEOPLE_TAG] })
+      );
+      serve(NsfwLevel.PG, [...people, UNTAGGED_PG, UNTAGGED_PG13]);
+      const { version } = await call(route, host);
+      expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_PG13.id]);
+    });
   });
 
   describe('the shared cache', () => {
+    it('keeps out an SFW version of a model with a civitai.com face, served the other face', async () => {
+      serve(NsfwLevel.PG, [UNTAGGED_PG], 'Safe name');
+      const { res, version } = await call(route, 'civitai.com');
+      expect(version.model.name).toBe('M');
+      expect(noStore(res)).toBe(true);
+    });
+
     it.each([false, true])(
       'keeps out a version above SFW, for either region (restricted: %s)',
       async (restricted) => {
@@ -257,5 +291,18 @@ describe.each(ROUTES)('%s, anonymous', (route) => {
         expect(servedIds(version)).toEqual([UNTAGGED_PG.id, UNTAGGED_PG13.id]);
       }
     );
+  });
+});
+
+describe('id, a version the region is not served', () => {
+  it.each([
+    [true, true],
+    [false, false],
+  ])('404 kept out of the shared cache: restricted %s → %s', async (restricted, kept) => {
+    region.restricted = restricted;
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    const { res } = await call('id', 'civitai.com');
+    expect(res.statusCode).toBe(404);
+    expect(noStore(res)).toBe(kept);
   });
 });

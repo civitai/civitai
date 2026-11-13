@@ -90,7 +90,10 @@ export default PublicEndpoint(
 
     // Only its owner or a moderator is still holding a Private version here.
     if (
-      files.some((file) => isPrivateModelVersion(file.modelVersion)) ||
+      files.some(
+        (file) =>
+          isPrivateModelVersion(file.modelVersion) || file.modelVersion.model.sfwName != null
+      ) ||
       variesByRegion.some(Boolean)
     )
       res.setHeader('Cache-Control', 'private, no-store');
