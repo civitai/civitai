@@ -1089,9 +1089,8 @@ describe('the mystery pack submission fee across an unknown outcome', () => {
   it('a retry with the same key after an unanswered charge charges once and submits once', async () => {
     ledger.queueFault('lose-response');
     ledger.failLookups();
-    await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow(
-      PAYMENT_OUTCOME_UNKNOWN_MESSAGE
-    );
+    // What the creator is told is pinned below; here only that it failed and wrote nothing.
+    await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow();
     expect(await packCount()).toBe(0);
 
     ledger.failLookups(null);

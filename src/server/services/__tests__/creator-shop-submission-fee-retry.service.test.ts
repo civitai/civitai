@@ -163,9 +163,8 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
   it('a retry with the same key after an unanswered charge charges once and submits', async () => {
     ledger.queueFault('lose-response');
     ledger.failLookups();
-    await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow(
-      PAYMENT_OUTCOME_UNKNOWN_MESSAGE
-    );
+    // What the creator is told is pinned below; here only that it failed and created nothing.
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow();
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
 
     ledger.failLookups(null);

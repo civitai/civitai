@@ -100,7 +100,8 @@ describe('on-site tip across an unknown outcome', () => {
     buzz.getTransactionByExternalId
       .mockResolvedValueOnce(null) // the pre-send check
       .mockRejectedValueOnce(new Error('buzz read failed')); // the resolve after the lost response
-    await expect(imageTip(KEY)).rejects.toThrow(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
+    // What the tipper is told is pinned below; here only that it failed.
+    await expect(imageTip(KEY)).rejects.toThrow();
 
     await imageTip(KEY);
 
