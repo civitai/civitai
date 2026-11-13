@@ -5,7 +5,7 @@ import { semanticSearchCandidateCache } from '~/server/metrics/semantic-search.m
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createSingleFlight } from '~/server/utils/cache-helpers';
 import { withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
-import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import {
   buildQdrantFilter,
   type CandidateSource,
@@ -15,8 +15,6 @@ import {
 // collectPage asks for at most 100 ids at a time, so a request spans one or two blocks. Blocks are
 // aligned so viewers whose hydration drops different images still share them past page 1.
 export const CANDIDATE_BLOCK = 100;
-// A stalled Redis read costs a search this, not the client's 10 s socket timeout.
-const CACHE_READ_DEADLINE_MS = 250;
 
 type Block = { ids: number[]; correctedQuery?: string };
 
@@ -24,13 +22,9 @@ type Block = { ids: number[]; correctedQuery?: string };
 const blockFlight = createSingleFlight();
 type CandidateKey = `${typeof REDIS_KEYS.SEMANTIC_SEARCH.CANDIDATES}:${string}`;
 
-async function readBlock(key: CandidateKey) {
-  try {
-    return await withTimeoutFallback(redis.packed.get<Block>(key), CACHE_READ_DEADLINE_MS, null);
-  } catch {
-    return null;
-  }
-}
+// Through the shared guard: a deadline, and the breaker that skips Redis while it is down.
+const readBlock = (key: CandidateKey) =>
+  clusterCacheGuard.readOr('semantic candidates get', () => redis.packed.get<Block>(key), null);
 
 /**
  * The key is everything the service answers from (the query and the Qdrant filter, which carries the
@@ -57,7 +51,9 @@ export function withCandidateCache(
         .update(JSON.stringify({ query, qdrantFilter, sort, start, viewerClass }))
         .digest('hex')}` as const;
     const write = (key: CandidateKey, block: Block) =>
-      redis.packed.set(key, block, { EX: CacheTTL.md }).catch(() => undefined);
+      clusterCacheGuard.writeBestEffort('semantic candidates set', () =>
+        redis.packed.set(key, block, { EX: CacheTTL.md })
+      );
 
     const block = (start: number) => {
       const key = keyOf(start);

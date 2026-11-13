@@ -107,9 +107,10 @@ describe('withCandidateCache', () => {
 
   it('makes one call for identical searches in flight together', async () => {
     const { source, calls } = rankedSource();
-    const search = withCandidateCache('images', source, 'user');
+    // Separate wrappers are separate requests: only the pod-wide single-flight can join them.
+    const search = () => withCandidateCache('images', source, 'user');
     const args = { query: { text: 'fox' }, filter: filter(), offset: 0, limit: 50 };
-    await Promise.all([search(args), search(args), search(args)]);
+    await Promise.all([search()(args), search()(args), search()(args)]);
     expect(calls).toHaveLength(1);
   });
 

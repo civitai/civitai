@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 // Per-pod (per-process) admission control for CPU-heavy routes.
 //
 // Node.js runs ONE JS thread. The feed/image endpoints do seconds of synchronous
@@ -22,6 +21,8 @@ import { TRPCError } from '@trpc/server';
 //
 // Correctness: Node is single-threaded, so the check-then-increment below is
 // atomic (no preemption between the comparison and `active++` — it's synchronous).
+
+import { TRPCError } from '@trpc/server';
 
 export class BulkheadFullError extends Error {
   constructor(public readonly key: string, public readonly limit: number) {
