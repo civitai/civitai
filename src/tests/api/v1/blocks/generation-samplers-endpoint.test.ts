@@ -16,16 +16,18 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 const { capturedOpts } = vi.hoisted(() => ({ capturedOpts: [] as unknown[] }));
 
+type Handler = (req: NextApiRequest, res: NextApiResponse) => unknown;
+
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
-  withBlockScope: (handler: any, opts: unknown) => {
+  withBlockScope: (handler: Handler, opts: unknown) => {
     capturedOpts.push(opts);
-    return (req: any, res: any) => {
+    return (req: NextApiRequest & { blockClaims?: BlockTokenClaims }, res: NextApiResponse) => {
       req.blockClaims = claimsBox.claims;
       return handler(req, res);
     };
   },
 }));
-vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: any) => handler }));
+vi.mock('@civitai/next-axiom', () => ({ withAxiom: (handler: Handler) => handler }));
 
 function fakeClaims(): BlockTokenClaims {
   return {
@@ -44,8 +46,12 @@ function fakeClaims(): BlockTokenClaims {
   } as unknown as BlockTokenClaims;
 }
 
+type FakeRes = { statusCode?: number; body?: unknown };
+
 function fakeRes() {
-  const res: any = {
+  const res = {
+    statusCode: undefined as number | undefined,
+    body: undefined as unknown,
     status(code: number) {
       this.statusCode = code;
       return this;
@@ -58,7 +64,7 @@ function fakeRes() {
       return this;
     },
   };
-  return res as NextApiResponse & { statusCode?: number; body?: any };
+  return res as unknown as NextApiResponse & FakeRes;
 }
 
 async function invoke(method: string) {
@@ -116,9 +122,16 @@ describe('GET /api/v1/blocks/generation-samplers', () => {
     // src/shared/generation/__tests__/sampler-options.test.ts).
     expect(body.ecosystems.SDXL).toEqual({
       sampler: {
-        options: ['Euler a', 'Euler', 'Heun', 'LMS', 'DDIM', 'DPM++ 2M Karras', 'DPM2', 'DPM2 a'].map(
-          (v) => ({ value: v, label: v })
-        ),
+        options: [
+          'Euler a',
+          'Euler',
+          'Heun',
+          'LMS',
+          'DDIM',
+          'DPM++ 2M Karras',
+          'DPM2',
+          'DPM2 a',
+        ].map((v) => ({ value: v, label: v })),
         default: 'Euler a',
       },
       byModelVersion: {},
@@ -139,7 +152,10 @@ describe('GET /api/v1/blocks/generation-samplers', () => {
           expect(typeof o.value).toBe('string');
           expect(typeof o.label).toBe('string');
         }
-        expect(c.options.map((o) => o.value), eco).toContain(c.default);
+        expect(
+          c.options.map((o) => o.value),
+          eco
+        ).toContain(c.default);
       }
     }
 

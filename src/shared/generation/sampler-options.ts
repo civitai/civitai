@@ -77,10 +77,10 @@ type ChoiceProbe = { kind: 'determined'; choice: SamplerChoice | null } | { kind
 function toChoice(probe: FieldProbe): ChoiceProbe {
   if (probe.kind === 'undetermined') return { kind: 'undetermined' };
   if (probe.kind === 'absent') return { kind: 'determined', choice: null };
-  const meta = probe.meta as { options?: unknown } | undefined;
-  if (!Array.isArray(meta?.options) || meta.options.length === 0) return { kind: 'undetermined' };
+  const rawOptions: unknown = (probe.meta as { options?: unknown } | undefined)?.options;
+  if (!Array.isArray(rawOptions) || rawOptions.length === 0) return { kind: 'undetermined' };
   const options: SamplerOption[] = [];
-  for (const o of meta.options as unknown[]) {
+  for (const o of rawOptions as unknown[]) {
     const { value, label } = (o ?? {}) as { value?: unknown; label?: unknown };
     if (typeof value !== 'string' || typeof label !== 'string') return { kind: 'undetermined' };
     options.push({ value, label });

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as GenerationConstants from '~/shared/constants/generation.constants';
+import type * as FormGraphDefs from '~/shared/form-graph/defs';
 
 /**
  * DRIFT: the catalog must be DERIVED from the generator's own sampler sources, so changing a
@@ -19,12 +21,12 @@ const MUTANT_SD = ['Drift Sampler A', 'Euler a', 'Drift Sampler B'] as const;
 const MARKER = 'zz-drift-marker';
 
 vi.mock('~/shared/constants/generation.constants', async (importOriginal) => {
-  const real = await importOriginal<typeof import('~/shared/constants/generation.constants')>();
+  const real = await importOriginal<typeof GenerationConstants>();
   return { ...real, samplers: MUTANT_SD };
 });
 
 vi.mock('~/shared/form-graph/defs', async (importOriginal) => {
-  const real = await importOriginal<typeof import('~/shared/form-graph/defs')>();
+  const real = await importOriginal<typeof FormGraphDefs>();
   return {
     ...real,
     selectDef: (o: Parameters<typeof real.selectDef>[0]) =>
@@ -50,7 +52,10 @@ describe('the sampler catalog follows its sources', () => {
     // Positive control: at least the SD five, Chroma, Anima, the Klein bases and HiDream Full.
     expect(choices.length).toBeGreaterThanOrEqual(10);
     for (const [eco, c] of choices) {
-      expect(c.options.map((o) => o.value), eco).toContain(MARKER);
+      expect(
+        c.options.map((o) => o.value),
+        eco
+      ).toContain(MARKER);
     }
   });
 });

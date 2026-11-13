@@ -95,7 +95,11 @@ describe('getSamplerCatalog — contract', () => {
     for (const [eco, family] of Object.entries(catalog.ecosystems)) {
       const choices = [family.sampler, ...Object.values(family.byModelVersion)];
       for (const c of choices) {
-        if (c) expect(c.options.map((o) => o.value), eco).toContain(c.default);
+        if (c)
+          expect(
+            c.options.map((o) => o.value),
+            eco
+          ).toContain(c.default);
       }
     }
   });
