@@ -27,6 +27,11 @@ const postPage = (await import('~/pages/posts/[postId]/[[...postSlug]]')) as unk
 const modelPage = (await import('~/pages/models/[id]/[[...slug]]')) as unknown as {
   getServerSideProps: { resolver: Resolver };
 };
+const challengeEventPage = (await import(
+  '~/pages/challenges/events/[id]/[[...slug]]'
+)) as unknown as {
+  getServerSideProps: { resolver: Resolver };
+};
 const errorPage = (await import('~/pages/_error')).default as unknown as {
   getInitialProps: (ctx: unknown) => Promise<{ statusCode?: number }>;
 };
@@ -108,5 +113,85 @@ describe('_error', () => {
     const res = { statusCode: 500 };
     await errorPage.getInitialProps({ res, err: new Error('boom') });
     expect(res.statusCode).toBe(500);
+  });
+});
+
+// An id that cannot name a row reaches Postgres as an out-of-range value and fails there; it must
+// still read as "not found", not as a server error.
+describe('odd numeric ids are notFound before any lookup', () => {
+  const outOfRange = () =>
+    Object.assign(new Error('value "99999999999" is out of range for type integer'), {
+      severity: 'ERROR',
+      code: '22003',
+    });
+  const ODD = ['1.5', '99999999999', 'Infinity', '0', '-3'];
+  const eventFetch = vi.fn();
+  const ssg = { challenge: { getEventById: { fetch: eventFetch } } };
+
+  beforeEach(() => {
+    h.getPostDetail.mockRejectedValue(outOfRange());
+    h.getDefaultModelVersion.mockRejectedValue(outOfRange());
+    eventFetch.mockReset().mockRejectedValue(outOfRange());
+  });
+
+  it.each(ODD)('post id %s', async (postId) => {
+    const r = await postPage.getServerSideProps
+      .resolver({
+        ctx: { params: { postId }, query: {}, res: response().res },
+        session: null,
+        features: {},
+      })
+      .catch((e) => e);
+    expect(r).toEqual({ notFound: true });
+    expect(h.getPostDetail).not.toHaveBeenCalled();
+  });
+
+  it.each(ODD)('model id %s', async (id) => {
+    const r = await modelPage.getServerSideProps
+      .resolver({
+        ctx: { params: { id, slug: [] }, query: {}, res: response().res },
+        session: null,
+        features: {},
+      })
+      .catch((e) => e);
+    expect(r).toEqual({ notFound: true });
+    expect(h.getDefaultModelVersion).not.toHaveBeenCalled();
+  });
+
+  it.each(ODD)('modelVersionId %s on a valid model id', async (modelVersionId) => {
+    const r = await modelPage.getServerSideProps
+      .resolver({
+        ctx: { params: { id: '22', slug: [] }, query: { modelVersionId }, res: response().res },
+        session: null,
+        features: {},
+      })
+      .catch((e) => e);
+    expect(r).toEqual({ notFound: true });
+    expect(h.getDefaultModelVersion).not.toHaveBeenCalled();
+  });
+
+  it.each(ODD)('challenge event id %s', async (id) => {
+    const r = await challengeEventPage.getServerSideProps
+      .resolver({
+        ctx: { params: {}, query: { id }, res: response().res },
+        ssg,
+        features: { challengePlatform: true },
+      })
+      .catch((e) => e);
+    expect(r).toEqual({ notFound: true });
+    expect(eventFetch).not.toHaveBeenCalled();
+  });
+
+  // Control: a valid id still goes to the lookup (here it fails, so the page does not 404).
+  it('a valid id still reaches the lookup', async () => {
+    const r = await postPage.getServerSideProps
+      .resolver({
+        ctx: { params: { postId: '2147483647' }, query: {}, res: response().res },
+        session: null,
+        features: {},
+      })
+      .catch((e) => e);
+    expect(h.getPostDetail).toHaveBeenCalledTimes(1);
+    expect(r).not.toEqual({ notFound: true });
   });
 });

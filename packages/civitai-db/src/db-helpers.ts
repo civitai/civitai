@@ -6,6 +6,7 @@ import client from 'prom-client';
 import { type DbLogFn } from './env';
 import { limitConcurrency } from './concurrency-helpers';
 import { guardPool } from './pool-guard';
+import { markDbConnectError } from './db-errors';
 
 // Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
 types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
@@ -207,7 +208,7 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
           { pool: label, result: err ? 'err' : 'ok' },
           elapsedSeconds()
         );
-        cb(err, client, done);
+        cb(err ? markDbConnectError(err) : err, client, done);
       });
     }
 
@@ -221,7 +222,8 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       },
       (e: unknown) => {
         pgPoolAcquireHistogram.observe({ pool: label, result: 'err' }, elapsedSeconds());
-        throw e;
+        // Marked so a raw socket error (ECONNREFUSED, …) reads as the DATABASE's: see db-errors.ts.
+        throw markDbConnectError(e);
       }
     );
   }) as typeof pool.connect;
@@ -375,9 +377,11 @@ export async function queryWithTimeout<R extends QueryResultRow = any>(
   params?: ReadonlyArray<unknown>
 ): Promise<QueryResult<R>> {
   const client = await pool.connect();
-  // A client-side deadline just past the server's own: it fires only when the server's answer
-  // never arrives (a half-open connection), never on a query the server is still allowed to run.
-  // On expiry the client is destroyed (released with an error), which also rejects whatever is
+  // A client-side deadline just past the server's own statement_timeout. It covers the whole
+  // transaction, so besides a server answer that never arrives (a half-open connection) it can also
+  // fire while a transaction-mode pooler is still queueing the BEGIN for a server connection — time
+  // the server's statement_timeout never sees. When that wait plus BEGIN/SET takes longer than the
+  // margin, the deadline can cut short a statement the server would still have allowed. On expiry the client is destroyed (released with an error), which also rejects whatever is
   // still pending on it — it is never handed to the next caller. A timer rather than pg's
   // `query_timeout`, so the statements keep the plain `(text, values)` call shape.
   const deadlineMs = Number(timeoutMs) + QUERY_DEADLINE_MARGIN_MS;

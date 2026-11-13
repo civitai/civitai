@@ -194,8 +194,7 @@ import {
   splitUppercase,
 } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { isNumber } from '~/utils/type-guards';
-import { isNotFoundError, nullIfNotFound } from '~/server/utils/ssr-not-found';
+import { isNotFoundError, isPageId, nullIfNotFound } from '~/server/utils/ssr-not-found';
 
 import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -226,7 +225,8 @@ export const getServerSideProps = createServerSideProps({
     };
     const id = Number(params.id);
     const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
-    if (!isNumber(id)) return { notFound: true };
+    if (!isPageId(id)) return { notFound: true };
+    if (modelVersionId !== undefined && !isPageId(modelVersionId)) return { notFound: true };
     const version = await getDefaultModelVersion({
       modelId: id,
       modelVersionId,

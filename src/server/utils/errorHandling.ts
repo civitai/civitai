@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 // this repo's pnpm layout, so importing it directly fails to resolve.
 import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
-import { isDbUnavailableError } from '@civitai/db/db-errors';
+import { dbUnavailableCause } from '@civitai/db/db-errors';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
 import { clickhouseFailSoftCounter } from '~/server/prom/client';
@@ -228,11 +228,15 @@ export const prismaErrorToTrpcCode: Record<string, TRPC_ERROR_CODE_KEY> = {
 /** What a client is told when the database is unreachable: never the driver's text. */
 export const DB_UNAVAILABLE_MESSAGE = 'This service is temporarily unavailable. Please try again.';
 
-function prismaKnownToTrpcError(error: Prisma.PrismaClientKnownRequestError) {
+/**
+ * The one Prisma known-error → TRPCError mapping. `message` (a caller's own text) replaces the
+ * driver's, except on a 503: that is always the generic message.
+ */
+function prismaKnownToTrpcError(error: Prisma.PrismaClientKnownRequestError, message?: string) {
   const code = prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR';
   return new TRPCError({
     code,
-    message: code === 'SERVICE_UNAVAILABLE' ? DB_UNAVAILABLE_MESSAGE : error.message,
+    message: code === 'SERVICE_UNAVAILABLE' ? DB_UNAVAILABLE_MESSAGE : message ?? error.message,
     cause: error,
   });
 }
@@ -242,9 +246,22 @@ function prismaKnownToTrpcError(error: Prisma.PrismaClientKnownRequestError) {
  * as a retryable SERVICE_UNAVAILABLE; `undefined` for anything else. Only INTERNAL_SERVER_ERROR and
  * TIMEOUT are re-mapped: a code a handler chose on purpose (NOT_FOUND, …) is left alone.
  */
-export function toDbUnavailableError(error: TRPCError): TRPCError | undefined {
+export function toDbUnavailableError(error: TRPCError, path?: string): TRPCError | undefined {
   if (error.code !== 'INTERNAL_SERVER_ERROR' && error.code !== 'TIMEOUT') return undefined;
-  if (!isDbUnavailableError(error)) return undefined;
+  const dbCause = dbUnavailableCause(error);
+  if (!dbCause) return undefined;
+  // A 503 skips the central error log (src/pages/api/trpc/[trpc].ts), so the re-map itself is
+  // logged: the original error's name and code only — never its message, which names the host.
+  console.warn(
+    JSON.stringify({
+      type: 'warning',
+      name: 'db-unavailable-503',
+      message: 'Database unavailable: served 503',
+      path,
+      errorName: dbCause.name,
+      errorCode: dbCause.code,
+    })
+  );
   return new TRPCError({
     code: 'SERVICE_UNAVAILABLE',
     message: DB_UNAVAILABLE_MESSAGE,
@@ -336,11 +353,7 @@ export function throwNotFoundError(message: string | null = null) {
 
 export function throwDbCustomError(message?: string) {
   return (error: PrismaClientKnownRequestError) => {
-    throw new TRPCError({
-      code: prismaErrorToTrpcCode[error.code] ?? 'INTERNAL_SERVER_ERROR',
-      message: message ?? error.message,
-      cause: error,
-    });
+    throw prismaKnownToTrpcError(error as Prisma.PrismaClientKnownRequestError, message);
   };
 }
 

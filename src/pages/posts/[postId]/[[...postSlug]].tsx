@@ -8,8 +8,7 @@ import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/uti
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ssrClientOnlySectionsOn } from '~/server/utils/ssr-client-only-sections';
 import { Availability } from '~/shared/utils/prisma/enums';
-import { isNumber } from '~/utils/type-guards';
-import { isNotFoundError, rethrowSsrError } from '~/server/utils/ssr-not-found';
+import { isNotFoundError, isPageId, rethrowSsrError } from '~/server/utils/ssr-not-found';
 
 export default function PostDetailPage({
   postId,
@@ -29,7 +28,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx, ssg, session, features }) => {
     const params = (ctx.params ?? {}) as { postId: string };
     const postId = Number(params.postId);
-    if (!isNumber(postId)) return { notFound: true };
+    if (!isPageId(postId)) return { notFound: true };
     try {
       const post = await getPostDetail({ id: postId, user: session?.user });
 

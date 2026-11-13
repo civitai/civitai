@@ -11,6 +11,20 @@ import { isDbUnavailableError } from '@civitai/db/db-errors';
  * 503 + `Retry-After` when the failure is a dependency being unavailable.
  */
 
+/** Postgres `int4` upper bound: every page id column here is a 32-bit integer. */
+const MAX_PAGE_ID = 2_147_483_647;
+
+/**
+ * A page id that can name a row: a positive whole number that fits the id column. Anything else
+ * (`1.5`, `Infinity`, `99999999999`) can only be a miss, so the page answers notFound before the
+ * lookup — which would otherwise fail with an out-of-range error and surface as a 500.
+ */
+export function isPageId(value: unknown): value is number {
+  return (
+    typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= MAX_PAGE_ID
+  );
+}
+
 /** `code` at the top level is a server-side `TRPCError`; `data.code` is a `TRPCClientError`. */
 export function isNotFoundError(error: unknown): boolean {
   const err = error as { code?: string; data?: { code?: string } } | null | undefined;

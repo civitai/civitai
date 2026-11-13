@@ -317,12 +317,13 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
 });
 
 // An unreachable database (or no pooled connection in time) answers a retryable 503 with a generic
-// message instead of a 500 carrying the driver's text. Inside recordProcedureDuration, so the
-// duration metric records the code the client actually gets.
-const mapDbUnavailable = t.middleware(async ({ next }) => {
+// message instead of a 500 carrying the driver's text. Database-originated errors only (db-errors.ts),
+// and each re-map logs a warning line, since a 503 skips the central error log. Inside
+// recordProcedureDuration, so the duration metric records the code the client actually gets.
+const mapDbUnavailable = t.middleware(async ({ path, next }) => {
   const result = await next();
   if (!result.ok) {
-    const mapped = toDbUnavailableError(result.error);
+    const mapped = toDbUnavailableError(result.error, path);
     if (mapped) throw mapped;
   }
   return result;

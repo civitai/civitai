@@ -9,7 +9,7 @@ import { EventHero } from '~/components/Challenge/EventHero';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { nullIfNotFound } from '~/server/utils/ssr-not-found';
+import { isPageId, nullIfNotFound } from '~/server/utils/ssr-not-found';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
 import { removeEmpty } from '~/utils/object-helpers';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
@@ -27,7 +27,7 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.challengePlatform) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
-    if (!result.success) return { notFound: true };
+    if (!result.success || !isPageId(result.data.id)) return { notFound: true };
 
     if (ssg) {
       const event = await ssg.challenge.getEventById
