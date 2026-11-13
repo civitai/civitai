@@ -8,6 +8,7 @@ import type { EcosystemData } from './types';
 
 export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>((data) => {
   const shared = {
+    ...(data.yue2Instrumental ? { instrumental: true } : {}),
     maxDuration: data.duration,
     seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
   };
@@ -26,7 +27,7 @@ export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>
         mode: 'full',
       },
     };
-    return [createMusicConceptStep(data.prompt, data.duration), music];
+    return [createMusicConceptStep(data.prompt, data.duration, data.yue2Instrumental), music];
   }
 
   return [
@@ -36,7 +37,7 @@ export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>
         loras: {},
         ...shared,
         style: data.musicDescription,
-        lyrics: data.lyrics,
+        lyrics: data.yue2Instrumental ? '' : data.lyrics ?? '',
         steps: data.steps,
         mode: data.yue2Mode,
         abc: data.yue2Mode !== 'off' ? data.yue2Abc?.trim() || undefined : undefined,
