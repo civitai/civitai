@@ -17,7 +17,8 @@ import { registerCounterWithLabels, registerHistogram } from '~/server/prom/clie
 // (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
 // key fetch; `revocation` = sysRedis TOKEN_STATE/ALL read.
 export type SessionLeg = 'identity' | 'identity-by-id' | 'hub-write' | 'jwks' | 'revocation';
-export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'error';
+// `breaker-open`: only the revocation leg, when the sys read breaker refused the read without waiting.
+export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'breaker-open' | 'error';
 
 // Sub-ms (cache/crypto) → ~30s (a fully-stalled hairpin, the incident tail). Covers the whole span so a
 // 40-90s stall lands in the +Inf bucket and the p99 is unmistakable.
@@ -29,7 +30,7 @@ const durationHistogram = registerHistogram({
     'Duration (seconds) of each session-resolution leg as seen by the CALLING app — the app→hub identity ' +
     'fetch (cookie + by-userId API-key/OAuth), the hub invalidate/refresh writes, the JWKS verify/refetch, ' +
     'and the sysRedis revocation read. The hub cannot observe these hops. Labeled by leg ' +
-    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|error).',
+    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|breaker-open|error).',
   labelNames: ['leg', 'outcome'] as const,
   buckets: [...SESSION_RESOLUTION_BUCKETS],
 });

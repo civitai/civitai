@@ -224,6 +224,8 @@ export const config = {
     comicAlias: process.env.VECTOR_COMIC_ALIAS ?? 'comics_semantic',
     crucibleCollection: process.env.VECTOR_CRUCIBLE_COLLECTION ?? 'crucibles_wemm2b_256_v1',
     crucibleAlias: process.env.VECTOR_CRUCIBLE_ALIAS ?? 'crucibles_semantic',
+    challengeCollection: process.env.VECTOR_CHALLENGE_COLLECTION ?? 'challenges_wemm2b_256_v1',
+    challengeAlias: process.env.VECTOR_CHALLENGE_ALIAS ?? 'challenges_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

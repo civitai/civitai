@@ -6,6 +6,12 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  getFliptLocalOverride,
+} from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
@@ -14,12 +20,46 @@ import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metad
 export type QueryTracker = Pick<Tracker, 'action'>;
 export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'error' | false;
 
-/** Only moderators search above the safe levels. */
-export function resolveSemanticBrowsingLevel(requested: number | undefined, user?: SessionUser) {
+/**
+ * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
+ * levels. Only an explicit `false` lifts it: pass `await isNonModClampOn()`.
+ */
+export function resolveSemanticBrowsingLevel(
+  requested: number | undefined,
+  user: SessionUser | undefined,
+  clamp: boolean | undefined
+) {
   const level = requested || publicBrowsingLevelsFlag;
-  if (user?.isModerator) return level;
+  if (user?.isModerator || clamp === false) return level;
   return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
 }
+
+/**
+ * The containment switch, read fail-closed: only a successful evaluation that answers off lifts
+ * the clamp. An unavailable client, an evaluation error (a missing key throws) or a malformed
+ * answer all hold it. Read uncached so a flip takes effect at the next refresh.
+ */
+export async function isNonModClampOn(): Promise<boolean> {
+  const flag = FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_NONMOD_CLAMP;
+  const override = getFliptLocalOverride(flag);
+  if (override !== undefined) return override !== 'off';
+  await ensureFliptInitialized();
+  const client = getFliptClientSync();
+  if (!client) return true;
+  try {
+    return (
+      client.evaluateBoolean({ flagKey: flag, entityId: 'global', context: {} }).enabled !== false
+    );
+  } catch (e) {
+    const now = Date.now();
+    if (now - lastClampEvalErrorLog > 60_000) {
+      lastClampEvalErrorLog = now;
+      console.error(`[flipt] ${flag} could not be evaluated; holding the clamp`, e);
+    }
+    return true;
+  }
+}
+let lastClampEvalErrorLog = 0;
 
 /**
  * "More like this" never rates above its anchor: the viewer's levels at or below the anchor's.

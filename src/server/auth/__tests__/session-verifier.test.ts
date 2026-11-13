@@ -2,13 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 
-// Leg 3 of the SPOF fix: the sysRedis revocation read is now bounded by withSysReadDeadline and FAILS OPEN on
-// a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
+// Leg 3 of the SPOF fix: the sysRedis revocation read (the shared createRevocationCheck) is bounded by
+// withSysReadBreaker and FAILS OPEN on a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
 const h = vi.hoisted(() => ({
   observeSessionLeg: vi.fn(),
   hGet: vi.fn(),
   get: vi.fn(),
-  withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+  withSysReadBreaker: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
   logSysRedisFailOpen: vi.fn(),
 }));
 
@@ -23,11 +23,11 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: h.logSysRe
 // copies drift silently: this factory used to declare TOKEN_STATE as 'sys:token-state' and
 // ALL as 'sys:all' while production uses 'session:token-state' and 'session:all', so the
 // suite exercised keys Redis never sees and could not have caught a key-name regression.
-// The client and the withSysReadDeadline control surface stay overridden.
+// The client and the withSysReadBreaker control surface stay overridden.
 vi.mock('~/server/redis/client', async () => ({
   ...(await import('@civitai/redis/client')),
   sysRedis: { hGet: h.hGet, get: h.get },
-  withSysReadDeadline: h.withSysReadDeadline,
+  withSysReadBreaker: h.withSysReadBreaker,
 }));
 
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';
@@ -38,7 +38,7 @@ const claims = (over: Partial<SessionClaims> = {}): SessionClaims =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.withSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  h.withSysReadBreaker.mockImplementation((p) => p); // transparent by default
   h.hGet.mockResolvedValue(null);
   h.get.mockResolvedValue(null);
 });
@@ -85,22 +85,24 @@ describe('isRevoked — bounded revocation read (leg 3)', () => {
   });
 
   it('FAILS OPEN (false) on a read-deadline timeout and records outcome "timeout"', async () => {
-    // withSysReadDeadline rejects with a "…read timed out after Nms" Error when the deadline trips.
-    h.withSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    // withSysReadBreaker rejects with an error tagged `reason: 'timeout'` when the deadline trips.
+    h.withSysReadBreaker.mockRejectedValue(
+      Object.assign(new Error('sysRedis read timed out after 1000ms'), { reason: 'timeout' })
+    );
     expect(await isRevoked(claims())).toBe(false); // a stalled revocation check must NOT block login
     expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'timeout', expect.any(Number));
     expect(h.logSysRedisFailOpen).toHaveBeenCalled();
   });
 
   it('FAILS OPEN (false) on a generic read error and records outcome "error"', async () => {
-    h.withSysReadDeadline.mockRejectedValue(new Error('ECONNRESET'));
+    h.withSysReadBreaker.mockRejectedValue(new Error('ECONNRESET'));
     expect(await isRevoked(claims())).toBe(false);
     expect(h.observeSessionLeg).toHaveBeenCalledWith('revocation', 'error', expect.any(Number));
   });
 
   it('returns false without reading when the token has no jti', async () => {
     expect(await isRevoked(claims({ jti: undefined }))).toBe(false);
-    expect(h.withSysReadDeadline).not.toHaveBeenCalled();
+    expect(h.withSysReadBreaker).not.toHaveBeenCalled();
     expect(h.observeSessionLeg).not.toHaveBeenCalled();
   });
 });
