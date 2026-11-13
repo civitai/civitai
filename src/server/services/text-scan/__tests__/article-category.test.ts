@@ -95,6 +95,7 @@ describe('scanEntity: the article category call', () => {
   it('submits a category-only workflow offering the pickable categories', async () => {
     const result = await scanEntity({ entityType: 'Article', entityId: 5 });
     expect(result).toEqual({ status: 'submitted', workflowId: 'wf-1' });
+    expect(categoryCalls()).toHaveLength(1);
     const [body] = categoryCalls();
     expect(body.tags).toEqual(['text-category', 'Article']);
     expect(body.metadata).toMatchObject({ entityId: 5, categories: ['guide', 'story'], textHash });
@@ -225,8 +226,10 @@ describe('handleTextCategoryCallback', () => {
   it('writes the chosen category tag id', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(categoryWorkflow('{"category":"story"}'));
     await callback();
-    expect(writes()).toHaveLength(1);
-    expect(writes()[0].slice(1)).toEqual([12, 5]);
+    expect(writeArgs()).toEqual([[12, 5]]);
+    const sql = (writes()[0][0] as TemplateStringsArray).join('?');
+    expect(sql).toMatch(/UPDATE "Article" SET "systemCategoryId" = \? WHERE id = \?/);
+    expect(sql).not.toContain('TagsOnArticle');
   });
 
   it.each([

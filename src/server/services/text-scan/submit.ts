@@ -401,7 +401,8 @@ export async function scanEntity({
       })
     );
   }
-  // Not on an unchanged text. A retry resends it: the first submit may have failed before it ran.
+  // Skipped when the scan was unchanged (not submitted) and on the web-search-only pass; a main-pass
+  // retry resends it because the first submit may have died before the call.
   if (profile.category && result.status === 'submitted' && !first.variant)
     await submitTextCategoryScan({
       entityType,

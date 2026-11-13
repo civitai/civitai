@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getCategoryTags } from '~/server/services/system-cache';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
+import { tryParseJson } from '~/server/services/text-scan/parse';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { segmentUserText } from '~/server/services/text-scan/segment';
@@ -57,14 +58,10 @@ export function parseTextCategoryStep(
   step: ChatCompletionStepLike | undefined,
   names: readonly string[]
 ): string | null {
-  try {
-    const content = step?.output?.choices?.[0]?.message?.content;
-    const json = step?.output?.parsed ?? (content ? JSON.parse(content.trim()) : undefined);
-    const value = (json as { category?: unknown } | undefined)?.category;
-    return typeof value === 'string' && names.includes(value) ? value : null;
-  } catch {
-    return null;
-  }
+  const content = step?.output?.choices?.[0]?.message?.content;
+  const json = step?.output?.parsed ?? (content ? tryParseJson(content) : undefined);
+  const value = (json as { category?: unknown } | undefined)?.category;
+  return typeof value === 'string' && names.includes(value) ? value : null;
 }
 
 /** The scan callback URL, marked so the webhook routes it here instead of to the scan callback. */
@@ -101,7 +98,7 @@ export async function submitTextCategoryScan({
 }) {
   const names = (await getPickableCategories(hook)).map((c) => c.name);
   if (!names.length) return log('warning', 'no categories to offer', { entityType, entityId });
-  // The opening is enough to classify, and one call keeps the cost flat however long the text is.
+  // One segment: the opening suffices and cost stays flat.
   const [user] = segmentUserText(subject, { budget: maxInputChars, maxSegments: 1 }).segments;
   if (!user?.trim()) return;
 

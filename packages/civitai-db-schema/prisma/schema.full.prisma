@@ -6312,6 +6312,7 @@ model Article {
   contentLinkHold    ArticleContentLinkHold?
 
   @@index([status, ingestion, nsfwLevel])
+  @@index([systemCategoryId])
 }
 
 /// Content urls of an article that linking created no Image row for yet: deferred until the
