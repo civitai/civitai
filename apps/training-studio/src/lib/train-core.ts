@@ -647,7 +647,8 @@ async function assertMatureAcked(
 
 export interface SubmittedBatch {
   workflowIds: string[];
-  /** Why the runs after `workflowIds` did not start; set only when some runs landed and a later one failed. */
+  /** Why the runs after `workflowIds` were not confirmed (they may still have started); set only when
+   *  some runs landed and a later one failed. */
   failure?: string;
 }
 

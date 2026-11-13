@@ -73,7 +73,7 @@ async function readErrorBody(response: Response): Promise<unknown> {
 export type BuzzLogFn = (message: string, ...args: unknown[]) => void;
 
 /** Default bound on a read (GET). A per-call `timeoutMs` overrides it. */
-export const DEFAULT_READ_TIMEOUT_MS = 3_000;
+export const DEFAULT_READ_TIMEOUT_MS = 10_000;
 /** Default bound on a single-transaction write. A per-call `timeoutMs` overrides it. */
 export const DEFAULT_WRITE_TIMEOUT_MS = 10_000;
 /** Default bound on the batch write, which carries up to hundreds of transactions in one body. */
@@ -570,8 +570,14 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   const refundMultiTransaction = (body: BuzzRefundMultiTransactionInput, opts?: BuzzWriteOptions) =>
     post('/multi-transactions/refund', body, opts) as Promise<RefundMultiTransactionResponse>;
 
+  // Refunds keep the old retry-everything rule, unlike other writes. A missed refund leaves a user
+  // charged for something they never got; a duplicate refund attempt is one the service can reject
+  // (it answers 409 when a refund for the transaction already exists). So here a retry is the safer
+  // side of an unknown outcome, the opposite of a charge.
   const refundTransaction = (transactionId: string, body: BuzzRefundTransactionInput = {}) =>
-    post(`/transactions/${transactionId}/refund`, body) as Promise<RefundTransactionResponse>;
+    post(`/transactions/${transactionId}/refund`, body, {
+      shouldRetry: () => true,
+    }) as Promise<RefundTransactionResponse>;
 
   return {
     endpoint,

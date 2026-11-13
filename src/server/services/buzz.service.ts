@@ -792,7 +792,8 @@ export async function createBuzzTransaction(
     fromAccountType?: BuzzAccountType;
     insufficientFundsErrorMsg?: string;
   },
-  // Optional per-call bound. Absent means today's behaviour: unbounded.
+  // Optional per-call overrides. Absent, the client's write defaults apply: a 10s bound, and a
+  // retry only when the request provably never left.
   opts?: BuzzWriteOptions
 ) {
   if (entityType && entityId && toAccountId === undefined) {
@@ -836,6 +837,7 @@ export async function createBuzzTransaction(
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
+  const externalTransactionId = payload.externalTransactionId || crypto.randomUUID();
   const data = await buzzService.createTransaction(
     {
       ...payload,
@@ -843,7 +845,7 @@ export async function createBuzzTransaction(
       // key passes one derived from it (and a retry of that caller reuses it); for one that does
       // not, this id is minted ONCE per call, before the client's own retries, so the client never
       // resends a write under a second id. It does not make a caller's own re-run idempotent.
-      externalTransactionId: payload.externalTransactionId || crypto.randomUUID(),
+      externalTransactionId,
       details: {
         ...(details ?? {}),
         entityId: entityId ?? details?.entityId,
@@ -855,7 +857,8 @@ export async function createBuzzTransaction(
     opts
   );
 
-  return data;
+  // The key it was filed under, so a caller can reconcile by it (`getTransactionByExternalId`).
+  return { ...data, externalTransactionId };
 }
 
 export async function upsertBuzzTip({

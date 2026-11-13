@@ -31,7 +31,8 @@ const buzzService = createBuzzClient({
 
 const account = await buzzService.getUserBuzzByAccountType(userId, 'yellow');
 const report = await buzzService.getUserTransactionsReport(userId, query);
-await buzzService.createTransaction({ fromAccountId, toAccountId, amount, type, /* … */ });
+// externalTransactionId is required: derive it from the business event, so a retry reuses it.
+await buzzService.createTransaction({ fromAccountId, toAccountId, amount, type, externalTransactionId, /* … */ });
 ```
 
 `createBuzzClient(options)` returns a client with typed endpoint methods:

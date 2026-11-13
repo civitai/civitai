@@ -14,7 +14,10 @@ const { recordModActivity } = vi.hoisted(() => ({ recordModActivity: vi.fn(async
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
 
 let endpoint = '';
-vi.mock('$lib/server/buzz', () => ({ getBuzz: () => createBuzzClient({ endpoint }) }));
+vi.mock('$lib/server/buzz', () => ({
+  // A short write bound so the timeout case runs in well under a second.
+  getBuzz: () => createBuzzClient({ endpoint, transactionTimeoutMs: 300 }),
+}));
 
 const { sendBuzz } = await import('$lib/server/user-actions.service');
 
@@ -25,6 +28,8 @@ type Behaviour = {
   rejectWithout?: Record<number, number>;
   /** Every lookup answers 503. */
   lookupDown?: boolean;
+  /** Writes are accepted and never answered (nothing committed yet). */
+  hangWrites?: boolean;
 };
 
 let server: Server | undefined;
@@ -48,6 +53,7 @@ async function ledger(behaviour: Behaviour = {}) {
       }
       if (req.method === 'POST' && req.url === '/transaction') {
         attempts++;
+        if (behaviour.hangWrites) return; // never answer
         const rejected = behaviour.rejectWithout?.[attempts];
         if (rejected) return send(rejected, {});
         writes.push(JSON.parse(body));
@@ -109,6 +115,17 @@ describe('moderator sendBuzz', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/Nothing was filed/) });
     expect(writes).toHaveLength(0);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('a write that TIMED OUT is not reported as "nothing filed", even when the lookup finds nothing yet', async () => {
+    await ledger({ hangWrites: true });
+
+    const result = await sendBuzz(grant);
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/may still have gone through/),
+    });
+    expect(result).not.toMatchObject({ error: expect.stringMatching(/Nothing was filed/) });
   });
 
   it('files nothing when the ledger cannot be asked whether this form was already filed', async () => {

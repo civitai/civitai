@@ -1023,6 +1023,10 @@ export async function sendBuzz(input: {
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
+    // A write we stopped waiting for may still commit after we look: a lookup that finds nothing
+    // then means "not yet", not "never".
+    const name = (e as { name?: string } | null)?.name;
+    const timedOut = name === 'TimeoutError' || name === 'AbortError';
     // A timeout or a 5xx does not say the write did not happen, so ask the ledger before telling a
     // moderator it failed: "failed" invites a resubmit, and a resubmit of a write that landed is a
     // second grant (or deduction).
@@ -1035,7 +1039,7 @@ export async function sendBuzz(input: {
     } catch (lookupError) {
       console.error('[user-actions] buzz lookup after a failed write failed', lookupError);
     }
-    if (landed === undefined)
+    if (landed === undefined || (!landed && timedOut))
       return {
         ok: false,
         error:

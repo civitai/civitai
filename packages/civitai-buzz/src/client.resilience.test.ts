@@ -114,8 +114,25 @@ describe('writes are never re-sent after the server may have run them', () => {
   });
 });
 
+describe('refunds keep their retry', () => {
+  it('a refund answered 502 once is retried and lands', async () => {
+    let hits = 0;
+    const endpoint = await stub((req, res) => {
+      hits++;
+      if (hits === 1) return json(res, 502, {});
+      json(res, 200, { transactionId: 'refund-1' });
+    });
+    const client = createBuzzClient({ endpoint });
+
+    await expect(client.refundTransaction('tx-1', { description: 'r' })).resolves.toEqual({
+      transactionId: 'refund-1',
+    });
+    expect(hits).toBe(2);
+  });
+});
+
 describe('reads are bounded by default', () => {
-  it('a balance endpoint that never answers rejects in under 4s, with no options passed', async () => {
+  it('a read that never answers rejects at the 10s default (not sooner, never hangs), with no options passed', async () => {
     let hits = 0;
     const endpoint = await stub(() => {
       hits++; // accept, never respond
@@ -126,10 +143,12 @@ describe('reads are bounded by default', () => {
     await expect(client.getUserAccounts(42, ['yellow'])).rejects.toThrow();
     const elapsed = Date.now() - started;
 
-    expect(elapsed).toBeLessThan(4_000);
+    // Exports, summaries and contributor lists are slow reads: the default must leave them room.
+    expect(elapsed).toBeGreaterThanOrEqual(9_500);
+    expect(elapsed).toBeLessThan(11_500);
     // A timeout is not retried: against a hung service a retry only doubles the wait.
     expect(hits).toBe(1);
-  }, 15_000);
+  }, 20_000);
 
   it('a per-call budget shorter than the default wins', async () => {
     const endpoint = await stub(() => undefined);

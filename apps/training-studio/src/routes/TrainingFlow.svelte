@@ -341,7 +341,7 @@
     submitKey = newSubmitKey();
     if (failure)
       submitNotice.set(
-        `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
+        `Started ${ids.length} of ${runs.length} runs. The rest may not have started (${failure}); check your runs list before starting them again.`
       );
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
