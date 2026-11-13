@@ -193,9 +193,23 @@ describe('releasing a held service offering from the report queue', () => {
   const hold = () =>
     pg.query(`UPDATE "ServiceOffering" SET ingestion = 'Blocked' WHERE id = $1`, [OFFERING]);
 
+  const seen = async () =>
+    (
+      await pg.query<{ updatedAt: Date }>(
+        `SELECT "updatedAt" FROM "ServiceOffering" WHERE id = $1`,
+        [OFFERING]
+      )
+    ).rows[0].updatedAt;
+  const release = async (seenUpdatedAt?: Date, offeringId = OFFERING) =>
+    releaseServiceOffering({
+      offeringId,
+      seenUpdatedAt: seenUpdatedAt ?? (await seen()),
+      moderatorId: MOD,
+    });
+
   it('shows a held offering again and records the moderator', async () => {
     await hold();
-    const released = await releaseServiceOffering({ offeringId: OFFERING, moderatorId: MOD });
+    const released = await release();
     expect(released).toMatchObject({ id: OFFERING, ingestion: 'Scanned', changed: true });
     expect((await ingestion()).scannedAt).not.toBeNull();
     expect(recordModActivity).toHaveBeenCalledWith({
@@ -208,12 +222,23 @@ describe('releasing a held service offering from the report queue', () => {
 
   it('leaves an offering whose check is still running as it is', async () => {
     // The migration leaves existing offerings Pending.
-    const released = await releaseServiceOffering({ offeringId: OFFERING, moderatorId: MOD });
+    const released = await release();
     expect(released).toMatchObject({ ingestion: 'Pending', changed: false });
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
   it('is null for an offering that no longer exists', async () => {
-    expect(await releaseServiceOffering({ offeringId: 999, moderatorId: MOD })).toBeNull();
+    expect(await release(new Date(), 999)).toBeNull();
+  });
+
+  it('leaves a held offering edited since the moderator read it', async () => {
+    await hold();
+    const read = await seen();
+    await pg.query(
+      `UPDATE "ServiceOffering" SET title = 'Edited', "updatedAt" = "updatedAt" + interval '1 second' WHERE id = $1`,
+      [OFFERING]
+    );
+    expect(await release(read)).toMatchObject({ ingestion: 'Blocked', changed: false });
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 });

@@ -6873,8 +6873,9 @@ export interface ServiceOffering {
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
   maxNsfwLevel: number;
-  declaredNsfwLevel: number;
+  declaredNsfwLevel: number | null;
   ingestion: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
   scannedAt: Date | null;
   deliveryDays: number;
   revisionsIncluded: number;

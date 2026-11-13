@@ -671,6 +671,7 @@
               </p>
               <form method="POST" action="?/releaseServiceOffering" use:enhance={offeringForm.enhance}>
                 <input type="hidden" name="id" value={selected.id} />
+                <input type="hidden" name="seenUpdatedAt" value={new Date(offering.updatedAt).toISOString()} />
                 <Button type="submit" size="sm" variant="outline" disabled={offeringForm.submitting}>
                   Release service
                 </Button>

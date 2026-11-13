@@ -268,7 +268,7 @@ const offeringShowable = Prisma.sql`(o."ingestion" = 'Scanned'::"ServiceOffering
   AND (o."coverImageId" IS NULL OR EXISTS (
     SELECT 1 FROM "Image" ci
     WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
-      AND ci."needsReview" IS NULL AND ci."nsfwLevel" > 0
+      AND ci."needsReview" IS NULL AND ci."tosViolation" = false AND ci."nsfwLevel" > 0
   )))`;
 
 // The stored rating with the cover's folded in, so a cover rated since the last recompute counts.

@@ -187,11 +187,23 @@ export const actions: Actions = {
     const id = Number(data.get('id'));
     if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
 
+    const seenUpdatedAt = new Date(String(data.get('seenUpdatedAt') ?? ''));
+    if (Number.isNaN(seenUpdatedAt.getTime())) return fail(400, { error: 'Reload and try again.' });
+
     const offeringId = await getReportServiceOfferingId(id);
     if (!offeringId) return fail(410, { error: 'That report no longer exists.', gone: true });
-    const offering = await releaseServiceOffering({ offeringId, moderatorId: locals.user.id });
+    const offering = await releaseServiceOffering({
+      offeringId,
+      seenUpdatedAt,
+      moderatorId: locals.user.id,
+    });
     if (!offering) return fail(410, { error: 'That service no longer exists.', gone: true });
-    if (!offering.changed) return fail(409, { error: 'That service is not held.' });
+    // Reloads, so the moderator reads the current text before trying again.
+    if (!offering.changed)
+      return fail(409, {
+        error: 'That service is no longer held, or was edited since you opened it.',
+        gone: true,
+      });
 
     const result = await setReportStatus({
       id,

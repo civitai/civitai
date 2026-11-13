@@ -68,7 +68,8 @@ export function ServiceOfferingFormModal({ offering }: { offering?: ServiceOffer
       revisionsIncluded: offering?.revisionsIncluded ?? 2,
       maxOpenDeals: offering?.maxOpenDeals ?? 3,
       previewKind: offering?.previewKind ?? ServicePreviewKind.Image,
-      declaredNsfwLevel: offering?.declaredNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
+      declaredNsfwLevel:
+        offering?.declaredNsfwLevel ?? offering?.maxNsfwLevel ?? SERVICE_OFFERING_DEFAULT_RATING,
       coverImage: offering?.coverImage
         ? {
             ...offering.coverImage,

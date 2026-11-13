@@ -11077,10 +11077,15 @@ model ServiceOffering {
   /// `updateServiceOfferingNsfwLevels`: the highest of `declaredNsfwLevel`, the text scan's level
   /// and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
-  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it.
-  declaredNsfwLevel Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+  /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+  /// copies it here.
+  declaredNsfwLevel Int?
   /// Where the title and description are in their content check.
   ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  /// The check submitted for the current text. Cleared when the text changes, so a result for
+  /// earlier text is not applied to it.
+  scanWorkflowId    String?
   scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)

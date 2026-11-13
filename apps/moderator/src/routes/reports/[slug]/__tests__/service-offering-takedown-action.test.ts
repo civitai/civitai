@@ -116,9 +116,15 @@ describe('releasing a held service', () => {
     });
   };
 
-  it('releases the reported offering, then sets the report Unactioned', async () => {
-    const result = await release({ id: '9' });
-    expect(releaseServiceOffering).toHaveBeenCalledWith({ offeringId: 5, moderatorId: MOD });
+  const seen = '2027-01-06T12:00:00.123Z';
+
+  it('releases the reported offering as the moderator saw it, then sets the report Unactioned', async () => {
+    const result = await release({ id: '9', seenUpdatedAt: seen });
+    expect(releaseServiceOffering).toHaveBeenCalledWith({
+      offeringId: 5,
+      seenUpdatedAt: new Date(seen),
+      moderatorId: MOD,
+    });
     expect(setReportStatus).toHaveBeenCalledWith(
       expect.objectContaining({ id: 9, status: 'Unactioned', userId: MOD })
     );
@@ -127,12 +133,18 @@ describe('releasing a held service', () => {
 
   it('leaves the report alone when the offering was not held', async () => {
     releaseServiceOffering.mockResolvedValueOnce({ changed: false });
-    expect(status(await release({ id: '9' }))).toBe(409);
+    expect(status(await release({ id: '9', seenUpdatedAt: seen }))).toBe(409);
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('refuses a release without the version the moderator read', async () => {
+    expect(status(await release({ id: '9' }))).toBe(400);
+    expect(releaseServiceOffering).not.toHaveBeenCalled();
     expect(setReportStatus).not.toHaveBeenCalled();
   });
 
   it('is refused on another report type', async () => {
-    expect(status(await release({ id: '9' }, 'model'))).toBe(403);
+    expect(status(await release({ id: '9', seenUpdatedAt: seen }, 'model'))).toBe(403);
     expect(releaseServiceOffering).not.toHaveBeenCalled();
   });
 });

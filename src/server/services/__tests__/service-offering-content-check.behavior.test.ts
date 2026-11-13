@@ -20,6 +20,14 @@ const report = vi.hoisted(() => ({ createReport: vi.fn(async () => ({ id: 1 })) 
 vi.mock('~/server/services/report.service', () => report);
 const notifications = vi.hoisted(() => ({ createNotification: vi.fn(async () => undefined) }));
 vi.mock('~/server/services/notification.service', () => notifications);
+const route = vi.hoisted(() => ({
+  submitTextModerationOrScan: vi.fn(
+    async (): Promise<{ id?: string | null } | null> => ({
+      id: 'wf-new',
+    })
+  ),
+}));
+vi.mock('~/server/services/text-scan/route', () => route);
 
 dbMock.dbWrite.$executeRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['executeRaw']>
@@ -29,7 +37,7 @@ const { updateServiceOfferingNsfwLevels } = await import('~/server/services/nsfw
 const { serviceOfferingShowableWhere, shopRatingFilter, serviceOfferingReviewState } = await import(
   '~/server/services/creator-service.service'
 );
-const { serviceOfferingModerationAdapter } = await import(
+const { serviceOfferingModerationAdapter, scanServiceOffering } = await import(
   '~/server/services/service-offering-moderation.adapter'
 );
 const { reconcileAction } = await import('~/server/jobs/service-offering-ingestion-reconcile');
@@ -54,7 +62,8 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0);
+      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
+      "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL, blocked boolean,
       "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb, "nsfwLevel" int,
       PRIMARY KEY ("entityType", "entityId"));
@@ -105,11 +114,14 @@ describe('the offering rating', () => {
     expect(await rating()).toBe(R);
   });
 
-  it('rates an offering R when the fallback check flagged its text', async () => {
+  it('rates an offering R when the fallback check flagged its text, and leaves it when not', async () => {
     const id = await offering(PG13);
     await q(
-      `INSERT INTO "EntityModeration" ("entityType", "entityId", blocked, "triggeredLabels") VALUES ('ServiceOffering', 1, false, '{nsfw}')`
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", blocked, "triggeredLabels") VALUES ('ServiceOffering', 1, false, '{}')`
     );
+    await updateServiceOfferingNsfwLevels([id]);
+    expect(await rating()).toBe(PG13);
+    await q(`UPDATE "EntityModeration" SET "triggeredLabels" = '{nsfw}'`);
     await updateServiceOfferingNsfwLevels([id]);
     expect(await rating()).toBe(R);
   });
@@ -135,6 +147,21 @@ describe('the offering rating', () => {
     expect(await rating()).toBe(R);
   });
 
+  it('takes the stored rating as the pick of a row written before the deploy, and keeps it', async () => {
+    // Between the migration and the deploy, the old code wrote the seller's X to maxNsfwLevel only.
+    await q(
+      `INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "maxNsfwLevel", "updatedAt")
+       VALUES (1, 'Portraits', 'desc', 500, 3, $1, now())`,
+      [X]
+    );
+    await textVerdict(PG13);
+    await updateServiceOfferingNsfwLevels([1]);
+    const [row] = await q<{ maxNsfwLevel: number; declaredNsfwLevel: number }>(
+      `SELECT "maxNsfwLevel", "declaredNsfwLevel" FROM "ServiceOffering"`
+    );
+    expect(row).toEqual({ maxNsfwLevel: X, declaredNsfwLevel: X });
+  });
+
   it('starts an existing offering under review, keeping the rating its seller picked', async () => {
     const db = new PGlite();
     await db.exec(`
@@ -148,18 +175,46 @@ describe('the offering rating', () => {
       VALUES (1, 't', 'd', 500, 3, ${X}, 99, now())`);
     await db.exec(readFileSync(MIGRATIONS[MIGRATIONS.length - 1], 'utf8'));
     const [row] = (
-      await db.query<{ ingestion: string; declaredNsfwLevel: number; coverImageId: number | null }>(
-        `SELECT ingestion::text, "declaredNsfwLevel", "coverImageId" FROM "ServiceOffering"`
+      await db.query<{
+        ingestion: string;
+        maxNsfwLevel: number;
+        declaredNsfwLevel: number | null;
+        coverImageId: number | null;
+      }>(
+        `SELECT ingestion::text, "maxNsfwLevel", "declaredNsfwLevel", "coverImageId" FROM "ServiceOffering"`
       )
     ).rows;
-    // A cover id naming no image is cleared so the key could be added.
-    expect(row).toEqual({ ingestion: 'Pending', declaredNsfwLevel: X, coverImageId: null });
+    // The pick stays in maxNsfwLevel until the first recompute; a cover id naming no image is
+    // cleared so the key could be added.
+    expect(row).toEqual({
+      ingestion: 'Pending',
+      maxNsfwLevel: X,
+      declaredNsfwLevel: null,
+      coverImageId: null,
+    });
     await db.close();
   });
 });
 
 // The subset of Prisma's where semantics the storefront filter uses, evaluated against a row.
 type Row = Record<string, unknown>;
+const OPERATORS = new Set(['in', 'lte']);
+// Prisma operators this evaluator does not implement: a filter using one throws instead of
+// silently reading as "no match".
+const PRISMA_OPERATORS = new Set([
+  'not',
+  'notIn',
+  'lt',
+  'gt',
+  'gte',
+  'equals',
+  'contains',
+  'is',
+  'isNot',
+  'some',
+  'none',
+  'every',
+]);
 function matches(row: Row | null, where: Record<string, unknown>): boolean {
   if (!row) return false;
   return Object.entries(where).every(([key, cond]) => {
@@ -167,12 +222,14 @@ function matches(row: Row | null, where: Record<string, unknown>): boolean {
     if (key === 'OR') return (cond as Row[]).some((w) => matches(row, w));
     const value = row[key];
     if (cond === null || typeof cond !== 'object') return value === cond;
+    if (cond instanceof Date) return value instanceof Date && value.getTime() === cond.getTime();
     const c = cond as Record<string, unknown>;
+    const ops = Object.keys(c).filter((k) => OPERATORS.has(k) || PRISMA_OPERATORS.has(k));
+    if (!ops.length) return matches(value as Row | null, c);
+    if (ops.length !== Object.keys(c).length || ops.some((k) => !OPERATORS.has(k)))
+      throw new Error(`unsupported condition on ${key}: ${Object.keys(c).join(', ')}`);
     if ('in' in c) return (c.in as unknown[]).includes(value);
-    if ('lte' in c) return (value as number) <= (c.lte as number);
-    if (Object.keys(c).some((k) => !['in', 'lte'].includes(k)))
-      return matches(value as Row | null, c);
-    throw new Error(`unsupported condition on ${key}`);
+    return (value as number) <= (c.lte as number);
   });
 }
 
@@ -186,10 +243,15 @@ describe('which offerings a storefront shows', () => {
   const coverRow = (
     ingestion: ImageIngestionStatus,
     nsfwLevel: number,
-    needsReview: string | null = null
+    needsReview: string | null = null,
+    tosViolation = false
   ) => ({
     coverImageId: 7,
-    coverImage: { ingestion, nsfwLevel, needsReview },
+    coverImage: { ingestion, nsfwLevel, needsReview, tosViolation },
+  });
+
+  it('shows an offering whose cover passed its checks', () => {
+    expect(shown({ ...scanned, ...coverRow(ImageIngestionStatus.Scanned, PG) })).toBe(true);
   });
 
   it('shows a checked offering with no cover', () => {
@@ -205,9 +267,12 @@ describe('which offerings a storefront shows', () => {
   });
 
   it.each([
-    ['not scanned', coverRow(ImageIngestionStatus.Pending, 0)],
-    ['blocked', coverRow(ImageIngestionStatus.Blocked, NsfwLevel.Blocked)],
+    // Rated PG, so only the check named hides it.
+    ['not scanned', coverRow(ImageIngestionStatus.Pending, PG)],
+    ['in a rescan', coverRow(ImageIngestionStatus.Rescan, PG)],
+    ['blocked', coverRow(ImageIngestionStatus.Blocked, PG)],
     ['held for review', coverRow(ImageIngestionStatus.Scanned, PG, 'poi')],
+    ['taken down', coverRow(ImageIngestionStatus.Scanned, PG, null, true)],
   ])('hides an offering whose cover is %s', (_, cover) => {
     expect(shown({ ...scanned, ...cover })).toBe(false);
   });
@@ -220,19 +285,33 @@ describe('which offerings a storefront shows', () => {
 });
 
 describe('what the seller is told', () => {
+  const cover = (
+    ingestion: ImageIngestionStatus,
+    needsReview: string | null = null,
+    tosViolation = false
+  ) => ({
+    ingestion,
+    needsReview,
+    tosViolation,
+  });
   it.each([
     [ServiceOfferingIngestionStatus.Pending, null, 'reviewing'],
+    [ServiceOfferingIngestionStatus.Error, null, 'reviewing'],
     [ServiceOfferingIngestionStatus.Blocked, null, 'held'],
+    [ServiceOfferingIngestionStatus.Scanned, cover(ImageIngestionStatus.Pending), 'reviewing'],
     [
       ServiceOfferingIngestionStatus.Scanned,
-      { ingestion: ImageIngestionStatus.Pending, needsReview: null },
+      cover(ImageIngestionStatus.Scanned, 'poi'),
       'reviewing',
     ],
+    [ServiceOfferingIngestionStatus.Scanned, cover(ImageIngestionStatus.Blocked), 'held'],
+    [ServiceOfferingIngestionStatus.Scanned, cover(ImageIngestionStatus.NotFound), 'held'],
     [
       ServiceOfferingIngestionStatus.Scanned,
-      { ingestion: ImageIngestionStatus.Blocked, needsReview: null },
+      cover(ImageIngestionStatus.Scanned, null, true),
       'held',
     ],
+    [ServiceOfferingIngestionStatus.Scanned, cover(ImageIngestionStatus.Scanned), null],
     [ServiceOfferingIngestionStatus.Scanned, null, null],
   ] as const)('%s with cover %o reads %s', (ingestion, coverImage, expected) => {
     expect(serviceOfferingReviewState({ ingestion, coverImage })).toBe(expected);
@@ -240,64 +319,97 @@ describe('what the seller is told', () => {
 });
 
 describe('the moderation adapter', () => {
+  const OFFERING = 7;
+  const SELLER = 42;
   let row: Row;
-  beforeEach(() => {
-    row = {
-      id: 1,
-      sellerId: 1,
-      seller: { username: 'badgesmith' },
-      ingestion: ServiceOfferingIngestionStatus.Pending,
-    };
-    dbMock.dbWrite.serviceOffering.updateMany.mockImplementation((async ({
-      where,
-      data,
-    }: {
-      where: Row;
-      data: Row;
-    }) => {
-      const hit = matches(
-        row,
-        'ingestion' in where ? { ...where, ingestion: inSet(where.ingestion) } : where
-      );
-      if (hit) Object.assign(row, data);
-      return { count: hit ? 1 : 0 };
-    }) as never);
-    dbMock.dbRead.serviceOffering.findUnique.mockImplementation((async () => row) as never);
-  });
   // Prisma's `{ not: x }` is outside `matches`; turn it into the set it stands for.
   const inSet = (cond: unknown) =>
     cond && typeof cond === 'object' && 'not' in cond
       ? { in: Object.values(ServiceOfferingIngestionStatus).filter((s) => s !== (cond as Row).not) }
       : cond;
-  const apply = (blocked: boolean) =>
+  const where = (w: Row) => ('ingestion' in w ? { ...w, ingestion: inSet(w.ingestion) } : w);
+  const storedRating = async () =>
+    (
+      await q<{ maxNsfwLevel: number }>(
+        `SELECT "maxNsfwLevel" FROM "ServiceOffering" WHERE id = $1`,
+        [OFFERING]
+      )
+    )[0].maxNsfwLevel;
+
+  beforeEach(async () => {
+    // The rating lives in Postgres (the recompute is real SQL); ingestion in this row.
+    await q(`INSERT INTO "User" (id) VALUES ($1)`, [SELLER]);
+    await q(
+      `INSERT INTO "ServiceOffering" (id, "sellerId", title, description, price, "deliveryDays", "declaredNsfwLevel", "maxNsfwLevel", "updatedAt")
+       VALUES ($1, $2, 'Portraits', 'desc', 500, 3, ${PG13}, ${PG13}, now())`,
+      [OFFERING, SELLER]
+    );
+    await q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", result, "nsfwLevel") VALUES ('ServiceOffering', $1, '{"version": 1}', ${R})`,
+      [OFFERING]
+    );
+    row = {
+      id: OFFERING,
+      sellerId: SELLER,
+      seller: { username: 'badgesmith' },
+      ingestion: ServiceOfferingIngestionStatus.Pending,
+      scanWorkflowId: 'wf-current',
+    };
+    dbMock.dbWrite.serviceOffering.updateMany.mockImplementation((async (args: {
+      where: Row;
+      data: Row;
+    }) => {
+      const hit = matches(row, where(args.where));
+      if (hit) Object.assign(row, args.data);
+      return { count: hit ? 1 : 0 };
+    }) as never);
+    dbMock.dbRead.serviceOffering.findFirst.mockImplementation((async (args: { where: Row }) =>
+      matches(row, where(args.where)) ? row : null) as never);
+  });
+  const apply = (blocked: boolean, workflowId = 'wf-current') =>
     serviceOfferingModerationAdapter.applyResult!({
-      entityId: 1,
-      workflowId: 'wf',
+      entityId: OFFERING,
+      workflowId,
       blocked,
       triggeredLabels: [],
       output: {} as never,
     });
 
-  it('shows an offering whose check passed', async () => {
+  it('shows an offering whose check passed, at the rating the check found', async () => {
     await apply(false);
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
+    expect(await storedRating()).toBe(R);
   });
 
-  it('holds a blocked offering, files one report for moderators and tells the seller once', async () => {
+  it('holds a blocked offering at its new rating, files a report for moderators and tells the seller once', async () => {
     await apply(true);
     await apply(true);
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    expect(await storedRating()).toBe(R);
     expect(report.createReport).toHaveBeenCalledTimes(1);
     expect(report.createReport).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'serviceOffering', id: 1, reason: 'TOSViolation' })
+      expect.objectContaining({
+        type: 'serviceOffering',
+        id: OFFERING,
+        reason: 'TOSViolation',
+        // A report a moderator already ruled on is not reused, so the queue sees this block.
+        foldIntoPendingOnly: true,
+      })
     );
     expect(notifications.createNotification).toHaveBeenCalledTimes(1);
     expect(notifications.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: 1,
+        userId: SELLER,
         details: expect.objectContaining({ url: '/user/badgesmith/shop/manage?tab=services' }),
       })
     );
+  });
+
+  it('leaves an offering Pending, with no notice, when its report cannot be filed', async () => {
+    report.createReport.mockRejectedValueOnce(new Error('db down'));
+    await expect(apply(true)).rejects.toThrow('db down');
+    expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+    expect(notifications.createNotification).not.toHaveBeenCalled();
   });
 
   it('keeps a blocked offering held when a later check passes', async () => {
@@ -306,20 +418,65 @@ describe('the moderation adapter', () => {
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
   });
 
-  it('marks a failed check Error only while it is still Pending', async () => {
-    row.ingestion = ServiceOfferingIngestionStatus.Scanned;
-    await serviceOfferingModerationAdapter.applyFailure!({
-      entityId: 1,
-      workflowId: 'wf',
-      status: 'failed',
+  it('applies no result from a check for text the seller has since changed', async () => {
+    // The seller edited: the text is Pending again and its own check is not recorded yet.
+    row.scanWorkflowId = null;
+    await apply(false, 'wf-old');
+    expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+    await apply(true, 'wf-old');
+    expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+    expect(report.createReport).not.toHaveBeenCalled();
+  });
+
+  it('applies a text-scan verdict only for the current text', async () => {
+    const scan = (workflowId: string) =>
+      serviceOfferingModerationAdapter.applyTextScan!({
+        entityId: OFFERING,
+        workflowId,
+        outcome: {} as never,
+        subject: {} as never,
+        textHash: 'h',
+      });
+    await scan('wf-old');
+    expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+    await scan('wf-current');
+    expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
+  });
+
+  it('records the check it submits, unless the text changed while it was submitted', async () => {
+    const readAt = new Date('2027-01-06T12:00:00.000Z');
+    row.updatedAt = readAt;
+    row.scanWorkflowId = null;
+    dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
+      title: 'Portraits',
+      description: 'desc',
+      updatedAt: readAt,
+    } as never);
+    await scanServiceOffering(OFFERING);
+    expect(row.scanWorkflowId).toBe('wf-new');
+
+    row.scanWorkflowId = null;
+    route.submitTextModerationOrScan.mockImplementationOnce(async () => {
+      // The seller saves again while this check is being submitted.
+      row.updatedAt = new Date('2027-01-06T12:00:01.000Z');
+      return { id: 'wf-stale' };
     });
+    await scanServiceOffering(OFFERING);
+    expect(row.scanWorkflowId).toBeNull();
+  });
+
+  it('marks a failed check Error only while it is still Pending', async () => {
+    const fail = () =>
+      serviceOfferingModerationAdapter.applyFailure!({
+        entityId: OFFERING,
+        workflowId: 'wf-current',
+        status: 'failed',
+      });
+    row.ingestion = ServiceOfferingIngestionStatus.Scanned;
+    await fail();
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
     row.ingestion = ServiceOfferingIngestionStatus.Pending;
-    await serviceOfferingModerationAdapter.applyFailure!({
-      entityId: 1,
-      workflowId: 'wf',
-      status: 'failed',
-    });
+    await fail();
     expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Error);
   });
 });

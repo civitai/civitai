@@ -69,7 +69,7 @@ export const serviceOfferingSelect = {
 /** What only the seller and moderators see: the seller's own rating and the content check. */
 const ownServiceOfferingSelect = {
   ...serviceOfferingSelect,
-  coverImage: { select: { ...profileImageSelect, needsReview: true } },
+  coverImage: { select: { ...profileImageSelect, needsReview: true, tosViolation: true } },
   declaredNsfwLevel: true,
   ingestion: true,
   sellerAffirmation: true,
@@ -226,11 +226,16 @@ export type ServiceOfferingReviewState = 'reviewing' | 'held' | null;
 /** What the seller is told about their offering's content checks; null once it can be shown. */
 export function serviceOfferingReviewState(offering: {
   ingestion: ServiceOfferingIngestionStatus;
-  coverImage: { ingestion: ImageIngestionStatus; needsReview: string | null } | null;
+  coverImage: {
+    ingestion: ImageIngestionStatus;
+    needsReview: string | null;
+    tosViolation: boolean;
+  } | null;
 }): ServiceOfferingReviewState {
   const cover = offering.coverImage;
   if (
     offering.ingestion === ServiceOfferingIngestionStatus.Blocked ||
+    cover?.tosViolation ||
     cover?.ingestion === ImageIngestionStatus.Blocked ||
     cover?.ingestion === ImageIngestionStatus.NotFound
   )
@@ -258,6 +263,7 @@ export const serviceOfferingShowableWhere = (matureRatings: readonly number[]) =
             coverImage: {
               ingestion: ImageIngestionStatus.Scanned,
               needsReview: null,
+              tosViolation: false,
               nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13, ...matureRatings] },
             },
           },
@@ -405,7 +411,7 @@ export async function upsertServiceOffering({
       // New text is shown once it is checked. A blocked offering stays blocked until a moderator
       // releases it.
       ...(textChanged && existing.ingestion !== ServiceOfferingIngestionStatus.Blocked
-        ? { ingestion: ServiceOfferingIngestionStatus.Pending }
+        ? { ingestion: ServiceOfferingIngestionStatus.Pending, scanWorkflowId: null }
         : {}),
       ...(activating ? { status: ServiceOfferingStatus.Active } : {}),
       ...(affirmation ? { sellerAffirmation: affirmation } : {}),

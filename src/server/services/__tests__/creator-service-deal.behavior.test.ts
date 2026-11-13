@@ -285,7 +285,8 @@ beforeAll(async () => {
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (id serial PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
-      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0);
+      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
+      "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
@@ -2433,10 +2434,15 @@ describe('reasons and reason codes', () => {
 describe('content checks', () => {
   const setIngestion = (ingestion: string) =>
     q(`UPDATE "ServiceOffering" SET ingestion = $1::"ServiceOfferingIngestionStatus"`, [ingestion]);
-  const cover = async (ingestion: string, nsfwLevel: number, needsReview: string | null = null) => {
+  const cover = async (
+    ingestion: string,
+    nsfwLevel: number,
+    needsReview: string | null = null,
+    tosViolation = false
+  ) => {
     await q(
-      `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "needsReview") VALUES (1, $1::"ImageIngestionStatus", $2, $3)`,
-      [ingestion, nsfwLevel, needsReview]
+      `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "needsReview", "tosViolation") VALUES (1, $1::"ImageIngestionStatus", $2, $3, $4)`,
+      [ingestion, nsfwLevel, needsReview, tosViolation]
     );
     await q(`UPDATE "ServiceOffering" SET "coverImageId" = 1`);
   };
@@ -2460,10 +2466,14 @@ describe('content checks', () => {
     ['unscanned', 'Pending', null],
     ['blocked', 'Blocked', null],
     ['held for review', 'Scanned', 'minor'],
-  ] as const)('takes no request with a cover that is %s', async (_, ingestion, needsReview) => {
-    await cover(ingestion, PG, needsReview);
-    await expect(request()).rejects.toThrow(/Service not found/);
-  });
+    ['taken down', 'Scanned', null, true],
+  ] as const)(
+    'takes no request with a cover that is %s',
+    async (_, ingestion, needsReview, tos = false) => {
+      await cover(ingestion, PG, needsReview, tos);
+      await expect(request()).rejects.toThrow(/Service not found/);
+    }
+  );
 
   it("rates the deal with a scanned cover's level before the offering is recomputed", async () => {
     // Stored rating PG-13, cover scanned R: a PG-only buyer is refused, an R buyer gets an R deal.

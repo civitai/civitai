@@ -455,7 +455,8 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
 
 /**
  * A service offering's rating: the highest of the seller's declared level, its text floor and its
- * cover's level once the cover is scanned, capped at XXX.
+ * cover's level once the cover is scanned, capped at XXX. A row with no declared level yet (last
+ * written before that column existed) takes its stored rating as the seller's pick, and keeps it.
  */
 export async function updateServiceOfferingNsfwLevels(offeringIds: number[]) {
   if (!offeringIds.length) return;
@@ -465,12 +466,13 @@ export async function updateServiceOfferingNsfwLevels(offeringIds: number[]) {
         o.id,
         LEAST(
           GREATEST(
-            o."declaredNsfwLevel",
+            COALESCE(o."declaredNsfwLevel", o."maxNsfwLevel"),
             ${serviceOfferingTextFloorSql('o.id')},
             COALESCE(cover."nsfwLevel", 0)
           ),
           ${NsfwLevel.XXX}
-        ) AS "nsfwLevel"
+        ) AS "nsfwLevel",
+        COALESCE(o."declaredNsfwLevel", o."maxNsfwLevel") AS "declaredNsfwLevel"
       FROM "ServiceOffering" o
       LEFT JOIN "Image" cover
         ON cover.id = o."coverImageId"
@@ -478,9 +480,10 @@ export async function updateServiceOfferingNsfwLevels(offeringIds: number[]) {
       WHERE o.id IN (${Prisma.join(offeringIds)})
     )
     UPDATE "ServiceOffering" o
-    SET "maxNsfwLevel" = level."nsfwLevel"
+    SET "maxNsfwLevel" = level."nsfwLevel", "declaredNsfwLevel" = level."declaredNsfwLevel"
     FROM level
-    WHERE level.id = o.id AND o."maxNsfwLevel" IS DISTINCT FROM level."nsfwLevel"
+    WHERE level.id = o.id
+      AND (o."maxNsfwLevel" IS DISTINCT FROM level."nsfwLevel" OR o."declaredNsfwLevel" IS NULL)
   `);
 }
 

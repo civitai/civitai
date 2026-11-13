@@ -16,6 +16,7 @@ export type ReportedServiceOffering = {
   status: string;
   maxNsfwLevel: number;
   ingestion: string;
+  updatedAt: Date;
   sellerId: number;
   sellerUsername: string | null;
   removedReason: string | null;
@@ -34,6 +35,7 @@ const selectOffering = (db: typeof dbRead) =>
       'o.status',
       'o.maxNsfwLevel',
       'o.ingestion',
+      'o.updatedAt',
       'o.sellerId',
       'u.username as sellerUsername',
       'o.removedReason',
@@ -137,16 +139,19 @@ export async function takedownServiceOffering({
 
 /**
  * Releases an offering its content check held: it is shown again with the rating it has. Applies
- * only to a held offering, so a release can't skip a check still running. The activity is recorded
- * only by the write that released it.
+ * only to a held offering, and only as it was when the moderator read it (`seenUpdatedAt`), so a
+ * release can't publish text edited since. The activity is recorded only by the write that
+ * released it.
  *
  * Null when the offering no longer exists.
  */
 export async function releaseServiceOffering({
   offeringId,
+  seenUpdatedAt,
   moderatorId,
 }: {
   offeringId: number;
+  seenUpdatedAt: Date;
   moderatorId: number;
 }): Promise<(ReportedServiceOffering & { changed: boolean }) | null> {
   const { numUpdatedRows } = await dbWrite
@@ -154,6 +159,7 @@ export async function releaseServiceOffering({
     .set({ ingestion: 'Scanned', scannedAt: new Date(), updatedAt: new Date() })
     .where('id', '=', offeringId)
     .where('ingestion', '=', 'Blocked')
+    .where('updatedAt', '=', seenUpdatedAt)
     .executeTakeFirst();
 
   const offering = await selectOffering(dbWrite).where('o.id', '=', offeringId).executeTakeFirst();

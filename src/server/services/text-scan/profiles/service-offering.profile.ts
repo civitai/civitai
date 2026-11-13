@@ -14,6 +14,7 @@ registerTextScanProfile({
         title: true,
         description: true,
         declaredNsfwLevel: true,
+        maxNsfwLevel: true,
         status: true,
       },
     });
@@ -22,7 +23,7 @@ registerTextScanProfile({
         o.id,
         {
           userId: o.sellerId,
-          declared: { nsfwLevel: o.declaredNsfwLevel },
+          declared: { nsfwLevel: o.declaredNsfwLevel ?? o.maxNsfwLevel },
           notPublic: o.status === ServiceOfferingStatus.Removed,
           fields: [
             { heading: 'Title', text: o.title },

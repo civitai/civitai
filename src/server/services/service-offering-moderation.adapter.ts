@@ -25,14 +25,25 @@ export function buildServiceOfferingModerationText(offering: {
 }
 
 /**
+ * A result applies only to the text it was for. `workflowId` is the check that produced it; a
+ * result reached without one (a stored verdict for unchanged text, or the reconcile job's own
+ * check) applies as is.
+ */
+const forCurrentText = (offeringId: number, workflowId?: string) =>
+  workflowId ? { id: offeringId, scanWorkflowId: workflowId } : { id: offeringId };
+
+/**
  * Settles a check that passed: the rating takes the verdict, then the offering is marked scanned.
  * A blocked offering stays blocked; only a moderator releases it.
  */
-export async function settleServiceOfferingScan(offeringId: number) {
+export async function settleServiceOfferingScan(
+  offeringId: number,
+  { workflowId }: { workflowId?: string } = {}
+) {
   await updateServiceOfferingNsfwLevels([offeringId]);
   await dbWrite.serviceOffering.updateMany({
     where: {
-      id: offeringId,
+      ...forCurrentText(offeringId, workflowId),
       ingestion: {
         in: [ServiceOfferingIngestionStatus.Pending, ServiceOfferingIngestionStatus.Error],
       },
@@ -41,38 +52,41 @@ export async function settleServiceOfferingScan(offeringId: number) {
   });
 }
 
-export async function blockServiceOffering(offeringId: number) {
-  await updateServiceOfferingNsfwLevels([offeringId]);
-  // The transition decides the report and the notice, so a redelivered callback files neither twice.
-  const { count } = await dbWrite.serviceOffering.updateMany({
-    where: { id: offeringId, ingestion: { not: ServiceOfferingIngestionStatus.Blocked } },
-    data: { ingestion: ServiceOfferingIngestionStatus.Blocked, scannedAt: new Date() },
-  });
-  if (count === 0) return;
-  const offering = await dbRead.serviceOffering.findUnique({
-    where: { id: offeringId },
+export async function blockServiceOffering(
+  offeringId: number,
+  { workflowId }: { workflowId?: string } = {}
+) {
+  const where = {
+    ...forCurrentText(offeringId, workflowId),
+    ingestion: { not: ServiceOfferingIngestionStatus.Blocked },
+  };
+  const offering = await dbRead.serviceOffering.findFirst({
+    where,
     select: { sellerId: true, seller: { select: { username: true } } },
   });
   if (!offering) return;
+  await updateServiceOfferingNsfwLevels([offeringId]);
+  // Filed before the offering is held, so a failure here leaves it Pending for the reconcile job to
+  // try again rather than held with nothing for a moderator to review. It joins only a report still
+  // waiting for a moderator, so a block after an earlier ruling reaches the queue again.
   await createReport({
     type: ReportEntity.ServiceOffering,
     id: offeringId,
     userId: constants.system.user.id,
     isModerator: true,
     reason: ReportReason.TOSViolation,
+    foldIntoPendingOnly: true,
     details: {
       violation: 'Held by the automated content check',
       comment: 'The title or description did not pass the automated content check.',
     },
-  }).catch((error) =>
-    logToAxiom({
-      type: 'error',
-      name: 'service-offering-scan',
-      message: 'block report failed',
-      offeringId,
-      error: error instanceof Error ? error.message : String(error),
-    })
-  );
+  });
+  // The transition decides the notice, so a redelivered callback sends it once.
+  const { count } = await dbWrite.serviceOffering.updateMany({
+    where,
+    data: { ingestion: ServiceOfferingIngestionStatus.Blocked, scannedAt: new Date() },
+  });
+  if (count === 0) return;
   await createNotification({
     userId: offering.sellerId,
     category: NotificationCategory.System,
@@ -86,6 +100,21 @@ export async function blockServiceOffering(offeringId: number) {
         : '/',
     },
   });
+}
+
+/** Records the check submitted for the text as it was read, unless the text changed since. */
+async function trackSubmit(
+  offeringId: number,
+  readAt: Date,
+  submit: () => Promise<{ id?: string | null } | null | undefined>
+) {
+  const workflow = await submit();
+  if (workflow?.id)
+    await dbWrite.serviceOffering.updateMany({
+      where: { id: offeringId, updatedAt: readAt },
+      data: { scanWorkflowId: workflow.id },
+    });
+  return workflow;
 }
 
 const settleSkipped = (offeringId: number, reason: SkipReason) =>
@@ -117,17 +146,19 @@ export async function scanServiceOffering(offeringId: number, { forceRescan = fa
   // The primary: called right after a write, and a lagging replica would scan the old text.
   const offering = await dbWrite.serviceOffering.findUnique({
     where: { id: offeringId },
-    select: { title: true, description: true },
+    select: { title: true, description: true, updatedAt: true },
   });
   if (!offering) return;
   try {
-    await submitTextModerationOrScan({
-      entityType: ENTITY_TYPE,
-      entityId: offeringId,
-      force: forceRescan,
-      onActiveSkip: (reason) => settleSkipped(offeringId, reason),
-      xguard: xguard(offeringId, buildServiceOfferingModerationText(offering), forceRescan),
-    });
+    await trackSubmit(offeringId, offering.updatedAt, () =>
+      submitTextModerationOrScan({
+        entityType: ENTITY_TYPE,
+        entityId: offeringId,
+        force: forceRescan,
+        onActiveSkip: (reason) => settleSkipped(offeringId, reason),
+        xguard: xguard(offeringId, buildServiceOfferingModerationText(offering), forceRescan),
+      })
+    );
   } catch (e) {
     // The reconcile job resubmits an offering left Pending; saving must not fail on this.
     logToAxiom({
@@ -149,18 +180,25 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
   },
 
   // Only the retry cron calls submit.
-  submit: ({ entityId, content }) =>
-    submitTextModerationOrScan({
-      entityType: ENTITY_TYPE,
-      entityId,
-      fromRetry: true,
-      onActiveSkip: (reason) => settleSkipped(entityId, reason),
-      xguard: xguard(entityId, content),
-    }),
+  submit: async ({ entityId, content }) => {
+    const offering = await dbWrite.serviceOffering.findUnique({
+      where: { id: entityId },
+      select: { updatedAt: true },
+    });
+    const submit = () =>
+      submitTextModerationOrScan({
+        entityType: ENTITY_TYPE,
+        entityId,
+        fromRetry: true,
+        onActiveSkip: (reason) => settleSkipped(entityId, reason),
+        xguard: xguard(entityId, content),
+      });
+    return offering ? trackSubmit(entityId, offering.updatedAt, submit) : submit();
+  },
 
-  applyResult: async ({ entityId, blocked }) => {
-    if (blocked) await blockServiceOffering(entityId);
-    else await settleServiceOfferingScan(entityId);
+  applyResult: async ({ entityId, workflowId, blocked }) => {
+    if (blocked) await blockServiceOffering(entityId, { workflowId });
+    else await settleServiceOfferingScan(entityId, { workflowId });
   },
 
   // Scoped to Pending so a failed rescan can't hide an offering that already passed.
@@ -171,7 +209,7 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
     });
   },
 
-  applyTextScan: async ({ entityId }) => {
-    await settleServiceOfferingScan(entityId);
+  applyTextScan: async ({ entityId, workflowId }) => {
+    await settleServiceOfferingScan(entityId, { workflowId });
   },
 };
