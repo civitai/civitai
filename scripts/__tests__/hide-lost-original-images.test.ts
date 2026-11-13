@@ -63,6 +63,15 @@ const EXPECTED_REFS: [reason: string, table: string, column: string][] = [
   ['storyline-image', 'Storyline', 'heroImageId'],
   ['storyline-image', 'Storyline', 'sparkImageId'],
   ['storyline-cover-upload', 'StorylineCoverUpload', 'imageId'],
+  ['model-cover', 'Model', 'coverImageId'],
+  ['model-cover', 'Model', 'sfwCoverImageId'],
+  ['service-offering-cover', 'ServiceOffering', 'coverImageId'],
+  ['service-deal-file', 'ServiceDealFile', 'imageId'],
+  ['service-deal-file-entry', 'ServiceDealFileEntry', 'imageId'],
+  ['version-showcase-item', 'ModelVersionShowcaseItem', 'imageId'],
+  ['challenge-entry-standing', 'ChallengeEntryStanding', 'imageId'],
+  ['event-turf-sticker', 'EventTurfSticker', 'imageId'],
+  ['event-turf-flag-sticker', 'EventTurfFlagSticker', 'imageId'],
   ['image-connection', 'ImageConnection', 'imageId'],
 ];
 const REF_TABLES = [...new Set(EXPECTED_REFS.map(([, table]) => table))];

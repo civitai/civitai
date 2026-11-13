@@ -164,6 +164,15 @@ export const DISPLAY_REFS: { reason: string; table: string; columns: string[] }[
     columns: ['coverImageId', 'heroImageId', 'sparkImageId'],
   },
   { reason: 'storyline-cover-upload', table: 'StorylineCoverUpload', columns: ['imageId'] },
+  // Plain Int columns with no Prisma relation: a relation walk of the schema misses them.
+  { reason: 'model-cover', table: 'Model', columns: ['coverImageId', 'sfwCoverImageId'] },
+  { reason: 'service-offering-cover', table: 'ServiceOffering', columns: ['coverImageId'] },
+  { reason: 'service-deal-file', table: 'ServiceDealFile', columns: ['imageId'] },
+  { reason: 'service-deal-file-entry', table: 'ServiceDealFileEntry', columns: ['imageId'] },
+  { reason: 'version-showcase-item', table: 'ModelVersionShowcaseItem', columns: ['imageId'] },
+  { reason: 'challenge-entry-standing', table: 'ChallengeEntryStanding', columns: ['imageId'] },
+  { reason: 'event-turf-sticker', table: 'EventTurfSticker', columns: ['imageId'] },
+  { reason: 'event-turf-flag-sticker', table: 'EventTurfFlagSticker', columns: ['imageId'] },
   // Moderation Lead: any entityType (bounty and bounty entry included); when unsure, keep.
   { reason: 'image-connection', table: 'ImageConnection', columns: ['imageId'] },
 ];
