@@ -24,6 +24,7 @@ import type { GetInfiniteChallengesInput } from '~/server/schema/challenge.schem
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import styles from './index.module.css';
 
@@ -73,6 +74,7 @@ const myStatusFilters: Record<MyChallengeStatus, Partial<GetInfiniteChallengesIn
 
 function ChallengesPage() {
   const router = useRouter();
+  const searchQuery = useFeedSearchQuery();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const canCreateChallenge =
@@ -233,6 +235,7 @@ function ChallengesPage() {
                   includeEnded,
                   excludeEventChallenges: true,
                   participation,
+                  query: searchQuery,
                 }}
               />
             </Stack>

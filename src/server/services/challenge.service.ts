@@ -651,9 +651,12 @@ export async function getInfiniteChallenges(
     currentUserId?: number;
     isGreen: boolean;
     canAccessUserChallenges?: boolean;
+    /** Server-only: only these challenges, e.g. the semantic search's candidates. */
+    ids?: number[];
   }
 ) {
   const {
+    ids,
     query,
     status,
     source,
@@ -683,6 +686,11 @@ export async function getInfiniteChallenges(
       browsingLevel,
     }))
   );
+
+  if (ids) {
+    if (!ids.length) return { items: [], nextCursor: undefined };
+    conditions.push(Prisma.sql`c.id IN (${Prisma.join(ids)})`);
+  }
 
   // Status filter (parameterized)
   if (status && status.length > 0) {

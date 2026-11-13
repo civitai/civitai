@@ -72,6 +72,8 @@ const routers = {
     import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
   semanticComicSearch: () =>
     import('./semantic-comic-search.router').then((m) => m.semanticComicSearchRouter),
+  semanticChallengeSearch: () =>
+    import('./semantic-challenge-search.router').then((m) => m.semanticChallengeSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),
