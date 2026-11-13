@@ -8,13 +8,15 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import '~/styles/globals.css';
 
 /**
- * The shared draft view's body images under the same guard as the article page, for a signed-out
- * link holder whose browsing level is PG only. Levels: PG = 1, R = 4.
+ * The shared draft view's body images under the same guard as the article page, for a link holder
+ * whose browsing level is PG only. Levels: PG = 1, R = 4. A signed-out reader only ever reaches a
+ * PG draft's body (`Gated` sends them to log in otherwise), so a mature draft is read signed in.
  */
 
+const viewer = vi.hoisted(() => ({ current: null as { id: number; isModerator: boolean } | null }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
-  useCurrentUser: () => null,
+  useCurrentUser: () => viewer.current,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ canViewNsfw: true }),
@@ -102,9 +104,22 @@ describe('SharedArticleView body images', () => {
   });
 
   test('🔴 a body image with no linked row is rated at the draft’s level', async () => {
-    const { container } = await renderDraft(media(R_UUID), [], R);
+    // Signed in, not the author or a moderator: the only reader who gets an R draft's body.
+    viewer.current = { id: 20, isModerator: false };
+    try {
+      const { container } = await renderDraft(media(R_UUID), [], R);
 
-    await expect.element(page.getByText('This image is rated')).toBeVisible();
-    expect(imgWithSrc(container, R_UUID)).toHaveLength(0);
+      await expect.element(page.getByText('This image is rated')).toBeVisible();
+      expect(imgWithSrc(container, R_UUID)).toHaveLength(0);
+    } finally {
+      viewer.current = null;
+    }
+  });
+
+  test('a body image with no linked row in a PG draft renders', async () => {
+    const { container } = await renderDraft(media(R_UUID), [], PG);
+
+    await expect.poll(() => imgWithSrc(container, R_UUID)).toHaveLength(1);
+    expect(page.getByText('This image is rated').query()).toBeNull();
   });
 });
