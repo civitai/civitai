@@ -21,7 +21,8 @@ import {
   INLINE_NODEPACKS_ENABLED,
   inlineAirTypeRefusal,
 } from '~/server/services/blocks/inline-comfy.service';
-import type { ComfyGraph } from '~/server/services/blocks/recipes';
+import { getRecipe, type ComfyGraph } from '~/server/services/blocks/recipes';
+import { assertNoRestrictedBaseModels } from '~/server/services/blocks/app-base-model-licence';
 
 /**
  * The inline-graph belt. This module is what REPLACES code review as the trust
@@ -271,11 +272,10 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
   it('🔴 the revert did NOT narrow anything else — a non-nodepack resource is gated exactly as before', async () => {
     // The mirror of the test that guarded the flip. The failure it pins: a
     // revert that accidentally tightens (or loosens) the belt for the rest of
-    // `resources`. A well-formed, generatable civitai LoRA plus a huggingface
-    // weight must still be ACCEPTED, and a non-generatable one still REJECTED,
-    // with nodepacks out of the picture entirely.
+    // `resources`. A well-formed, generatable civitai LoRA must still be ACCEPTED,
+    // and a non-generatable one still REJECTED, with nodepacks out of the picture.
     await expect(
-      assertViewerEntitledToInlineResources({ airs: [LORA_AIR, HF_AIR], user: VIEWER })
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
     ).resolves.toBeUndefined();
 
     vi.clearAllMocks();
@@ -339,28 +339,21 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
   });
 
   it('🔴 …and from an ALLOWLISTED source too, where NO sibling guard could mask it', async () => {
-    // `huggingface` IS allowlisted, so the source guard cannot reject this AIR:
-    // the type guard is the only thing standing between an app and an arbitrary
-    // container image. Remove it and this case does not merely change its error
-    // — it stops throwing at all.
+    // `civitai` IS allowlisted, so the source guard cannot reject this AIR: the type
+    // guard is the only thing standing between an app and an arbitrary container
+    // image. Remove it and this case stops throwing at all.
     await expect(
       assertViewerEntitledToInlineResources({
-        airs: ['urn:air:oci:image:huggingface:evil/comfy@v1'],
+        airs: ['urn:air:sdxl:image:civitai:118025@136251'],
         user: VIEWER,
       })
     ).rejects.toThrow(/AIR type 'image' is not permitted in an inline workflow/);
   });
 
   it('POSITIVE CONTROL — the same AIR with an ALLOWLISTED type is accepted', async () => {
-    // Isolates the `type` token as the cause: same source, same `oci` ecosystem,
-    // same `evil/comfy@v1` id and version — only `image` → `lora` changes, and
-    // the rejection goes away. Without this, the case above is also satisfied by
-    // a guard that rejects every huggingface AIR for some unrelated reason.
+    // Isolates the `type` token as the cause: only `image` → `lora` changes.
     await expect(
-      assertViewerEntitledToInlineResources({
-        airs: ['urn:air:oci:lora:huggingface:evil/comfy@v1'],
-        user: VIEWER,
-      })
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
     ).resolves.toBeUndefined();
   });
 
@@ -372,16 +365,25 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     // the `/`-and-`.`-bearing huggingface versions and the underscored
     // `diffusion_model` / `text_encoders` types, all of which a naive
     // `[a-z0-9]+@\d+` reader would reject.
-    const shipped = [
+    const shippedHf = [
       'urn:air:zimageturbo:diffusion_model:huggingface:Comfy-Org/z_image_turbo@main/split_files/diffusion_models/z_image_turbo_bf16.safetensors',
       'urn:air:qwen:clip:huggingface:Comfy-Org/z_image_turbo@main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors',
       'urn:air:flux1:vae:huggingface:Comfy-Org/Z-Image-Turbo@6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors',
       'urn:air:qwen:diffusion_model:huggingface:unsloth/Qwen-Image-2512-GGUF@main/qwen-image-2512-Q5_K_M.gguf',
       'urn:air:flux2:text_encoders:huggingface:Comfy-Org/vae-text-encorder-for-flux-klein-9b@main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
+    ];
+    const shipped = [
       'urn:air:zimageturbo:lora:civitai:118025@2702227',
       'urn:air:qwen:lora:civitai:118025@2702222',
       'urn:air:flux2:lora:civitai:118025@2702214',
     ];
+    // The recipes' own huggingface weights still PARSE (the grammar is not too strict);
+    // inline, they are refused on source, never as malformed.
+    for (const air of shippedHf) {
+      await expect(
+        assertViewerEntitledToInlineResources({ airs: [air], user: VIEWER })
+      ).rejects.toThrow("resource AIR source 'huggingface' is not permitted in an inline workflow");
+    }
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => resourceRow({ id }))
     );
@@ -449,16 +451,27 @@ describe('assertViewerEntitledToInlineResources — AIR shape', () => {
     ).rejects.toThrow(/duplicate resource declared/);
   });
 
-  it('a huggingface-only manifest needs no civitai belt call (exempt by construction)', async () => {
+  it('🔴 refuses a huggingface resource, alone or beside a civitai one', async () => {
     await expect(
       assertViewerEntitledToInlineResources({ airs: [HF_AIR], user: VIEWER })
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("resource AIR source 'huggingface' is not permitted in an inline workflow");
+    await expect(
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR, HF_AIR], user: VIEWER })
+    ).rejects.toThrow("resource AIR source 'huggingface' is not permitted in an inline workflow");
     expect(mockGetResourceData).not.toHaveBeenCalled();
+  });
+
+  it('platform recipes still pin huggingface weights, outside the inline source list', () => {
+    const recipe = getRecipe('starter-comfy-txt2img');
+    expect(recipe).toBeDefined();
+    const airs = recipe!.buildStep(recipe!.paramSchema.parse({ prompt: 'a cat' }), {}).resources;
+    expect(airs.some((a) => a.includes(':huggingface:'))).toBe(true);
+    expect(() => assertNoRestrictedBaseModels({ airs })).not.toThrow();
   });
 
   it('POSITIVE CONTROL — a well-formed civitai AIR for a generatable resource passes', async () => {
     await expect(
-      assertViewerEntitledToInlineResources({ airs: [LORA_AIR, HF_AIR], user: VIEWER })
+      assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
     ).resolves.toBeUndefined();
     expect(mockGetResourceData).toHaveBeenCalledWith([136251], expect.anything());
   });
@@ -660,7 +673,7 @@ describe('INVARIANT GUARD (not a contract test) — allowlist membership', () =>
   });
 
   it('pins the exact AIR SOURCE allowlist', () => {
-    expect([...INLINE_ALLOWED_AIR_SOURCES].sort()).toEqual(['civitai', 'huggingface'].sort());
+    expect([...INLINE_ALLOWED_AIR_SOURCES].sort()).toEqual(['civitai']);
   });
 
   it('records the CURRENT nodepack membership — a state, not a rule', () => {

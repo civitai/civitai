@@ -153,15 +153,12 @@ export const INLINE_NODEPACKS_ENABLED = false;
  * denylist — an unrecognised source is a resource class nobody has reasoned
  * about, and the fail-closed answer is to reject it.
  *
- * `civitai` carries civitai entitlement and is gated below. `huggingface` is the
- * public-weights source both shipped recipes already pin (see the `staticAirs`
- * in `recipes/seamless-pano.recipe.ts`), so it is exempt-by-construction: there
- * is no civitai entitlement to check on a public HF repo.
+ * Only `civitai`: every inline resource must resolve to a civitai model version so the
+ * checks below can run on it. Platform recipes pin their own `staticAirs` and do not pass
+ * through this list.
  */
 export const INLINE_ALLOWED_AIR_SOURCES: ReadonlySet<string> = new Set(
-  INLINE_NODEPACKS_ENABLED
-    ? ['civitai', 'huggingface', 'comfyregistry']
-    : ['civitai', 'huggingface']
+  INLINE_NODEPACKS_ENABLED ? ['civitai', 'comfyregistry'] : ['civitai']
 );
 
 /**
