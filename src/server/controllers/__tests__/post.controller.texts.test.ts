@@ -4,11 +4,13 @@ import { NsfwLevel } from '~/server/common/enums';
 const mocks = vi.hoisted(() => ({
   getPostDetail: vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined),
   getPostTextsForViewer: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+  reorderPostImages: vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined),
 }));
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getPostDetail: mocks.getPostDetail,
+  reorderPostImages: mocks.reorderPostImages,
 }));
 vi.mock('~/server/services/post-text.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -22,7 +24,7 @@ vi.mock('~/server/services/blocks/post-app-chip.service', () => ({
   readPostAppChip: vi.fn(async () => null),
 }));
 
-import { getPostHandler } from '~/server/controllers/post.controller';
+import { getPostHandler, reorderPostImagesHandler } from '~/server/controllers/post.controller';
 
 const POST = 31;
 const AUTHOR = 5;
@@ -86,5 +88,25 @@ describe("post.get's storyline text items", () => {
       code: 'NOT_FOUND',
     });
     expect(mocks.getPostTextsForViewer).not.toHaveBeenCalled();
+  });
+});
+
+describe('post.reorderImages', () => {
+  const items = [
+    { type: 'text' as const, id: 1 },
+    { type: 'image' as const, id: 2 },
+  ];
+  const reorder = (storylineText: boolean, withItems = true) =>
+    reorderPostImagesHandler({
+      input: { id: POST, imageIds: [2], ...(withItems ? { items } : {}) },
+      ctx: ctx({ user: { id: AUTHOR }, features: { storylineText } }),
+    });
+
+  it('moves text items only with the storylineText flag', async () => {
+    await expect(reorder(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mocks.reorderPostImages).not.toHaveBeenCalled();
+    await reorder(false, false);
+    await reorder(true);
+    expect(mocks.reorderPostImages).toHaveBeenCalledTimes(2);
   });
 });

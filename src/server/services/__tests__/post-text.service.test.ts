@@ -23,6 +23,7 @@ const { addPostText, setPostText, deletePostText, getPostTextsForViewer, getStor
   await import('~/server/services/post-text.service');
 const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
 const { setStorylineTextSchema } = await import('~/server/schema/storyline.schema');
+const { OWNER_CONTENT_KEPT } = await import('~/server/services/legal-hold.service');
 const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 const { updatePostNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 
@@ -80,7 +81,8 @@ describe('setPostText', () => {
   it('refuses to change held text', async () => {
     w.$queryRaw.mockResolvedValue([{ postId: POST }] as never);
     await expect(setPostText({ id: TEXT, content: '', userId: AUTHOR })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+      code: 'FORBIDDEN',
+      message: OWNER_CONTENT_KEPT,
     });
     expect(w.postText.update).not.toHaveBeenCalled();
   });
@@ -172,11 +174,13 @@ describe('deletePostText', () => {
 
   it('keeps held text from its author and from a moderator alike', async () => {
     w.$queryRaw.mockResolvedValue([{ postId: POST }] as never);
+    // The owner is never told why; a moderator is.
     await expect(deletePostText({ id: TEXT, userId: AUTHOR })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+      code: 'FORBIDDEN',
+      message: OWNER_CONTENT_KEPT,
     });
     await expect(deletePostText({ id: TEXT, userId: 99, isModerator: true })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST' }
+      { code: 'FORBIDDEN', message: expect.stringMatching(/held for review/) }
     );
     expect(w.postText.delete).not.toHaveBeenCalled();
     // The hold is the database's own `post_text_held`, asked of this text.

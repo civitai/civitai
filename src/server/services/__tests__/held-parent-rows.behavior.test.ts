@@ -637,7 +637,7 @@ describe("a held author's comments go with their parent", () => {
     `);
 
     await expect(deletePost({ id: 10, isModerator: true })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+      code: 'FORBIDDEN',
       message: expect.stringMatching(/held for review/),
     });
 

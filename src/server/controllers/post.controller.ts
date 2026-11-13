@@ -780,10 +780,13 @@ export const removeResourceFromPostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
+  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: ProtectedContext;
 }) => {
+  // Text items move only with their flag; without it a reorder moves images alone.
+  if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
     return await reorderPostImages({ ...input });
   } catch (error) {

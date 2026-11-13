@@ -423,7 +423,7 @@ describe('commentv3 create', () => {
         ctx: ctx(STRANGER, true),
         input: { entityType: 'postText', entityId: 1, content: '<p>x</p>' } as never,
       })
-    ).rejects.toBeTruthy();
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     m.stored.set(500, row(500, { entityType: 'postText', entityId: 1, userId: STRANGER }));
     for (const isModerator of [false, true])
       await expect(update(STRANGER, 500, isModerator)).rejects.toMatchObject({

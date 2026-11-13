@@ -1,7 +1,7 @@
 -- Storylines: text items in a post's reading order (PostText). Held text, and the post that holds
 -- it, cannot be deleted until the hold is released: a text is held while its CSAM hold is pending
--- (`csamHeld`), while a CSAM report unsent or sent within the year names its author or quotes its
--- post, or while an evidence hold covers its author. The trigger refuses every delete of such a
+-- (`csamHeld`), while a CSAM report that still holds (pending, not yet archived, or sent within the
+-- year) names its author or quotes its post, or while an evidence hold covers its author. The trigger refuses every delete of such a
 -- row, including the cascade from "Post" and raw SQL. Its Comment v3 thread is
 -- 20270108094000_post_text_comment_type, applied later.
 --
@@ -50,11 +50,12 @@ BEGIN
   IF csam_held THEN
     RETURN true;
   END IF;
-  -- A report holds while unsent and for a year after it is sent, naming the author or quoting the
-  -- post.
+  -- A report holds while pending, not yet archived, or sent within the year (`reportHolds` in
+  -- src/server/utils/legal-hold.ts), naming the author or quoting the post.
   IF EXISTS (
     SELECT 1 FROM "CsamReport" r
-    WHERE (r."reportSentAt" IS NULL OR r."reportSentAt" > now() - interval '1 year')
+    WHERE (r."reportSentAt" IS NULL OR r."archivedAt" IS NULL
+           OR r."reportSentAt" > now() - interval '1 year')
       AND (
         r."userId" = author_id
         OR r.details ->> 'secondaryUserId' = author_id::text
@@ -64,14 +65,18 @@ BEGIN
   ) THEN
     RETURN true;
   END IF;
-  -- An evidence hold on the author, while that view exists: without it, the reports above decide.
+  -- An evidence hold on the author, while that view exists: without it, the reports above decide,
+  -- and each database session warns once that the view is gone.
   IF to_regclass('public."EvidenceHeldUser"') IS NOT NULL THEN
     EXECUTE 'SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = $1)'
       INTO marked USING author_id;
+  ELSIF current_setting('post_text_held.warned', true) IS DISTINCT FROM 't' THEN
+    RAISE WARNING 'post_text_held: "EvidenceHeldUser" is missing; evidence holds are not checked';
+    PERFORM set_config('post_text_held.warned', 't', false);
   END IF;
   RETURN marked;
 END;
-$$ LANGUAGE plpgsql STABLE SET search_path = public, pg_temp;
+$$ LANGUAGE plpgsql VOLATILE SET search_path = public, pg_temp;
 
 CREATE OR REPLACE FUNCTION post_text_keep_held() RETURNS trigger AS $$
 BEGIN

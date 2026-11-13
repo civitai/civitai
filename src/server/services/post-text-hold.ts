@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
+import { OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
 
 // A leaf: post, user and job deletes import it, so it imports nothing of theirs.
 
@@ -33,3 +35,12 @@ export async function heldPostTextPostIds({
   `;
   return rows.map((row) => row.postId);
 }
+
+/** The refusal of a change to held text: an owner is never told why (`OWNER_CONTENT_KEPT`). */
+export const heldTextError = (isModerator: boolean | undefined, what: string) =>
+  new TRPCError({
+    code: 'FORBIDDEN',
+    message: isModerator
+      ? `${what} is held for review and can't change until the hold is released`
+      : OWNER_CONTENT_KEPT,
+  });

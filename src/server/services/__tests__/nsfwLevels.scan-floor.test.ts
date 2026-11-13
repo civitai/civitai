@@ -86,7 +86,7 @@ describe.each([
     await fn([1, 2]);
     expect(sentText()).toContain(imageGuard);
     // A post with only text items is not rated: an image is still required.
-    expect(sentText()).not.toMatch(/OR\s+EXISTS/);
+    expect(sentText()).not.toMatch(/OR\s*\(?\s*EXISTS/);
   });
 
   it('writes only when the final value differs', async () => {

@@ -23,6 +23,7 @@ CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
   "reportSentAt" TIMESTAMP(3),
+  "archivedAt" TIMESTAMP(3),
   "details" JSONB NOT NULL DEFAULT '{}'
 );
 -- Stands in for the view: the trigger only reads its "userId".
@@ -102,7 +103,7 @@ describe('PostText delete trigger', () => {
     expect(await texts()).not.toContain(id);
   });
 
-  it('holds text while a report, unsent or sent within the year, names its author or quotes its post', async () => {
+  it('holds text while a report that still holds names its author or quotes its post', async () => {
     const id = await addText(1);
     await pg.query(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [AUTHOR]);
     await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
@@ -113,10 +114,16 @@ describe('PostText delete trigger', () => {
     ]);
     await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
 
-    // Sent, it holds for a year from submission.
-    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '364 days'`);
+    // Sent, it holds for a year from submission, and until it is archived.
+    await pg.query(
+      `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '364 days', "archivedAt" = now()`
+    );
     await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
-    await pg.query(`UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days'`);
+    await pg.query(
+      `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '366 days', "archivedAt" = NULL`
+    );
+    await expect(pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id])).rejects.toThrow(/held/);
+    await pg.query(`UPDATE "CsamReport" SET "archivedAt" = now()`);
     await pg.query(`DELETE FROM "PostText" WHERE id = $1`, [id]);
     expect(await texts()).toEqual([]);
   });
@@ -131,9 +138,18 @@ describe('PostText delete trigger', () => {
       await expect(pg.query(`DELETE FROM "Post" WHERE id = 1`)).rejects.toThrow(
         /cannot be deleted while it is held/
       );
+      // The evidence leg is skipped, with one warning per session that the view is gone.
       await pg.query(`DELETE FROM "CsamReport"`);
-      await pg.query(`DELETE FROM "Post" WHERE id = 1`);
-      expect(await texts()).not.toContain(id);
+      const notices: string[] = [];
+      const onNotice = (n: { severity?: string; message?: string }) =>
+        notices.push(`${n.severity}: ${n.message}`);
+      await addText(2);
+      await pg.query(`DELETE FROM "Post" WHERE id = 1`, [], { onNotice });
+      await pg.query(`DELETE FROM "Post" WHERE id = 2`, [], { onNotice });
+      expect(await texts()).toEqual([]);
+      expect(notices).toEqual([
+        expect.stringMatching(/^WARNING: post_text_held: "EvidenceHeldUser" is missing/),
+      ]);
     } finally {
       await pg.query(`ALTER TABLE "EvidenceHeldUserGone" RENAME TO "EvidenceHeldUser"`);
     }

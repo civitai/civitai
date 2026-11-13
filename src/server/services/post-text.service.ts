@@ -1,5 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
-import { heldPostTextPostIds } from '~/server/services/post-text-hold';
+import { heldPostTextPostIds, heldTextError } from '~/server/services/post-text-hold';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { updatePostNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
@@ -63,8 +63,9 @@ async function getOwnText(id: number, userId: number, isModerator?: boolean) {
 }
 
 /**
- * Saves a text item's content. A change resets its rating to 0 in the same write, so readers see
- * none of it until its own scan lands (unlike a caption, which keeps its old rating meanwhile).
+ * Saves a text item's content. A change to its words resets its rating to 0 in the same write, so
+ * readers see none of it until its own scan lands (unlike a caption, which keeps its old rating
+ * meanwhile); a markup-only change keeps the rating.
  */
 export async function setPostText({
   id,
@@ -79,7 +80,7 @@ export async function setPostText({
 }) {
   const text = await getOwnText(id, userId);
   if ((await heldPostTextPostIds({ textIds: [id] })).length)
-    throw throwBadRequestError('This text is held for review and cannot be changed');
+    throw heldTextError(isModerator, 'This text');
   await assertChapterPostAuthor({
     postId: text.postId,
     postUserId: text.post.userId,
@@ -119,7 +120,7 @@ export async function deletePostText({
 }) {
   const text = await getOwnText(id, userId, isModerator);
   if ((await heldPostTextPostIds({ textIds: [id] })).length)
-    throw throwBadRequestError('This text is held for review and cannot be deleted');
+    throw heldTextError(isModerator, 'This text');
   await dbWrite.postText.delete({ where: { id } });
   await updatePostNsfwLevels([text.postId]);
   return { id };

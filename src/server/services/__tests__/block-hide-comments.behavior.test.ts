@@ -293,4 +293,12 @@ describe('SECTION_OWNERS', () => {
       )
     );
   });
+
+  it("finds the blocker's own section of each type left out until its enum value exists", async () => {
+    for (const type of SECTION_TYPES_AWAITING_ENUM) {
+      const i = SECTIONS.findIndex(([t]) => t === type);
+      const { rows } = await holder.db.query<{ id: number }>(SECTION_OWNERS[type](String(BLOCKER)));
+      expect(rows.map((r) => Object.values(r)[0])).toEqual([mine(i)]);
+    }
+  });
 });
