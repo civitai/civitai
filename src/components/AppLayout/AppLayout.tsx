@@ -24,6 +24,7 @@ import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
 import { useTosReacceptancePrompt } from '~/hooks/useTosReacceptancePrompt';
+import { useMusicPlayerActive } from '~/store/music-player.store';
 
 let shownReadonly = false;
 const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
@@ -115,11 +116,14 @@ export function AppLayout({
   );
 }
 
-function AdhesiveFooter() {
+export function AdhesiveFooter() {
   const currentUser = useCurrentUser();
   const router = useRouter();
+  // The music player takes the ad's place at the bottom while it is active.
+  const musicPlayerActive = useMusicPlayerActive();
 
-  if (currentUser?.isPaidMember || router.asPath.includes('/moderator')) return null;
+  if (musicPlayerActive || currentUser?.isPaidMember || router.asPath.includes('/moderator'))
+    return null;
   // Reserve the footer height up front for logged-out users (the bulk of ad
   // traffic) so the bar doesn't shove content when it fills ~1-2s after paint.
   return <AdhesiveAd preserveLayout={!currentUser} />;

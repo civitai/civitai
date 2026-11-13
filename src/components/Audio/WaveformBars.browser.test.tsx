@@ -35,4 +35,31 @@ describe('the waveform bars', () => {
     await rerender(<WaveformBars peaks={new Array(10).fill(0.5)} progress={1} />);
     expect(played().every(Boolean)).toBe(true);
   });
+
+  test('paint played bars in the Civitai primary unless an enclosing player sets its own colour', async () => {
+    await renderWithProviders(
+      <div>
+        <div data-testid="plain">
+          <WaveformBars peaks={[0.5, 0.5]} progress={1} />
+        </div>
+        <div data-testid="tinted" style={{ ['--waveform-played' as string]: 'rgb(230, 73, 128)' }}>
+          <WaveformBars peaks={[0.5, 0.5]} progress={1} />
+        </div>
+      </div>
+    );
+    await expect.element(page.getByTestId('waveform-bar').first()).toBeInTheDocument();
+    const fill = (wrapper: string) =>
+      getComputedStyle(
+        page.getByTestId(wrapper).element().querySelector('[data-testid="waveform-bar"]')!
+      ).backgroundColor;
+    const probe = document.createElement('div');
+    probe.style.backgroundColor = 'var(--mantine-primary-color-filled)';
+    document.body.appendChild(probe);
+    const primary = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+
+    expect(primary).not.toBe('rgba(0, 0, 0, 0)');
+    expect(fill('plain')).toBe(primary);
+    expect(fill('tinted')).toBe('rgb(230, 73, 128)');
+  });
 });

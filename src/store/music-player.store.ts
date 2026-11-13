@@ -394,3 +394,6 @@ export const useMusicPlayheadStore = create<{ currentTime: number; duration: num
   currentTime: 0,
   duration: 0,
 }));
+
+/** True while a player surface shows (the bar or the minimized cover): the bottom ads stand down. */
+export const useMusicPlayerActive = () => useMusicPlayerStore((s) => s.view !== 'closed');
