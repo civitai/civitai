@@ -55,6 +55,7 @@ import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostResourceReviews } from '~/components/Post/EditV2/PostResourceReviews/usePostResourceReviews';
 import { ResourceReviewEditButton } from '~/components/Post/EditV2/PostResourceReviews/ResourceReviewEditButton';
 import { useReviewFocusStore } from '~/components/Post/EditV2/PostResourceReviews/reviewFocus';
 import {
@@ -164,6 +165,8 @@ const useAddedImageContext = () => {
   return context;
 };
 // #endregion
+
+const COLLAPSED_RESOURCE_COUNT = 3;
 
 export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
   // Advanced Mode allows unrestricted mixing of base models; an empty list leaves the picker
@@ -749,19 +752,33 @@ function EditDetail() {
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
 
+  // Unrated resources stay expanded so they can be rated in place; only rated ones collapse.
+  const ownerId = usePostEditStore((state) => state.post?.user.id);
+  const { byModelVersionId } = usePostResourceReviews({
+    postId: postId ?? 0,
+    ownerId: ownerId ?? 0,
+  });
+  const isUnrated = (r: ResourceHelper) => {
+    const review = r.modelVersionId ? byModelVersionId.get(r.modelVersionId) : undefined;
+    return !!review && review.reviewRecommended == null;
+  };
+  const namedResources = sortByModelTypes(resources).filter((x) => !!x.modelName);
+
   // "Next unrated" on the review progress card may target a resource hidden behind "Show All".
   const reviewFocus = useReviewFocusStore((state) => state.target);
   useEffect(() => {
     if (reviewFocus?.imageId !== image.id) return;
     const visible = sortByModelTypes(image.resourceHelper).filter((x) => !!x.modelName);
-    if (visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >= 3)
+    if (
+      visible.findIndex((x) => x.modelVersionId === reviewFocus.modelVersionId) >=
+      COLLAPSED_RESOURCE_COUNT
+    )
       setShowMoreResources(true);
     useReviewFocusStore.setState({ target: null });
   }, [reviewFocus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
-  const resourcesSorted = sortByModelTypes(resources);
   const unmatchedResources = useMemo(() => {
     const derived = meta?.unmatchedResources as UnmatchedResource[] | undefined;
     if (derived) return derived;
@@ -969,13 +986,12 @@ function EditDetail() {
             {(!!resources?.length || unmatchedResources.length > 0 || hasLegacyUnmatched) && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {resourcesSorted
-                  .filter((x) => !!x.modelName)
-                  .slice(0, !showMoreResources ? 3 : resources.length)
-                  .map((resource, i) => (
+                {namedResources.map((resource, i) =>
+                  showMoreResources || i < COLLAPSED_RESOURCE_COUNT || isUnrated(resource) ? (
                     <ResourceRow key={`${image.id}-${i}`} resource={resource} i={i} />
-                  ))}
-                {resources.length > 3 && (
+                  ) : null
+                )}
+                {resources.length > COLLAPSED_RESOURCE_COUNT && (
                   <div>
                     <Button
                       variant="light"
