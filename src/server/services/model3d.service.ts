@@ -774,7 +774,8 @@ export const upsertModel3D = async ({
       if (locked.has('nsfwLevel') && data.thumbnailImageId !== undefined) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: "A moderator has rated this model, so its thumbnail can't be changed.",
+          message:
+            "A moderator has rated this model, so its thumbnail can't be changed. Contact support if you need to change it.",
         });
       }
       for (const key of locked) delete (data as Record<string, unknown>)[key];

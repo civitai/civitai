@@ -191,7 +191,10 @@ describe('upsertModel3D thumbnail ownership', () => {
     });
     await expect(
       upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringContaining('Contact support'),
+    });
     await expect(
       upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
