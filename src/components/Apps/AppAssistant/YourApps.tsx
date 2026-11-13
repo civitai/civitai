@@ -41,6 +41,15 @@ export function AppError({ error }: { error: unknown }) {
         pauses the others.
       </Alert>
     );
+  // App hibernate: the SLEEPING apps are at their limit (a start had to put one to sleep and could
+  // not). The kept apps are not the problem, so the copy below would send the user to the wrong list.
+  if (error instanceof SandboxApiError && error.code === 'sleeping_limit')
+    return (
+      <Alert color="yellow" variant="light" title="You have as many sleeping apps as you can keep">
+        Delete a sleeping app you no longer need from the app switcher at the top of the page, then
+        try again.
+      </Alert>
+    );
   if (error instanceof SandboxApiError && error.kind === 'limit')
     return (
       <Alert color="yellow" variant="light" title="You have as many apps as you can keep">

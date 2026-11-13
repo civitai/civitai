@@ -365,6 +365,8 @@ const hib = vi.hoisted(() => ({
     expiresAt: '2026-11-13T12:10:00.000Z',
   })),
   deleteMine: vi.fn(async (input: { app: string }) => ({ deleted: input.app })),
+  /** The page's FRESH read of the records (`listMine.query`), right after an open had to create. */
+  listMineQuery: vi.fn(async () => hib.sleeping),
   /** Each wake the page asked for, with the seed it fetched for it. */
   wakes: [] as { app: string; seed: unknown }[],
   /** The next wakes throw these, in turn. */
@@ -606,6 +608,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const appHibernation = {
     getWakeSeed: { mutate: hib.getWakeSeed },
     deleteMine: { mutate: hib.deleteMine },
+    listMine: { query: hib.listMineQuery },
   };
   return {
     ...real,
@@ -3905,6 +3908,7 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     hib.listReads = [];
     hib.getWakeSeed.mockClear();
     hib.deleteMine.mockClear();
+    hib.listMineQuery.mockClear();
     hib.wakes = [];
     hib.wakeRejects = [];
     hib.sleeps = [];
@@ -4161,6 +4165,78 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await settle(200);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
+  test('R2-2 LINEAGE from the RUNNER: deleting an app the runner woke (wake_app) deletes its record by sha', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    localStorage.clear();
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    // The runner woke it: the page hears of the call, and its list now has the woken sandbox.
+    m.list = [...m.list, sandbox('sbx-woken-garden-log', { app: 'garden-log', state: 'starting' })];
+    m.chat!.onToolResult!({
+      name: 'wake_app',
+      input: { app: 'garden-log' },
+      output: {
+        app: 'garden-log',
+        state: 'starting',
+        woke: true,
+        sha256: 'd'.repeat(64),
+        note: 'x',
+      },
+      isError: false,
+    });
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-woken-garden-log');
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log', sha256: 'd'.repeat(64) })
+    );
+  });
+
+  test('R2-2 NEGATIVE CONTROL: a runner wake_app with no sha (already awake) records no lineage', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    localStorage.clear();
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    m.list = [...m.list, sandbox('sbx-woken-garden-log', { app: 'garden-log', state: 'starting' })];
+    m.chat!.onToolResult!({
+      name: 'wake_app',
+      input: { app: 'garden-log' },
+      output: { app: 'garden-log', state: 'starting', woke: true, note: 'x' },
+      isError: false,
+    });
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-woken-garden-log');
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('R2-5: a start refused at the SLEEPING-app limit says so, not "apps you can keep"', async () => {
+    const { AppError } = await import('./YourApps');
+    renderWithProviders(<AppError error={sleepingLimit('old-quiz')} />);
+    await expect
+      .element(page.getByText('You have as many sleeping apps as you can keep'))
+      .toBeVisible();
+    await expect.element(page.getByText(/Delete a sleeping app you no longer need/)).toBeVisible();
+    expect(page.getByText('You have as many apps as you can keep').elements()).toHaveLength(0);
+  });
+
   test('Put to sleep asks the service and shows the app going to sleep', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await mountHibernate(true);
@@ -4224,6 +4300,7 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
   beforeEach(() => {
     hib.sleeping = sleepingBbbb();
     hib.deleteMine.mockClear();
+    hib.listMineQuery.mockClear();
     hib.getWakeSeed.mockClear();
     hib.wakes = [];
     hib.wakeRejects = [];
@@ -4252,9 +4329,11 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
     await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
     await settle(200);
-    // No unseeded create, nothing discarded, the record kept.
-    expect(m.open.mock.calls).toEqual([]);
-    expect(m.remove).not.toHaveBeenCalled();
+    // The listed app resumes with a plain open; that open had to CREATE (it slept meanwhile), so
+    // only the EMPTY sandbox it made is deleted, the app is woken, and the record is kept.
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(hib.listMineQuery).toHaveBeenCalledTimes(1);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
   test('Submit of an app put to sleep meanwhile: it is WOKEN (never made empty), and the record is not deleted', async () => {
@@ -4296,8 +4375,8 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     onTestFinished(() => shown.remove());
     await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toContain('app-bbbb'));
     await settle(200);
-    expect(m.open.mock.calls).toEqual([]);
-    expect(m.remove).not.toHaveBeenCalled();
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
   test('Start of a stale paused app that now sleeps WAKES it; deleting that one then takes its own record only', async () => {
@@ -4314,8 +4393,73 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
     await page.getByRole('menuitem', { name: /^Start/ }).click();
     await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
-    // Never an unseeded (empty) create of the sleeping app.
-    expect(m.open.mock.calls).toEqual([]);
+    // The empty sandbox the plain open made is gone; the woken one is what the user has.
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(m.list.filter((s) => s.app === 'app-bbbb').map((s) => s.name)).toEqual([
+      'sbx-woken-app-bbbb',
+    ]);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
+
+  test('R2-3: a paused LISTED app with a sleeping record resumes with a PLAIN open: no seed, no wake', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await mountHibernateFor();
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /^Start/ }).click();
+    await vi.waitFor(() => expect(m.open.mock.calls).toEqual([['app-bbbb']]));
+    await settle(200);
+    expect(hib.wakes).toEqual([]);
+    expect(hib.getWakeSeed).not.toHaveBeenCalled();
+    expect(hib.listMineQuery).not.toHaveBeenCalled();
+    expect(m.remove).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🟡 R2-1 — A MESSAGE SENT TO, OR A REPLY ASKED FOR ON, A PAUSED APP that was put to sleep since
+   * the page listed it: the page's one start wakes it, never leaves it NEW and EMPTY.
+   */
+  test('R2-1: a message sent to a stale paused app that now sleeps WAKES it (never left empty)', async () => {
+    // A visit opens the one app without starting it: paused, as listed.
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: ago(1) })];
+    await mountHibernateFor();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    // Put to sleep since the page listed it: the record is there, the sandbox is not.
+    goneFromService('app-bbbb');
+    m.chat!.onBeforeSend!('Add a dark mode', (waiting) => ({
+      text: 'Add a dark mode',
+      waiting: waiting ?? '',
+      release: () => undefined,
+      cancel: () => undefined,
+    }));
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(m.list.filter((s) => s.app === 'app-bbbb').map((s) => s.name)).toEqual([
+      'sbx-woken-app-bbbb',
+    ]);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('R2-1: Retry on a stale paused app that now sleeps WAKES it (never left empty)', async () => {
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: ago(1) })];
+    await mountHibernateFor();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    goneFromService('app-bbbb');
+    expect(m.chat!.onReplyResume!('retry')).toBe(true);
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  async function mountHibernateFor() {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  }
 });

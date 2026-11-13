@@ -77,8 +77,9 @@ export interface AppSandboxDeps {
   wakeTimeoutMs?: number;
   wakePollMs?: number;
   /**
-   * How a paused app is started (`openApp` unless set). App hibernate sets one that WAKES an app
-   * with a sleeping record rather than start it unseeded, which would make it new and empty.
+   * How a paused app is started (`openApp` unless set). App hibernate sets `startOrWakeApp`, which
+   * resumes a listed app with a plain open and wakes one put to sleep since it was listed, rather
+   * than leave it new and empty.
    */
   open?(app: string): Promise<{ sandbox: Sandbox; created: boolean }>;
 }

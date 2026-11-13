@@ -235,12 +235,25 @@ export function createAppTools({
       : { app, state, note: newAppNotReady(app, intro), awaitsUser: true };
   };
 
+  /**
+   * What a limit offer for `app` must leave out (`safeOldest`): the app being opened or woken, and
+   * every app awake now. With the apps or the sleeping apps unread (the runner's list refused past
+   * its rate limit reads as `null`, so no `sleeping` here), nothing is offered: fail closed.
+   */
+  const offerContext = (app: string): OfferContext => {
+    const list = apps();
+    return {
+      app,
+      live: (list ?? []).map((s) => s.app),
+      ...(!list || !hibernate?.sleeping() ? { unknown: true } : {}),
+    };
+  };
+
   const openOrExplain = async (app: string) => {
     try {
       return await open(app);
     } catch (error) {
-      // Never offer to delete the app being opened, nor any app awake now (`safeOldest`).
-      const ctx = { app, live: (apps() ?? []).map((s) => s.app) };
+      const ctx = offerContext(app);
       const message = appOpenFailure(error, ctx);
       if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
       const card = isHibernateCapRefusal(error) ? limitCardOfError(error, ctx) : null;
@@ -411,8 +424,7 @@ export function createAppTools({
           woken = await wakeApp(app);
         } catch (error) {
           createFailed = true;
-          // Never offer to delete the app being woken, nor any app awake now (`safeOldest`).
-          const ctx = { app, live: (apps() ?? []).map((s) => s.app) };
+          const ctx = offerContext(app);
           const message = wakeOnlyFailure(error) ?? appOpenFailure(error, ctx);
           if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
           const card = limitCardOfError(error, ctx);
@@ -424,12 +436,17 @@ export function createAppTools({
         const intro = woken.alreadyAwake
           ? `${app} had already been woken elsewhere and is now open, with its files.`
           : `${app} was woken from sleep and is now open, with its files (its .env files included).`;
+        // The archive it was woken from (absent when it was already awake): a page following a
+        // runner's wake records it as the sandbox's lineage, so deleting the app there takes the
+        // record with it (`sleepLineage.ts`).
+        const lineage = woken.sha256 ? { sha256: woken.sha256 } : {};
         const reinstall = `Its dependencies (node_modules), build output and caches were not kept while it slept, so before anything else run cd ${app} && npm install (if ${app} is not the project folder, find it with sandbox__list_dir first).`;
         return ready
           ? {
               app,
               state,
               woke: true,
+              ...lineage,
               note: `${intro} ${reinstall} Its tools are ready for this reply: then carry on with what the user asked.`,
               reopenTools: true,
             }
@@ -437,6 +454,7 @@ export function createAppTools({
               app,
               state,
               woke: true,
+              ...lineage,
               note: `${intro} It is still starting, so its tools arrive with your next reply, and this reply ends here: tell the user it is waking up. ${reinstall}`,
               awaitsUser: true,
             };

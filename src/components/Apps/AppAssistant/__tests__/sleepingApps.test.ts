@@ -23,6 +23,7 @@ import {
   SLEEPING_FULL,
   sleepingLimitMessage,
   sleepingNotLive,
+  startOrWakeApp,
   wakeOnlyFailure,
   wakeSleepingApp,
   type Sandbox,
@@ -386,6 +387,136 @@ describe('🔴 the limit offer never names the app being opened or woken, nor a 
   });
 });
 
+describe('R2-3: past the list’s rate limit, the limit offer fails CLOSED', () => {
+  const atLimit = refusal(409, 'sandbox limit (3) reached; delete one first', 'sleeping_limit', {
+    oldest: { app: 'old-quiz', hibernatedAt: '2026-09-01T00:00:00.000Z' },
+  });
+
+  it('no sleeping list (unread, or the feature off): create_app offers NO oldest', async () => {
+    const t = tools({
+      open: async () => {
+        throw atLimit;
+      },
+    });
+    const out = await t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx);
+    expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
+  });
+
+  it('the feature on but its sleeping list not loaded yet: create_app offers NO oldest', async () => {
+    const t = createAppTools({
+      apps: () => [],
+      current: () => null,
+      open: async () => {
+        throw atLimit;
+      },
+      sleeping: () => undefined,
+      wake: async () => {
+        throw new Error('unused');
+      },
+    });
+    const out = await t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx);
+    expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
+  });
+
+  it('NEGATIVE CONTROL: with the list read, the same refusal offers the oldest', async () => {
+    const t = tools({
+      sleeping: [],
+      wake: async () => {
+        throw new Error('unused');
+      },
+      open: async () => {
+        throw atLimit;
+      },
+    });
+    expect(await t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx)).toMatchObject({
+      limitCard: { kind: 'sleeping', oldest: 'old-quiz' },
+    });
+  });
+});
+
+describe('startOrWakeApp: the one start of an app, page and runner alike', () => {
+  const record = asleep('garden-log');
+  function deps(opts: { created?: boolean; records?: boolean[]; wakeFails?: unknown }) {
+    const calls: string[] = [];
+    const answers = [...(opts.records ?? [])];
+    return {
+      calls,
+      deps: {
+        open: vi.fn(async (app: string) => {
+          calls.push(`open ${app}`);
+          return { sandbox: sandbox(app, 'starting', `sbx-plain-${app}`), created: !!opts.created };
+        }),
+        remove: vi.fn(async (name: string) => {
+          calls.push(`remove ${name}`);
+        }),
+        wake: vi.fn(async (app: string): Promise<WakeResult> => {
+          calls.push(`wake ${app}`);
+          if (opts.wakeFails) throw opts.wakeFails;
+          return {
+            sandbox: sandbox(app, 'starting', `sbx-woken-${app}`),
+            created: true,
+            alreadyAwake: false,
+            sha256: record.sha256,
+          };
+        }),
+        hasRecord: vi.fn((_app: string, { fresh }: { fresh: boolean }) => {
+          calls.push(`record? fresh=${fresh}`);
+          return answers.shift() ?? false;
+        }),
+      },
+    };
+  }
+
+  it('LISTED and found (created: false): the plain open, even with a record; never a wake', async () => {
+    const { calls, deps: d } = deps({ created: false, records: [true] });
+    const out = await startOrWakeApp('garden-log', true, d);
+    expect(calls).toEqual(['open garden-log']);
+    expect(out.sandbox.name).toBe('sbx-plain-garden-log');
+  });
+
+  it('LISTED but the open had to CREATE while a record exists: delete that empty one, then wake', async () => {
+    const { calls, deps: d } = deps({ created: true, records: [true] });
+    const out = await startOrWakeApp('garden-log', true, d);
+    expect(calls).toEqual([
+      'open garden-log',
+      'record? fresh=true',
+      'remove sbx-plain-garden-log',
+      'wake garden-log',
+    ]);
+    expect(out).toEqual({
+      sandbox: expect.objectContaining({ name: 'sbx-woken-garden-log' }),
+      created: false,
+    });
+  });
+
+  it('LISTED, created, and no record: the new sandbox is kept (a deleted app made again)', async () => {
+    const { calls, deps: d } = deps({ created: true, records: [false] });
+    await startOrWakeApp('garden-log', true, d);
+    expect(calls).toEqual(['open garden-log', 'record? fresh=true']);
+  });
+
+  it('NOT LISTED with a record: woken, no plain open', async () => {
+    const { calls, deps: d } = deps({ records: [true] });
+    await startOrWakeApp('garden-log', false, d);
+    expect(calls).toEqual(['record? fresh=false', 'wake garden-log']);
+  });
+
+  it('NOT LISTED and no record: the plain open (a new app)', async () => {
+    const { calls, deps: d } = deps({ created: true, records: [false] });
+    await startOrWakeApp('garden-log', false, d);
+    expect(calls).toEqual(['record? fresh=false', 'open garden-log']);
+  });
+
+  it('a wake whose record went meanwhile (not_found) is a plain open; any other failure throws', async () => {
+    const gone = deps({ records: [true], wakeFails: new WakeSeedError('gone', 'not_found') });
+    await startOrWakeApp('garden-log', false, gone.deps);
+    expect(gone.calls).toEqual(['record? fresh=false', 'wake garden-log', 'open garden-log']);
+    const cap = refusal(409, 'sandbox limit (3) reached; delete one first', 'sleeping_limit');
+    const capped = deps({ records: [true], wakeFails: cap });
+    await expect(startOrWakeApp('garden-log', false, capped.deps)).rejects.toBe(cap);
+  });
+});
+
 describe('sleepingNotLive', () => {
   it('a live sandbox wins over a record of the same app', () => {
     expect(
@@ -483,6 +614,29 @@ describe('the assistant’s tools with the feature ON', () => {
     expect(result.note).toMatch(/wake_app/);
     // It chose nothing for the chat.
     expect(chosenAppOf({ name: CREATE_APP, input: {}, output: result, isError: false })).toBeNull();
+  });
+
+  it('R2-2: wake_app returns the archive’s sha256 it woke from (its lineage), and none when already awake', async () => {
+    const sha = 'f'.repeat(64);
+    const woken = await tools({
+      sleeping: [asleep('garden-log')],
+      wake: async (app) => ({
+        sandbox: sandbox(app, 'starting', 'sbx-woken'),
+        created: true,
+        alreadyAwake: false,
+        sha256: sha,
+      }),
+    }).tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    expect(woken).toMatchObject({ app: 'garden-log', woke: true, sha256: sha });
+    const awake = await tools({
+      sleeping: [asleep('garden-log')],
+      wake: async (app) => ({
+        sandbox: sandbox(app, 'starting', 'sbx-there'),
+        created: false,
+        alreadyAwake: true,
+      }),
+    }).tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    expect(awake).not.toHaveProperty('sha256');
   });
 
   it('wake_app wakes it, says to reinstall dependencies first, and chooses it for the chat', async () => {

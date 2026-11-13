@@ -55,6 +55,7 @@ import {
   limitCardOf,
   safeOldest,
   sleepingNotLive,
+  startOrWakeApp,
   type WakeResult,
 } from '@civitai/app-assistant';
 import { saveAppSource } from '~/components/Apps/AppAssistant/appSourceSave';
@@ -439,29 +440,41 @@ export function AppAssistantWorkspace({
     apps: sandboxes.list.data,
     sleeping: hibernate ? sleepingList.data : undefined,
   };
+  const sandboxesRef = useRef(sandboxes);
+  sandboxesRef.current = sandboxes;
   const stopRef = useRef(stopDevTunnel.mutateAsync);
   stopRef.current = stopDevTunnel.mutateAsync;
   const startRef = useRef(startDevTunnel.mutateAsync);
   startRef.current = startDevTunnel.mutateAsync;
-  const openRef = useRef(sandboxes.open.mutateAsync);
-  // App hibernate: an UNSEEDED start of an app that has a sleeping record, from a sandbox this
-  // browser did not wake from that record (or none listed), would make it NEW and EMPTY while the
-  // real one sleeps (a stale list: it was put to sleep meanwhile). It is woken instead: a sandbox
-  // that does exist answers `already_exists` and is opened as it is.
-  openRef.current = async (app: string) => {
-    const record = hibernate ? live.current.sleeping?.find((s) => s.app === app) : undefined;
-    const listed = live.current.apps?.find((s) => s.app === app);
-    const fromRecord = !!listed && lineageOf(userIdRef.current, listed.name) === record?.sha256;
-    if (record && !fromRecord) {
-      try {
-        const woken = await wakeRef.current(app);
-        return { sandbox: woken.sandbox, created: false };
-      } catch (error) {
-        // The record went meanwhile (deleted): nothing sleeps under that key, so a plain start.
-        if (!(error instanceof WakeSeedError && error.code === 'not_found')) throw error;
-      }
-    }
-    return sandboxes.open.mutateAsync(app);
+  /**
+   * EVERY start of an app on this page (the menu's Start, a pick, an export, a submit, a message
+   * sent to a paused app, a reply asked for again, the assistant's create_app): one function, so
+   * none of them can start an app that sleeps NEW and EMPTY. With app hibernate on it is
+   * `startOrWakeApp`: a listed app resumes with a plain open (its sleeping record, kept after a
+   * wake, or not); one put to sleep since it was listed is woken, the empty sandbox the open made
+   * deleted first. That delete is never `onRemoved`'s, so it never touches a sleeping record.
+   */
+  const openRef = useRef((app: string) => sandboxesRef.current.open.mutateAsync(app));
+  openRef.current = (app: string) => {
+    const plain = (key: string) => sandboxesRef.current.open.mutateAsync(key);
+    if (!hibernate) return plain(app);
+    const cached = (key: string) => !!live.current.sleeping?.some((s) => s.app === key);
+    return startOrWakeApp(app, !!live.current.apps?.some((s) => s.app === app), {
+      open: plain,
+      remove: (name) => sandboxesRef.current.remove.mutateAsync(name),
+      wake: (key) => wakeRef.current(key),
+      // Right after an open had to create: the records as civitai has them NOW (the list here can
+      // be as stale as the app list was). Unreadable, the last list answers.
+      hasRecord: async (key, { fresh }) => {
+        if (!fresh) return cached(key);
+        try {
+          const records = await trpcVanilla.appHibernation.listMine.query();
+          return records.some((s) => s.app === key);
+        } catch {
+          return cached(key);
+        }
+      },
+    });
   };
   // Wakes a sleeping app (set below): shared by the list's Wake and the assistant's wake_app.
   const wakeRef = useRef<(app: string) => Promise<WakeResult>>(() =>
@@ -544,8 +557,6 @@ export function AppAssistantWorkspace({
   // civitai's seed and one-time wake ticket (minted from this signed-in user's own request), then
   // the seeded create; the sleeping list is read again either way.
   // Read only when a wake runs: with the flag off nothing here touches the wake at all.
-  const sandboxesRef = useRef(sandboxes);
-  sandboxesRef.current = sandboxes;
   wakeRef.current = async (app: string) => {
     try {
       const woken = await sandboxesRef.current.wake.mutateAsync({ app, getSeed: fetchWakeSeed });
@@ -724,11 +735,16 @@ export function AppAssistantWorkspace({
       }
       // On the runner, a wake_app (app hibernate) opens the woken app as create_app opens a new one.
       if (result.name !== CREATE_APP && result.name !== WAKE_APP) return;
-      const app = (result.output as { app?: unknown } | null)?.app;
+      const output = result.output as { app?: unknown; sha256?: unknown } | null;
+      const app = output?.app;
       if (typeof app !== 'string') return;
       void refetchRef.current().then(({ data }) => {
         const opened = data?.find((s) => s.app === app);
         if (!opened) return;
+        // Lineage (sleepLineage.ts): the runner woke this sandbox FROM that archive, so deleting it
+        // here takes its record with it, as for a wake on this page. No sha (already awake): none.
+        if (result.name === WAKE_APP && typeof output?.sha256 === 'string' && output.sha256)
+          rememberLineage(userIdRef.current, opened.name, output.sha256);
         // Being built now: its preview opens with its dev server, so there is none to look for.
         probedApp.current = opened.name;
         setActiveName(opened.name);
@@ -827,15 +843,16 @@ export function AppAssistantWorkspace({
   const endResumeAsk = useCallback(() => finishResumeAsk(false), [finishResumeAsk]);
   const refetchRef = useRef(sandboxes.list.refetch);
   refetchRef.current = sandboxes.list.refetch;
+  // The page's one start (`openRef`): an app put to sleep since it was listed is woken, not made empty.
   const wakeForAsk = useCallback(
     (app: string) =>
-      resumeRef.current(app, {
+      void openRef.current(app).then(
         // Unless the user moved on meanwhile.
-        onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+        ({ sandbox }) => {
           if (resumeAskRef.current?.app === sandbox.app) setActiveName(sandbox.name);
         },
-        onError: endResumeAsk,
-      }),
+        endResumeAsk
+      ),
     [endResumeAsk]
   );
   /** The chat asked by itself: decide on the app list as it is now, not as it was before the page slept. */
@@ -1068,8 +1085,6 @@ export function AppAssistantWorkspace({
     }
   }, [sandboxes.list.data, activeName, forkClaimsActiveApp, checkOpenedChat]);
 
-  const resumeRef = useRef(sandboxes.open.mutate);
-  resumeRef.current = sandboxes.open.mutate;
   const heldRef = useRef(held);
   heldRef.current = held;
   const prepareSubmitRef = useRef<(name: string) => Promise<PreparedSubmit>>(() =>
@@ -1096,13 +1111,14 @@ export function AppAssistantWorkspace({
         started: false,
       };
       setHeld(heldRef.current);
-      resumeRef.current(app.app, {
+      // The page's one start (`openRef`), as every other: never an empty app in place of a sleeping one.
+      void openRef.current(app.app).then(
         // Unless the user moved on meanwhile.
-        onSuccess: ({ sandbox }: { sandbox: Sandbox }) => {
+        ({ sandbox }) => {
           if (heldRef.current?.app === sandbox.app) setActiveName(sandbox.name);
         },
-        onError: giveBackHeld,
-      });
+        giveBackHeld
+      );
     },
     [gate, giveBackHeld]
   );

@@ -106,6 +106,62 @@ export async function wakeSleepingApp(
   throw last;
 }
 
+/** What {@link startOrWakeApp} starts an app with: the page's and the runner's own. */
+export interface StartOrWakeDeps {
+  /** A plain (unseeded) open: finds, creates or resumes the app's sandbox (`openApp`). */
+  open(app: string): Promise<{ sandbox: Sandbox; created: boolean }>;
+  /** Deletes a sandbox: only ever the new, EMPTY one a plain open just made. */
+  remove(name: string): Promise<unknown>;
+  /** Wakes the app from its sleeping record ({@link wakeSleepingApp}). */
+  wake(app: string): Promise<WakeResult>;
+  /**
+   * Whether `app` has a sleeping record. `fresh`: asked right after a plain open made a new
+   * sandbox, so a caller that can read the records again cheaply does (the page); one whose reads
+   * are rate-limited answers from the read it has (the runner). Unknown is `false`.
+   */
+  hasRecord(app: string, opts: { fresh: boolean }): Promise<boolean> | boolean;
+}
+
+/**
+ * APP HIBERNATE — THE ONE START of an app, on the page (every start: the menu, a pick, an export,
+ * a submit, a message sent to a paused app, a reply asked for again) and on the runner (a reply's
+ * start, create_app's resume). An app is never made NEW and EMPTY while its real one sleeps:
+ *   - LISTED (it has a sandbox, as last listed): a PLAIN open, which resumes it as it is, even
+ *     when it has a sleeping record (kept after a wake, as its lineage): no seed, no wake quota.
+ *     Only when that open had to CREATE (the sandbox went since it was listed: put to sleep
+ *     meanwhile) and a record exists is the empty sandbox it made deleted and the app woken.
+ *   - NOT LISTED with a record: woken.
+ *   - Otherwise a plain open (a new app).
+ * A wake that finds no record any more (`not_found`, deleted meanwhile) is a plain open.
+ */
+export async function startOrWakeApp(
+  app: string,
+  listed: boolean,
+  deps: StartOrWakeDeps
+): Promise<{ sandbox: Sandbox; created: boolean }> {
+  if (listed) {
+    const opened = await deps.open(app);
+    if (!opened.created || !(await deps.hasRecord(app, { fresh: true }))) return opened;
+    await deps.remove(opened.sandbox.name);
+    return wakeOrOpen(app, deps);
+  }
+  if (!(await deps.hasRecord(app, { fresh: false }))) return deps.open(app);
+  return wakeOrOpen(app, deps);
+}
+
+async function wakeOrOpen(
+  app: string,
+  deps: StartOrWakeDeps
+): Promise<{ sandbox: Sandbox; created: boolean }> {
+  try {
+    const woken = await deps.wake(app);
+    return { sandbox: woken.sandbox, created: false };
+  } catch (error) {
+    if (error instanceof WakeSeedError && error.code === 'not_found') return deps.open(app);
+    throw error;
+  }
+}
+
 /** A kept app the service could not put to sleep, and why (`kept_apps`). */
 export interface KeptApp {
   app: string;
@@ -170,6 +226,11 @@ export interface OfferContext {
   app?: string | null;
   /** Every app with a live sandbox now. */
   live?: readonly string[];
+  /**
+   * The apps or the sleeping apps could not be read (the runner's list past its rate limit, or a
+   * list not loaded yet): what is safe to offer is unknown, so NOTHING is offered (fail closed).
+   */
+  unknown?: boolean;
 }
 
 /**
@@ -180,7 +241,7 @@ export interface OfferContext {
  * told to delete a sleeping app themselves.
  */
 export function safeOldest(oldest: string | null, ctx: OfferContext = {}): string | null {
-  if (!oldest || oldest === ctx.app || ctx.live?.includes(oldest)) return null;
+  if (!oldest || ctx.unknown || oldest === ctx.app || ctx.live?.includes(oldest)) return null;
   return oldest;
 }
 

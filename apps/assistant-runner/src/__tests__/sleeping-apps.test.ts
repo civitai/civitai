@@ -47,10 +47,13 @@ let fake: FakeSandboxService;
 let opened: OpenTools[];
 let providerOptions: Partial<AppAssistantToolsOptions>;
 let wakeSeeds: string[];
+/** How many times a reply read civitai's sleeping-app list (its rate-limited route). */
+let listReads: number;
 
 beforeEach(async () => {
   providerOptions = {};
   wakeSeeds = [];
+  listReads = 0;
   fake = new FakeSandboxService();
   await fake.start();
   opened = [];
@@ -64,7 +67,10 @@ afterEach(async () => {
 function withSleeping(list: (typeof ASLEEP)[] | null) {
   providerOptions = {
     sleepingApps: () => ({
-      list: async () => list,
+      list: async () => {
+        listReads++;
+        return list;
+      },
       wakeSeed: async (app) => {
         wakeSeeds.push(app);
         return SEED;
@@ -157,6 +163,8 @@ describe('app hibernate on the runner', () => {
       },
     ]);
     expect(woke.app).toBe('garden-log');
+    // R2-2: the archive it was woken from, so a page following this wake records its lineage.
+    expect((woke as { sha256?: string }).sha256).toBe(SEED.sha256);
     expect(woke.note).toContain('npm install');
     // A rebuild of the reply's tools opens the app it woke (the gate's own rule).
     expect(appChosenIn([{ name: 'wake_app', input: {}, output: woke, isError: false }])).toBe(
@@ -208,8 +216,15 @@ describe('the runner never starts a sleeping app UNSEEDED', () => {
     await open();
     expect(wakeSeeds).toEqual(['my-app']);
     const creates = fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes');
-    // Exactly one create, and it carried the seed: never an unseeded (empty) one.
-    expect(creates).toHaveLength(1);
+    // Listed, so a plain open first; it had to CREATE (an empty app), which is deleted, then the
+    // seeded wake. The user is left with exactly one my-app: the woken one.
+    expect(creates).toHaveLength(2);
+    // In that order: the plain create, the delete of what it made, then the seeded create.
+    const order = fake.requests
+      .filter((r) => r.method === 'DELETE' || (r.method === 'POST' && r.path === '/v1/sandboxes'))
+      .map((r) => r.method);
+    expect(order).toEqual(['POST', 'DELETE', 'POST']);
+    expect(fake.sandboxes.filter((s) => s.app === 'my-app')).toHaveLength(1);
     expect(fake.seeds).toEqual([
       {
         app: 'my-app',
@@ -224,6 +239,58 @@ describe('the runner never starts a sleeping app UNSEEDED', () => {
     await open();
     expect(wakeSeeds).toEqual([]);
     expect(fake.seeds).toEqual([]);
+  });
+
+  it('R2-3: a paused LISTED app with a sleeping record resumes with a PLAIN open: no seed, no wake', async () => {
+    fake.add('my-app', 'suspended');
+    // Its record is kept after a wake (lineage): it must not route the resume through the wake.
+    withSleeping([{ ...ASLEEP, app: 'my-app' }]);
+    await open();
+    expect(wakeSeeds).toEqual([]);
+    expect(fake.seeds).toEqual([]);
+    expect(fake.requests.filter((r) => r.method === 'DELETE')).toEqual([]);
+    expect(fake.sandboxes.find((s) => s.app === 'my-app')?.state).not.toBe('suspended');
+  });
+
+  it('INVARIANT: a reply reads the sleeping list ONCE, however many apps it starts', async () => {
+    fake.add('my-app', 'suspended');
+    fake.add('quiz-game', 'suspended');
+    withSleeping([{ ...ASLEEP, app: 'my-app' }]);
+    const tools = await open();
+    await call(tools.tools, 'create_app', { name: 'Quiz game' });
+    await call(tools.tools, 'create_app', { name: 'Tip calculator' });
+    expect(listReads).toBe(1);
+  });
+});
+
+describe('R2-3: past the list’s rate limit (`null`), the limit offer fails CLOSED', () => {
+  const atSleepingLimit = {
+    error: 'sandbox limit (5) reached; delete one first',
+    code: 'sleeping_limit',
+    limit: { kind: 'apps', limit: 5, used: 5 },
+    oldest: { app: 'old-quiz', hibernatedAt: '2026-09-01T00:00:00.000Z' },
+  };
+
+  it('the sleeping list unread: create_app at the sleeping-app limit offers NO app to delete', async () => {
+    fake.add('my-app');
+    withSleeping(null);
+    const tools = await open();
+    fake.createRefusal = atSleepingLimit;
+    const out = (await call(tools.tools, 'create_app', { name: 'Quiz night' })) as {
+      limitCard?: unknown;
+    };
+    expect(out.limitCard).toEqual({ kind: 'sleeping', oldest: null });
+  });
+
+  it('NEGATIVE CONTROL: with the list read, the same refusal offers the oldest', async () => {
+    fake.add('my-app');
+    withSleeping([ASLEEP]);
+    const tools = await open();
+    fake.createRefusal = atSleepingLimit;
+    const out = (await call(tools.tools, 'create_app', { name: 'Quiz night' })) as {
+      limitCard?: unknown;
+    };
+    expect(out.limitCard).toEqual({ kind: 'sleeping', oldest: 'old-quiz' });
   });
 });
 

@@ -25,7 +25,7 @@ import {
   READ_DOCS,
   WAKE_APP,
   sleepingNotLive,
-  WakeSeedError,
+  startOrWakeApp,
   wakeSleepingApp,
   type CoverEstimator,
   unconfiguredFeedbackSource,
@@ -255,22 +255,25 @@ export class AppAssistantTools implements ToolProvider {
     const sleepingRead = sleepingSource?.list().catch(() => null) ?? Promise.resolve(null);
     let sleeping: SleepingApp[] | null = null;
     /**
-     * Every start of an app on the runner (a reply's start, create_app's resume): an app with a
-     * sleeping record is WOKEN, never started UNSEEDED, which would make it new and empty while the
-     * real one sleeps (put to sleep after the page listed it). The runner keeps no lineage, so a
-     * sandbox that does exist answers `already_exists` and is opened as it is.
+     * Every start of an app on the runner (a reply's start, create_app's resume): the one rule
+     * (`startOrWakeApp`). A listed app is resumed with a plain open, its record or not; an app put to
+     * sleep since is woken, never made new and empty. Records come from the reply's ONE read above:
+     * a start never reads them again, so it never counts against civitai's list rate limit, and an
+     * unread list (`null`) is "no record".
      */
-    const openOrWake = async (app: string): Promise<{ sandbox: Sandbox; created: boolean }> => {
-      if (!sleepingSource || !sleeping?.some((s) => s.app === app)) return openApp(client, app);
-      try {
-        const woken = await wakeSleepingApp(client, app, (key) => sleepingSource.wakeSeed(key));
-        return { sandbox: woken.sandbox, created: false };
-      } catch (error) {
-        // The record went meanwhile (deleted): nothing sleeps under that key, so a plain start.
-        if (error instanceof WakeSeedError && error.code === 'not_found')
-          return openApp(client, app);
-        throw error;
-      }
+    const openOrWake = (app: string): Promise<{ sandbox: Sandbox; created: boolean }> => {
+      const records = sleepingSource ? sleeping : null;
+      if (!sleepingSource || !records) return openApp(client, app);
+      return startOrWakeApp(
+        app,
+        (apps ?? []).some((s) => s.app === app),
+        {
+          open: (key) => openApp(client, key),
+          remove: (name) => client.remove(name),
+          wake: (key) => wakeSleepingApp(client, key, (k) => sleepingSource.wakeSeed(k)),
+          hasRecord: (key) => records.some((s) => s.app === key),
+        }
+      );
     };
     const newSandbox = (endReply?: (message: string) => void) =>
       new AppSandbox({
