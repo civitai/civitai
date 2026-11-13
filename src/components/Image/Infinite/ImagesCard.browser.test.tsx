@@ -1,6 +1,8 @@
 import type * as CardStickerOverlayModule from '~/components/Sticker/CardStickerOverlay';
 import type { ReactNode } from 'react';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { useRouter } from 'next/router';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
@@ -9,6 +11,7 @@ import '@mantine/core/styles.layer.css';
 
 const guard = { safe: true };
 const features = { stickerPlacement: true, imageCardInfoButton: false, imageGeneration: false };
+const creator = { hideCreator: false };
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
@@ -16,13 +19,29 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
-  return { ...(await importOriginal<typeof Trpc>()), trpc: makeTrpcProxy() };
+  return {
+    ...(await importOriginal<typeof Trpc>()),
+    trpc: makeTrpcProxy({
+      'user.getCreator': {
+        useQuery: () => ({ data: undefined, isLoading: true, isError: false }),
+      },
+    }),
+  };
 });
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useViewerBrowsingLevelDebounced: () => 1,
+}));
+vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
+    selector({ autoplayGifs: false }),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
-  useImagesContext: () => ({ getImages: () => [] }),
+  useImagesContext: () => ({ getImages: () => [], hideCreator: creator.hideCreator }),
 }));
 vi.mock('~/components/Image/ContextMenu/ImageContextMenu', () => ({
   ImageContextMenu: () => null,
@@ -57,6 +76,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
       }}
     />
   ),
+  EdgeMedia: ({ src, alt }: { src: string; alt?: string }) => <img src={src} alt={alt} />,
 }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {
@@ -123,6 +143,84 @@ const stats = { like: 432, heart: 321, laugh: 45, cry: 23, tip: 345 };
 const maxed = { like: 999999, heart: 999999, laugh: 999999, cry: 999999, tip: 999999 };
 
 const zero = { like: 0, heart: 0, laugh: 0, cry: 0, tip: 0 };
+
+const avatar = {
+  id: 10,
+  url: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="32" height="32"%3E%3Crect width="32" height="32" fill="teal"/%3E%3C/svg%3E',
+  userId: 2,
+  nsfwLevel: 1,
+  ingestion: 'Scanned',
+  type: MediaType.image,
+  width: 32,
+  height: 32,
+  metadata: {},
+};
+
+describe('ImagesCard creator', () => {
+  afterEach(() => {
+    creator.hideCreator = false;
+    guard.safe = true;
+  });
+
+  async function show(overrides: Record<string, unknown> = {}, username = 'someone') {
+    const data = imageData(stats);
+    data.user = { id: 2, username, profilePicture: avatar };
+    renderWithProviders(
+      <IntersectionObserverProvider>
+        <div data-testid="shot" style={{ width: 181 }}>
+          <ImagesCard data={{ ...data, ...overrides }} height={280} width={181} />
+        </div>
+      </IntersectionObserverProvider>
+    );
+    await vi.waitFor(() => expect(document.querySelector('[data-testid="shot"]')).not.toBeNull());
+  }
+
+  test('shows the avatar and opens the creator profile', async () => {
+    await show();
+    await expect.element(page.getByRole('img', { name: "someone's Avatar" })).toBeVisible();
+    await page.getByRole('button', { name: /someone/ }).click();
+    expect(useRouter().push).toHaveBeenCalledWith('/user/someone');
+  });
+
+  test('keeps a long name inside a narrow card without covering the action footer', async () => {
+    await show({}, 'a_very_long_creator_name_that_will_not_fit_on_a_phone_card');
+    const target = page.getByRole('button', { name: /a_very_long_creator_name/ });
+    await expect.element(target).toBeVisible();
+    const bounds = target.element().getBoundingClientRect();
+    const cardBounds = card().getBoundingClientRect();
+    const footer = card().querySelector('[class*="actionsFooter"]')!.getBoundingClientRect();
+    expect(bounds.left).toBeGreaterThanOrEqual(cardBounds.left);
+    expect(bounds.right).toBeLessThanOrEqual(cardBounds.right);
+    expect(bounds.bottom).toBeLessThanOrEqual(footer.top);
+  });
+
+  test.each(['Pending', 'Blocked'])('hides the creator on %s media', async (ingestion) => {
+    await show({ ingestion });
+    expect(page.getByRole('button', { name: /someone/ }).query()).toBeNull();
+  });
+
+  test('hides the creator on blurred media', async () => {
+    guard.safe = false;
+    await show();
+    expect(page.getByRole('button', { name: /someone/ }).query()).toBeNull();
+  });
+
+  test('honors the single-creator feed opt-out', async () => {
+    creator.hideCreator = true;
+    await show();
+    expect(page.getByRole('button', { name: /someone/ }).query()).toBeNull();
+  });
+
+  test('opens the existing creator hover card outside the media clipping container', async () => {
+    await show();
+    await page.getByRole('button', { name: /someone/ }).hover();
+    await vi.waitFor(() => {
+      const dropdown = document.querySelector('.creator-hover-dropdown');
+      expect(dropdown).not.toBeNull();
+      expect(card().contains(dropdown)).toBe(false);
+    });
+  });
+});
 
 const FEED_CARD_WIDTHS = [181, 245, 288, 320, 358];
 
