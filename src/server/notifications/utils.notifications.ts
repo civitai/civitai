@@ -1,4 +1,5 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { comicNotifications } from '~/server/notifications/comics.notifications';
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
@@ -134,13 +135,15 @@ function getNotificationTypes() {
   type SettingRow = { displayName: string; type: string; optIn: boolean };
   const notificationCategoryTypes: Record<string, SettingRow[]> = {};
   const notificationSectionTypes: Record<string, SettingRow[]> = {};
+  const notificationGroupFeatures: Record<string, FeatureFlagKey> = {};
   for (const [
     type,
-    { displayName, toggleable, category, section, optIn, showCategory },
+    { displayName, toggleable, category, section, optIn, showCategory, feature },
   ] of Object.entries(notificationProcessors)) {
     if (toggleable === false && !showCategory) continue;
     const groups = section ? notificationSectionTypes : notificationCategoryTypes;
     const group = section ?? category;
+    if (feature) notificationGroupFeatures[group] = feature;
     groups[group] ??= [];
     groups[group]!.push({ type, displayName, optIn: optIn ?? false });
     if (optIn) optInNotificationTypes.push(type);
@@ -150,6 +153,7 @@ function getNotificationTypes() {
   return {
     notificationCategoryTypes,
     notificationSectionTypes,
+    notificationGroupFeatures,
     notificationTypes,
     optInNotificationTypes,
   };
@@ -162,6 +166,7 @@ function getNotificationTypes() {
 export const {
   notificationCategoryTypes,
   notificationSectionTypes,
+  notificationGroupFeatures,
   notificationTypes,
   optInNotificationTypes,
 } = getNotificationTypes();
@@ -174,6 +179,17 @@ export const notificationSettingGroups = {
   ...notificationCategoryTypes,
   ...notificationSectionTypes,
 };
+
+/** The settings groups this viewer may see: a group whose types name a `feature` shows only while it is on. */
+export const visibleNotificationSettingGroups = (
+  features: Partial<Record<FeatureFlagKey, boolean>>
+) =>
+  Object.fromEntries(
+    Object.entries(notificationSettingGroups).filter(([group]) => {
+      const feature = notificationGroupFeatures[group];
+      return !feature || features[feature] === true;
+    })
+  );
 
 export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);
 

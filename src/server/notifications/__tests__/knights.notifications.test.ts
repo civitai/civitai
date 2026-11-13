@@ -7,6 +7,7 @@ import {
   notificationSectionTypes,
   notificationSettingGroups,
   notificationTypes,
+  visibleNotificationSettingGroups,
 } from '~/server/notifications/utils.notifications';
 
 const TYPES = ['knights-verdicts-in', 'knights-streak-ends-soon', 'knights-new-images'];
@@ -48,6 +49,18 @@ describe('Knights daily-loop notifications', () => {
         .map(([type]) => type);
       expect(types.map((t) => t.type).sort()).toEqual(registered.sort());
     }
+  });
+
+  it('hides the section from settings until the Knights app flag is on for the viewer', () => {
+    const off = visibleNotificationSettingGroups({ knightsApp: false });
+    const on = visibleNotificationSettingGroups({ knightsApp: true });
+
+    expect(off[SECTION]).toBeUndefined();
+    expect(visibleNotificationSettingGroups({})[SECTION]).toBeUndefined();
+    expect(on[SECTION]).toBe(notificationSettingGroups[SECTION]);
+    // Every other group is shown either way.
+    const { [SECTION]: _knights, ...rest } = notificationSettingGroups;
+    expect(off).toEqual(rest);
   });
 
   it('lists every settable type in exactly one settings group', () => {
