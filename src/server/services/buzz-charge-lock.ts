@@ -11,8 +11,11 @@ import { isPrismaLockTimeout } from '~/server/utils/errorHandling';
 /**
  * Serialises what two requests with one client key do with ONE charge: record it once, and never
  * refund a charge the other recorded. The Buzz charge itself runs outside (the ledger dedupes it
- * by external id), so no database connection waits on the Buzz service except a refund after a
- * failed record (`refundUnlessRecorded`).
+ * by external id). Buzz calls do run while the lock's connection is held, each ledger read or write
+ * one attempt with a deadline (the budget below): the refund-state check (`CHARGE_LOCKED_READ`) on
+ * every keyed record, because refunds are serialised by this same lock and the check only holds
+ * under it; and, after a failed record only, the refund itself (`CHARGE_LOCKED_REFUND`,
+ * `refundUnlessRecorded`).
  *
  * A short primary transaction takes `pg_advisory_xact_lock(hashtextextended(<key>, 0))`, released
  * at commit or rollback. No table, no migration. Bounded: the lock wait (past it, "may have gone
@@ -96,13 +99,9 @@ export async function withChargeKeyLock<T>(
 /**
  * After a failed record: refunds the charge unless another request with the same key recorded it
  * meanwhile (that record owns the charge). Under the key's lock, so no request records on a charge
- * while it is being refunded. The refund is the one Buzz call made while holding a connection,
- * one attempt bounded by `CHARGE_LOCKED_REFUND`, on this rare path only, and it ends before the
- * transaction deadline (see the budget above).
- *
- * Not refunding after commit instead ("mark, then refund") because there is nowhere to put the mark
- * without a migration: a refund started after the lock is released could reverse a charge a
- * concurrent request records in between.
+ * while it is being refunded. The refund-state check and the refund both run under the lock and
+ * end before the transaction deadline (see the budget above).
+ * Refunding after release instead could reverse a charge a concurrent request records meanwhile.
  *
  * A refund that fails leaves the charge unrecorded and unrefunded, which a retry with the same key
  * continues from (it finds the charge and records it), so it is reported as "may have gone through".

@@ -8,6 +8,7 @@ import {
 } from '~/server/services/buzz.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 /**
  * Charging a user once per action when a Buzz write can end with an unknown outcome.
@@ -67,7 +68,7 @@ type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   externalTransactionId: string;
 };
 
-/** The old answer to a clean "insufficient funds" from the ledger, kept for that case. */
+/** The message for a charge the ledger declined for insufficient funds (no transaction back). */
 export const CHARGE_DECLINED_MESSAGE = 'Unable to charge this payment';
 
 /**
@@ -141,10 +142,9 @@ export async function chargeByExternalId(
   }
   if (!reusable) return { transactionId };
 
-  // The refund's id is the ledger's: `refund-<transactionId>`.
   let refund: unknown;
   try {
-    refund = await getTransactionByExternalId(`refund-${transactionId}`);
+    refund = await getTransactionByExternalId(refundExternalTransactionId(transactionId));
   } catch (lookupError) {
     throw paymentOutcomeUnknown(context, 'refund lookup failed', { lookupError });
   }
