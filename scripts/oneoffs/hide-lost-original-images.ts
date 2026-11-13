@@ -13,7 +13,10 @@
  *   - Run 1: the dry run prints counts only: listed, controls, scan-in-flight (workflow present,
  *     requested after scanned, both: shown separately), skipped:<reason> (not-scanned, needs-review,
  *     blocked-for, tos, minor, poi, image-hold, owner-hold, pending-collection-item, open-report,
- *     open-post-report, article-image, app-listing-asset, crucible-image, external-url, odd-url, head-error, now-200),
+ *     open-post-report, article-image, app-listing-asset, crucible-image, external-url, odd-url,
+ *     head-error, now-200, and one per DISPLAY_REFS reason: a confirmed-404 image shown as a
+ *     display asset or ImageConnection stays visible with broken bytes, on purpose; each is its own
+ *     count, so the desk can hand that list to an owner), raced-out,
  *     still-404, no-row, would-hide.
  *   - Then `--apply --limit 1`, read the row back (public hidden, moderator sees it), then the rest.
  *   - Undo: `--undo --apply`. It does not touch the existence cache, which holds "gone" for up to 5
@@ -565,7 +568,6 @@ export function appendDurable(file: string, text: string) {
   }
 }
 
-/** A torn last line (a crash mid-write) is dropped; a bad line anywhere else is an error. */
 /** Other run logs beside this one: name and counts only, so a second run in flight is visible. */
 export function siblingLogs(file: string) {
   const dir = path.dirname(file);
@@ -592,6 +594,7 @@ export function siblingLogs(file: string) {
     });
 }
 
+/** A torn last line (a crash mid-write) is dropped; a bad line anywhere else is an error. */
 export function readLog(file: string): LogEntry[] {
   if (!fs.existsSync(file)) return [];
   const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
