@@ -21,12 +21,12 @@ import {
 // (seamless-pano-360, future ones) do things `kind:textToImage` cannot; this one
 // exists to show the WIRING, not a sophisticated workflow.
 //
-// 🔴 NO civitai-pinned resources. It pins ONLY huggingface `staticAirs` (the same
-// Z-Image diffusion/clip/vae AIRs seamless-pano reuses) — no `loras`, no
+// 🔴 NO viewer-gated resources. It pins ONLY `staticAirs` (the same official
+// Z-Image diffusion/clip/vae files seamless-pano uses) — no `loras`, no
 // `checkpoints`. So `recipeCivitaiVersionIds(recipe)` returns `[]` and the router's
 // entitlement-gate loop (resolveCanGenerateForVersions over pinned versions) is
-// skipped entirely: the simplest, safest starter, sidestepping the early-access /
-// Private invariant (index.ts RESOURCE INVARIANT) by construction. `checkpointPolicy:
+// skipped entirely: the simplest starter, outside the early-access / Private
+// invariant (index.ts RESOURCE INVARIANT) by construction. `checkpointPolicy:
 // 'pinned'` (no user-picked checkpoint).
 //
 // Like every recipe module here: server-authored, code-reviewed, NEVER
@@ -77,8 +77,8 @@ export const STARTER_ESTIMATE_BUZZ = 15;
 // a new App developer runs, and the one most likely to hit a cold worker — fail on
 // first use, reporting a bare `expired` with no message.
 //
-// 90 matches the lowest per-engine ceiling already shipped by seamless-pano
-// (90/150/180) and is ~3× the slowest warm inline run observed (55s). Raising it is
+// 90 matches seamless-pano's ceiling and is ~3× the slowest warm inline run
+// observed (55s). Raising it is
 // free: billing settles to actual GPU-seconds, so the ceiling costs nothing unless
 // it is actually consumed — an over-tight value buys no savings and only converts a
 // slow start into a silent failure.
@@ -191,8 +191,8 @@ export function buildStarterTxt2imgGraph(params: StarterComfyParams): ComfyGraph
 
 /**
  * The reusable graph-construction step. Returns the `customComfy` step INPUT
- * (`{ resources, trace, workflow }`). Only huggingface `staticAirs` — no gated
- * civitai versions, so the router's entitlement loop is skipped. Deliberately
+ * (`{ resources, trace, workflow }`). Only `staticAirs` — no viewer-gated
+ * versions, so the router's entitlement loop is skipped. Deliberately
  * separable from the `$type:'customComfy'` step wrapper so ONLY the wrapper (not
  * this graph) changes if a future prepaid path registers it as `$type:'comfy'`.
  */
@@ -214,9 +214,6 @@ export const starterComfyTxt2imgRecipe: BlockRecipe<StarterComfyParams> = {
   resolveEngine,
   buildStep,
   resourceAllowlist: {
-    // NO civitai resources (no checkpoints, no loras). Only huggingface AIRs —
-    // exempt-by-construction (code-reviewed) → recipeCivitaiVersionIds() === [] →
-    // the router's entitlement gate loop is skipped for this recipe.
     staticAirs: [ZIMAGE_DIFFUSION_AIR, ZIMAGE_CLIP_AIR, ZIMAGE_VAE_AIR],
   },
   checkpointPolicy: 'pinned',
