@@ -193,12 +193,9 @@ async function toReactorPage(
   };
 }
 
-/**
- * A thumbs-up review of one of the model's versions, as the site's rating totals count it, by anyone but the
- * owner. Reads alias `rr` (ResourceReview).
- */
-const countedThumbsUp = (ownerId: number) => sql`
-  rr.recommended AND NOT rr.exclude AND NOT rr."tosViolation" AND rr."userId" <> ${ownerId}
+/** A thumbs-up review as the site's thumbs-up metric counts it. Reads alias `rr` (ResourceReview). */
+const countedThumbsUp = sql`
+  rr.recommended AND NOT rr.exclude AND NOT rr."tosViolation"
   AND (rr."postId" IS NULL OR EXISTS (
     SELECT 1 FROM "Post" rvp WHERE rvp.id = rr."postId" AND rvp."publishedAt" <= now()
   ))`;
@@ -208,8 +205,9 @@ const notMetricExcluded = (ids: number[]) =>
 
 /**
  * Who left a thumbs-up review on any version of the caller's model: the "Like" list of a reactor page, one row per
- * user however many versions they liked, dated by their latest. Returns null when the model is not the caller's;
- * a deleted or unpublished model of theirs still lists.
+ * user however many versions they liked, dated by their latest. Returns null when the model is not the caller's, or
+ * a moderator took it down (as `ownsListableContent` does for a blocked image); one the owner deleted or unpublished
+ * still lists.
  *
  * Keyset-paged on `userId` like `getReactors`: each version is a backward range scan of the
  * `(modelVersionId, userId)` unique index, and the per-version top pages merge into the global one. `ResourceReview`
@@ -223,19 +221,18 @@ export async function getModelLikers(
 ): Promise<ReactorPage | null> {
   const owned = await sql<{ id: number }>`
     SELECT id FROM "Model" WHERE id = ${modelId} AND "userId" = ${ownerId}
+      AND status IS DISTINCT FROM 'UnpublishedViolation' AND mode IS DISTINCT FROM 'TakenDown'
   `.execute(db);
   if (!owned.rows.length) return null;
 
   // The site's own thumbs-up total, which the metrics job counts with the same review filters. An exact count here
   // reads every review of the model: 11-23 s cold on a model with 60-145k of them.
-  const metric = await sql<{ thumbsUpCount: number }>`
-    SELECT "thumbsUpCount" FROM "ModelMetric" WHERE "modelId" = ${modelId}
-  `.execute(db);
-  const counts = emptyCounts();
-  counts.Like = Number(metric.rows[0]?.thumbsUpCount ?? 0);
-  if (counts.Like === 0) return { reaction: 'Like', counts, reactors: [], next: null, prev: null };
-
-  const notCounted = await getMetricExcludedUserIds();
+  const [metric, notCounted] = await Promise.all([
+    sql<{ thumbsUpCount: number }>`
+      SELECT "thumbsUpCount" FROM "ModelMetric" WHERE "modelId" = ${modelId}
+    `.execute(db),
+    getMetricExcludedUserIds(),
+  ]);
   const { bound, order } = keysetClause('rr.userId', cursor);
   const { rows } = await sql<ReactorRow>`
     SELECT r."userId", r."createdAt", u.username, u."deletedAt", u."bannedAt",
@@ -245,7 +242,7 @@ export async function getModelLikers(
       FROM "ModelVersion" mv
       CROSS JOIN LATERAL (
         SELECT rr."userId", rr."createdAt" FROM "ResourceReview" rr
-        WHERE rr."modelVersionId" = mv.id AND ${countedThumbsUp(ownerId)}
+        WHERE rr."modelVersionId" = mv.id AND ${countedThumbsUp}
           AND ${listedToViewer('rr.userId', ownerId)} ${notMetricExcluded(notCounted)} ${bound}
         ORDER BY rr."userId" ${order}
         LIMIT ${REACTORS_PAGE_SIZE + 1}
@@ -260,7 +257,14 @@ export async function getModelLikers(
     ORDER BY r."userId" ${order}
   `.execute(db);
 
-  return { reaction: 'Like', counts, ...(await toReactorPage(db, ownerId, rows, cursor)) };
+  const page = await toReactorPage(db, ownerId, rows, cursor);
+  // The metric trails new likes by a job run: never show fewer than are listed, and an empty first page means none.
+  const counts = emptyCounts();
+  counts.Like =
+    !cursor && !page.reactors.length
+      ? 0
+      : Math.max(Number(metric.rows[0]?.thumbsUpCount ?? 0), page.reactors.length);
+  return { reaction: 'Like', counts, ...page };
 }
 
 /** GET handler for `…/<entity>/[id]/reactors`. Owner-only by construction: `getReactors` scopes to `locals.user`. */

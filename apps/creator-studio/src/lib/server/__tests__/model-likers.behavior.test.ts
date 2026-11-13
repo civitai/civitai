@@ -81,7 +81,9 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (id int PRIMARY KEY, ingestion text, "nsfwLevel" int, url text);
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type text);
-    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, status text, "deletedAt" timestamp);
+    CREATE TABLE "Model" (
+      id int PRIMARY KEY, "userId" int, status text, mode text, "deletedAt" timestamp
+    );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
     CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamp);
     CREATE TABLE "ModelMetric" ("modelId" int PRIMARY KEY, "thumbsUpCount" int);
@@ -91,17 +93,18 @@ beforeAll(async () => {
       "postId" int, "createdAt" timestamp NOT NULL DEFAULT '2026-10-01',
       UNIQUE ("modelVersionId", "userId")
     );
-    INSERT INTO "Model" VALUES (${MODEL}, ${OWNER}, 'Published', NULL), (${OTHER_MODEL}, ${STRANGER}, 'Published', NULL);
+    INSERT INTO "Model" VALUES
+      (${MODEL}, ${OWNER}, 'Published', NULL, NULL), (${OTHER_MODEL}, ${STRANGER}, 'Published', NULL, NULL);
     INSERT INTO "ModelVersion" VALUES (${V1}, ${MODEL}), (${V2}, ${MODEL}), (6001, ${OTHER_MODEL});
-    INSERT INTO "Post" VALUES (1, '2026-01-01'), (2, NULL);
+    INSERT INTO "Post" VALUES (1, '2026-01-01'), (2, NULL), (3, now() + interval '1 day');
   `);
 });
 
 beforeEach(async () => {
   notCounted.ids = [];
   await holder.db.exec(`
-    DELETE FROM "ResourceReview"; DELETE FROM "User"; DELETE FROM "UserEngagement";
-    UPDATE "Model" SET status = 'Published', "deletedAt" = NULL;
+    DELETE FROM "ResourceReview"; DELETE FROM "User"; DELETE FROM "UserEngagement"; DELETE FROM "Image";
+    UPDATE "Model" SET status = 'Published', mode = NULL, "deletedAt" = NULL;
     DELETE FROM "ModelMetric"; INSERT INTO "ModelMetric" VALUES (${MODEL}, 1000);
   `);
 });
@@ -118,10 +121,11 @@ async function thumbsUp(rows: [userId: number, versionId: number][]) {
 }
 
 describe('Creator Studio "Who liked" a model', () => {
-  it('lists thumbs-up reviewers only, newest account first', async () => {
+  it('lists thumbs-up reviewers only, the owner too, newest account first', async () => {
     await holder.db.exec(`
       INSERT INTO "User" (id, username) VALUES (10, 'up'), (11, 'down'), (12, 'excluded'), (13, 'tos'),
-        (14, 'live-post'), (15, 'draft-post'), (16, 'other-model'), (${OWNER}, 'owner');
+        (14, 'live-post'), (15, 'draft-post'), (16, 'other-model'), (17, 'scheduled-post'),
+        (${OWNER}, 'owner');
       INSERT INTO "ResourceReview" ("userId", "modelVersionId", recommended, exclude, "tosViolation", "postId") VALUES
         (10, ${V1}, true, false, false, NULL),
         (11, ${V1}, false, false, false, NULL),
@@ -130,10 +134,12 @@ describe('Creator Studio "Who liked" a model', () => {
         (14, ${V2}, true, false, false, 1),
         (15, ${V2}, true, false, false, 2),
         (16, 6001, true, false, false, NULL),
+        (17, ${V2}, true, false, false, 3),
         (${OWNER}, ${V1}, true, false, false, NULL);
     `);
     const page = await likers();
-    expect(page?.ids).toEqual([14, 10]);
+    // The site's thumbs-up total counts the owner's own, and the image panel lists the owner's own reaction.
+    expect(page?.ids).toEqual([OWNER, 14, 10]);
     expect(page?.reaction).toBe('Like');
   });
 
@@ -160,7 +166,7 @@ describe('Creator Studio "Who liked" a model', () => {
     expect(page?.ids).toEqual([30]);
   });
 
-  it("is null for someone else's model and lists the owner's deleted or unpublished one", async () => {
+  it("is null for someone else's model or a takedown, and lists the owner's deleted or unpublished one", async () => {
     await holder.db.exec(`
       INSERT INTO "User" (id, username) VALUES (40, 'fan');
       INSERT INTO "ResourceReview" ("userId", "modelVersionId", recommended) VALUES (40, ${V1}, true);
@@ -174,16 +180,61 @@ describe('Creator Studio "Who liked" a model', () => {
       `UPDATE "Model" SET status = 'Deleted', "deletedAt" = now() WHERE id = ${MODEL}`
     );
     expect((await likers())?.ids).toEqual([40]);
+
+    await holder.db.exec(`UPDATE "Model" SET status = 'UnpublishedViolation', "deletedAt" = NULL`);
+    expect(await likers()).toBeNull();
+    await holder.db.exec(`UPDATE "Model" SET status = 'Published', mode = 'TakenDown'`);
+    expect(await likers()).toBeNull();
+    await holder.db.exec(`UPDATE "Model" SET mode = 'Archived'`);
+    expect((await likers())?.ids).toEqual([40]);
   });
 
-  it("counts the site's thumbs-up total, and lists nobody when it is zero", async () => {
+  it('names a deleted account by nothing, shows only a scanned safe avatar, and marks followers', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, ingestion, "nsfwLevel", url) VALUES
+        (1, 'Scanned', 1, 'safe.jpg'), (2, 'Scanned', 8, 'xxx.jpg'), (3, 'Pending', 1, 'unscanned.jpg');
+      INSERT INTO "User" (id, username, "profilePictureId", "deletedAt") VALUES
+        (60, 'safe', 1, NULL), (61, 'nsfw', 2, NULL), (62, 'unscanned', 3, NULL), (63, 'gone', 1, now());
+      INSERT INTO "UserEngagement" VALUES (60, ${OWNER}, 'Follow');
+      INSERT INTO "ResourceReview" ("userId", "modelVersionId", recommended) VALUES
+        (60, ${V1}, true), (61, ${V1}, true), (62, ${V2}, true), (63, ${V2}, true);
+    `);
+    const page = await likers();
+    expect(page?.reactors.map((r) => [r.userId, r.username, r.image, r.follows])).toEqual([
+      [63, null, null, false],
+      [62, 'unscanned', null, false],
+      [61, 'nsfw', null, false],
+      [60, 'safe', 'safe.jpg', true],
+    ]);
+  });
+
+  it("counts the site's thumbs-up total, never fewer than it lists, and none on an empty list", async () => {
     await thumbsUp([[50, V1]]);
     expect((await likers())?.counts.Like).toBe(1000);
 
+    // The metrics job has not caught up with a new like yet.
     await holder.db.exec(`UPDATE "ModelMetric" SET "thumbsUpCount" = 0`);
-    expect(await likers()).toMatchObject({ ids: [], counts: { Like: 0 }, next: null });
+    expect(await likers()).toMatchObject({ ids: [50], counts: { Like: 1 } });
     await holder.db.exec(`DELETE FROM "ModelMetric"`);
-    expect(await likers()).toMatchObject({ ids: [], counts: { Like: 0 } });
+    expect(await likers()).toMatchObject({ ids: [50], counts: { Like: 1 } });
+
+    // Nor with the last counted like withdrawn.
+    await holder.db.exec(
+      `INSERT INTO "ModelMetric" VALUES (${MODEL}, 1); DELETE FROM "ResourceReview"`
+    );
+    expect(await likers()).toMatchObject({ ids: [], counts: { Like: 0 }, next: null });
+  });
+
+  it('pages past one version holding more than a page of likers', async () => {
+    const ids = Array.from({ length: REACTORS_PAGE_SIZE + 5 }, (_, i) => 300 + i);
+    await thumbsUp(ids.map((u): [number, number] => [u, V1]));
+    const desc = [...ids].reverse();
+
+    const first = await likers();
+    expect(first?.ids).toEqual(desc.slice(0, REACTORS_PAGE_SIZE));
+    expect(first?.next).toBe(desc[REACTORS_PAGE_SIZE - 1]);
+    const second = await likers({ dir: 'after', userId: Number(first?.next) });
+    expect(second?.ids).toEqual(desc.slice(REACTORS_PAGE_SIZE));
   });
 
   it('pages across versions without skipping or repeating anyone', async () => {
@@ -222,10 +273,16 @@ describe('GET /analytics/models/[modelId]/likers', () => {
     await expect(call(OWNER, '999999')).rejects.toMatchObject({ status: 404 });
   });
 
-  it('answers the owner, privately', async () => {
-    const res = await call(OWNER, String(MODEL));
+  it('answers the owner, privately, at the page the cursor names', async () => {
+    await thumbsUp([
+      [70, V1],
+      [71, V2],
+    ]);
+    const res = await call(OWNER, String(MODEL), '?reaction=Like&after=71');
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('private, no-store');
+    const body = (await res.json()) as { reactors: { userId: number }[] };
+    expect(body.reactors.map((r) => r.userId)).toEqual([70]);
   });
 
   it('refuses a reaction other than Like and a malformed id', async () => {
