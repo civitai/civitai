@@ -110,7 +110,7 @@ export const getPostsInfiniteHandler = async ({
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       input = { ...input, browsingLevel };
     }
-    return await getPostsInfinite({ ...input, user: ctx.user });
+    return await getPostsInfinite({ ...input, user: ctx.user, asModerator: moderator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

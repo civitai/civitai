@@ -8,7 +8,8 @@ import { NsfwLevel } from '~/server/common/enums';
 import { PostSort } from '~/server/common/enums';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { ApiKeyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 /**
  * The post feed's images follow the viewer's hidden tags and the browsing-settings exclusions at
@@ -25,9 +26,11 @@ const VIEWER_HIDDEN_TAG = 42; // a tag the signed-in viewer hid
 const h = vi.hoisted(() => ({
   addons: [] as unknown[],
   hiddenTagsByUser: {} as Record<number, { id: number; hidden: boolean }[]>,
+  // How many post rows the query returns: the real one returns `limit + 1`.
+  rows: undefined as number | undefined,
 }));
 
-const POSTS = [1, 2, 3, 4, 5, 6, 7].map((id) => ({
+const POSTS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((id) => ({
   id,
   userId: CREATOR,
   cursorId: id,
@@ -57,15 +60,23 @@ const IMAGES = [
   image(52, 5),
   image(61, 6, { poi: true }), // poi is disabled at every level
   image(71, 7, { minor: true }), // minor is disabled at R and above
+  image(81, 8, { nsfwLevel: NsfwLevel.R, minor: true }),
+  image(91, 9, { nsfwLevel: NsfwLevel.Blocked }),
+  image(92, 9, { nsfwLevel: 0 }), // unrated
 ];
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
-  queryCache: () => async () => POSTS.map((p) => ({ ...p })),
+  queryCache: () => async () => POSTS.slice(0, h.rows).map((p) => ({ ...p })),
 }));
 // Mocked whole: spreading the original loads post.service first, which then binds the real one.
 vi.mock('~/server/services/image.service', () => ({
-  getImagesForPosts: vi.fn(async () => IMAGES.map((i) => ({ ...i }))),
+  // As the real query: an image of the asked level, and any rating when no level is asked.
+  getImagesForPosts: vi.fn(async ({ browsingLevel }: { browsingLevel?: number }) =>
+    IMAGES.filter((i) => !browsingLevel || (i.nsfwLevel & browsingLevel) !== 0).map((i) => ({
+      ...i,
+    }))
+  ),
   getImageMetricsObject: vi.fn(),
   imagesForModelVersionsCache: { bust: vi.fn() },
   queueImageSearchIndexUpdate: vi.fn(),
@@ -98,11 +109,13 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
 const { postRouter } = await import('~/server/routers/post.router');
 
 type Viewer = { id: number; isModerator?: boolean } | undefined;
-const caller = (user: Viewer, apiKey = false) =>
+const caller = (user: Viewer, apiKey: boolean | 'full' = false) =>
   postRouter.createCaller({
     user: user && { ...user, username: `user${user.id}`, showNsfw: true },
     acceptableOrigin: true,
-    tokenScope: apiKey ? TokenScope.MediaRead : TokenScope.Full,
+    tokenScope: apiKey === true ? TokenScope.MediaRead : TokenScope.Full,
+    // A personal API key's credential, as the auth layer sets it; none for a session.
+    ...(apiKey ? { apiKeyId: 1, apiKeyType: ApiKeyType.User, subject: { type: 'apiKey' } } : {}),
     apiKeyId: apiKey ? 1 : null,
     req: { headers: {}, cookies: {} },
     res: { setHeader: () => undefined },
@@ -112,7 +125,15 @@ const caller = (user: Viewer, apiKey = false) =>
   } as never);
 
 /** What the feed serves the caller: each listed post's image ids. Nothing is sent but the level. */
-const feed = async (user: Viewer, browsingLevel: number, apiKey = false) => {
+const page = (user: Viewer, browsingLevel: number, apiKey: boolean | 'full' = false, limit = 20) =>
+  caller(user, apiKey).getInfinite({
+    limit,
+    sort: PostSort.Newest,
+    period: MetricTimeframe.AllTime,
+    periodMode: 'published',
+    browsingLevel,
+  } as never);
+const feed = async (user: Viewer, browsingLevel: number, apiKey: boolean | 'full' = false) => {
   const { items } = await caller(user, apiKey).getInfinite({
     limit: 20,
     sort: PostSort.Newest,
@@ -125,7 +146,7 @@ const feed = async (user: Viewer, browsingLevel: number, apiKey = false) => {
 
 const VIEWER = { id: 9 };
 const MATURE = NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
-const ALL = { 1: [11], 2: [21], 3: [31], 4: [41], 5: [51, 52], 6: [61], 7: [71] };
+const ALL = { 1: [11], 2: [21], 3: [31], 4: [41], 5: [51, 52], 6: [61], 7: [71], 8: [81] };
 
 beforeEach(() => {
   h.addons = [
@@ -143,6 +164,7 @@ beforeEach(() => {
     },
   ] satisfies BrowsingSettingsAddon[];
   h.hiddenTagsByUser = { [VIEWER.id]: [{ id: VIEWER_HIDDEN_TAG, hidden: true }] };
+  h.rows = undefined;
 });
 
 describe('post.getInfinite applies tag exclusions on the server', () => {
@@ -175,7 +197,44 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
     expect(await feed({ id: CREATOR }, MATURE)).toEqual(ALL);
   });
 
-  it("does not hold a moderator to the site's tags", async () => {
-    expect(await feed({ id: 1, isModerator: true }, MATURE)).toEqual(ALL);
+  it.each([
+    ['a session', false],
+    ['a full-scope key', 'full'],
+  ] as const)("does not hold a moderator to the site's tags through %s", async (_, apiKey) => {
+    expect(await feed({ id: 1, isModerator: true }, MATURE, apiKey)).toEqual(ALL);
+  });
+
+  it("holds a moderator's narrow-scope key to the site's tags, as anyone's", async () => {
+    expect(await feed({ id: 1, isModerator: true }, MATURE, true)).toEqual({
+      1: [11],
+      4: [41],
+      5: [52],
+    });
+  });
+
+  it.each([
+    ['a session', false],
+    ['an API key', true],
+  ])(
+    'reads an empty level as public for %s: no mature minor image, nothing blocked or unrated',
+    async (_, apiKey) => {
+      const { getImagesForPosts } = await import('~/server/services/image.service');
+      vi.mocked(getImagesForPosts).mockClear();
+      // Posts 8 (a mature minor image) and 9 (blocked and unrated images) are not served.
+      expect(await feed(VIEWER, 0, apiKey)).toEqual({ 1: [11], 3: [31], 5: [52], 7: [71] });
+      expect(vi.mocked(getImagesForPosts).mock.calls[0][0]).toMatchObject({
+        browsingLevel: publicBrowsingLevelsFlag,
+      });
+    }
+  );
+
+  it("pages by the query's rows: a post that drops is not refilled, and the cursor is the row past the page", async () => {
+    h.rows = 3; // limit 2, plus the one past the page
+    const result = await page(undefined, NsfwLevel.PG, false, 2);
+    // Post 2's only image is excluded: its slot is not refilled by post 3.
+    expect(result.items.map((p) => p.id)).toEqual([1]);
+    expect(result.nextCursor).toBeDefined();
+    h.rows = 2;
+    expect((await page(undefined, NsfwLevel.PG, false, 2)).nextCursor).toBeUndefined();
   });
 });

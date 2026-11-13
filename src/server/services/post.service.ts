@@ -156,6 +156,7 @@ import type {
 } from './../schema/post.schema';
 import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -288,9 +289,12 @@ export const getPostsInfinite = async ({
   disableMinor,
   poiOnly,
   minorOnly,
+  asModerator,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
+  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  asModerator?: boolean;
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const cacheTags: string[] = [];
@@ -410,6 +414,9 @@ export const getPostsInfinite = async ({
   else if (jump?.direction === 'after')
     AND.push(Prisma.sql`p."publishedAt" >= ${new Date(jump.startMs)}`);
 
+  // An empty level is no level asked for: read as public, as `getAllImages` does, so the posts, their
+  // images and the image exclusions below are all served at the same level.
+  if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   if (browsingLevel) {
     if (pending && (isModerator || userId)) {
       if (isModerator) {
@@ -558,7 +565,7 @@ export const getPostsInfinite = async ({
   await enforceBlockedBrowsingTags(imageRules, {
     id: user?.id,
     username: user?.username,
-    isModerator: user?.isModerator,
+    isModerator: asModerator ?? user?.isModerator,
   });
   const excludedImageTagIds = new Set([
     ...(imageRules.excludedTagIds ?? []),
