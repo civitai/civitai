@@ -2788,6 +2788,11 @@ export const REDIS_SYS_KEYS = {
     // `domain` is the spoke's registrable domain, not a full redirect_uri — see apps/auth pending-authz.ts.
     PENDING_AUTHZ: 'session:pending-authz',
   },
+  OAUTH: {
+    // `oauth:xchg:${jti}` → JSON record of one exchanged access token, read by introspection.
+    // Expires a minute after the token does.
+    TOKEN_EXCHANGES: 'oauth:xchg',
+  },
   JOB: 'job',
   SEARCH_INDEX_CLEANUP: {
     // Per-index keyset scan cursor for the nightly search-index cleanup, so a pass

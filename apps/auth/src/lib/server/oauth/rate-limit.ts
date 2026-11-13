@@ -45,6 +45,13 @@ import { checkRateLimit, isRateLimited } from '$lib/server/auth/rate-limit';
 //                bound to an authenticated client before it is used as a key.
 //   - introspect-worker: per-client (1200/min) — `introspect` for a caller allowed to see Worker tokens,
 //                which checks each worker that registers.
+//   - token-exchange: per-client (600/min, or the client's staff-set `tokenRateLimit`) — the user token
+//                exchange, charged after client auth. One relay exchanges for many users from one IP, so the
+//                per-IP `token` limit never applies to it.
+//   - token-exchange-ip: per-IP (120/min) — FAILED client-secret checks on the user token exchange. A request
+//                whose secret checks out is never charged or refused by it. With no resolvable IP the
+//                failures share one bucket, never one keyed on the claimed client id.
+//   - introspect-jwt: per-client (1200/min) — introspection of an exchanged JWT, charged after client auth.
 //   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
 //                once per token TTL, so this only catches a runaway host loop.
 const OAUTH_RATE_LIMITS = {
@@ -63,6 +70,9 @@ const OAUTH_RATE_LIMITS = {
   'worker-token': { limit: 600, windowSeconds: 60 },
   'worker-device': { limit: 10, windowSeconds: 60 },
   'introspect-worker': { limit: 1200, windowSeconds: 60 },
+  'token-exchange': { limit: 600, windowSeconds: 60 },
+  'token-exchange-ip': { limit: 120, windowSeconds: 60 },
+  'introspect-jwt': { limit: 1200, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
@@ -88,4 +98,23 @@ export async function tokenOverflowExhausted(ip: string | null | undefined): Pro
 /** The `token-client` check: a client's own per-minute /oauth/token limit, as set by staff. */
 export async function checkClientTokenRateLimit(clientId: string, limit: number): Promise<boolean> {
   return checkRateLimit('oauth:token-client', clientId, limit, 60);
+}
+
+/** The `token-exchange` check: per authenticated client, at its staff-set limit when it has one. */
+export async function checkTokenExchangeRateLimit(
+  clientId: string,
+  clientLimit: number | null
+): Promise<boolean> {
+  const cfg = OAUTH_RATE_LIMITS['token-exchange'];
+  return checkRateLimit(
+    'oauth:token-exchange',
+    clientId,
+    clientLimit ?? cfg.limit,
+    cfg.windowSeconds
+  );
+}
+
+/** Count one failed client-secret check on the user token exchange; false once the IP is past its limit. */
+export async function chargeTokenExchangeFailure(ip: string | null): Promise<boolean> {
+  return checkOAuthRateLimit('token-exchange-ip', ip ?? 'no-ip');
 }

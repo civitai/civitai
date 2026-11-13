@@ -23,6 +23,7 @@ import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
 import { hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
+import { handleUserTokenExchange } from '$lib/server/oauth/user-exchange';
 import {
   parseBody,
   toOAuthRequest,
@@ -31,10 +32,15 @@ import {
   setPublicClientCors,
 } from '$lib/server/oauth/http';
 import { getClientIp } from '$lib/server/auth/request';
-import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
+import {
+  authenticatedConfidentialClient,
+  basicAuthClientId,
+  clientIdMismatch,
+} from '$lib/server/oauth/client-auth';
 
-// POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, and the
-// worker token-exchange grant (lib/server/oauth/worker-grant.ts).
+// POST /api/auth/oauth/token — authorization_code + refresh_token (+ client_credentials) grants, the
+// worker token-exchange grant (lib/server/oauth/worker-grant.ts) and the user token exchange
+// (lib/server/oauth/user-exchange.ts).
 // Ported from src/pages/api/auth/oauth/token.ts.
 //
 // OIDC id_token signer: undefined unless the hub ES256 keys are set (they always are when sessions
@@ -47,13 +53,6 @@ export const OPTIONS: RequestHandler = () => {
   setWildcardCors(headers); // preflight stays permissive — we can't classify the client until the POST body
   return new Response(null, { status: 204, headers });
 };
-
-// The client id in a Basic Authorization header, parsed as the OAuth library's `basic-auth` dependency parses it.
-function basicAuthClientId(header: string | null): string | undefined {
-  const match = /^ *(?:[Bb][Aa][Ss][Ii][Cc]) +([A-Za-z0-9._~+/-]+=*) *$/.exec(header ?? '');
-  if (!match) return undefined;
-  return /^([^:]*):(.*)$/.exec(Buffer.from(match[1], 'base64').toString())?.[1];
-}
 
 /**
  * Whether a request over the per-IP `token` limit may go on under its client's own limit. Staff set one
@@ -83,6 +82,11 @@ async function tokenOverflowAllowed(
 }
 
 export const POST: RequestHandler = async ({ request }) => {
+  // A form can repeat `resource`, which parseBody collapses; the user token exchange must see every value.
+  const formEncoded = (request.headers.get('content-type') ?? '').includes(
+    'application/x-www-form-urlencoded'
+  );
+  const rawForm = formEncoded ? request.clone() : null;
   const body = await parseBody(request);
   const clientId =
     typeof body.client_id === 'string' && body.client_id ? body.client_id : 'unknown';
@@ -91,11 +95,21 @@ export const POST: RequestHandler = async ({ request }) => {
   const clientIp = getClientIp(request);
   const ip = clientIp ?? 'unknown';
   const origin = request.headers.get('origin') ?? undefined;
-  const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
-
   // RFC 8628 §3.4: a device polls the token endpoint. The poll has its own limits (per device_code,
   // behind a per-IP ceiling), so it goes before the `token` bucket a poll loop would otherwise drain.
   if (body.grant_type === DEVICE_CODE_GRANT) return deviceTokenGrant(request, body);
+
+  // A user's access token exchanged for a resource JWT has its own client auth and limits (user-exchange.ts).
+  // Every other token exchange is a worker's, handled by the library's worker grant.
+  if (body.grant_type === TOKEN_EXCHANGE_GRANT && body.subject_token_type === ACCESS_TOKEN_TYPE) {
+    const resources = rawForm
+      ? (await rawForm.formData().catch(() => null))
+          ?.getAll('resource')
+          .map((v) => (typeof v === 'string' ? v : '')) ?? []
+      : [];
+    return handleUserTokenExchange({ request, body, resources, clientIp, formEncoded });
+  }
+  const isWorkerExchange = body.grant_type === TOKEN_EXCHANGE_GRANT;
 
   // Rate-limit by IP before any DB work — keying on client_id would let an attacker rotate ids for a
   // fresh bucket each request. The worker exchange has its own, larger bucket: a pool of workers can
@@ -115,8 +129,8 @@ export const POST: RequestHandler = async ({ request }) => {
 
   // The library authenticates the Basic header's client and ignores a body client_id, so a different one
   // there would name a client that never authenticated.
-  const basicClientId = basicAuthClientId(request.headers.get('authorization'));
-  if (basicClientId !== undefined && body.client_id && body.client_id !== basicClientId) {
+  // The library authenticates the Basic header as its `basic-auth` dependency parses it.
+  if (clientIdMismatch(basicAuthClientId(request.headers.get('authorization')), body)) {
     const headers = new Headers({ 'WWW-Authenticate': 'Basic realm="Service"' });
     setWildcardCors(headers);
     return json(
