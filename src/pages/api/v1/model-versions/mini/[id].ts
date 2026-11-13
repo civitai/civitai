@@ -54,6 +54,12 @@ import {
 } from '~/server/utils/mini-moderation-state';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
@@ -127,6 +133,8 @@ type VersionRow = {
   userFlags: number;
   ownerDeletedAt: Date | null;
   ownerBannedAt: Date | null;
+  nsfwLevel: number;
+  sfwName: string | null;
   modelDeletedAt: Date | null;
 };
 type FileRow = {
@@ -201,6 +209,8 @@ export default MixedAuthEndpoint(async function handler(
       m.availability as "modelAvailability",
       m.poi,
       m."deletedAt" AS "modelDeletedAt",
+      mv."nsfwLevel",
+      m."sfwName",
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -278,6 +288,24 @@ export default MixedAuthEndpoint(async function handler(
   // Same answer as an unknown id, so the response does not reveal that the version exists.
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
     return res.status(404).json({ error: 'Model not found' });
+
+  // Above SFW, or with a civitai.com name, the answer depends on the caller's region, which the
+  // shared cache does not key on.
+  if (!Flags.hasFlag(sfwBrowsingLevelsFlag, modelVersion.nsfwLevel) || modelVersion.sfwName != null)
+    res.setHeader('Cache-Control', 'private, no-store');
+  // A restricted region is served the levels /api/v1/model-versions/[id] serves it (unrated fails
+  // closed), with the civitai.com name. The orchestrator, on its verified service token, is exempt:
+  // it is not a viewer in a region.
+  const servedLevel = orchestrator ? allBrowsingLevelsFlag : apiBrowsingLevel(req);
+  if (
+    servedLevel !== allBrowsingLevelsFlag &&
+    !Flags.intersects(modelVersion.nsfwLevel, servedLevel)
+  )
+    return res.status(404).json({ error: 'Model not found' });
+  const modelName = resolveModelFace(
+    { name: modelVersion.modelName, sfwName: modelVersion.sfwName },
+    showsSfwFace(servedLevel)
+  ).name;
 
   const files = await dbWrite.$queryRaw<FileRow[]>`
     SELECT 
@@ -727,7 +755,7 @@ export default MixedAuthEndpoint(async function handler(
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
     versionName: modelVersion.versionName,
-    modelName: modelVersion.modelName,
+    modelName,
     userId: modelVersion.modelUserId,
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,
