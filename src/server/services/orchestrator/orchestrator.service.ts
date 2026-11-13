@@ -153,6 +153,7 @@ export async function createImageIngestionRequest({
       mediaUrl: getEdgeUrl(normalizeImageScanUrl(url), { type }),
       priority,
     });
+    const response = 'response' in result ? result.response : undefined;
     if (!result.data)
       logToAxiom({
         type: 'error',
@@ -160,15 +161,15 @@ export async function createImageIngestionRequest({
         imageId,
         url,
         attempts: result.attempts,
-        responseStatus: result.response?.status,
+        responseStatus: response?.status,
         error: safeError('error' in result ? result.error : undefined),
       });
     return {
       data: result.data,
-      body: result.body,
+      body: 'body' in result ? result.body : undefined,
       error: 'error' in result ? result.error : undefined,
-      status: result.response?.status,
-      retryAfter: getRetryAfterSeconds(result.response),
+      status: response?.status,
+      retryAfter: getRetryAfterSeconds(response),
       useImageScanning: false,
     };
   }

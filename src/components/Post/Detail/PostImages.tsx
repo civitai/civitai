@@ -16,7 +16,6 @@ import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostCon
 import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay';
 import type { SongList } from '~/components/MusicPlayer/PostSong';
 import { PostSongTile, SongMenuItems } from '~/components/MusicPlayer/PostSong';
-import { trpc } from '~/utils/trpc';
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -45,6 +44,7 @@ const fitToScreenWidth = (width: number, height: number) =>
   `calc((100dvh - var(--header-height) - 16px) * ${width} / ${height})`;
 export function PostImages({
   postId,
+  postTitle,
   images,
   isLoading,
   collectionItems,
@@ -52,6 +52,8 @@ export function PostImages({
   isModerator,
 }: {
   postId: number;
+  /** Names the post's songs in Up next. */
+  postTitle?: string | null;
   images: ImagesInfiniteModel[];
   isLoading?: boolean;
   collectionItems?: PostContestCollectionItem[];
@@ -75,9 +77,7 @@ export function PostImages({
     [features.music, images]
   );
   const songIds = useMemo(() => songs.map((song) => song.id), [songs]);
-  // Already loaded by the post page; its title names the list in Up next.
-  const { data: post } = trpc.post.get.useQuery({ id: postId }, { enabled: songs.length > 0 });
-  const songList: SongList = { name: post?.title || 'this post', songs };
+  const songList: SongList = { name: postTitle || 'this post', songs };
 
   if (isLoading)
     return (

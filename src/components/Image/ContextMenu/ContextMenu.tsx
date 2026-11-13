@@ -1,4 +1,4 @@
-import type { ActionIconProps, PopoverMiddlewares } from '@mantine/core';
+import type { ActionIconProps, PopoverProps } from '@mantine/core';
 import { Group } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
 import React from 'react';
@@ -9,7 +9,7 @@ import { ImageProvider } from '~/components/Image/ImageProvider';
 
 // A menu taller than the room on either side (a moderator's, on a card low in the window) keeps to
 // the side it opens on and scrolls inside, instead of running off the top or bottom of the window.
-const fitInWindow: PopoverMiddlewares = {
+const fitInWindow: NonNullable<PopoverProps['middlewares']> = {
   flip: true,
   shift: true,
   size: {

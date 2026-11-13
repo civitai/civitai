@@ -47,14 +47,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   );
   return {
     ...actual,
-    trpc: withSongCoversStub(
-      new Proxy(actual.trpc, {
-        get: (target, key) =>
-          key === 'post'
-            ? { get: { useQuery: () => ({ data: { id: 100, title: 'Night Drive' } }) } }
-            : Reflect.get(target, key),
-      })
-    ),
+    trpc: withSongCoversStub(actual.trpc),
   };
 });
 vi.mock('~/components/UserSettings/hooks', async (importOriginal) => ({
@@ -125,7 +118,9 @@ beforeEach(() => {
 
 describe('a song on the post page', () => {
   test('with the music flag, plays in the global player with the post songs as the list', async () => {
-    await renderWithProviders(<PostImages postId={100} images={post as any} />);
+    await renderWithProviders(
+      <PostImages postId={100} postTitle="Night Drive" images={post as any} />
+    );
 
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
     await expect.element(page.getByText('Untitled song')).toBeInTheDocument();
@@ -148,7 +143,9 @@ describe('a song on the post page', () => {
   });
 
   test('a song in the middle of the post: Up next is the songs after it', async () => {
-    await renderWithProviders(<PostImages postId={100} images={post as any} />);
+    await renderWithProviders(
+      <PostImages postId={100} postTitle="Night Drive" images={post as any} />
+    );
     await page.getByRole('button', { name: 'Play Untitled song' }).click();
     expect(player().current?.id).toBe(3);
     expect(player().listName).toBe('Night Drive');
@@ -157,7 +154,11 @@ describe('a song on the post page', () => {
 
   test('a post with one song leaves Up next empty', async () => {
     await renderWithProviders(
-      <PostImages postId={100} images={[audio(1, 'Midnight Arcade'), picture(2)] as any} />
+      <PostImages
+        postId={100}
+        postTitle="Night Drive"
+        images={[audio(1, 'Midnight Arcade'), picture(2)] as any}
+      />
     );
     await page.getByRole('button', { name: 'Play Midnight Arcade' }).click();
     expect(player().current?.id).toBe(1);
@@ -166,7 +167,9 @@ describe('a song on the post page', () => {
 
   test('the song menu plays now, plays next and adds to up next; pictures get no song items', async () => {
     mocks.menuOpened = true;
-    await renderWithProviders(<PostImages postId={100} images={post as any} />);
+    await renderWithProviders(
+      <PostImages postId={100} postTitle="Night Drive" images={post as any} />
+    );
     await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
     expect(mocks.menuProps.filter((p) => p.imageId === 2).every((p) => !p.leading)).toBe(true);
 
@@ -184,7 +187,11 @@ describe('a song on the post page', () => {
     await page.viewport(390, 800);
     await renderWithProviders(
       <div className="px-4">
-        <PostImages postId={100} images={[audio(1, 'Paper Lanterns')] as any} />
+        <PostImages
+          postId={100}
+          postTitle="Night Drive"
+          images={[audio(1, 'Paper Lanterns')] as any}
+        />
       </div>
     );
     const title = page.getByText('Paper Lanterns');
@@ -205,7 +212,11 @@ describe('a song on the post page', () => {
 
   test('the play button names itself in a tooltip', async () => {
     await renderWithProviders(
-      <PostImages postId={100} images={[audio(1, 'Paper Lanterns')] as any} />
+      <PostImages
+        postId={100}
+        postTitle="Night Drive"
+        images={[audio(1, 'Paper Lanterns')] as any}
+      />
     );
     await userEvent.hover(page.getByRole('button', { name: 'Play Paper Lanterns' }));
     await expect.element(page.getByRole('tooltip', { name: 'Play' })).toBeVisible();
@@ -214,7 +225,11 @@ describe('a song on the post page', () => {
   test('the song items are the same size as the rest of the menu', async () => {
     mocks.menuOpened = true;
     await renderWithProviders(
-      <PostImages postId={100} images={[audio(1, 'Paper Lanterns')] as any} />
+      <PostImages
+        postId={100}
+        postTitle="Night Drive"
+        images={[audio(1, 'Paper Lanterns')] as any}
+      />
     );
     const size = (name: string) =>
       getComputedStyle(page.getByRole('menuitem', { name, exact: true }).element()).fontSize;
@@ -225,7 +240,9 @@ describe('a song on the post page', () => {
 
   test('with the flag off, a song renders the native element as before', async () => {
     mocks.features = {};
-    await renderWithProviders(<PostImages postId={100} images={post as any} />);
+    await renderWithProviders(
+      <PostImages postId={100} postTitle="Night Drive" images={post as any} />
+    );
     await expect.element(page.getByTestId('media-image')).toBeInTheDocument();
     expect(page.getByTestId('media-audio').elements()).toHaveLength(3);
     expect(page.getByRole('button', { name: /^Play / }).elements()).toHaveLength(0);

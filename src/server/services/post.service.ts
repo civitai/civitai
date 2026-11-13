@@ -974,7 +974,7 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
   });
   if (!links.length) return new Map<number, Cover>();
   // The songs come back too, for their owner: a cover must be theirs.
-  const rows = (await db.image.findMany({
+  const rows = (await (db as typeof dbRead).image.findMany({
     where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
     select: { ...coverSelect, id: true, userId: true, postId: true, metadata: true },
   })) as unknown as ({
