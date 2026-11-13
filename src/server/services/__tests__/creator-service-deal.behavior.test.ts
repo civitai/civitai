@@ -158,7 +158,13 @@ const SFW_LEVELS = PG | PG13;
 const ALL_LEVELS = 31;
 
 /** The offering a faked Prisma read includes, as the real `include` always does. */
-const OFFERING_ROW = { id: 1, title: 'Cat portraits', coverImageId: null, removedReason: null };
+const OFFERING_ROW = {
+  id: 1,
+  title: 'Cat portraits',
+  coverImageId: null,
+  removedReason: null,
+  ingestion: 'Scanned',
+};
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -2771,6 +2777,73 @@ describe('an offering taken down mid-deal', () => {
       await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
       expect((await deal(id)).status).toBe('Accepted');
     });
+  });
+});
+
+describe('a held offering on its deals', () => {
+  const hold = () =>
+    q(
+      `UPDATE "ServiceOffering" SET ingestion = 'Blocked'::"ServiceOfferingIngestionStatus" WHERE id = 1`
+    );
+  const titlesSentTo = (userId: number) =>
+    notifications.createNotification.mock.calls
+      .filter(([n]) => n.userId === userId)
+      .map(([n]) => n.details.offeringTitle);
+  const viewAs = async (id: number, ingestion: string, userId: number, isModerator = false) => {
+    const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+    const offering = { ...OFFERING_ROW, ingestion, coverImageId: 7 };
+    const model = dbMock.dbWrite as unknown as {
+      serviceDeal: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+    };
+    model.serviceDeal.findUnique = vi.fn().mockResolvedValue({ ...row, offering, events: [] });
+    model.serviceDeal.findMany = vi.fn().mockResolvedValue([{ ...row, offering }]);
+    const view = await deals.getServiceDealView({
+      dealId: id,
+      userId,
+      isModerator,
+      servicesEnabled: true,
+    });
+    const { items } = await deals.listMyServiceDeals({
+      userId,
+      role: userId === SELLER ? 'seller' : 'buyer',
+      limit: 20,
+      servicesEnabled: true,
+      servableLevels: ALL_LEVELS,
+    });
+    return { view: view.offering, listed: items[0].offering };
+  };
+
+  it("keeps a held offering's title and cover from the buyer's deal view, list, notices and chat", async () => {
+    const { id } = await request();
+    await hold();
+    notifications.createNotification.mockClear();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+
+    expect(titlesSentTo(BUYER)).toEqual(['Service under review']);
+    expect(JSON.stringify(chat.createMessage.mock.calls)).not.toContain('Cat portraits');
+    const buyer = await viewAs(id, 'Blocked', BUYER);
+    expect(buyer.view).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
+    expect(buyer.listed).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
+  });
+
+  it('shows the seller and moderators the live title of a held offering', async () => {
+    const { id } = await request();
+    await hold();
+    expect((await viewAs(id, 'Blocked', SELLER)).view.title).toBe('Cat portraits');
+    expect((await viewAs(id, 'Blocked', SELLER)).listed.title).toBe('Cat portraits');
+    expect((await viewAs(id, 'Blocked', STRANGER, true)).view.title).toBe('Cat portraits');
+  });
+
+  it("shows the buyer a checked offering's title and cover", async () => {
+    const { id } = await request();
+    notifications.createNotification.mockClear();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+
+    expect(titlesSentTo(BUYER)).toEqual(['Cat portraits']);
+    expect(JSON.stringify(chat.createMessage.mock.calls)).toContain('Cat portraits');
+    const buyer = await viewAs(id, 'Scanned', BUYER);
+    expect(buyer.view).toEqual({ id: 1, title: 'Cat portraits', coverImageId: 7 });
+    expect(buyer.listed).toEqual({ id: 1, title: 'Cat portraits', coverImageId: 7 });
   });
 });
 

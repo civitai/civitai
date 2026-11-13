@@ -6,6 +6,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { createMessage, upsertDealChat } from '~/server/services/chat.service';
 import {
+  counterpartyOfferingTitle,
   getDealPartiesWithTitle,
   notifyServiceDeal,
   notifyServiceDealTransition,
@@ -46,7 +47,11 @@ import {
   type ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/prisma/enums';
+import {
+  ServiceOfferingIngestionStatus,
+  type ServiceDealEventType,
+  type ServiceDealStatus,
+} from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   dealActions,
@@ -543,7 +548,8 @@ async function openDealChat(dealId: number) {
     content: dealAcceptedChatLine({
       dealId,
       sellerName: deal.sellerName,
-      title: deal.title,
+      // The chat is the buyer's too.
+      title: counterpartyOfferingTitle(deal),
     }),
   });
 }
@@ -937,6 +943,27 @@ export async function countOpenDealsByOffering(offeringIds: number[]) {
   return new Map(rows.map((row) => [row.offeringId, row.open]));
 }
 
+/** A held offering's text and cover stay with its seller and moderators. */
+function offeringAsSeen(
+  {
+    ingestion,
+    ...offering
+  }: {
+    id: number;
+    title: string;
+    coverImageId: number | null;
+    ingestion: ServiceOfferingIngestionStatus;
+  },
+  seesLive: boolean
+) {
+  if (seesLive || ingestion === ServiceOfferingIngestionStatus.Scanned) return offering;
+  return {
+    ...offering,
+    title: counterpartyOfferingTitle({ ...offering, ingestion }),
+    coverImageId: null,
+  };
+}
+
 export async function getServiceDealView({
   dealId,
   userId,
@@ -952,7 +979,9 @@ export async function getServiceDealView({
   const deal = await dbWrite.serviceDeal.findUnique({
     where: { id: dealId },
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
+      offering: {
+        select: { id: true, title: true, coverImageId: true, removedReason: true, ingestion: true },
+      },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
       events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
@@ -966,6 +995,7 @@ export async function getServiceDealView({
     SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
   const { removedReason, ...offering } = deal.offering;
   const offeringTakenDown = removedReason != null;
+  const seesLiveOffering = isModerator || deal.sellerId === userId;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
@@ -981,7 +1011,7 @@ export async function getServiceDealView({
     mature: isMatureServiceLevel(deal.maxNsfwLevel),
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
-    offering,
+    offering: offeringAsSeen(offering, seesLiveOffering),
     /** Seller and moderators only, and never the reason, which reaches the seller by notification. */
     offeringTakenDown: seesTakedown && offeringTakenDown,
     buyer: deal.buyer,
@@ -1067,7 +1097,9 @@ export async function listMyServiceDeals({
     orderBy: { id: 'desc' },
     take: limit + 1,
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
+      offering: {
+        select: { id: true, title: true, coverImageId: true, removedReason: true, ingestion: true },
+      },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
     },
@@ -1088,7 +1120,7 @@ export async function listMyServiceDeals({
       status: deal.status,
       disputeResolution: deal.disputeResolution,
       maxNsfwLevel: deal.maxNsfwLevel,
-      offering,
+      offering: offeringAsSeen(offering, role === 'seller'),
       offeringTakenDown: role === 'seller' && removedReason != null,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,

@@ -602,9 +602,20 @@ describe('the moderation adapter', () => {
     });
 
     it('holds an offering with a csam hold still pending, whatever its verdict says', async () => {
-      dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+      dbMock.dbWrite.textScanHold.findMany.mockResolvedValueOnce([
+        { status: 'Pending', textHash: 'other', meta: null },
+      ] as never);
       await reconcile();
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
+    it('lists an offering once a moderator dismissed the csam hold on its current text', async () => {
+      verdict(['csam']);
+      dbMock.dbWrite.textScanHold.findMany.mockResolvedValueOnce([
+        { status: 'Dismissed', textHash: currentHash, meta: { decision: 'dismiss' } },
+      ] as never);
+      await reconcile();
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
     });
 
     it('holds a csam verdict with no text hash to compare', async () => {

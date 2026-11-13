@@ -12,6 +12,7 @@ import {
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { csamHoldBars } from '~/server/services/text-scan/csam-hold-bars';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { loadServiceOfferingSubjects } from '~/server/services/text-scan/profiles/service-offering.profile';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
@@ -73,27 +74,31 @@ const hasPendingCsamHold = async (offeringId: number) =>
 export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';
 
 /**
- * Whether the offering is held for the csam queue, read from the stored rows alone: a hold there
- * still pending, or a csam verdict on its current text. `unverified` when the stored verdict is not
- * about the current text, or there is none; such an offering is not shown.
+ * Whether the offering is held for the csam queue, read from the stored rows alone. `unverified`
+ * when the stored verdict is not about the current text, or there is none; such an offering is not
+ * shown.
  */
 export async function serviceOfferingHoldState(
   offeringId: number
 ): Promise<ServiceOfferingHoldState> {
-  if (await hasPendingCsamHold(offeringId)) return 'held';
+  const holds = await dbWrite.textScanHold.findMany({
+    where: { entityType: ENTITY_TYPE, entityId: offeringId, label: 'csam' },
+    select: { status: true, textHash: true, meta: true },
+  });
+  if (csamHoldBars(null, holds)) return 'held';
   const verdict = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: ENTITY_TYPE, entityId: offeringId } },
     select: { status: true, triggeredLabels: true, result: true },
   });
   if (verdict?.status !== EntityModerationStatus.Succeeded) return 'unverified';
-  const detected = verdict.triggeredLabels.includes('csam');
+  const held = csamHoldBars(verdict, holds);
   const result = verdict.result as { version?: unknown; textHash?: unknown } | null;
   // A fallback-check row carries no text hash and never this label.
-  if (result?.version === undefined) return detected ? 'held' : 'clear';
+  if (result?.version === undefined) return held ? 'held' : 'clear';
   const subject = (await loadServiceOfferingSubjects([offeringId])).get(offeringId);
-  if (typeof result.textHash !== 'string' || !subject) return detected ? 'held' : 'unverified';
+  if (typeof result.textHash !== 'string' || !subject) return held ? 'held' : 'unverified';
   if (textScanTextHash(subject) !== result.textHash) return 'unverified';
-  return detected ? 'held' : 'clear';
+  return held ? 'held' : 'clear';
 }
 
 /**
@@ -250,7 +255,6 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
     return new Map(rows.map((r) => [r.id, buildServiceOfferingModerationText(r)]));
   },
 
-  // Only the retry cron calls submit.
   submit: async ({ entityId, content }) => {
     const offering = await dbWrite.serviceOffering.findUnique({
       where: { id: entityId },

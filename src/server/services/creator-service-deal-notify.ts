@@ -7,7 +7,21 @@ import {
   type ServiceDealNotificationDetails,
 } from '~/server/notifications/creator-service.notifications';
 import { createNotification } from '~/server/services/notification.service';
-import type { ServiceDealEventType } from '~/shared/utils/prisma/enums';
+import {
+  ServiceOfferingIngestionStatus,
+  type ServiceDealEventType,
+} from '~/shared/utils/prisma/enums';
+
+export const HELD_OFFERING_TITLE = 'Service under review';
+
+/** A deal's offering title for anyone but its seller and moderators: the live text only once its content check passed. */
+export const counterpartyOfferingTitle = (offering: {
+  title: string;
+  ingestion: ServiceOfferingIngestionStatus;
+}) =>
+  offering.ingestion === ServiceOfferingIngestionStatus.Scanned
+    ? offering.title
+    : HELD_OFFERING_TITLE;
 
 type Recipient = 'buyer' | 'seller' | 'otherParty';
 
@@ -25,9 +39,16 @@ const transitionNotices: Partial<
 
 export async function getDealPartiesWithTitle(dealId: number) {
   const [deal] = await dbWrite.$queryRaw<
-    { buyerId: number; sellerId: number; title: string; sellerName: string | null }[]
+    {
+      buyerId: number;
+      sellerId: number;
+      title: string;
+      ingestion: ServiceOfferingIngestionStatus;
+      sellerName: string | null;
+    }[]
   >`
-    SELECT d."buyerId", d."sellerId", o."title", s."username" AS "sellerName"
+    SELECT d."buyerId", d."sellerId", o."title", o."ingestion"::text AS "ingestion",
+      s."username" AS "sellerName"
     FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
     LEFT JOIN "User" s ON s."id" = d."sellerId"
     WHERE d."id" = ${dealId}::int`;
@@ -66,6 +87,7 @@ export async function notifyServiceDeal({
       else return;
       userId = details.requestedBy === 'buyer' ? deal.sellerId : deal.buyerId;
     }
+    if (userId !== deal.sellerId) details.offeringTitle = counterpartyOfferingTitle(deal);
 
     await createNotification({
       userId,

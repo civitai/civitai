@@ -11078,9 +11078,9 @@ model ServiceOffering {
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Written only by
-  /// `updateServiceOfferingNsfwLevels`: the highest of `declaredNsfwLevel`, the text scan's level
-  /// and the scanned cover's level.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+  /// seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+  /// `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
   /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
   /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute

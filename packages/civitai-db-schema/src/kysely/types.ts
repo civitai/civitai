@@ -5623,9 +5623,9 @@ export type ServiceOffering = {
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
   /**
-   * The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Written only by
-   * `updateServiceOfferingNsfwLevels`: the highest of `declaredNsfwLevel`, the text scan's level
-   * and the scanned cover's level.
+   * The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+   * seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+   * `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
    */
   maxNsfwLevel: Generated<number>;
   /**
