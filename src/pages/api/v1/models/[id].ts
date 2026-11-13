@@ -24,6 +24,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { Flags } from '~/shared/utils/flags';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -156,15 +157,18 @@ async function buildPublicModelResponse(
                   visibility: undefined,
                 }))
             : [],
+          // Only images within the level this response is served at (SFW in a restricted region).
           images: includeImages
-            ? images.map(({ url, id, ...image }) => ({
-                url: getEdgeUrl(url, {
-                  original: true,
-                  name: id.toString(),
-                  type: image.type,
-                }),
-                ...image,
-              }))
+            ? images
+                .filter((image) => Flags.intersects(image.nsfwLevel, browsingLevel))
+                .map(({ url, id, ...image }) => ({
+                  url: getEdgeUrl(url, {
+                    original: true,
+                    name: id.toString(),
+                    type: image.type,
+                  }),
+                  ...image,
+                }))
             : [],
           downloadUrl: includeDownloadUrl
             ? `${baseUrl}${createModelFileDownloadUrl({
@@ -189,6 +193,9 @@ const baseHandler = PublicEndpoint(async function handler(
     });
 
   const browsingLevel = apiBrowsingLevel(req);
+  // The body depends on the caller's region (the level above), which the shared cache does not key
+  // on. The origin cache below is keyed by level.
+  res.setHeader('Cache-Control', 'private, no-store');
   const { id } = parsedParams.data;
 
   // Bypass the origin cache when this request is taking the block-scoped path
