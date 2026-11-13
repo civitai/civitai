@@ -989,6 +989,13 @@ describe('working a deal', () => {
     );
   });
 
+  it('posts the accepted line once however many times accept is sent', async () => {
+    const { id } = await request();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+    await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toEqual(conflict);
+    expect(chat.createMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses an accept across a block made since the request', async () => {
     const { id } = await request();
     await q(`INSERT INTO "UserEngagement" VALUES ($1, $2, 'Block')`, [BUYER, SELLER]);

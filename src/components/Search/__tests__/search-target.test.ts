@@ -56,4 +56,11 @@ describe('the feed search flag on its own', () => {
     expect(legacyImageSearchDestination({ imageSearch: true, feedSearch: false })).toBeUndefined();
     expect(legacyImageSearchDestination(neither)).toBe('models-search');
   });
+
+  it('keeps "more like this" on the search page, which the feed cannot answer yet', () => {
+    const both = { imageSearch: true, feedSearch: true };
+    expect(legacyImageSearchDestination(both, { similarTo: '42' })).toBeUndefined();
+    expect(legacyImageSearchDestination(both)).toBe('images-feed');
+    expect(legacyImageSearchDestination(feedOnly, { similarTo: '42' })).toBe('images-feed');
+  });
 });

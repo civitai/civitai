@@ -119,7 +119,7 @@ export async function acceptImage({
       : sql`"metadata" - 'ruleId' - 'ruleReason'`;
 
   // Refused in the statement itself, not off the replica read above.
-  const { numUpdatedRows } = await dbWrite
+  const updated = await dbWrite
     .updateTable('Image')
     .set({
       needsReview: null,
@@ -142,8 +142,19 @@ export async function acceptImage({
     .$if(!restoreRemoved, (qb) =>
       qb.where(NOT_FLAG_ONLY_REMAINING).where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
     )
+    // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
+    // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
+    .returning([
+      'id',
+      sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
+      sql<boolean | null>`${
+        nr === 'minor'
+          ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
+          : sql`NULL`
+      }`.as('wasMinor'),
+    ])
     .executeTakeFirst();
-  if (!numUpdatedRows) {
+  if (!updated) {
     if (restoreRemoved) return;
     throw new RemovedImageNotRestorableError(imageId);
   }
@@ -177,6 +188,15 @@ export async function acceptImage({
     await trackImageRestore({ imageId, actorUserId: userId });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
+  // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows
+  // which queue it came from and whether it lifted the flag.
+  if (nr === 'minor')
+    await recordModActivity({
+      userId,
+      entityType: 'image',
+      entityId: imageId,
+      activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
+    });
 
   await applyAcceptSideEffects(img, imageId);
 

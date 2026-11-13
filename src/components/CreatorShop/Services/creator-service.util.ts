@@ -2,6 +2,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { pluralize } from '~/shared/utils/pluralize';
 import type { RouterOutput } from '~/types/router';
+import type { ServiceOfferingFeedSort } from '~/server/schema/creator-service.schema';
 
 export type ServiceOffering = RouterOutput['creatorService']['getMine']['items'][number];
 
@@ -19,6 +20,23 @@ export function serviceTermsLine(
 export function useQueryShopServices(userId: number, enabled: boolean) {
   const { data, isLoading } = trpc.creatorService.getForShop.useQuery({ userId }, { enabled });
   return { offerings: data ?? [], isLoading };
+}
+
+export type ServiceFeedOffering = RouterOutput['creatorService']['getFeed']['items'][number];
+
+export function useServiceOfferingFeed(sort: ServiceOfferingFeedSort) {
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.creatorService.getFeed.useInfiniteQuery(
+      { sort },
+      { getNextPageParam: (last) => last.nextCursor }
+    );
+  return {
+    offerings: data?.pages.flatMap((page) => page.items) ?? [],
+    isLoading,
+    fetchNextPage,
+    hasNextPage: !!hasNextPage,
+    isFetchingNextPage,
+  };
 }
 
 /** `canSell` false (the services flag is off) still lists the seller's services, to pause or remove. */

@@ -138,6 +138,9 @@ const articleFilterSchema = z.object({
   sort: z.enum(ArticleSort).default(ArticleSort.MostBookmarks),
   followed: z.boolean().optional(),
 });
+const redArticleFilterSchema = articleFilterSchema.extend({
+  sort: z.enum(ArticleSort).default(ArticleSort.Newest),
+});
 
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;
 const collectionFilterSchema = z.object({
@@ -315,32 +318,76 @@ const localStorageSchemas: LocalStorageSchema = {
 export const MODEL_FILTER_MIGRATION_KEY = 'model-filters-migration';
 export const MODEL_FILTER_MIGRATION_VERSION = '1-hot-default';
 
-export function migrateModelFilters(key: string, value: Record<string, unknown>) {
-  if (key !== localStorageSchemas.models.key) return value;
-  if (localStorage.getItem(MODEL_FILTER_MIGRATION_KEY) === MODEL_FILTER_MIGRATION_VERSION)
-    return value;
+function rewriteOncePerVersion({
+  key,
+  value,
+  filterKey,
+  migrationKey,
+  version,
+  isOldDefault,
+  rewrite,
+}: {
+  key: string;
+  value: Record<string, unknown>;
+  filterKey: string;
+  migrationKey: string;
+  version: string;
+  isOldDefault: (value: Record<string, unknown>) => boolean;
+  rewrite: (value: Record<string, unknown>) => Record<string, unknown>;
+}) {
+  if (key !== filterKey) return value;
+  if (localStorage.getItem(migrationKey) === version) return value;
 
-  const isOldDefaultPair =
-    value?.sort === ModelSort.HighestRated && value?.period === MetricTimeframe.Month;
-  const migrated = isOldDefaultPair
-    ? { ...value, sort: ModelSort.Hot, period: MetricTimeframe.AllTime }
-    : value;
+  const isOld = isOldDefault(value);
+  const migrated = isOld ? rewrite(value) : value;
 
-  localStorage.setItem(MODEL_FILTER_MIGRATION_KEY, MODEL_FILTER_MIGRATION_VERSION);
-  if (isOldDefaultPair) localStorage.setItem(key, serializeJSON(migrated));
+  localStorage.setItem(migrationKey, version);
+  if (isOld) localStorage.setItem(key, serializeJSON(migrated));
   return migrated;
+}
+
+export function migrateModelFilters(key: string, value: Record<string, unknown>) {
+  return rewriteOncePerVersion({
+    key,
+    value,
+    filterKey: localStorageSchemas.models.key,
+    migrationKey: MODEL_FILTER_MIGRATION_KEY,
+    version: MODEL_FILTER_MIGRATION_VERSION,
+    isOldDefault: (v) => v?.sort === ModelSort.HighestRated && v?.period === MetricTimeframe.Month,
+    rewrite: (v) => ({ ...v, sort: ModelSort.Hot, period: MetricTimeframe.AllTime }),
+  });
+}
+
+/** civitai.red defaults articles to Newest; same stored-default issue as migrateModelFilters. */
+export const RED_ARTICLE_FILTER_MIGRATION_KEY = 'article-filters-migration';
+export const RED_ARTICLE_FILTER_MIGRATION_VERSION = '1-red-newest';
+
+export function migrateRedArticleFilters(key: string, value: Record<string, unknown>) {
+  return rewriteOncePerVersion({
+    key,
+    value,
+    filterKey: localStorageSchemas.articles.key,
+    migrationKey: RED_ARTICLE_FILTER_MIGRATION_KEY,
+    version: RED_ARTICLE_FILTER_MIGRATION_VERSION,
+    isOldDefault: (v) =>
+      v?.sort === ArticleSort.MostBookmarks && v?.period === MetricTimeframe.Month,
+    rewrite: (v) => ({ ...v, sort: ArticleSort.Newest }),
+  });
 }
 
 const getInitialValues = <TSchema extends z.ZodObject>({
   key,
   schema,
+  isRed,
 }: {
   key: string;
   schema: TSchema;
+  isRed: boolean;
 }) => {
   if (typeof window === 'undefined') return schema.parse({});
   const storageValue = localStorage.getItem(key) ?? '{}';
-  const value = migrateModelFilters(key, deserializeJSON(storageValue));
+  let value = migrateModelFilters(key, deserializeJSON(storageValue));
+  if (isRed) value = migrateRedArticleFilters(key, value);
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   else {
@@ -351,11 +398,15 @@ const getInitialValues = <TSchema extends z.ZodObject>({
   }
 };
 
-const getInitialLocalStorageValues = () =>
+export const getInitialLocalStorageValues = ({ isRed }: { isRed: boolean }) =>
   Object.entries(localStorageSchemas).reduce<Record<string, unknown>>(
     (acc, [key, value]) => ({
       ...acc,
-      [key]: getInitialValues({ key: value.key, schema: value.schema }),
+      [key]: getInitialValues({
+        key: value.key,
+        schema: isRed && key === 'articles' ? redArticleFilterSchema : value.schema,
+        isRed,
+      }),
     }),
     {}
   ) as StorageState;
@@ -375,10 +426,10 @@ function handleLocalStorageChange<TKey extends keyof StorageState>({
 }
 
 type FilterStore = ReturnType<typeof createFilterStore>;
-const createFilterStore = () =>
+const createFilterStore = ({ isRed }: { isRed: boolean }) =>
   createStore<StoreState>()(
     devtools((set) => ({
-      ...getInitialLocalStorageValues(),
+      ...getInitialLocalStorageValues({ isRed }),
       setModelFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'models', data, state })),
       setImageFilters: (data) =>
@@ -430,9 +481,15 @@ export function useFiltersContext<T>(selector: (state: StoreState) => T) {
   return useStore(store, selector);
 }
 
-export const FiltersProvider = ({ children }: { children: React.ReactNode }) => {
+export const FiltersProvider = ({
+  children,
+  isRed = false,
+}: {
+  children: React.ReactNode;
+  isRed?: boolean;
+}) => {
   const storeRef = useRef<FilterStore>();
-  if (!storeRef.current) storeRef.current = createFilterStore();
+  if (!storeRef.current) storeRef.current = createFilterStore({ isRed });
 
   return <FiltersContext.Provider value={storeRef.current}>{children}</FiltersContext.Provider>;
 };

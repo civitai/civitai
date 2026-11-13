@@ -225,10 +225,8 @@ export const processUserContentRemovalQueue = async () => {
   // One combined filter per index instead of one per user per index
   const mainIndexConfigs = [
     { name: MODELS_SEARCH_INDEX, filter: `user.id IN [${userIdList}]` },
-    // IMAGES_SEARCH_INDEX is omitted deliberately: while it is retired no reset runs, so it has
-    // no filterable attributes and a `user.username` filter errors. Re-add it only in the change
-    // that resets the index — and it can hold documents before then, because
-    // `pages/api/mod/search/images-update.ts` writes to it without consulting `retired`.
+    // The retired images index (`images_v6`) is not here: image search moved to the vector index,
+    // and nothing writes to it any more.
     { name: ARTICLES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: BOUNTIES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },

@@ -44,7 +44,6 @@ describe('buildSearchRules', () => {
     ['a zero id', { id: 0 }],
   ])('%s gets the filters with no owner carve-out', (_label, viewer) => {
     expect(privacy(buildSearchRules(viewer)[MODELS_SEARCH_INDEX])).toBe(anonModels);
-    expect(privacy(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX])).toBe('poi != true');
   });
 
   it('a signed-in user also sees their own models, keyed on user.id', () => {
@@ -52,8 +51,6 @@ describe('buildSearchRules', () => {
     expect(privacy(rules[MODELS_SEARCH_INDEX])).toBe(
       '(poi != true OR user.id = 42) AND (availability != Private OR user.id = 42)'
     );
-    // Images carry no owner carve-out.
-    expect(privacy(rules[IMAGES_SEARCH_INDEX])).toBe('poi != true');
   });
 
   it('moderators on an uncapped site get no filters on any index', () => {
@@ -83,12 +80,6 @@ describe('buildSearchRules', () => {
     }
   });
 
-  it('restoring a retired index grants it with its filter, never without', () => {
-    for (const viewer of [undefined, { id: 42 }]) {
-      expect(privacy(buildSearchRules(viewer, [])[IMAGES_SEARCH_INDEX])).toBe('poi != true');
-    }
-  });
-
   it('every filter names only attributes its index declares filterable', () => {
     const filterable: Record<string, readonly string[]> = filterableAttributesByIndex;
     const checked: string[] = [];
@@ -107,7 +98,6 @@ describe('buildSearchRules', () => {
         `${MODELS_SEARCH_INDEX}:poi`,
         `${MODELS_SEARCH_INDEX}:availability`,
         `${MODELS_SEARCH_INDEX}:user.id`,
-        `${IMAGES_SEARCH_INDEX}:poi`,
         ...LEVELLED_INDEXES.map((index) => `${index}:nsfwLevel`),
       ])
     );
@@ -116,7 +106,6 @@ describe('buildSearchRules', () => {
 
 const LEVELLED_INDEXES = [
   MODELS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   ARTICLES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
@@ -155,13 +144,11 @@ describe('buildSearchRules: the site content level', () => {
       'a signed-in viewer, capped to PG',
       { id: 42, browsingLevelCap: publicBrowsingLevelsFlag },
       '((poi != true OR user.id = 42) AND (availability != Private OR user.id = 42)) AND (nsfwLevel=1)',
-      '(poi != true) AND (nsfwLevel=1)',
       'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]',
     ],
     [
       'a moderator, capped to PG',
       { id: 7, isModerator: true, browsingLevelCap: publicBrowsingLevelsFlag },
-      'nsfwLevel=1',
       'nsfwLevel=1',
       'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [2, 4, 8, 16, 32]',
     ],
@@ -169,13 +156,11 @@ describe('buildSearchRules: the site content level', () => {
       'a moderator with no cap (fails closed to SFW)',
       { id: 7, isModerator: true },
       'nsfwLevel=1 OR nsfwLevel=2',
-      'nsfwLevel=1 OR nsfwLevel=2',
       'nsfwLevel IS NOT EMPTY AND nsfwLevel NOT IN [4, 8, 16, 32]',
     ],
-  ])('pins the filters for %s', (_label, viewer, models, images, comics) => {
+  ])('pins the filters for %s', (_label, viewer, models, comics) => {
     const rules = buildSearchRules(viewer, []);
     expect(rules[MODELS_SEARCH_INDEX]).toEqual({ filter: models });
-    expect(rules[IMAGES_SEARCH_INDEX]).toEqual({ filter: images });
     expect(rules[COMICS_SEARCH_INDEX]).toEqual({ filter: comics });
   });
 

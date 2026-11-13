@@ -28,7 +28,6 @@ vi.mock('~/server/search-index', async (importOriginal) => {
   return {
     ...actual,
     modelsSearchIndex: idx,
-    imagesSearchIndex: idx,
     imagesMetricsSearchIndex: idx,
     articlesSearchIndex: idx,
     collectionsSearchIndex: collectionsIndex,
