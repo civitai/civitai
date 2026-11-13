@@ -6,6 +6,7 @@ import type { SessionClaims } from '@civitai/auth';
 // a timeout (a revocation-check stall must never block login), while emitting the revocation-leg metric.
 const h = vi.hoisted(() => ({
   observeSessionLeg: vi.fn(),
+  observeRevocationDegraded: vi.fn(),
   hGet: vi.fn(),
   get: vi.fn(),
   withSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
@@ -17,7 +18,10 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   createAuthVerifier: () => ({}),
 }));
-vi.mock('~/server/auth/session-metrics', () => ({ observeSessionLeg: h.observeSessionLeg }));
+vi.mock('~/server/auth/session-metrics', () => ({
+  observeSessionLeg: h.observeSessionLeg,
+  observeRevocationDegraded: h.observeRevocationDegraded,
+}));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: h.logSysRedisFailOpen }));
 // 🔴 Spread the REAL package for the key constants rather than re-typing them. Hand-typed
 // copies drift silently: this factory used to declare TOKEN_STATE as 'sys:token-state' and
@@ -31,16 +35,22 @@ vi.mock('~/server/redis/client', async () => ({
 }));
 
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';
-import { isRevoked } from '../session-verifier';
+import type * as Verifier from '../session-verifier';
+
+// Loaded fresh per test: the verifier keeps the revocation markers it has read, so a marker one test
+// returns would otherwise decide another test's fail-open verdict.
+let isRevoked: typeof Verifier.isRevoked;
 
 const claims = (over: Partial<SessionClaims> = {}): SessionClaims =>
   ({ jti: 't7', signedAt: 1000, ...over } as SessionClaims);
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   h.withSysReadDeadline.mockImplementation((p) => p); // transparent by default
   h.hGet.mockResolvedValue(null);
   h.get.mockResolvedValue(null);
+  vi.resetModules();
+  ({ isRevoked } = await import('../session-verifier'));
 });
 
 describe('isRevoked — bounded revocation read (leg 3)', () => {

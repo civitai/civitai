@@ -57,6 +57,28 @@ export function observeSessionLeg(
   if (outcome === 'timeout') timeoutsCounter.inc({ leg });
 }
 
+// --- Revocation verdicts given without sysRedis ------------------------------------------------------------
+// When the revocation read fails, the verdict comes from the markers this pod has already read
+// (revocation-marker-cache.ts). `deny_cached` = a known marker revoked the session; `allow_unknown` = no
+// known marker revoked it, so it was allowed as before the cache. A sustained `allow_unknown` rate is the
+// volume of sessions whose revocation state nobody checked.
+export type RevocationDegradedVerdict = 'deny_cached' | 'allow_unknown';
+
+const revocationDegradedCounter = registerCounterWithLabels({
+  name: 'session_revocation_degraded_total',
+  help:
+    'Session revocation checks answered without sysRedis because the read failed or timed out, by verdict: ' +
+    'deny_cached (a revocation marker this pod had already read applied) or allow_unknown (no known marker ' +
+    'applied, so the session was allowed).',
+  labelNames: ['verdict'] as const,
+});
+for (const verdict of ['deny_cached', 'allow_unknown'] as const)
+  revocationDegradedCounter.inc({ verdict }, 0);
+
+export function observeRevocationDegraded(verdict: RevocationDegradedVerdict): void {
+  revocationDegradedCounter.inc({ verdict });
+}
+
 // --- Session-state fan-out (refreshSession / invalidateSession) -------------------------------------------
 // `updateSessionState` reads a user's whole token hash and writes one token-state field per token, so its
 // cost scales with the account's session count. SLOWLOG can't see this below its 10ms threshold, which is
