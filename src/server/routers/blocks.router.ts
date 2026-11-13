@@ -4216,10 +4216,18 @@ export const blocksRouter = router({
       // first threw, the careful wording was discarded one layer below the test that asserted it
       // and the viewer saw a generic "something went wrong (ref: …)". 503 is that formatter's own
       // carve-out. Thrown AFTER the `finally`, so the teardown has already run.
+      //
+      // 🔴 `cause.consentRevokeRecorded` IS WHAT THE CLIENT BRANCHES ON, NOT THE 503 CODE. The
+      // `mapDbUnavailable` middleware in `src/server/trpc.ts` answers ANY unreachable-database error
+      // with a 503 — including one from the reads above, before anything was written. A client that
+      // read every 503 as "recorded" told the viewer "Permission removed" while the grant stayed
+      // live. `errorFormatter` lifts this flag onto `data.consentRevokeRecorded`, and only this
+      // throw sets it.
       if (publishFailed) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+          cause: { consentRevokeRecorded: true },
         });
       }
 
