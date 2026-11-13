@@ -26,8 +26,8 @@ const GRANT = {
 
 const m = vi.hoisted(() => ({
   calls: [] as { appBlockId: string; scopes: string[] }[],
-  firstError: null as null | { code: string; message: string },
-  alwaysError: null as null | { code: string; message: string },
+  firstError: null as null | { code: string; message: string; recorded?: boolean },
+  alwaysError: null as null | { code: string; message: string; recorded?: boolean },
   freshGrants: [] as unknown[],
   fetchOpts: [] as unknown[],
   success: undefined as unknown as ReturnType<typeof vi.fn>,
@@ -43,8 +43,12 @@ vi.mock('~/utils/notifications', async (importOriginal) => {
 });
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
-  const reject = (e: { code: string; message: string }) =>
-    Promise.reject({ data: { code: e.code }, message: e.message });
+  // `recorded` = the server's `data.consentRevokeRecorded` flag (post-write marker failure only).
+  const reject = (e: { code: string; message: string; recorded?: boolean }) =>
+    Promise.reject({
+      data: { code: e.code, ...(e.recorded ? { consentRevokeRecorded: true } : {}) },
+      message: e.message,
+    });
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     setTrpcBatchingEnabled: vi.fn(),
@@ -184,8 +188,12 @@ describe('Remove all', () => {
     expect(m.success).not.toHaveBeenCalled();
   });
 
-  test('🔴 a 503 means they were removed: the rows show the removed marker', async () => {
-    m.alwaysError = { code: 'SERVICE_UNAVAILABLE', message: 'removed, enforcement lags' };
+  test('🔴 a flagged 503 means they were removed: the rows show the removed marker', async () => {
+    m.alwaysError = {
+      code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
+      message: 'removed, enforcement lags',
+    };
     mount();
     await page.getByTestId('scope-revoke-all').click();
     await page.getByTestId('scope-revoke-all-confirm').click();
@@ -196,6 +204,24 @@ describe('Remove all', () => {
       .poll(() => document.querySelectorAll('[data-testid="scope-revoked-mark"]').length)
       .toBe(2);
     expect(m.calls).toHaveLength(1);
+  });
+
+  test('🔴 a 503 WITHOUT the recorded flag (database unreachable) removes nothing on screen', async () => {
+    // `mapDbUnavailable` answers an unreachable database with a bare 503, including before the
+    // write. MUTATION THAT MUST KILL IT: the remove-all arm back to `code === 'SERVICE_UNAVAILABLE'`.
+    m.alwaysError = {
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'This service is temporarily unavailable. Please try again.',
+    };
+    mount();
+    await page.getByTestId('scope-revoke-all').click();
+    await page.getByTestId('scope-revoke-all-confirm').click();
+    await expect
+      .element(page.getByTestId('scope-revoke-failure'))
+      .toHaveAttribute('data-degraded', 'false');
+    expect(document.querySelectorAll('[data-testid="scope-revoked-mark"]').length).toBe(0);
+    expect(m.calls).toHaveLength(1);
+    expect(m.success).not.toHaveBeenCalled();
   });
 
   test('more than 32 removable permissions disable the button and say why', async () => {

@@ -16,6 +16,9 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import {
+  classifyImageScanFailure,
+  getImageScanRetryDelayMinutes,
+  ImageScanFailureClass,
   getImageScanRetryLimit,
   IMAGE_RESCAN_RETRY_LIMIT as IMAGE_SCANNING_RETRY_LIMIT,
 } from '~/server/services/image-scan-failure';
@@ -35,8 +38,6 @@ import {
   appealTrainingHeld,
   isAppealTrainingConfigured,
 } from '~/server/jobs/appeal-decision-records';
-
-const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 
 // Minutes a just-created image counts as "submit in flight" (see the double-submit
 // note below). Must stay above the upload-path submit's own ceiling or the window it
@@ -114,6 +115,8 @@ type IngestImageRow = IngestImageInput & {
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
+  /** `scanJobs.error.reason`, to reclassify a row stamped before a reason pattern was added. */
+  failureReason: string | null;
   /**
    * When its current run of 429 submits began; null unless the last submit was a 429.
    * A successful submit clears `scanJobs.error`, and with it this.
@@ -182,6 +185,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
            i."scanJobs"->'error'->>'failureClass' as "failureClass",
+           i."scanJobs"->'error'->>'reason' as "failureReason",
            CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
              THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
            END as "rateLimitedSince",
@@ -196,9 +200,23 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     WHERE i.id = ANY(${imageIds})
   `) ?? [];
 
+  // A row stamped Unknown before its reason was recognised retries as what it is now.
+  for (const img of images) {
+    if (
+      img.failureReason &&
+      (!img.failureClass || img.failureClass === ImageScanFailureClass.Unknown)
+    )
+      img.failureClass = classifyImageScanFailure({ reason: img.failureReason });
+  }
+
   // Filter based on status and retry logic
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
-  const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
+  // Shared by the retry filter and the waiting-for-retry mirror below, which must agree or a
+  // cooling-down Error row is neither sent nor kept, and gets pruned.
+  const errorRetryDue = (img: IngestImageRow) =>
+    !!img.scanRequestedAt &&
+    new Date(img.scanRequestedAt).getTime() <=
+      decreaseDate(now, getImageScanRetryDelayMinutes(img.failureClass), 'minutes').getTime();
 
   // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
   // trigger queues a new image immediately, but `ingestImage` stamps
@@ -296,8 +314,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
-      img.scanRequestedAt &&
-      new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
+      errorRetryDue(img) &&
       Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass)
   );
 
@@ -336,8 +353,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         // Error but waiting for retry delay or under retry limit. Mirror the
         // reason-aware ceiling used by errorImages above.
         if (img.ingestion === 'Error') {
-          const waitingForDelay =
-            img.scanRequestedAt && new Date(img.scanRequestedAt).getTime() > errorRetryDate;
+          const waitingForDelay = !!img.scanRequestedAt && !errorRetryDue(img);
           const underRetryLimit =
             Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass);
           return waitingForDelay && underRetryLimit;

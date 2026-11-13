@@ -136,9 +136,8 @@ export function createKyselyClients<DB>(
   //
   // These pools carry NO acquire-latency metric and NO retry: the error reaches the caller as-is,
   // and a caller that wants either has to add it (see the transient-error retry in
-  // apps/notifications). `max`/`idleTimeoutMillis` match the sibling `createPool` factory;
-  // `connectionTimeoutMillis` is deliberately STRICTER than createPool (which defaults it to 0) and
-  // matches the value the monolith already runs in production.
+  // apps/notifications). `max`/`idleTimeoutMillis`/`connectionTimeoutMillis` match the sibling
+  // `createPool` factory, and the timeout matches the value the monolith already runs in production.
   //
   // Caller-supplied values win — `poolConfig` is spread last.
   // ORDER-DEPENDENT: this snapshots `poolConfig.connectionString`, so the `sslNoVerify` rewrite

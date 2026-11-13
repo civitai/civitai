@@ -47,9 +47,9 @@ import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useChatLayout } from '~/components/Chat/useChatTheme';
 import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
 import {
+  chatLinkifyOptions,
   getLinkHref,
   isExternalChatLink,
-  linkifyOptions,
   loadMotion,
   showsChatModeratorMark,
 } from '~/components/Chat/util';
@@ -58,6 +58,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ChatSystemNoteText } from '~/components/Chat/ChatSystemNoteText';
+import { useCurrentDomainHosts } from '~/hooks/useCurrentDomainHref';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -1157,9 +1158,10 @@ function ChatInputBox({
 }
 
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
+  const { ownHosts } = useCurrentDomainHosts();
   if (!href) return <span className={classes.embedTitle}>{title}</span>;
 
-  if (isExternalChatLink(href)) {
+  if (isExternalChatLink(href, ownHosts)) {
     return (
       <Anchor
         className={classes.embedTitle}
@@ -1181,6 +1183,7 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
+  const { ownHosts } = useCurrentDomainHosts();
   let contentObj: {
     title: string | null;
     description: string | null;
@@ -1197,7 +1200,7 @@ const EmbedMessage = ({ content }: { content: string }) => {
 
   if (!title && !description && !image) return <></>;
 
-  const modHref = getLinkHref(href);
+  const modHref = getLinkHref(href, ownHosts);
   // A link to an image unfurls to the image alone. Shown at thumbnail size it is
   // an icon of itself, so the card becomes the frame and the preview fills it.
   const isMediaOnly = !title && !description;
@@ -1486,6 +1489,7 @@ function ChatMessageContent({
 }) {
   const scannable = stripStickerTokens(content);
   const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+  const { ownHosts } = useCurrentDomainHosts();
 
   if (!content.length) return <>{fallback ?? null}</>;
 
@@ -1494,7 +1498,7 @@ function ChatMessageContent({
   if (cleaned !== scannable)
     return (
       <Text component="span">
-        <Linkify options={linkifyOptions}>{cleaned}</Linkify>
+        <Linkify options={chatLinkifyOptions(ownHosts)}>{cleaned}</Linkify>
       </Text>
     );
 
@@ -1521,7 +1525,7 @@ function ChatMessageContent({
                     : undefined
                 }
               >
-                <Linkify options={linkifyOptions}>{part.value}</Linkify>
+                <Linkify options={chatLinkifyOptions(ownHosts)}>{part.value}</Linkify>
               </Text>
             )
           )}

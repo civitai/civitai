@@ -22,21 +22,36 @@ const parseChatLink = (value: string) => {
   return url;
 };
 
-export const isExternalChatLink = (href: string) => {
+/**
+ * Linked as written and opened in a new tab: the allowlisted third-party hosts, and our other
+ * sites (`ownHosts` from the domain config, less this deployment's own `civHosts`). Each of our
+ * sites shows content the others may not, so a link to one keeps its host.
+ */
+export const isExternalChatLink = (href: string, ownHosts: readonly string[]) => {
   const url = parseChatLink(href);
-  return !!url && constants.chat.externalHosts.includes(url.hostname);
+  if (!url) return false;
+  const host = url.hostname;
+  if (constants.chat.externalHosts.includes(host)) return true;
+  // Like `externalHosts`, an own site is linked with or without "www.".
+  const site = host.replace(/^www\./, '');
+  return ownHosts.includes(site) && !constants.chat.civHosts.includes(site);
 };
+
+// The URL parser folds "\" and dot segments into "//"; reject a leading "//" (another host).
+// The "\" check is kept as defence in depth.
+const isSameSitePath = (path: string) => path === '/' || /^\/[^/\\]/.test(path);
 
 const civitaiChatLinkPath = (href: string) => {
   const url = parseChatLink(href);
   if (!url || !constants.chat.civHosts.includes(url.hostname)) return null;
-  return `${url.pathname}${url.search}${url.hash}` || '/';
+  const path = `${url.pathname}${url.search}${url.hash}` || '/';
+  return isSameSitePath(path) ? path : null;
 };
 
-export const getLinkHref = (href: string | undefined) => {
+export const getLinkHref = (href: string | undefined, ownHosts: readonly string[]) => {
   if (!href) return;
 
-  if (isExternalChatLink(href)) return href;
+  if (isExternalChatLink(href, ownHosts)) return href;
 
   const airMatch = href.match(constants.chat.airRegex);
   if (airMatch && airMatch.groups) {
@@ -48,56 +63,66 @@ export const getLinkHref = (href: string | undefined) => {
   return civitaiChatLinkPath(href) ?? undefined;
 };
 
-export const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement> = ({
-  attributes,
-  content,
-}) => {
-  const { href, ...props }: { href?: string } = attributes;
+const chatLinkRenderer = (
+  ownHosts: readonly string[]
+): OptFn<(ir: IntermediateRepresentation) => ReactElement> =>
+  function ChatLink({ attributes, content }) {
+    const { href, ...props }: { href?: string } = attributes;
 
-  const modHref = getLinkHref(href);
-  // linkify-react reads `.props` off whatever this returns, so plain text still needs an element.
-  if (!modHref) return <>{content}</>;
+    const modHref = getLinkHref(href, ownHosts);
+    // linkify-react reads `.props` off whatever this returns, so plain text still needs an element.
+    if (!modHref) return <>{content}</>;
 
-  if (isExternalChatLink(modHref)) {
-    // TODO: In a perfect world, we wouldn't be relying on Mantine here.
+    if (isExternalChatLink(modHref, ownHosts)) {
+      // TODO: In a perfect world, we wouldn't be relying on Mantine here.
+      return (
+        <Anchor
+          href={modHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          variant="link"
+          style={{ textDecoration: 'underline', color: 'unset' }}
+          {...props}
+        >
+          {content}
+        </Anchor>
+      );
+    }
+
     return (
-      <Anchor
-        href={modHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        variant="link"
-        style={{ textDecoration: 'underline', color: 'unset' }}
-        {...props}
-      >
-        {content}
-      </Anchor>
+      // TODO: In a perfect world, we wouldn't be relying on Mantine here.
+      <Link legacyBehavior href={modHref} passHref {...props}>
+        <Text c="blue.4" component="a" style={{ textDecoration: 'underline', color: 'unset' }}>
+          {content}
+        </Text>
+      </Link>
     );
-  }
+  };
 
-  return (
-    // TODO: In a perfect world, we wouldn't be relying on Mantine here.
-    <Link legacyBehavior href={modHref} passHref {...props}>
-      <Text c="blue.4" component="a" style={{ textDecoration: 'underline', color: 'unset' }}>
-        {content}
-      </Text>
-    </Link>
-  );
-};
 // This is the whole allowlist for what chat will fetch. `chat.service.ts` runs
 // `findLinks` with these options server-side and unfurls whatever they return, so a
 // domain absent here is never turned into a link and never fetched. Asked and answered
 // 2026-08-26: there is no arbitrary-URL fetch behind DM link previews.
-export const validateLink = {
-  url: (value: string) =>
-    civitaiChatLinkPath(value) !== null ||
-    constants.chat.airRegex.test(value) ||
-    isExternalChatLink(value),
-};
+export const isChatLink = (value: string, ownHosts: readonly string[]) =>
+  civitaiChatLinkPath(value) !== null ||
+  constants.chat.airRegex.test(value) ||
+  isExternalChatLink(value, ownHosts);
 
-export const linkifyOptions: Opts = {
-  render: renderLink,
-  // A type missing from an object `validate` passes, so anything but a url (an email) is text.
-  validate: (value, type) => type === 'url' && validateLink.url(value),
+const optionsByHosts = new Map<string, Opts>();
+
+/** Linkify options for chat. `ownHosts` is every host our sites answer on (`getOwnHosts`). */
+export const chatLinkifyOptions = (ownHosts: readonly string[]): Opts => {
+  const key = ownHosts.join(',');
+  let options = optionsByHosts.get(key);
+  if (!options) {
+    options = {
+      render: chatLinkRenderer(ownHosts),
+      // A type missing from an object `validate` passes, so anything but a url (an email) is text.
+      validate: (value, type) => type === 'url' && isChatLink(value, ownHosts),
+    };
+    optionsByHosts.set(key, options);
+  }
+  return options;
 };
 
 export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);

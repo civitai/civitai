@@ -85,6 +85,7 @@ import { getBuzzBulkMultiplier } from '~/server/utils/buzz-helpers';
 import { isDev } from '~/env/other';
 import { toPascalCase } from '~/utils/string-helpers';
 import { redactTransactionCounterparty } from '~/server/services/buzz-transaction-redaction';
+import { createBalanceDisplayReader } from '~/server/services/buzz-balance-display';
 // import type { BuzzAccountType as PrismaBuzzAccountType } from '~/shared/utils/prisma/enums';
 // import { adWatchedReward } from '~/server/rewards';
 
@@ -137,9 +138,10 @@ async function getUserBuzzAccountByAccountType(
 
 export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType>(
   accountId: number,
-  accountTypes: T[]
+  accountTypes: T[],
+  opts?: BuzzReadOptions
 ): Promise<BuzzAccountsResponse<T>> {
-  const data = await buzzService.getUserAccounts(accountId, accountTypes);
+  const data = await buzzService.getUserAccounts(accountId, accountTypes, opts);
   return Object.entries(data).reduce((acc, [key, value]) => {
     const type = BuzzTypes.toClientType(key as BuzzApiAccountType);
     if (!type) return acc;
@@ -149,6 +151,16 @@ export async function getUserBuzzAccountByAccountTypes<T extends BuzzAccountType
 
 export async function getUserBuzzAccounts({ userId }: { userId: number }) {
   return await getUserBuzzAccountByAccountTypes(userId, buzzSpendTypes);
+}
+
+// `buzz.getBuzzAccount` (the header and the client's `useBuzz` hook; see buzz-balance-display.ts):
+// bounded, with a last-good fallback that is off unless flagged. The server never charges on this
+// figure; spend paths re-read the balance themselves.
+const readBalanceForDisplay = createBalanceDisplayReader((userId, opts) =>
+  getUserBuzzAccountByAccountTypes(userId, buzzSpendTypes, opts)
+);
+export async function getUserBuzzAccountsForDisplay({ userId }: { userId: number }) {
+  return readBalanceForDisplay(userId);
 }
 
 async function fetchUserBuzzAccounts({
@@ -780,7 +792,8 @@ export async function createBuzzTransaction(
     fromAccountType?: BuzzAccountType;
     insufficientFundsErrorMsg?: string;
   },
-  // Optional per-call bound. Absent means today's behaviour: unbounded.
+  // Optional per-call overrides. Absent, the client's write defaults apply: a 10s bound, and a
+  // retry only when the request provably never left.
   opts?: BuzzWriteOptions
 ) {
   if (entityType && entityId && toAccountId === undefined) {
@@ -824,9 +837,15 @@ export async function createBuzzTransaction(
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
+  const externalTransactionId = payload.externalTransactionId || crypto.randomUUID();
   const data = await buzzService.createTransaction(
     {
       ...payload,
+      // The package requires an id so a lost response can be looked up. A caller with a business
+      // key passes one derived from it (and a retry of that caller reuses it); for one that does
+      // not, this id is minted ONCE per call, before the client's own retries, so the client never
+      // resends a write under a second id. It does not make a caller's own re-run idempotent.
+      externalTransactionId,
       details: {
         ...(details ?? {}),
         entityId: entityId ?? details?.entityId,
@@ -838,7 +857,8 @@ export async function createBuzzTransaction(
     opts
   );
 
-  return data;
+  // The key it was filed under, so a caller can reconcile by it (`getTransactionByExternalId`).
+  return { ...data, externalTransactionId };
 }
 
 export async function upsertBuzzTip({
