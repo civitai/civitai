@@ -712,6 +712,21 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     expect(r.errorCode).toBe('workflow_ref_invalid');
   });
 
+  it.each([
+    ['a step', 'clip'],
+    ['`$arguments`', '$arguments'],
+  ])('🔴 a merge field from %s with no `path` and a string `reduce` is refused', (_l, source) => {
+    // Only the media check stands here: the field is not a reference without a path.
+    const r = refusal([
+      video,
+      step({
+        $type: 'merge',
+        input: { onMissing: 'fail', fields: { x: { $ref: source, reduce: 'first' } } },
+      }),
+    ]);
+    expect(r.error).toBe(`workflow step 1: ${MEDIA_REF_ERROR}`);
+  });
+
   it('a merge may still read text and scalar fields', () => {
     expect(
       resolved([
