@@ -48,7 +48,15 @@ const image = (id: number) => ({
   url: `img-${id}`,
   hideMeta: true,
   meta: { prompt: 'a prompt its owner hid' },
+  needsReview: 'poi',
+  ingestion: 'Blocked',
+  blockedFor: 'review',
 });
+/** Generation data and moderation state, none of which a 3D model read returns. */
+const HIDDEN = ['meta', 'hideMeta', 'needsReview', 'ingestion', 'blockedFor'];
+const expectNoHidden = (img: unknown) => {
+  for (const key of HIDDEN) expect(img).not.toHaveProperty(key);
+};
 const MODEL = {
   id: 9,
   name: 'model',
@@ -91,15 +99,15 @@ describe('a 3D model page', () => {
       const model = await getModel3DById({ id: 9, user: user as never });
       expect(model.sourceImage?.id).toBe(2);
       expect(model.thumbnailImage?.id).toBe(1);
-      expect(model.sourceImage).not.toHaveProperty('meta');
-      expect(model.thumbnailImage).not.toHaveProperty('meta');
+      expectNoHidden(model.sourceImage);
+      expectNoHidden(model.thumbnailImage);
     }
   });
 
   it("the feed never returns a card thumbnail's generation data", async () => {
     const { items } = await getModel3DsInfinite({ limit: 10, user: null } as never);
     expect(items[0]?.thumbnailImage?.id).toBe(1);
-    expect(items[0]?.thumbnailImage).not.toHaveProperty('meta');
+    expectNoHidden(items[0]?.thumbnailImage);
   });
 });
 
@@ -117,11 +125,14 @@ describe('a 3D model edit or moderation action', () => {
     ],
     ['flagging it', () => toggleModel3DFlag({ id: 9, field: 'poi', user: moderator })],
     ['restoring it', () => restoreModel3D({ id: 9, user: moderator })],
-  ])("%s returns the model without its images' generation data", async (_, act) => {
-    const model = await act();
-    expect(model.sourceImage?.id).toBe(2);
-    expect(model.thumbnailImage?.id).toBe(1);
-    expect(model.sourceImage).not.toHaveProperty('meta');
-    expect(model.thumbnailImage).not.toHaveProperty('meta');
-  });
+  ])(
+    "%s returns the model without its images' generation data or moderation state",
+    async (_, act) => {
+      const model = await act();
+      expect(model.sourceImage?.id).toBe(2);
+      expect(model.thumbnailImage?.id).toBe(1);
+      expectNoHidden(model.sourceImage);
+      expectNoHidden(model.thumbnailImage);
+    }
+  );
 });
