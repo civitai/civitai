@@ -352,6 +352,14 @@ export const SCANNED_VIDEO_GEN_ENGINES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Explicit `provider` values a scanned engine may take media with. An absent
+ * `provider` is the engine's default route, the one confirmed scanned; any value
+ * not listed here, or not a literal string, refuses. Empty until a pair is
+ * confirmed against the orchestrator's upload path.
+ */
+export const SCANNED_VIDEO_GEN_PROVIDERS: Readonly<Record<string, ReadonlySet<string>>> = {};
+
+/**
  * The last path segments a non-media consumer may reference: text and scalar
  * fields that cannot carry a url, a blob id or a blob. Anything else fails closed.
  */
@@ -404,7 +412,12 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
   if (!isPlainObject(input)) return false;
   if (type === 'videogen') {
     if (hasRecasedTwin(input, 'engine') || hasRecasedTwin(input, 'provider')) return false;
-    return typeof input.engine === 'string' && SCANNED_VIDEO_GEN_ENGINES.has(input.engine);
+    if (typeof input.engine !== 'string' || !SCANNED_VIDEO_GEN_ENGINES.has(input.engine)) {
+      return false;
+    }
+    if (!('provider' in input)) return true;
+    const providers = SCANNED_VIDEO_GEN_PROVIDERS[input.engine];
+    return typeof input.provider === 'string' && !!providers?.has(input.provider);
   }
   if (type === 'composemedia') {
     if (hasRecasedTwin(input, 'output') || !isPlainObject(input.output)) return false;

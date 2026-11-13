@@ -9,6 +9,7 @@ import {
   MEDIA_REF_ERROR,
   resolveBlockWorkflowGraph,
   SCANNED_VIDEO_GEN_ENGINES,
+  SCANNED_VIDEO_GEN_PROVIDERS,
   WRITE_TARGET_ERROR,
   WORKFLOW_INPUT_DEPTH_MAX,
   WORKFLOW_MAX_REFS,
@@ -736,6 +737,19 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
       ],
       1
     );
+  });
+
+  it('🔴 videoGen takes media only on the engine’s default route: any explicit provider refuses', () => {
+    const wan = (extra: Record<string, unknown>) =>
+      step({ $type: 'videoGen', input: { engine: 'wan', images: [ref('gen')], ...extra } });
+    expect(resolved([gen, wan({})])).toHaveLength(2);
+    for (const provider of ['fal', 'comfy', 'civitai', null, ref('$arguments', 'p')]) {
+      mediaRefused([gen, wan({ provider })], 1);
+    }
+  });
+
+  it('pins the confirmed (engine, provider) pairs: none yet, so adding one is a reviewed diff', () => {
+    expect(SCANNED_VIDEO_GEN_PROVIDERS).toEqual({});
   });
 
   it('pins the exact scanned videoGen engine set: adding one is a reviewed diff', () => {
