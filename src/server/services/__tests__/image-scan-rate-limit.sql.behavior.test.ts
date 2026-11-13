@@ -162,3 +162,65 @@ describe('the Pending age-out over real rows', () => {
     expect((await row(12)).ingestion).toBe('Error');
   });
 });
+
+describe('an Error row re-submitted successfully, over real rows', () => {
+  const succeed = () =>
+    mockCreateImageIngestionRequest.mockResolvedValue({
+      data: { id: 'wf-resubmit' },
+      error: undefined,
+      status: 200,
+      useImageScanning: false,
+    });
+  const insertError = async (id: number, retryCount: number) => {
+    await pg.query(
+      `INSERT INTO "Image" (id, url, width, height, "createdAt", "scanRequestedAt", ingestion, "scanJobs")
+       VALUES ($1, $2, 100, 100, $3, $4, 'Error', $5)`,
+      [
+        id,
+        `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee${id}/a.png`,
+        ago(2 * HOUR),
+        ago(30 * 60 * 1000),
+        {
+          retryCount,
+          error: { failureType: 'send-fail', failureClass: 'transient', reason: 'timeout' },
+        },
+      ]
+    );
+    await pg.query(
+      `INSERT INTO "JobQueue" (type, "entityType", "entityId") VALUES ('ImageScan', 'Image', $1)`,
+      [id]
+    );
+  };
+  const queued = async (id: number) =>
+    (await pg.query(`SELECT 1 FROM "JobQueue" WHERE "entityId" = $1`, [id])).rows.length > 0;
+  const runCron = async (ids: number[]) => {
+    dbMock.dbRead.jobQueue.findMany.mockResolvedValueOnce(
+      ids.map((entityId) => ({ entityId })) as never
+    );
+    await ingestImages.run({} as never).result;
+  };
+
+  it('stays queued past the unknown cap while its re-submitted scan is in flight', async () => {
+    await insertError(20, 12);
+    succeed();
+
+    await runCron([20]);
+    expect(mockCreateImageIngestionRequest).toHaveBeenCalledTimes(1);
+    await runCron([20]);
+
+    expect(await queued(20)).toBe(true);
+    const { scanJobs } = await row(20);
+    expect(scanJobs.retryCount).toBe(12);
+    // A cleared error is what ends a 429 run's age-out exemption.
+    expect(scanJobs.error).toBeUndefined();
+  });
+
+  it('control: one past the transient cap is pruned', async () => {
+    await insertError(21, 30);
+
+    await runCron([21]);
+
+    expect(mockCreateImageIngestionRequest).not.toHaveBeenCalled();
+    expect(await queued(21)).toBe(false);
+  });
+});

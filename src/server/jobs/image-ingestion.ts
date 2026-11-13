@@ -111,7 +111,8 @@ type IngestImageRow = IngestImageInput & {
   retryCount: number | null;
   /**
    * Reason-derived failure class stamped by the scan webhook
-   * (`scanJobs.error.failureClass`), used to pick the Error retry ceiling.
+   * (`scanJobs.error.failureClass`, or `scanJobs.lastFailure` once a re-submit has cleared
+   * the error), used to pick the Error retry ceiling.
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
@@ -184,8 +185,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
-           i."scanJobs"->'error'->>'failureClass' as "failureClass",
-           i."scanJobs"->'error'->>'reason' as "failureReason",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'reason' as "failureReason",
            CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
              THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
            END as "rateLimitedSince",

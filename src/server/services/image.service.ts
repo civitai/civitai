@@ -1844,12 +1844,12 @@ export const ingestImage = async ({
       UPDATE "Image"
       SET
         "scanRequestedAt" = ${scanRequestedAt},
-        "scanJobs" = CASE
-          WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
-            ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
-          ELSE
-            ${scanJobsJson}::jsonb
-        END
+        -- The last failure moves to lastFailure, so the cron keeps this row's retry ceiling
+        -- while the new scan is in flight; error itself is cleared, ending any 429 run.
+        "scanJobs" = ${scanJobsJson}::jsonb || jsonb_strip_nulls(jsonb_build_object(
+          'retryCount', "scanJobs"->'retryCount',
+          'lastFailure', COALESCE("scanJobs"->'error', "scanJobs"->'lastFailure')
+        ))
       WHERE id = ${id}
     `;
   imageScanSubmittedCounter.inc({ lane, result: 'success' });
