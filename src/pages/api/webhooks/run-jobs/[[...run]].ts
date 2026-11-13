@@ -55,7 +55,9 @@ import { drainReviewPreviewQueueJob } from '~/server/jobs/drain-review-preview-q
 import { runStorageMigrationsJob } from '~/server/jobs/run-storage-migrations';
 import { reapDeletedAppStorageJob } from '~/server/jobs/reap-deleted-app-storage';
 import { removeDeletedAccountAppDataJob } from '~/server/jobs/remove-deleted-account-app-data';
+import { sweepHibernationObjectsJob } from '~/server/jobs/sweep-hibernation-objects';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
+import { reconcileSubscriptionHistoryJob } from '~/server/jobs/reconcile-subscription-history';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
@@ -299,6 +301,7 @@ export const jobs: Job[] = [
   runStorageMigrationsJob,
   reapDeletedAppStorageJob,
   removeDeletedAccountAppDataJob,
+  sweepHibernationObjectsJob,
   checkImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
@@ -329,6 +332,7 @@ export const jobs: Job[] = [
   expireReferralTokens,
   advanceReferralSubs,
   ...prepaidMembershipJobs,
+  reconcileSubscriptionHistoryJob,
   ...entityModerationJobs,
   ...placementJobs,
   ...creatorServiceDealJobs,

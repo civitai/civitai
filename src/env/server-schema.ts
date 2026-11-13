@@ -128,12 +128,13 @@ export const serverSchema = z
     // 1000: a 1s bound rarely fires on a healthy store and halves what each read costs while the
     // store is hung.
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(1000),
-    // Process-wide breaker for the hot request-path reads that opt in with withSysReadBreaker
-    // (redis/sys-read-breaker.ts): after THRESHOLD consecutive failed reads (a timeout or a client/connection
-    // error; an error reply from the store does not count), those
-    // reads reject at once instead of waiting out the deadline, until COOLDOWN passes and one probe
-    // read succeeds. Dark by default — while off, they wait on the client as before. Plain
-    // withSysReadDeadline reads never consult it.
+    // Process-wide breakers for the hot request-path reads (redis/sys-read-breaker.ts): one shared by the
+    // reads that opt in with withSysReadBreaker, and one for the session revocation read alone
+    // (withRevocationReadBreaker); these three settings apply to both. After THRESHOLD consecutive failed
+    // reads through one breaker (a timeout or a client/connection error; an error reply from the store does
+    // not count), its reads reject at once instead of waiting out the deadline, until COOLDOWN passes and
+    // one probe read succeeds. Dark by default — while off, they wait on the client as before. Plain
+    // withSysReadDeadline reads never consult either.
     REDIS_SYS_READ_BREAKER_ENABLED: zc.booleanString.default(false),
     REDIS_SYS_READ_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
     REDIS_SYS_READ_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
@@ -649,6 +650,9 @@ export const serverSchema = z
     // When saturated, additional calls fail fast with MeiliCallTimeoutError
     // rather than queueing forever and pressuring the event loop.
     MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
+    // Search-service calls in flight per pod; past it a search gets 429 "Server busy". A safety valve:
+    // one page can need two calls, and the cluster-wide limit belongs in the search service.
+    SEMANTIC_SEARCH_CONCURRENCY: z.coerce.number().int().positive().optional().default(4),
     // Per-backend circuit breaker (see src/server/meilisearch/client.ts). If
     // `MEILI_CIRCUIT_TRIP_THRESHOLD` MeiliCallTimeoutErrors accumulate within
     // `MEILI_CIRCUIT_WINDOW_SECONDS` on a backend, the circuit OPENs and all
@@ -790,16 +794,15 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
-    // Fail-closed OFF-switches (each ON when unset; `off` / `0` / `false`, any case, turns it
-    // off — see `@civitai/shared/env-switch`; any other value keeps it on).
-    // PROMPT_CHECK_FAIL_CLOSED: a classifier error refuses the submit with a 503; off restores
-    // the pass-through on the word lists alone (auditPromptServer).
+    // Fail-closed OFF-switches: ON unless `off`/`0`/`false` (see @civitai/shared/env-switch).
     PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
-    // BLOCKS_ENFORCE_GENERATION_STATUS: App Blocks submits obey the global generation kill switch.
     BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
-    // TRAINING_STATUS_FAIL_CLOSED: a failed training-status read serves the last status read, or
-    // "paused" when there is none; off restores "available" (getTrainingServiceStatus).
+    PRESET_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
+    // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain
+    // fail-open, with nothing recorded.
+    SESSION_REVOCATION_CACHE: z.string().optional().transform(isEnvSwitchOn),
     // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
     // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
     // visible as the instant its series appear — which is the only thing that distinguishes "no
@@ -1369,6 +1372,46 @@ export const serverSchema = z
     APP_FORK_SEED_S3_BUCKET: z.string().optional(),
     APP_FORK_SEED_S3_ACCESS_KEY_ID: z.string().optional(),
     APP_FORK_SEED_S3_SECRET_ACCESS_KEY: z.string().optional(),
+
+    // APP HIBERNATE ("Sleeping" apps) — `src/server/services/app-hibernation/`. All optional:
+    // with any of them unset, every hibernation endpoint answers 503 and nothing is archived.
+    // The feature is also dark behind the `app-hibernate` Flipt flag regardless.
+    //
+    // The archive store: the bucket a sleeping app's workspace zip and its sealed `.env*` blob
+    // are kept in, under `archives/`, with NO lifecycle rule (the objects are the only copy).
+    // APP_ARCHIVE_S3_ENDPOINT is for civitai's own calls (it may be plain http with a port).
+    // APP_ARCHIVE_S3_PUBLIC_ENDPOINT is used ONLY to presign the URLs handed to the sandbox
+    // service: https with no port (anything else counts as unset), and path-style, so a presigned
+    // URL's host is its host. Unset, nothing is presigned and hibernation answers 503; civitai
+    // never presigns on the in-cluster endpoint instead.
+    APP_ARCHIVE_S3_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+    APP_ARCHIVE_S3_BUCKET: z.string().optional(),
+    APP_ARCHIVE_S3_ACCESS_KEY_ID: z.string().optional(),
+    APP_ARCHIVE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+    // The shared secret the sandbox service signs `/api/internal/app-hibernation/*` requests
+    // with (HMAC-SHA256): at least 32 characters. Blank is accepted here so a bare key cannot
+    // stop the app from booting; blank or unset, those endpoints answer 503.
+    APP_HIBERNATION_HMAC_SECRET: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET must be at least 32 characters',
+      })
+      .optional(),
+    // The PREVIOUS signing secret, still accepted while a rotation is under way (set it to the old
+    // value, move the sandbox service to the new one, then clear it). Never used alone: with
+    // APP_HIBERNATION_HMAC_SECRET unset the endpoints answer 503 whatever this holds.
+    APP_HIBERNATION_HMAC_SECRET_PREVIOUS: z
+      .string()
+      .refine((value) => value.trim() === '' || value.trim().length >= 32, {
+        message: 'APP_HIBERNATION_HMAC_SECRET_PREVIOUS must be at least 32 characters',
+      })
+      .optional(),
+    // The master keys that wrap each sleeping app's per-archive data key (envelope encryption of
+    // its `.env*` files): comma-separated `<kid>:<base64 of 32 random bytes>`, the CURRENT key
+    // first, then old keys kept only to unwrap. Held by civitai only; never sent to the sandbox
+    // service. Malformed, it counts as unset.
+    APP_ARCHIVE_SECRETS_MASTER_KEYS: z.string().optional(),
 
     // APP DEV TUNNEL (on-site dev via hardened sish tunnel — P1 control plane).
     // ALL optional so envs without the feature still boot; the feature is dark

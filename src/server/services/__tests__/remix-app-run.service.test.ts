@@ -105,6 +105,7 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', async (impor
       selfHostedMode: 'enabled',
       gateRules: [],
     },
+    status: { mode: 'enabled' },
   })),
   bustQueriedWorkflowsCache: vi.fn(async () => undefined),
 }));

@@ -5,7 +5,7 @@ import { db } from '$lib/server/db/db';
 import type { AccessMode } from '$lib/server/oauth/access';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
-import { isSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
+import { firstNonSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
 import {
   SYSTEM_APP_SCOPE_OPTIONS,
   SYSTEM_USER_ID,
@@ -84,9 +84,11 @@ async function updateClient(
   action: string,
   id: string,
   values: { accessMode?: AccessMode; skipConsent?: boolean; tokenRateLimit?: number | null },
-  scope: ClientScope = 'any'
+  scope: ClientScope = 'any',
+  redirectUris?: string[]
 ) {
   let query = db.updateTable('OauthClient').set(values).where('id', '=', id);
+  if (redirectUris) query = query.where('redirectUris', '=', redirectUris);
   if (scope !== 'any') query = query.where('userId', '=', SYSTEM_USER_ID);
   if (scope === 'confidential-system') query = query.where('isConfidential', '=', true);
   const updated = await query.returning('id').executeTakeFirst();
@@ -121,6 +123,7 @@ export const actions: Actions = {
     const skipConsent = value === 'true';
     // Turning it off is always allowed; turning it on needs a confidential app with only https, non-loopback
     // redirect URIs.
+    let checkedUris: string[] | undefined;
     if (skipConsent) {
       const client = await db
         .selectFrom('OauthClient')
@@ -128,7 +131,7 @@ export const actions: Actions = {
         .where('id', '=', id)
         .where('userId', '=', SYSTEM_USER_ID)
         .executeTakeFirst();
-      const refused = client?.redirectUris.find((uri) => !isSkipConsentRedirectUri(uri));
+      const refused = client && firstNonSkipConsentRedirectUri(client.redirectUris);
       if (refused) {
         return fail(400, {
           action: 'setSkipConsent',
@@ -136,9 +139,11 @@ export const actions: Actions = {
           error: `Skipping consent needs every redirect URI to be https and not localhost. Remove ${refused} first.`,
         });
       }
+      // Turned on only while the URIs are the ones just checked, so an edit landing meanwhile cannot slip one in.
+      checkedUris = client?.redirectUris;
     }
     const scope = skipConsent ? 'confidential-system' : 'system';
-    const missing = await updateClient('setSkipConsent', id, { skipConsent }, scope);
+    const missing = await updateClient('setSkipConsent', id, { skipConsent }, scope, checkedUris);
     if (missing) return missing;
     logOAuthEvent({
       type: 'client.updated',

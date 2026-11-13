@@ -3,16 +3,23 @@ import {
   createRevocationCheck,
   type SessionRegistryRedis,
 } from '@civitai/auth';
-import { hubRevocationFailOpenTotal } from '../metrics';
+import { hubRevocationDeniedCachedTotal, hubRevocationFailOpenTotal } from '../metrics';
 import { getSysRedis } from '../redis';
 
-// The shared revocation check (the same one the main app and the spokes use). It fails OPEN — a redis blip
-// must not log everyone out — and is bounded by REDIS_SYS_READ_TIMEOUT_MS (default 1000ms), so a hung store
+// The shared revocation check (the same one the main app and the spokes use). When the read fails it answers
+// from the revocation markers the hub has already read and allows a session with none known — a redis blip
+// must not log everyone out — and it is bounded by REDIS_SYS_READ_TIMEOUT_MS (default 1000ms), so a hung store
 // cannot hold every hub request either. Without a sys redis configured there is nothing to check, the same
 // as the registry's no-op fallback.
 const checkRevocation = createRevocationCheck({
   redis: () => getSysRedis() as unknown as SessionRegistryRedis,
-  onError: (_err, reason) => hubRevocationFailOpenTotal.inc({ reason }),
+  // SESSION_REVOCATION_CACHE=off|0|false (any case) turns off the record of seen revocations; anything else,
+  // unset included, keeps it on. The same parse as @civitai/shared/env-switch, which the hub does not depend on.
+  markerCache: !/^(off|0|false)$/i.test((process.env.SESSION_REVOCATION_CACHE ?? '').trim()),
+  onError: (_err, reason, _claims, verdict) => {
+    if (verdict === 'deny_cached') hubRevocationDeniedCachedTotal.inc({ reason });
+    else hubRevocationFailOpenTotal.inc({ reason });
+  },
 });
 
 // The hub verifies its OWN issued tokens (to populate locals.user). It verifies the ES256 signature
