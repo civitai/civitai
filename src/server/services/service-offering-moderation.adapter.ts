@@ -12,6 +12,8 @@ import {
   type SkipReason,
 } from '~/server/services/text-scan/actions/settle-skipped';
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { loadServiceOfferingSubjects } from '~/server/services/text-scan/profiles/service-offering.profile';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
   EntityModerationStatus,
@@ -60,6 +62,49 @@ export async function settleServiceOfferingScan(offeringId: number, current: Cur
     },
     data: { ingestion: ServiceOfferingIngestionStatus.Scanned, scannedAt: new Date() },
   });
+}
+
+const hasPendingCsamHold = async (offeringId: number) =>
+  !!(await dbWrite.textScanHold.findFirst({
+    where: { entityType: ENTITY_TYPE, entityId: offeringId, label: 'csam', status: 'Pending' },
+    select: { id: true },
+  }));
+
+export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';
+
+/**
+ * Whether the offering is held for the csam queue, read from the stored rows alone: a hold there
+ * still pending, or a csam verdict on its current text. `unverified` when the stored verdict is not
+ * about the current text, or there is none; such an offering is not shown.
+ */
+export async function serviceOfferingHoldState(
+  offeringId: number
+): Promise<ServiceOfferingHoldState> {
+  if (await hasPendingCsamHold(offeringId)) return 'held';
+  const verdict = await dbWrite.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: ENTITY_TYPE, entityId: offeringId } },
+    select: { status: true, triggeredLabels: true, result: true },
+  });
+  if (verdict?.status !== EntityModerationStatus.Succeeded) return 'unverified';
+  const detected = verdict.triggeredLabels.includes('csam');
+  const result = verdict.result as { version?: unknown; textHash?: unknown } | null;
+  // A fallback-check row carries no text hash and never this label.
+  if (result?.version === undefined) return detected ? 'held' : 'clear';
+  const subject = (await loadServiceOfferingSubjects([offeringId])).get(offeringId);
+  if (typeof result.textHash !== 'string' || !subject) return detected ? 'held' : 'unverified';
+  if (textScanTextHash(subject) !== result.textHash) return 'unverified';
+  return detected ? 'held' : 'clear';
+}
+
+/**
+ * Applies a passed check from the stored rows: a held offering is blocked, an unverified one is
+ * left unshown. Returns what it found.
+ */
+export async function settleOrHoldServiceOffering(offeringId: number, current: CurrentText = {}) {
+  const state = await serviceOfferingHoldState(offeringId);
+  if (state === 'held') await blockServiceOffering(offeringId, current);
+  else if (state === 'clear') await settleServiceOfferingScan(offeringId, current);
+  return state;
 }
 
 export async function blockServiceOffering(offeringId: number, current: CurrentText = {}) {
@@ -138,7 +183,7 @@ async function trackSubmit(
   if (early) {
     const current = { workflowId, unchangedSince: readAt };
     if (early.blocked) await blockServiceOffering(offeringId, current);
-    else await settleServiceOfferingScan(offeringId, current);
+    else await settleOrHoldServiceOffering(offeringId, current);
   }
   return workflow;
 }
@@ -235,8 +280,10 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
     });
   },
 
+  // The outcome is this text's verdict; a hold still pending from earlier text holds it too.
   applyTextScan: withCsamHold(ENTITY_TYPE, async ({ entityId, workflowId, outcome }) => {
-    if (outcome.csam?.detected) await blockServiceOffering(entityId, { workflowId });
+    if (outcome.csam?.detected || (await hasPendingCsamHold(entityId)))
+      await blockServiceOffering(entityId, { workflowId });
     else await settleServiceOfferingScan(entityId, { workflowId });
   }),
 };

@@ -43,7 +43,10 @@ const { serviceOfferingShowableWhere, shopRatingFilter, serviceOfferingReviewSta
 const { serviceOfferingModerationAdapter, scanServiceOffering } = await import(
   '~/server/services/service-offering-moderation.adapter'
 );
-const { reconcileAction } = await import('~/server/jobs/service-offering-ingestion-reconcile');
+const { reconcileAction, serviceOfferingIngestionReconcile } = await import(
+  '~/server/jobs/service-offering-ingestion-reconcile'
+);
+const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 
 const MIGRATIONS = [
   '20261016150000_text_scan_hold',
@@ -517,6 +520,110 @@ describe('the moderation adapter', () => {
     );
   });
 
+  describe('a csam verdict the callback could not apply', () => {
+    // The stored rows alone decide it: the verdict row says blocked = false, as every text-scan row does.
+    const TEXT = { title: 'Portraits', description: 'desc' };
+    const currentHash = textScanTextHash({
+      fields: [
+        { heading: 'Title', text: TEXT.title },
+        { heading: 'Description', text: TEXT.description },
+      ],
+      declared: {},
+    });
+    const verdict = (triggeredLabels: string[], textHash: string | null = currentHash) =>
+      dbMock.dbWrite.entityModeration.findUnique.mockResolvedValueOnce({
+        status: 'Succeeded',
+        triggeredLabels,
+        result: { version: 1, ...(textHash === null ? {} : { textHash }) },
+      } as never);
+    const reconcile = async () => {
+      const old = new Date(Date.now() - 60 * 60_000);
+      dbMock.dbRead.serviceOffering.findMany.mockResolvedValueOnce([
+        { id: OFFERING, updatedAt: old },
+      ] as never);
+      dbMock.dbRead.entityModeration.findMany.mockResolvedValueOnce([
+        { entityId: OFFERING, status: 'Succeeded', blocked: false, updatedAt: new Date() },
+      ] as never);
+      return serviceOfferingIngestionReconcile.run({}).result;
+    };
+    beforeEach(() => {
+      dbMock.dbWrite.entityModeration.findUnique.mockReset();
+      dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
+        ...TEXT,
+        updatedAt: new Date(),
+      } as never);
+      dbMock.dbWrite.serviceOffering.findMany.mockResolvedValue([
+        {
+          id: OFFERING,
+          sellerId: SELLER,
+          ...TEXT,
+          declaredNsfwLevel: null,
+          maxNsfwLevel: PG13,
+          status: 'Active',
+        },
+      ] as never);
+    });
+
+    it('stays hidden when its scan matched another check, and the reconcile job holds it', async () => {
+      verdict(['csam']);
+      await serviceOfferingModerationAdapter.applyTextScan!({
+        entityId: OFFERING,
+        workflowId: 'wf-other',
+        outcome: { csam: { detected: true, reason: 'r' }, triggeredLabels: ['csam'] } as never,
+        subject: { fields: [], declared: {}, userId: SELLER },
+        textHash: currentHash,
+      });
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+      await reconcile();
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
+    it('lets the reconcile job list an offering whose verdict found nothing', async () => {
+      verdict([]);
+      await reconcile();
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
+    });
+
+    it('holds an offering whose verdict landed before its check was recorded', async () => {
+      verdict(['csam']);
+      row.scanWorkflowId = 'wf-new';
+      row.updatedAt = (
+        await q<{ updatedAt: Date }>(`SELECT "updatedAt" FROM "ServiceOffering" WHERE id = $1`, [
+          OFFERING,
+        ])
+      )[0].updatedAt;
+      dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
+        ...TEXT,
+        updatedAt: row.updatedAt,
+      } as never);
+      dbMock.dbWrite.entityModeration.findFirst.mockResolvedValueOnce({ blocked: false } as never);
+      await scanServiceOffering(OFFERING);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
+    it('holds an offering with a csam hold still pending, whatever its verdict says', async () => {
+      dbMock.dbWrite.textScanHold.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+      await reconcile();
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
+    it('holds a csam verdict with no text hash to compare', async () => {
+      verdict(['csam'], null);
+      await reconcile();
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
+    it.each([
+      ['a verdict for text since replaced', () => verdict(['csam'], 'old-hash')],
+      ['no verdict at all', () => undefined],
+    ])('leaves an offering with %s unshown, and checks it again', async (_, given) => {
+      given();
+      await reconcile();
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+      expect(route.submitTextModerationOrScan).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('submitting a check', () => {
     // The check id is written by raw SQL, to Postgres; the result is applied to the row above.
     let readAt: Date;
@@ -528,6 +635,7 @@ describe('the moderation adapter', () => {
         )
       )[0];
     beforeEach(async () => {
+      dbMock.dbWrite.entityModeration.findUnique.mockReset();
       readAt = (await storedCheck()).updatedAt;
       row.updatedAt = readAt;
       dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
@@ -561,6 +669,12 @@ describe('the moderation adapter', () => {
         // The callback came first and matched nothing; the stored row now names this check.
         row.scanWorkflowId = 'wf-new';
         dbMock.dbWrite.entityModeration.findFirst.mockResolvedValueOnce({ blocked } as never);
+        // The same row, as the hold check reads it: a fallback-check result.
+        dbMock.dbWrite.entityModeration.findUnique.mockResolvedValueOnce({
+          status: 'Succeeded',
+          triggeredLabels: [],
+          result: null,
+        } as never);
         await scanServiceOffering(OFFERING);
         expect(dbMock.dbWrite.entityModeration.findFirst).toHaveBeenCalledWith(
           expect.objectContaining({

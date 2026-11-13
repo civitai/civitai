@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   blockServiceOffering,
   scanServiceOffering,
-  settleServiceOfferingScan,
+  settleOrHoldServiceOffering,
 } from '~/server/services/service-offering-moderation.adapter';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -26,7 +26,7 @@ export type ReconcileAction = 'submit' | 'settle' | 'block' | 'leave';
 /**
  * What to do with an offering still Pending, or in Error, past the grace window. A succeeded check whose result
  * never reached the offering is applied; a missing or lost submit is resubmitted. Failed rows are
- * the retry cron's.
+ * left to the retry cron.
  */
 export function reconcileAction(
   moderation: { status: EntityModerationStatus; blocked: boolean | null; updatedAt: Date } | null,
@@ -89,8 +89,11 @@ export const serviceOfferingIngestionReconcile = createJob(
         counts[action]++;
         try {
           if (action === 'submit') await scanServiceOffering(id, { forceRescan: true });
-          else if (action === 'settle') await settleServiceOfferingScan(id);
-          else if (action === 'block') await blockServiceOffering(id);
+          else if (action === 'settle') {
+            // A verdict not about the current text is checked again rather than applied.
+            if ((await settleOrHoldServiceOffering(id)) === 'unverified')
+              await scanServiceOffering(id, { forceRescan: true });
+          } else if (action === 'block') await blockServiceOffering(id);
         } catch (error) {
           errors++;
           logToAxiom({
