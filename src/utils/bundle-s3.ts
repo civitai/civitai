@@ -1,9 +1,10 @@
+import { newS3Client } from '~/utils/s3-client-factory';
+import type { S3Client } from '@aws-sdk/client-s3';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
-  S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
@@ -32,7 +33,7 @@ export function getBundleS3Client(): S3Client {
         'Bundle S3 not configured: BUNDLE_S3_ENDPOINT / BUNDLE_S3_ACCESS_KEY_ID / BUNDLE_S3_SECRET_ACCESS_KEY must be set'
       );
     }
-    _client = new S3Client({
+    _client = newS3Client({
       endpoint: env.BUNDLE_S3_ENDPOINT,
       region: 'us-east-1',
       credentials: {
@@ -95,9 +96,7 @@ export async function deleteStagedBundle(publishRequestId: string): Promise<void
     const client = getBundleS3Client();
     const bucket = getBundleBucket();
     const prefix = `agent-reviews/${publishRequestId}/`;
-    const listed = await client.send(
-      new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix })
-    );
+    const listed = await client.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix }));
     const keys = (listed.Contents ?? [])
       .map((o) => o.Key)
       .filter((k): k is string => typeof k === 'string' && k.length > 0);
@@ -117,9 +116,7 @@ export async function deleteStagedBundle(publishRequestId: string): Promise<void
 export async function presignBundleGet(key: string, ttlSeconds: number): Promise<string> {
   const client = getBundleS3Client();
   const bucket = getBundleBucket();
-  return getSignedUrl(
-    client,
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
-    { expiresIn: ttlSeconds }
-  );
+  return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
+    expiresIn: ttlSeconds,
+  });
 }

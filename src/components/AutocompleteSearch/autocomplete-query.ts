@@ -1,5 +1,7 @@
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import type { SearchIndexKey } from '~/components/Search/search.types';
+import type { ParsedUrlQuery } from 'querystring';
+import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { getModelUrl } from '~/utils/string-helpers';
 
@@ -119,4 +121,52 @@ export function buildSearchPageUrl(index: SearchIndexKey, search: string) {
   });
 
   return queryString ? `/search/${index}?${queryString}` : `/search/${index}`;
+}
+
+/**
+ * Search v3: what a header search applies to the images feed. `@user` becomes the feed's user
+ * filter; `#tag` words stay in the query, which the search matches by meaning.
+ */
+export function parseFeedSearch(search: string) {
+  const username = [...search.matchAll(USER_TOKEN)].find((match) => !match.groups?.not)?.groups
+    ?.value;
+  const query = search
+    .replace(USER_TOKEN, ' ')
+    .replace(TAG_TOKEN, (...args) => {
+      const groups = args.at(-1) as { not?: string; value: string };
+      return groups.not ? ' ' : ` ${groups.value}`;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { query: query || undefined, username };
+}
+
+/**
+ * The router query a header search on the feed produces: the feed's other filters kept, `query`
+ * replaced, `username` set only by an `@user` token. Null when it would change nothing.
+ */
+export function nextFeedSearchQuery(
+  current: ParsedUrlQuery,
+  search: string,
+  /** The user filter this bar's own `@user` token set last, if it is still on the URL. */
+  typedUsername?: string
+) {
+  const { query, username } = parseFeedSearch(search);
+  const currentQuery = typeof current.query === 'string' ? current.query : undefined;
+  const currentUsername = typeof current.username === 'string' ? current.username : undefined;
+  // A user filter the bar set goes when its token is deleted; one set anywhere else stays.
+  const nextUsername =
+    username ?? (typedUsername && currentUsername === typedUsername ? undefined : currentUsername);
+  if (query === currentQuery && nextUsername === currentUsername) return null;
+  return removeEmpty({ ...current, query, username: nextUsername }) as ParsedUrlQuery;
+}
+
+/**
+ * The feed a header search lands on, for an index whose feed answers `?query=` (images so far);
+ * null for the rest, which still open their search page.
+ */
+export function buildFeedSearchUrl(index: SearchIndexKey, search: string) {
+  if (index !== 'images') return null;
+  const queryString = QS.stringify(parseFeedSearch(search));
+  return queryString ? `/images?${queryString}` : '/images';
 }

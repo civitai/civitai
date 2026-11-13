@@ -114,24 +114,7 @@ Tables `KnightsReferenceImage`, `KnightsHarvestCursor` (migration `2026121012000
 
 ## Sources (queue producers)
 
-The enqueue contract is `{ source, questionKey, items: [{ imageId, priority: 1|2|3, minRank?, votesNeeded?, expiresAt?, prediction? }] }`.
-It is implemented once, in the main app: `src/server/services/knights/enqueue.service.ts` (`enqueueKnightsItems`, one batch insert).
-Per item it answers `enqueued` | `duplicate` | `refused` (refusal reasons: see the result type in `enqueue.service.ts`). Defaults and the stage-rank rule match `enqueueItem` here; the stage ranks and TTL live in
-`@civitai/shared/new-order`. An open, Inquisitor or Ruling item for the same question and image makes a new one a duplicate; the partial unique
-index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knights_v2_tables`, applied by hand, which also has the `prediction` column) closes the race.
-
-- `POST /api/mod/knights/enqueue` (`src/pages/api/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
-  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`. Unlike the producers below, it also refuses images the public feeds would not show (`not-servable`: `servableImage` in `@civitai/db/knights`).
-- The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
-  here, beside today's game, which is untouched. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
-  **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
-  `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
-  deploy needed.
-- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
-  `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
-- Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
-  images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
-  `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
+Queue producers (moderator enqueue endpoint, scan sampling, owner ratings, the `system:knights-v2-sources` switch, the Inquisitor queue, the dev queue): [`docs/features/knights-sources.md`](../../docs/features/knights-sources.md). The enqueue contract is implemented once, in the main app (`src/server/services/knights/enqueue.service.ts`).
 
 ## Motion and sound (`src/global.css`, `src/motion.css`)
 
@@ -149,55 +132,7 @@ Tokens and easings are in `src/global.css`, keyframes in `src/motion.css`. Keep 
 
 ## Metrics
 
-`GET /metrics` (`src/routes/metrics`) serves Prometheus text to in-cluster scrapes only. Definitions: `src/lib/server/metrics.ts`
-(counters, own `prom-client` registry plus the default `process_*`/`nodejs_*` metrics) and `src/lib/server/metrics/gauges.ts`.
-Labels are bounded enums, never user, image or item ids; an unexpected value is counted as `other`. Every counter
-series is pre-declared, so it exports 0 before its first event. Counters are incremented where the event is written,
-some inside a transaction, so a transaction that rolls back after that point can overcount by one.
-
-| Metric                               | Labels                                                                                                      | Meaning                                                                                                                               |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `knights_votes_total`                | `kind`: rating, yesno, hidden_check                                                                         | Votes written to the ledger (`insertVote`)                                                                                            |
-| `knights_gold_earned_total` | `source`: vote, hidden_check, streak_bonus, acolyte_level | Gold moved to earned: settled correct votes, graded hidden checks, Watch streak bonuses, Acolyte level gold |
-| `knights_gold_spent_total`           | `item_kind`: buzz_pack, cosmetic, membership                                                                | Gold reserved by new shop purchases (a purchase that fails later gives it back)                                                       |
-| `knights_shop_purchases_total`       | `item_kind`; `outcome`: granted, pending, failed                                                            | New purchases by the first answer the buyer got (replays and refusals are not counted)                                                |
-| `knights_buzz_grants_total`          | `outcome`: paid, failed, retry                                                                              | Buzz grant attempts behind a shop Buzz pack (`settleConversion`, at purchase and on the tick's retries); retry = Buzz did not confirm |
-| `knights_escalations_total`          | `reason`: next-stage, blocked, pushed-down, no-consensus, level-moved, moderator-locked, attempts-exhausted | Items handed to the next stage, or to the Inquisitors with the stored reason                                                          |
-| `knights_items_resolved_total`       | `stage`: Knight, Templar, Paladin                                                                           | Items resolved by a stage consensus                                                                                                   |
-| `knights_hidden_checks_graded_total` | `verdict`: correct, failed, inconclusive                                                                    | Hidden checks graded                                                                                                                  |
-| `knights_smites_total`               |                                                                                                             | Smites issued                                                                                                                         |
-| `knights_career_resets_total` | `trigger`: smites, restart | Career resets: done in the main app after the smite limit, or the player's own restart |
-| `knights_joins_total`                |                                                                                                             | Players who joined                                                                                                                    |
-| `knights_rank_ups_total` | `rank`: Knight, Templar, Paladin | Rank-ups: the apprenticeship's promotion to Knight, and rank-ups from settled votes |
-| `knights_notifications_sent_total` | `kind`: verdicts, streak, new-images | Daily-loop notifications the notifications app accepted, per player; alert on no increase in 26h |
-| `knights_unhandled_errors_total`     |                                                                                                             | Server errors (status 500 and up) reaching `handleError` in `hooks.server.ts`                                                         |
-| `knights_tick_item_failures_total` | `step`: writeback, payout, yesno, reset, buzz_grant | Items that failed inside a tick step and wait for the next tick (the tick still answers 200) |
-
-Joins, rank-ups and career resets also log one Axiom event each (`knights-player-joined`, `knights-rank-up`,
-`knights-career-reset`, with its trigger), and `handleError` logs `knights-unhandled-error`.
-
-Gauges are read by SQL on scrape, one snapshot shared by all of them and cached 60s per process, with a 5s statement
-timeout. When the read fails, `knights_db_up` is 0, labelled gauges are absent and unlabelled ones are NaN; a scrape
-never errors.
-
-| Metric                                       | Labels                                                   | Meaning                                                                            |
-| -------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `knights_db_up`                              |                                                          | 1 when the gauge read succeeded                                                    |
-| `knights_queue_open_items`                   | `stage`: Knight, Templar, Paladin, yesno                 | Open items                                                                         |
-| `knights_queue_oldest_open_age_seconds`      | `stage`                                                  | Age of the oldest open item since it was created (0 when none)                     |
-| `knights_queue_newest_item_age_seconds`      | `source`: scan-sample, owner-rating, yesno-import, other | Age of the newest item per source among the newest 50,000 items (absent when none) |
-| `knights_queue_overdue_items`                |                                                          | Open items more than 15 minutes past `expiresAt` (the tick should have moved them) |
-| `knights_inquisitor_items`                   |                                                          | Items waiting for an Inquisitor ruling                                             |
-| `knights_writeback_pending_items`            |                                                          | Resolved, not written back, `applyAttempts > 0`                                    |
-| `knights_buzz_grants_stuck`                  | `state`: failed, pending                                 | Buzz grants failed in the last 24 hours, or pending for more than 15 minutes       |
-| `knights_shop_purchases_stuck`               |                                                          | Shop purchases pending for more than 15 minutes                                    |
-| `knights_reference_pool_items`               | `pool`: trials, hiddenCheck                              | Active reference images                                                            |
-| `knights_harvest_last_run_timestamp_seconds` |                                                          | Latest `KnightsHarvestCursor.updatedAt` (NaN before the first run)                 |
-| `knights_vote_partition_next_month_ready`    |                                                          | 1 when next month's `KnightsVote_YYYY_MM` partition exists                         |
-
-Every gauge query is served by an index from `20261210120000_knights_v2_tables` or reads a table of a few rows
-(`KnightsHarvestCursor`), except the newest-item gauge, which walks the primary key backwards over the newest 50,000
-rows (there is no index on `source`).
+`GET /metrics` serves Prometheus text to in-cluster scrapes only. Every metric, its labels and meaning, and the gauge queries: [`docs/features/knights-metrics.md`](../../docs/features/knights-metrics.md). Labels are bounded enums, never user, image or item ids; add a new metric there too.
 
 ## Tests
 

@@ -107,6 +107,7 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
 import { anchorBrowsingLevel } from '~/server/services/semantic-query-guard';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import type { CandidateSource } from '~/server/services/semantic-search-client';
 
 const VIEWER = { id: 500, isModerator: false } as SessionUser;
@@ -361,6 +362,29 @@ describe('filters', () => {
     expect(calls[0].filter.userIds).toEqual([31, 32]);
   });
 
+  it("narrows to the feed's user, by id", async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const { source, calls } = rankedSource([101]);
+    await searchSemanticImages({
+      input: textQuery({ userIds: [40] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(calls[0].filter.userIds).toEqual([40]);
+  });
+
+  it("returns nothing, without asking the index, when a named user is not the feed's user", async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 31 }]);
+    const { source, calls } = rankedSource([101]);
+    const result = await searchSemanticImages({
+      input: textQuery({ usernames: ['fox'], userIds: [40] }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
   it('returns nothing, without asking the index, when no chosen user exists', async () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([]);
     const { source, calls } = rankedSource([101]);
@@ -416,12 +440,23 @@ describe('filters', () => {
 
   it('never proposes NSFW images on a base model that forbids NSFW', async () => {
     const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), candidateSource: source });
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
+      user: { id: 501, isModerator: true } as SessionUser,
+      candidateSource: source,
+    });
     const [restricted] = calls[0].filter.mustNot as {
       must: { key: string; match: { any: unknown[] } }[];
     }[];
     expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
     for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
+  });
+
+  it('drops the base-model rule when the gate holds no NSFW level', async () => {
+    const { source, calls } = rankedSource([]);
+    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(calls[0].filter.mustNot).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -501,21 +536,14 @@ describe('the query audit and the browsing level', () => {
     }).then((result) => ({ result, calls, track }));
   };
 
-  it('refuses a query the audit flags as minor, before asking the index, and records it', async () => {
+  // The blanket non-moderator clamp already sits at the safe levels; this pins search-not-refuse.
+  it('searches a minor query for a non-moderator instead of refusing it, and records it', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, calls, track } = await run({});
-    expect(result.items).toEqual([]);
-    expect(calls).toHaveLength(0);
+    const { result, track } = await run({ browsingLevel: ALL_LEVELS });
+    expect(result.items.map((i) => i.id)).toEqual([101]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
-  });
-
-  it('refuses a minor query for a moderator too', async () => {
-    h.includesInappropriate.mockReturnValue('minor');
-    const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
-    expect(result.items).toEqual([]);
-    expect(calls).toHaveLength(0);
   });
 
   it('audits the query as NSFW when the resolved level includes an NSFW level', async () => {
@@ -554,11 +582,30 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).not.toHaveBeenCalled();
   });
 
-  it('records a minor match that a POI verdict came back ahead of', async () => {
+  it('refuses, and records, a masked minor match for a non-moderator', async () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
-    const { result, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS });
     expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+  });
+
+  it('refuses a minor query for a moderator, before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses, and records, a minor match that a POI verdict came back ahead of', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    h.includesMinor.mockReturnValue(true);
+    const { result, calls, track } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
@@ -569,6 +616,21 @@ describe('the query audit and the browsing level', () => {
     const { result, calls } = await run({});
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a person-of-interest query from a non-moderator with no add-on', async () => {
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([]);
+    h.includesPoi.mockReturnValue('someone');
+    const { result, calls } = await run({});
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('lets a moderator with no add-on search a person-of-interest query', async () => {
+    vi.mocked(getBrowsingSettingAddons).mockResolvedValueOnce([]);
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
   it('clamps a non-moderator to the safe levels, in the index filter and in hydration', async () => {
@@ -690,10 +752,50 @@ describe('the search service call', () => {
         { key: 'tagIds', match: { value: 42 } },
       ])
     );
-    // The base-model license rule, as a nested must_not.
-    expect(sent[0].body.filter.must_not).toContainEqual(
+    // A PG gate carries no base-model license rule: it could never match.
+    expect(sent[0].body.filter.must_not ?? []).not.toContainEqual(
       expect.objectContaining({ must: expect.any(Array) })
     );
+  });
+
+  it('asks the service for newest first only when the caller picks it', async () => {
+    const sent = stubService(() =>
+      Response.json({ query: 'fox', corrected: 'fox', changes: [], hits: [] })
+    );
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', sort: 'newest' }),
+      user: VIEWER,
+    });
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox' }),
+      user: VIEWER,
+    });
+    await searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', sort: 'relevance' }),
+      user: VIEWER,
+    });
+
+    expect(sent[0].body).toMatchObject({ collection: 'images', query: 'fox', sort: 'newest' });
+    // Relevance, picked or by default, sends the request as it always has: no sort field at all.
+    expect(Object.keys(sent[1].body).sort()).toEqual([
+      'collection',
+      'filter',
+      'limit',
+      'offset',
+      'query',
+    ]);
+    expect(sent[2].body).toEqual(sent[1].body);
+    // Newest changes the order only: the filter is the one relevance sends.
+    expect(sent[0].body.filter).toEqual(sent[1].body.filter);
+  });
+
+  it('keeps "more like this" in similarity order whatever the sort', async () => {
+    const sent = stubService(() => Response.json({ result: { points: [{ id: 101 }] } }));
+    await searchSemanticImages({ input: input({ imageId: ANCHOR, sort: 'newest' }), user: VIEWER });
+    await searchSemanticImages({ input: input({ imageId: ANCHOR }), user: VIEWER });
+
+    expect(sent[0].url).toBe('http://search.test/qdrant/collections/images/points/query');
+    expect(sent[0].body).toEqual(sent[1].body);
   });
 
   it('reports no correction when the service changed nothing', async () => {

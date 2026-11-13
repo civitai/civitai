@@ -47,6 +47,10 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCachesForPosts: vi.fn(() => Promise.resolve()),
+}));
 vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
   const reset = { reset: vi.fn(() => Promise.resolve()) };
   return {
@@ -60,6 +64,7 @@ vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
 
 const { setImageNsfwLevelFromKnights } = await import('../image.service');
 const { refreshThumbnailCache } = await import('~/server/redis/caches');
+const { bustCachesForPosts } = await import('~/server/services/post.service');
 
 let pg: PGlite;
 
@@ -148,6 +153,8 @@ describe('setImageNsfwLevelFromKnights', () => {
       metadata: { nsfwLevelReason: 'Knights Vote' },
     });
     expect(refreshThumbnailCache).toHaveBeenCalledTimes(1);
+    // The version showcase filters by level, so the image's post caches are busted.
+    expect(bustCachesForPosts).toHaveBeenCalledExactlyOnceWith(55);
     expect(dbMock.dbWrite.imageRatingRequest.updateMany).toHaveBeenCalledWith({
       where: { imageId: IMAGE, status: 'Pending' },
       data: { status: 'Actioned' },

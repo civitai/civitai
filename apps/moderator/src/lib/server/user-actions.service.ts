@@ -950,6 +950,12 @@ export type BuzzColor = (typeof BUZZ_TYPES)[number];
 /** Account 0 is Civitai's own — the counterparty for every moderator grant or deduction. */
 const CIVITAI_ACCOUNT_ID = 0;
 
+/** The shape `newBuzzSubmissionId` mints: hex only, so the ledger key needs no URL encoding. */
+const BUZZ_SUBMISSION_ID = /^[0-9a-f]{16,64}$/;
+export const moderatorBuzzExternalId = (submissionId: string) => `moderator-buzz-${submissionId}`;
+/** Bounded and retried once: a moderator is waiting on this, and it decides whether to write. */
+const BUZZ_LOOKUP_OPTIONS = { timeoutMs: 3_000, retries: 1 };
+
 export async function sendBuzz(input: {
   userId: number;
   amount: number;
@@ -961,13 +967,42 @@ export async function sendBuzz(input: {
   entityType?: string;
   entityId?: number;
   moderatorId: number;
+  /** One per form, minted by the panel (`newBuzzSubmissionId`); a resubmit of the form reuses it. */
+  submissionId: string;
 }): Promise<ActionResult> {
   if (!Number.isInteger(input.amount) || input.amount <= 0)
     return { ok: false, error: 'Amount must be a positive whole number.' };
+  if (!BUZZ_SUBMISSION_ID.test(input.submissionId))
+    return { ok: false, error: 'This form is stale. Reload the page and try again.' };
+
+  // The ledger key for THIS form submission, so the transaction can be found again after a lost
+  // response, and a resubmit of the same form is recognised instead of filed a second time. Whether
+  // the buzz service itself rejects a repeated id is not something this code relies on: the lookup
+  // below is what stops the second write.
+  const externalTransactionId = moderatorBuzzExternalId(input.submissionId);
+  const buzz = getBuzz();
+
+  let existing: Awaited<ReturnType<typeof buzz.getTransactionByExternalId>>;
+  try {
+    existing = await buzz.getTransactionByExternalId(externalTransactionId, BUZZ_LOOKUP_OPTIONS);
+  } catch (e) {
+    console.error('[user-actions] buzz lookup failed', e);
+    // Fail closed: without the lookup there is no telling a fresh form from a resubmitted one.
+    return {
+      ok: false,
+      error: 'The Buzz service is not answering, so nothing was filed. Try again in a minute.',
+    };
+  }
+  if (existing)
+    return {
+      ok: false,
+      error: `This form was already filed (${existing.amount.toLocaleString()} Buzz). Reload the panel to file another.`,
+    };
 
   const toUser = input.action === 'send';
   try {
-    await getBuzz().createTransaction({
+    await buzz.createTransaction({
+      externalTransactionId,
       fromAccountId: toUser ? CIVITAI_ACCOUNT_ID : input.userId,
       toAccountId: toUser ? input.userId : CIVITAI_ACCOUNT_ID,
       fromAccountType: toUser ? 'yellow' : input.buzzType,
@@ -988,7 +1023,29 @@ export async function sendBuzz(input: {
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
-    return { ok: false, error: 'Buzz transaction failed.' };
+    // A write we stopped waiting for may still commit after we look: a lookup that finds nothing
+    // then means "not yet", not "never".
+    const name = (e as { name?: string } | null)?.name;
+    const timedOut = name === 'TimeoutError' || name === 'AbortError';
+    // A timeout or a 5xx does not say the write did not happen, so ask the ledger before telling a
+    // moderator it failed: "failed" invites a resubmit, and a resubmit of a write that landed is a
+    // second grant (or deduction).
+    let landed: boolean | undefined;
+    try {
+      landed = !!(await buzz.getTransactionByExternalId(
+        externalTransactionId,
+        BUZZ_LOOKUP_OPTIONS
+      ));
+    } catch (lookupError) {
+      console.error('[user-actions] buzz lookup after a failed write failed', lookupError);
+    }
+    if (landed === undefined || (!landed && timedOut))
+      return {
+        ok: false,
+        error:
+          "Buzz did not confirm the transaction, and it may still have gone through. Check the user's transaction history before submitting again; this form will not file it twice.",
+      };
+    if (!landed) return { ok: false, error: 'Buzz transaction failed. Nothing was filed.' };
   }
 
   await logAction(

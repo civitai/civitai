@@ -7,7 +7,9 @@ const {
   countStrikeReview,
   countSiteAppeals,
   getRestrictedVerdictCount,
+  countTrainingDataReview,
 } = vi.hoisted(() => ({
+  countTrainingDataReview: vi.fn(),
   getRestrictedVerdictCount: vi.fn(),
   getFlaggedCount: vi.fn(),
   getHeldDetectionModelCount: vi.fn(),
@@ -74,6 +76,7 @@ vi.mock('../minor-hash.service', () => ({
   getFlaggedCount,
 }));
 
+vi.mock('../training-moderation.service', () => ({ countTrainingDataReview }));
 vi.mock('../strike-review.service', () => ({ countStrikeReview }));
 vi.mock('../restricted-nsfw-verdicts', () => ({ getRestrictedVerdictCount }));
 vi.mock('../site-appeals.service', () => ({ countSiteAppeals }));
@@ -86,6 +89,7 @@ beforeEach(() => {
   getFlaggedCount.mockResolvedValue(0);
   getHeldDetectionModelCount.mockResolvedValue(3);
   getRestrictedVerdictCount.mockResolvedValue(0);
+  countTrainingDataReview.mockResolvedValue(0);
   getMinorQueueCounts.mockResolvedValue({ pending: 10, pendingWithDetection: 1 });
 });
 
@@ -133,6 +137,20 @@ describe('sidebar counts for Model Flags', () => {
     const counts = (await getSidebarCounts()).counts;
     expect(counts).not.toHaveProperty('modelFlagsAuto');
     expect(counts).toMatchObject({ modelFlagsAppeals: 4, modelFlagsNeedsReview: 12 });
+  });
+});
+
+describe('sidebar count trainingDataReview', () => {
+  it('is the review count, and unavailable rather than 0 when the count is unknown', async () => {
+    countTrainingDataReview.mockResolvedValue(7);
+    const known = await getSidebarCounts();
+    expect(known.counts).toMatchObject({ trainingDataReview: 7 });
+    expect(known.unavailable).not.toContain('trainingDataReview');
+
+    countTrainingDataReview.mockResolvedValue(null);
+    const unknown = await getSidebarCounts();
+    expect(unknown.counts).not.toHaveProperty('trainingDataReview');
+    expect(unknown.unavailable).toContain('trainingDataReview');
   });
 });
 
@@ -255,8 +273,8 @@ describe('Needs review badge when a part does not answer', () => {
   });
 
   it('still answers when Redis does not', async () => {
-    // The first three Redis writes fail, whichever parts they belong to.
-    for (let part = 0; part < 3; part++) redis.set.mockRejectedValueOnce(new Error('redis down'));
+    // One per last-good part: image tags, minor queue, held detections, training data review.
+    for (let part = 0; part < 4; part++) redis.set.mockRejectedValueOnce(new Error('redis down'));
     expect((await getSidebarCounts()).counts).toMatchObject({ modelFlagsNeedsReview: 12 });
     redis.get.mockRejectedValueOnce(new Error('redis down'));
     getHeldDetectionModelCount.mockReturnValue(hang());

@@ -10,6 +10,12 @@ import { ConsentBlockedEmbed } from '~/components/Consent/ConsentBlockedEmbed';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { EdgeMediaComponent } from '~/components/TipTap/EdgeMediaNode';
+import {
+  GuardedBodyMedia,
+  type BodyImageGuard,
+} from '~/components/RichTextEditor/GuardedBodyMedia';
+import { extractCloudflareUuid } from '~/utils/article-helpers';
+import { parseImageWidth } from '~/shared/tiptap/image-width';
 import classes from './RichTextEditorComponent.module.scss';
 import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { EdgeMediaNode } from '~/shared/tiptap/edge-media.node';
@@ -90,24 +96,62 @@ export function RenderRichText({
   content,
   fallbackHtml,
   className,
+  imageGuard,
 }: {
   content: Record<string, any>;
   fallbackHtml?: string;
   className?: string;
+  /** Article bodies: guard each image and video by its scanned level. Omitted, media renders bare. */
+  imageGuard?: BodyImageGuard;
 }) {
   const { allowed } = useThirdPartyConsent();
   const contentRef = useRef<HTMLDivElement>(null);
   const toCurrentDomain = useCurrentDomainHref();
   const embedIds = useMemo(() => collectCivitaiEmbedIds(content), [content]);
   const host = useMaybeAppContext()?.host;
+  const imagesByUrl = useMemo(
+    () => new Map(imageGuard?.images.map((image) => [image.url, image])),
+    [imageGuard?.images]
+  );
+  const guardNsfwLevel = imageGuard?.nsfwLevel;
   const memoized = useMemo(() => {
+    // Content images are linked by Cloudflare uuid: a media node's url is one, an img's src holds one.
+    const guard = (urlKey: string, size: unknown, media: React.ReactElement) => (
+      <GuardedBodyMedia
+        linked={imagesByUrl.get(urlKey)}
+        urlKey={urlKey}
+        fallbackNsfwLevel={guardNsfwLevel ?? 0}
+        size={parseImageWidth(size)}
+      >
+        {media}
+      </GuardedBodyMedia>
+    );
     try {
       const el = renderToReactElement({
         content: groupSpoilerRuns(rewriteLinkMarks(content, toCurrentDomain)) as typeof content,
         extensions,
         options: {
           nodeMapping: {
-            media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
+            media: ({ node }) => {
+              const attrs = node.attrs as any;
+              if (guardNsfwLevel === undefined) return <EdgeMediaComponent {...attrs} />;
+              return guard(
+                attrs.url ?? '',
+                attrs.size,
+                <EdgeMediaComponent {...attrs} size={null} />
+              );
+            },
+            ...(guardNsfwLevel !== undefined && {
+              image: ({ node }) => {
+                const { src, alt, title, size } = node.attrs as Record<string, string | null>;
+                return guard(
+                  extractCloudflareUuid(src ?? '') ?? src ?? '',
+                  size,
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={src ?? undefined} alt={alt ?? undefined} title={title ?? undefined} />
+                );
+              },
+            }),
             // The same profile link RenderHtml gives a comment mention, so MentionHoverCard still
             // validates it. Inside an author's link it stays a span: an <a> in an <a> is invalid
             // HTML, and the browser splits it apart on parse.
@@ -179,7 +223,7 @@ export function RenderRichText({
       // sync with `tiptapExtensions` by hand, so treat drift as reachable.
       return { ok: false as const };
     }
-  }, [content, allowed, toCurrentDomain, host]);
+  }, [content, allowed, toCurrentDomain, host, imagesByUrl, guardNsfwLevel]);
 
   if (!memoized.ok)
     // The fallback cannot mask a spoiler, so it leaves spoilers out rather than show them.

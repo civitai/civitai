@@ -437,11 +437,18 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
-  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // Image search on the search pages: /search/semantic, "more like this", the Images entry in the
+  // pickers and tabs, /search/images and the semanticImageSearch procedures. `feedSearch` (below)
+  // also offers the Images entry, opens the search procedure and redirects /search/images.
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
+  // Images first. It switches between the old and the new search on its own (it opens the semantic
+  // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
+  // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
+  // rollout splits signed-in users only.
+  feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
@@ -739,14 +746,6 @@ const featureFlags = createFeatureFlags({
   // launch. Off ⇒ Ultra is not offered and a submitted 'ultra' falls back to the
   // default (see `image/krea3.graph.ts`).
   krea3Ultra: { availability: ['mod'], fliptKey: 'krea3-ultra' },
-  // Gates the whole MiniMaxH3Image ecosystem: off ⇒ it is hidden from the picker and a
-  // submission naming it is refused (see `generation/ecosystem-gates.ts`). No Flipt key, so
-  // opening it past moderators is a code change.
-  minimaxH3ImageGenerator: { availability: ['mod'] },
-  // Gates Seedream v5.5 like krea3Ultra: off ⇒ v5.5 is not offered, v5.0-pro stays the default, and a
-  // submitted v5.5 falls back to v5.0-pro (see `image/seedream.graph.ts`). Dark until the
-  // orchestrator release that accepts v5.5 is live; Flipt alone opens it.
-  seedream55: { availability: [], fliptKey: 'seedream-5-5' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay

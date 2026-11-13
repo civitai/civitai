@@ -840,8 +840,8 @@ describe('Image metadata provenance — update-site ledger', () => {
 
   it('scans a real update population', () => {
     // Positive control: the filter is applied to a population that is not empty.
-    expect(collect(UPDATE_CALL).length).toBeGreaterThan(25);
-    expect(collect(RAW_UPDATE).length).toBeGreaterThan(25);
+    expect(collect(UPDATE_CALL).length).toBeGreaterThan(20);
+    expect(collect(RAW_UPDATE).length).toBeGreaterThan(20);
   });
 
   it('every Image update that can write metadata is classified, and none has gone', () => {

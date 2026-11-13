@@ -27,7 +27,6 @@ vi.mock('~/server/services/home-block-cache.service', () => ({
 }));
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: mockQueueUpdate },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
 }));
 
 // Every image here is one the submitter may see; the visibility rule has its own test.

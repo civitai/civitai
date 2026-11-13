@@ -10,6 +10,15 @@ import { removeTags } from '~/utils/string-helpers';
 registerTextScanProfile({
   entityType: 'Article',
   labels: ['nsfw', 'csam'],
+  category: {
+    tagType: 'article',
+    // Raw: no updatedAt bump, and the author's own pick in TagsOnArticle is never touched.
+    write: async (entityId, tagId) => {
+      await dbWrite.$executeRaw`
+        UPDATE "Article" SET "systemCategoryId" = ${tagId} WHERE id = ${entityId}
+      `;
+    },
+  },
   load: async (ids) => {
     const rows = await dbWrite.article.findMany({
       where: { id: { in: ids } },

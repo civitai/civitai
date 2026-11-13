@@ -32,7 +32,6 @@ const WEBHOOK_ROUTES = [
   'knights/reset-player',
   'knights/shop/cosmetics',
   'knights/shop/membership',
-  'mark-poi-images-search',
   'mod-rules',
   'mute-user-pending-review',
   'new-order/manage-queue',

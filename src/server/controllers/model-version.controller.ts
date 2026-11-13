@@ -20,7 +20,11 @@ import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.
 import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
 import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
-import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isHiddenBaseModel,
+} from '~/shared/constants/basemodel.constants';
 import {
   baseModelLicenses,
   constants,
@@ -478,6 +482,15 @@ export const upsertModelVersionHandler = async ({
           },
         })
       : null;
+    // The form only offers hidden base models to moderators; this holds API clients to the same rule.
+    // A version already on a hidden base model can still be edited.
+    if (
+      !ctx.user.isModerator &&
+      input.baseModel !== storedVersion?.baseModel &&
+      isHiddenBaseModel(input.baseModel)
+    ) {
+      throw throwBadRequestError(`${input.baseModel} is not available for new models yet`);
+    }
     const storedUsageControl = storedVersion?.usageControl;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
