@@ -6,6 +6,8 @@ import {
 } from '~/server/events/points/hooks';
 import { uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
+import type { Context } from '~/server/createContext';
+import { canViewImageMedia } from '~/server/utils/image-media-visibility';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -958,6 +960,8 @@ const playerCoverSelect = {
   ingestion: true,
   blockedFor: true,
   needsReview: true,
+  acceptableMinor: true,
+  userId: true,
 } satisfies Prisma.ImageSelect;
 
 export type PlayerSongCover = {
@@ -970,20 +974,22 @@ export type PlayerSongCover = {
 
 /**
  * The covers the global player may show for `ids`: only for songs the requester can already open
- * by id, and only a cover that is the song's own, scanned, not blocked and not held for review.
- * The owner gets the same rule; the editor is where pending or blocked covers show.
+ * by id, and only a cover that is the song's own, scanned, not blocked, not held for review, not
+ * flagged as showing a minor, and inside the request's domain browsing level. The owner gets the
+ * same rule except the domain level; the editor is where pending or blocked covers show.
  */
 export async function getSongCoversForPlayer({
   ids,
-  user,
+  ctx,
 }: {
   ids: number[];
-  user?: SessionUser;
+  ctx: Pick<Context, 'user' | 'features' | 'req'>;
 }): Promise<PlayerSongCover[]> {
+  const { user } = ctx;
   if (!getFeatureFlagsLazy({ user }).music)
     throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
   const visible = await getImageIdsVisibleToViewer({
-    ids,
+    ids: [...new Set(ids)],
     userId: user?.id,
     isModerator: user?.isModerator,
   });
@@ -996,7 +1002,9 @@ export async function getSongCoversForPlayer({
   return [...covers].flatMap(([songId, cover]) =>
     cover.ingestion === ImageIngestionStatus.Scanned &&
     !hasBlockMarker(cover) &&
-    cover.needsReview == null
+    cover.needsReview == null &&
+    cover.acceptableMinor === false &&
+    canViewImageMedia(ctx, { nsfwLevel: cover.nsfwLevel, user: { id: cover.userId } })
       ? [{ songId, id: cover.id, url: cover.url, hash: cover.hash, nsfwLevel: cover.nsfwLevel }]
       : []
   );

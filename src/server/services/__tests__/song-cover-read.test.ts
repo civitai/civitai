@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
+import { getImageIdsVisibleToViewer } from '~/server/services/image-visibility.service';
+import { NsfwLevel } from '~/server/common/enums';
 import type { SessionUser } from '~/types/session';
 
 const mocks = vi.hoisted(() => ({ music: true, visible: new Set<number>() }));
@@ -35,6 +37,7 @@ type Row = {
   nsfwLevel: number;
   blockedFor: string | null;
   needsReview: string | null;
+  acceptableMinor: boolean;
 };
 
 let table: Row[] = [];
@@ -52,6 +55,7 @@ function image(id: number, values: Partial<Row> = {}): Row {
     nsfwLevel: 1,
     blockedFor: null,
     needsReview: null,
+    acceptableMinor: false,
     ...values,
   };
 }
@@ -79,8 +83,16 @@ beforeEach(() => {
       .map((x) => Object.fromEntries(Object.entries(x).filter(([key]) => select[key])))) as never);
 });
 
-const read = (ids: number[], user: SessionUser | undefined = LISTENER) =>
-  getSongCoversForPlayer({ ids, user });
+/** A request from `user` on a domain that serves mature content (`canViewNsfw`) or not. */
+const read = (
+  ids: number[],
+  user: SessionUser | undefined = LISTENER,
+  { canViewNsfw = true }: { canViewNsfw?: boolean } = {}
+) =>
+  getSongCoversForPlayer({
+    ids,
+    ctx: { user, features: { canViewNsfw } as never, req: { headers: {} } as never },
+  });
 
 describe('the global player reads song covers', () => {
   it('returns a scanned cover the requester may see, with only the fields the player shows', async () => {
@@ -136,6 +148,46 @@ describe('the global player reads song covers', () => {
     mocks.visible = new Set([1]);
 
     expect(await read([1], { id: OWNER } as SessionUser)).toEqual([]);
+  });
+
+  it("holds each cover to the domain's browsing level: a PG cover shows, R, X and unrated do not", async () => {
+    table = [
+      song(1, 101),
+      song(2, 102),
+      song(3, 103),
+      song(4, 104),
+      song(5, 105),
+      coverOf(101, 1, { nsfwLevel: NsfwLevel.PG }),
+      coverOf(102, 2, { nsfwLevel: NsfwLevel.R }),
+      coverOf(103, 3, { nsfwLevel: NsfwLevel.X }),
+      coverOf(104, 4, { nsfwLevel: 0 }),
+      coverOf(105, 5, { nsfwLevel: NsfwLevel.PG | NsfwLevel.R }),
+    ];
+    mocks.visible = new Set([1, 2, 3, 4, 5]);
+
+    expect(await read([1, 2, 3, 4, 5], LISTENER, { canViewNsfw: false })).toEqual([
+      { songId: 1, id: 101, url: 'key-101', hash: 'hash-101', nsfwLevel: NsfwLevel.PG },
+    ]);
+    // Where mature content is served, the R and X covers come back (the client applies the
+    // viewer's own browsing level).
+    expect((await read([1, 2, 3], LISTENER)).map((c) => c.songId)).toEqual([1, 2, 3]);
+  });
+
+  it('leaves out a cover flagged as showing a minor', async () => {
+    table = [song(1, 101), coverOf(101, 1, { acceptableMinor: true })];
+    mocks.visible = new Set([1]);
+
+    expect(await read([1])).toEqual([]);
+  });
+
+  it('reads each song once when an id repeats', async () => {
+    table = [song(1, 101), coverOf(101, 1)];
+    mocks.visible = new Set([1]);
+
+    expect(await read([1, 1, 1])).toHaveLength(1);
+    expect(vi.mocked(getImageIdsVisibleToViewer)).toHaveBeenCalledWith(
+      expect.objectContaining({ ids: [1] })
+    );
   });
 
   it('refuses without the music flag, before reading anything', async () => {
