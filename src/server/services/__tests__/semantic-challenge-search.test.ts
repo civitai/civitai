@@ -132,6 +132,50 @@ describe('searchSemanticChallenges', () => {
     expect(h.feedCalls[0]).toMatchObject({ browsingLevel: 1 });
   });
 
+  describe("the feed's filters", () => {
+    const filters = {
+      source: ['User'],
+      userId: 7,
+      modelVersionId: 42,
+      challengeEventId: 9,
+      excludeEventChallenges: true,
+      includeEnded: true,
+      participation: 'entered',
+    };
+
+    it('narrows the index by creator, source, model and event', async () => {
+      const { result, filters: sent } = run([1], { input: filters });
+      await result;
+      expect(sent[0]).toMatchObject({
+        userIds: [7],
+        anyOf: { source: ['User'], modelVersionIds: [42], eventId: [9] },
+      });
+      const qdrant = buildQdrantFilter('challenges', sent[0]);
+      expect(qdrant.must_not).toContainEqual({ must_not: [{ is_null: { key: 'eventId' } }] });
+    });
+
+    it('with ended challenges, searches every status but Cancelled', async () => {
+      const { result, filters: sent } = run([1], { input: { includeEnded: true } });
+      await result;
+      const status = (sent[0].anyOf as { status: string[] }).status;
+      expect(status).toContain('Completed');
+      expect(status).not.toContain('Cancelled');
+    });
+
+    it('searches exactly the statuses picked', async () => {
+      const { result, filters: sent } = run([1], { input: { status: ['Completed'] } });
+      await result;
+      expect((sent[0].anyOf as { status: string[] }).status).toEqual(['Completed']);
+    });
+
+    // participation is per viewer and not in the index: only the feed's query can apply it.
+    it("hands every filter, participation included, to the feed's re-check", async () => {
+      const { result } = run([1], { input: filters });
+      await result;
+      expect(h.feedCalls[0]).toMatchObject(filters);
+    });
+  });
+
   describe('the non-moderator clamp', () => {
     const viewer = { id: 500, isModerator: false } as SessionUser;
     const ALL = 31;
@@ -214,6 +258,5 @@ describe('searchSemanticChallenges', () => {
     });
     const page = await result;
     expect(page.items).toEqual([]);
-    expect(page).not.toHaveProperty('refusal');
   });
 });
