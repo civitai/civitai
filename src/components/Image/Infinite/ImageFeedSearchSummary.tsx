@@ -41,8 +41,10 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
       (key) =>
         isEmptyFilter(patch[key as keyof typeof patch]) && !isEmptyFilter(storeFilters?.[key])
     );
+    // A change of query is a search, so Back returns to the previous one; a filter tweak is not.
+    const method = 'query' in patch ? 'push' : 'replace';
     if (inUrl.length)
-      void router.replace(
+      void router[method](
         {
           pathname: router.pathname,
           query: removeEmpty({
