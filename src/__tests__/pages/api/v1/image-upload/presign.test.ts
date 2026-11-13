@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as HttpErrors from '~/server/prom/http-errors';
@@ -66,6 +67,7 @@ function makeRes() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setEnv({ UPLOAD_KEY_REFUSE_UNRECORDED: false });
   m.session.mockResolvedValue({ user: { id: 7, bannedAt: null } });
   m.customPut.mockImplementation(async (bucket: string, key: string) => ({
     url: 'https://put',
@@ -114,24 +116,50 @@ describe('image upload presign routes', () => {
     );
   });
 
-  it.each([
-    ['/api/v1/image-upload', imageUpload],
-    ['/api/v1/image-upload/multipart', imageUploadMultipart],
-  ])('%s hands out no key whose issue record could not be written', async (_, route) => {
+  const failEveryWrite = () =>
     redisMock.sysRedis.set
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'));
-    const res = makeRes();
-    await route({ body: { size: 10 } } as NextApiRequest, res);
 
-    expect(res.statusCode).toBe(503);
-    expect(res.headers['Retry-After']).toBe('2');
-    expect(res.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
-    expect(m.customPut).not.toHaveBeenCalled();
-    expect(m.multipartPut).not.toHaveBeenCalled();
-    expect(m.track).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['/api/v1/image-upload', imageUpload, 'id'],
+    ['/api/v1/image-upload/multipart', imageUploadMultipart, 'key'],
+  ])(
+    '%s still hands out a key whose issue record could not be written, by default',
+    async (_, route, field) => {
+      failEveryWrite();
+      const req = { body: { size: 10 } } as NextApiRequest;
+      const res = makeRes();
+      await route(req, res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body[field]).toEqual(expect.any(String));
+      expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(3);
+      // The request log is then the save's only proof, so it must name the caller.
+      expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body[field], 7);
+    }
+  );
+
+  it.each([
+    ['/api/v1/image-upload', imageUpload],
+    ['/api/v1/image-upload/multipart', imageUploadMultipart],
+  ])(
+    '%s hands out no key whose issue record could not be written, when refusing is on',
+    async (_, route) => {
+      setEnv({ UPLOAD_KEY_REFUSE_UNRECORDED: true });
+      failEveryWrite();
+      const res = makeRes();
+      await route({ body: { size: 10 } } as NextApiRequest, res);
+
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['Retry-After']).toBe('2');
+      expect(res.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+      expect(m.customPut).not.toHaveBeenCalled();
+      expect(m.multipartPut).not.toHaveBeenCalled();
+      expect(m.track).not.toHaveBeenCalled();
+    }
+  );
 
   it('hands out the key once a write that failed is retried', async () => {
     redisMock.sysRedis.set.mockRejectedValueOnce(new Error('blip'));

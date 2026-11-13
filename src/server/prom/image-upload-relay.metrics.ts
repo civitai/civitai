@@ -142,8 +142,9 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
    *  status already distinguishes them and splitting the label would buy a series
    *  whose only reader is the same dashboard panel). */
   'store_error',
-  /** 503 — the bytes were stored, but the key's issue record could not be written, so no key
-   *  was handed out (a save would refuse it); the client is told to retry. */
+  /** 503 — the key's issue record could not be written and UPLOAD_KEY_REFUSE_UNRECORDED is on,
+   *  so no key was handed out; the client is told to retry. The single-shot relay has stored the
+   *  body by then; the chunked relay refuses at its start step, before any piece. */
   'owner_unrecorded',
   /** The invocation threw without ever naming an outcome — the wrapper's `catch` in
    *  `relay.ts` records this and re-throws unchanged. Its presence is what makes "one
@@ -196,8 +197,8 @@ const HELP =
   'empty = zero-length body (400); read_error = reading the body threw (400); ' +
   'store_error = the store write or the chunked-relay session store threw (500, or 499 on a ' +
   'client disconnect); ' +
-  'owner_unrecorded = stored, but the upload key issue record could not be written, so no key ' +
-  'was returned (503); ' +
+  'owner_unrecorded = the upload key issue record could not be written and refusing is on, so ' +
+  'no key was returned (503; the chunked relay refuses at its start step); ' +
   'handler_error = the invocation threw without naming an outcome — expected to stay 0, ' +
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
   'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +

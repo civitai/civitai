@@ -9,7 +9,7 @@ import {
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
 import {
   recordUploadKeyOwner,
-  refuseUnrecordedUploadKey,
+  withholdUnrecordedUploadKey,
 } from '~/server/services/image-url-ownership';
 import {
   type ImageUploadRelaySession,
@@ -134,6 +134,11 @@ async function startSession(
 
   try {
     const { key, uploadId } = await startImageMultipartToStore({ contentType });
+    // Recorded at start, before any piece is sent, so a refusal (when on) wastes no upload.
+    if (withholdUnrecordedUploadKey(res, await recordUploadKeyOwner(key, userId))) {
+      await abortImageMultipartToStore({ key, uploadId }).catch(() => undefined);
+      return 'owner_unrecorded';
+    }
     let session: string;
     try {
       session = await createRelaySession({
@@ -273,11 +278,6 @@ async function completeSession(
     }
     // The TTL reaps it if this fails; the object is stored either way.
     await deleteRelaySession(sessionId).catch(() => undefined);
-    // The object is stored, but a key with no issue record is refused on save: retry instead.
-    if (!(await recordUploadKeyOwner(key, userId))) {
-      refuseUnrecordedUploadKey(res);
-      return 'owner_unrecorded';
-    }
     trackImageUpload(req, res, key, userId);
     res.status(200).json({ id: key });
     try {

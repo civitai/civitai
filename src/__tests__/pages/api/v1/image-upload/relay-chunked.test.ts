@@ -10,6 +10,7 @@ import type * as OriginHelpers from '~/server/utils/origin-helpers';
 import type * as ImageUploadAction from '~/server/services/image-upload-action.service';
 import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // The chunked upload relay (`/api/v1/image-upload/relay-chunked`). New-feature tests: the route
 // did not exist before this change, so none of these can be shown red on the pre-change tree
@@ -212,6 +213,7 @@ beforeEach(() => {
   }));
   mockAbort.mockResolvedValue(undefined);
   mockRecordUploadKeyOwner.mockResolvedValue(true);
+  setEnv({ UPLOAD_KEY_REFUSE_UNRECORDED: false });
 
   redisMock.sysRedis.hSetMultiWithExpire.mockImplementation(
     async (key: string, fields: string[]) => {
@@ -325,20 +327,38 @@ describe('chunked image-upload relay', () => {
     });
   });
 
-  it('returns no key whose issue record could not be written, and says to retry', async () => {
+  it('still completes with a key whose issue record could not be written, by default', async () => {
     mockRecordUploadKeyOwner.mockResolvedValue(false);
     const { session } = await start();
     await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES);
     await sendPart(session, 2, LAST_PIECE);
 
     const done = await call({ query: { action: 'complete', session } });
-    expect(done.statusCode).toBe(503);
-    expect(done.headers['Retry-After']).toBe('2');
-    expect(done.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
-    expect(JSON.stringify(done.body)).not.toContain(MINTED_KEY);
-    expect(mockTrackImageUpload).not.toHaveBeenCalled();
-    expect(await outcomes()).toMatchObject({ owner_unrecorded: 1 });
-    expect((await outcomes()).success).toBeUndefined();
+    expect(done.statusCode).toBe(200);
+    expect(done.body).toEqual({ id: MINTED_KEY });
+    expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      done,
+      MINTED_KEY,
+      OWNER
+    );
+  });
+
+  it('records the key at start, and when refusing is on opens no session for a key it could not record', async () => {
+    setEnv({ UPLOAD_KEY_REFUSE_UNRECORDED: true });
+    mockRecordUploadKeyOwner.mockResolvedValue(false);
+
+    const { res } = await start();
+
+    expect(mockRecordUploadKeyOwner).toHaveBeenCalledExactlyOnceWith(MINTED_KEY, OWNER);
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['Retry-After']).toBe('2');
+    expect(res.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+    expect(JSON.stringify(res.body)).not.toContain(MINTED_KEY);
+    // No piece is sent for it: the multipart upload is closed and no session addresses it.
+    expect(mockAbort).toHaveBeenCalledExactlyOnceWith({ key: MINTED_KEY, uploadId: UPLOAD_ID });
+    expect(hashes.size).toBe(0);
+    expect(await outcomes()).toEqual({ owner_unrecorded: 1 });
   });
 
   describe('session ownership', () => {
@@ -543,8 +563,8 @@ describe('chunked image-upload relay', () => {
 
       expect(res.statusCode).toBe(409);
       expect(await outcomes()).toMatchObject({ upload_gone: 1 });
+      // No key is handed out (the issue record was written at start, before any piece).
       expect(mockTrackImageUpload).not.toHaveBeenCalled();
-      expect(mockRecordUploadKeyOwner).not.toHaveBeenCalled();
       expect((await call({ query: { action: 'complete', session } })).statusCode).toBe(404);
     });
 

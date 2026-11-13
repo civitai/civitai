@@ -4,6 +4,7 @@ import type { NextApiResponse } from 'next';
 import { clickhouse } from '~/server/clickhouse/client';
 import { escapeClickhouseString } from '~/server/clickhouse/escape';
 import { dbWrite } from '~/server/db/client';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
@@ -295,7 +296,7 @@ export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-18T16:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
-  help: 'Image upload key issue records: writes that needed a retry or failed, and unrecorded keys accepted or refused on save.',
+  help: 'Image upload key issue records: writes that needed a retry or failed, keys handed out or withheld without one, and unrecorded keys accepted or refused on save.',
   labelNames: ['outcome'] as const,
 });
 
@@ -306,7 +307,7 @@ const ownerKey = (key: string) =>
 const RECORD_ATTEMPTS = 3;
 const RECORD_RETRY_BASE_MS = 100;
 
-/** Answered, with a 503, instead of an upload key whose issue record could not be written. */
+/** Answered, with a 503, instead of an upload key whose issue record could not be written (when refusing is on). */
 export const UPLOAD_KEY_UNRECORDED_MESSAGE =
   "We couldn't start this upload. Please try again in a moment.";
 
@@ -314,9 +315,8 @@ export const UPLOAD_KEY_UNRECORDED_MESSAGE =
  * Records that upload key `key` was issued to `userId`. A failed write is retried, up to
  * `RECORD_ATTEMPTS` writes with a jittered backoff between them, each one bounded by the sys
  * deadline so a write that never settles cannot hold the request. Never throws: resolves whether
- * the record was written. From `UNRECORDED_KEYS_ACCEPTED_UNTIL` a save refuses a key without one,
- * so a route handing the key to a client must not hand it out on `false`
- * (`refuseUnrecordedUploadKey`).
+ * the record was written; a route handing the key to a client passes that to
+ * `withholdUnrecordedUploadKey`.
  */
 export async function recordUploadKeyOwner(key: string, userId: number): Promise<boolean> {
   let error: unknown;
@@ -350,12 +350,22 @@ export async function recordUploadKeyOwner(key: string, userId: number): Promise
 }
 
 /**
- * The answer an upload route gives in place of a key `recordUploadKeyOwner` could not record: the
- * key would be refused on save, so the client is told to retry now instead.
+ * Whether an upload route withholds a key, given whether `recordUploadKeyOwner` wrote its issue
+ * record. Off by default: the key is handed out and counted, and the save decides from the
+ * request log, which `trackImageUpload` writes naming the caller (fail-closed there from
+ * `UNRECORDED_KEYS_ACCEPTED_UNTIL`). With `UPLOAD_KEY_REFUSE_UNRECORDED` on, this answers a 503
+ * the client can retry and returns true: the route must hand out nothing more.
  */
-export function refuseUnrecordedUploadKey(res: NextApiResponse) {
+export function withholdUnrecordedUploadKey(res: NextApiResponse, recorded: boolean) {
+  if (recorded) return false;
+  if (!env.UPLOAD_KEY_REFUSE_UNRECORDED) {
+    uploadKeyOwnerCounter.inc({ outcome: 'issued_unrecorded' });
+    return false;
+  }
+  uploadKeyOwnerCounter.inc({ outcome: 'issue_refused' });
   res.setHeader('Retry-After', '2');
   res.status(503).json({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
+  return true;
 }
 
 async function ownersFromRedis(keys: string[]) {
