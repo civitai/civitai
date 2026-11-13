@@ -11,8 +11,21 @@ import type { SessionUser } from '~/types/session';
  *   - a version move drops every entry at once (a Flipt change is not held for the long TTL);
  *   - an entry computed while the eval cache may still hold pre-move answers keeps the 10s TTL;
  *   - every input of the evaluation is in the key (a Flipt-context-only difference, a
- *     permissions-only difference).
+ *     permissions-only difference, a host-only difference, a region-only difference, and a
+ *     region restriction taking effect while an entry is still live).
  */
+
+// Read at IMPORT time by the service (color-host sets) and by region-blocking (restriction
+// config), so set them before those modules evaluate; otherwise the host and region branches of
+// `hasFeature` never run and the key tests below have nothing to tell apart.
+vi.hoisted(() => {
+  process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
+  process.env.SERVER_DOMAIN_BLUE = 'civitai.blue';
+  process.env.SERVER_DOMAIN_RED = 'civitai.red';
+  // FR: restricted since long ago. DE: restricted from the end of 2030-01-01 (UTC), so a test can
+  // step the clock across the moment it takes effect.
+  process.env.REGION_RESTRICTION_CONFIG = 'FR:2020-01-01,DE:2030-01-01';
+});
 
 const { fliptEvals, flipt } = vi.hoisted(() => ({
   fliptEvals: [] as { flag: string; entityId: string; context: Record<string, string> }[],
@@ -70,8 +83,8 @@ import {
 } from '../feature-flags.service';
 import { OnboardingSteps } from '~/server/common/enums';
 
-function makeReq(): NextApiRequest {
-  return { headers: { host: 'civitai.com', 'cf-ipcountry': 'US' } } as unknown as NextApiRequest;
+function makeReq(host = 'civitai.com', country = 'US'): NextApiRequest {
+  return { headers: { host, 'cf-ipcountry': country } } as unknown as NextApiRequest;
 }
 
 function makeUser(over: Partial<SessionUser> = {}): SessionUser {
@@ -289,5 +302,73 @@ describe('every input is in the key', () => {
     settle();
     getFeatureFlags(a);
     expect(present(getFeatureFlags(b))).toBe(expectedB);
+  });
+
+  // `isGreen` is on only on the green host, `isRed` only on blue/red: domain gating.
+  it('the same user on two hosts gets each host its own result', () => {
+    const user = makeUser({ id: 400 });
+    const a = { user, req: makeReq('civitai.com') };
+    const b = { user, req: makeReq('civitai.red') };
+    setSwitch(false);
+    const expectedB = present(getFeatureFlags(b));
+    setSwitch(false);
+    const expectedA = present(getFeatureFlags(a));
+    expect(expectedA).not.toBe(expectedB); // POSITIVE CONTROL
+
+    setSwitch(true);
+    settle();
+    getFeatureFlags(a);
+    expect(present(getFeatureFlags(b))).toBe(expectedB);
+  });
+
+  // `canViewNsfw` needs a non-restricted region (and a blue/red host); FR is restricted.
+  it('the same user from two regions gets each region its own result', () => {
+    const user = makeUser({ id: 500 });
+    const a = { user, req: makeReq('civitai.red', 'US') };
+    const b = { user, req: makeReq('civitai.red', 'FR') };
+    setSwitch(false);
+    const expectedB = present(getFeatureFlags(b));
+    setSwitch(false);
+    const expectedA = present(getFeatureFlags(a));
+    expect(expectedA).not.toBe(expectedB); // POSITIVE CONTROL
+
+    setSwitch(true);
+    settle();
+    getFeatureFlags(a);
+    expect(present(getFeatureFlags(b))).toBe(expectedB);
+  });
+
+  // Same user, region and host: only the date moves, across DE's restriction taking effect, inside
+  // the life of a long-TTL entry. Unless the key's restricted bit changes with it, the entry
+  // computed before keeps serving `canViewNsfw` for up to the long TTL.
+  it('a region restriction taking effect reaches a still-live entry', () => {
+    vi.restoreAllMocks(); // drop the Date.now spy: this test drives the whole Date
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const ctx = { user: makeUser({ id: 600 }), req: makeReq('civitai.red', 'DE') };
+      const before = new Date('2030-01-01T23:58:00Z').getTime();
+      const after = new Date('2030-01-02T00:00:30Z').getTime();
+
+      vi.setSystemTime(after);
+      setSwitch(false);
+      const expectedAfter = present(getFeatureFlags(ctx));
+      vi.setSystemTime(before);
+      setSwitch(false);
+      const expectedBefore = present(getFeatureFlags(ctx));
+      expect(expectedBefore).not.toBe(expectedAfter); // POSITIVE CONTROL
+
+      setSwitch(true);
+      getFeatureFlags(ctx); // the cache sees the version now
+      const settledAt = before + flipt.evalCacheTtlMs + 1;
+      vi.setSystemTime(settledAt);
+      expect(present(getFeatureFlags(ctx))).toBe(expectedBefore); // stored with the long TTL
+      // The step below stays inside that entry's life, so only the key can retire it.
+      expect(after - settledAt).toBeLessThan(FEATURE_ACCESS_VERSIONED_TTL_MS);
+
+      vi.setSystemTime(after);
+      expect(present(getFeatureFlags(ctx))).toBe(expectedAfter);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
