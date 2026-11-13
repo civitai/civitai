@@ -245,15 +245,7 @@ export const processEnqueuedComicPanelsJob = createJob(
                 userId,
                 isGreen,
                 isModerator: sessionUser.isModerator,
-                // Observability only — see `~/server/prom/external-moderation.metrics`. There are two
-                // places this job can reach the external classifier per panel: this explicit
-                // pre-submit gate, and a second one inside `submitPresetImageGen` →
-                // `generateFromGraph`, which labels itself `preset` via the surface mapping. A panel
-                // contributes 0, 1 or 2 observations, NOT a fixed 2 — `auditPromptServer` never
-                // reaches the classifier on an empty prompt, and a hard regex block throws
-                // ahead of it, which also skips the submit below and with it the second call.
-                // Leaving this one undeclared would default it to `other`, moving this job's gate off
-                // `preset` and onto a mixture the metric documents as unreadable as any single path.
+                // Declared so the metric attributes this gate to `preset`; omitted, it defaults to `other`.
                 moderationSource: 'preset',
               });
             } catch (error) {
@@ -306,6 +298,13 @@ export const processEnqueuedComicPanelsJob = createJob(
               })
               .catch(() => null); // Don't fail the job if signal fails
           } catch (error: any) {
+            // The submit's own prompt check (or its generation-config read) could not run: the
+            // same retry-able 503 as the pre-submit gate above, handled the same way.
+            if (isPromptCheckUnavailable(error)) {
+              log(`Panel ${panel.id}: submit check unavailable, left Enqueued for the next run`);
+              promptCheckUnavailable = true;
+              break;
+            }
             const errorMessage = error instanceof Error ? error.message : String(error);
             log(`Panel ${panel.id}: Failed to submit - ${errorMessage}`);
 

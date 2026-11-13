@@ -8,6 +8,8 @@ import {
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { env } from '~/env/server';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 
 /**
  * Preset image generation
@@ -317,7 +319,7 @@ export async function submitPresetImageGen(
   } = args;
   const input = graphInputOf(args, false);
 
-  const { externalCtx } = await buildGenerationContext(
+  const { externalCtx, status } = await buildGenerationContext(
     user.tier ?? 'free',
     flags,
     { id: user.id, isModerator: user.isModerator },
@@ -327,6 +329,12 @@ export async function submitPresetImageGen(
     // on-site and the App Blocks numbers.
     'preset'
   );
+  // The global generation kill switch, as onsite applies it, for every preset entry point (comics,
+  // iterate, remix apps, article reframe, the queued comic-panels job), which all submit here.
+  // PRESET_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+  if (env.PRESET_ENFORCE_GENERATION_STATUS) {
+    assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  }
 
   return generateFromGraph({
     input,

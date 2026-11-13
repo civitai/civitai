@@ -795,16 +795,10 @@ export type TextOutputScreenResult =
  * selection swallow it. Recorded so nobody reads the paragraph above as covering
  * it.
  *
- * 🔴 THIS NO LONGER DIFFERS FROM `auditPromptServer` ON AN OUTAGE — BOTH FAIL
- * CLOSED — BUT DO NOT MERGE THEM. `auditPromptServer` now refuses, with a
- * retry-able 503, any prompt its verdict would let through while the external
- * classifier is unavailable (PROMPT_CHECK_FAIL_CLOSED; off restores its old
- * pass-through on the word lists alone, which is what it did when this
- * paragraph was first written). That switch governs USER-AUTHORED prompts
- * only. This scan is MODEL OUTPUT nobody has seen yet and has no such switch:
- * if it failed soft, a scanner outage would ship unscanned generated text to
- * users, which is the single outcome the posture exists to prevent. Turning
- * the prompt switch off must not, and does not, change this.
+ * 🔴 FAILS CLOSED ON A SCANNER OUTAGE AND HAS NO OFF-SWITCH — DO NOT MERGE WITH
+ * `auditPromptServer`, whose PROMPT_CHECK_FAIL_CLOSED governs user-authored
+ * prompts only. This is model output nobody has seen yet: failing soft would
+ * ship unscanned generated text.
  *
  * 🔴 NO VIOLATION / AUTO-MUTE COUNTER IS TOUCHED, and that is the other reason
  * `auditPromptServer` is the wrong tool here rather than merely the wrong

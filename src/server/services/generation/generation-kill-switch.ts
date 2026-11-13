@@ -6,9 +6,9 @@ import {
 
 /**
  * The global generation kill switch's decision for one caller: the message to refuse them with,
- * or null when they may generate. The single rule every generation entry point applies (the
- * onsite generator and App Blocks), so a moderator's "disabled" / "members only" cannot hold on
- * one surface and not another.
+ * or null when they may generate. The one rule the onsite generator, App Blocks and preset
+ * generation (`submitPresetImageGen`) apply, so a moderator's "disabled" / "members only" cannot
+ * hold on one surface and not another.
  *
  * - `disabled`: refused for everyone but moderators.
  * - `memberOnly`: refused for free (no tier) callers who are not moderators.

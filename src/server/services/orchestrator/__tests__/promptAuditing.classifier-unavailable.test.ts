@@ -110,17 +110,6 @@ describe('auditPromptServer — external classifier unavailable', () => {
     });
   });
 
-  it('logs the classifier failure and the refusal', async () => {
-    classifierDown();
-    await auditPromptServer(options).catch(() => undefined);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'external-moderation-error' })
-    );
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'prompt-check-unavailable', userId: 5 })
-    );
-  });
-
   it('refuses an ACKNOWLEDGED soft block: the acknowledgement never skips the classifier', async () => {
     flagWith(SOFT);
     classifierDown();

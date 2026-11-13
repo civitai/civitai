@@ -6,10 +6,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const h = vi.hoisted(() => ({
   submitPresetImageGen: vi.fn(async () => ({ id: 'wf-1' })),
   auditPromptServer: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+  getHighestTierSubscription: vi.fn(
+    async (_userId: number): Promise<{ tier: string } | null> => null
+  ),
 }));
 
 vi.mock('~/server/services/subscriptions.service', () => ({
-  getHighestTierSubscription: vi.fn(async () => null),
+  getHighestTierSubscription: h.getHighestTierSubscription,
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'token'),
@@ -97,6 +100,7 @@ const run = () => processEnqueuedComicPanelsJob.run({}).result;
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockReset();
+  h.getHighestTierSubscription.mockResolvedValue(null);
 });
 
 describe('process-enqueued-comic-panels: reference image re-check', () => {
@@ -205,6 +209,28 @@ describe('process-enqueued-comic-panels: prompt check unavailable', () => {
     expect(h.auditPromptServer).toHaveBeenCalledTimes(1);
   });
 
+  it("the submit's own check (inside submitPresetImageGen) leaves the panel Enqueued and stops the run", async () => {
+    givenPanel(CDN, {}, 2);
+    givenPrivateImageOf(OWNER);
+    h.submitPresetImageGen.mockRejectedValueOnce(unavailable());
+    await run();
+    expect(panels.map((p) => p.status)).toEqual([
+      ComicPanelStatus.Enqueued,
+      ComicPanelStatus.Enqueued,
+    ]);
+    expect(dbMock.dbWrite.comicPanel.update).not.toHaveBeenCalled();
+    expect(h.submitPresetImageGen).toHaveBeenCalledTimes(1);
+  });
+
+  it("PROMPT_CHECK_FAIL_CLOSED off: the submit's 503 fails the panel, as before", async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    givenPanel(CDN);
+    givenPrivateImageOf(OWNER);
+    h.submitPresetImageGen.mockRejectedValueOnce(unavailable());
+    await run();
+    expect(panels[0].status).toBe(ComicPanelStatus.Failed);
+  });
+
   it('PROMPT_CHECK_FAIL_CLOSED off: the panel is Failed, as before', async () => {
     setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
     givenPanel(CDN);
@@ -225,6 +251,39 @@ describe('process-enqueued-comic-panels: prompt check unavailable', () => {
     expect(panels[0]).toMatchObject({
       status: ComicPanelStatus.Failed,
       errorMessage: 'Job processing failed: Your prompt was flagged',
+    });
+  });
+});
+
+/**
+ * The job submits as the panel's owner: `submitPresetImageGen` applies the generation kill switch
+ * with that user's moderator flag and subscription tier, and its refusal fails the panel.
+ */
+describe('process-enqueued-comic-panels: generation kill switch', () => {
+  it.each([
+    [{ isModerator: false }, null, { isModerator: false, tier: 'free' }],
+    [{ isModerator: false }, { tier: 'gold' }, { isModerator: false, tier: 'gold' }],
+    [{ isModerator: true }, null, { isModerator: true, tier: 'free' }],
+  ])('submits as the owner %j with subscription %j', async (owner, sub, expected) => {
+    givenPanel(CDN, owner);
+    givenPrivateImageOf(OWNER);
+    h.getHighestTierSubscription.mockResolvedValue(sub);
+    await run();
+    expect(h.getHighestTierSubscription).toHaveBeenCalledWith(OWNER);
+    const [[args]] = h.submitPresetImageGen.mock.calls as unknown as [[{ user: unknown }]];
+    expect(args.user).toMatchObject({ id: OWNER, ...expected });
+  });
+
+  it("fails the panel with the operator's message when the switch refuses the owner", async () => {
+    givenPanel(CDN);
+    givenPrivateImageOf(OWNER);
+    h.submitPresetImageGen.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Generation is paused' })
+    );
+    await run();
+    expect(panels[0]).toMatchObject({
+      status: ComicPanelStatus.Failed,
+      errorMessage: 'Job processing failed: Generation is paused',
     });
   });
 });

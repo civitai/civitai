@@ -273,6 +273,18 @@ describe('comics generation inputs the server loads', () => {
     expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
   });
 
+  // The kill switch is applied inside `submitPresetImageGen` from the user it is handed.
+  it('submits as the signed-in user, for the generation kill switch', async () => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([]);
+    mocks.submit.mockRejectedValue(new Error('stop'));
+    await caller()
+      .iterateGenerate({ projectId: 11, chapterPosition: 0, prompt: 'p' })
+      .catch(() => undefined);
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    const { user } = mocks.submit.mock.calls[0][0] as { user: unknown };
+    expect(user).toMatchObject({ id: USER_ID, isModerator: false });
+  });
+
   it("getGenerationCostEstimate reads only the caller's own references", async () => {
     mocks.assertInputs.mockResolvedValue(undefined);
     dbMock.dbRead.comicReference.findMany.mockResolvedValue([]);

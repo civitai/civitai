@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
 import type * as InputUrls from '~/server/services/generation-input-urls';
@@ -105,6 +105,7 @@ import {
 } from '~/shared/constants/remix-apps.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { startRemixRun } from '~/server/services/remix-app-run.service';
+import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
 import {
   manifestOf,
   remixAppBlockRowId,
@@ -734,5 +735,67 @@ describe('team remix', () => {
     await runTeam(34);
     const whatIf = (h.whatIfFromGraph.mock.calls as unknown as [SubmitArgs][])[0][0].input;
     expect(whatIf).toEqual(submitted()[0].input);
+  });
+});
+
+/** Menu apps (remix-app-run) and team remix (remix-app) both submit under the generation kill switch. */
+describe('the generation kill switch', () => {
+  const OWNER = USER_ID + 1;
+  const givenSwitch = (mode: string) =>
+    vi.mocked(buildGenerationContext).mockResolvedValue({
+      externalCtx: {},
+      status: { mode, message: 'paused' },
+    } as never);
+  afterEach(() =>
+    vi.mocked(buildGenerationContext).mockResolvedValue({ externalCtx: {}, status: {} } as never)
+  );
+  const runMenu = (imageId: number, who: RemixAppCaller) =>
+    startRun({
+      quote: 30,
+      slug: 'make-it-real',
+      imageId,
+      nonce: `nonce-ks-${imageId}`,
+      caller: who,
+    });
+  const runTeam = (imageId: number, who: RemixAppCaller) => {
+    h.findWaiver.mockResolvedValue({ event: 'party', team: 'Green', perDay: 10 });
+    h.standing.mockResolvedValue({ team: 'Green', remaining: 3, resetsAt: new Date() });
+    return runRemixApp({
+      quote: 30,
+      slug: TEAM_REMIX_SLUG,
+      imageId,
+      nonce: `nonce-ks-team-${imageId}`,
+      caller: who,
+    });
+  };
+  const surfaces = [
+    ['a menu app', (id: number, who: RemixAppCaller) => (addImage(id), runMenu(id, who))],
+    [
+      'team remix',
+      (id: number, who: RemixAppCaller) => (addImage(id, { ownerId: OWNER }), runTeam(id, who)),
+    ],
+  ] as const;
+
+  describe.each(surfaces)('%s', (_name, run) => {
+    it.each(['disabled', 'memberOnly'])(
+      '%s refuses a free user and charges nothing',
+      async (mode) => {
+        givenSwitch(mode);
+        await expect(run(60, caller())).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: 'paused',
+        });
+        expect(h.generateFromGraph).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['disabled', caller({}, { isModerator: true })],
+      ['memberOnly', caller({}, { tier: 'gold' } as never)],
+    ])('%s still runs for a moderator / member', async (mode, who) => {
+      givenSwitch(mode);
+      await run(61, who);
+      expect(h.generateFromGraph).toHaveBeenCalledTimes(1);
+    });
   });
 });
