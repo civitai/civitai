@@ -27,8 +27,8 @@ export const comVersionTextQueueKey = (modelId: number) => `${QUEUE_PREFIX}${mod
 /**
  * The .com verdicts on one version's name and trigger words, each rated on its own. `name` and
  * `words` are the text that was rated; `policy` the prompts and model that rated it. Only `shown`
- * strings may show on .com: `held` strings got a minor, poi or csam detection, and a string in no
- * list has no verdict yet.
+ * strings may show on .com. `hidden` (rated above PG-13, refused, or too long to rate) and `held`
+ * (a minor, poi or csam detection) have verdicts too; a string in no list is unrated.
  */
 export type ComVersionTextVerdicts = {
   name: string;
@@ -91,7 +91,7 @@ export async function queueComFaceVersionText(modelId: number) {
       `
     );
   } catch (error) {
-    log('error', 'enqueue failed', { modelId, error: errorMessage(error) });
+    log('error', 'enqueue failed', { modelId, ...errorFields(error) });
   }
 }
 
@@ -268,7 +268,7 @@ export async function rateComFaceVersionText(
       fields: chunk,
       waitSeconds: WAIT_SECONDS,
     }).catch((error) => {
-      log('error', 'rating failed', { modelId, error: errorMessage(error) });
+      log('error', 'rating failed', { modelId, ...errorFields(error) });
       return {
         workflowId: null,
         verdicts: chunk.map((): TextScanEachVerdict => ({ status: 'unavailable' })),
@@ -390,7 +390,7 @@ export async function processComFaceVersionText(
       modelId,
       Math.min(left, COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN)
     ).catch((error) => {
-      log('error', 'rating threw', { modelId, error: errorMessage(error) });
+      log('error', 'rating threw', { modelId, ...errorFields(error) });
       return { status: 'failed' as const, workflows: 0, csamHits: 0 };
     });
     counts[result.status]++;
@@ -401,9 +401,7 @@ export async function processComFaceVersionText(
     if (result.status === 'complete') {
       await dbWrite
         .$executeRaw(Prisma.sql`DELETE FROM "KeyValue" WHERE ${unchanged}`)
-        .catch((error) =>
-          log('error', 'queue delete failed', { modelId, error: errorMessage(error) })
-        );
+        .catch((error) => log('error', 'queue delete failed', { modelId, ...errorFields(error) }));
       continue;
     }
     if (result.status === 'partial') continue;
@@ -412,9 +410,7 @@ export async function processComFaceVersionText(
       log('error', 'left the queue without verdicts', { modelId, attempts: attempt - 1 });
       await dbWrite
         .$executeRaw(Prisma.sql`DELETE FROM "KeyValue" WHERE ${unchanged}`)
-        .catch((error) =>
-          log('error', 'queue delete failed', { modelId, error: errorMessage(error) })
-        );
+        .catch((error) => log('error', 'queue delete failed', { modelId, ...errorFields(error) }));
       continue;
     }
     const next: QueueEntry = {
@@ -429,9 +425,7 @@ export async function processComFaceVersionText(
       .$executeRaw(
         Prisma.sql`UPDATE "KeyValue" SET value = ${JSON.stringify(next)}::jsonb WHERE ${unchanged}`
       )
-      .catch((error) =>
-        log('error', 'queue retry failed', { modelId, error: errorMessage(error) })
-      );
+      .catch((error) => log('error', 'queue retry failed', { modelId, ...errorFields(error) }));
   }
   return counts;
 }
@@ -465,7 +459,8 @@ export const comVersionTextSweepSql = (limit: number, policy: string) => Prisma.
 
 /** Queues every model {@link comVersionTextSweepSql} finds, up to `limit`. Returns the ids queued. */
 export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIMIT) {
-  const found = await dbWrite.$queryRaw<{ modelId: number }[]>(
+  // The replica: a lagging read only re-queues a model already queued or rated, which costs nothing.
+  const found = await dbRead.$queryRaw<{ modelId: number }[]>(
     comVersionTextSweepSql(limit, await getComVersionTextPolicy())
   );
   const modelIds = found.map((row) => row.modelId);
@@ -482,6 +477,10 @@ export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIM
   return modelIds;
 }
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+/** Name and code only: a database error message can echo its arguments, which can be held text. */
+function errorFields(error: unknown) {
+  return {
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorCode: (error as { code?: unknown } | null | undefined)?.code,
+  };
 }

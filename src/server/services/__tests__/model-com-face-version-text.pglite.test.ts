@@ -87,6 +87,7 @@ const {
 } = await import('~/server/services/model-com-face-version-text.service');
 
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { logToAxiom } = await import('~/server/logging/client');
 
 const MODEL_ID = 7;
 
@@ -335,6 +336,24 @@ describe('rateComFaceVersionText', () => {
         { versionId: 2, field: 'trainedWords', index: 1 },
       ],
     });
+  });
+
+  it('logs a failed hold without its error message, which can carry the held text', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: ok({ csam: { detected: true, reason: '' } }) });
+    const error = Object.assign(new Error(`insert failed: ${modelSubject.fields[0].text} alpha`), {
+      code: 'P2010',
+    });
+    applyCsamHold.mockRejectedValue(error);
+    await queueComFaceVersionText(MODEL_ID);
+    vi.mocked(logToAxiom).mockClear();
+
+    await processComFaceVersionText(new Date(Date.now() + COM_VERSION_TEXT_QUIET_MS));
+
+    const logged = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    expect(logged).toContain('P2010');
+    expect(logged).not.toContain(String(modelSubject.fields[0].text));
+    expect(logged).not.toContain('alpha');
   });
 
   it('a csam hit with no Model scan subject fails the run and writes no verdicts', async () => {
@@ -623,7 +642,9 @@ describe('processComFaceVersionText', () => {
 describe('sweepComFaceVersionText', () => {
   it('queues faced models whose shown versions have no verdict, a pending one, or a stale one', async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    dbMock.dbWrite.$queryRaw.mockClear();
     await expect(sweepComFaceVersionText()).resolves.toEqual([MODEL_ID]);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
 
     await db.exec(`DELETE FROM "KeyValue"`);
     await rateComFaceVersionText(MODEL_ID);
