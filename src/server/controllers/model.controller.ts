@@ -2014,7 +2014,7 @@ async function associatedCardImages<
     browsingLevel: allBrowsingLevelsFlag,
     disablePoi: opts.disablePoi,
     disableMinor: opts.disableMinor,
-    viewer: opts.viewer,
+    viewer: exemptViewer,
   });
 }
 

@@ -144,6 +144,13 @@ describe('associated-resource card images', () => {
     expect(await cardImages({ user: { id: 99 } }, { disableMinor: true })).toEqual([1, 2, 3, 4]);
   });
 
+  // A guard: the route never sets pending, so the cache's images are all rated today.
+  it('guard: drops an unrated image for a moderator on a scoped key, not on a session', async () => {
+    getImagesForModelVersion.mockResolvedValue([image(1, NsfwLevel.PG), image(6, 0)]);
+    expect(await cardImages({ user: { id: 5, isModerator: true }, ...scopedKey })).toEqual([1]);
+    expect(await cardImages({ user: { id: 5, isModerator: true } })).toEqual([1, 6]);
+  });
+
   describe('a minor or SFW-only model', () => {
     // Stored at PG: the PG-13 entry drops, which the SFW fallback level would keep.
     beforeEach(() => {
