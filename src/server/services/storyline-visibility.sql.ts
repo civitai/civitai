@@ -1,9 +1,7 @@
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  semanticImageHeldText,
-  semanticUserHeldText,
-} from '~/server/services/semantic-held-content.sql';
+import { heldUserSql } from '@civitai/shared/held-media';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 
 /**
  * Storyline visibility as SQL text, for callers that build raw strings (the notification
@@ -43,9 +41,7 @@ export const storylineSemanticEligibleText = ({
   `(${st}."tosViolation" = false AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL
   AND ${storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" IS NOT NULL`)}
   AND ${rp}.availability = 'Public'
-  AND NOT ${semanticUserHeldText(`${st}."userId"`)} AND NOT ${semanticUserHeldText(
-    `${rp}."userId"`
-  )}
+  AND NOT ${heldUserSql(`${st}."userId"`)} AND NOT ${heldUserSql(`${rp}."userId"`)}
   AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = ${rp}.id
     AND ${semanticImageHeldText('ri')}))`;
 

@@ -21,7 +21,8 @@ export const STORYLINE_FROM = `"Storyline" st
  * (storyline-visibility.sql.ts) as SQL, held to it by the site's storyline-eligibility parity test.
  * Nothing held is indexed: not the owner, chapter 1's author, or any of chapter 1's images. A
  * storyline that stops matching loses its point at its next sync (an event, or the refresh walk).
- * Publication time is not part of it: the payload's rootPublishedAt is filtered at query time.
+ * Whether the publication time has passed is not part of it: the payload's rootPublishedAt is
+ * filtered at query time.
  */
 export const STORYLINE_ELIGIBLE_SQL = `(st."tosViolation" = false AND u."bannedAt" IS NULL
   AND u."deletedAt" IS NULL AND rp.id IS NOT NULL AND rc."removedAt" IS NULL
