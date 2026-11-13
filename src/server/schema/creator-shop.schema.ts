@@ -524,6 +524,11 @@ const rightsAffirmedSchema = z
 // can't be charged a number the creator never saw.
 const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
 
+// Minted by the client once per submission and resent on its retries. The fee is charged under an
+// id derived from it, so a retry after an unanswered submit cannot charge again. Optional: a client
+// from before keys gets a new charge id per call, as before.
+const submissionIdempotencyKeySchema = z.string().uuid().optional();
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -559,6 +564,7 @@ export const submitCreatorShopItemSchema = z
     // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
     rightsAffirmed: rightsAffirmedSchema,
     quotedFee: quotedFeeSchema,
+    idempotencyKey: submissionIdempotencyKeySchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -621,6 +627,7 @@ export const submitCreatorShopPackSchema = z.object({
   // without one supplies none. Its members were each affirmed at submission.
   rightsAffirmed: rightsAffirmedSchema.optional(),
   quotedFee: quotedFeeSchema,
+  idempotencyKey: submissionIdempotencyKeySchema,
 });
 
 export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
@@ -911,6 +918,7 @@ export const submitMysteryPackSchema = mysteryPackProposalSchema.extend({
   rightsAffirmed: rightsAffirmedSchema.optional(),
   buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
   quotedFee: quotedFeeSchema,
+  idempotencyKey: submissionIdempotencyKeySchema,
 });
 
 export type ReviseMysteryPackInput = z.infer<typeof reviseMysteryPackSchema>;
