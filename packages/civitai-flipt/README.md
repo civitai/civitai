@@ -70,7 +70,10 @@ app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
   `snapshotStore` (or call `setSnapshotStore`), and a process
   that cannot reach Flipt at startup evaluates from the newest stored snapshot no older than
   `FLIPT_SNAPSHOT_MAX_AGE_MS`, logging that it did, instead of answering `false` for every flag.
-  It switches to live state as soon as a background retry succeeds. Processes with live state keep
+  It switches to live state as soon as a background retry succeeds. Until then, each failed retry
+  reloads the store and switches to a newer snapshot if one was saved, and a snapshot that ages past
+  `FLIPT_SNAPSHOT_MAX_AGE_MS` while in use is dropped (flags then answer as if none was stored).
+  Processes with live state keep
   the store current; `createKvSnapshotStore` builds one over any key-value store with TTLs and holds
   the write rate near one per 10 minutes across all of them. The monolith's is
   `src/server/flipt/snapshot-store.ts` (sysRedis).

@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFliptClient } from '../client';
 import type { FliptSnapshot, FliptSnapshotStore } from '../snapshot';
 
@@ -82,6 +82,7 @@ function client(
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const c of clients.splice(0)) c.getClientSync()?.close();
   await Promise.all(
     servers.splice(0).map((s) => new Promise<void>((resolve) => s.close(() => resolve())))
@@ -172,6 +173,91 @@ describe('the snapshot round trip between processes', () => {
     expect(await flipt.isEnabled('default-on-flag')).toBe(false); // live state
     // ...on the sync readers too, which read whichever client is current.
     expect(flipt.isEnabledSync('default-on-flag')).toBe(false);
+  });
+});
+
+// A process that alone cannot reach Flipt, past its first attempt. Regression: before, the first
+// seed was final: failed retries never reloaded the store, and the seeded state served forever,
+// whatever its age, because the age was checked only when seeding.
+describe('a seeded process while Flipt stays down', () => {
+  const offData = { namespace: { key: 'default' }, flags: [flag('default-on-flag', false)] };
+
+  function retryingClient(url: string, store: FliptSnapshotStore, logs: string[] = []) {
+    const flipt = createFliptClient({
+      url,
+      clientToken: 'token',
+      environment: 'test-env',
+      localOverrides: {},
+      log: (message) => logs.push(message),
+      onInitError: () => {},
+      snapshotStore: store,
+      snapshotMaxAgeMs: ON,
+      failureCooldownMs: 0,
+      evalCacheTtlMs: 0,
+    });
+    clients.push(flipt);
+    return flipt;
+  }
+
+  /** Trigger background retries until `check` holds, or give up after `ms`. */
+  async function retryUntil(
+    flipt: ReturnType<typeof createFliptClient>,
+    check: () => boolean,
+    ms = 2000
+  ) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      await flipt.ensureInitialized(); // starts a retry (no cooldown) without waiting on it
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  it('picks up a newer snapshot a healthy sibling saved since the seed', async () => {
+    const { store } = memoryStore({ savedAt: Date.now() - 60_000, data: snapshotData });
+    const flipt = retryingClient(await downUrl(), store);
+    expect(await flipt.isEnabled('default-on-flag')).toBe(true); // seeded from the first snapshot
+
+    // A sibling with live state saves a flip.
+    await store.save({ savedAt: Date.now(), data: offData }, true);
+    await retryUntil(flipt, () => flipt.isEnabledSync('default-on-flag') === false);
+
+    expect(flipt.isEnabledSync('default-on-flag')).toBe(false);
+    expect(await flipt.isEnabled('default-on-flag')).toBe(false);
+  });
+
+  it('keeps the seeded state when the store holds nothing newer', async () => {
+    const seededAt = Date.now() - 60_000;
+    const { store } = memoryStore({ savedAt: seededAt, data: snapshotData });
+    const flipt = retryingClient(await downUrl(), store);
+    expect(await flipt.isEnabled('default-on-flag')).toBe(true);
+
+    // An OLDER snapshot appears (e.g. a lagging writer): it must not replace the seeded one.
+    let loads = 0;
+    store.load = async () => {
+      loads++;
+      return { savedAt: seededAt - 1_000, data: offData };
+    };
+    await retryUntil(flipt, () => loads >= 3);
+
+    expect(loads).toBeGreaterThanOrEqual(3); // positive control: the retries did reload the store
+    expect(flipt.isEnabledSync('default-on-flag')).toBe(true);
+  });
+
+  it('stops serving the seeded state once it is older than the age limit', async () => {
+    const logs: string[] = [];
+    const { store } = memoryStore({ savedAt: Date.now() - 60_000, data: snapshotData });
+    const flipt = client(await downUrl(), store, logs);
+    expect(await flipt.isEnabled('default-on-flag')).toBe(true); // seeded, well inside the limit
+
+    // A day and an hour later, Flipt still down, nothing newer stored.
+    const realNow = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(realNow + ON + 60 * 60 * 1000);
+
+    expect(flipt.isEnabledSync('default-on-flag')).toBeNull();
+    expect(await flipt.isEnabled('default-on-flag')).toBe(false);
+    expect(flipt.getClientSync()).toBeNull();
+    expect(logs.some((l) => l.includes('no longer used'))).toBe(true);
   });
 });
 

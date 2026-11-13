@@ -174,7 +174,11 @@ export function startHealthMetricsLoop(options: HealthMetricsLoopOptions = {}): 
 export const WARM_POLL_MS = 1_000;
 export const WARM_MAX_WAIT_MS = 120_000;
 
-/** Start the loop once `isWarm()` reads true, or after `maxWaitMs`, whichever comes first. Never throws. */
+/**
+ * Start the loop once `isWarm()` reads true, or after `maxWaitMs`, whichever comes first. When the
+ * loop is switched off (`intervalMs` null, default from HEALTH_METRICS_INTERVAL_MS) it calls
+ * `start` at once, which logs "off", and never polls the warm flag. Never throws.
+ */
 export function startHealthMetricsLoopWhenWarm(
   isWarm: () => boolean,
   {
@@ -182,8 +186,19 @@ export function startHealthMetricsLoopWhenWarm(
     maxWaitMs = WARM_MAX_WAIT_MS,
     start = () => startHealthMetricsLoop(),
     now = () => Date.now(),
-  }: { pollMs?: number; maxWaitMs?: number; start?: () => unknown; now?: () => number } = {}
+    intervalMs = resolveHealthMetricsIntervalMs(process.env.HEALTH_METRICS_INTERVAL_MS),
+  }: {
+    pollMs?: number;
+    maxWaitMs?: number;
+    start?: () => unknown;
+    now?: () => number;
+    intervalMs?: number | null;
+  } = {}
 ): void {
+  if (intervalMs === null) {
+    start();
+    return;
+  }
   const startedWaitingAt = now();
   const ready = () => {
     try {

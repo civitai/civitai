@@ -377,10 +377,36 @@ describe('health metrics loop — interval above the timer limit', () => {
 });
 
 describe('health metrics loop — waits for the warm flag, not for runWarmup()', () => {
+  const ON_MS = 15_000;
+
+  // Regression (red before the interval check): a switched-off loop used to poll the warm flag
+  // every second for up to WARM_MAX_WAIT_MS, only to then log "off".
+  it('switched off: calls start (which logs "off") at once and never polls the warm flag', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', '');
+    const startLoop = vi.fn();
+    const isWarm = vi.fn(() => false);
+    startHealthMetricsLoopWhenWarm(isWarm, { start: startLoop, pollMs: 1_000 });
+    expect(startLoop).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(isWarm).not.toHaveBeenCalled();
+    expect(startLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it('switched on via HEALTH_METRICS_INTERVAL_MS: waits for the warm flag (control)', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HEALTH_METRICS_INTERVAL_MS', '15000');
+    const startLoop = vi.fn();
+    startHealthMetricsLoopWhenWarm(() => false, { start: startLoop, pollMs: 1_000 });
+    expect(startLoop).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
   it('starts at once when the process is already warm', () => {
     vi.useFakeTimers();
     const startLoop = vi.fn();
-    startHealthMetricsLoopWhenWarm(() => true, { start: startLoop });
+    startHealthMetricsLoopWhenWarm(() => true, { start: startLoop, intervalMs: ON_MS });
     expect(startLoop).toHaveBeenCalledTimes(1);
   });
 
@@ -388,7 +414,11 @@ describe('health metrics loop — waits for the warm flag, not for runWarmup()',
     vi.useFakeTimers();
     const startLoop = vi.fn();
     let warm = false;
-    startHealthMetricsLoopWhenWarm(() => warm, { start: startLoop, pollMs: 1_000 });
+    startHealthMetricsLoopWhenWarm(() => warm, {
+      start: startLoop,
+      pollMs: 1_000,
+      intervalMs: ON_MS,
+    });
     await vi.advanceTimersByTimeAsync(5_000);
     expect(startLoop).not.toHaveBeenCalled();
 
@@ -402,7 +432,11 @@ describe('health metrics loop — waits for the warm flag, not for runWarmup()',
   it('starts at the hard cap when the flag never flips', async () => {
     vi.useFakeTimers();
     const startLoop = vi.fn();
-    startHealthMetricsLoopWhenWarm(() => false, { start: startLoop, pollMs: 1_000 });
+    startHealthMetricsLoopWhenWarm(() => false, {
+      start: startLoop,
+      pollMs: 1_000,
+      intervalMs: ON_MS,
+    });
     await vi.advanceTimersByTimeAsync(WARM_MAX_WAIT_MS - 1_000);
     expect(startLoop).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1_000);

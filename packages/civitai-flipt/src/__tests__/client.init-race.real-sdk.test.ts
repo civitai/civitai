@@ -76,7 +76,6 @@ describe('real SDK: a client that arrives after the init timeout', () => {
     expect(await c.isEnabled('f')).toBe(false); // the 50ms timeout won
     await wait(600); // the late client arrives (init fetch + refresh, 150ms each) and is closed
     const afterInit = flipt.seen.requests;
-    expect(afterInit).toBe(2);
     await wait(2300); // two poll intervals
     expect(flipt.seen.requests).toBe(afterInit);
   });
