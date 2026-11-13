@@ -114,6 +114,9 @@ export function useDrawnMediaBox(active: boolean) {
       observer = new ResizeObserver(measure);
       observer.observe(host);
       observer.observe(media);
+      // Media that moves without resizing (re-centred when the sticker timeline pads the
+      // container) fires nothing on itself or the host; the container's content box does change.
+      if (host.parentElement) observer.observe(host.parentElement);
       // The natural size arrives with the file, and no ResizeObserver fires for
       // it; it only matters if the media is ever cropped by `object-fit`.
       media.addEventListener('load', measure);

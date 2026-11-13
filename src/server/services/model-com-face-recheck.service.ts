@@ -9,10 +9,11 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { backoffDelay } from '~/utils/backoff';
 
 const QUEUE = 'com-face-recheck';
 /** A model whose check got no verdict waits in a KeyValue row under this prefix until its next try. */
-const RETRY_KEY_PREFIX = 'com-face-recheck:';
+export const RETRY_KEY_PREFIX = 'com-face-recheck:';
 
 /** Retries back off from the first delay, doubling up to the max, until the window since the oldest
  *  edit still without a verdict runs out. */
@@ -46,9 +47,9 @@ export async function queueComFaceRecheck(modelId: number) {
 export const dueRetryRowSql = (modelId: number, since: Date) => {
   const value: RetryState = { since: since.toISOString(), attempt: 0, nextAt: '' };
   return Prisma.sql`
-    INSERT INTO "KeyValue" (key, value) VALUES (${retryKey(modelId)}, ${JSON.stringify(
-    value
-  )}::jsonb)
+    INSERT INTO "KeyValue" (key, value) VALUES (${comFaceRecheckRetryKey(
+      modelId
+    )}, ${JSON.stringify(value)}::jsonb)
     ON CONFLICT (key) DO UPDATE
     SET value = "KeyValue".value || '{"attempt":0,"nextAt":""}'::jsonb
   `;
@@ -321,9 +322,12 @@ export async function processComFaceRestores(now = new Date(), budgetMs = COM_FA
   return counts;
 }
 
-const retryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
+export const comFaceRecheckRetryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
 const retryDelay = (attempt: number) =>
-  Math.min(COM_FACE_RECHECK_FIRST_DELAY_MS * 2 ** (attempt - 1), COM_FACE_RECHECK_MAX_DELAY_MS);
+  backoffDelay(attempt - 1, {
+    baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,
+    maxMs: COM_FACE_RECHECK_MAX_DELAY_MS,
+  });
 /** A run stops taking new models after this, inside the job lock; the rest wait for the next run.
  *  The re-checks and the restore checks share it. */
 export const COM_FACE_RUN_BUDGET_MS = 4 * 60_000;
@@ -368,7 +372,7 @@ export async function processComFaceRechecks(now = new Date()) {
   const waitingSince = new Map<number, string>();
   for (const row of waiting) {
     const modelId = Number(row.key.slice(RETRY_KEY_PREFIX.length));
-    if (!Number.isInteger(modelId) || retryKey(modelId) !== row.key) continue;
+    if (!Number.isInteger(modelId) || comFaceRecheckRetryKey(modelId) !== row.key) continue;
     const state = (row.value ?? {}) as Partial<RetryState>;
     // An unreadable start counts as out of time and an unreadable nextAt as due, so both fail closed.
     const since = Number.isFinite(Date.parse(state.since ?? ''))
@@ -404,7 +408,7 @@ export async function processComFaceRechecks(now = new Date()) {
 
       if (result !== 'unavailable' && result !== 'failed') {
         if (waitingSince.has(modelId))
-          await dbWrite.keyValue.deleteMany({ where: { key: retryKey(modelId) } });
+          await dbWrite.keyValue.deleteMany({ where: { key: comFaceRecheckRetryKey(modelId) } });
         continue;
       }
 
@@ -412,7 +416,7 @@ export async function processComFaceRechecks(now = new Date()) {
       if (now.getTime() - new Date(since).getTime() >= COM_FACE_RECHECK_WINDOW_MS) {
         // Fail closed: no verdict on the current listing means the face does not stay up.
         const removed = await removeUnverified(modelId);
-        await dbWrite.keyValue.deleteMany({ where: { key: retryKey(modelId) } });
+        await dbWrite.keyValue.deleteMany({ where: { key: comFaceRecheckRetryKey(modelId) } });
         if (removed) {
           counts.gaveUp++;
           logError(COM_FACE_RECHECK_GAVE_UP, modelId);
@@ -430,8 +434,8 @@ export async function processComFaceRechecks(now = new Date()) {
         ).toISOString(),
       };
       await dbWrite.keyValue.upsert({
-        where: { key: retryKey(modelId) },
-        create: { key: retryKey(modelId), value },
+        where: { key: comFaceRecheckRetryKey(modelId) },
+        create: { key: comFaceRecheckRetryKey(modelId), value },
         update: { value },
       });
     } catch (error) {

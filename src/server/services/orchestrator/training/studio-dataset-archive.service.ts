@@ -27,6 +27,7 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { getGetUrlByKey, getUploadBucket, getUploadS3Client } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { buildUploadKey } from '~/utils/upload-key';
+import { backoffDelay } from '~/utils/backoff';
 
 /**
  * A Training Studio run trains on orchestrator blobs, never a zip, so publishing it creates a
@@ -471,7 +472,7 @@ const SERVICE_RETRY_BASE_MS = 60 * 60 * 1000;
 const SERVICE_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
 /** 1h, 2h, 4h ... capped at a day: still retried, without crowding newer rows out of a run. */
 export function serviceRetryDelayMs(attempts: number) {
-  return Math.min(SERVICE_RETRY_BASE_MS * 2 ** (attempts - 1), SERVICE_RETRY_MAX_MS);
+  return backoffDelay(attempts - 1, { baseMs: SERVICE_RETRY_BASE_MS, maxMs: SERVICE_RETRY_MAX_MS });
 }
 
 function serviceToken() {

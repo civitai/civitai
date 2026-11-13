@@ -65,7 +65,7 @@ import type {
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex } from '~/server/search-index';
 import { collectionWithoutImageSelect } from '~/server/selectors/collection.selector';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -4365,10 +4365,6 @@ export const setCollectionItemNsfwLevel = async ({
     scanLevel: image.nsfwLevel,
     finalLevel: updated.nsfwLevel,
   }).catch();
-
-  await imagesSearchIndex.queueUpdate([
-    { id: imageId, action: SearchIndexUpdateQueueAction.Update },
-  ]);
 
   // `rescanning`: the judge's level applies once the rescan's checks have run at it.
   return {

@@ -222,6 +222,7 @@ export async function collectPage<T extends { id: number }>({
   excluded?: Set<number>;
 }) {
   const items: T[] = [];
+  const kept = new Set<number>();
   let position = offset;
   let exhausted = false;
 
@@ -244,7 +245,10 @@ export async function collectPage<T extends { id: number }>({
       if (items.length >= limit) break;
       consumed++;
       const item = byId.get(id);
-      if (item && !excluded.has(id)) items.push(item);
+      // Ties in the ranking reorder between requests, so a later round can repeat an earlier id.
+      if (!item || excluded.has(id) || kept.has(id)) continue;
+      kept.add(id);
+      items.push(item);
     }
     position += consumed;
     if (ids.length < batchSize && consumed === ids.length) {
@@ -258,12 +262,16 @@ export async function collectPage<T extends { id: number }>({
 }
 
 /** Tag names, as search URLs and pickers carry them, to ids; a name that does not exist is dropped. */
-export async function resolveTagIds(names: string[]) {
-  const tags = await dbRead.tag.findMany({
+/** Tag names (case-insensitively) to the tags they name; a name that does not exist is absent. */
+export async function resolveTags(names: string[]) {
+  return dbRead.tag.findMany({
     where: { name: { in: names.map((name) => name.toLowerCase()) } },
-    select: { id: true },
+    select: { id: true, name: true },
   });
-  return tags.map((x) => x.id);
+}
+
+export async function resolveTagIds(names: string[]) {
+  return (await resolveTags(names)).map((x) => x.id);
 }
 
 /** Usernames to user ids; a name that does not exist is dropped. */

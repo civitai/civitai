@@ -24,8 +24,6 @@ const OPTED_IN_HOT_READS = [
   'src/server/orchestrator/get-orchestrator-token.ts',
   // generation client version, every generation tRPC call
   'src/server/routers/orchestrator.router.ts',
-  // image-existence cache, the image feed
-  'src/server/services/image.service.ts',
   // browsing-setting add-ons, every SSR render
   'src/server/services/system-cache.ts',
   // client version (needsUpdate), every web tRPC procedure
