@@ -380,6 +380,20 @@ describe('hide-lost-original-images', () => {
     expect(calls.flat().sort()).toEqual([1, 2, 3]);
   });
 
+  it('--rebust without --apply writes nothing', async () => {
+    const { deps, propagated } = makeDeps();
+    await run(options(), GONE, deps);
+    propagated.length = 0;
+    const n = await rebust(
+      GONE.map((id) => ({ id, prior: 'Scanned' })),
+      'hide',
+      options({ apply: false }),
+      deps
+    );
+    expect(n).toBe(0);
+    expect(propagated).toEqual([]);
+  });
+
   it('reads the log with a torn last line, and the ids file strictly', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hide-test-'));
     const log = path.join(dir, 'log');
@@ -411,6 +425,37 @@ describe('hide-lost-original-images', () => {
     // Targets spread over the id range, so the control samples live-900 (present) and live-950 (missing).
     await expect(run(options(), [...GONE, 940], deps)).rejects.toThrow(/control failed/);
     expect(await ingestion(1)).toBe('Scanned');
+  });
+
+  it('stops before writing a chunk when the control fails mid-run', async () => {
+    let controlHeads = 0;
+    const { deps } = makeDeps({
+      head: async (url) => {
+        if (url.startsWith('live-')) {
+          controlHeads += 1;
+          // The first chunk's control (5 HEADs at start, 5 before the write) passes; later ones fail.
+          return controlHeads > 10 ? 'missing' : 'present';
+        }
+        return 'missing';
+      },
+    });
+    await expect(run(options({ chunk: 1 }), GONE, deps)).rejects.toThrow(/mid-run/);
+    expect(await ingestion(1)).toBe('NotFound');
+    expect(await ingestion(2)).toBe('Scanned');
+  });
+
+  it('skips a url with whitespace without a HEAD', async () => {
+    await db.exec(`UPDATE "Image" SET url = 'gone-1 ' WHERE id = 1`);
+    const heads: string[] = [];
+    const { deps } = makeDeps({
+      head: async (u) => {
+        heads.push(u);
+        return u.startsWith('gone-') ? 'missing' : 'present';
+      },
+    });
+    const counts = await run(options(), GONE, deps);
+    expect(heads).not.toContain('gone-1 ');
+    expect(counts['skipped:odd-url']).toBe(1);
   });
 
   it('reports how many control images vouched for the HEADs', async () => {

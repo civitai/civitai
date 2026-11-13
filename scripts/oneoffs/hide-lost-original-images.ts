@@ -17,14 +17,13 @@
  * Options:
  *   --ids <file>              Image ids, one per line.
  *   --log <file>              Run log (append-only JSON lines). Off-repo.
- *   --apply                   Write. Without it nothing is written (--rebust is the exception: it
- *                             writes search and caches only).
+ *   --apply                   Write. Without it nothing is written.
  *   --limit <n>               Hide at most n rows this run.
  *   --chunk <n>               Ids per step, 1-500 (default 200).
  *   --concurrency <n>         HEADs in flight, 1-20 (default 10).
  *   --pause-ms <n>            Pause between chunks (default 1000).
- *   --rebust hide|undo        Catch search and caches up for the log's rows (after a stop that
- *                             said "run --rebust"). Writes search and caches, not Image.
+ *   --rebust hide|undo        With --apply, catch search and caches up for the log's rows (after a
+ *                             stop that said "run --rebust"). Writes search and caches, not Image.
  *   --include-unconfirmed     Undo and rebust also act on log rows never confirmed hidden.
  *   --cross-check-rerun       Required to --apply after CROSS_CHECK_EXPIRES: the Moderation Lead's
  *                             full cross-check was re-run first.
@@ -238,6 +237,10 @@ export async function rebust(
   options: RunOptions,
   deps: Deps
 ) {
+  if (!options.apply) {
+    deps.log(`would catch up search and caches for up to ${entries.length} rows (pass --apply)`);
+    return 0;
+  }
   const groups = new Map<string, number[]>();
   for (const e of entries) {
     const state = action === 'hide' ? 'NotFound' : e.prior;
@@ -299,6 +302,8 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
     const eligible = rows.filter((r) => {
       if (r.skip) bump(counts, `skipped:${r.skip}`);
       else if (deps.isExternal(r.url)) bump(counts, 'skipped:external-url');
+      // A key with whitespace is not the form the control images use; a HEAD for it proves nothing.
+      else if (!/^\S+$/.test(r.url)) bump(counts, 'skipped:odd-url');
       else return true;
       return false;
     });
@@ -321,6 +326,10 @@ export async function run(options: RunOptions, ids: number[], deps: Deps) {
       return false;
     });
     bump(counts, 'still-404', gone.length);
+
+    // A bucket incident part-way through would 404 live images; the start-of-run control cannot see it.
+    if (options.apply && gone.length && !(await controlOk(ids, deps)))
+      throw new Error('control failed mid-run: stopped before this chunk was written');
 
     const room = options.limit - hidden;
     const batch = gone.slice(0, room);
@@ -399,7 +408,7 @@ export function appendDurable(file: string, text: string) {
     const body = fs.readFileSync(file, 'utf8');
     if (body && !body.endsWith('\n')) fs.truncateSync(file, body.lastIndexOf('\n') + 1);
   }
-  const fd = fs.openSync(file, 'a');
+  const fd = fs.openSync(file, 'a', 0o600);
   try {
     fs.writeSync(fd, text);
     fs.fsyncSync(fd);
@@ -496,8 +505,7 @@ async function main() {
   if (options.rebust) await rebust(acted(), options.rebust, options, deps);
   else if (options.undo) await undo(acted(), options, deps);
   else await run(options, readIds(options.idsFile as string), deps);
-  if (!options.apply && !options.rebust)
-    deps.log('dry run: nothing written (pass --apply to write)');
+  if (!options.apply) deps.log('dry run: nothing written (pass --apply to write)');
   if (fs.existsSync(logFile))
     deps.log(`log sha256: ${createHash('sha256').update(fs.readFileSync(logFile)).digest('hex')}`);
 }
