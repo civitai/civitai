@@ -2395,7 +2395,8 @@ export const submitEntry = async ({
           reusable: true,
           beforeCharging: assertCanPayFee,
           charge: () => chargeFee(prefix),
-          declined: () => throwBadRequestError('Unable to charge the entry fee'),
+          declined: () =>
+            new TRPCError({ code: 'BAD_REQUEST', message: 'Unable to charge the entry fee' }),
         });
         const { entry, recordedHere } = await recordKeyedCharge(prefix, feeContext, {
           findRecorded: async (tx) => {

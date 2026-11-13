@@ -1067,7 +1067,10 @@ export async function createEntityAppeal({
           reusable: true,
           charge: () => charge(prefix),
           declined: () =>
-            throwBadRequestError('There was an error creating the appeal transaction.'),
+            new TRPCError({
+              code: 'BAD_REQUEST',
+              message: 'There was an error creating the appeal transaction.',
+            }),
         });
         return recordKeyedCharge(prefix, feeContext, {
           findRecorded: (tx) =>
