@@ -77,7 +77,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, username text, settings jsonb, "bannedAt" timestamp, "deletedAt" timestamp
     );
     CREATE TABLE "Model" (
-      id int PRIMARY KEY, "userId" int NOT NULL, "coverImageId" int, "sfwCoverImageId" int
+      id int PRIMARY KEY, "userId" int NOT NULL, "coverImageId" int, "sfwCoverImageId" int,
+      nsfw boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Post" (
@@ -146,7 +147,7 @@ beforeEach(async () => {
     DELETE FROM "ModelVersionShowcaseItem"; DELETE FROM "Image"; DELETE FROM "Post";
     DELETE FROM "UserEngagement"; DELETE FROM "CreatorGalleryHiddenUser";
     DELETE FROM "User" WHERE id <> ${CREATOR};
-    UPDATE "Model" SET "coverImageId" = NULL, "sfwCoverImageId" = NULL;
+    UPDATE "Model" SET "coverImageId" = NULL, "sfwCoverImageId" = NULL, nsfw = false;
   `);
 });
 
@@ -290,6 +291,22 @@ describe('when a featured image stops qualifying', () => {
 
     expect(saveModelCovers).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL, covers: { coverImageId: null } })
+    );
+  });
+
+  it("clears a mature model's community .com cover, and keeps its .red one", async () => {
+    const com = await featured({ site: 'com' });
+    const red = await featured();
+    await db.query(
+      `UPDATE "Model" SET nsfw = true, "sfwCoverImageId" = $1, "coverImageId" = $2 WHERE id = $3`,
+      [com, red, MODEL]
+    );
+
+    await dropInvalidCommunityCovers([MODEL]);
+
+    expect(saveModelCovers).toHaveBeenCalledTimes(1);
+    expect(saveModelCovers).toHaveBeenCalledWith(
+      expect.objectContaining({ modelId: MODEL, covers: { sfwCoverImageId: null } })
     );
   });
 

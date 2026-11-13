@@ -221,8 +221,8 @@ export async function getVersionShowcaseImageIds({
     const community = new Set(
       entry.community.filter((image) => image.site === site).map((image) => image.id)
     );
-    // The owner cache holds the first 20; an owner image positioned further down comes from its row
-    // (the carousel's hydrate re-checks every id against the viewer's filters).
+    // The owner cache holds only the first page; an owner image positioned beyond it comes from its
+    // row (the carousel's hydrate re-checks every id against the viewer's filters).
     const ownerRows = rows.filter((row) => row.source === 'Owner').map((row) => row.imageId);
     const owner = [...new Set([...ownerImageIds, ...ownerRows])].filter((id) => !excluded.has(id));
     const available = new Set([...owner, ...community]);
@@ -239,15 +239,7 @@ export async function getVersionShowcaseImageIds({
     ];
     return [...new Set(ordered)].slice(0, VERSION_SHOWCASE_LIMIT);
   } catch (error) {
-    void logToAxiom(
-      {
-        type: 'error',
-        name: 'version-showcase-read-failed',
-        modelVersionId,
-        message: (error as Error).message,
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    logShowcaseError('version-showcase-read-failed', error, { modelVersionId });
     return null;
   }
 }
@@ -282,15 +274,7 @@ export async function getCarouselShowcaseIds({
       coverImageId: version?.model[coverColumnForSite(site)] ?? null,
     });
   } catch (error) {
-    void logToAxiom(
-      {
-        type: 'error',
-        name: 'version-showcase-read-failed',
-        modelVersionId,
-        message: (error as Error).message,
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    logShowcaseError('version-showcase-read-failed', error, { modelVersionId });
     return null;
   }
 }
@@ -370,9 +354,9 @@ async function findShowcaseCommunityCovers(
   return found;
 }
 
-function logShowcaseError(name: string, error: unknown) {
+function logShowcaseError(name: string, error: unknown, fields?: Record<string, unknown>) {
   void logToAxiom(
-    { type: 'error', name, message: (error as Error)?.message ?? String(error) },
+    { type: 'error', name, ...fields, message: (error as Error)?.message ?? String(error) },
     'civitai-prod'
   ).catch(() => undefined);
 }
@@ -399,8 +383,8 @@ export async function getShowcaseVersionsForPosts(postIds: number[]) {
 
 /**
  * Clears any model cover that is a community image no longer allowed there (removed, its author
- * banned, opted out or blocked, the image moderated), judged against the current state. The
- * creator's own covers are left alone.
+ * banned, opted out or blocked, the image moderated, or the model now mature on .com), judged
+ * against the current state. The creator's own covers are left alone.
  */
 export async function dropInvalidCommunityCovers(modelIds: number[]) {
   const ids = [...new Set(modelIds)];
@@ -409,13 +393,14 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
     {
       id: number;
       userId: number;
+      nsfw: boolean;
       coverImageId: number | null;
       sfwCoverImageId: number | null;
       coverUserId: number | null;
       sfwCoverUserId: number | null;
     }[]
   >`
-    SELECT m.id, m."userId", m."coverImageId", m."sfwCoverImageId",
+    SELECT m.id, m."userId", m.nsfw, m."coverImageId", m."sfwCoverImageId",
       ci."userId" AS "coverUserId", si."userId" AS "sfwCoverUserId"
     FROM "Model" m
     LEFT JOIN "Image" ci ON ci.id = m."coverImageId"
@@ -430,14 +415,20 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
       ] as const
     )
       .filter(([, imageId, imageUserId]) => imageId && imageUserId && imageUserId !== model.userId)
-      .map(([site, imageId]) => ({ modelId: model.id, site, imageId: imageId as number }))
+      .map(([site, imageId]) => ({
+        modelId: model.id,
+        site,
+        imageId: imageId as number,
+        // A mature model's .com cover must be the creator's own image.
+        allowed: !(site === 'com' && model.nsfw),
+      }))
   );
   if (!candidates.length) return;
   // Refreshes the versions holding the covers, which need not be the ones the caller refreshed.
   const valid = await getShowcaseCommunityCovers(candidates, { primary: true });
   const { saveModelCovers } = await import('~/server/services/model-cover.service');
-  for (const { modelId, site, imageId } of candidates) {
-    if (isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
+  for (const { modelId, site, imageId, allowed } of candidates) {
+    if (allowed && isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
     await saveModelCovers({
       modelId,
       covers: { [coverColumnForSite(site)]: null },
@@ -455,14 +446,14 @@ export async function bustVersionShowcasesForPosts(postIds: number[]) {
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     await dropInvalidCommunityCovers(affected.map((row) => row.modelId));
   } catch (error) {
-    // Runs after the write it follows has committed; the hour TTL is the backstop.
+    // Runs after the write it follows has committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
 
 /**
  * Refreshes every showcase holding a user's images: after a ban, an opt-out, or a block or gallery
- * hide involving them. Starts from the showcase table, which is small, not from the user's images.
+ * hide involving them. Starts from the showcase table, not from the user's images.
  * With `ownerId`, only that creator's models (a block or hide is between two people).
  */
 export async function bustVersionShowcasesForUser(userId: number, ownerId?: number) {
@@ -481,7 +472,7 @@ export async function bustVersionShowcasesForUser(userId: number, ownerId?: numb
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     await dropInvalidCommunityCovers(affected.map((row) => row.modelId));
   } catch (error) {
-    // Runs after the write it follows has committed; the hour TTL is the backstop.
+    // Runs after the write it follows has committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
@@ -500,12 +491,10 @@ export async function bustVersionShowcasesForModels(modelIds: number[]) {
     await refreshVersionShowcases(affected.map((row) => row.modelVersionId));
     await dropInvalidCommunityCovers(modelIds);
   } catch (error) {
-    // Runs after the write it follows has committed; the hour TTL is the backstop.
+    // Runs after the write it follows has committed.
     logShowcaseError('version-showcase-bust-failed', error);
   }
 }
-
-// --- Writes -------------------------------------------------------------------------------------
 
 export type VersionShowcaseItemInput = {
   imageId: number;
@@ -818,8 +807,6 @@ async function notifyFeaturedAuthors({
     }).catch(() => null);
   }
 }
-
-// --- Reads for the editor and for authors ---------------------------------------------------------
 
 /** What the showcase editor needs for one version: both sites' rows and the images to arrange. */
 export async function getVersionShowcaseEditor({

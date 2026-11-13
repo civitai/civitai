@@ -456,4 +456,32 @@ describe('removeMyImageFromVersionShowcase', () => {
     ).rejects.toThrow(/your own images/);
     expect(dbMock.dbWrite.modelVersionShowcaseItem.updateMany).not.toHaveBeenCalled();
   });
+
+  it('leaves a tombstone on the author’s own image', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
+    dbMock.dbWrite.modelVersionShowcaseItem.updateMany.mockResolvedValue({ count: 1 } as never);
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: VERSION,
+      status: 'Published',
+      model: { id: 1, name: 'Model', userId: 5, nsfw: false, status: 'Published' },
+    } as never);
+    await showcase.removeMyImageFromVersionShowcase({
+      modelVersionId: VERSION,
+      imageId: 77,
+      userId: 9,
+    });
+    expect(dbMock.dbWrite.modelVersionShowcaseItem.updateMany).toHaveBeenCalledWith({
+      where: { modelVersionId: VERSION, imageId: 77, source: 'Community' },
+      data: { removed: true, position: null },
+    });
+    expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('says so when the image isn’t featured there', async () => {
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
+    dbMock.dbWrite.modelVersionShowcaseItem.updateMany.mockResolvedValue({ count: 0 } as never);
+    await expect(
+      showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
+    ).rejects.toThrow(/isn’t featured/);
+  });
 });

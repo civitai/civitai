@@ -28,6 +28,7 @@ save, which also refuses a save when either cover changed since it was read.
 - A cover may be a community image featured in that site's showcase.
 - On a mature model the civitai.com cover must be the creator's own image: it is what lists the
   model on civitai.com, and someone else's image must not decide that.
+  A model that turns mature drops a community civitai.com cover.
 - A non-mature model's civitai.com cover applies to civitai.com viewers without a civitai.com title.
 
 ## What a community image must pass

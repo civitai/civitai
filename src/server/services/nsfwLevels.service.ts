@@ -556,7 +556,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
 
 export async function updateModelNsfwLevels(modelIds: number[]) {
   if (!modelIds.length) return;
-  const models = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  const models = await dbWrite.$queryRaw<{ id: number; communityComCover: boolean }[]>(Prisma.sql`
     WITH level AS (
       SELECT
         mv."modelId" as "id",
@@ -594,11 +594,21 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
     )
     FROM level
     WHERE level.id = m.id AND (level."nsfwLevel" != m."nsfwLevel" OR m.nsfw = TRUE)
-    RETURNING m.id;
+    RETURNING m.id, (m.nsfw AND EXISTS (
+      SELECT 1 FROM "Image" ci WHERE ci.id = m."sfwCoverImageId" AND ci."userId" != m."userId"
+    )) AS "communityComCover";
   `);
   await modelsSearchIndex.queueUpdate(
     models.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  // A model turned mature can't keep someone else's image as its .com cover.
+  const matureWithCommunityCover = models.filter((model) => model.communityComCover);
+  if (matureWithCommunityCover.length) {
+    const { dropInvalidCommunityCovers } = await import(
+      '~/server/services/version-showcase.service'
+    );
+    await dropInvalidCommunityCovers(matureWithCommunityCover.map((model) => model.id));
+  }
 }
 
 /**
