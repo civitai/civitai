@@ -26,7 +26,13 @@ import {
   sysReadGuardRejectionCounter,
 } from '~/server/prom/sys-read-guard.metrics';
 import { withSysReadBreaker } from '~/server/redis/sys-read-deadline';
-import { isRevoked } from '../session-verifier';
+
+// This file is about the breakers alone, so the seen-marker fallback is off. With it on, a read the
+// breaker abandoned still settles into the record, and a later failed read denies from it; that would
+// pass the isolation case below even with the revocation read back on the shared breaker. The fallback
+// is read once when the check is built, so it is set before the verifier is loaded.
+envMock.set({ SESSION_REVOCATION_CACHE: false });
+const { isRevoked } = await import('../session-verifier');
 
 // The revocation read must not share a breaker with the other hot sys reads: a breaker opened by THEIR
 // failures would refuse the revocation read while the store still answers, and a revoked session would be
