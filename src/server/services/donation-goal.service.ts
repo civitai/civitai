@@ -26,6 +26,13 @@ import {
 } from '~/server/common/constants';
 import { queueModelEarlyAccessReindex } from '~/server/services/model.service';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  chargeWasDeclined,
+  PAYMENT_REFUNDED_MESSAGE,
+  paymentOutcomeUnknown,
+} from '~/server/services/buzz-keyed-charge';
+import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 // Batch read-side accessor for the public donation goal per entity — mirrors getPaidAccess. The
 // cache holds only the raw active goal + total; the DISPLAY filters are applied fresh here:
@@ -233,11 +240,30 @@ export async function ensureDonationGoal({
   await refreshPublicDonationGoalsCache(entityType, entityId);
 }
 
+/**
+ * The external id prefix of one donation's charge. With the client's key (a uuid, minted once per
+ * donation and resent on its retries) it is the same on every retry, so the ledger holds one charge
+ * for it. The goal, the donor and the amount come first, so a key can only ever name this donor's
+ * donation of this amount to this goal. `-k-` keeps it apart from the keyless form, whose prefix
+ * could otherwise match it in a prefix lookup. Without a key, a new prefix per call, as before.
+ */
+export function donationTransactionIdPrefix(
+  donationGoalId: number,
+  userId: number,
+  amount: number,
+  idempotencyKey: string | undefined
+) {
+  return idempotencyKey
+    ? `donation-k-${donationGoalId}-${userId}-${amount}-${idempotencyKey}`
+    : `donation-${donationGoalId}-${Date.now()}`;
+}
+
 export const donateToGoal = async ({
   donationGoalId,
   amount,
   userId,
   buzzType,
+  idempotencyKey,
 }: DonateToGoalInput & {
   userId: number;
   buzzType: BuzzSpendType;
@@ -272,10 +298,26 @@ export const donateToGoal = async ({
   }
 
   let performedTransaction = false;
-  const externalTransactionIdPrefix = `donation-${donationGoalId}-${Date.now()}`;
+  const externalTransactionIdPrefix = donationTransactionIdPrefix(
+    donationGoalId,
+    userId,
+    amount,
+    idempotencyKey
+  );
+  const reusable = idempotencyKey !== undefined;
 
-  try {
-    const transaction = await createMultiAccountBuzzTransaction({
+  // An earlier request under this key already recorded the donation (its response was lost):
+  // the donor has donated, so answer as that request would have, and charge nothing.
+  if (reusable) {
+    const recorded = await dbWrite.donation.findFirst({
+      where: { buzzTransactionId: externalTransactionIdPrefix, userId },
+      select: { id: true },
+    });
+    if (recorded) return goal;
+  }
+
+  const charge = () =>
+    createMultiAccountBuzzTransaction({
       amount,
       fromAccountId: userId,
       fromAccountTypes: [buzzType],
@@ -288,11 +330,43 @@ export const donateToGoal = async ({
       description: `Donation to ${goal.title}`,
       type: TransactionType.Donation,
     });
+  const outcomeContext = { externalTransactionId: externalTransactionIdPrefix, userId, amount };
 
-    if (!transaction.transactionIds || transaction.transactionIds.length === 0) {
-      throw new Error('There was an error creating the transaction.');
+  // A failure that may have committed is resent once under the same prefix: the ledger answers a
+  // leg it already holds as `duplicate` and moves nothing, so the resend charges at most once.
+  let transaction: Awaited<ReturnType<typeof charge>>;
+  try {
+    transaction = await charge();
+  } catch (error) {
+    if (chargeWasDeclined(error)) throw new Error('Failed to create donation');
+    try {
+      transaction = await charge();
+    } catch (resendError) {
+      throw paymentOutcomeUnknown(outcomeContext, 'donation resend failed after unknown outcome', {
+        error,
+        resendError,
+      });
     }
+  }
 
+  if (!transaction.transactionIds || transaction.transactionIds.length === 0)
+    throw new Error('Failed to create donation');
+
+  // Legs the ledger already held came from an earlier request under this key, which may have
+  // refunded them after failing to record the donation. Refunded money is not a donation.
+  if (reusable && transaction.transactionIds.some((leg) => leg.duplicate === true)) {
+    let reversed: unknown[];
+    try {
+      ({ reversed } = await getPrefixRefundState(externalTransactionIdPrefix));
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(outcomeContext, 'donation refund lookup failed', {
+        lookupError,
+      });
+    }
+    if (reversed.length > 0) throw throwBadRequestError(PAYMENT_REFUNDED_MESSAGE);
+  }
+
+  try {
     performedTransaction = true;
 
     await dbWrite.donation.create({
