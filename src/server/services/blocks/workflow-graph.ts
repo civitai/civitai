@@ -473,6 +473,19 @@ function isRefObject(value: Record<string, unknown>): boolean {
   return true;
 }
 
+const RECASED_REF_ERROR = 'a reference key must be spelled "$ref", "path", "default" or "format"';
+
+/**
+ * An object with `$ref` under any casing and a reference key spelled otherwise.
+ * Whether the orchestrator binds a re-cased key is not something this repo can
+ * know, so such an object is refused rather than walked as plain data.
+ */
+function hasRecasedRefKey(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value);
+  if (!keys.some((key) => key.toLowerCase() === '$ref')) return false;
+  return keys.some((key) => REF_KEYS.has(key.toLowerCase()) && !REF_KEYS.has(key));
+}
+
 type WalkState = { refs: number; loopVars: Set<string>; mediaRefsAllowed: boolean };
 
 /** A refusal message, or `null` when `value` is fine. */
@@ -494,6 +507,7 @@ function checkValue(
     return null;
   }
   const object = value as Record<string, unknown>;
+  if (hasRecasedRefKey(object)) return RECASED_REF_ERROR;
   if (isRefObject(object)) {
     if (typeof object.$ref !== 'string' || typeof object.path !== 'string') {
       return 'a reference needs a string "$ref" and a string "path"';

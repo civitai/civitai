@@ -11218,7 +11218,6 @@ function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
   // This arm's body has no `arguments`, so there is nothing a `repeat` may iterate.
   const unbounded = repeatUnboundedProblem($type, input, undefined);
   if (unbounded) throw new TRPCError({ code: 'BAD_REQUEST', message: unbounded });
-  // The same output-destination rule a multi-step workflow's steps get.
   const writeTarget = writeTargetProblem(input);
   if (writeTarget) throw new TRPCError({ code: 'BAD_REQUEST', message: writeTarget });
 }

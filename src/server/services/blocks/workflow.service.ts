@@ -739,6 +739,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
         step.$type,
         (step as unknown as { output?: unknown }).output
       );
+      if (split.truncated > 0) recordOutputTruncated(split.truncated);
       trainedEpochs.push(...split.trainedEpochs);
       model3dOutputs.push(...split.model3d);
       for (const m of split.media) {

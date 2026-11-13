@@ -420,8 +420,6 @@ function walkPassThroughOutput(
     liftBlob(value as OrchestratorBlobLike, sink, path);
     return {};
   }
-  // 🔴 Past the cap the subtree is dropped, never forwarded: it is unwalked, so
-  // anything blob-shaped inside it would otherwise reach the block raw.
   if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) {
     sink.truncated += 1;
     return null;

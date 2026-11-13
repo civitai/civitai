@@ -817,6 +817,23 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     }
   });
 
+  it.each([
+    ['a re-cased $ref', { $REF: 'gen', path: 'output.images[0].url' }],
+    ['a re-cased path', { $ref: 'gen', Path: 'output.images[0].url' }],
+    ['a $ref with a re-cased twin', { $ref: 'chat', $Ref: 'gen', path: 'output.text' }],
+  ])('🔴 refuses a reference object with %s', (_label, refObject) => {
+    const r = refusal([gen, step({ $type: 'chatCompletion', input: { x: refObject } })]);
+    expect(r.error).toBe(
+      'workflow step 1: a reference key must be spelled "$ref", "path", "default" or "format"'
+    );
+  });
+
+  it('CONTROL: an object that merely has a key named like a reference field is plain data', () => {
+    expect(
+      resolved([gen, step({ $type: 'chatCompletion', input: { x: { Path: 'a', Format: 'b' } } })])
+    ).toHaveLength(2);
+  });
+
   it('🔴 refuses any input key naming an output destination, at any depth and in any case', () => {
     for (const input of [
       { sourceUrl: 'https://a', destinationUrl: 'https://b' },
