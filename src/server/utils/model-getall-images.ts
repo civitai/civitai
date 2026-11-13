@@ -219,23 +219,10 @@ export function stripGetAllModelImage<T extends Record<string, unknown>>(image: 
 }
 
 /**
- * The exact per-model image wire transform the `model.getAll` response mapping
- * applies: reduce to `limit` images, then field-trim every surviving image. Both
- * steps return fresh arrays/objects — the shared image cache is never touched.
- *
- * Selection depends on `biased`:
- *   - `biased: false` (default, flag-OFF path + non-feed callers like home blocks /
- *     collections): naive first-`limit` cache order — BYTE-IDENTICAL to today.
- *   - `biased: true` (flag-ON `getAllModelImagesSlim` path only): the nsfw-biased
- *     coverage slice (`selectSlimGetAllModelImages`) — same count/byte win, but
- *     guarantees any viewer with a visible image in the full set keeps one in the
- *     slice, driving the feed-drop regression to ~0. See that fn's docs.
- */
-/**
- * The images a viewer may be sent, by the rule the client's hidden-preferences filter
- * (`useApplyHiddenPreferences`, models path) applies to level, poi and minor, so the server never
- * drops one the client would have shown. A model marked `nsfw` keeps everything up to the viewer's
- * highest level; an unrated image is kept only for its owner or a moderator.
+ * The images a viewer may be sent: the level, poi and minor rules of the client's hidden-preferences
+ * filter (`useApplyHiddenPreferences`, models path), applied at the caller's `browsingLevel`. A model
+ * marked `nsfw` keeps everything up to the highest level; an unrated image is kept only for its owner
+ * or a moderator, which the client does not require on an `nsfw` model.
  */
 export function filterImagesForViewer<
   T extends { nsfwLevel: number; userId?: number; poi?: boolean | null; minor?: boolean | null }
@@ -269,6 +256,19 @@ export function filterImagesForViewer<
   });
 }
 
+/**
+ * The exact per-model image wire transform the `model.getAll` response mapping
+ * applies: reduce to `limit` images, then field-trim every surviving image. Both
+ * steps return fresh arrays/objects — the shared image cache is never touched.
+ *
+ * Selection depends on `biased`:
+ *   - `biased: false` (default, flag-OFF path + non-feed callers like home blocks /
+ *     collections): naive first-`limit` cache order — BYTE-IDENTICAL to today.
+ *   - `biased: true` (flag-ON `getAllModelImagesSlim` path only): the nsfw-biased
+ *     coverage slice (`selectSlimGetAllModelImages`) — same count/byte win, but
+ *     guarantees any viewer with a visible image in the full set keeps one in the
+ *     slice, driving the feed-drop regression to ~0. See that fn's docs.
+ */
 export function buildGetAllModelImages<T extends Record<string, unknown>>(
   images: T[],
   limit = GET_ALL_IMAGES_PER_MODEL,

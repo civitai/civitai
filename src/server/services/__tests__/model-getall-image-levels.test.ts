@@ -145,7 +145,17 @@ describe('getModelsWithImagesAndModelVersions card images', () => {
 
   it('keeps an nsfw model up to the viewer highest level, as the client does', async () => {
     modelRow.nsfw = true;
-    expect(await cardImages(1 | 2 | 4, { user: { id: 99 } })).toEqual([1, 4]);
+    vi.mocked(getImagesForModelVersionCache).mockResolvedValue({
+      [VERSION]: {
+        modelVersionId: VERSION,
+        images: [image(1, 1), image(2, 2), image(4, 4), image(8, 8)],
+      },
+    } as never);
+    expect(await cardImages(1 | 4, { user: { id: 99 } })).toEqual([1, 2, 4]);
+  });
+
+  it('leaves a caller that passes no browsing level unfiltered', async () => {
+    expect(await cardImages(undefined as never)).toEqual([1, 4, 8, 16]);
   });
 
   describe('poi and minor flags', () => {
