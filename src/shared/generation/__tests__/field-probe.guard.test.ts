@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GenerationCtx } from '~/shared/generation/context';
-import { probeFieldMeta } from '../field-probe';
+import { probeField, probeFieldMeta } from '../field-probe';
 
 const CTX: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
@@ -52,5 +52,48 @@ describe('probeFieldMeta guards on the workflow, not the ecosystem', () => {
     expect(
       probeFieldMeta('images', { workflow: 'txt2img', ecosystem: 'SDXL' }, CTX)
     ).toBeUndefined();
+  });
+});
+
+/**
+ * `probeField` keeps apart the two answers `probeFieldMeta` folds into `undefined`. The sampler
+ * catalog reports `absent` as "this family has no sampler control", so an `undetermined` that
+ * leaked through as `absent` would tell an app to hide a control the generator shows.
+ */
+describe('probeField separates absent from undetermined', () => {
+  it('absent: the pin survives and the route has no such field', () => {
+    expect(probeField('sampler', { workflow: 'txt2img', ecosystem: 'Flux1' }, CTX)).toEqual({
+      kind: 'absent',
+    });
+  });
+
+  it('present: carries the resolved value as well as the meta', () => {
+    const probe = probeField('sampler', { workflow: 'txt2img', ecosystem: 'SDXL' }, CTX);
+    expect(probe).toMatchObject({ kind: 'present', value: 'Euler a' });
+  });
+
+  it('undetermined, not present: Flux1/img2img is re-routed to SD1, which HAS a sampler', () => {
+    // The ecosystem guard is what makes this undetermined. Without it the answer is SD1's
+    // sampler list, reported as Flux1's.
+    expect(probeField('sampler', { workflow: 'img2img', ecosystem: 'Flux1' }, CTX)).toEqual({
+      kind: 'undetermined',
+    });
+  });
+
+  it('undetermined: a pinned model version the hub swapped for another', () => {
+    // HiDream is model-locked: version 1 is not one of its versions, so the hub swaps in the
+    // default (Dev), which has no sampler field. Unguarded this reads `absent` — a confident
+    // answer about a version nobody asked for.
+    expect(
+      probeField('sampler', { workflow: 'txt2img', ecosystem: 'HiDream', model: { id: 1 } }, CTX)
+    ).toEqual({ kind: 'undetermined' });
+    // Positive control: a version the hub keeps is answered — HiDream FP8 Full has UniPC.
+    expect(
+      probeField(
+        'sampler',
+        { workflow: 'txt2img', ecosystem: 'HiDream', model: { id: 1772448 } },
+        CTX
+      )
+    ).toMatchObject({ kind: 'present', value: 'UniPC' });
   });
 });

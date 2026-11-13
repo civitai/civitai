@@ -111,7 +111,8 @@ type IngestImageRow = IngestImageInput & {
   retryCount: number | null;
   /**
    * Reason-derived failure class stamped by the scan webhook
-   * (`scanJobs.error.failureClass`), used to pick the Error retry ceiling.
+   * (`scanJobs.error.failureClass`, or `scanJobs.lastFailure` once a re-submit has cleared
+   * the error), used to pick the Error retry ceiling.
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
@@ -122,6 +123,8 @@ type IngestImageRow = IngestImageInput & {
    * A successful submit clears `scanJobs.error`, and with it this.
    */
   rateLimitedSince: Date | null;
+  /** True once a successful re-submit has moved the error to `lastFailure`: a scan is in flight. */
+  resubmitted: boolean;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -184,11 +187,12 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
-           i."scanJobs"->'error'->>'failureClass' as "failureClass",
-           i."scanJobs"->'error'->>'reason' as "failureReason",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'reason' as "failureReason",
            CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
              THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
            END as "rateLimitedSince",
+           (i."scanJobs" ? 'lastFailure' AND NOT i."scanJobs" ? 'error') as "resubmitted",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -216,7 +220,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const errorRetryDue = (img: IngestImageRow) =>
     !!img.scanRequestedAt &&
     new Date(img.scanRequestedAt).getTime() <=
-      decreaseDate(now, getImageScanRetryDelayMinutes(img.failureClass), 'minutes').getTime();
+      decreaseDate(
+        now,
+        // An in-flight re-submit waits the full delay: the shorter transient one is a failure
+        // cooldown, and would duplicate the workflow of any scan slower than it.
+        getImageScanRetryDelayMinutes(img.resubmitted ? null : img.failureClass),
+        'minutes'
+      ).getTime();
 
   // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
   // trigger queues a new image immediately, but `ingestImage` stamps
@@ -419,9 +429,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     .filter((img) => img.ingestion === 'Rescan' && staleIdSet.has(img.id))
     .map((img) => img.id);
   if (exhaustedRescanIds.length > 0) {
+    // The flip to Error re-queues the row (the Image scan-queue trigger). Dropping lastFailure
+    // gives it the unknown cap, so an earlier episode's class does not re-open its retries.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
       WHERE id = ANY(${exhaustedRescanIds})
         AND ingestion = 'Rescan'::"ImageIngestionStatus"
     `;
@@ -438,9 +450,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // `pendingImages` -> `processedIds`, so not pruned), so next run they are
   // re-pulled and handled as Error.
   if (agedOutPendingIds.length > 0) {
+    // As above, dropping lastFailure gives the row the unknown cap, not an earlier episode's.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
       WHERE id = ANY(${agedOutPendingIds})
         AND ingestion = 'Pending'::"ImageIngestionStatus"
     `;

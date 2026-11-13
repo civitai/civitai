@@ -40,6 +40,8 @@ type AssistantProps = {
   subagents: boolean;
   /** Replies run on the server runner (`appAssistantRemoteRunner`, the runner and the sandbox service configured). */
   remoteRunner: boolean;
+  /** App hibernate (`app-hibernate`): sleeping apps, Wake, and the assistant's tools for them. */
+  hibernate: boolean;
 };
 export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
 
@@ -67,8 +69,13 @@ export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
     if (!('assistant' in access)) return access;
 
     const user = session!.user!;
-    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
-    const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
+    const { isAppBlocksDevTunnelEnabled, isAppHibernateEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    const [canPreview, hibernate] = await Promise.all([
+      features?.appBlocksAuthor ? isAppBlocksDevTunnelEnabled({ user }) : false,
+      isAppHibernateEnabled({ user }),
+    ]);
 
     const { env } = await import('~/env/server');
     const { isAssistantRunnerConfigured } = await import(
@@ -87,6 +94,7 @@ export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
           !!features?.appAssistantRemoteRunner &&
           isAssistantRunnerConfigured() &&
           !!env.APP_ASSISTANT_SANDBOX_URL,
+        hibernate,
       },
     };
   },
@@ -154,6 +162,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
               sandboxUrl={props.sandboxUrl}
               subagents={props.subagents}
               remoteRunner={props.remoteRunner}
+              hibernate={props.hibernate}
               userId={currentUser?.id ?? null}
             />
           )}

@@ -89,21 +89,22 @@ function fakeModelWith(imageNsfwLevels: number[]) {
   ];
 }
 
-async function run(browsingLevel: number, nsfwImagePassthrough: boolean, imageNsfwLevels: number[]) {
+async function run(
+  browsingLevel: number,
+  nsfwImagePassthrough: boolean,
+  imageNsfwLevels: number[]
+) {
   mockGetModelsWithVersions.mockResolvedValue({
     items: fakeModelWith(imageNsfwLevels),
     nextCursor: undefined,
   });
   const { runModelSearch } = await import('~/server/services/model-search.service');
-  const res = await runModelSearch(
-    { limit: 10 },
-    {
-      browsingLevel,
-      nsfwImagePassthrough,
-      user: undefined,
-      baseUrlOrigin: 'https://civitai.com',
-    } as Parameters<typeof runModelSearch>[1]
-  );
+  const res = await runModelSearch({ limit: 10 }, {
+    browsingLevel,
+    nsfwImagePassthrough,
+    user: undefined,
+    baseUrlOrigin: 'https://civitai.com',
+  } as Parameters<typeof runModelSearch>[1]);
   // Single model → single version → its (filtered) image nsfwLevels.
   const item = res.items[0] as { modelVersions: Array<{ images: Array<{ nsfwLevel: number }> }> };
   return item.modelVersions[0].images.map((img) => img.nsfwLevel);
@@ -152,5 +153,40 @@ describe('runModelSearch — per-image browsingLevel filter (real Flags)', () =>
     // here: PG survives, PG13/R do not.
     const survived = await run(NsfwLevel.PG, false, [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R]);
     expect(survived).toEqual([NsfwLevel.PG]);
+  });
+});
+
+describe('runModelSearch — the creator avatar is held to the level', () => {
+  async function avatarAt(browsingLevel: number, avatarLevel: number) {
+    const [model] = fakeModelWith([1]);
+    mockGetModelsWithVersions.mockResolvedValue({
+      items: [
+        {
+          ...model,
+          user: {
+            username: 'creator',
+            image: 'unrated.png',
+            profilePicture: { url: 'avatar.png', type: 'image', nsfwLevel: avatarLevel },
+          },
+        },
+      ],
+      nextCursor: undefined,
+    });
+    const { runModelSearch } = await import('~/server/services/model-search.service');
+    const res = await runModelSearch({ limit: 10 }, {
+      browsingLevel,
+      nsfwImagePassthrough: false,
+      user: undefined,
+      baseUrlOrigin: 'https://civitai.com',
+    } as Parameters<typeof runModelSearch>[1]);
+    return (res.items[0] as { creator?: { image: string | null } }).creator?.image;
+  }
+
+  it('drops an avatar above the level, without falling back to the unrated image', async () => {
+    expect(await avatarAt(sfwBrowsingLevelsFlag, NsfwLevel.R)).toBeNull();
+  });
+
+  it('keeps an avatar within the level (control)', async () => {
+    expect(await avatarAt(sfwBrowsingLevelsFlag, NsfwLevel.PG)).toBe('avatar.png');
   });
 });

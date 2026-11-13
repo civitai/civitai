@@ -27,16 +27,25 @@ export const FORK_SEED_PRESIGN_TTL_SECONDS = 600;
  * at some point inside the presign window, and nothing tells civitai when. The bucket MUST carry a
  * lifecycle rule expiring `fork-seeds/` objects (a day is ample); a failed start deletes its own.
  */
-export function forkSeedStoreConfig(): {
+export type SeedStoreConfig = {
   endpoint: string;
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
-} | null {
-  const endpoint = env.APP_FORK_SEED_S3_ENDPOINT;
-  const bucket = env.APP_FORK_SEED_S3_BUCKET;
-  const accessKeyId = env.APP_FORK_SEED_S3_ACCESS_KEY_ID;
-  const secretAccessKey = env.APP_FORK_SEED_S3_SECRET_ACCESS_KEY;
+};
+
+/**
+ * A seed-serving store's settings from its four values, or `null` when any is missing or the
+ * endpoint is one the sandbox service would refuse (not https, or with a port). Shared by every
+ * store whose presigned URLs the sandbox service downloads (fork seeds, sleeping-app archives).
+ */
+export function seedStoreConfig(values: {
+  endpoint?: string;
+  bucket?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+}): SeedStoreConfig | null {
+  const { endpoint, bucket, accessKeyId, secretAccessKey } = values;
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null;
   try {
     const u = new URL(endpoint);
@@ -45,6 +54,15 @@ export function forkSeedStoreConfig(): {
     return null;
   }
   return { endpoint, bucket, accessKeyId, secretAccessKey };
+}
+
+export function forkSeedStoreConfig(): SeedStoreConfig | null {
+  return seedStoreConfig({
+    endpoint: env.APP_FORK_SEED_S3_ENDPOINT,
+    bucket: env.APP_FORK_SEED_S3_BUCKET,
+    accessKeyId: env.APP_FORK_SEED_S3_ACCESS_KEY_ID,
+    secretAccessKey: env.APP_FORK_SEED_S3_SECRET_ACCESS_KEY,
+  });
 }
 
 /**
@@ -63,7 +81,8 @@ export function isAcceptableSeedUrl(url: string, endpoint: string): boolean {
   }
 }
 
-function client(config: NonNullable<ReturnType<typeof forkSeedStoreConfig>>): S3Client {
+/** A path-style client for a seed store, so a presigned URL's host is the endpoint's host. */
+export function seedStoreClient(config: SeedStoreConfig): S3Client {
   return newS3Client({
     endpoint: config.endpoint,
     region: 'us-east-1',
@@ -84,7 +103,7 @@ export function forkSeedKey(forkSlug: string, sha256: string): string {
 export async function stageForkSeed(key: string, buffer: Buffer): Promise<string> {
   const config = forkSeedStoreConfig();
   if (!config) throw new Error('fork seed store not configured');
-  const s3 = client(config);
+  const s3 = seedStoreClient(config);
   await s3.send(
     new PutObjectCommand({
       Bucket: config.bucket,
@@ -103,7 +122,9 @@ export async function deleteForkSeed(key: string): Promise<void> {
   const config = forkSeedStoreConfig();
   if (!config) return;
   try {
-    await client(config).send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+    await seedStoreClient(config).send(
+      new DeleteObjectCommand({ Bucket: config.bucket, Key: key })
+    );
   } catch {
     // The bucket's lifecycle rule on `fork-seeds/` is the backstop.
   }

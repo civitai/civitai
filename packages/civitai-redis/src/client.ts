@@ -2462,6 +2462,20 @@ export const REDIS_SYS_KEYS = {
      */
     SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
+     * APP HIBERNATE — one record per hibernation attempt, keyed
+     * `system:blocks:hibernation-attempt:${attemptId}`. JSON: the user, the app and the upload key
+     * civitai built. Written `SET NX` by `begin` (TTL `ATTEMPT_TTL_SECONDS`) and read by `commit`, so a commit can only land the objects its own `begin` named
+     * (`app-hibernation.service.ts`).
+     */
+    HIBERNATION_ATTEMPT: 'system:blocks:hibernation-attempt',
+    /**
+     * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
+     * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
+     * sha256 it releases secrets for. Written by `mintWakeTicket` on a wake the user started (TTL
+     * `WAKE_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
+     */
+    HIBERNATION_WAKE_TICKET: 'system:blocks:hibernation-wake-ticket',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -3502,6 +3516,13 @@ const REDIS_KEYS_UNPREFIXED = {
       Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
      */
     QUERY_VECTOR: 'semantic-search:query-vector',
+    /*
+      Use: one aligned block of ranked candidate ids from the search service, shared by every viewer
+      whose filter and viewer class match, so a repeated search makes no Qdrant call.
+      Structure: packed { ids: number[], correctedQuery?: string },
+      key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
+     */
+    CANDIDATES: 'semantic-search:candidates',
   },
 } as const;
 

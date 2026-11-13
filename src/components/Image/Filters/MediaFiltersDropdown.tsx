@@ -2,6 +2,7 @@ import type { ButtonProps } from '@mantine/core';
 import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group, Text } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
@@ -10,7 +11,8 @@ import { JumpToMonthFilter } from '~/components/Filters/JumpToMonthFilter';
 import { isJumpToSort, jumpToPatch, periodPatch } from '~/shared/utils/jump-to-month';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
-import { getDefaultMediaTypes } from '~/components/Image/image.utils';
+import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
+import { getDefaultMediaTypes, useImageQueryParams } from '~/components/Image/image.utils';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useTeamColor } from '~/components/Events/events.utils';
@@ -24,6 +26,7 @@ import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilter
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { removeEmpty } from '~/utils/object-helpers';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-keys';
 
@@ -37,6 +40,32 @@ const moderatorKeys: MediaFilterKey[] = [
   'notPublished',
 ];
 const hatTurfKeys: MediaFilterKey[] = ['hatTeams', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'];
+
+// The URL params `useImageFilters` lets outrank the store that this dropdown edits. A store-backed
+// dropdown shows them, and moves them into the store on Apply or Clear so its change takes effect.
+const urlOverridableKeys = [
+  'period',
+  'types',
+  'withMeta',
+  'requiringMeta',
+  'hidden',
+  'fromPlatform',
+  'notPublished',
+  'scheduled',
+  'hideManualResources',
+  'hideAutoResources',
+  'tools',
+  'techniques',
+  'baseModels',
+  'remixesOnly',
+  'nonRemixesOnly',
+  'hideChallenges',
+  'disablePoi',
+  'disableMinor',
+  'poiOnly',
+  'minorOnly',
+  'includePG13',
+] as const satisfies readonly (keyof ImagesQueryParamSchema)[];
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -121,14 +150,51 @@ export function MediaFiltersDropdown({
         : state.setModelImageFilters,
   }));
 
-  const committedFilters = useMemo(() => query || filters, [query, filters]);
+  const router = useRouter();
+  const { query: routeParams } = useImageQueryParams();
+  const urlOverrides = useMemo(() => {
+    if (query) return {};
+    const overrides: Partial<Pick<ImagesQueryParamSchema, (typeof urlOverridableKeys)[number]>> =
+      {};
+    for (const key of urlOverridableKeys) {
+      if (routeParams[key] !== undefined) Object.assign(overrides, { [key]: routeParams[key] });
+    }
+    return overrides;
+  }, [query, routeParams]);
+
+  const committedFilters = useMemo(
+    () => query || { ...filters, ...urlOverrides },
+    [query, filters, urlOverrides]
+  );
+
+  const setStoreFilters = useCallback(
+    (next: Partial<typeof filters>) => {
+      setFilters(next);
+      const overridden = Object.keys(urlOverrides);
+      // The raw router query, not the schema-parsed one: parsing drops dynamic route params
+      // (`/models/[id]`), and Next throws on a pathname missing them.
+      if (overridden.length)
+        router.replace(
+          {
+            pathname: router.pathname,
+            query: removeEmpty({
+              ...router.query,
+              ...Object.fromEntries(overridden.map((key) => [key, undefined])),
+            }),
+          },
+          undefined,
+          { shallow: true, scroll: false }
+        );
+    },
+    [setFilters, urlOverrides, router]
+  );
 
   const handleApply = useCallback(
     (next: typeof committedFilters) => {
       if (onChange) onChange(next);
-      else setFilters(next);
+      else setStoreFilters(next);
     },
-    [onChange, setFilters]
+    [onChange, setStoreFilters]
   );
 
   const handleClear = useCallback(() => {
@@ -183,12 +249,12 @@ export function MediaFiltersDropdown({
     // undefined so it's stripped from the query string.
     if (onChange) onChange({ ...reset, period: undefined });
     else
-      setFilters({
+      setStoreFilters({
         ...reset,
         types: getDefaultMediaTypes(filterType),
         period: MetricTimeframe.AllTime,
       });
-  }, [onChange, setFilters, filterType, shows, showJumpTo, showTurf]);
+  }, [onChange, setStoreFilters, filterType, shows, showJumpTo, showTurf]);
 
   const {
     opened,
