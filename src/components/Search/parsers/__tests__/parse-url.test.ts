@@ -179,3 +179,22 @@ describe('articles parser, on the query strings that reported the bug', () => {
     expect(articles('?sortBy=bogus')).toEqual({});
   });
 });
+
+describe('images parser, "more like this"', () => {
+  const images = (search: string) =>
+    parseSearch(imagesInstantSearchRoutingParser, IMAGES_SEARCH_INDEX, search);
+
+  it('carries similarTo from the URL to the UI state and back', () => {
+    const route = { [IMAGES_SEARCH_INDEX]: images('?similarTo=42') };
+    const state = imagesInstantSearchRoutingParser.routeToState(route as never);
+    expect(state[IMAGES_SEARCH_INDEX]).toMatchObject({ similarTo: 42 });
+    expect(
+      imagesInstantSearchRoutingParser.stateToRoute(state as never)[IMAGES_SEARCH_INDEX]
+    ).toMatchObject({ similarTo: 42 });
+  });
+
+  it('drops a similarTo that is not an image id', () => {
+    expect(images('?similarTo=abc')).not.toHaveProperty('similarTo');
+    expect(images('?similarTo=-1')).not.toHaveProperty('similarTo');
+  });
+});

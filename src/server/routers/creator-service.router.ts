@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  getServiceOfferingFeedSchema,
   getShopServiceOfferingsSchema,
   setServiceOfferingStatusSchema,
   takedownServiceOfferingSchema,
@@ -9,6 +10,7 @@ import {
 import {
   getMyServiceOfferings,
   getServiceSellEligibility,
+  getServiceOfferingFeed,
   getShopServiceOfferings,
   removeServiceOffering,
   setServiceOfferingStatus,
@@ -78,6 +80,18 @@ export const creatorServiceRouter = router({
         servable: domainServableLevels(ctx),
         viewerId: ctx.user?.id,
         isModerator: ctx.user?.isModerator,
+      });
+    }),
+  getFeed: publicProcedure
+    .use(isFlagProtected('creatorShop'))
+    .use(isFlagProtected('creatorServices'))
+    .input(getServiceOfferingFeedSchema)
+    .query(({ input, ctx }) => {
+      resolveRequestBrowsingLevels(input, ctx);
+      return getServiceOfferingFeed({
+        ...input,
+        servable: domainServableLevels(ctx),
+        viewerId: ctx.user?.id,
       });
     }),
 });

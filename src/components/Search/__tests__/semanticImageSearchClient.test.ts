@@ -75,6 +75,27 @@ describe('withSemanticImageSearch', () => {
     expect(search.mock.calls[1][0]).toMatchObject({ cursor: 87 });
   });
 
+  it('drops an image any earlier page already showed', async () => {
+    const search = fakeSearch([
+      { ids: [1, 2], nextCursor: 2 },
+      { ids: [2, 3], nextCursor: 4 },
+      { ids: [1, 4] },
+    ]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+    type Response = { results: { hits: { id: number }[] }[] };
+
+    await client.search([imageRequest({ hitsPerPage: 2 })] as never);
+    const second = (await client.search([
+      imageRequest({ hitsPerPage: 2, page: 1 }),
+    ] as never)) as Response;
+    const third = (await client.search([
+      imageRequest({ hitsPerPage: 2, page: 2 }),
+    ] as never)) as Response;
+
+    expect(second.results[0].hits.map((hit) => hit.id)).toEqual([3]);
+    expect(third.results[0].hits.map((hit) => hit.id)).toEqual([4]);
+  });
+
   it('passes other indexes through, keeping the order of the results', async () => {
     const search = fakeSearch([{ ids: [7] }]);
     const base = meili();
@@ -119,5 +140,22 @@ describe('withSemanticImageSearch', () => {
     };
 
     expect(results[0].userData).toEqual([{ correctedQuery: 'batman' }]);
+  });
+  it('searches for images like the one in similarTo when nothing is typed', async () => {
+    const search = fakeSearch([{ ids: [2] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+
+    await client.search([imageRequest({ query: '', similarTo: 42 })] as never);
+
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ imageId: 42 }));
+  });
+
+  it('lets a typed query replace similarTo', async () => {
+    const search = fakeSearch([{ ids: [2] }]);
+    const client = withSemanticImageSearch(meili() as never, createSemanticImageSearch({ search }));
+
+    await client.search([imageRequest({ query: 'fox', similarTo: 42 })] as never);
+
+    expect(search.mock.calls[0][0]).toMatchObject({ query: 'fox', imageId: undefined });
   });
 });

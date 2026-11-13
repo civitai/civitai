@@ -124,7 +124,6 @@ import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
@@ -5176,9 +5175,6 @@ export const publishModelById = async ({
   // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // Update search index for all affected images
-  await imagesSearchIndex.queueUpdate(
-    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
-  );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );

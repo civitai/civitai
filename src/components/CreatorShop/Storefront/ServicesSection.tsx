@@ -1,9 +1,10 @@
-import { Badge, Button, Group, Stack } from '@mantine/core';
+import { Button, Group, Stack } from '@mantine/core';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
+import { ServiceSlotsBadge } from '~/components/CreatorShop/Services/ServiceSlotsBadge';
 import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
 import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
@@ -60,13 +61,7 @@ export function ServicesSection({
                 offering={offering}
                 footer={
                   <Group justify="space-between" mt="sm">
-                    {offering.slotsOpen != null && (
-                      <Badge color={full ? 'gray' : 'green'} variant="light" radius="sm">
-                        {full
-                          ? 'Fully booked'
-                          : `${offering.slotsOpen} slot${offering.slotsOpen === 1 ? '' : 's'} open`}
-                      </Badge>
-                    )}
+                    <ServiceSlotsBadge slotsOpen={offering.slotsOpen} />
                     {isOwner && (
                       <Group gap={4} ml="auto">
                         <Button component={NextLink} href={manageHref} size="xs" variant="default">
