@@ -147,7 +147,7 @@ describe('the payout record', () => {
 
   // A refund flips the purchase before it reads meta.payouts: one that ran while this payout was in
   // flight found nothing to reverse, so the payout reverses itself.
-  it('reverses a payout that lands on a sale refunded meanwhile, recording nothing', async () => {
+  it('reverses a payout that lands on a sale refunded meanwhile, recording no payout', async () => {
     await purchase('p1', { refunded: true });
 
     const result = await payCreatorBoxSale({
@@ -161,7 +161,37 @@ describe('the payout record', () => {
 
     expect(result).toBe('reversed');
     expect(buzz.refundTransaction).toHaveBeenCalledWith('payout-tx', expect.any(String), undefined);
-    expect(await metaOf('p1')).toBeNull();
+    expect(await metaOf('p1')).toEqual({
+      payoutReversal: {
+        transactionId: 'payout-tx',
+        at: expect.any(String),
+        doneAt: expect.any(String),
+      },
+    });
+  });
+
+  it('leaves a failed reversal owed, and the sweep finishes it', async () => {
+    await purchase('p1', { refunded: true });
+    buzz.refundTransaction.mockRejectedValueOnce(new Error('buzz down'));
+    const sale = {
+      buzzTransactionId: 'p1',
+      buyerId: BUYER,
+      sellerId: SELLER,
+      unitAmount: 1000,
+      color: 'yellow' as const,
+      title: 'Pack',
+    };
+
+    await expect(payCreatorBoxSale(sale)).rejects.toThrow('buzz down');
+    expect(await metaOf('p1')).toEqual({
+      payoutReversal: { transactionId: 'payout-tx', at: expect.any(String) },
+    });
+
+    const result = await sweepCreatorBoxPayouts();
+
+    expect(result).toMatchObject({ reversed: 1, failed: [] });
+    expect(buzz.refundTransaction).toHaveBeenCalledTimes(2);
+    expect(await metaOf('p1')).toMatchObject({ payoutReversal: { doneAt: expect.any(String) } });
   });
 
   it('writes only the sale it paid', async () => {

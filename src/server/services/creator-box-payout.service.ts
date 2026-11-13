@@ -104,12 +104,23 @@ export async function payCreatorBoxSale(sale: CreatorBoxSale): Promise<'paid' | 
     throw new Error(
       `Payout ${externalTransactionId} landed on a refunded sale with no id to reverse`
     );
-  await refundTransactionOnce(transactionId, `Refund: mystery pack sale refunded - ${sale.title}`);
-  await logPayout('info', 'Creator box payout reversed: the sale was refunded first', {
-    ...sale,
-    transactionId,
-  });
+  // Owed until `doneAt`, so the sweep finishes a reversal that fails here.
+  await dbWrite.$executeRaw`
+    UPDATE "UserCosmeticShopPurchases" p
+    SET meta = ${asJsonbObjectSql('p.meta')} || jsonb_build_object(
+      'payoutReversal', jsonb_build_object('transactionId', ${transactionId}::text, 'at', now())
+    )
+    WHERE p."buzzTransactionId" = ${sale.buzzTransactionId}`;
+  await reversePayout(sale.buzzTransactionId, transactionId, sale.title);
   return 'reversed';
+}
+
+async function reversePayout(buzzTransactionId: string, transactionId: string, title: string) {
+  await refundTransactionOnce(transactionId, `Refund: mystery pack sale refunded - ${title}`);
+  await dbWrite.$executeRaw`
+    UPDATE "UserCosmeticShopPurchases"
+    SET meta = jsonb_set(meta, '{payoutReversal,doneAt}', to_jsonb(now()))
+    WHERE "buzzTransactionId" = ${buzzTransactionId}`;
 }
 
 const logPayout = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
@@ -122,7 +133,7 @@ export async function payCreatorBoxSaleAfterGrant(sale: CreatorBoxSale) {
   try {
     await withRetries(() => payCreatorBoxSale(sale), 3, 1000);
   } catch (error) {
-    await logPayout('error', 'Creator box payout failed; the sweep retries it', {
+    await logPayout('error', 'Creator box payout failed or not reversed; the sweep retries it', {
       ...sale,
       error: errorMessage(error),
     });
@@ -182,6 +193,27 @@ export async function sweepCreatorBoxPayouts({ limit = SWEEP_BATCH }: { limit?: 
           'payoutAttempt', jsonb_build_object('at', now(), 'error', ${message}::text)
         )
         WHERE p."buzzTransactionId" = ${sale.buzzTransactionId}`.catch(() => undefined);
+    }
+  }
+  // Payouts that landed on a sale refunded meanwhile and whose reversal failed.
+  const owedReversals = await dbWrite.$queryRaw<
+    { buzzTransactionId: string; transactionId: string; title: string }[]
+  >`
+    SELECT p."buzzTransactionId", p.meta -> 'payoutReversal' ->> 'transactionId' AS "transactionId",
+      s.title
+    FROM "ItemDefinition" d
+    JOIN "CosmeticShopItem" s ON s."itemDefinitionId" = d.id
+    JOIN "UserCosmeticShopPurchases" p ON p."shopItemId" = s.id
+    WHERE d."sellerId" IS NOT NULL AND p.refunded
+      AND p.meta -> 'payoutReversal' IS NOT NULL
+      AND p.meta -> 'payoutReversal' ->> 'doneAt' IS NULL
+    LIMIT ${limit}`;
+  for (const owed of owedReversals) {
+    try {
+      await reversePayout(owed.buzzTransactionId, owed.transactionId, owed.title);
+      reversed++;
+    } catch (error) {
+      failed.push({ buzzTransactionId: owed.buzzTransactionId, error: errorMessage(error) });
     }
   }
   if (failed.length)

@@ -172,7 +172,7 @@ describe('sweepCreatorBoxPayouts', () => {
   };
 
   it('pays an unrecorded sale in the colour its charge was debited from', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([unpaid]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([unpaid]).mockResolvedValue([]);
     mocks.listMultiTx.mockResolvedValue([
       {
         transactionId: 'debit',
@@ -207,7 +207,7 @@ describe('sweepCreatorBoxPayouts', () => {
   });
 
   it('leaves a sale charged from two accounts for a person, paying nothing', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([unpaid]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([unpaid]).mockResolvedValue([]);
     mocks.listMultiTx.mockResolvedValue([
       {
         transactionId: 'a',
