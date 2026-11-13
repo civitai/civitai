@@ -35,6 +35,7 @@ import {
 import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
@@ -56,8 +57,110 @@ const store = useMusicPlayerStore.getState;
 export function MusicPlayerBar() {
   const track = useMusicPlayerStore((s) => s.current);
   const view = useMusicPlayerStore((s) => s.view);
+  const compact = useIsMobile({ type: 'media' });
   if (!track || view !== 'bar') return null;
-  return <Bar track={track} />;
+  return compact ? <CompactBar track={track} /> : <Bar track={track} />;
+}
+
+/**
+ * The bar below the `sm` breakpoint (Pencil `Pf8Oy`): cover, song, play/pause and close over the
+ * cover's colours. The close button is not in the frame: a phone has no other way to dismiss it.
+ */
+function CompactBar({ track }: { track: MusicTrack }) {
+  const playing = useMusicPlayerStore((s) => s.playing);
+  const error = useMusicPlayerStore((s) => s.error);
+  const { cover, accent } = useMusicPlayerCover(track.id);
+  // Without an accent the bar keeps the site's surface and text colours.
+  const onColour = !!accent;
+
+  return (
+    <div
+      data-music-player-bar=""
+      role="region"
+      aria-label="Music player"
+      className={clsx(
+        'relative z-[201] flex shrink-0 flex-col overflow-hidden',
+        !onColour && 'border-t border-gray-3 bg-gray-0 dark:border-dark-4 dark:bg-dark-6'
+      )}
+      style={
+        {
+          ...(accent && {
+            '--music-accent': accent.accent,
+            '--music-accent-2': accent.accent2,
+            background: `linear-gradient(#14151740, #14151740), linear-gradient(90deg, ${accent.accent2}, ${accent.accent})`,
+          }),
+          height: 'calc(62px + var(--safe-area-inset-bottom))',
+          paddingBottom: 'var(--safe-area-inset-bottom)',
+        } as CSSProperties
+      }
+    >
+      <CompactProgress track={track} onColour={onColour} />
+      <div className="flex min-h-0 min-w-0 flex-1 items-center gap-3 px-4">
+        <SongArt url={cover?.url} width={40} iconSize={20} className="size-10 rounded-lg" />
+        <div className="flex min-w-0 flex-1 flex-col gap-px">
+          <span
+            className={clsx(
+              'truncate text-sm font-bold leading-tight',
+              onColour ? 'text-white' : 'text-black dark:text-white'
+            )}
+          >
+            {track.title || 'Untitled song'}
+          </span>
+          <span
+            className={clsx('truncate text-xs font-semibold', onColour ? 'text-white/90' : dimmed)}
+          >
+            {error ? "Couldn't play this song" : track.creator.username}
+          </span>
+        </div>
+        <button
+          type="button"
+          aria-label={playing ? 'Pause' : 'Play'}
+          onClick={() => store().togglePlay()}
+          className={clsx(
+            'flex size-[38px] shrink-0 items-center justify-center rounded-full',
+            onColour ? 'bg-white text-[#1A1B1E]' : 'text-white'
+          )}
+          style={onColour ? undefined : { backgroundColor: ACCENT }}
+        >
+          {playing ? <IconPlayerPauseFilled size={18} /> : <IconPlayerPlayFilled size={18} />}
+        </button>
+        <button
+          type="button"
+          aria-label="Close player"
+          onClick={() => store().close()}
+          className={clsx(
+            'flex size-9 shrink-0 items-center justify-center rounded-lg',
+            onColour ? 'text-white' : 'text-gray-9 dark:text-dark-0'
+          )}
+        >
+          <IconX size={18} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The 3px progress line on top of the compact bar. */
+function CompactProgress({ track, onColour }: { track: MusicTrack; onColour: boolean }) {
+  const currentTime = useMusicPlayheadStore((s) => s.currentTime);
+  const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
+  return (
+    <div
+      aria-hidden
+      className={clsx(
+        'h-[3px] w-full shrink-0',
+        onColour ? 'bg-white/20' : 'bg-gray-4 dark:bg-dark-3'
+      )}
+    >
+      <div
+        className="h-full"
+        style={{
+          width: `${playbackProgress(currentTime, duration) * 100}%`,
+          backgroundColor: onColour ? '#fff' : ACCENT,
+        }}
+      />
+    </div>
+  );
 }
 
 function Bar({ track }: { track: MusicTrack }) {

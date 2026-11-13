@@ -79,7 +79,9 @@ const player = () => useMusicPlayerStore.getState();
 const bar = () => document.querySelector('[data-music-player-bar]') as HTMLElement;
 const button = (name: string) => page.getByRole('button', { name, exact: true });
 
-beforeEach(() => {
+beforeEach(async () => {
+  // The desktop width the bar is drawn for; the phone layout has its own test.
+  await page.viewport(1440, 800);
   vi.clearAllMocks();
   mocks.covers = [];
   mocks.browsingLevel = 1;
@@ -204,5 +206,27 @@ describe('the global player bar', () => {
 
     await button('Next').click();
     expect(player().current?.title).toBe('Palm Static');
+  });
+
+  test('below the sm breakpoint shows only the cover, song, play/pause and close', async () => {
+    await page.viewport(390, 800);
+    await renderWithProviders(<MusicPlayerBar />);
+    await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
+    await expect.element(page.getByText('neonwave')).toBeInTheDocument();
+    await expect.element(page.getByTestId('music-cover-placeholder')).toBeInTheDocument();
+    const names = page
+      .getByRole('region', { name: 'Music player' })
+      .getByRole('button')
+      .elements()
+      .map((el) => el.getAttribute('aria-label'));
+    expect(names).toEqual(['Pause', 'Close player']);
+    expect(page.getByRole('slider').elements()).toHaveLength(0);
+    expect(bar().getBoundingClientRect().height).toBe(62);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+
+    await button('Pause').click();
+    expect(player().playing).toBe(false);
+    await button('Close player').click();
+    expect(player().current).toBeNull();
   });
 });
