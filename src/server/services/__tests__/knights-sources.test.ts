@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { enqueue } = vi.hoisted(() => ({ enqueue: vi.fn() }));
-vi.mock('~/server/db/kyselyDb', () => ({ kyselyWrite: { tag: 'write' } }));
+const { enqueue, openCount } = vi.hoisted(() => ({
+  enqueue: vi.fn(),
+  openCount: vi.fn<(strings: readonly string[], ...values: unknown[]) => Promise<unknown[]>>(),
+}));
+vi.mock('~/server/db/kyselyDb', async () => ({
+  kyselyWrite: { tag: 'write' },
+  kyselyRead: (await import('~/test-utils/kysely-raw-fake')).fakeKysely(openCount),
+}));
 vi.mock('~/server/services/knights/enqueue.service', () => ({ enqueueKnightsItems: enqueue }));
 
 const {
@@ -21,8 +27,13 @@ beforeEach(() => {
   vi.useRealTimers();
   clearKnightsSourcesConfigCache();
   enqueue.mockResolvedValue([]);
+  openCount.mockResolvedValue([{ n: '0' }]);
   configured(null);
 });
+
+/** The open Knight-stage count the intake reads, as Postgres returns a count. */
+const openItems = (n: number) => openCount.mockResolvedValue([{ n: String(n) }]);
+const queuedIds = () => enqueue.mock.calls.map(([, input]) => input.items[0].imageId);
 
 describe('parseKnightsSourcesConfig', () => {
   it.each([null, '', 'not json', '[]', '"on"', '{"enabled":"true"}', '{"enabled":1}'])(
@@ -159,5 +170,106 @@ describe('queueOwnerRatingForKnights', () => {
     configured({ enabled: true });
     enqueue.mockRejectedValue(new Error('db down'));
     await expect(queueOwnerRatingForKnights(7)).resolves.toBeUndefined();
+  });
+});
+
+describe('intake backpressure', () => {
+  it('skips scan samples while more Knight-stage items are open than maxOpen, and still queues owner ratings', async () => {
+    configured({ enabled: true, maxOpen: 10 });
+    openItems(11);
+    await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    await queueScanSampleForKnights({ imageId: 2, nsfw: true }, () => 0);
+    await queueOwnerRatingForKnights(3);
+
+    expect(queuedIds()).toEqual([3]);
+    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 11]);
+  });
+
+  it('queues scan samples again at the cap', async () => {
+    configured({ enabled: true, maxOpen: 10 });
+    openItems(10);
+    await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    expect(queuedIds()).toEqual([1]);
+  });
+
+  it('caps at 5000 open items when maxOpen is not set', async () => {
+    configured({ enabled: true });
+    openItems(5001);
+    await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 5001]);
+
+    clearKnightsSourcesConfigCache();
+    openItems(5000);
+    await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
+    expect(queuedIds()).toEqual([2]);
+  });
+
+  it('does not count when the sample roll misses or for owner ratings', async () => {
+    configured({ enabled: true, sfwRate: 0.5 });
+    await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0.9);
+    await queueOwnerRatingForKnights(2);
+    expect(openCount).not.toHaveBeenCalled();
+    expect(queuedIds()).toEqual([2]);
+  });
+
+  it('counts once a minute, not once per scan', async () => {
+    vi.useFakeTimers();
+    configured({ enabled: true, maxOpen: 10 });
+    openItems(11);
+    await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(1);
+
+    openItems(3);
+    vi.advanceTimersByTime(61_000);
+    await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(2);
+    expect(queuedIds()).toEqual([3]);
+  });
+
+  it('queues anyway when the count fails, never throws, and waits 10 s before counting again', async () => {
+    vi.useFakeTimers();
+    configured({ enabled: true, maxOpen: 10 });
+    openCount.mockRejectedValueOnce(new Error('db down'));
+    await expect(
+      queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0)
+    ).resolves.toBeUndefined();
+
+    openItems(11);
+    await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(1);
+    expect(queuedIds()).toEqual([1, 2]);
+
+    vi.advanceTimersByTime(11_000);
+    await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(2);
+    expect(queuedIds()).toEqual([1, 2]);
+  });
+
+  it('runs one slow count, queues while it is out, logs it once, and uses its answer when it lands', async () => {
+    vi.useFakeTimers();
+    configured({ enabled: true, maxOpen: 10 });
+    let answer: (rows: unknown[]) => void = () => undefined;
+    openCount.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+
+    for (const imageId of [1, 2]) {
+      const queued = queueScanSampleForKnights({ imageId, nsfw: false }, () => 0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await queued;
+    }
+    expect(queuedIds()).toEqual([1, 2]);
+    expect(openCount).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+
+    answer([{ n: '11' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(1);
+    expect(queuedIds()).toEqual([1, 2]);
   });
 });

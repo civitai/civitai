@@ -33,7 +33,8 @@ async function settle<T>(step: string, run: () => Promise<T>) {
 export const POST: RequestHandler = async ({ request }) => {
   if (!isJobRequest(request)) return new Response(null, { status: 401 });
 
-  const expired = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
+  // `escalated`, `toInquisitor`, `extended` and `expired` (unvoted items closed) go straight into the response.
+  const escalation = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
   );
@@ -88,7 +89,7 @@ export const POST: RequestHandler = async ({ request }) => {
   // Only a step that throws fails the tick (a 500 pages). Items that failed inside a step are retried by the next tick, so
   // they are counted and logged instead: one bad item would otherwise page for hours and hide a real tick outage.
   if (
-    !expired.ok ||
+    !escalation.ok ||
     !writeBacks.ok ||
     !progression.ok ||
     !hidden.ok ||
@@ -119,7 +120,7 @@ export const POST: RequestHandler = async ({ request }) => {
     });
   }
   return json({
-    ...expired.value,
+    ...escalation.value,
     ...writeBacks.value,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,

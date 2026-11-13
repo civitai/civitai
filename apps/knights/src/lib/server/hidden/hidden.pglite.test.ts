@@ -163,6 +163,58 @@ describe('serving a hidden check', () => {
     await enqueueItem(db, { questionKey: Q, imageId: 10, source: 'test' }, NOW);
     expect(await getFeed(db, 1)).toBeNull();
   });
+
+  it('spreads offers evenly across the level buckets that have references, whatever their size', async () => {
+    // A pool that is mostly PG, as harvested pools are: the draw must not follow the pool's shape.
+    let imageId = 1000;
+    for (let i = 0; i < 40; i++) await reference(imageId++, '1');
+    for (const level of ['2', '4', '8', '16']) {
+      for (let i = 0; i < 2; i++) await reference(imageId++, level);
+    }
+    const answers = new Map(
+      (
+        await pg.query<{ id: number; answer: string }>(
+          `SELECT id, answer FROM "KnightsReferenceImage"`
+        )
+      ).rows.map((r) => [r.id, r.answer])
+    );
+
+    const counts = new Map<string, number>();
+    for (let user = 1; user <= 100; user++) {
+      const offer = await pick(user);
+      const level = answers.get(offer?.referenceId as number) as string;
+      counts.set(level, (counts.get(level) ?? 0) + 1);
+    }
+    expect([...counts.keys()].sort()).toEqual(['1', '16', '2', '4', '8']);
+    for (const count of counts.values()) {
+      expect(count).toBeGreaterThanOrEqual(10);
+      expect(count).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it('offers a check to the same players at the same rate, whatever the pool holds', async () => {
+    const offered = async () => {
+      const users: number[] = [];
+      for (let user = 1; user <= 60; user++) if (await pick(user, 'Knight', 0.25)) users.push(user);
+      return users;
+    };
+    await reference(1000, '1');
+    const single = await offered();
+    let imageId = 1001;
+    for (const level of ['2', '4', '8', '16', '1', '4']) await reference(imageId++, level);
+
+    expect(await offered()).toEqual(single);
+    expect(single.length).toBeGreaterThan(5);
+    expect(single.length).toBeLessThan(30);
+  });
+
+  it('still offers the buckets a player has left once they answered every check in one', async () => {
+    await seedPlayer(pg, 1);
+    const pg13 = [await reference(10, '2'), await reference(11, '2')];
+    const r = await reference(12, '4');
+    for (const id of pg13) await answer(1, id, '2');
+    expect((await pick(1))?.referenceId).toBe(r);
+  });
 });
 
 describe('answering a hidden check', () => {

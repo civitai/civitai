@@ -17,9 +17,16 @@ import { RANKS, rankIndex, type Rank } from '../ranks';
 import { heldSql } from '../conversion/held';
 import { metrics } from '../metrics';
 import { creditVote, insertVote, lockPlayerVoting } from './vote-record';
-import { FEED_STRETCH_SIZE, isStageRank, nextStaffedRank, stagesWorkedBy } from './ranks';
+import {
+  ESCALATION_PATH,
+  FEED_STRETCH_SIZE,
+  isStageRank,
+  nextStaffedRank,
+  stagesWorkedBy,
+} from './ranks';
 import { SMITES } from '../smites/config';
 import {
+  BUCKET_LEVELS,
   FEED,
   itemBucket,
   lowestTierPerItem,
@@ -129,10 +136,30 @@ async function recentBuckets(db: Executor, userId: number, now: Date) {
   return rows.map((r) => itemBucket(r.prediction, r.nsfwLevel));
 }
 
+const levelList = sql.join(BUCKET_LEVELS.map((level) => sql.lit(level)));
+const textLevelList = sql.join(BUCKET_LEVELS.map((level) => sql.lit(String(level))));
+
 /**
- * One stage's candidates, read in index order: the items escalated within the priority window, then the
- * stage's normal order (priority, age). Both reads stop at the window size, and neither includes an image the
- * player has already judged for the question, at any stage or in any earlier item.
+ * `itemBucket` as SQL, as the bucket's level flag (0 for none): `prediction.value` when it is a level flag (a number,
+ * or a plain integer string), else the image's level. Expects `KnightsQueueItem as i` and `Image as img`.
+ */
+export const bucketLevelSql = sql<number>`CASE
+  WHEN jsonb_typeof(i.prediction -> 'value') = 'number'
+    AND (i.prediction ->> 'value')::numeric IN (${levelList})
+    THEN (i.prediction ->> 'value')::numeric::int
+  WHEN jsonb_typeof(i.prediction -> 'value') = 'string'
+    AND (i.prediction ->> 'value') IN (${textLevelList})
+    THEN (i.prediction ->> 'value')::int
+  WHEN img."nsfwLevel" IN (${levelList}) THEN img."nsfwLevel"
+  ELSE 0
+END`;
+
+/**
+ * One stage's candidates, read in index order: one read of the items escalated within the priority window (skipped at
+ * the entry stage, where nothing is escalated), then the stage's normal order (priority, age) per level bucket. Each
+ * bucket read stops at `FEED.bucketWindowSize`, so a crowded bucket cannot push the others out of the window; the
+ * caller buckets the escalated rows with `itemBucket`. An item whose level has no bucket is read only once escalated.
+ * No read includes an image the player has already judged for the question, at any stage or in any earlier item.
  */
 function stageWindow(
   db: Executor,
@@ -170,28 +197,33 @@ function stageWindow(
         'img.width',
         'img.height',
         'img.nsfwLevel as imageLevel',
-      ])
-      .limit(FEED.windowSize);
+      ]);
 
-  return db
-    .with('escalated', () =>
-      candidates()
-        .select(sql<number>`${TIER_ESCALATED}`.as('tier'))
-        .where('i.escalatedAt', '>', utc(escalatedSince))
-        .orderBy('i.escalatedAt', 'asc')
-        .orderBy('i.id', 'asc')
-    )
-    .with('normal', () =>
-      candidates()
-        .select(sql<number>`${TIER_NORMAL}`.as('tier'))
-        .orderBy('i.priority', 'asc')
-        .orderBy('i.createdAt', 'asc')
-        .orderBy('i.id', 'asc')
-    )
-    .selectFrom('escalated')
-    .selectAll()
-    .unionAll((qb) => qb.selectFrom('normal').selectAll())
-    .execute();
+  const normal = BUCKET_LEVELS.map((level) =>
+    candidates()
+      .where((eb) => eb(bucketLevelSql, '=', level))
+      .select(sql<number>`${sql.lit(TIER_NORMAL)}`.as('tier'))
+      .orderBy('i.priority', 'asc')
+      .orderBy('i.createdAt', 'asc')
+      .orderBy('i.id', 'asc')
+      .limit(FEED.bucketWindowSize)
+  );
+  const escalated =
+    stage === ESCALATION_PATH[0]
+      ? []
+      : [
+          candidates()
+            .select(sql<number>`${sql.lit(TIER_ESCALATED)}`.as('tier'))
+            .where('i.escalatedAt', '>', utc(escalatedSince))
+            .orderBy('i.escalatedAt', 'asc')
+            .orderBy('i.id', 'asc')
+            .limit(FEED.bucketWindowSize * BUCKET_LEVELS.length),
+        ];
+  // Each read is wrapped so its ORDER BY and LIMIT stay its own inside the UNION ALL.
+  const [first, ...rest] = [...escalated, ...normal].map((read) =>
+    db.selectFrom(read.as('w')).selectAll()
+  );
+  return rest.reduce((query, read) => query.unionAll(read), first).execute();
 }
 
 /**
@@ -827,15 +859,17 @@ export async function applyPendingResolutions(
 }
 
 /**
- * Moves items whose stage window lapsed. An item with no counted vote (a held player's weighs 0) at its stage may have had no one to answer it, so it gets
- * one more window at the same stage, until two stage windows after it entered the stage; after that, or when nobody can serve the stage, it is handed up like one with
- * votes: to the next stage someone can serve, or to the Inquisitors.
+ * Moves items whose stage window lapsed. An item with votes is handed up: to the next stage someone can serve, or to the Inquisitors.
+ * An item with no counted vote (a held player's weighs 0; an earlier stage's does not count) at its stage may have had no one to answer
+ * it, so it gets one more window at the same stage, until two stage windows after it entered the stage. After that it closes as
+ * `expired`: unvoted overflow must not become moderator work. At a stage nobody serves there is no extension; such an item is handed up
+ * when a later stage is served, and expires when the hand-up would reach the Inquisitors.
  */
 export async function escalateExpired(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
-): Promise<{ escalated: number; toInquisitor: number; extended: number }> {
-  return db.transaction().execute(async (trx) => {
+): Promise<{ escalated: number; toInquisitor: number; extended: number; expired: number }> {
+  const result = await db.transaction().execute(async (trx) => {
     const due = await trx
       .selectFrom('KnightsQueueItem')
       .select(['id', 'minRank', 'escalatedAt', 'createdAt'])
@@ -847,7 +881,7 @@ export async function escalateExpired(
       .skipLocked()
       .execute();
 
-    const counts = { escalated: 0, toInquisitor: 0, extended: 0 };
+    const counts = { escalated: 0, toInquisitor: 0, extended: 0, expired: 0 };
     if (due.length === 0) return counts;
 
     const voted = new Set(
@@ -894,29 +928,55 @@ export async function escalateExpired(
       counts.extended = idle.length;
     }
 
+    const expire = (item: (typeof due)[number]) => {
+      if (voted.has(item.id) || extend(item)) return false;
+      if (staffed.has(item.minRank)) return true;
+      const next = nextStaffedRank(item.minRank, staffed);
+      return !next || next === 'Inquisitor';
+    };
+    const lapsed = due.filter(expire);
+    if (lapsed.length > 0) {
+      // Votes are only graded here: `settleFinalItems`, next in the tick, pays them one item at a time, so one bad settlement
+      // cannot roll back this batch, and player rows are not locked while every item lock is held.
+      await closeItems(
+        trx,
+        lapsed.map((item) => item.id),
+        now,
+        'expired'
+      );
+      counts.expired = lapsed.length;
+    }
+
     for (const item of due) {
-      if (extend(item)) continue;
+      if (extend(item) || expire(item)) continue;
       const outcome = await escalate(trx, item, now, staffed);
       if (outcome === 'escalated') counts.escalated++;
       else counts.toInquisitor++;
     }
     return counts;
   });
+  for (let i = 0; i < result.expired; i++) metrics.escalation('expired');
+  return result;
+}
+
+/** Closes items with no outcome: no label and nothing written back. Pending votes become `inconclusive`; settling them is the caller's. */
+async function closeItems(trx: Transaction<DB>, itemIds: number[], now: Date, reason?: string) {
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({ status: 'Closed', updatedAt: utc(now), ...(reason ? { reason } : {}) })
+    .where('id', 'in', itemIds)
+    .execute();
+  await trx
+    .updateTable('KnightsVote')
+    .set({ verdict: 'inconclusive' })
+    .where('itemId', 'in', itemIds)
+    .where('verdict', '=', 'pending')
+    .execute();
 }
 
 export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: Date) {
   await db.transaction().execute(async (trx) => {
-    await trx
-      .updateTable('KnightsQueueItem')
-      .set({ status: 'Closed', updatedAt: utc(now) })
-      .where('id', '=', itemId)
-      .execute();
-    await trx
-      .updateTable('KnightsVote')
-      .set({ verdict: 'inconclusive' })
-      .where('itemId', '=', itemId)
-      .where('verdict', '=', 'pending')
-      .execute();
+    await closeItems(trx, [itemId], now);
     await settleItemVotes(trx, itemId, now);
   });
 }

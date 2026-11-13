@@ -96,6 +96,16 @@ describe('POST /api/jobs/tick', () => {
     });
   });
 
+  it('reports how many unvoted items the escalation closed as expired', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0, toInquisitor: 0, extended: 1, expired: 4 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ expired: 4, extended: 1 });
+  });
+
   it('writes labels and retries unconfirmed conversions even when an earlier step failed', async () => {
     escalateExpired.mockRejectedValue(new Error('db down'));
     applyPendingResolutions.mockResolvedValue({ applied: 0 });

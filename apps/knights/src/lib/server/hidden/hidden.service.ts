@@ -5,6 +5,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import { PROGRESSION } from '../progression/config';
+import { BUCKET_LEVELS } from '../queue/feed';
 import { canVote } from '../queue/ranks';
 import {
   pacingGate,
@@ -46,6 +47,19 @@ export async function slotOf(db: Executor, userId: number): Promise<number> {
 
 export const unit = (digest: Buffer, at: number) => digest.readUInt32BE(at) / 2 ** 32;
 
+/** A reference's level bucket is its `answer`; `null` is every other answer, kept as a group of its own. */
+type AnswerGroup = string | null;
+const BUCKET_ANSWERS = BUCKET_LEVELS.map(String);
+const ANSWER_GROUPS: AnswerGroup[] = [...BUCKET_ANSWERS, null];
+/** Digest bytes 0-7 roll the rate and the start point; the bucket order reads the next four bytes per group. */
+const BUCKET_DIGEST_OFFSET = 8;
+
+/** The groups in a per-digest order, uniform over all orders, so the first group with a reference is a fair draw. */
+const bucketOrder = (digest: Buffer) =>
+  ANSWER_GROUPS.map((group, i) => ({ group, key: unit(digest, BUCKET_DIGEST_OFFSET + 4 * i) }))
+    .sort((a, b) => a.key - b.key)
+    .map(({ group }) => group);
+
 function eligibleReferences(
   db: Executor,
   userId: number,
@@ -76,8 +90,11 @@ function eligibleReferences(
  * The hidden check for this feed slot, or null for a queue item. The pool is read on every call a Knight makes, so a page
  * costs the same whichever it turns out to be.
  *
- * The player's fixed digest picks a start point in the pool's id range (its lowest to highest id), and the pick is the first eligible reference at or
- * after it (wrapping to the first one), so the cost is a short index walk and not a count of every eligible row.
+ * The player's fixed digest orders the level buckets (a reference's `answer`; any other answer is a group of its own)
+ * and picks a start point in the pool's id range (its lowest to highest id). The pick is the first eligible reference
+ * at or after it (wrapping to the first one) in the first bucket, in that order, that has one: each bucket with an
+ * eligible reference is equally likely, whatever its size, and the cost is a short index walk per bucket tried, not a
+ * count of every eligible row.
  */
 export async function pickHiddenCheck(
   db: Executor,
@@ -122,19 +139,22 @@ export async function pickHiddenCheck(
     'img.width',
     'img.height',
   ] as const;
-  const row =
-    (await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
+  const walk = (answers: AnswerGroup, from: 'at-or-after' | 'before') =>
+    eligibleReferences(db, input.userId, input.questionKey, input.exclude)
+      .where((eb) =>
+        answers === null ? eb('r.answer', 'not in', BUCKET_ANSWERS) : eb('r.answer', '=', answers)
+      )
       .select(columns)
-      .where('r.id', '>=', start)
+      .where('r.id', from === 'at-or-after' ? '>=' : '<', start)
       .orderBy('r.id', 'asc')
       .limit(1)
-      .executeTakeFirst()) ??
-    (await eligibleReferences(db, input.userId, input.questionKey, input.exclude)
-      .select(columns)
-      .where('r.id', '<', start)
-      .orderBy('r.id', 'asc')
-      .limit(1)
-      .executeTakeFirst());
+      .executeTakeFirst();
+
+  let row: Awaited<ReturnType<typeof walk>> = undefined;
+  for (const group of bucketOrder(digest)) {
+    row = (await walk(group, 'at-or-after')) ?? (await walk(group, 'before'));
+    if (row) break;
+  }
 
   if (!row || unit(digest, 0) >= input.rate) return null;
   return {

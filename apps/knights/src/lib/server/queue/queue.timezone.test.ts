@@ -51,6 +51,7 @@ describe('on a host that is not on UTC', () => {
       escalated: 0,
       toInquisitor: 0,
       extended: 0,
+      expired: 0,
     });
     const atExpiry = new Date('2026-12-18T12:00:00Z');
     // No higher rank is staffed here, so the voted item goes straight to the Inquisitors.
@@ -58,6 +59,7 @@ describe('on a host that is not on UTC', () => {
       escalated: 0,
       toInquisitor: 1,
       extended: 0,
+      expired: 0,
     });
   });
 });

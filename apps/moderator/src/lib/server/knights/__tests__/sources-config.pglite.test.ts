@@ -171,6 +171,22 @@ describe('saveSourcesConfig', () => {
     });
   });
 
+  it('keeps a stored maxOpen, which the page does not edit', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 1200 })
+    );
+
+    await saveSourcesConfig({ enabled: true, sfwRate: 0.5, nsfwRate: 0.2 }, MOD);
+
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: true,
+      sfwRate: 0.5,
+      nsfwRate: 0.2,
+      maxOpen: 1200,
+    });
+  });
+
   it('records who changed it with the value before and after', async () => {
     await saveSourcesConfig({ enabled: true, sfwRate: 0.05, nsfwRate: 0.05 }, MOD);
     await saveSourcesConfig({ enabled: false, sfwRate: 0.05, nsfwRate: 0.1 }, 8);

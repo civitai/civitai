@@ -21,6 +21,7 @@ const SHOP_OUTCOMES = ['granted', 'pending', 'failed'] as const;
 const BUZZ_OUTCOMES = ['paid', 'failed', 'retry'] as const;
 const ESCALATION_REASONS = [
   'next-stage',
+  'expired',
   ...new Set([...KNIGHTS_ESCALATION_REASONS, ...KNIGHTS_WRITEBACK_REASONS]),
 ] as const;
 const HIDDEN_VERDICTS = ['correct', 'failed', 'inconclusive'] as const;
@@ -74,7 +75,7 @@ const buzzGrants = counter(
 );
 const escalations = counter(
   'knights_escalations_total',
-  'Queue items handed to the next stage (next-stage) or to the Inquisitors, by reason.',
+  'Queue items handed to the next stage (next-stage) or to the Inquisitors, by reason; expired counts unvoted items closed instead.',
   { reason: ESCALATION_REASONS }
 );
 const itemsResolved = counter(
