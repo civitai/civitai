@@ -25,7 +25,9 @@ vi.mock('~/server/flipt/client', () => ({
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
 }));
-const { modelRow } = vi.hoisted(() => ({ modelRow: { nsfw: false } }));
+const { modelRow } = vi.hoisted(() => ({
+  modelRow: { nsfw: false, minor: false, sfwOnly: false },
+}));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {
     cancellableQuery: async () => ({
@@ -36,6 +38,8 @@ vi.mock('~/server/db/pgDb', () => ({
           name: 'model',
           type: 'LORA',
           nsfw: modelRow.nsfw,
+          minor: modelRow.minor,
+          sfwOnly: modelRow.sfwOnly,
           nsfwLevel: 31,
           status: 'Published',
           mode: null,
@@ -127,6 +131,9 @@ async function cardImages(
 describe('getModelsWithImagesAndModelVersions card images', () => {
   beforeEach(() => {
     modelRow.nsfw = false;
+    modelRow.minor = false;
+    modelRow.sfwOnly = false;
+    redisMock.redis.get.mockResolvedValue(null);
     vi.mocked(getImagesForModelVersionCache).mockResolvedValue({
       [VERSION]: {
         modelVersionId: VERSION,
@@ -180,6 +187,30 @@ describe('getModelsWithImagesAndModelVersions card images', () => {
       expect(
         await cardImages(1, { user: { id: OWNER }, disablePoi: true, disableMinor: true })
       ).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe('a minor or SFW-only model', () => {
+    // Its cached gallery settings: held, at PG|PG13.
+    const holdAt = (level: number) =>
+      redisMock.redis.get.mockResolvedValue(JSON.stringify({ sfwHeld: true, level }) as never);
+
+    it('serves a level-31 viewer only the images within its hold', async () => {
+      modelRow.sfwOnly = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: 99 } })).toEqual([1]);
+    });
+
+    it('serves its owner the whole showcase', async () => {
+      modelRow.minor = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: OWNER } })).toEqual([1, 4, 8, 16]);
+    });
+
+    it('serves a moderator the whole showcase', async () => {
+      modelRow.minor = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: 99, isModerator: true } })).toEqual([1, 4, 8, 16]);
     });
   });
 });

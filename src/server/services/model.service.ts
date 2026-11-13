@@ -1816,6 +1816,40 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
   typeof getModelsWithImagesAndModelVersions
 >['items'][0];
 
+/**
+ * The showcase of a minor or SFW-only model, capped at its gallery level for every viewer but the
+ * model's owner, who sees it whole. Moderators are the caller's to exempt.
+ */
+async function holdForViewer<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: {
+    id: number;
+    minor?: boolean;
+    sfwOnly?: boolean;
+    user: { id: number };
+    modelVersions: { id: number }[];
+  }[],
+  viewer?: { id: number }
+) {
+  const held = await holdShowcaseImages(
+    byVersion,
+    new Map(
+      models.flatMap((model) =>
+        model.modelVersions.map(
+          (version) =>
+            [version.id, { modelId: model.id, minor: model.minor, sfwOnly: model.sfwOnly }] as const
+        )
+      )
+    )
+  );
+  if (!viewer) return held;
+  for (const model of models)
+    if (model.user.id === viewer.id)
+      for (const version of model.modelVersions)
+        if (byVersion[version.id]) held[version.id] = byVersion[version.id];
+  return held;
+}
+
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
@@ -1918,6 +1952,8 @@ export const getModelsWithImagesAndModelVersions = async ({
     } else {
       modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
     }
+    if (!user?.isModerator)
+      modelVersionImages = await holdForViewer(modelVersionImages, items, user);
   }
 
   const showSfwFace = showsSfwFace(faceBrowsingLevel ?? input.browsingLevel);
