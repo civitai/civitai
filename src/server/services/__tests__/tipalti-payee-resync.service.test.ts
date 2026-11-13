@@ -259,6 +259,17 @@ describe('resyncTipaltiPayees', () => {
     expect(bust).not.toHaveBeenCalled();
   });
 
+  it('a failed ModActivity write still reports the write as applied and busts the cache', async () => {
+    arrange(stored(false), payee());
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+
+    const [row] = await run(false);
+
+    expect(row).toMatchObject({ applied: true, direction: 'enable' });
+    expect(row.error).toBeUndefined();
+    expect(bust).toHaveBeenCalledWith(USER_ID);
+  });
+
   it('a failed cache bust still reports the write as applied', async () => {
     arrange(stored(false), payee());
     bust.mockRejectedValueOnce(new Error('redis down'));

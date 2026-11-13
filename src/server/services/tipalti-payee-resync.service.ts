@@ -144,7 +144,7 @@ export async function resyncTipaltiPayees({
     row.tipalti = {
       status: payee.status,
       isPayable: typeof payee.isPayable === 'boolean' ? payee.isPayable : null,
-      // Reported only, never written: it is why a payee is unpayable.
+      // Reported only, never written or passed on: updateByTipaltiAccount emails the user on a 'tax' reason.
       unpayableReasons: reasons.success ? reasons.data : null,
       lastChangeDateTimeUTC: payee.lastChangeDateTimeUTC ?? null,
       paymentMethodType: payee.paymentMethod?.paymentMethodType ?? null,
