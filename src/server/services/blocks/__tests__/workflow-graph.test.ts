@@ -141,9 +141,9 @@ describe('resolveBlockWorkflowGraph — references', () => {
     expect(r.error).toContain('workflow step 1: "$ref": "$0" does not name');
   });
 
-  it('checks a reference that IS the whole input', () => {
+  it('refuses a reference that IS the whole input', () => {
     const r = refusal([step({ input: ref('ghost') as unknown as Record<string, unknown> })]);
-    expect(r.error).toContain('workflow step 0: "$ref": "ghost" does not name');
+    expect(r.error).toBe('workflow step 0: a step input must be an object, not a reference');
   });
 
   it('refuses a reference whose `$ref` or `path` is not a string', () => {
@@ -707,10 +707,9 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     ).toHaveLength(2);
   });
 
-  it('🔴 non-generators may not take media: chat, transcode, convertImage, blobArchive, analysers, unknown $types', () => {
+  it('🔴 non-generators may not take media: chat, convertImage, blobArchive, analysers, unknown $types (transcode takes no refs at all)', () => {
     for (const $type of [
       'chatCompletion',
-      'transcode',
       'convertImage',
       'blobArchive',
       'echo',
@@ -789,6 +788,8 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     'mesh',
     'samples.0',
     'thumbnail',
+    'svg',
+    'audio',
     'imageId',
     'blobIDs',
     'sourceUri',
@@ -834,6 +835,103 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     ).toHaveLength(2);
   });
 
+  it('🔴 a reference default is held to the same rules as the reference', () => {
+    const withDefault = (fallback: unknown) =>
+      step({
+        $type: 'chatCompletion',
+        input: { x: { $ref: 'gen', path: 'output.text', default: fallback } },
+      });
+    mediaRefused([gen, withDefault(ref('gen', 'output.video.url'))], 1);
+    expect(refusal([gen, withDefault(ref('zzz', 'output.text'))]).error).toContain('"zzz"');
+    expect(resolved([gen, withDefault('a literal fallback')])).toHaveLength(2);
+  });
+
+  it.each([
+    ['a reference', { src: { $ref: 'gen', path: 'output.video.url' } }],
+    ['a re-cased reference', { list: [{ $REF: 'gen', path: 'output.text' }] }],
+  ])('🔴 refuses workflow arguments holding %s', (_label, args) => {
+    const r = resolveBlockWorkflowGraph({
+      steps: [gen, step({ $type: 'chatCompletion', input: { x: ref('$arguments', 'src') } })],
+      arguments: args,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('workflow arguments may not hold a reference');
+  });
+
+  it('🔴 a transcode step takes no references at all, even to text', () => {
+    const chat = step({ name: 'llm', $type: 'chatCompletion', input: { messages: [] } });
+    for (const input of [
+      { sourceUrl: ref('llm', 'output.text') },
+      { options: ref('llm', 'output.parsed.text') },
+    ]) {
+      expect(refusal([chat, step({ $type: 'transcode', input })]).error).toBe(
+        'workflow step 1: a transcode step takes literal input only, no references'
+      );
+    }
+    expect(
+      resolved([chat, step({ $type: 'transcode', input: { sourceUrl: 'https://a' } })])
+    ).toHaveLength(2);
+  });
+
+  it('🔴 a step input may not itself be a reference', () => {
+    const chat = step({ name: 'llm', $type: 'chatCompletion', input: { messages: [] } });
+    expect(
+      refusal([chat, step({ $type: 'imageGen', input: ref('llm', 'output.parsed.text') })]).error
+    ).toBe('workflow step 1: a step input must be an object, not a reference');
+  });
+
+  it('🔴 an analyser takes media on its media field only, never in its free-text fields', () => {
+    const caption = (input: Record<string, unknown>) =>
+      step({ $type: 'mediaCaptioning', input: { mediaUrl: 'https://a', ...input } });
+    expect(resolved([gen, caption({ mediaUrl: ref('gen', 'output.video.url') })])).toHaveLength(2);
+    mediaRefused([gen, caption({ customInstructions: ref('gen', 'output.video.url') })], 1);
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'wdTagging',
+          input: { mediaUrl: 'https://a', prompt: ref('gen', 'output.images[0].url') },
+        }),
+      ],
+      1
+    );
+  });
+
+  it('🔴 refuses media into videoGen when `provider` has a re-cased twin', () => {
+    mediaRefused(
+      [
+        gen,
+        step({
+          $type: 'videoGen',
+          input: { engine: 'wan', provider: 'civitai', Provider: 'comfy', images: [ref('gen')] },
+        }),
+      ],
+      1
+    );
+  });
+
+  it('🔴 a merge field from `$arguments` with a non-string path is refused', () => {
+    const r = refusal([
+      step({
+        $type: 'merge',
+        input: {
+          onMissing: 'fail',
+          fields: { x: { $ref: '$arguments', path: 5, reduce: 'first' } },
+        },
+      }),
+    ]);
+    expect(r.errorCode).toBe('workflow_ref_invalid');
+  });
+
+  it.each(['destınationUrl', 'deſtinationUrl'])(
+    '🔴 refuses the destination key spelled %s',
+    (key) => {
+      expect(refusal([step({ $type: 'transcode', input: { [key]: 'https://b' } })]).error).toBe(
+        `workflow step 0: ${WRITE_TARGET_ERROR}`
+      );
+    }
+  );
+
   it('🔴 refuses any input key naming an output destination, at any depth and in any case', () => {
     for (const input of [
       { sourceUrl: 'https://a', destinationUrl: 'https://b' },
@@ -848,7 +946,7 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
   it('🔴 refuses a destination key in the workflow arguments, or arguments too deep to check', () => {
     const graph = (args: Record<string, unknown>) =>
       resolveBlockWorkflowGraph({
-        steps: [step({ $type: 'transcode', input: { opts: ref('$arguments', 'opts') } })],
+        steps: [step({ $type: 'chatCompletion', input: { opts: ref('$arguments', 'opts') } })],
         arguments: args,
       });
     const r = graph({ opts: { destinationUrl: 'https://b' } });

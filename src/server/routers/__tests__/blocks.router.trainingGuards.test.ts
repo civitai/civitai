@@ -391,12 +391,6 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
         { images: [{ url: 'a' }] }
       ),
     ],
-    [
-      'a training input that is itself a reference',
-      workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
-        cfg: { triggerWord: 'badword' },
-      }),
-    ],
   ])('refuses %s, before any check or orchestrator call', async (_label, body) => {
     await expect(estimate(body)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
@@ -406,6 +400,18 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
       code: 'BAD_REQUEST',
       message: NOT_A_STRING,
     });
+    expect(h.check).not.toHaveBeenCalled();
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a training input that is itself a reference, before any check or orchestrator call', async () => {
+    const body = workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
+      cfg: { triggerWord: 'badword' },
+    });
+    for (const call of [estimate, submit]) {
+      const outcome = await call(body).catch((error: unknown) => error);
+      expect(JSON.stringify(outcome)).toContain('a step input must be an object, not a reference');
+    }
     expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();
   });

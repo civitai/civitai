@@ -1141,7 +1141,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const outputTruncatedTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_output_truncated_total',
-    'Pass-through step output subtrees nested past the output walk cap, dropped (nulled) instead of forwarded to the block. Counted on the snapshot path, per subtree. step_type = `passthrough` (the $type is app-supplied, an open set). Non-zero means a block received a step output with a part removed.',
+    'Pass-through step output subtrees nested past the output walk cap, dropped (nulled) instead of forwarded to the block. Counted per subtree wherever a step output is split for the block. step_type = `passthrough` (the $type is app-supplied, an open set). Non-zero means a block received a step output with a part removed.',
     ['step_type']
   );
 

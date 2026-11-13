@@ -292,6 +292,21 @@ export const MEDIA_REF_ANALYSERS: readonly string[] = [
   'videoMetadata',
 ];
 
+const ANALYSER_TYPES: ReadonlySet<string> = new Set(
+  MEDIA_REF_ANALYSERS.map((type) => type.toLowerCase())
+);
+/** The analysers' media inputs, from their declared input types. */
+const ANALYSER_MEDIA_KEYS: ReadonlySet<string> = new Set(['mediaUrl', 'image', 'video']);
+
+/**
+ * Step `$type`s (lowercased) whose input can name an output destination. They take
+ * literal input only: a referenced value could carry a destination key the
+ * destination check never sees.
+ */
+const DESTINATION_STEP_TYPES: ReadonlySet<string> = new Set(['transcode']);
+const DESTINATION_STEP_REF_ERROR = 'a transcode step takes literal input only, no references';
+const WHOLE_INPUT_REF_ERROR = 'a step input must be an object, not a reference';
+
 /**
  * Step `$type`s (lowercased) that may take a reference into media: generators
  * whose own output the platform scans before it is served, so what they make
@@ -379,7 +394,7 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
   if (MEDIA_REF_CONSUMERS.has(type)) return true;
   if (!isPlainObject(input)) return false;
   if (type === 'videogen') {
-    if (hasRecasedTwin(input, 'engine')) return false;
+    if (hasRecasedTwin(input, 'engine') || hasRecasedTwin(input, 'provider')) return false;
     return typeof input.engine === 'string' && SCANNED_VIDEO_GEN_ENGINES.has(input.engine);
   }
   if (type === 'composemedia') {
@@ -438,23 +453,35 @@ const TOO_DEEP = Symbol('too deep');
  * The first key naming an output destination, at any depth, or `null`. Past
  * `WORKFLOW_INPUT_DEPTH_MAX` it returns `TOO_DEEP` rather than stop looking.
  */
-function findWriteTargetKey(value: unknown, depth = 0): string | typeof TOO_DEEP | null {
+function findWriteTargetKey(value: unknown): string | typeof TOO_DEEP | null {
+  // Upper-casing folds `ı` and `ſ` onto I and S, so those spellings match too.
+  return findKey(value, (key) => key.toUpperCase().includes('DESTINATION'));
+}
+
+/** The first key at any depth that `matches`, `TOO_DEEP` past the depth limit, or `null`. */
+function findKey(
+  value: unknown,
+  matches: (key: string) => boolean,
+  depth = 0
+): string | typeof TOO_DEEP | null {
   if (typeof value !== 'object' || value === null) return null;
   if (depth > WORKFLOW_INPUT_DEPTH_MAX) return TOO_DEEP;
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const found = findWriteTargetKey(entry, depth + 1);
+      const found = findKey(entry, matches, depth + 1);
       if (found) return found;
     }
     return null;
   }
   for (const [key, entry] of Object.entries(value)) {
-    if (/destination/i.test(key)) return key;
-    const found = findWriteTargetKey(entry, depth + 1);
+    if (matches(key)) return key;
+    const found = findKey(entry, matches, depth + 1);
     if (found) return found;
   }
   return null;
 }
+
+const isRefKey = (key: string) => key.toLowerCase() === '$ref';
 
 /**
  * Why a step input may not be submitted as-is: it names an output destination,
@@ -524,7 +551,8 @@ function checkValue(
     if (!state.mediaRefsAllowed && refMayReachMedia(object.$ref, object.path)) {
       return MEDIA_REF_ERROR;
     }
-    return null;
+    // A default stands in for the reference, so it is held to the same rules.
+    return checkValue(object.default, depth + 1, sources, state);
   }
   for (const entry of Object.values(object)) {
     const problem = checkValue(entry, depth + 1, sources, state);
@@ -565,7 +593,20 @@ function checkStepInput(
 ): string | null {
   const writeTarget = writeTargetProblem(input);
   if (writeTarget) return writeTarget;
+  if (isPlainObject(input) && findKey(input, isRefKey, 0) !== null) {
+    if (isRefObject(input) || hasRecasedRefKey(input)) return WHOLE_INPUT_REF_ERROR;
+    if (DESTINATION_STEP_TYPES.has(lowerType(stepType))) return DESTINATION_STEP_REF_ERROR;
+  }
   state.mediaRefsAllowed = acceptsMediaRefs(stepType, input);
+  if (ANALYSER_TYPES.has(lowerType(stepType)) && isPlainObject(input)) {
+    // An analyser takes media on its media field only; its free-text fields are text.
+    for (const [key, value] of Object.entries(input)) {
+      state.mediaRefsAllowed = ANALYSER_MEDIA_KEYS.has(key);
+      const problem = checkValue(value, depth + 1, sources, state);
+      if (problem) return problem;
+    }
+    return null;
+  }
   if (isMergeStepType(stepType)) {
     const mergeSources = readMergeSources(input);
     if (!mergeSources) return MERGE_SHAPE_ERROR;
@@ -635,6 +676,14 @@ export function resolveBlockWorkflowGraph(body: {
   });
   // A `$arguments` reference resolves to whatever the arguments hold, so a
   // destination key there reaches a step input the per-step check never saw.
+  const argumentsRef = findKey(body.arguments, isRefKey);
+  if (argumentsRef !== null && argumentsRef !== TOO_DEEP) {
+    return {
+      ok: false,
+      errorCode: 'workflow_ref_invalid',
+      error: 'workflow arguments may not hold a reference',
+    };
+  }
   const argumentsTarget = findWriteTargetKey(body.arguments);
   if (argumentsTarget) {
     return {
