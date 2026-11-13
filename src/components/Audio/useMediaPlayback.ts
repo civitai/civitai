@@ -59,12 +59,15 @@ export function useMediaPlayback<T extends HTMLMediaElement = HTMLMediaElement>(
     },
   };
 
+  // `play` and `pause` arrive a task after the call: follow what the element is doing now, so a
+  // late `play` from a preview another player already stopped does not stop that player in turn.
   const mediaEvents = {
     onPlay: (e: SyntheticEvent<HTMLMediaElement>) => {
+      if (e.currentTarget.paused) return;
       claimPlayback(e.currentTarget);
       setPlaying(true);
     },
-    onPause: () => setPlaying(false),
+    onPause: (e: SyntheticEvent<HTMLMediaElement>) => setPlaying(!e.currentTarget.paused),
     onEnded: () => setPlaying(false),
     onTimeUpdate: (e: SyntheticEvent<HTMLMediaElement>) =>
       setCurrentTime(e.currentTarget.currentTime),

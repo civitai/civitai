@@ -25,7 +25,12 @@ function startPlaying(media: HTMLAudioElement) {
   });
 }
 
-/** Brings the element in line with the store; `prev` is undefined on mount. */
+/**
+ * Brings the element in line with what changed in the store; `prev` is undefined on mount. Play and
+ * pause are asserted only when `playing` or the playback changed: the element's own `play`/`pause`
+ * events arrive a task after the call, so re-asserting on every other change (the playhead, ~4 a
+ * second) would fight them in a loop.
+ */
 function apply(media: HTMLAudioElement, state: MusicPlayerState, prev?: MusicPlayerState) {
   const track = state.current;
   if (!track) {
@@ -38,19 +43,24 @@ function apply(media: HTMLAudioElement, state: MusicPlayerState, prev?: MusicPla
     return;
   }
 
-  if (!prev || state.playback?.playbackId !== prev.playback?.playbackId) {
+  const started = !prev || state.playback?.playbackId !== prev.playback?.playbackId;
+  if (started) {
     const url = resolveEdgeUrl(track.url, { type: 'audio' }).url;
     if (media.getAttribute('src') !== url) media.src = url;
     else media.currentTime = 0;
     useMusicPlayheadStore.setState({ currentTime: 0, duration: track.durationSec });
   }
 
-  if (state.playing && media.paused) startPlaying(media);
-  else if (!state.playing && !media.paused) media.pause();
+  if (started || state.playing !== prev?.playing) {
+    if (state.playing && media.paused) startPlaying(media);
+    else if (!state.playing && !media.paused) media.pause();
+  }
 
-  media.volume = state.volume;
-  media.muted = state.muted;
+  if (!prev || state.volume !== prev.volume) media.volume = state.volume;
+  if (!prev || state.muted !== prev.muted) media.muted = state.muted;
 }
+
+const pauseThroughStore = () => useMusicPlayerStore.getState().pause();
 
 /**
  * The global player's one `<audio>` element. It follows the player store through a synchronous
@@ -80,13 +90,16 @@ export function MusicPlayerAudio() {
       ref={ref}
       preload="auto"
       className="hidden"
+      // The events arrive a task late: act only on what the element is doing now.
       onPlay={(e) => {
-        claimPlayback(e.currentTarget);
+        if (e.currentTarget.paused) return;
+        claimPlayback(e.currentTarget, pauseThroughStore);
         if (!store().playing) store().resume();
       }}
       onPause={(e) => {
-        // `ended` follows and decides what plays next.
-        if (!e.currentTarget.ended && store().playing) store().pause();
+        const media = e.currentTarget;
+        // At the end, `ended` follows and decides what plays next.
+        if (media.paused && !media.ended && store().playing) store().pause();
       }}
       onEnded={() => store().ended()}
       onTimeUpdate={(e) => {

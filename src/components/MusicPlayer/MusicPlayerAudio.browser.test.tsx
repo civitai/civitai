@@ -247,3 +247,213 @@ describe('the global player audio element', () => {
     expect(player().playing).toBe(false);
   });
 });
+
+describe('one sound at a time, with element events arriving a task late as browsers send them', () => {
+  const MAX_CALLS = 50;
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * `play()`/`pause()` flip `paused` at once and send their events a task later, a `timeupdate` at
+   * the moved playhead before `pause`, and a playing element reports its time every 50 ms. A
+   * play/pause loop between the players throws after `MAX_CALLS` calls instead of spinning.
+   */
+  function browserLikeMedia() {
+    const calls = new Map<HTMLMediaElement, { play: number; pause: number }>();
+    const count = (media: HTMLMediaElement, kind: 'play' | 'pause') => {
+      const counts = calls.get(media) ?? { play: 0, pause: 0 };
+      counts[kind]++;
+      calls.set(media, counts);
+      if (counts[kind] > MAX_CALLS) throw new Error(`${kind}() looped past ${MAX_CALLS} calls`);
+    };
+    const setPaused = (media: HTMLMediaElement, paused: boolean) =>
+      Object.defineProperty(media, 'paused', { configurable: true, value: paused });
+    play.mockImplementation(function (this: HTMLMediaElement) {
+      count(this, 'play');
+      if (this.paused) {
+        setPaused(this, false);
+        setTimeout(() => this.dispatchEvent(new Event('play')));
+      }
+      return Promise.resolve();
+    });
+    pause.mockImplementation(function (this: HTMLMediaElement) {
+      count(this, 'pause');
+      if (!this.paused) {
+        setPaused(this, true);
+        setTimeout(() => {
+          setTime(this, this.currentTime + 0.01);
+          this.dispatchEvent(new Event('pause'));
+        });
+      }
+    });
+    const ticker = setInterval(() => {
+      for (const media of audios()) if (!media.paused) setTime(media, media.currentTime + 0.05);
+    }, 50);
+    return {
+      calls: (media: HTMLMediaElement) => calls.get(media) ?? { play: 0, pause: 0 },
+      stop: () => clearInterval(ticker),
+    };
+  }
+
+  test('the global player and two previews hand over without a play/pause loop', async () => {
+    const media = browserLikeMedia();
+    try {
+      await renderWithProviders(
+        <>
+          <MusicPlayerAudio />
+          <div data-testid="preview-a">
+            <SongPreviewPlayer src={urlFor(8)} duration={10} />
+          </div>
+          <div data-testid="preview-b">
+            <SongPreviewPlayer src={urlFor(9)} duration={10} />
+          </div>
+        </>
+      );
+      const global = audio();
+      const button = (id: string, name: string) =>
+        page.getByTestId(id).getByRole('button', { name, exact: true });
+
+      act(() => player().playTrack(track(1)));
+      await wait(100);
+      expect(global.paused).toBe(false);
+
+      // A preview starts: the global player stops and stays stopped.
+      await button('preview-a', 'Play').click();
+      await wait(300);
+      expect(media.calls(global).pause).toBeLessThanOrEqual(2);
+      expect(media.calls(global).play).toBeLessThanOrEqual(2);
+      expect(global.paused).toBe(true);
+      expect(player().playing).toBe(false);
+      await expect.element(button('preview-a', 'Pause')).toBeInTheDocument();
+
+      // The other preview takes over from the first.
+      await button('preview-b', 'Play').click();
+      await wait(300);
+      await expect.element(button('preview-a', 'Play')).toBeInTheDocument();
+      await expect.element(button('preview-b', 'Pause')).toBeInTheDocument();
+      expect(global.paused).toBe(true);
+
+      // The global player starts again: the preview stops, the global player keeps playing.
+      act(() => player().resume());
+      await wait(300);
+      expect(media.calls(global).play).toBeLessThanOrEqual(3);
+      expect(media.calls(global).pause).toBeLessThanOrEqual(2);
+      expect(global.paused).toBe(false);
+      expect(player().playing).toBe(true);
+      await expect.element(button('preview-b', 'Play')).toBeInTheDocument();
+    } finally {
+      media.stop();
+    }
+  });
+
+  test('a pause the browser makes on its own (a headset button) sticks', async () => {
+    const media = browserLikeMedia();
+    try {
+      await renderWithProviders(<MusicPlayerAudio />);
+      act(() => player().playTrack(track(1)));
+      await wait(100);
+
+      // The playhead keeps reporting until the `pause` event lands.
+      audio().pause();
+      await wait(300);
+
+      expect(audio().paused).toBe(true);
+      expect(player().playing).toBe(false);
+      expect(media.calls(audio()).play).toBe(1);
+    } finally {
+      media.stop();
+    }
+  });
+
+  test('pause then play again before the events land: it plays', async () => {
+    const media = browserLikeMedia();
+    try {
+      await renderWithProviders(<MusicPlayerAudio />);
+      act(() => player().playTrack(track(1)));
+      await wait(100);
+
+      act(() => {
+        player().pause();
+        player().resume();
+      });
+      await wait(200);
+
+      expect(audio().paused).toBe(false);
+      expect(player().playing).toBe(true);
+    } finally {
+      media.stop();
+    }
+  });
+
+  test('play then pause again before the events land: it stays paused', async () => {
+    const media = browserLikeMedia();
+    try {
+      await renderWithProviders(<MusicPlayerAudio />);
+      act(() => player().playTrack(track(1)));
+      await wait(100);
+      act(() => player().pause());
+      await wait(100);
+
+      act(() => {
+        player().resume();
+        player().pause();
+      });
+      await wait(200);
+
+      expect(audio().paused).toBe(true);
+      expect(player().playing).toBe(false);
+    } finally {
+      media.stop();
+    }
+  });
+
+  test('a preview stopped before its play event lands does not stop the global player', async () => {
+    const media = browserLikeMedia();
+    try {
+      await renderWithProviders(
+        <>
+          <MusicPlayerAudio />
+          <SongPreviewPlayer src={urlFor(8)} duration={10} />
+        </>
+      );
+      const [global, preview] = audios();
+      act(() => player().playTrack(track(1)));
+      await wait(100);
+
+      act(() => {
+        void preview.play();
+        preview.pause();
+      });
+      await wait(200);
+
+      expect(global.paused).toBe(false);
+      expect(player().playing).toBe(true);
+    } finally {
+      media.stop();
+    }
+  });
+
+  test('a preview that starts stops the global player through its store, at once', async () => {
+    const media = browserLikeMedia();
+    try {
+      await renderWithProviders(
+        <>
+          <MusicPlayerAudio />
+          <SongPreviewPlayer src={urlFor(8)} duration={10} />
+        </>
+      );
+      const [, preview] = audios();
+      act(() => player().playTrack(track(1)));
+      await wait(100);
+
+      Object.defineProperty(preview, 'paused', { configurable: true, value: false });
+      act(() => {
+        preview.dispatchEvent(new Event('play'));
+      });
+
+      // Not a task later, when the global element's own `pause` event lands.
+      expect(player().playing).toBe(false);
+    } finally {
+      media.stop();
+    }
+  });
+});
