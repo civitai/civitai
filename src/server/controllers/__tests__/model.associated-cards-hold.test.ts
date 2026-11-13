@@ -9,6 +9,8 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 const OWNER = 7;
 const MODEL = 100;
 const VERSION = 200;
+const OTHER_MODEL = 101;
+const OTHER_VERSION = 201;
 
 const { getModelsRaw, getImagesForModelVersion, modelRow } = vi.hoisted(() => ({
   getModelsRaw: vi.fn(),
@@ -27,7 +29,10 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/hot-reads-6.reads', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  readModelAssociationTargetsViaKysely: vi.fn(async () => [{ toModelId: 100, toArticleId: null }]),
+  readModelAssociationTargetsViaKysely: vi.fn(async () => [
+    { toModelId: 100, toArticleId: null },
+    { toModelId: 101, toArticleId: null },
+  ]),
 }));
 vi.mock('~/server/db/kyselyDb.lazy', () => ({ loadKyselyDb: async () => ({ kyselyRead: {} }) }));
 vi.mock('~/server/services/promotion.service', () => ({ getSponsoredModel: async () => null }));
@@ -75,6 +80,19 @@ async function cardImages(
     return {
       items: [
         {
+          id: OTHER_MODEL,
+          name: 'other',
+          nsfwLevel: 31,
+          mode: null,
+          ...modelRow,
+          user: { id: 8 },
+          modelVersions: [{ id: OTHER_VERSION }],
+          hashes: [],
+          tagsOnModels: [],
+          rank: {},
+          metricPrivacy: null,
+        },
+        {
           id: MODEL,
           name: 'model',
           nsfwLevel: 31,
@@ -94,9 +112,12 @@ async function cardImages(
     input: { fromId: 1, type: 'model', browsingLevel: 31 },
     ctx: { features: {}, req: { headers: {} }, ...ctx },
   } as never);
-  const card = (result as { id: number; images: { id: number }[] }[]).find((r) => r.id === MODEL);
-  return card?.images.map((i) => i.id) ?? [];
+  const cards = result as { id: number; images: { id: number }[] }[];
+  const ids = (id: number) => cards.find((r) => r.id === id)?.images.map((i) => i.id) ?? [];
+  lastOther = ids(OTHER_MODEL);
+  return ids(MODEL);
 }
+let lastOther: number[] = [];
 
 describe('associated-resource card images', () => {
   beforeEach(() => {
@@ -109,6 +130,8 @@ describe('associated-resource card images', () => {
       image(3, NsfwLevel.X),
       image(4, NsfwLevel.PG, { poi: true }),
       image(5, NsfwLevel.PG, { minor: true }),
+      { ...image(11, NsfwLevel.PG), userId: 8, modelVersionId: OTHER_VERSION },
+      { ...image(13, NsfwLevel.X), userId: 8, modelVersionId: OTHER_VERSION },
     ]);
   });
 
@@ -133,10 +156,15 @@ describe('associated-resource card images', () => {
     it('holds its card images at the stored gallery level', async () => {
       expect(await cardImages({ user: { id: 99 } })).toEqual([1, 4, 5]);
       expect(await cardImages({})).toEqual([1, 4, 5]);
+      modelRow.sfwOnly = false;
+      modelRow.minor = true;
+      expect(await cardImages({ user: { id: 99 } })).toEqual([1, 4, 5]);
     });
 
     it('serves it whole to its owner and a moderator on a session', async () => {
       expect(await cardImages({ user: { id: OWNER } })).toEqual([1, 2, 3, 4, 5]);
+      // Another creator's held model stays held for this owner.
+      expect(lastOther).toEqual([11]);
       expect(await cardImages({ user: { id: 5, isModerator: true } })).toEqual([1, 2, 3, 4, 5]);
     });
 
