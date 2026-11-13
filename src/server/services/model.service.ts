@@ -6605,6 +6605,29 @@ export async function getModelsWithVersions({
       )
     )
   );
+  // Card images follow the viewer's browsing-settings exclusions at the request's level, also on a
+  // by-id lookup, where `ignoreBrowsingAddons` only stops them deciding which models are found.
+  // Resolved onto a target of its own, which names no owner, so none of it is skipped.
+  const imageRules: {
+    browsingLevel?: number;
+    excludedTagIds?: number[];
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  } = { browsingLevel: input.browsingLevel };
+  await enforceBlockedBrowsingTagsForModels(imageRules, {
+    id: user?.id,
+    username: user?.username,
+    isModerator: user?.isModerator,
+  });
+  const excludedImageTagIds = new Set([
+    ...(imageRules.excludedTagIds ?? []),
+    ...(input.excludedTagIds ?? []),
+  ]);
+  const showsCardImage = (image: ImagesForModelVersions) =>
+    (!!user && image.userId === user.id) ||
+    (!(imageRules.disablePoi && image.poi) &&
+      !(imageRules.disableMinor && image.minor) &&
+      !(image.tags ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
@@ -6776,20 +6799,22 @@ export async function getModelsWithVersions({
                 //       ...image,
                 //     })
                 //   ),
-                images: (images[version.id]?.images ?? []).map(
-                  ({
-                    modelVersionId,
-                    name,
-                    userId,
-                    sizeKB,
-                    availability,
-                    metadata,
-                    tags,
-                    ...image
-                  }) => ({
-                    ...image,
-                  })
-                ),
+                images: (images[version.id]?.images ?? [])
+                  .filter(showsCardImage)
+                  .map(
+                    ({
+                      modelVersionId,
+                      name,
+                      userId,
+                      sizeKB,
+                      availability,
+                      metadata,
+                      tags,
+                      ...image
+                    }) => ({
+                      ...image,
+                    })
+                  ),
               };
             }
           ),
