@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 
 /**
  * `app_sandbox_hibernations`: one row per sleeping app, per user. RAW SQL ONLY (the Prisma model
@@ -28,6 +28,8 @@ export type HibernationRow = {
 
 export type HibernationUsage = { apps: number; bytes: number };
 
+export type OldestSleepingApp = { app: string; hibernatedAt: Date };
+
 /**
  * What a commit decides once it holds the user's lock: write `row` (insert, or replace the
  * user's row for that app) or not, and what to answer. Synchronous on purpose: nothing but the
@@ -36,8 +38,12 @@ export type HibernationUsage = { apps: number; bytes: number };
 export type CommitDecision<T> = { write?: HibernationRow; result: T };
 
 export interface HibernationRepo {
-  list(userId: number): Promise<HibernationRow[]>;
   get(userId: number, appKey: string): Promise<HibernationRow | null>;
+  /**
+   * The user's oldest sleeping app (earliest `hibernated_at`, ties by key), leaving out
+   * `excludeAppKey`: the one a limit refusal offers to delete, once the user confirms.
+   */
+  oldest(userId: number, excludeAppKey: string): Promise<OldestSleepingApp | null>;
   /** The user's sleeping apps and their total bytes, leaving out `excludeAppKey`'s row. */
   usage(userId: number, excludeAppKey: string): Promise<HibernationUsage>;
   /**
@@ -49,7 +55,6 @@ export interface HibernationRepo {
     appKey: string,
     decide: (existing: HibernationRow | null, usage: HibernationUsage) => CommitDecision<T>
   ): Promise<T>;
-  remove(userId: number, appKey: string): Promise<HibernationRow | null>;
   removeAll(userId: number): Promise<HibernationRow[]>;
 }
 
@@ -104,10 +109,11 @@ export function fromDb(r: DbRow): HibernationRow {
  * (`__tests__/hibernation.repo.sql.test.ts`).
  */
 export const hibernationSql = {
-  list: (userId: number) => Prisma.sql`
-    SELECT ${COLUMNS} FROM "app_sandbox_hibernations"
-    WHERE "user_id" = ${userId}
-    ORDER BY "hibernated_at" DESC`,
+  oldest: (userId: number, excludeAppKey: string) => Prisma.sql`
+    SELECT "app_key", "hibernated_at" FROM "app_sandbox_hibernations"
+    WHERE "user_id" = ${userId} AND "app_key" <> ${excludeAppKey}
+    ORDER BY "hibernated_at" ASC, "app_key" ASC
+    LIMIT 1`,
   get: (userId: number, appKey: string) => Prisma.sql`
     SELECT ${COLUMNS} FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId} AND "app_key" = ${appKey}`,
@@ -143,15 +149,17 @@ export const hibernationSql = {
       "last_activity_at" = EXCLUDED."last_activity_at",
       "hibernated_at" = EXCLUDED."hibernated_at",
       "updated_at" = now()`,
-  remove: (userId: number, appKey: string) => Prisma.sql`
-    DELETE FROM "app_sandbox_hibernations"
-    WHERE "user_id" = ${userId} AND "app_key" = ${appKey}
-    RETURNING ${COLUMNS}`,
   removeAll: (userId: number) => Prisma.sql`
     DELETE FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId}
     RETURNING ${COLUMNS}`,
 };
+
+export type OldestDbRow = { app_key: string; hibernated_at: Date };
+export const fromOldestDb = (r: OldestDbRow): OldestSleepingApp => ({
+  app: r.app_key,
+  hibernatedAt: r.hibernated_at,
+});
 
 export type UsageDbRow = { apps: number; bytes: bigint | number };
 export const toUsage = (rows: UsageDbRow[]): HibernationUsage => ({
@@ -160,8 +168,11 @@ export const toUsage = (rows: UsageDbRow[]): HibernationUsage => ({
 });
 
 export const hibernationRepo: HibernationRepo = {
-  async list(userId) {
-    return (await dbRead.$queryRaw<DbRow[]>(hibernationSql.list(userId))).map(fromDb);
+  async oldest(userId, excludeAppKey) {
+    const rows = await dbWrite.$queryRaw<OldestDbRow[]>(
+      hibernationSql.oldest(userId, excludeAppKey)
+    );
+    return rows[0] ? fromOldestDb(rows[0]) : null;
   },
 
   async get(userId, appKey) {
@@ -185,11 +196,6 @@ export const hibernationRepo: HibernationRepo = {
       if (decision.write) await tx.$executeRaw(hibernationSql.upsert(decision.write));
       return decision.result;
     });
-  },
-
-  async remove(userId, appKey) {
-    const rows = await dbWrite.$queryRaw<DbRow[]>(hibernationSql.remove(userId, appKey));
-    return rows[0] ? fromDb(rows[0]) : null;
   },
 
   async removeAll(userId) {

@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as z from 'zod';
 import { env } from '~/env/server';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { PayloadTooLarge, readRawBody } from '~/server/utils/raw-body';
 import {
   beginHibernation,
   beginInput,
@@ -21,8 +22,7 @@ import { verifyHibernationRequest } from '~/server/services/app-hibernation/inte
  *   503 the shared secret is not configured
  *   405 not a POST
  *   413 the body is over {@link MAX_BODY_BYTES}
- *   401 the signature, timestamp or nonce is refused (`internal-auth.ts`); 503 if the nonce
- *       store is down
+ *   401 the signature or the timestamp is refused (`internal-auth.ts`)
  *   400 the body does not parse
  *   then the route's own answers (403 `disabled` when the `app-hibernate` flag is off for the
  *   user, 503 `not_configured` without the archive store or the master key, ...)
@@ -40,19 +40,17 @@ const MAX_BODY_BYTES = 256 * 1024;
 
 export type HibernationRouteDeps = {
   hibernation: () => Promise<HibernationDeps>;
-  claimNonce: (nonce: string, ttlSeconds: number) => Promise<boolean>;
   nowSeconds: () => number;
   /** Reports an unexpected failure (answered 503). */
   report: (event: string, details: Record<string, unknown>) => void;
 };
 
 async function defaultRouteDeps(): Promise<HibernationRouteDeps> {
-  const { defaultHibernationDeps, claimHibernationNonce } = await import(
+  const { defaultHibernationDeps } = await import(
     '~/server/services/app-hibernation/hibernation-deps'
   );
   return {
     hibernation: defaultHibernationDeps,
-    claimNonce: claimHibernationNonce,
     nowSeconds: () => Math.floor(Date.now() / 1000),
     report: (event, details) => {
       void import('~/server/logging/client')
@@ -60,20 +58,6 @@ async function defaultRouteDeps(): Promise<HibernationRouteDeps> {
         .catch(() => undefined);
     },
   };
-}
-
-class BodyTooLarge extends Error {}
-
-async function readRawBody(req: NextApiRequest): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of req as unknown as AsyncIterable<Buffer | string>) {
-    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-    total += buf.length;
-    if (total > MAX_BODY_BYTES) throw new BodyTooLarge();
-    chunks.push(buf);
-  }
-  return Buffer.concat(chunks.map((c) => new Uint8Array(c)));
 }
 
 type Answer = { status: number; json: Record<string, unknown> };
@@ -96,7 +80,12 @@ export function beginAnswer(r: BeginResult): Answer {
     case 'limit':
       return {
         status: 409,
-        json: { error: 'Sleeping app limit reached', code: 'SLEEPING_LIMIT', limit: r.limit },
+        json: {
+          error: 'Sleeping app limit reached',
+          code: 'SLEEPING_LIMIT',
+          limit: r.limit,
+          oldest: r.oldest,
+        },
       };
     case 'attempt-conflict':
       return {
@@ -180,22 +169,21 @@ function createRoute<S extends z.ZodType>(
 
     let raw: Buffer;
     try {
-      raw = await readRawBody(req);
+      raw = await readRawBody(req, MAX_BODY_BYTES);
     } catch (err) {
-      if (err instanceof BodyTooLarge)
+      if (err instanceof PayloadTooLarge)
         return res.status(413).json({ error: 'Payload too large', code: 'too_large' });
       throw err;
     }
 
     const deps = await getDeps();
-    const auth = await verifyHibernationRequest({
+    const auth = verifyHibernationRequest({
       secret,
       method: req.method,
       path,
       headers: req.headers,
       body: raw,
       nowSeconds: deps.nowSeconds(),
-      claimNonce: deps.claimNonce,
     });
     if (!auth.ok) return res.status(auth.status).json({ error: 'Unauthorized', code: auth.code });
 

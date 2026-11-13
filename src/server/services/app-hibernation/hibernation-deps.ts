@@ -10,7 +10,7 @@ import { archiveStoreConfig, createArchiveStore } from '~/utils/app-archive-s3';
 import type { SessionUser } from '~/types/session';
 
 /**
- * The production wiring of `HibernationDeps`: the raw-SQL repo, Redis for attempts and nonces,
+ * The production wiring of `HibernationDeps`: the raw-SQL repo, Redis for attempts,
  * the S3 archive store, the master key from env, the `app-hibernate` flag and the per-plan
  * limits. Everything heavy is imported lazily, per call.
  */
@@ -36,16 +36,6 @@ const redisAttempts: AttemptStore = {
     return raw ? (JSON.parse(raw) as AttemptRecord) : null;
   },
 };
-
-/** Records a request nonce; `true` only the first time. Throws on a redis error (fail closed). */
-export async function claimHibernationNonce(nonce: string, ttlSeconds: number): Promise<boolean> {
-  const { sysRedis, keys } = await sysRedisClient();
-  const set = await sysRedis.set(`${keys.HIBERNATION_NONCE}:${nonce}` as const, '1', {
-    NX: true,
-    EX: ttlSeconds,
-  });
-  return !!set;
-}
 
 export async function defaultHibernationDeps(): Promise<HibernationDeps> {
   const config = archiveStoreConfig();

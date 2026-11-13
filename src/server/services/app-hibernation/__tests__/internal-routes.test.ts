@@ -14,7 +14,7 @@ import { sha, world, type World } from './hibernation.fakes';
 
 /**
  * The signed routes the sandbox service calls, driven through the REAL handler: raw-body HMAC,
- * timestamp window, nonce replay, the flag, and the begin -> upload -> commit flow.
+ * the timestamp window, the flag, and the begin -> upload -> commit flow.
  */
 
 // TEST-ONLY placeholder secrets.
@@ -26,50 +26,32 @@ const APP = 'habit-tracker';
 const A1 = '33333333-3333-4333-8333-333333333333';
 
 let w: World;
-let nonces: Set<string>;
-let nonceStoreDown: boolean;
 let routes: ReturnType<typeof createHibernationRoutes>;
 
 beforeEach(() => {
   setEnv({ APP_HIBERNATION_HMAC_SECRET: SECRET });
   w = world();
-  nonces = new Set();
-  nonceStoreDown = false;
   const deps: HibernationRouteDeps = {
     hibernation: async () => w.deps,
-    claimNonce: async (nonce) => {
-      if (nonceStoreDown) throw new Error('redis down');
-      if (nonces.has(nonce)) return false;
-      nonces.add(nonce);
-      return true;
-    },
     nowSeconds: () => NOW,
     report: () => undefined,
   };
   routes = createHibernationRoutes(async () => deps);
 });
 
-let nonceSeq = 0;
-function signed(
-  path: string,
-  body: unknown,
-  opts: { secret?: string; timestamp?: number; nonce?: string } = {}
-) {
+function signed(path: string, body: unknown, opts: { secret?: string; timestamp?: number } = {}) {
   const raw = Buffer.from(JSON.stringify(body));
   const timestamp = String(opts.timestamp ?? NOW);
-  const nonce = opts.nonce ?? `nonce-${String(++nonceSeq).padStart(12, '0')}`;
   const signature = signHibernationRequest(opts.secret ?? SECRET, {
     method: 'POST',
     path,
     timestamp,
-    nonce,
     body: raw,
   });
   return {
     raw,
     headers: {
       [HIBERNATION_HEADERS.timestamp]: timestamp,
-      [HIBERNATION_HEADERS.nonce]: nonce,
       [HIBERNATION_HEADERS.signature]: signature,
     },
   };
@@ -147,15 +129,6 @@ describe('HMAC request signing', () => {
     expect(w.attemptsMap.size).toBe(1);
   });
 
-  it('replaying the exact same signed request is refused', async () => {
-    const req = signed(HIBERNATION_PATHS.begin, beginBody);
-    expect((await call(routes.begin, req)).status).toBe(200);
-    expect(await call(routes.begin, req)).toEqual({
-      status: 401,
-      json: { error: 'Unauthorized', code: 'replay' },
-    });
-  });
-
   it('a signature for one route is refused by another, and a changed body by its own', async () => {
     const forBegin = signed(HIBERNATION_PATHS.begin, beginBody);
     expect((await call(routes.commit, forBegin)).json).toMatchObject({ code: 'unauthorized' });
@@ -163,12 +136,13 @@ describe('HMAC request signing', () => {
     expect((await call(routes.begin, tampered)).json).toMatchObject({ code: 'unauthorized' });
   });
 
-  it('a nonce store that is down refuses (503) instead of accepting unchecked', async () => {
-    nonceStoreDown = true;
-    expect(await call(routes.begin, signed(HIBERNATION_PATHS.begin, beginBody))).toEqual({
-      status: 503,
-      json: { error: 'Unauthorized', code: 'unavailable' },
+  it('a body over 256 KiB is refused 413 before any signature work or service call', async () => {
+    const big = { ...beginBody, pad: 'x'.repeat(256 * 1024) };
+    expect(await call(routes.begin, signed(HIBERNATION_PATHS.begin, big))).toEqual({
+      status: 413,
+      json: { error: 'Payload too large', code: 'too_large' },
     });
+    expect(w.attemptsMap.size).toBe(0);
   });
 
   it('no configured secret answers 503 to everyone', async () => {
@@ -245,6 +219,7 @@ describe('begin -> upload -> commit through the routes', () => {
         error: 'Sleeping app limit reached',
         code: 'SLEEPING_LIMIT',
         limit: { kind: 'apps', limit: 0, used: 0 },
+        oldest: null,
       },
     });
   });

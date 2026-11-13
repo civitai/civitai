@@ -3,12 +3,11 @@ import {
   beginHibernation,
   commitHibernation,
   deleteSleepingAppsForAccount,
-  getWakeSeed,
-  listSleepingApps,
   restoreSleepingAppSecrets,
   type BeginResult,
   type CommitInput,
 } from '~/server/services/app-hibernation/app-hibernation.service';
+import { beginAnswer } from '~/server/services/app-hibernation/internal-routes';
 import { sealSecrets } from '~/server/services/app-hibernation/secrets-envelope';
 import { sleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
 import { defaultUsageLimitConfig } from '~/shared/constants/usage-limits';
@@ -167,7 +166,7 @@ describe('upsert and lineage', () => {
 describe('per-plan sleeping-app limits', () => {
   // Literal registry defaults per tier, not read from the implementation.
   const EXPECTED: Record<string, { apps: number; bytes: number }> = {
-    free: { apps: 10, bytes: 262_144_000 },
+    free: { apps: 5, bytes: 104_857_600 },
     founder: { apps: 25, bytes: 524_288_000 },
     bronze: { apps: 25, bytes: 524_288_000 },
     silver: { apps: 50, bytes: 1_073_741_824 },
@@ -188,7 +187,11 @@ describe('per-plan sleeping-app limits', () => {
     expect(await limitsFor(null)).toEqual(EXPECTED.free);
   });
 
-  /** A world whose limits come from the real resolver, holding `n` sleeping apps of `each` bytes. */
+  /**
+   * A world whose limits come from the real resolver, holding `n` sleeping apps of `each` bytes.
+   * `held-i` went to sleep i days before 2026-06-01, so the oldest is the LAST one, never the
+   * first by key: a refusal that named the wrong app could not pass.
+   */
   function holding(tier: string, n: number, each = 1_000) {
     const w = world({ tier });
     w.deps.limits = () => limitsFor(tier);
@@ -208,7 +211,7 @@ describe('per-plan sleeping-app limits', () => {
         reason: null,
         appCreatedAt: null,
         lastActivityAt: null,
-        hibernatedAt: new Date(0),
+        hibernatedAt: new Date(Date.UTC(2026, 5, 1 - i)),
       });
     }
     return w;
@@ -223,6 +226,10 @@ describe('per-plan sleeping-app limits', () => {
       ).toEqual({
         kind: 'limit',
         limit: { kind: 'apps', limit: apps, used: apps },
+        oldest: {
+          app: `held-${apps - 1}`,
+          hibernatedAt: new Date(Date.UTC(2026, 5, 1 - (apps - 1))).toISOString(),
+        },
       } satisfies BeginResult);
       expect(atLimit.attemptsMap.size).toBe(0);
 
@@ -233,25 +240,44 @@ describe('per-plan sleeping-app limits', () => {
     }
   );
 
+  it('the free refusal names the oldest sleeping app (literal payload), and deletes nothing', async () => {
+    const w = holding('free', 5);
+    const answer = beginAnswer(
+      await beginHibernation({ userId: USER, app: APP, attemptId: A1 }, w.deps)
+    );
+    expect(answer).toEqual({
+      status: 409,
+      json: {
+        error: 'Sleeping app limit reached',
+        code: 'SLEEPING_LIMIT',
+        limit: { kind: 'apps', limit: 5, used: 5 },
+        oldest: { app: 'held-4', hibernatedAt: '2026-05-28T00:00:00.000Z' },
+      },
+    });
+    expect(w.rows.size).toBe(5);
+    expect(w.log.filter((l) => l.startsWith('delete') || l.startsWith('remove'))).toEqual([]);
+  });
+
   it('at the app limit, re-hibernating an app that is already sleeping is still allowed', async () => {
-    const w = holding('free', 10);
+    const w = holding('free', 5);
     expect(
       (await beginHibernation({ userId: USER, app: 'held-3', attemptId: A2 }, w.deps)).kind
     ).toBe('ok');
   });
 
   it('begin refuses once the plan bytes are used up; commit refuses an archive that would pass them', async () => {
-    const full = holding('free', 1, 262_144_000);
+    const full = holding('free', 1, 104_857_600);
     expect(await beginHibernation({ userId: USER, app: APP, attemptId: A1 }, full.deps)).toEqual({
       kind: 'limit',
-      limit: { kind: 'bytes', limit: 262_144_000, used: 262_144_000 },
+      limit: { kind: 'bytes', limit: 104_857_600, used: 104_857_600 },
+      oldest: { app: 'held-0', hibernatedAt: '2026-06-01T00:00:00.000Z' },
     });
 
-    const nearly = holding('free', 1, 262_144_000 - 10);
+    const nearly = holding('free', 1, 104_857_600 - 10);
     const { body } = await uploaded(nearly, A1, Buffer.alloc(11, 1));
     expect(await commitHibernation(body, nearly.deps)).toEqual({
       kind: 'limit',
-      limit: { kind: 'bytes', limit: 262_144_000, used: 262_144_000 - 10 },
+      limit: { kind: 'bytes', limit: 104_857_600, used: 104_857_600 - 10 },
     });
     expect(nearly.rows.has(`${USER}/${APP}`)).toBe(false);
   });
@@ -336,24 +362,7 @@ describe('encrypted .env* secrets', () => {
   });
 });
 
-describe('list, wake seed and account deletion', () => {
-  it('lists only the viewer’s apps as Sleeping, and a wake seed is a presigned GET with the sha', async () => {
-    const w = world();
-    const { b, body } = await uploaded(w, A1, ARCHIVE_1);
-    await commitHibernation(body, w.deps);
-
-    expect(await listSleepingApps(USER, w.deps)).toMatchObject([
-      { app: APP, status: 'Sleeping', bytes: ARCHIVE_1.length, hasSecrets: false },
-    ]);
-    expect(await listSleepingApps(OTHER_USER, w.deps)).toEqual([]);
-    expect(await getWakeSeed(USER, APP, w.deps)).toMatchObject({
-      url: `https://store.test/get/${b.archive.key}`,
-      sha256: sha(ARCHIVE_1),
-      bytes: ARCHIVE_1.length,
-    });
-    expect(await getWakeSeed(OTHER_USER, APP, w.deps)).toBeNull();
-  });
-
+describe('account deletion', () => {
   it('account deletion removes the user’s rows and every object under their prefix, and no one else’s', async () => {
     const w = world();
     const mine = await uploaded(w, A1, ARCHIVE_1);

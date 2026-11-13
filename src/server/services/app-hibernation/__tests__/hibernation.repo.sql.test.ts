@@ -5,9 +5,11 @@ import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   fromDb,
+  fromOldestDb,
   hibernationSql,
   toUsage,
   type DbRow,
+  type OldestDbRow,
   type HibernationRow,
   type UsageDbRow,
 } from '~/server/services/app-hibernation/hibernation.repo';
@@ -76,7 +78,10 @@ describe('app_sandbox_hibernations SQL', () => {
     await run(hibernationSql.upsert(second));
 
     expect(await get(9101, 'tip-calculator')).toEqual(second);
-    expect(await run(hibernationSql.list(9101))).toHaveLength(1);
+    expect(toUsage(await run<UsageDbRow>(hibernationSql.usage(9101, 'none-such')))).toEqual({
+      apps: 1,
+      bytes: 9_876,
+    });
   });
 
   it('usage counts the user’s other apps and their bytes, leaving the named app out', async () => {
@@ -103,6 +108,34 @@ describe('app_sandbox_hibernations SQL', () => {
       apps: 2,
       bytes: 5_321,
     });
+  });
+
+  it('oldest is the earliest hibernated app of that user, ties by key, leaving out the named app', async () => {
+    const at = (iso: string) => new Date(iso);
+    const put = (appKey: string, iso: string, userId = 9101) =>
+      run(
+        hibernationSql.upsert(
+          row({
+            userId,
+            appKey,
+            objectKey: `archives/${userId}/${appKey}/x.zip`,
+            hibernatedAt: at(iso),
+          })
+        )
+      );
+    await put('newest-app', '2026-11-10T00:00:00.000Z');
+    await put('bbb-app', '2026-09-01T00:00:00.000Z');
+    await put('aaa-app', '2026-09-01T00:00:00.000Z');
+    await put('older-elsewhere', '2020-01-01T00:00:00.000Z', 9202);
+    const oldest = async (exclude: string) =>
+      (await run<OldestDbRow>(hibernationSql.oldest(9101, exclude))).map(fromOldestDb);
+
+    expect(await oldest('none-such')).toEqual([
+      { app: 'aaa-app', hibernatedAt: at('2026-09-01T00:00:00.000Z') },
+    ]);
+    expect(await oldest('aaa-app')).toEqual([
+      { app: 'bbb-app', hibernatedAt: at('2026-09-01T00:00:00.000Z') },
+    ]);
   });
 
   it('removeAll deletes only that user’s rows and returns them', async () => {

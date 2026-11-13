@@ -334,13 +334,14 @@ export const usageLimitDefs = [
   },
   {
     // Sleeping (hibernated) apps one user may keep. At the limit a new hibernation is refused and
-    // the app stays as it is: nothing is ever deleted to make room.
+    // the app stays as it is. The refusal names the user's oldest sleeping app, which is deleted
+    // only if the user confirms ("delete <name> to continue"); nothing is ever deleted on its own.
     id: 'apps.sleeping-count',
     area: 'apps',
     kind: 'abuse',
     label: 'Sleeping apps',
     window: { type: 'standing' },
-    base: 10,
+    base: 5,
     byTier: {
       founder: { limit: 25 },
       bronze: { limit: 25 },
@@ -355,7 +356,7 @@ export const usageLimitDefs = [
     kind: 'abuse',
     label: 'Sleeping app storage',
     window: { type: 'standing' },
-    base: 250 * 1024 * 1024,
+    base: 100 * 1024 * 1024,
     byTier: {
       founder: { limit: 500 * 1024 * 1024 },
       bronze: { limit: 500 * 1024 * 1024 },

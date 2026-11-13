@@ -22,7 +22,6 @@ export function fakeStore(log: string[]) {
   const objects = new Map<string, Buffer>();
   const store: ArchiveStore = {
     presignPut: async (key) => `https://store.test/put/${key}`,
-    presignGet: async (key) => `https://store.test/get/${key}`,
     head: async (key) => {
       const o = objects.get(key);
       return o ? { bytes: o.length } : null;
@@ -56,7 +55,15 @@ export function fakeRepo(log: string[]) {
     return { apps: mine.length, bytes: mine.reduce((s, r) => s + r.bytes, 0) };
   };
   const repo: HibernationRepo = {
-    list: async (userId) => [...rows.values()].filter((r) => r.userId === userId),
+    oldest: async (userId, exclude) => {
+      const mine = [...rows.values()]
+        .filter((r) => r.userId === userId && r.appKey !== exclude)
+        .sort(
+          (a, b) =>
+            a.hibernatedAt.getTime() - b.hibernatedAt.getTime() || a.appKey.localeCompare(b.appKey)
+        );
+      return mine[0] ? { app: mine[0].appKey, hibernatedAt: mine[0].hibernatedAt } : null;
+    },
     get: async (userId, appKey) => rows.get(id(userId, appKey)) ?? null,
     usage: async (userId, exclude) => usage(userId, exclude),
     commit: async (userId, appKey, decide) => {
@@ -66,14 +73,6 @@ export function fakeRepo(log: string[]) {
         rows.set(id(userId, appKey), { ...d.write });
       }
       return d.result;
-    },
-    remove: async (userId, appKey) => {
-      const r = rows.get(id(userId, appKey)) ?? null;
-      if (r) {
-        log.push(`remove-row ${appKey}`);
-        rows.delete(id(userId, appKey));
-      }
-      return r;
     },
     removeAll: async (userId) => {
       const mine = [...rows.values()].filter((r) => r.userId === userId);

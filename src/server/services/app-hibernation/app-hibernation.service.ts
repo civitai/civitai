@@ -4,7 +4,6 @@ import { isAppBlockId } from '@civitai/app-assistant';
 import type { SessionUser } from '~/types/session';
 import type { ArchiveStore } from '~/utils/app-archive-s3';
 import {
-  ARCHIVE_GET_TTL_SECONDS,
   ARCHIVE_PUT_TTL_SECONDS,
   archiveObjectKeys,
   userArchivePrefix,
@@ -34,9 +33,12 @@ import {
  *           what the new row superseded. Its `{ committed: true }` answer is the sandbox service's
  *           receipt: it removes the sandbox only after holding one.
  *
- * The owner lists, wakes (a presigned GET of the archive, the seed the sandbox service restores
- * from) and deletes sleeping apps. Nothing here ever deletes a sleeping app to make room: at the
- * plan limit `begin` refuses, and the sandbox service keeps the app as it is.
+ * `secrets` is the wake's restore step. Listing, waking and deleting sleeping apps from the UI come
+ * with the UI.
+ *
+ * Nothing here ever deletes a sleeping app to make room: at the plan limit `begin` refuses, naming
+ * the user's oldest sleeping app so the user can be asked whether to delete it, and the sandbox
+ * service keeps the app as it is until they answer.
  */
 
 /** The largest archive kept: the sandbox service's seed limit, so every archive can be woken. */
@@ -120,10 +122,16 @@ export type SleepingLimitRefusal = {
   used: number;
 };
 
+/**
+ * The sleeping app a limit refusal offers to delete: the user's oldest (earliest hibernated).
+ * Only its name and when it went to sleep; nothing is deleted until the user confirms.
+ */
+export type OldestSleeping = { app: string; hibernatedAt: string };
+
 export type BeginResult =
   | { kind: 'disabled' }
   | { kind: 'not-configured' }
-  | { kind: 'limit'; limit: SleepingLimitRefusal }
+  | { kind: 'limit'; limit: SleepingLimitRefusal; oldest: OldestSleeping | null }
   | { kind: 'attempt-conflict' }
   | {
       kind: 'ok';
@@ -178,9 +186,18 @@ export async function beginHibernation(
     deps.repo.get(input.userId, input.app),
     deps.repo.usage(input.userId, input.app),
   ]);
-  // At begin the archive's size is unknown: refuse once not even one more byte fits.
+  // At begin the archive's size is unknown: refuse once not even one more byte fits. The refusal
+  // names the oldest sleeping app so the user can be offered "delete <name> to continue"; nothing
+  // is deleted here or anywhere else without that confirmation.
   const refusal = limitRefusal(limits, usage, !!existing, 1);
-  if (refusal) return { kind: 'limit', limit: refusal };
+  if (refusal) {
+    const oldest = await deps.repo.oldest(input.userId, input.app);
+    return {
+      kind: 'limit',
+      limit: refusal,
+      oldest: oldest ? { app: oldest.app, hibernatedAt: oldest.hibernatedAt.toISOString() } : null,
+    };
+  }
 
   const keys = archiveObjectKeys(input.userId, input.app, input.attemptId);
   const binding = { userId: input.userId, appKey: input.app, attemptId: input.attemptId };
@@ -339,62 +356,6 @@ export async function commitHibernation(
   return outcome.result;
 }
 
-export type SleepingApp = {
-  app: string;
-  status: 'Sleeping';
-  bytes: number;
-  sha256: string;
-  hasSecrets: boolean;
-  appCreatedAt: Date | null;
-  lastActivityAt: Date | null;
-  hibernatedAt: Date;
-};
-
-const toSleepingApp = (row: HibernationRow): SleepingApp => ({
-  app: row.appKey,
-  status: 'Sleeping',
-  bytes: row.bytes,
-  sha256: row.sha256,
-  hasSecrets: !!row.secretsObjectKey,
-  appCreatedAt: row.appCreatedAt,
-  lastActivityAt: row.lastActivityAt,
-  hibernatedAt: row.hibernatedAt,
-});
-
-export async function listSleepingApps(userId: number, deps: HibernationDeps) {
-  return (await deps.repo.list(userId)).map(toSleepingApp);
-}
-
-export type WakeSeed = {
-  app: string;
-  url: string;
-  sha256: string;
-  bytes: number;
-  expiresAt: string;
-  /** Whether the sandbox service should restore `.env*` (`/api/internal/app-hibernation/secrets`). */
-  hasSecrets: boolean;
-};
-
-/** The seed a wake restores from, or `null` when the user has no sleeping app under that key. */
-export async function getWakeSeed(
-  userId: number,
-  app: string,
-  deps: HibernationDeps
-): Promise<WakeSeed | null | 'not-configured'> {
-  const cfg = configured(deps);
-  if (!cfg) return 'not-configured';
-  const row = await deps.repo.get(userId, app);
-  if (!row) return null;
-  return {
-    app: row.appKey,
-    url: await cfg.store.presignGet(row.objectKey, ARCHIVE_GET_TTL_SECONDS),
-    sha256: row.sha256,
-    bytes: row.bytes,
-    expiresAt: new Date(deps.now().getTime() + ARCHIVE_GET_TTL_SECONDS * 1000).toISOString(),
-    hasSecrets: !!row.secretsObjectKey,
-  };
-}
-
 /**
  * The decrypted `.env*` blob of a sleeping app's record: read from storage, checked against the
  * row's sha256, then unwrapped and decrypted. Throws when any of that fails.
@@ -437,30 +398,6 @@ export async function restoreSleepingAppSecrets(
   if (row.sha256 !== input.sha256) return { kind: 'stale' };
   const plain = await decryptRowSecrets(row, cfg.store, cfg.masterKey);
   return { kind: 'ok', secrets: plain ? plain.toString('base64') : null };
-}
-
-/** Deletes one sleeping app: the row first, then its objects. */
-export async function deleteSleepingApp(
-  userId: number,
-  app: string,
-  deps: HibernationDeps
-): Promise<{ deleted: boolean }> {
-  const row = await deps.repo.remove(userId, app);
-  if (!row) return { deleted: false };
-  const keys = [row.objectKey, row.secretsObjectKey].filter((k): k is string => !!k);
-  if (deps.store) {
-    try {
-      await deps.store.deleteMany(keys);
-    } catch (err) {
-      deps.report('app-hibernation.delete-objects-failed', {
-        userId,
-        app,
-        keys,
-        error: (err as Error)?.message,
-      });
-    }
-  }
-  return { deleted: true };
 }
 
 /**

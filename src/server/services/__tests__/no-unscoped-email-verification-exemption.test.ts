@@ -121,8 +121,6 @@ const DERIVED_BASES: Record<string, string> = {
   servicesGuardedProcedure: 'guardedProcedure',
   servicesProcedure: 'protectedProcedure',
   sharedStorageProcedure: 'publicProcedure',
-  // `app-hibernation.router.ts`: listing, waking and deleting the caller's OWN sleeping apps.
-  sleepingAppsProcedure: 'protectedProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
   storylineWriteProcedure: 'guardedProcedure',
