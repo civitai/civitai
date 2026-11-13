@@ -11,7 +11,6 @@ import {
 } from '~/server/services/app-hibernation/app-hibernation.service';
 import type { HibernationRow } from '~/server/services/app-hibernation/hibernation.repo';
 import { beginAnswer, commitAnswer } from '~/server/services/app-hibernation/internal-routes';
-import { sealSecrets } from '~/server/services/app-hibernation/secrets-envelope';
 import { sleepingAppLimits } from '~/server/services/blocks/user-app-caps.service';
 import { defaultUsageLimitConfig } from '~/shared/constants/usage-limits';
 import type { SessionUser } from '~/types/session';
@@ -387,21 +386,16 @@ describe('deleted and banned accounts', () => {
   });
 });
 
-describe('encrypted .env* secrets and wake tickets', () => {
-  const ENV = Buffer.from('.env\0SECRET=test-only-value\n');
+describe('.env* secrets sealed by civitai, and wake tickets', () => {
+  // Opaque bytes: civitai never parses them, so they need not even be text.
+  const ENV = Buffer.concat([
+    Buffer.from('.env\0SECRET=test-only-value\n'),
+    Buffer.from([0, 255, 7]),
+  ]);
 
-  async function committedWithSecrets(w: World, attemptId = A1) {
+  async function committedWithSecrets(w: World, attemptId = A1, blob = ENV) {
     const { b, body } = await uploaded(w, attemptId, ARCHIVE_1);
-    const sealed = sealSecrets(
-      Buffer.from(b.secrets.dataKey, 'base64'),
-      { userId: USER, appKey: APP, attemptId },
-      ENV
-    );
-    w.objects.set(b.secrets.key, sealed);
-    const res = await commitHibernation(
-      { ...body, secrets: { sha256: sha(sealed), bytes: sealed.length } },
-      w.deps
-    );
+    const res = await commitHibernation({ ...body, secretsBlob: blob.toString('base64') }, w.deps);
     return { b, res };
   }
 
@@ -415,13 +409,18 @@ describe('encrypted .env* secrets and wake tickets', () => {
       w.deps
     );
 
-  it('a ticket minted for a wake releases the secrets ONCE, and the release is logged without content', async () => {
+  it('round trip: the blob sealed at commit comes back byte-identical, ONCE, and the release is logged without content', async () => {
     const w = world();
-    const { b, res } = await committedWithSecrets(w);
+    const { res } = await committedWithSecrets(w);
     expect(res.kind).toBe('committed');
     const row = w.rows.get(`${USER}/${APP}`)!;
     expect(row.secretsObjectKey).toBe(keysOf(A1).keptSecrets);
-    expect(row.secretsWrappedKey).not.toContain(b.secrets.dataKey);
+    expect(row.secretsWrappedKey?.startsWith('v2.k1.')).toBe(true);
+    // Stored SEALED: the plaintext is not in the object, and the row's sha/bytes describe the object.
+    const stored = w.objects.get(keysOf(A1).keptSecrets)!;
+    expect(stored.toString('latin1')).not.toContain('test-only-value');
+    expect(row.secretsSha256).toBe(sha(stored));
+    expect(row.secretsBytes).toBe(stored.length);
 
     const minted = await mintWakeTicket(USER, APP, w.deps);
     if (minted.kind !== 'ok') throw new Error(minted.kind);
@@ -429,10 +428,7 @@ describe('encrypted .env* secrets and wake tickets', () => {
     // The store holds a hash of the ticket, never the ticket.
     expect([...w.ticketsMap.keys()]).not.toContain(minted.ticket);
 
-    expect(await restore(w, minted.ticket)).toEqual({
-      kind: 'ok',
-      secrets: ENV.toString('base64'),
-    });
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'ok', blob: ENV.toString('base64') });
     expect(w.reports).toEqual([
       {
         event: 'app-hibernation.secrets-released',
@@ -483,22 +479,54 @@ describe('encrypted .env* secrets and wake tickets', () => {
     expect(w.ticketsMap.size).toBe(0);
   });
 
-  it('a secrets blob that does not decrypt under the attempt key is a 409 and NO row', async () => {
+  it('a blob over 64 KiB (decoded) is refused, with NO row and no object left; 64 KiB exactly is kept', async () => {
     const w = world();
-    const { b, body } = await uploaded(w, A1, ARCHIVE_1);
-    const forged = sealSecrets(
-      Buffer.alloc(32, 7),
-      { userId: USER, appKey: APP, attemptId: A1 },
-      ENV
-    );
-    w.objects.set(b.secrets.key, forged);
+    const { body } = await uploaded(w, A1, ARCHIVE_1);
     const res = await commitHibernation(
-      { ...body, secrets: { sha256: sha(forged), bytes: forged.length } },
+      { ...body, secretsBlob: Buffer.alloc(65_537, 1).toString('base64') },
       w.deps
     );
-    expect(res).toEqual({ kind: 'mismatch', reason: 'secrets do not decrypt' });
+    expect(commitAnswer(res)).toEqual({
+      status: 413,
+      json: { error: 'The secrets blob is too large', code: 'secrets_too_large', limit: 65_536 },
+    });
     expect(w.rows.size).toBe(0);
     expect(leftOf(w, A1)).toEqual([]);
+
+    const w2 = world();
+    expect((await committedWithSecrets(w2, A1, Buffer.alloc(65_536, 1))).res.kind).toBe(
+      'committed'
+    );
+  });
+
+  it('a failure to store the sealed secrets writes NO row and leaves no object', async () => {
+    const w = world();
+    const { body } = await uploaded(w, A1, ARCHIVE_1);
+    w.storeState.failPuts = true;
+    expect(
+      await commitHibernation({ ...body, secretsBlob: ENV.toString('base64') }, w.deps)
+    ).toEqual({ kind: 'secrets-store-failed' });
+    expect(w.rows.size).toBe(0);
+    expect(w.log.filter((l) => l.startsWith('write'))).toEqual([]);
+    expect(leftOf(w, A1)).toEqual([]);
+  });
+
+  it('a commit with no blob records no secrets, and the restore answers blob null', async () => {
+    const w = world();
+    const { body } = await uploaded(w, A1, ARCHIVE_1);
+    await commitHibernation(body, w.deps);
+    expect(w.rows.get(`${USER}/${APP}`)?.secretsObjectKey).toBeNull();
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    expect(await restore(w, minted.ticket)).toEqual({ kind: 'ok', blob: null });
+  });
+
+  it('begin answers exactly the archive upload: no key material, no secrets upload', async () => {
+    const w = world();
+    const b = await begin(w, A1);
+    expect(Object.keys(b).sort()).toEqual(['archive', 'expiresAt', 'kind', 'maxBytes']);
+    expect(Object.keys(b.archive).sort()).toEqual(['key', 'url']);
+    expect(Object.keys(beginAnswer(b).json).sort()).toEqual(['archive', 'expiresAt', 'maxBytes']);
   });
 
   it('no master key appears in what begin answers', async () => {

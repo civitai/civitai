@@ -18,6 +18,7 @@ import type {
 import {
   newDataKey,
   openSecrets,
+  sealSecrets,
   unwrapDataKey,
   wrapDataKey,
   type MasterKeyring,
@@ -28,17 +29,21 @@ import {
  * about to remove (at the kept-app cap, on the idle expiry, or on the user's request) and asks
  * civitai to keep the archive:
  *
- *   begin   civitai checks the flag, the account and the user's plan limit, builds the object keys
- *           itself, and answers presigned PUTs for the archive and the encrypted `.env*` blob, plus
- *           a fresh data key for that blob (its wrapped copy stays with civitai).
- *   commit  civitai COPIES the uploads to keys no presigned URL ever named, verifies the copies
- *           (size, a capped re-hash; the secrets blob must also decrypt), checks the account and
- *           lineage, upserts the user's row for the app, and only then deletes what the new row
- *           superseded and the uploads. Every refusal deletes that attempt's objects. Its
- *           `{ committed: true }` answer is the sandbox service's receipt: it removes the sandbox
- *           only after holding one.
- *   secrets the wake's restore step: the decrypted `.env*` blob, released only against a one-time
- *           WAKE TICKET that civitai minted for a wake the user started ({@link mintWakeTicket}).
+ *   begin   civitai checks the flag, the account and the user's plan limit, builds the object key
+ *           itself, and answers a presigned PUT for the archive. No key material ever goes to the
+ *           sandbox service.
+ *   commit  civitai COPIES the upload to a key no presigned URL ever named and verifies the copy
+ *           (size, a capped re-hash). If the request carries the app's `.env*` files
+ *           (`secretsBlob`, opaque bytes), civitai SEALS them itself: a fresh data key encrypts
+ *           them, the current master key wraps that key, and the sealed object is stored at
+ *           another never-presigned key. Then it checks the account and lineage, upserts the
+ *           user's row for the app, and only then deletes what the new row superseded and the
+ *           upload. Every refusal deletes that attempt's objects; a failure to store the secrets
+ *           writes no row. Its `{ committed: true }` answer is the sandbox service's receipt: it
+ *           removes the sandbox only after holding one.
+ *   secrets the wake's restore step: the same opaque `.env*` bytes, released only against a
+ *           one-time WAKE TICKET that civitai minted for a wake the user started
+ *           ({@link mintWakeTicket}).
  *
  * Listing, waking and deleting sleeping apps from the UI come with the UI.
  *
@@ -49,8 +54,10 @@ import {
 
 /** The largest archive kept: the sandbox service's seed limit, so every archive can be woken. */
 export const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
-/** The largest encrypted `.env*` blob kept. */
-export const MAX_SECRETS_BYTES = 1024 * 1024;
+/** The largest `.env*` blob (decoded, before sealing) a commit may carry. */
+export const MAX_SECRETS_BLOB_BYTES = 64 * 1024;
+/** A sealed blob is the plaintext plus the GCM nonce and tag. */
+const MAX_SEALED_BYTES = MAX_SECRETS_BLOB_BYTES + 64;
 /** How long a `begin` is remembered for its `commit` (and for a retried commit). */
 export const ATTEMPT_TTL_SECONDS = 24 * 60 * 60;
 /** How long a wake ticket can be redeemed for the secrets, once. */
@@ -83,8 +90,15 @@ export const commitInput = z.object({
   createdAt: z.iso.datetime({ offset: true }).nullish(),
   /** The seed sha the sandbox was created from (`null` for an app that was never woken). */
   sandboxSeedSha: sha256Hex.nullish(),
-  secrets: z
-    .object({ sha256: sha256Hex, bytes: z.number().int().positive().max(MAX_SECRETS_BYTES) })
+  /**
+   * The app's `.env*` files as one opaque blob, base64. civitai never parses it: it seals and
+   * stores the bytes, and the secrets route hands back the same bytes. Over
+   * {@link MAX_SECRETS_BLOB_BYTES} decoded is refused (`secrets-too-large`).
+   */
+  secretsBlob: z
+    .string()
+    .max(256 * 1024)
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/, 'not base64')
     .optional(),
 });
 export type CommitInput = z.infer<typeof commitInput>;
@@ -99,15 +113,13 @@ export const restoreSecretsInput = z.object({
 });
 export type RestoreSecretsInput = z.infer<typeof restoreSecretsInput>;
 
-/** What `begin` remembers for `commit`. The data key is stored only wrapped. */
+/** What `begin` remembers for `commit`. */
 export type AttemptRecord = {
   userId: number;
   appKey: string;
   attemptId: string;
   reason: (typeof HIBERNATION_REASONS)[number] | null;
   archiveKey: string;
-  secretsKey: string;
-  wrappedKey: string;
 };
 
 export interface AttemptStore {
@@ -165,7 +177,6 @@ export type BeginResult =
       expiresAt: string;
       maxBytes: number;
       archive: { key: string; url: string };
-      secrets: { key: string; url: string; dataKey: string; maxBytes: number };
     };
 
 export type CommitResult =
@@ -174,6 +185,8 @@ export type CommitResult =
   | { kind: 'unknown-attempt' }
   | { kind: 'account-closed' }
   | { kind: 'mismatch'; reason: string }
+  | { kind: 'secrets-too-large'; limit: number }
+  | { kind: 'secrets-store-failed' }
   | { kind: 'lineage' }
   | { kind: 'limit'; limit: SleepingLimitRefusal; oldest: OldestSleeping | null }
   | { kind: 'committed'; sha256: string };
@@ -235,76 +248,32 @@ export async function beginHibernation(
     return { kind: 'limit', limit: refusal, oldest: await oldestOf(deps, input.userId, input.app) };
 
   const keys = archiveObjectKeys(input.userId, input.app, input.attemptId);
-  const binding = { userId: input.userId, appKey: input.app, attemptId: input.attemptId };
-  const fresh = newDataKey();
   const stored = await deps.attempts.claim(
     {
-      ...binding,
+      userId: input.userId,
+      appKey: input.app,
+      attemptId: input.attemptId,
       reason: input.reason ?? null,
       archiveKey: keys.archive,
-      secretsKey: keys.secrets,
-      wrappedKey: wrapDataKey(cfg.masterKeys, binding, fresh),
     },
     ATTEMPT_TTL_SECONDS
   );
-  // A retried begin gets the same keys back; an attempt id reused for another app is refused.
+  // A retried begin gets the same key back; an attempt id reused for another app is refused.
   if (stored.userId !== input.userId || stored.appKey !== input.app)
     return { kind: 'attempt-conflict' };
-  const dataKey = unwrapDataKey(cfg.masterKeys, binding, stored.wrappedKey);
 
-  const [archiveUrl, secretsUrl] = await Promise.all([
-    cfg.store.presignPut(stored.archiveKey, ARCHIVE_PUT_TTL_SECONDS),
-    cfg.store.presignPut(stored.secretsKey, ARCHIVE_PUT_TTL_SECONDS),
-  ]);
   return {
     kind: 'ok',
     expiresAt: new Date(deps.now().getTime() + ARCHIVE_PUT_TTL_SECONDS * 1000).toISOString(),
     maxBytes: MAX_ARCHIVE_BYTES,
-    archive: { key: stored.archiveKey, url: archiveUrl },
-    secrets: {
-      key: stored.secretsKey,
-      url: secretsUrl,
-      dataKey: dataKey.toString('base64'),
-      maxBytes: MAX_SECRETS_BYTES,
+    archive: {
+      key: stored.archiveKey,
+      url: await cfg.store.presignPut(stored.archiveKey, ARCHIVE_PUT_TTL_SECONDS),
     },
   };
 }
 
 const sha256Of = (b: Buffer) => createHash('sha256').update(new Uint8Array(b)).digest('hex');
-
-/** Verifies the KEPT secrets copy: its size, its hash, and that it decrypts. */
-async function verifySecrets(
-  store: ArchiveStore,
-  masterKeys: MasterKeyring,
-  attempt: AttemptRecord,
-  keptKey: string,
-  claimed: { sha256: string; bytes: number }
-): Promise<string | null> {
-  if (!(await store.copy(attempt.secretsKey, keptKey))) return 'secrets object missing';
-  const head = await store.head(keptKey);
-  if (!head) return 'secrets object missing';
-  if (head.bytes !== claimed.bytes) return 'secrets size mismatch';
-  let sealed: Buffer | null;
-  try {
-    sealed = await store.read(keptKey, MAX_SECRETS_BYTES + 64);
-  } catch (err) {
-    if (err instanceof ArchiveObjectTooLarge) return 'secrets too large';
-    throw err;
-  }
-  if (!sealed) return 'secrets object missing';
-  if (sha256Of(sealed) !== claimed.sha256) return 'secrets sha256 mismatch';
-  try {
-    const binding = {
-      userId: attempt.userId,
-      appKey: attempt.appKey,
-      attemptId: attempt.attemptId,
-    };
-    openSecrets(unwrapDataKey(masterKeys, binding, attempt.wrappedKey), binding, sealed);
-  } catch {
-    return 'secrets do not decrypt';
-  }
-  return null;
-}
 
 /** Verifies the KEPT archive copy: copy first, then size and a capped re-hash of the copy. */
 async function verifyArchive(
@@ -364,7 +333,7 @@ export async function commitHibernation(
 
   const kept = archiveObjectKeys(attempt.userId, attempt.appKey, attempt.attemptId);
   const context = { userId: attempt.userId, app: attempt.appKey, attemptId: attempt.attemptId };
-  const uploads = [attempt.archiveKey, attempt.secretsKey];
+  const uploads = [attempt.archiveKey];
   const all = [...uploads, kept.keptArchive, kept.keptSecrets];
   const refuse = async (result: CommitResult): Promise<CommitResult> => {
     await discard(cfg.store, all, deps, context);
@@ -383,18 +352,38 @@ export async function commitHibernation(
   if ((await deps.repo.accountState(attempt.userId)) !== 'active')
     return refuse({ kind: 'account-closed' });
 
+  const blob = input.secretsBlob === undefined ? null : Buffer.from(input.secretsBlob, 'base64');
+  if (blob && blob.length > MAX_SECRETS_BLOB_BYTES)
+    return refuse({ kind: 'secrets-too-large', limit: MAX_SECRETS_BLOB_BYTES });
+
   // 1. Copy and verify before anything is written.
   const badArchive = await verifyArchive(cfg.store, attempt, kept.keptArchive, input);
   if (badArchive) return refuse({ kind: 'mismatch', reason: badArchive });
-  if (input.secrets) {
-    const bad = await verifySecrets(
-      cfg.store,
-      cfg.masterKeys,
-      attempt,
-      kept.keptSecrets,
-      input.secrets
-    );
-    if (bad) return refuse({ kind: 'mismatch', reason: bad });
+  // Seal and store the secrets BEFORE the row: a commit whose secrets were not stored writes no
+  // row, so a sleeping app never silently loses its `.env*` files.
+  let secrets: { sha256: string; bytes: number; wrappedKey: string } | null = null;
+  if (blob) {
+    const binding = {
+      userId: attempt.userId,
+      appKey: attempt.appKey,
+      attemptId: attempt.attemptId,
+    };
+    const dataKey = newDataKey();
+    const sealed = sealSecrets(dataKey, binding, blob);
+    try {
+      await cfg.store.put(kept.keptSecrets, sealed);
+    } catch (err) {
+      deps.report('app-hibernation.secrets-store-failed', {
+        ...context,
+        error: (err as Error)?.message,
+      });
+      return refuse({ kind: 'secrets-store-failed' });
+    }
+    secrets = {
+      sha256: sha256Of(sealed),
+      bytes: sealed.length,
+      wrappedKey: wrapDataKey(cfg.masterKeys, binding, dataKey),
+    };
   }
 
   const limits = await deps.limits(attempt.userId);
@@ -406,10 +395,10 @@ export async function commitHibernation(
     sha256: input.sha256,
     bytes: input.bytes,
     excluded: input.excluded,
-    secretsObjectKey: input.secrets ? kept.keptSecrets : null,
-    secretsSha256: input.secrets?.sha256 ?? null,
-    secretsBytes: input.secrets?.bytes ?? null,
-    secretsWrappedKey: input.secrets ? attempt.wrappedKey : null,
+    secretsObjectKey: secrets ? kept.keptSecrets : null,
+    secretsSha256: secrets?.sha256 ?? null,
+    secretsBytes: secrets?.bytes ?? null,
+    secretsWrappedKey: secrets?.wrappedKey ?? null,
     reason: attempt.reason,
     appCreatedAt: input.createdAt ? new Date(input.createdAt) : null,
     lastActivityAt: input.lastActivityAt ? new Date(input.lastActivityAt) : null,
@@ -450,12 +439,8 @@ export async function commitHibernation(
 
   const result = outcome.result;
   if (result.kind === 'committed') {
-    // 3. Only now delete what the new row superseded, the uploads, and an unused secrets copy.
-    const toDelete = [
-      ...(outcome.superseded ?? []),
-      ...(outcome.superseded ? uploads : []),
-      ...(outcome.superseded && !input.secrets ? [kept.keptSecrets] : []),
-    ];
+    // 3. Only now delete what the new row superseded, and the upload.
+    const toDelete = [...(outcome.superseded ?? []), ...(outcome.superseded ? uploads : [])];
     await discard(cfg.store, toDelete, deps, context);
     return result;
   }
@@ -479,7 +464,7 @@ export async function decryptRowSecrets(
   masterKeys: MasterKeyring
 ): Promise<Buffer | null> {
   if (!row.secretsObjectKey || !row.secretsWrappedKey || !row.secretsSha256) return null;
-  const sealed = await store.read(row.secretsObjectKey, MAX_SECRETS_BYTES + 64);
+  const sealed = await store.read(row.secretsObjectKey, MAX_SEALED_BYTES);
   if (!sealed) throw new Error('secrets object missing');
   if (sha256Of(sealed) !== row.secretsSha256)
     throw new Error('secrets object does not match its record');
@@ -528,7 +513,8 @@ export type RestoreSecretsResult =
   | { kind: 'ticket' }
   | { kind: 'not-found' }
   | { kind: 'stale' }
-  | { kind: 'ok'; secrets: string | null };
+  /** The opaque `.env*` bytes, base64; `null` when the record kept none. */
+  | { kind: 'ok'; blob: string | null };
 
 /**
  * The wake's restore step (the sandbox service, after the seed landed): the decrypted `.env*`
@@ -562,7 +548,7 @@ export async function restoreSleepingAppSecrets(
     app: input.app,
     hadSecrets: !!plain,
   });
-  return { kind: 'ok', secrets: plain ? plain.toString('base64') : null };
+  return { kind: 'ok', blob: plain ? plain.toString('base64') : null };
 }
 
 type AccountDeletionDeps = Pick<HibernationDeps, 'repo' | 'store'> & {

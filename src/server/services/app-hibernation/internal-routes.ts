@@ -106,7 +106,6 @@ export function beginAnswer(r: BeginResult): Answer {
           expiresAt: r.expiresAt,
           maxBytes: r.maxBytes,
           archive: r.archive,
-          secrets: r.secrets,
         },
       };
   }
@@ -124,6 +123,20 @@ export function commitAnswer(r: CommitResult): Answer {
       return {
         status: 409,
         json: { error: 'Stored object does not match', code: 'mismatch', reason: r.reason },
+      };
+    case 'secrets-too-large':
+      return {
+        status: 413,
+        json: {
+          error: 'The secrets blob is too large',
+          code: 'secrets_too_large',
+          limit: r.limit,
+        },
+      };
+    case 'secrets-store-failed':
+      return {
+        status: 503,
+        json: { error: 'Could not store the secrets; nothing was recorded', code: 'unavailable' },
       };
     case 'lineage':
       return {
@@ -161,7 +174,7 @@ export function restoreSecretsAnswer(r: RestoreSecretsResult): Answer {
         json: { error: 'The record changed since that seed', code: 'stale' },
       };
     case 'ok':
-      return { status: 200, json: { secrets: r.secrets } };
+      return { status: 200, json: { blob: r.blob } };
   }
 }
 

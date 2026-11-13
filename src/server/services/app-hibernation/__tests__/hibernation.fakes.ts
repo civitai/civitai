@@ -29,7 +29,7 @@ export function fakeStore(log: string[]) {
   const objects = new Map<string, Buffer>();
   /** Last-written time per key; a key written without one reads as written at {@link NOW}. */
   const times = new Map<string, Date>();
-  const state = { failDeletes: false };
+  const state = { failDeletes: false, failPuts: false };
   const store: ArchiveStore = {
     presignPut: async (key) => `https://store.test/put/${key}`,
     head: async (key) => {
@@ -46,6 +46,12 @@ export function fakeStore(log: string[]) {
       const o = objects.get(key);
       if (o && o.length > max) throw new ArchiveObjectTooLarge('too large');
       return o ?? null;
+    },
+    put: async (key, body) => {
+      if (state.failPuts) throw new Error('store unavailable');
+      log.push(`put ${key}`);
+      objects.set(key, Buffer.from(body));
+      times.set(key, NOW);
     },
     copy: async (from, to) => {
       const o = objects.get(from);

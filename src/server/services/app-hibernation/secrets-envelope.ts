@@ -1,23 +1,22 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 /**
- * Envelope encryption of a sleeping app's `.env*` files.
+ * Envelope encryption of a sleeping app's `.env*` files, done entirely by civitai.
  *
- *   - Each hibernation attempt gets a fresh random 32-byte DATA KEY. `begin` hands it to the
- *     sandbox service, which encrypts the `.env*` blob with it ({@link sealSecrets}'s format) and
- *     uploads only ciphertext.
+ *   - The sandbox service sends the files as one opaque blob in `commit`. civitai generates a
+ *     fresh random 32-byte DATA KEY per archive, seals the blob with it ({@link sealSecrets}), and
+ *     stores only the sealed bytes. No key ever goes to the sandbox service.
  *   - civitai keeps the data key only WRAPPED by the current master key, which never leaves
  *     civitai: {@link wrapDataKey} / {@link unwrapDataKey}. The master keys are a KEYRING
  *     (`APP_ARCHIVE_SECRETS_MASTER_KEYS`, {@link parseMasterKeys}): the first entry wraps, and every
  *     entry can unwrap, so a key is rotated by putting a new one first and keeping the old one
  *     listed until nothing wrapped under it is left.
  *   - Both layers are AES-256-GCM, and each binds the (user, app, attempt) it belongs to as
- *     additional authenticated data, so neither a blob nor a wrapped key can be moved to another
- *     user's or another app's record: decryption fails instead.
+ *     additional authenticated data, so neither a sealed blob nor a wrapped key can be moved to
+ *     another user's or another app's record: decryption fails instead.
  *
- * Secrets blob wire format (what the sandbox service must produce):
- *   nonce (12 bytes) || ciphertext || GCM tag (16 bytes)
- *   key = the data key, AAD = UTF-8 of {@link secretsAad}(userId, appKey, attemptId).
+ * Sealed blob format: nonce (12 bytes) || ciphertext || GCM tag (16 bytes), key = the data key,
+ * AAD = UTF-8 of {@link secretsAad}(userId, appKey, attemptId).
  */
 
 const ALGORITHM = 'aes-256-gcm';
@@ -30,7 +29,7 @@ const WRAPPED_V2 = 'v2';
 const WRAPPED_V1 = 'v1';
 const KID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
-/** The AAD a secrets blob is sealed with. Part of the wire contract with the sandbox service. */
+/** The AAD a secrets blob is sealed with. */
 export function secretsAad(userId: number, appKey: string, attemptId: string): string {
   return `civitai-app-secrets:v1:${userId}:${appKey}:${attemptId}`;
 }

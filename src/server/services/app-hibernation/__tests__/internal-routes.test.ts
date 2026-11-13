@@ -10,6 +10,7 @@ import {
   HIBERNATION_PATHS,
   type HibernationRouteDeps,
 } from '~/server/services/app-hibernation/internal-routes';
+import { mintWakeTicket } from '~/server/services/app-hibernation/app-hibernation.service';
 import { sha, world, type World } from './hibernation.fakes';
 
 /**
@@ -97,7 +98,6 @@ describe('HMAC request signing', () => {
     expect(res.status).toBe(200);
     expect(res.json).toMatchObject({
       archive: { key: `archives/${USER}/${APP}/${A1}.zip` },
-      secrets: { key: `archives/${USER}/${APP}/${A1}.secrets` },
     });
   });
 
@@ -241,6 +241,47 @@ describe('the flag off refuses every route', () => {
 });
 
 describe('begin -> upload -> commit through the routes', () => {
+  it('round trip: secretsBlob in at commit, the same bytes out of the secrets route with a valid ticket', async () => {
+    const begun = await call(routes.begin, signed(HIBERNATION_PATHS.begin, beginBody));
+    const key = (begun.json as { archive: { key: string } }).archive.key;
+    const archive = Buffer.from('PK\x03\x04 habit tracker with secrets');
+    w.objects.set(key, archive);
+    const blob = Buffer.from('.env\0TOKEN=test-only-token\n.env.local\0A=1\n');
+    const commit = {
+      attemptId: A1,
+      sha256: sha(archive),
+      bytes: archive.length,
+      secretsBlob: blob.toString('base64'),
+    };
+    expect(await call(routes.commit, signed(HIBERNATION_PATHS.commit, commit))).toEqual({
+      status: 200,
+      json: { committed: true, sha256: sha(archive) },
+    });
+
+    const minted = await mintWakeTicket(USER, APP, w.deps);
+    if (minted.kind !== 'ok') throw new Error(minted.kind);
+    const restore = { userId: USER, app: APP, sha256: sha(archive), ticket: minted.ticket };
+    expect(await call(routes.secrets, signed(HIBERNATION_PATHS.secrets, restore))).toEqual({
+      status: 200,
+      json: { blob: blob.toString('base64') },
+    });
+  });
+
+  it('a secretsBlob that is not base64 is a 400 and records nothing', async () => {
+    const begun = await call(routes.begin, signed(HIBERNATION_PATHS.begin, beginBody));
+    const key = (begun.json as { archive: { key: string } }).archive.key;
+    const archive = Buffer.from('PK\x03\x04 x');
+    w.objects.set(key, archive);
+    const commit = {
+      attemptId: A1,
+      sha256: sha(archive),
+      bytes: archive.length,
+      secretsBlob: 'not base64!',
+    };
+    expect((await call(routes.commit, signed(HIBERNATION_PATHS.commit, commit))).status).toBe(400);
+    expect(w.rows.size).toBe(0);
+  });
+
   it('commits a verified upload and answers the receipt; a tampered upload gets 409 and no row', async () => {
     const begun = await call(routes.begin, signed(HIBERNATION_PATHS.begin, beginBody));
     const key = (begun.json as { archive: { key: string } }).archive.key;

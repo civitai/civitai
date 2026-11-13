@@ -51,17 +51,16 @@ export function archiveStoreConfig(): ArchiveStoreConfig | null {
 /**
  * The object keys of one hibernation attempt. civitai builds them; no caller names a key.
  *
- *   archive / secrets            the UPLOAD keys `begin` presigns PUTs for.
- *   keptArchive / keptSecrets    the keys a commit copies the uploads to and records. No presigned
- *                                URL ever names them, so nothing outside civitai can overwrite a
- *                                committed archive (an upload URL stays valid for its whole TTL,
- *                                commit or not).
+ *   archive        the UPLOAD key `begin` presigns a PUT for.
+ *   keptArchive    the key a commit copies the upload to and records.
+ *   keptSecrets    the key a commit stores the `.env*` blob at, after sealing it itself.
+ * No presigned URL ever names a kept key, so nothing outside civitai can overwrite a committed
+ * archive or its secrets (an upload URL stays valid for its whole TTL, commit or not).
  */
 export function archiveObjectKeys(userId: number, appKey: string, attemptId: string) {
   const base = `${ARCHIVE_PREFIX}${userId}/${appKey}/${attemptId}`;
   return {
     archive: `${base}.zip`,
-    secrets: `${base}.secrets`,
     keptArchive: `${base}.kept.zip`,
     keptSecrets: `${base}.kept.secrets`,
   };
@@ -91,6 +90,8 @@ export interface ArchiveStore {
   hash(key: string, maxBytes: number): Promise<{ sha256: string; bytes: number } | null>;
   /** The whole object; throws {@link ArchiveObjectTooLarge} past `maxBytes` (`null` when absent). */
   read(key: string, maxBytes: number): Promise<Buffer | null>;
+  /** Writes `body` at `key` (civitai's own write; never presigned). */
+  put(key: string, body: Buffer): Promise<void>;
   /** Server-side copy of `from` to `to`; `false` when `from` does not exist. */
   copy(from: string, to: string): Promise<boolean>;
   /** Deletes the keys; a missing key is not an error. */
@@ -170,6 +171,9 @@ export function createArchiveStore(config: ArchiveStoreConfig): ArchiveStore {
         chunks.push(buf);
       }
       return Buffer.concat(chunks.map((c) => new Uint8Array(c)));
+    },
+    async put(key, body) {
+      await s3.send(new PutObjectCommand({ Bucket, Key: key, Body: new Uint8Array(body) }));
     },
     async copy(from, to) {
       try {
