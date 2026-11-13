@@ -27,7 +27,6 @@ export const textScanNotifications = createNotificationProcessor({
       const noun = entityNoun[entityType] ?? 'content';
       const label = browsingLevelLabels[level as keyof typeof browsingLevelLabels] ?? '?';
       const named = title ? `${noun} "${title}"` : noun;
-      // A model's rating is not locked (`flipRow`): the owner is pointed at the civitai.com face.
       if (entityType === 'Model')
         return {
           message: `Your ${named} is now marked mature based on its text, so it lists on civitai.red. To list it on civitai.com too, add a civitai.com title and cover in its editor.`,

@@ -69,7 +69,6 @@ beforeEach(() => {
 describe('applyModelNsfwTextScan', () => {
   it('flips nsfw without locking it, attributes it to the text scan, and notifies the owner once', async () => {
     await applyModelNsfwTextScan(args(true));
-    // The owner keeps the rating and the .com face: only a moderator or a sexual-intent verdict locks.
     expect(flipSql()).not.toContain('array_append');
     expect(flipSql()).toContain(`NOT ('nsfw' = ANY(`);
     // Merged into meta in the same guarded write, never written back from a read.
@@ -129,7 +128,7 @@ describe('applyModelNsfwTextScan', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(model(face));
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toBeDefined();
-    expect(createNotification).toHaveBeenCalled();
+    expect(createNotification).toHaveBeenCalledTimes(1);
   });
 
   it('never overturns a moderator lock', async () => {

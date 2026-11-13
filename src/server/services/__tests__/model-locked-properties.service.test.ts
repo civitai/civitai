@@ -1173,6 +1173,35 @@ describe('upsertModel — content flags the row ends up with', () => {
       }
     );
 
+    it.each(['minor', 'poi'] as const)(
+      'holds the scan verdict as a %s lead when the scan rated it mature without a lock',
+      async (restriction) => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+
+        await upsert({
+          id: MODEL_ID,
+          userId: OWNER_ID,
+          [restriction]: true,
+          sfwOnly: false,
+          nsfw: false,
+        });
+
+        expect(updateData()).toEqual(
+          expect.objectContaining({
+            nsfw: false,
+            sfwOnly: true,
+            lockedProperties: expect.arrayContaining([restriction, 'sfwOnly']),
+          })
+        );
+        expect(updateData().meta).toEqual(
+          expect.objectContaining({
+            ownerFlagOverride: expect.objectContaining({ flags: [restriction] }),
+            restrictedNsfwVerdict: { source: 'text-scan', at: scanLock.at, restriction },
+          })
+        );
+      }
+    );
+
     it("writes no lead over a moderator's lock (control)", async () => {
       mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: null });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, sfwOnly: false, nsfw: false });

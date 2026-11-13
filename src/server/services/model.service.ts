@@ -3566,14 +3566,16 @@ function profanityRatingRefusal(
  */
 function applyRaisedRestrictions(
   stored: ContentFlags & { lockedProperties?: string[]; gallerySettings?: Prisma.JsonValue },
-  data: ContentFlagWrite & { lockedProperties?: string[] }
+  data: ContentFlagWrite & { lockedProperties?: string[] },
+  // A scan's rating carries no lock, but clearing it still has to reach a moderator.
+  { scanRated = false }: { scanRated?: boolean } = {}
 ): ModelMeta['ownerFlagOverride'] | undefined {
   const raised = raisedRestrictions(stored, data);
   if (!raised.length) return;
   data.nsfw = false;
   data.sfwOnly = true;
   const storedLocks = stored.lockedProperties ?? [];
-  if (!stored.nsfw || !storedLocks.includes('nsfw')) return;
+  if (!stored.nsfw || !(storedLocks.includes('nsfw') || scanRated)) return;
   data.lockedProperties = uniq([
     ...storedLocks,
     ...raised.flatMap((flag) =>
@@ -4324,7 +4326,9 @@ export const upsertModel = async (
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
-          const raisedOverScanLock = applyRaisedRestrictions(locked, data);
+          const raisedOverScanLock = applyRaisedRestrictions(locked, data, {
+            scanRated: !!prevMeta?.systemNsfwLock,
+          });
           const ownerFlagOverride = raisedOverScanLock ?? withRaisedFlags(locked, data);
           if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
           // The owner's flag clears a rating a scan set: the scan's verdict waits for a moderator,

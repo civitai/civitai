@@ -38,9 +38,6 @@ const appliedRecord = Prisma.sql`jsonb_build_object(
   )
 )`;
 
-/** `applySystemModelNsfwFlag`'s outcome, or why the text scan did not call it. */
-type ModelNsfwTextScanResult = ModelTextModerationOutcome | 'skipped_nsfw' | 'skipped_com_face';
-
 type RawDb = Pick<typeof dbWrite, '$executeRaw' | '$queryRaw'>;
 
 export async function applySystemModelNsfwFlag({
@@ -58,6 +55,8 @@ export async function applySystemModelNsfwFlag({
     poi: boolean;
     sfwOnly: boolean;
     availability?: string;
+    sfwName?: string | null;
+    sfwCoverImageId?: number | null;
   };
   source: string;
   /** The flip applies a held lead (`applyHeldRestrictedVerdict`). */
@@ -83,6 +82,10 @@ export async function applySystemModelNsfwFlag({
     const held = await holdRestrictedVerdict(dbWrite, model.id, source);
     if (held) return 'held_restricted';
   }
+
+  // Not locked, so a repeat verdict or the owner's own rating would be re-stamped as the system's.
+  if (!heldLead && model.nsfw) return 'skipped_nsfw';
+  if (!heldLead && hasCompleteSfwFace(model)) return 'skipped_com_face';
 
   const flipped = await flipRow(dbWrite, model.id, source, heldLead);
   if (!flipped)
@@ -120,11 +123,9 @@ export async function applySystemModelNsfwFlag({
 }
 
 /**
- * Rates the model NSFW, without locking it: the lock is kept for a model made for sexual content, so
- * the owner can still add a .com face (or change the rating, which the next text change scans again).
- * `meta.systemNsfwLock` records that the rating came from an automatic verdict. Guarded in the WHERE,
- * not by a caller's read: a moderator lock or ruling that lands in between would otherwise be
- * overwritten. SFW-only and nsfw cannot stand together, so SFW-only is cleared, and a lead records what was
+ * Rates the model NSFW without locking it, so the owner can still add a .com face; `meta.systemNsfwLock`
+ * is then the only record that the rating was automatic. Guarded in the WHERE, not by a caller's read:
+ * a moderator lock or ruling that lands in between would otherwise be overwritten. SFW-only and nsfw cannot stand together, so SFW-only is cleared, and a lead records what was
  * replaced so a moderator can put the owner's rating back; it is decided on the row as written.
  * `heldLead`: only while the lead is still there and unapplied, so a ruling made since stands.
  */
@@ -348,13 +349,7 @@ export async function applyModelNsfwTextScan({
   });
   if (!model) return nothing;
 
-  // Already mature (a redelivery, or the owner's own rating): nothing to raise. A complete .com face
-  // already decides what civitai.com shows, so the owner's rating stands.
-  const result: ModelNsfwTextScanResult = model.nsfw
-    ? 'skipped_nsfw'
-    : hasCompleteSfwFace(model)
-    ? 'skipped_com_face'
-    : await applySystemModelNsfwFlag({ model, source: 'text-scan' });
+  const result = await applySystemModelNsfwFlag({ model, source: 'text-scan' });
   logToAxiom({
     name: 'text-scan',
     type: 'info',

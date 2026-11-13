@@ -197,6 +197,18 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['already nsfw', { nsfw: true, nsfwLevel: 60 }],
+    ['with a complete .com face', { sfwName: 'Safe title', sfwCoverImageId: 5, nsfwLevel: 1 }],
+  ])('leaves an unlocked model %s as it is', async (_, row) => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow(row));
+
+    await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
+
+    expect(flipCall()).toBeUndefined();
+    expect(updateModelNsfwLevels).not.toHaveBeenCalled();
+  });
+
   describe('when a moderator has locked nsfw', () => {
     // A stored lock is a moderator's call — minor-flagging sets nsfw:false and locks it.
     it.each([false, true])('never flips the flag (stored nsfw=%s)', async (nsfw) => {
