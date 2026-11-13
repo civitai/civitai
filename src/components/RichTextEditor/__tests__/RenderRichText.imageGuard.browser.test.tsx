@@ -110,6 +110,17 @@ describe('RenderRichText article image guard', () => {
     await expect.poll(() => imgWithSrc(container, R_UUID)).toHaveLength(1);
   });
 
+  test('an image with no linked Image row shows when the article’s level is within the reader’s', async () => {
+    const { container } = await renderArticle(
+      '<p><img src="https://example.com/elsewhere.png" alt="external"></p>',
+      [],
+      R
+    );
+
+    await expect.poll(() => imgWithSrc(container, 'example.com/elsewhere.png')).toHaveLength(1);
+    expect(page.getByText('This image is rated').query()).toBeNull();
+  });
+
   test('a linked image still unrated (0) is covered for a reader', async () => {
     const { container } = await renderArticle(media(X_UUID, 'x.png'), [image(503, X_UUID, 0)], XXX);
 
