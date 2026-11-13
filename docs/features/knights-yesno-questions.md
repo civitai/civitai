@@ -57,11 +57,11 @@ sample-0002,true,1002,sample_axis,policy_preference,Should this image be restric
 sample-0003,false,1003,sample_axis,observable,Withdrawn question.,,
 ```
 
-`--dry-run` parses the file and prints the counts without touching the database.
+`--dry-run` parses the file and prints the counts without touching the database, so it does not check that the images exist.
 
 `cd apps/knights && pnpm run import:yesno <file.csv> [--dry-run]` reads `DATABASE_URL` from `.env` and refuses any host other than
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
-and `policy_preference` to `moderators`, creates the axis questions once, and upserts items by `externalId` in batches. It never
+and `policy_preference` to `moderators`, skips a row whose image does not exist (`bad-image`), creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`), and closes an open item the file marks inactive
 (`retired`, no outcome), along with any open reworded copies of it; a question it withdrew earlier and lists again, with no
 answers, is reopened. It skips an unanswered item a moderator changed (counted as `moderated`), except that a moderated item the file
@@ -71,8 +71,8 @@ reworded copy instead, if the import had closed that copy. It prints counts only
 **Temporary launch page.** The script cannot reach production, so `/admin/yesno-import` in the Knights app runs the same import once at launch.
 It is moderator-only (an explicit `isModerator` check on the page load and on its POST; others get 403), is not linked from any navigation,
 and is to be removed after the Knights v2 launch import. The browser splits the cleaned file into chunks of at most 400 rows (and 256 KB, to stay under the
-node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows` and `importYesNo`
-and the page sums the counts. It is dry-run by default (parse and count only, no writes). Each real chunk is logged to Axiom with the moderator id and counts.
+node adapter's request body limit), repeats the header in each, and posts them one after another; each chunk runs `toYesNoRows`, drops rows whose image does not exist (`bad-image`) and runs `importYesNo`,
+and the page sums the counts. It is dry-run by default (parse, check the images exist and count; no writes). Each real chunk is logged to Axiom with the moderator id and counts.
 Upload only the cleaned file: a withdrawn id is retired only within its own chunk's run, which is why the file must hold no inactive rows.
 
 ## Moderator cleanup

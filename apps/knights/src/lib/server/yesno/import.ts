@@ -143,6 +143,28 @@ export function toYesNoRows(records: Record<string, string>[]): {
   return { rows, skipped, retire };
 }
 
+/**
+ * Drops the rows whose image is not in `Image`, counting each under `skipped['bad-image']`. Nothing references `Image`
+ * from the queue, so an item for a missing image would be inserted and stay open, never served.
+ */
+export async function dropMissingImages(
+  db: Kysely<DB>,
+  rows: YesNoRow[],
+  skipped: Skipped
+): Promise<YesNoRow[]> {
+  if (rows.length === 0) return rows;
+  const found = await db
+    .selectFrom('Image')
+    .select('id')
+    .where('id', 'in', [...new Set(rows.map((r) => r.imageId))])
+    .execute();
+  const existing = new Set(found.map((f) => f.id));
+  const kept = rows.filter((r) => existing.has(r.imageId));
+  const missing = rows.length - kept.length;
+  if (missing > 0) skipped['bad-image'] = (skipped['bad-image'] ?? 0) + missing;
+  return kept;
+}
+
 export type ImportResult = {
   inserted: number;
   /** Rows that already existed, had no answers yet, and differed. */
@@ -417,18 +439,20 @@ export type ChunkSummary = {
   skipped: Skipped;
   /** Withdrawn ids in the chunk; only the import acts on them. */
   retire: number;
-  /** Absent on a dry run, which never touches the database. */
+  /** Absent on a dry run, which writes nothing. */
   result?: ImportResult;
 };
 
-/** Parses one CSV chunk and, unless `dryRun`, imports it. A dry run is `toYesNoRows` alone: nothing is written. */
+/** Parses one CSV chunk and, unless `dryRun`, imports it. A dry run also reads which images exist, so its counts match the import's, but writes nothing. */
 export async function importYesNoChunk(
   db: Kysely<DB>,
   csv: string,
   { dryRun }: { dryRun: boolean }
 ): Promise<ChunkSummary> {
   const records = parseCsv(csv);
-  const { rows, skipped, retire } = toYesNoRows(records);
+  const parsed = toYesNoRows(records);
+  const { skipped, retire } = parsed;
+  const rows = await dropMissingImages(db, parsed.rows, skipped);
   const summary: ChunkSummary = {
     read: records.length,
     toImport: rows.length,
