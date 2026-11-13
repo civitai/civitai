@@ -283,7 +283,7 @@ describe('upsertModel3D thumbnail ownership', () => {
       lockedProperties: [],
     });
     db.model3D.update.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-      if (where.thumbnailImageId !== 12) {
+      if ((where.AND as { thumbnailImageId: unknown }[])[0].thumbnailImageId !== 12) {
         throw new Prisma.PrismaClientKnownRequestError('No record found', {
           code: 'P2025',
           clientVersion: 'test',
@@ -298,7 +298,7 @@ describe('upsertModel3D thumbnail ownership', () => {
     ).rejects.toMatchObject({ code: 'CONFLICT' });
     expect(db.model3D.update.mock.calls[0][0].where).toEqual({
       id: MODEL_ID,
-      thumbnailImageId: 11,
+      AND: [{ thumbnailImageId: 11 }],
     });
 
     await setModel3DNsfwLevel({

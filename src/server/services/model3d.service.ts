@@ -1038,7 +1038,7 @@ export const setModel3DNsfwLevel = async ({
     const updated = await dbWrite.$transaction(async (tx) => {
       // The lock pins this rating to the current thumbnail, so it must be the one judged.
       const row = await tx.model3D.update({
-        where: { id, thumbnailImageId },
+        where: { id, AND: [{ thumbnailImageId }] },
         data: { nsfwLevel, lockedProperties: nextLocked },
         select: model3dDetailSelect,
       });
