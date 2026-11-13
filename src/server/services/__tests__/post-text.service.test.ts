@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -41,6 +42,7 @@ const stored = (content = '<p>old</p>', csamHeld = false) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  w.$queryRaw.mockResolvedValue([] as never);
   w.post.findUnique.mockResolvedValue({ userId: AUTHOR } as never);
   w.storylineChapter.findFirst.mockResolvedValue({ id: 9 } as never);
   w.storylinePendingChapter.findUnique.mockResolvedValue(null as never);
@@ -150,14 +152,23 @@ describe('deletePostText', () => {
     expect(w.postText.delete).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps text under a CSAM hold from its author, not from a moderator', async () => {
-    stored('<p>old</p>', true);
+  it('keeps held text from its author and from a moderator alike', async () => {
+    w.$queryRaw.mockResolvedValue([{ postId: POST }] as never);
     await expect(deletePostText({ id: TEXT, userId: AUTHOR })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
+    await expect(deletePostText({ id: TEXT, userId: 99, isModerator: true })).rejects.toMatchObject(
+      { code: 'BAD_REQUEST' }
+    );
     expect(w.postText.delete).not.toHaveBeenCalled();
-    await deletePostText({ id: TEXT, userId: 99, isModerator: true });
-    expect(w.postText.delete).toHaveBeenCalledTimes(1);
+    // The hold is the database's own `post_text_held`, asked of this text.
+    const [strings, ...values] = w.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...never[]
+    ];
+    const sql = Prisma.sql(strings, ...values);
+    expect(sql.sql).toContain('post_text_held');
+    expect(sql.values).toContain(TEXT);
   });
 });
 

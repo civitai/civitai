@@ -25,8 +25,10 @@ vi.mock('~/server/db/pgDb', () => ({
 
 import {
   BLOCK_HIDE_MAX_COMMENTS,
+  blockHideCandidatesSql,
   hideBlockedUserCommentsOnOwnContent,
   SECTION_OWNERS,
+  SECTION_TYPES_AWAITING_ENUM,
 } from '~/server/services/block-hide-comments.service';
 import { CommentEntityType } from '~/shared/utils/prisma/enums';
 
@@ -176,6 +178,14 @@ describe('hideBlockedUserCommentsOnOwnContent', () => {
 
 describe('SECTION_OWNERS', () => {
   // A comment section with no owner here is never hidden on a block.
+  // The query casts each type to the enum, so naming one the database lacks fails every block.
+  it('names no type whose enum value is still to be applied', () => {
+    expect(SECTION_TYPES_AWAITING_ENUM.length).toBeGreaterThan(0);
+    for (const type of SECTION_TYPES_AWAITING_ENUM)
+      expect(blockHideCandidatesSql).not.toContain(`'${type}'`);
+    expect(blockHideCandidatesSql).toContain(`'post'::`);
+  });
+
   it('resolves an owner for every comment entity type', () => {
     expect(Object.keys(SECTION_OWNERS).sort()).toEqual(Object.values(CommentEntityType).sort());
   });
@@ -277,6 +287,10 @@ describe('SECTION_OWNERS', () => {
     const { rows } = await holder.db.query<{ entityType: string; id: number }>(
       `SELECT "entityType", id FROM "CommentV3" WHERE hidden ORDER BY id`
     );
-    expect(rows).toEqual(SECTIONS.map(([type], i) => ({ entityType: type, id: mine(i) })));
+    expect(rows).toEqual(
+      SECTIONS.flatMap(([type], i) =>
+        SECTION_TYPES_AWAITING_ENUM.includes(type) ? [] : [{ entityType: type, id: mine(i) }]
+      )
+    );
   });
 });

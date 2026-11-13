@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { heldPostTextPostIds } from '~/server/services/post-text-hold';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { updatePostNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
@@ -52,7 +53,6 @@ async function getOwnText(id: number, userId: number, isModerator?: boolean) {
       id: true,
       postId: true,
       content: true,
-      csamHeld: true,
       post: { select: { userId: true } },
     },
   });
@@ -116,8 +116,8 @@ export async function deletePostText({
   isModerator?: boolean;
 }) {
   const text = await getOwnText(id, userId, isModerator);
-  if (text.csamHeld && !isModerator)
-    throw throwBadRequestError('This text is under review and cannot be deleted');
+  if ((await heldPostTextPostIds({ textIds: [id] })).length)
+    throw throwBadRequestError('This text is held for review and cannot be deleted');
   await dbWrite.postText.delete({ where: { id } });
   await updatePostNsfwLevels([text.postId]);
   return { id };

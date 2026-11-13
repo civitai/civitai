@@ -115,6 +115,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { heldPostTextPostIds } from '~/server/services/post-text-hold';
 import {
   Availability,
   CollectionMode,
@@ -1299,6 +1300,11 @@ export const deletePost = async ({
   isModerator,
   deletedById,
 }: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
+  // The delete trigger on "PostText" refuses it too; this says why.
+  if ((await heldPostTextPostIds({ postIds: [id] })).length)
+    throw throwBadRequestError(
+      'This post holds text that is held for review and cannot be deleted'
+    );
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });

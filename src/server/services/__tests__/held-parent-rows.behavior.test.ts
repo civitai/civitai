@@ -56,6 +56,14 @@ const unpaidAwardMigration = readFileSync(
   ),
   'utf8'
 );
+// deletePost asks it whether the post holds held text.
+const postTextMigration = readFileSync(
+  path.join(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+  ),
+  'utf8'
+);
 const TOPIC_ENTITY_TABLES = {
   image: 'Image',
   post: 'Post',
@@ -153,13 +161,14 @@ beforeAll(async () => {
   `);
   await db.exec(heldCopiesSchemaSql());
   await db.exec(heldStorylineCopiesSchemaSql());
+  await db.exec(postTextMigration);
 });
 afterAll(() => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
-    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "Post", "Image", "CsamReport",
+    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "PostText", "Post", "Image", "CsamReport",
       "EvidenceHold", "BountyEntry", "Bounty", "Article",
       "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
@@ -618,6 +627,22 @@ describe("a held author's comments go with their parent", () => {
 
     expect(await rows(`SELECT id FROM "Post"`)).toEqual([{ id: 11 }]);
     expect(await commentIds()).toEqual([1, 2]);
+  });
+
+  it('refuses a post holding held text, for a moderator too, and keeps both', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (10, ${OWNER});
+      INSERT INTO "PostText" ("postId", "userId", "index", content, "csamHeld", "updatedAt")
+      VALUES (10, ${OWNER}, 0, 'x', true, now());
+    `);
+
+    await expect(deletePost({ id: 10, isModerator: true })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringMatching(/held for review/),
+    });
+
+    expect(await rows(`SELECT id FROM "Post"`)).toEqual([{ id: 10 }]);
+    expect(await rows(`SELECT "postId" AS id FROM "PostText"`)).toEqual([{ id: 10 }]);
   });
 
   // The shop-artwork check reads these off the deleted row: missing, a blocked image reads as a
