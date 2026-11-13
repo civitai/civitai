@@ -14,9 +14,14 @@ import type { HibernationRow } from '~/server/services/app-hibernation/hibernati
  * those callers; {@link getWakeSeed} also checks it again through {@link mintWakeTicket}.
  */
 
-/** A sleeping app as the user's own clients see it: never an object key, hash of secrets or key. */
+/**
+ * A sleeping app as the user's own clients see it: never an object key, hash of secrets or key.
+ * `sha256` is the archive's own hash, which a sandbox woken from it was seeded with: the page
+ * compares it to tell a sandbox woken from this record from one that was not (lineage).
+ */
 export type SleepingApp = {
   app: string;
+  sha256: string;
   bytes: number;
   appCreatedAt: string | null;
   lastActivityAt: string | null;
@@ -27,6 +32,7 @@ const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
 const toSleepingApp = (row: HibernationRow): SleepingApp => ({
   app: row.appKey,
+  sha256: row.sha256,
   bytes: row.bytes,
   appCreatedAt: iso(row.appCreatedAt),
   lastActivityAt: iso(row.lastActivityAt),
@@ -114,9 +120,11 @@ export async function deleteSleepingApp(
   userId: number,
   app: string,
   deps: Pick<HibernationDeps, 'repo' | 'store' | 'report'>,
-  why: 'user' | 'limit' = 'user'
+  why: 'user' | 'limit' = 'user',
+  /** Only the record of this archive: a record replaced since is `not-found` and kept. */
+  sha256?: string
 ): Promise<DeleteSleepingAppResult> {
-  const row = await deps.repo.remove(userId, app);
+  const row = await deps.repo.remove(userId, app, sha256);
   if (!row) return { kind: 'not-found' };
   const keys = [row.objectKey, row.secretsObjectKey].filter((k): k is string => !!k);
   deps.report('app-hibernation.deleted', { userId, app, why });

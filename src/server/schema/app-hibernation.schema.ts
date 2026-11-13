@@ -11,4 +11,9 @@ export type SleepingAppInput = z.infer<typeof sleepingAppSchema>;
 /** A delete of one sleeping app; `why` records whether it was made at the limit (default `user`). */
 export const deleteSleepingAppSchema = sleepingAppSchema.extend({
   why: z.enum(['user', 'limit']).optional(),
+  /** Only while the record still holds this archive (a woken app's own record, by lineage). */
+  sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
 });

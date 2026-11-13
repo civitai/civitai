@@ -25,6 +25,9 @@ import {
 const m = vi.hoisted(() => ({
   runnerUser: vi.fn(),
   enabled: vi.fn(async (_opts: { user?: { id: number } | null }) => true),
+  /** Calls counted per user and bucket; past `limitAt` the limiter refuses, as the real one does. */
+  calls: new Map<string, number>(),
+  limitAt: Infinity,
   world: undefined as unknown as World,
 }));
 
@@ -37,6 +40,29 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppHibernateEnabled: m.enabled,
 }));
+// The real limiter is a no-op under test (it skips test runs), so its refusal is played here, at
+// the boundary the route calls: the same TOO_MANY_REQUESTS it throws.
+vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => {
+  const { TRPCError } = await import('@trpc/server');
+  return {
+    ...(await importOriginal<Record<string, unknown>>()),
+    claimRateLimitAttempt: async ({
+      keyName,
+      user,
+      rules,
+    }: {
+      keyName: string;
+      user: { id: number };
+      rules: { limit: number; period: number }[];
+    }) => {
+      const key = `${keyName}:${user.id}`;
+      const n = (m.calls.get(key) ?? 0) + 1;
+      if (n > Math.min(m.limitAt, rules[0]!.limit))
+        throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'slow down' });
+      return async () => void m.calls.set(key, n);
+    },
+  };
+});
 vi.mock('~/server/services/app-hibernation/hibernation-deps', async (importOriginal) => ({
   ...(await importOriginal<typeof HibernationDepsModule>()),
   defaultHibernationDeps: async () => m.world.deps,
@@ -91,6 +117,15 @@ const asRunner = { authorization: `Bearer ${SECRET}` };
 const grantFor = async (userId: number) =>
   (await signRunGrant({ userId, conversationId: `c-${userId}`, idempotencyKey: `k-${userId}` }))
     .token;
+const previewGrantFor = async (userId: number) =>
+  (
+    await signRunGrant({
+      userId,
+      conversationId: `c-${userId}`,
+      idempotencyKey: `p-${userId}`,
+      use: 'preview',
+    })
+  ).token;
 
 async function sleepApp(userId: number, app: string, archive: Buffer, attemptId: string) {
   const b = await beginHibernation({ userId, app, attemptId }, m.world.deps);
@@ -114,6 +149,8 @@ beforeEach(async () => {
     user: { id: userId },
   }));
   m.enabled.mockResolvedValue(true);
+  m.calls.clear();
+  m.limitAt = Infinity;
   m.world = world();
   await sleepApp(OWNER, OWNED_APP, ARCHIVE, '31111111-1111-4111-8111-111111111111');
   await sleepApp(OTHER, OTHERS_APP, OTHERS_ARCHIVE, '32222222-2222-4222-8222-222222222222');
@@ -188,5 +225,44 @@ describe('POST /api/internal/app-assistant/wake-seed', () => {
     m.enabled.mockResolvedValue(true);
     expect((await call(wakeRoute, { grant: await grantFor(OWNER), app: '../x' })).status).toBe(400);
     expect(m.world.ticketsMap.size).toBe(0);
+  });
+});
+
+describe('runner sleeping-app routes: grants and rate limits', () => {
+  it('a PREVIEW grant is refused on both routes, minting nothing', async () => {
+    const grant = await previewGrantFor(OWNER);
+    expect(await call(listRoute, { grant })).toMatchObject({
+      status: 403,
+      json: { code: 'refused' },
+    });
+    expect(await call(wakeRoute, { grant, app: OWNED_APP })).toMatchObject({
+      status: 403,
+      json: { code: 'refused' },
+    });
+    expect(m.world.ticketsMap.size).toBe(0);
+    expect(m.runnerUser).not.toHaveBeenCalled();
+  });
+
+  it('each route counts 60 calls an hour per user, then answers 429 and mints nothing', async () => {
+    const grant = await grantFor(OWNER);
+    for (let i = 0; i < 60; i++)
+      expect((await call(wakeRoute, { grant, app: OWNED_APP })).status).toBe(200);
+    const tickets = m.world.ticketsMap.size;
+    expect(await call(wakeRoute, { grant, app: OWNED_APP })).toMatchObject({
+      status: 429,
+      json: { code: 'rate_limited' },
+    });
+    expect(m.world.ticketsMap.size).toBe(tickets);
+    // The page's own getWakeSeed bucket: the runner and the page share the user's quota.
+    expect([...m.calls.keys()]).toEqual([`appHibernation:getWakeSeed:${OWNER}`]);
+    // Another user is not affected; the list has its own bucket.
+    expect((await call(wakeRoute, { grant: await grantFor(OTHER), app: OTHERS_APP })).status).toBe(
+      200
+    );
+    m.limitAt = 0;
+    expect(await call(listRoute, { grant })).toMatchObject({
+      status: 429,
+      json: { code: 'rate_limited' },
+    });
   });
 });

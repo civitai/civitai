@@ -6,6 +6,7 @@ import {
   AppAssistantTools,
   appChosenIn,
   readPageState,
+  runnerPageTools,
   type AppAssistantToolsOptions,
 } from '../app-assistant/provider';
 import {
@@ -27,6 +28,7 @@ const quiet = { info: () => undefined, warn: () => undefined, error: () => undef
 
 const ASLEEP = {
   app: 'garden-log',
+  sha256: 'e'.repeat(64),
   bytes: 2_048,
   lastActivityAt: '2026-10-01T09:00:00.000Z',
   hibernatedAt: '2026-10-15T00:00:00.000Z',
@@ -194,6 +196,69 @@ describe('app hibernate on the runner', () => {
     expect(readPageState({ app: 'my-app', woken: true })).toEqual({ app: 'my-app', woken: true });
     expect(readPageState({ app: 'my-app', woken: 'yes' })).toEqual({ app: 'my-app' });
     expect(readPageState({ app: null, woken: true })).toEqual({ app: null });
+  });
+});
+
+describe('the runner never starts a sleeping app UNSEEDED', () => {
+  it('a reply’s start of the page’s paused app that was put to sleep meanwhile WAKES it (seeded)', async () => {
+    fake.add('my-app', 'suspended');
+    // Put to sleep between the runner's list and its start: its sandbox is gone when the open lands.
+    fake.deleteBeforeOpen.add('my-app');
+    withSleeping([{ ...ASLEEP, app: 'my-app' }]);
+    await open();
+    expect(wakeSeeds).toEqual(['my-app']);
+    const creates = fake.requests.filter((r) => r.method === 'POST' && r.path === '/v1/sandboxes');
+    // Exactly one create, and it carried the seed: never an unseeded (empty) one.
+    expect(creates).toHaveLength(1);
+    expect(fake.seeds).toEqual([
+      {
+        app: 'my-app',
+        seed: { url: SEED.url, sha256: SEED.sha256, bytes: SEED.bytes, ticket: SEED.ticket },
+      },
+    ]);
+  });
+
+  it('NEGATIVE CONTROL: with no sleeping record, the same start is the plain (unseeded) one', async () => {
+    fake.add('my-app', 'suspended');
+    withSleeping([]);
+    await open();
+    expect(wakeSeeds).toEqual([]);
+    expect(fake.seeds).toEqual([]);
+  });
+});
+
+describe('runnerPageTools', () => {
+  const all = (omit: string[] = []) =>
+    Object.fromEntries(
+      [
+        'create_app',
+        'use_open_app',
+        'set_checklist',
+        'report_ready',
+        'submit_for_review',
+        'start_preview',
+        'stop_preview',
+        'get_review_feedback',
+        'get_user_feedback',
+        'set_feedback_status',
+        'generate_app_cover',
+        'app_activity',
+        'list_apps',
+        'wake_app',
+      ]
+        .filter((name) => !omit.includes(name))
+        .map((name) => [name, { name }])
+    );
+
+  it('only the hibernate tools may be missing', () => {
+    expect(Object.keys(runnerPageTools(all(['list_apps', 'wake_app'])))).not.toContain('wake_app');
+    expect(Object.keys(runnerPageTools(all()))).toContain('wake_app');
+  });
+
+  it('any other missing page tool throws, by name', () => {
+    expect(() => runnerPageTools(all(['report_ready']))).toThrow(
+      'page tool report_ready is missing'
+    );
   });
 });
 

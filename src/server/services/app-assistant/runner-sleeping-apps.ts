@@ -1,5 +1,6 @@
 import type { NextApiResponse } from 'next';
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
@@ -22,8 +23,13 @@ import type {
  *   404 `disabled`   the `app-hibernate` flag is off for the user: the runner offers no tools
  *   404 `NOT_FOUND`  no sleeping app of the user's under that key (wake only)
  *   409 `changed`    the record changed while the seed was made: ask again (wake only)
+ *   429 `rate_limited` more than {@link RUNNER_SLEEPING_RATE_LIMIT} calls an hour for the user
  *   503 `not_configured` / `unavailable`
+ * A PREVIEW grant (one Restart preview) is refused 403 before any of it, as the cover route does.
  */
+
+/** Per user, per route: the page's own `getWakeSeed` limit (60 an hour). */
+export const RUNNER_SLEEPING_RATE_LIMIT = { limit: 60, period: 60 * 60 } as const;
 
 export type RunnerSleepingDeps = {
   /** The grant's user when every App Assistant gate admits them, else the refusal. */
@@ -37,6 +43,8 @@ export type RunnerSleepingDeps = {
   hibernation: () => Promise<HibernationDeps>;
   list: (userId: number, deps: HibernationDeps) => Promise<SleepingApp[]>;
   wakeSeed: (userId: number, app: string, deps: HibernationDeps) => Promise<WakeSeedResult>;
+  /** Counts one call for the user against {@link RUNNER_SLEEPING_RATE_LIMIT}; `false` past it. */
+  allow: (user: SessionUser) => Promise<boolean>;
 };
 
 type Answer = { status: number; json: unknown };
@@ -60,6 +68,13 @@ async function admitted(
       },
     };
   if (!(await deps.enabled(subject.user))) return { answer: DISABLED };
+  if (!(await deps.allow(subject.user)))
+    return {
+      answer: {
+        status: 429,
+        json: { error: 'Too many requests for your apps; try again later', code: 'rate_limited' },
+      },
+    };
   return { hibernation: await deps.hibernation() };
 }
 
@@ -101,15 +116,36 @@ export async function answerWakeSeed(
   }
 }
 
-async function defaultDeps(): Promise<RunnerSleepingDeps> {
-  const [{ getRunnerDevTunnelUser }, { isAppHibernateEnabled }, { defaultHibernationDeps }, svc] =
-    await Promise.all([
-      import('~/server/services/app-assistant/app-assistant.service'),
-      import('~/server/services/app-blocks-flag'),
-      import('~/server/services/app-hibernation/hibernation-deps'),
-      import('~/server/services/app-hibernation/sleeping-apps.service'),
-    ]);
+async function defaultDeps(req: AxiomAPIRequest, keyName: string): Promise<RunnerSleepingDeps> {
+  const [
+    { getRunnerDevTunnelUser },
+    { isAppHibernateEnabled },
+    { defaultHibernationDeps },
+    svc,
+    { claimRateLimitAttempt },
+  ] = await Promise.all([
+    import('~/server/services/app-assistant/app-assistant.service'),
+    import('~/server/services/app-blocks-flag'),
+    import('~/server/services/app-hibernation/hibernation-deps'),
+    import('~/server/services/app-hibernation/sleeping-apps.service'),
+    import('~/server/utils/rate-limit-bucket'),
+  ]);
   return {
+    allow: async (user) => {
+      try {
+        const record = await claimRateLimitAttempt({
+          rules: [RUNNER_SLEEPING_RATE_LIMIT],
+          keyName,
+          user,
+          req,
+        });
+        await record();
+        return true;
+      } catch (err) {
+        if (err instanceof TRPCError && err.code === 'TOO_MANY_REQUESTS') return false;
+        throw err;
+      }
+    },
     user: getRunnerDevTunnelUser,
     enabled: (user) => isAppHibernateEnabled({ user }),
     hibernation: defaultHibernationDeps,
@@ -143,13 +179,21 @@ async function respond(
   }
 }
 
+/** A preview grant opens one live preview and nothing else. */
+function refusePreview(res: NextApiResponse) {
+  return res
+    .status(403)
+    .json({ error: 'A preview grant cannot read or wake apps', code: 'refused' });
+}
+
 /** `POST /api/internal/app-assistant/sleeping-apps` — `{ grant }` → `{ apps: SleepingApp[] }`. */
 export async function runnerSleepingAppsRoute(req: AxiomAPIRequest, res: NextApiResponse) {
   const request = await readRunnerRequest(req, res, listBody, 'Expected { grant }');
   if (!request) return;
+  if (request.grant.use === 'preview') return refusePreview(res);
   const userId = request.grant.userId;
   return respond(res, userId, 'sleeping-apps', async () =>
-    answerSleepingApps(userId, await defaultDeps())
+    answerSleepingApps(userId, await defaultDeps(req, 'app-assistant:runner-sleeping-apps'))
   );
 }
 
@@ -157,8 +201,10 @@ export async function runnerSleepingAppsRoute(req: AxiomAPIRequest, res: NextApi
 export async function runnerWakeSeedRoute(req: AxiomAPIRequest, res: NextApiResponse) {
   const request = await readRunnerRequest(req, res, wakeBody, 'Expected { grant, app }');
   if (!request) return;
+  if (request.grant.use === 'preview') return refusePreview(res);
   const userId = request.grant.userId;
+  // The page's getWakeSeed bucket: the page and the runner share the user's one quota.
   return respond(res, userId, 'wake-seed', async () =>
-    answerWakeSeed(userId, request.body.app, await defaultDeps())
+    answerWakeSeed(userId, request.body.app, await defaultDeps(req, 'appHibernation:getWakeSeed'))
   );
 }

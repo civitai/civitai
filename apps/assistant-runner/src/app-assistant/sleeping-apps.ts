@@ -135,6 +135,7 @@ function isSleepingApp(value: unknown): value is SleepingApp {
   const v = value as Partial<SleepingApp> | null;
   return (
     typeof v?.app === 'string' &&
+    typeof v.sha256 === 'string' &&
     typeof v.bytes === 'number' &&
     typeof v.hibernatedAt === 'string' &&
     (v.lastActivityAt === null || typeof v.lastActivityAt === 'string')

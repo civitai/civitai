@@ -411,4 +411,15 @@ describe('hibernationRepo.list and remove (the user’s own sleeping apps)', () 
     for (const held of lockedWhileDeleting)
       expect(held).toEqual([{ classid: LOCK_NS, objid: 9101, granted: true }]);
   });
+
+  it('remove with a sha256 removes only a row still recording that archive', async () => {
+    await run(hibernationSql.upsert(row()));
+    const repo = createHibernationRepo(pgliteRunner());
+    expect(await repo.remove(9101, 'tip-calculator', 'b'.repeat(64))).toBeNull();
+    expect(await get(9101, 'tip-calculator')).not.toBeNull();
+    expect((await repo.remove(9101, 'tip-calculator', 'a'.repeat(64)))?.sha256).toBe(
+      'a'.repeat(64)
+    );
+    expect(await get(9101, 'tip-calculator')).toBeNull();
+  });
 });

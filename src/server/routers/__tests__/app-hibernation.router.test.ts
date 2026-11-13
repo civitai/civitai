@@ -134,4 +134,15 @@ describe('appHibernation router', () => {
     });
     expect(h.world.ticketsMap.size).toBe(0);
   });
+
+  it('deleteMine with sha256 deletes only while the record holds that archive', async () => {
+    await expect(
+      caller(OWNER).deleteMine({ app: APP, sha256: 'f'.repeat(64) })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.world.rows.size).toBe(1);
+    expect(await caller(OWNER).deleteMine({ app: APP, sha256: sha(ARCHIVE) })).toEqual({
+      deleted: APP,
+    });
+    expect(h.world.rows.size).toBe(0);
+  });
 });

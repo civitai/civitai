@@ -4,6 +4,7 @@ import { IconDotsVertical, IconTrash } from '@tabler/icons-react';
 import {
   keptAppsOf,
   keptReason,
+  safeOldest,
   sleepingLimitOldestOf,
   wakeOnlyFailure,
   type SleepingApp,
@@ -119,6 +120,8 @@ export function AppActionError({
   app,
   error,
   deleting,
+  liveApps,
+  sleepingApps,
   onDeleteOldest,
 }: {
   /** What failed: waking `app`, putting it to sleep, or deleting it (a sleeping one). */
@@ -126,9 +129,16 @@ export function AppActionError({
   app: string;
   error: unknown;
   deleting: boolean;
+  /** The apps awake now: never offered for deletion. */
+  liveApps: readonly string[];
+  /** The sleeping apps the list shows, named when no delete can be offered. */
+  sleepingApps: readonly string[];
   onDeleteOldest: (oldest: string) => void;
 }) {
-  const oldest = sleepingLimitOldestOf(error);
+  const atLimit = error instanceof SandboxApiError && error.code === 'sleeping_limit';
+  // 🔴 Never the app being woken (civitai keeps a woken app's record), nor any app awake now.
+  const oldest = atLimit ? safeOldest(sleepingLimitOldestOf(error), { app, live: liveApps }) : null;
+  if (atLimit && !oldest) return <SleepingFull sleepingApps={sleepingApps} />;
   if (oldest)
     return (
       <Alert color="yellow" variant="light" title="You have as many sleeping apps as you can keep">
@@ -190,15 +200,31 @@ export function AppActionError({
  */
 export function SleepingLimitCard({
   oldest,
+  sleepingApps,
   deleting,
   error,
   onDelete,
 }: {
-  oldest: string;
+  /** The oldest sleeping app to offer, or `null` when none is safe to offer (see `safeOldest`). */
+  oldest: string | null;
+  sleepingApps: readonly string[];
   deleting: boolean;
   error: unknown;
   onDelete: (oldest: string) => void;
 }) {
+  if (!oldest)
+    return (
+      <Paper
+        component="section"
+        aria-label="Make room for this app"
+        withBorder
+        radius="md"
+        p="sm"
+        mb="md"
+      >
+        <SleepingFull sleepingApps={sleepingApps} />
+      </Paper>
+    );
   return (
     <Paper
       component="section"
@@ -233,5 +259,21 @@ export function SleepingLimitCard({
         </Group>
       </Stack>
     </Paper>
+  );
+}
+
+/**
+ * At the sleeping-app limit with no app safe to offer for deletion: the user is told to delete a
+ * sleeping app themselves (each Sleeping row has Delete app), and which ones they have.
+ */
+function SleepingFull({ sleepingApps }: { sleepingApps: readonly string[] }) {
+  return (
+    <Alert color="yellow" variant="light" title="You have as many sleeping apps as you can keep">
+      <Text size="sm">
+        {`Delete a sleeping app you no longer need first, from the app switcher at the top of the page, then try again.${
+          sleepingApps.length ? ` Your sleeping apps: ${sleepingApps.join(', ')}.` : ''
+        }`}
+      </Text>
+    </Alert>
   );
 }

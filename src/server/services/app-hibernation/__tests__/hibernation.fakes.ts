@@ -96,8 +96,9 @@ export function fakeRepo(log: string[]) {
           (a, b) =>
             b.hibernatedAt.getTime() - a.hibernatedAt.getTime() || a.appKey.localeCompare(b.appKey)
         ),
-    remove: async (userId, appKey) => {
-      const had = rows.get(id(userId, appKey)) ?? null;
+    remove: async (userId, appKey, sha256) => {
+      const found = rows.get(id(userId, appKey)) ?? null;
+      const had = found && (sha256 === undefined || found.sha256 === sha256) ? found : null;
       if (had) {
         rows.delete(id(userId, appKey));
         log.push(`remove-row ${userId}/${appKey}`);

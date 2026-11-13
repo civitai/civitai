@@ -20,6 +20,8 @@ import {
 /** A sleeping app as civitai lists it to its own user. */
 export interface SleepingApp {
   app: string;
+  /** The archive's sha256: a sandbox woken from this record was seeded with it (lineage). */
+  sha256: string;
   bytes: number;
   lastActivityAt: string | null;
   hibernatedAt: string;
@@ -63,6 +65,8 @@ export interface WakeResult {
   seed?: SandboxSeedResult;
   /** It had already been woken (elsewhere): it was opened as it is, without a seed. */
   alreadyAwake: boolean;
+  /** The archive it was woken from (absent when it was already awake): its lineage. */
+  sha256?: string;
 }
 
 /**
@@ -70,8 +74,9 @@ export interface WakeResult {
  *   - `stale_record` / `ticket_invalid`: the record changed or the ticket went; a NEW seed, again.
  *   - `already_exists`: the app was woken elsewhere meanwhile; it is opened as it is.
  * Every other refusal (a cap, `secrets_unavailable`, `civitai_auth`, a seed the service refused)
- * is thrown as it came, for {@link wakeOnlyFailure} to word: the user tries again themselves. At the kept-app cap the service puts the least recently used
- * app to sleep by itself; nothing here decides that.
+ * is thrown as it came, for {@link wakeOnlyFailure} to word: the user tries again themselves.
+ * At the kept-app cap the service puts the least recently used app to sleep by itself; nothing
+ * here decides that.
  */
 export async function wakeSleepingApp(
   client: SandboxClient,
@@ -88,6 +93,7 @@ export async function wakeSleepingApp(
       return {
         ...(await openApp(client, app, { url, sha256, bytes, ticket })),
         alreadyAwake: false,
+        sha256,
       };
     } catch (error) {
       last = error;
@@ -140,22 +146,48 @@ export function sleepingLimitOldestOf(error: unknown): string | null {
 // The chat shows the user these too (a tool's error), so they are written for them: no tool
 // names, ids or service wording. Never parsed back: the card is carried as `limitCard`.
 const CONTINUES = 'in the card under the chat; your request then continues automatically.';
-export const sleepingLimitMessage = (oldest: string) =>
-  `You have as many sleeping apps as you can keep. Delete ${oldest}, your oldest sleeping app, ${CONTINUES}`;
+export const sleepingLimitMessage = (oldest: string | null) =>
+  oldest
+    ? `You have as many sleeping apps as you can keep. Delete ${oldest}, your oldest sleeping app, ${CONTINUES}`
+    : SLEEPING_FULL;
+/** At the sleeping-app limit with no app safe to offer: the user picks one to delete themselves. */
+export const SLEEPING_FULL =
+  'You have as many sleeping apps as you can keep. Delete a sleeping app you no longer need from the app switcher at the top of the page, then ask again.';
 export const keptAppsMessage = (kept: readonly KeptApp[]) =>
   `You already have as many apps as you can keep, and ${kept
     .map((k) => `${k.app} (${keptReason(k.reason)})`)
     .join(', ')} cannot be put to sleep to make room. Choose one to delete ${CONTINUES}`;
 /**
  * The card a cap refusal asks the page for: `keep` (pick a kept app to delete) or `sleeping` (the
- * sleeping apps are at their limit: offer to delete the `oldest`, once the user confirms).
+ * sleeping apps are at their limit: offer to delete the `oldest`, once the user confirms; `null`
+ * when the one civitai named is not safe to offer, see {@link safeOldest}).
  */
-export type LimitCard = { kind: 'keep' } | { kind: 'sleeping'; oldest: string };
+export type LimitCard = { kind: 'keep' } | { kind: 'sleeping'; oldest: string | null };
+
+/** What is being opened or woken, and the apps awake now: never offered for deletion. */
+export interface OfferContext {
+  /** The app the refused open or wake was for. */
+  app?: string | null;
+  /** Every app with a live sandbox now. */
+  live?: readonly string[];
+}
+
+/**
+ * 🔴 The oldest sleeping app a limit refusal names, ONLY when deleting it cannot delete what the
+ * user is working on. civitai keeps a woken app's record (its sandbox's lineage), so the oldest
+ * record can be the very app being woken, or any app awake now: deleting that record deletes its
+ * archive, and the wake retried after it finds nothing. Such an `oldest` is `null`: the user is
+ * told to delete a sleeping app themselves.
+ */
+export function safeOldest(oldest: string | null, ctx: OfferContext = {}): string | null {
+  if (!oldest || oldest === ctx.app || ctx.live?.includes(oldest)) return null;
+  return oldest;
+}
 
 /** The card for an open's or a wake's refusal at a cap, or `null` for any other failure. */
-export function limitCardOfError(error: unknown): LimitCard | null {
-  const oldest = sleepingLimitOldestOf(error);
-  if (oldest) return { kind: 'sleeping', oldest };
+export function limitCardOfError(error: unknown, ctx: OfferContext = {}): LimitCard | null {
+  if (error instanceof SandboxApiError && error.code === 'sleeping_limit')
+    return { kind: 'sleeping', oldest: safeOldest(sleepingLimitOldestOf(error), ctx) };
   if (error instanceof SandboxApiError && error.kind === 'limit' && !isRunningLimit(error))
     return { kind: 'keep' };
   return null;

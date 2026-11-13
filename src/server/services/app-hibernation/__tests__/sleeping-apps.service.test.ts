@@ -65,6 +65,7 @@ describe('listSleepingApps', () => {
     expect(mine).toEqual([
       {
         app: APP,
+        sha256: sha(ARCHIVE),
         bytes: ARCHIVE.length,
         appCreatedAt: null,
         lastActivityAt: '2026-11-01T08:00:00.000Z',

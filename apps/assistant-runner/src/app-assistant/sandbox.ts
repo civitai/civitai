@@ -76,6 +76,11 @@ export interface AppSandboxDeps {
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
   wakePollMs?: number;
+  /**
+   * How a paused app is started (`openApp` unless set). App hibernate sets one that WAKES an app
+   * with a sleeping record rather than start it unseeded, which would make it new and empty.
+   */
+  open?(app: string): Promise<{ sandbox: Sandbox; created: boolean }>;
 }
 
 /**
@@ -288,7 +293,7 @@ export class AppSandbox {
     const { client, signal } = this.#deps;
     let opened: { sandbox: Sandbox; created: boolean };
     try {
-      opened = await openApp(client, app);
+      opened = await (this.#deps.open?.(app) ?? openApp(client, app));
     } catch (error) {
       this.#deps.log.warn(
         { err: (error as Error)?.name, runId: this.#deps.runId },

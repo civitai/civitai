@@ -349,6 +349,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
 const hib = vi.hoisted(() => ({
   sleeping: [] as {
     app: string;
+    sha256: string;
     bytes: number;
     lastActivityAt: string | null;
     hibernatedAt: string;
@@ -535,10 +536,16 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
             const reject = hib.wakeRejects.shift();
             if (reject) throw reject;
             const made = sandbox(`sbx-woken-${app}`, { app, state: 'starting' });
-            m.list = [...m.list, made];
+            // A seeded create succeeds only when the app has no sandbox: none other is listed.
+            m.list = [...m.list.filter((s) => s.app !== app), made];
             hib.sleeping = hib.sleeping.filter((s) => s.app !== app);
             rerender();
-            return { sandbox: made, created: true, alreadyAwake: false };
+            return {
+              sandbox: made,
+              created: true,
+              alreadyAwake: false,
+              sha256: (seed as { sha256: string }).sha256,
+            };
           },
           isPending: false,
           variables: undefined,
@@ -3872,8 +3879,10 @@ describe('AppAssistantWorkspace Submit for review', () => {
 
 describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
   const OLD = ago(30);
+  // The record's sha is the one the wake seed carries (`hib.getWakeSeed`): woken here, its lineage.
   const asleep = (app: string, days = 10) => ({
     app,
+    sha256: 'd'.repeat(64),
     bytes: 2_048,
     lastActivityAt: ago(days),
     hibernatedAt: OLD,
@@ -4024,6 +4033,70 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
 
+  test('🔴 the limit offer never names the APP BEING WOKEN: no delete offered, none performed', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('old-quiz', 60)];
+    // civitai keeps garden-log's record while it wakes, so it can be the "oldest".
+    hib.wakeRejects = [sleepingLimit('garden-log')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect
+      .element(dialog().getByText(/Delete a sleeping app you no longer need first/))
+      .toBeVisible();
+    await expect
+      .element(dialog().getByText(/Your sleeping apps: garden-log, old-quiz/))
+      .toBeVisible();
+    expect(
+      dialog()
+        .getByRole('button', { name: /to continue$/ })
+        .elements()
+    ).toHaveLength(0);
+    await settle(100);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('🔴 the limit offer never names a LIVE app: no delete offered, none performed', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('app-aaaa')];
+    hib.wakeRejects = [sleepingLimit('app-aaaa')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect
+      .element(dialog().getByText(/Delete a sleeping app you no longer need first/))
+      .toBeVisible();
+    expect(
+      dialog()
+        .getByRole('button', { name: /to continue$/ })
+        .elements()
+    ).toHaveLength(0);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('🔴 THE CARD never offers a LIVE app as the oldest: it says to delete a sleeping app instead', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    await mountHibernate(true);
+    await userSends('Make a quiz night app');
+    m.openReject = sleepingLimit('app-aaaa');
+    const gated = gateToolSet(m.chat!.tools as never, {
+      conversationId: 'c',
+      gate: (name, input, context) => m.chat!.beforeToolCall!(name, input, context) as never,
+      onResult: (result) => m.chat!.onToolResult!(result),
+    });
+    await Promise.resolve(
+      gated.create_app.execute!({ name: 'Quiz night' }, {
+        toolCallId: 't-1',
+        messages: [],
+      } as never)
+    ).catch(() => undefined);
+    m.openReject = null;
+    const card = page.getByRole('region', { name: 'Make room for this app' });
+    await expect
+      .element(card.getByText(/Delete a sleeping app you no longer need first/))
+      .toBeVisible();
+    expect(card.getByRole('button', { name: /to continue$/ }).elements()).toHaveLength(0);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
   test('a wake whose secrets could not be fetched says so in plain words', async () => {
     hib.sleeping = [asleep('garden-log')];
     hib.wakeRejects = [
@@ -4057,8 +4130,27 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     expect(hib.deleteMine).toHaveBeenCalledTimes(1);
   });
 
-  test('deleting a woken app deletes its kept sleeping record too, so it does not come back as Sleeping', async () => {
-    // Woken earlier: civitai kept its record, hidden while the app is awake.
+  test('LINEAGE: deleting an app woken HERE from its record deletes that record (by its sha) too', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    // civitai keeps the record after the wake (it is the woken sandbox's lineage).
+    hib.sleeping = [asleep('garden-log')];
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-woken-garden-log');
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log', sha256: 'd'.repeat(64) })
+    );
+  });
+
+  test('NO LINEAGE: a confirmed Delete of an app this browser did not wake from the record leaves the record', async () => {
+    // app-bbbb is listed and has a record, but this browser never woke it (another device, or a
+    // reload of an empty app made while it slept): the record may be the only copy.
     hib.sleeping = [asleep('app-bbbb')];
     await mountHibernate(true);
     await switcher().click();
@@ -4066,9 +4158,9 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
     await page.getByRole('menuitem', { name: 'Delete app' }).click();
     await page.getByRole('button', { name: 'Delete app' }).click();
     expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
-    await vi.waitFor(() => expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'app-bbbb' }));
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
   });
-
   test('Put to sleep asks the service and shows the app going to sleep', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await mountHibernate(true);
@@ -4121,11 +4213,20 @@ describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
  */
 describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the sleeping record', () => {
   const sleepingBbbb = () => [
-    { app: 'app-bbbb', bytes: 2_048, lastActivityAt: ago(9), hibernatedAt: ago(1) },
+    {
+      app: 'app-bbbb',
+      sha256: 'd'.repeat(64),
+      bytes: 2_048,
+      lastActivityAt: ago(9),
+      hibernatedAt: ago(1),
+    },
   ];
   beforeEach(() => {
     hib.sleeping = sleepingBbbb();
     hib.deleteMine.mockClear();
+    hib.getWakeSeed.mockClear();
+    hib.wakes = [];
+    hib.wakeRejects = [];
   });
   /** The service has no app-bbbb any more: its start makes a new, empty one. */
   const goneFromService = (app: string) =>
@@ -4133,7 +4234,7 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
       if (asked === app) m.list = m.list.filter((s) => s.name !== 'sbx-bbbbbbbbbbbb');
     });
 
-  test('Export of an app put to sleep meanwhile: the empty app is discarded, the sleeping record is not deleted', async () => {
+  test('Export of an app put to sleep meanwhile: it is WOKEN (never made empty), and the record is not deleted', async () => {
     const restore = stubExport();
     onTestFinished(restore);
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
@@ -4148,14 +4249,20 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
     await page.getByRole('menuitem', { name: /^Export/ }).click();
-    await vi.waitFor(() => expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]));
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
     await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
     await settle(200);
+    // No unseeded create, nothing discarded, the record kept.
+    expect(m.open.mock.calls).toEqual([]);
+    expect(m.remove).not.toHaveBeenCalled();
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
-
-  test('Submit of an app put to sleep meanwhile: the empty app is discarded, the sleeping record is not deleted', async () => {
+  test('Submit of an app put to sleep meanwhile: it is WOKEN (never made empty), and the record is not deleted', async () => {
+    const restore = stubExport();
+    onTestFinished(restore);
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    // No record yet: app-bbbb is opened as the plain paused app it is.
+    hib.sleeping = [];
     await page.viewport(1440, 900);
     renderWithProviders(
       <ModalsProvider>
@@ -4169,7 +4276,13 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
       .getByRole('button', { name: /^app-bbbb/ })
       .click();
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    // Put to sleep meanwhile: the record appears; the list still shows the paused sandbox.
+    hib.sleeping = sleepingBbbb();
+    // A render reads it (the list's query answers on every render).
+    await switcher().click();
+    await switcher().click();
     m.remove.mockClear();
+    m.open.mockClear();
     goneFromService('app-bbbb');
     const offer = { awaitsUser: true, submit: 'runner-submit-d4', note: 'x' };
     m.chat!.onToolResult!({ name: 'submit_for_review', input: {}, output: offer, isError: false });
@@ -4181,12 +4294,13 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     }) as HTMLElement;
     document.body.append(shown);
     onTestFinished(() => shown.remove());
-    await vi.waitFor(() => expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]));
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toContain('app-bbbb'));
     await settle(200);
+    expect(m.open.mock.calls).toEqual([]);
+    expect(m.remove).not.toHaveBeenCalled();
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
-
-  test('a confirmed Delete of an app a start made EMPTY on this page leaves the sleeping record alone', async () => {
+  test('Start of a stale paused app that now sleeps WAKES it; deleting that one then takes its own record only', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await page.viewport(1440, 900);
     renderWithProviders(
@@ -4196,18 +4310,12 @@ describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the s
     );
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
     goneFromService('app-bbbb');
-    // Start (the stale list's paused app): the service makes a new, empty app-bbbb.
     await switcher().click();
     await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
     await page.getByRole('menuitem', { name: /^Start/ }).click();
-    await vi.waitFor(() => expect(m.list.some((s) => s.name === 'sbx-new-app-bbbb')).toBe(true));
-    await switcher().click();
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
-    await page.getByRole('menuitem', { name: 'Delete app' }).click();
-    await page.getByRole('button', { name: 'Delete app' }).click();
-    expect(m.remove).toHaveBeenCalledWith('sbx-new-app-bbbb');
-    await settle(200);
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    // Never an unseeded (empty) create of the sleeping app.
+    expect(m.open.mock.calls).toEqual([]);
     expect(hib.deleteMine).not.toHaveBeenCalled();
   });
 });

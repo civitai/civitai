@@ -53,6 +53,7 @@ import {
   createAppFeedbackSource,
   createSourceSaveScheduler,
   limitCardOf,
+  safeOldest,
   sleepingNotLive,
   type WakeResult,
 } from '@civitai/app-assistant';
@@ -83,6 +84,7 @@ import {
   createBrowserCoverDeps,
 } from '~/components/Apps/AppAssistant/coverArt';
 import { FreeUpSlotCard } from '~/components/Apps/AppAssistant/FreeUpSlotCard';
+import { lineageOf, rememberLineage } from '~/components/Apps/AppAssistant/sleepLineage';
 import {
   AppActionError,
   SleepingAppRow,
@@ -349,8 +351,16 @@ export function AppAssistantWorkspace({
   const pickedOnLoad = useRef(false);
   // The message the user sent last in this chat: the one a kept-apps refusal answered.
   const lastSent = useRef<string | null>(null);
-  /** `oldest` (app hibernate): the sleeping-app limit, offering to delete the oldest sleeping app. */
-  type Slot = { message: string | null; deleting: boolean; error: unknown; oldest?: string };
+  /**
+   * `sleepingLimit` (app hibernate): the sleeping-app limit, offering to delete `oldest` (`null`:
+   * none safe to offer; the user deletes a sleeping app themselves).
+   */
+  type Slot = {
+    message: string | null;
+    deleting: boolean;
+    error: unknown;
+    sleepingLimit?: { oldest: string | null };
+  };
   const [slot, setSlot] = useState<Slot | null>(null);
   const slotRef = useRef(slot);
   slotRef.current = slot;
@@ -434,13 +444,24 @@ export function AppAssistantWorkspace({
   const startRef = useRef(startDevTunnel.mutateAsync);
   startRef.current = startDevTunnel.mutateAsync;
   const openRef = useRef(sandboxes.open.mutateAsync);
-  // App hibernate: the apps a start made NEW and empty on this page (a start whose app was gone).
-  // Deleting one of those never touches a sleeping record of the same key: it was never that app.
-  const createdEmpty = useRef(new Set<string>());
+  // App hibernate: an UNSEEDED start of an app that has a sleeping record, from a sandbox this
+  // browser did not wake from that record (or none listed), would make it NEW and EMPTY while the
+  // real one sleeps (a stale list: it was put to sleep meanwhile). It is woken instead: a sandbox
+  // that does exist answers `already_exists` and is opened as it is.
   openRef.current = async (app: string) => {
-    const opened = await sandboxes.open.mutateAsync(app);
-    if (opened.created) createdEmpty.current.add(opened.sandbox.name);
-    return opened;
+    const record = hibernate ? live.current.sleeping?.find((s) => s.app === app) : undefined;
+    const listed = live.current.apps?.find((s) => s.app === app);
+    const fromRecord = !!listed && lineageOf(userIdRef.current, listed.name) === record?.sha256;
+    if (record && !fromRecord) {
+      try {
+        const woken = await wakeRef.current(app);
+        return { sandbox: woken.sandbox, created: false };
+      } catch (error) {
+        // The record went meanwhile (deleted): nothing sleeps under that key, so a plain start.
+        if (!(error instanceof WakeSeedError && error.code === 'not_found')) throw error;
+      }
+    }
+    return sandboxes.open.mutateAsync(app);
   };
   // Wakes a sleeping app (set below): shared by the list's Wake and the assistant's wake_app.
   const wakeRef = useRef<(app: string) => Promise<WakeResult>>(() =>
@@ -529,6 +550,8 @@ export function AppAssistantWorkspace({
     try {
       const woken = await sandboxesRef.current.wake.mutateAsync({ app, getSeed: fetchWakeSeed });
       if (!woken.alreadyAwake) wokenApps.current.add(app);
+      // Lineage: this sandbox came from that archive (see sleepLineage.ts).
+      if (woken.sha256) rememberLineage(userIdRef.current, woken.sandbox.name, woken.sha256);
       return woken;
     } finally {
       void trpcUtils.current.appHibernation.listMine.invalidate();
@@ -685,7 +708,7 @@ export function AppAssistantWorkspace({
                 message: lastSent.current,
                 deleting: false,
                 error: null,
-                ...(card.kind === 'sleeping' ? { oldest: card.oldest } : {}),
+                ...(card.kind === 'sleeping' ? { sleepingLimit: { oldest: card.oldest } } : {}),
               }
           );
       }
@@ -1341,6 +1364,8 @@ export function AppAssistantWorkspace({
   const [goingToSleep, setGoingToSleep] = useState<string[]>([]);
   const waking =
     hibernate && sandboxes.wake.isPending ? sandboxes.wake.variables?.app ?? null : null;
+  /** The keys of every app awake now: never offered or deleted as "the oldest sleeping app". */
+  const liveAppKeys = () => (live.current.apps ?? []).map((s) => s.app);
   const deleteSleepingApp = async (app: string, why: 'user' | 'limit') => {
     setDeletingSleeping(app);
     try {
@@ -1352,17 +1377,21 @@ export function AppAssistantWorkspace({
   };
   /**
    * 🔴 ONLY after the user confirmed deleting `deleted` (its menu's Delete app, or the free-a-slot
-   * card): a woken app's sleeping record is kept while it is awake, so deleting the app deletes
-   * the record too, or it would come back as Sleeping. NEVER from `onRemoved`, which internal
-   * cleanup also calls (an export or submit discarding the empty app a start made in place of one
-   * put to sleep meanwhile): that record is then the app's only copy. Nor for an app a start made
-   * empty on this page (`createdEmpty`): it was never the sleeping app.
+   * card), and ONLY when this browser woke `deleted` FROM that record (lineage: sleepLineage.ts):
+   * a woken app's record is kept while it is awake, so deleting the app deletes the record too,
+   * or it would come back as Sleeping. NEVER from `onRemoved`, which internal cleanup also calls
+   * (an export or submit discarding the empty app a start made in place of one put to sleep
+   * meanwhile). Any sandbox without that lineage leaves the record alone (it may be the app's only
+   * copy); the Sleeping row's own Delete removes it. civitai deletes only a record still holding
+   * that archive (`sha256`).
    */
   function forgetSleepingOf(deleted: Sandbox) {
-    if (!hibernate || createdEmpty.current.has(deleted.name)) return;
-    if (!live.current.sleeping?.some((s) => s.app === deleted.app)) return;
+    if (!hibernate) return;
+    const record = live.current.sleeping?.find((s) => s.app === deleted.app);
+    const lineage = lineageOf(userIdRef.current, deleted.name);
+    if (!record || !lineage || lineage !== record.sha256) return;
     void trpcVanilla.appHibernation.deleteMine
-      .mutate({ app: deleted.app })
+      .mutate({ app: deleted.app, sha256: lineage })
       .catch(() => undefined)
       .finally(() => void trpcUtils.current.appHibernation.listMine.invalidate());
   }
@@ -1393,6 +1422,8 @@ export function AppAssistantWorkspace({
   /** The issue's offer to delete the oldest sleeping app, then the wake or sleep again. */
   const deleteOldestThenRetry = async (oldest: string) => {
     const issue = appIssue;
+    // 🔴 Never the app being woken, nor any app awake now (checked again as it runs).
+    if (!safeOldest(oldest, { app: issue?.app, live: liveAppKeys() })) return;
     try {
       await deleteSleepingApp(oldest, 'limit');
     } catch (error) {
@@ -1406,6 +1437,8 @@ export function AppAssistantWorkspace({
   };
   /** The limit card's delete of the oldest sleeping app; then the request carries on by itself. */
   const freeSleepingSlot = async (oldest: string) => {
+    // 🔴 Never an app awake now (checked again as it runs).
+    if (!safeOldest(oldest, { live: liveAppKeys() })) return;
     setSlot((shown) => shown && { ...shown, deleting: true, error: null });
     try {
       await deleteSleepingApp(oldest, 'limit');
@@ -1614,6 +1647,8 @@ export function AppAssistantWorkspace({
                               app={appIssue.app}
                               error={appIssue.error}
                               deleting={deletingSleeping !== null}
+                              liveApps={apps.map((s) => s.app)}
+                              sleepingApps={sleeping.map((s) => s.app)}
                               onDeleteOldest={(oldest) => void deleteOldestThenRetry(oldest)}
                             />
                           </li>
@@ -1698,9 +1733,10 @@ export function AppAssistantWorkspace({
               ) : null
             }
             threadEnd={
-              slot?.oldest ? (
+              slot?.sleepingLimit ? (
                 <SleepingLimitCard
-                  oldest={slot.oldest}
+                  oldest={safeOldest(slot.sleepingLimit.oldest, { live: apps.map((s) => s.app) })}
+                  sleepingApps={sleeping.map((s) => s.app)}
                   deleting={slot.deleting}
                   error={slot.error}
                   onDelete={(oldest) => void freeSleepingSlot(oldest)}

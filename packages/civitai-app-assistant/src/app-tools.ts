@@ -10,7 +10,9 @@ import {
   sleepingLimitOldestOf,
   sleepingNotLive,
   wakeOnlyFailure,
+  safeOldest,
   type LimitCard,
+  type OfferContext,
   type SleepingApp,
   type WakeResult,
 } from './sleeping-apps';
@@ -26,7 +28,7 @@ class LimitRefusal extends Error {
   }
 }
 const isHibernateCapRefusal = (error: unknown) =>
-  !!sleepingLimitOldestOf(error) || !!keptAppsOf(error);
+  (error instanceof SandboxApiError && error.code === 'sleeping_limit') || !!keptAppsOf(error);
 const limitRefusalOutput = (error: LimitRefusal) => ({
   error: error.message,
   limitCard: error.card,
@@ -74,11 +76,11 @@ export const NEW_APP_FAILED_KEEP_OPEN =
   'A new app could not be made just now, so your open app was left as it is. Do what the message above says, then ask again.';
 
 /** What the user may read about a failed open; never the service's own message. */
-export function appOpenFailure(error: unknown): string {
+export function appOpenFailure(error: unknown, ctx: OfferContext = {}): string {
   if (isRunningLimit(error)) return RUNNING_LIMIT;
   // App hibernate's two kept-cap refusals; a service without hibernation never sends either.
-  const oldest = sleepingLimitOldestOf(error);
-  if (oldest) return sleepingLimitMessage(oldest);
+  if (error instanceof SandboxApiError && error.code === 'sleeping_limit')
+    return sleepingLimitMessage(safeOldest(sleepingLimitOldestOf(error), ctx));
   const kept = keptAppsOf(error);
   if (kept) return keptAppsMessage(kept);
   if (error instanceof SandboxApiError && error.kind === 'limit') return KEEP_LIMIT;
@@ -120,8 +122,11 @@ export function limitCardOf(result: {
   if ((result.name !== CREATE_APP && result.name !== WAKE_APP) || !result.isError) return null;
   const output = result.output as { error?: unknown; limitCard?: unknown } | null;
   const card = output?.limitCard as { kind?: unknown; oldest?: unknown } | null | undefined;
-  if (card?.kind === 'sleeping' && typeof card.oldest === 'string' && card.oldest)
-    return { kind: 'sleeping', oldest: card.oldest };
+  if (card?.kind === 'sleeping')
+    return {
+      kind: 'sleeping',
+      oldest: typeof card.oldest === 'string' && card.oldest ? card.oldest : null,
+    };
   if (card?.kind === 'keep' || output?.error === KEEP_LIMIT) return { kind: 'keep' };
   return null;
 }
@@ -234,9 +239,11 @@ export function createAppTools({
     try {
       return await open(app);
     } catch (error) {
-      const message = appOpenFailure(error);
+      // Never offer to delete the app being opened, nor any app awake now (`safeOldest`).
+      const ctx = { app, live: (apps() ?? []).map((s) => s.app) };
+      const message = appOpenFailure(error, ctx);
       if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
-      const card = isHibernateCapRefusal(error) ? limitCardOfError(error) : null;
+      const card = isHibernateCapRefusal(error) ? limitCardOfError(error, ctx) : null;
       throw card ? new LimitRefusal(message, card) : new Error(message);
     }
   };
@@ -404,9 +411,11 @@ export function createAppTools({
           woken = await wakeApp(app);
         } catch (error) {
           createFailed = true;
-          const message = wakeOnlyFailure(error) ?? appOpenFailure(error);
+          // Never offer to delete the app being woken, nor any app awake now (`safeOldest`).
+          const ctx = { app, live: (apps() ?? []).map((s) => s.app) };
+          const message = wakeOnlyFailure(error) ?? appOpenFailure(error, ctx);
           if (error instanceof SandboxApiError && error.kind === 'limit') limited = message;
-          const card = limitCardOfError(error);
+          const card = limitCardOfError(error, ctx);
           if (card) return limitRefusalOutput(new LimitRefusal(message, card));
           throw new Error(message);
         }

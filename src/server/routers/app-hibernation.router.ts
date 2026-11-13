@@ -73,7 +73,13 @@ export const appHibernationRouter = router({
     .use(rateLimit({ limit: 60, period: 60 * 60 }))
     .mutation(async ({ ctx, input }) => {
       const { svc, deps } = await service();
-      const result = await svc.deleteSleepingApp(ctx.user.id, input.app, deps, input.why ?? 'user');
+      const result = await svc.deleteSleepingApp(
+        ctx.user.id,
+        input.app,
+        deps,
+        input.why ?? 'user',
+        input.sha256
+      );
       if (result.kind === 'not-found')
         throw new TRPCError({ code: 'NOT_FOUND', message: NO_SUCH_APP });
       return { deleted: result.app };

@@ -72,9 +72,10 @@ export interface HibernationRepo {
   /**
    * Deletes the user's row for `appKey` and answers it (`null` when there was none). Under the
    * same per-user lock as {@link commit}, so a delete and a commit of the user's apps never
-   * interleave.
+   * interleave. With `sha256`, only a row still recording that archive is removed (a record
+   * replaced since is left alone).
    */
-  remove(userId: number, appKey: string): Promise<HibernationRow | null>;
+  remove(userId: number, appKey: string, sha256?: string): Promise<HibernationRow | null>;
   removeAll(userId: number): Promise<HibernationRow[]>;
   /** Which of `keys` a row records (as its archive or its secrets object). */
   referencedKeys(keys: string[]): Promise<Set<string>>;
@@ -137,9 +138,10 @@ export const hibernationSql = {
     SELECT ${COLUMNS} FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId}
     ORDER BY "hibernated_at" DESC, "app_key" ASC`,
-  remove: (userId: number, appKey: string) => Prisma.sql`
+  remove: (userId: number, appKey: string, sha256?: string) => Prisma.sql`
     DELETE FROM "app_sandbox_hibernations"
     WHERE "user_id" = ${userId} AND "app_key" = ${appKey}
+    ${sha256 === undefined ? Prisma.empty : Prisma.sql`AND "sha256" = ${sha256}`}
     RETURNING ${COLUMNS}`,
   oldest: (userId: number, excludeAppKey: string) => Prisma.sql`
     SELECT "app_key", "hibernated_at" FROM "app_sandbox_hibernations"
@@ -244,10 +246,10 @@ export function createHibernationRepo(db: SqlRunner): HibernationRepo {
       return (await db.query<DbRow>(hibernationSql.list(userId))).map(fromDb);
     },
 
-    async remove(userId, appKey) {
+    async remove(userId, appKey, sha256) {
       return db.transaction(async (tx) => {
         await tx(hibernationSql.lock(userId));
-        const rows = await tx<DbRow>(hibernationSql.remove(userId, appKey));
+        const rows = await tx<DbRow>(hibernationSql.remove(userId, appKey, sha256));
         return rows[0] ? fromDb(rows[0]) : null;
       });
     },

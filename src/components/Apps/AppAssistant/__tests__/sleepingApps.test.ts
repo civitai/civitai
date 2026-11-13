@@ -19,6 +19,8 @@ import {
   createSandboxClient,
   keptAppsMessage,
   limitCardOf,
+  safeOldest,
+  SLEEPING_FULL,
   sleepingLimitMessage,
   sleepingNotLive,
   wakeOnlyFailure,
@@ -59,6 +61,7 @@ const asleep = (
   lastActivityAt: string | null = '2026-10-01T09:00:00.000Z'
 ): SleepingApp => ({
   app,
+  sha256: `${app}-sha`.padEnd(64, '0'),
   bytes: 4_096,
   lastActivityAt,
   hibernatedAt: '2026-10-15T00:00:00.000Z',
@@ -324,6 +327,62 @@ describe('what the user reads when a wake fails', () => {
     await expect(
       Promise.resolve(t.tools[CREATE_APP].execute({ name: 'Quiz night' }, ctx))
     ).rejects.toThrow(KEEP_LIMIT);
+  });
+});
+
+describe('🔴 the limit offer never names the app being opened or woken, nor a live app', () => {
+  const atLimit = (oldest: string) =>
+    refusal(409, 'sandbox limit (3) reached; delete one first', 'sleeping_limit', {
+      oldest: { app: oldest, hibernatedAt: '2026-09-01T00:00:00.000Z' },
+    });
+
+  it('safeOldest drops the app in hand and every live app', () => {
+    expect(safeOldest('old-quiz', { app: 'garden-log', live: ['quiz-game'] })).toBe('old-quiz');
+    expect(safeOldest('garden-log', { app: 'garden-log', live: [] })).toBeNull();
+    expect(safeOldest('quiz-game', { app: 'garden-log', live: ['quiz-game'] })).toBeNull();
+    expect(safeOldest(null)).toBeNull();
+  });
+
+  it('wake_app: oldest === the app being woken → no oldest offered, the plain message', async () => {
+    const t = tools({
+      sleeping: [asleep('garden-log')],
+      wake: async () => {
+        throw atLimit('garden-log');
+      },
+    });
+    const out = await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx);
+    expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
+    expect(limitCardOf({ name: WAKE_APP, output: out, isError: true })).toEqual({
+      kind: 'sleeping',
+      oldest: null,
+    });
+  });
+
+  it('create_app: oldest === a live app → no oldest offered', async () => {
+    const t = tools({
+      apps: [sandbox('quiz-game', 'suspended')],
+      wake: async () => {
+        throw new Error('unused');
+      },
+      open: async () => {
+        throw atLimit('quiz-game');
+      },
+    });
+    const out = await t.tools[CREATE_APP].execute({ name: 'Garden log' }, ctx);
+    expect(out).toEqual({ error: SLEEPING_FULL, limitCard: { kind: 'sleeping', oldest: null } });
+  });
+
+  it('NEGATIVE CONTROL: an oldest that is neither is offered', async () => {
+    const t = tools({
+      apps: [sandbox('quiz-game', 'suspended')],
+      sleeping: [asleep('garden-log')],
+      wake: async () => {
+        throw atLimit('old-quiz');
+      },
+    });
+    expect(await t.tools[WAKE_APP].execute({ app: 'garden-log' }, ctx)).toMatchObject({
+      limitCard: { kind: 'sleeping', oldest: 'old-quiz' },
+    });
   });
 });
 
