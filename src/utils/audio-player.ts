@@ -6,6 +6,33 @@ export function formatPlaybackTime(seconds: number) {
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+/** True when a track's length is known: positive and finite. */
+function isKnownDuration(duration: number) {
+  return isFinite(duration) && duration > 0;
+}
+
+/** `time` held inside the track, `0..duration`; 0 when the time or the length is unknown. */
+export function clampPlaybackTime(time: number, duration: number) {
+  if (!isKnownDuration(duration) || isNaN(time)) return 0;
+  return Math.max(0, Math.min(duration, time));
+}
+
+/** The track time under a pointer at `clientX` on a seek bar, held inside the track. */
+export function timeFromPointer(
+  clientX: number,
+  rect: { left: number; width: number },
+  duration: number
+) {
+  if (!(rect.width > 0)) return 0;
+  return clampPlaybackTime(((clientX - rect.left) / rect.width) * duration, duration);
+}
+
+/** The played fraction of the track, `0..1`; 0 when the length is unknown. */
+export function playbackProgress(time: number, duration: number) {
+  if (!isKnownDuration(duration)) return 0;
+  return clampPlaybackTime(time, duration) / duration;
+}
+
 /**
  * `buckets` loudness values in 0..1 for one decoded channel: the mean absolute sample of each
  * equal slice, scaled so the loudest slice reads 1. Samples past the last whole slice are left
