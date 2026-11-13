@@ -78,6 +78,8 @@ BEGIN
         AND c ->> 'source' = 'postDescription'
         AND c ->> 'postId' = post_id::text
         AND (c ->> 'capturedAt') ~ '^\d{4}-\d{2}-\d{2}T'
+        -- setText refuses a held text from the hold's detection on, so a capture taken at or after
+        -- the hold's createdAt includes the held text.
         AND (c ->> 'capturedAt')::timestamptz >= h."createdAt" AT TIME ZONE 'UTC'
     )
   ) THEN
