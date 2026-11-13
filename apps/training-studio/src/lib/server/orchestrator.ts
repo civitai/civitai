@@ -75,3 +75,10 @@ export function getRunDataset(
 ): Promise<{ air: string; caption: string }[]> {
   return core.getRunDataset(orchestratorClient(token), workflowId);
 }
+
+export function trainingPreview(
+  token: string,
+  input: TrainingWhatIfInput
+): Promise<core.TrainingQuote> {
+  return core.trainingPreview(orchestratorClient(token), input);
+}

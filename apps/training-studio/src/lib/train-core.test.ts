@@ -1,3 +1,4 @@
+import { trainingPreview } from './orchestrator-core';
 import { describe, expect, it, vi } from 'vitest';
 import { cardByType } from '$lib/data/trainingModels';
 import { parseServiceStatus } from '$lib/service-status-core';
@@ -64,6 +65,103 @@ const baseRun = (): TrainingRunInput => ({
 });
 
 describe('extra ai-toolkit fields on the wire', () => {
+  it('quotes and submits the same new settings, and returns ignored-field warnings', async () => {
+    const run = {
+      ...baseRun(),
+      lrScheduler: 'constant',
+      lrWarmupSteps: 250,
+      captionDropoutRate: 0,
+      rankDropout: 0.1,
+      trainConv: true,
+    };
+    submitWorkflow.mockResolvedValueOnce({
+      data: {
+        cost: { total: 100 },
+        steps: [{ warnings: [{ code: 'fieldIgnored', message: 'Setting is not supported.' }] }],
+      },
+    });
+    expect(await trainingPreview(client, run)).toEqual({
+      cost: 100,
+      warnings: ['Setting is not supported.'],
+    });
+    const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-options' } });
+    await submitTraining(client, run);
+    const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const) {
+      expect(quoted[field]).toBe(run[field]);
+      expect(submitted[field]).toBe(run[field]);
+    }
+    expect(submitted).not.toHaveProperty('resolution');
+  });
+
+  it('normalizes Prodigy and locked text encoder rates identically in previews and submissions', async () => {
+    for (const ecosystem of ['sdxl', 'minimaxh3']) {
+      const run = {
+        ...baseRun(),
+        ecosystem,
+        optimizer: 'Prodigy',
+        unetLr: 0.0004,
+        textEncoderLr: 0.00005,
+      };
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 100 } } });
+      await trainingPreview(client, run);
+      const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-lr' } });
+      await submitTraining(client, run);
+      const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      expect(quoted.lr).toBe(1);
+      expect(quoted.textEncoderLr).toBe(ecosystem === 'sdxl' ? 1 : 0);
+      expect(submitted).toMatchObject({
+        lr: quoted.lr,
+        textEncoderLr: quoted.textEncoderLr,
+        trainTextEncoder: quoted.trainTextEncoder,
+      });
+    }
+  });
+
+  it('drops stale options after changing the model, scheduler or engine', async () => {
+    for (const override of [{ ecosystem: 'yue2' }, { engine: 'flux2-dev' }]) {
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-gated' } });
+      await submitTraining(client, {
+        ...baseRun(),
+        ...override,
+        lrWarmupSteps: 200,
+        captionDropoutRate: 0.5,
+        rankDropout: 0.1,
+        trainConv: true,
+      });
+      const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      expect(input).not.toHaveProperty('lrWarmupSteps');
+      expect(input).not.toHaveProperty('captionDropoutRate');
+      expect(input).not.toHaveProperty('trainConv');
+      if (override.engine) expect(input).not.toHaveProperty('rankDropout');
+    }
+  });
+
+  it('refuses invalid dropout and warmup values before spending Buzz', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    for (const options of [
+      { rankDropout: 1 },
+      { captionDropoutRate: -0.1 },
+      { captionDropoutRate: 1.01 },
+      { lrWarmupSteps: 2001 },
+      { lrWarmupSteps: 0.5 },
+    ]) {
+      await expect(
+        submitTrainingBatch(client, [{ ...baseRun(), lrScheduler: 'constant', ...options }], {
+          checkText,
+        })
+      ).rejects.toBeInstanceOf(TrainingBatchValidationError);
+    }
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
   it('sends only the fields the run set', async () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-1' } });
     await submitTraining(client, {
@@ -73,7 +171,7 @@ describe('extra ai-toolkit fields on the wire', () => {
       noiseOffset: 0.1,
       flipAugmentation: false,
     });
-    const body = submitWorkflow.mock.calls[0]![0].body;
+    const body = submitWorkflow.mock.calls.at(-1)![0].body;
     const input = body.steps[0].input;
     expect(input).toMatchObject({
       shuffleTokens: true,
@@ -165,7 +263,18 @@ describe('keep-training currencies', () => {
       steps: [
         {
           $type: 'training',
-          input: { engine: 'ai-toolkit', ecosystem: 'sdxl', epochs: 10, steps: 2000 },
+          input: {
+            engine: 'ai-toolkit',
+            ecosystem: 'sdxl',
+            epochs: 10,
+            steps: 2000,
+            lrScheduler: 'constant',
+            lrWarmupSteps: 1500,
+            rankDropout: 0.1,
+            captionDropoutRate: 0,
+            trainConv: true,
+            resolution: 2048,
+          },
           output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
         },
       ],
@@ -182,6 +291,17 @@ describe('keep-training currencies', () => {
     const [quoted, submitted] = submitWorkflow.mock.calls.slice(-2);
     expect(quoted![0].body.currencies).toEqual(['blue', 'green']);
     expect(submitted![0].body.currencies).toEqual(['blue', 'green']);
+    for (const call of [quoted, submitted]) {
+      const input = call![0].body.steps[0].input;
+      expect(input).toMatchObject({
+        steps: 1000,
+        lrWarmupSteps: 1000,
+        rankDropout: 0.1,
+        captionDropoutRate: 0,
+        trainConv: true,
+      });
+      expect(input).not.toHaveProperty('resolution');
+    }
   });
 
   it("checks the source run's trigger word again, and submits nothing when it is refused", async () => {

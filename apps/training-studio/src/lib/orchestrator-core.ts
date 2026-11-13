@@ -1,3 +1,11 @@
+import { trainingLearningRates } from './data/trainingModels';
+import {
+  parseAiToolkitOptions,
+  trainingIgnoredWarnings,
+  type AiToolkitOptions,
+} from '@civitai/shared/training-options';
+import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
+import type { TrainingRunInput } from './train-core';
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
@@ -316,7 +324,25 @@ export async function whatIfCost(
  * 1/3/6 prompts and for ['green'] vs ['yellow','blue']), not by any contract. If the orchestrator
  * ever starts pricing either, this type must grow the field or Review misquotes silently.
  */
-export interface TrainingWhatIfInput {
+export interface TrainingWhatIfInput
+  extends AiToolkitOptions,
+    Partial<
+      Pick<
+        TrainingRunInput,
+        | 'batchSize'
+        | 'unetLr'
+        | 'textEncoderLr'
+        | 'lrScheduler'
+        | 'optimizer'
+        | 'networkDim'
+        | 'networkAlpha'
+        | 'noiseOffset'
+        | 'minSnrGamma'
+        | 'flipAugmentation'
+        | 'shuffleTokens'
+        | 'keepTokens'
+      >
+    > {
   ecosystem: string;
   modelVariant?: string;
   /** The base checkpoint AIR. Required by the `flux2-dev` path; on ai-toolkit it pins the base the
@@ -340,15 +366,29 @@ export interface TrainingWhatIfInput {
 // epoch/repeat/resolution budget rather than deriving one, so a "from" quote uses a modest fixed config.
 const WHATIF_FLUX2 = { resolution: 1024, maxTrainEpochs: 10, numRepeats: 200, trainBatchSize: 1 };
 
-/** Price a training run without submitting it (`whatif`). Most models use the ai-toolkit path (its
- * ecosystem resolves the base); a few (Flux.2) have no ai-toolkit ecosystem and train via `flux2-dev`,
- * priced through the `imageResourceTraining` shape with an explicit base AIR. Returns the total Buzz cost,
- * or null if the orchestrator returned no estimate. No real dataset is needed — the URL is never fetched. */
+export interface TrainingQuote {
+  cost: number | null;
+  warnings: string[];
+}
+
 export async function trainingWhatIf(
   client: OrchestratorClient,
   input: TrainingWhatIfInput
 ): Promise<number | null> {
+  return (await trainingPreview(client, input)).cost;
+}
+
+export async function trainingPreview(
+  client: OrchestratorClient,
+  input: TrainingWhatIfInput
+): Promise<TrainingQuote> {
   const count = input.imageCount ?? WHATIF_IMAGE_COUNT;
+  const { lr, textEncoderLr } = trainingLearningRates(
+    input.ecosystem,
+    input.optimizer,
+    input.unetLr,
+    input.textEncoderLr
+  );
   // The SDK type marks server-computed fields (defaultSteps, usesStepPricing, …) as required outputs we
   // must not send; cast past them, as the main app's training step builders do.
   const step = (isFlux2(input.engine)
@@ -371,6 +411,23 @@ export async function trainingWhatIf(
         priority: 'normal',
         input: {
           engine: 'ai-toolkit',
+          ...(parseAiToolkitOptions(
+            { ...input, engine: input.engine ?? 'ai-toolkit' },
+            input
+          ) satisfies Pick<AiToolkitTrainingInput, keyof AiToolkitOptions>),
+          batchSize: input.batchSize,
+          lr,
+          textEncoderLr,
+          trainTextEncoder: textEncoderLr === undefined ? undefined : textEncoderLr > 0,
+          lrScheduler: input.lrScheduler,
+          optimizerType: input.optimizer?.toLowerCase(),
+          networkDim: input.networkDim,
+          networkAlpha: input.networkAlpha,
+          noiseOffset: input.noiseOffset,
+          flipAugmentation: input.flipAugmentation,
+          shuffleTokens: input.shuffleTokens,
+          keepTokens: input.keepTokens,
+          ...(['sd1', 'sdxl'].includes(input.ecosystem) ? { minSnrGamma: input.minSnrGamma } : {}),
           ecosystem: input.ecosystem,
           ...(input.model ? { model: input.model } : {}),
           ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
@@ -383,7 +440,13 @@ export async function trainingWhatIf(
         },
       }) as unknown as WorkflowStepTemplate;
 
-  return whatIfCost(client, step, 'training whatif');
+  const { data, error } = await submitWorkflow({
+    client,
+    body: { steps: [step], currencies: WHATIF_CURRENCIES },
+    query: { whatif: true },
+  });
+  if (!data) throw new Error(`training whatif failed: ${describeSubmitError(error)}`);
+  return { cost: data.cost?.total ?? null, warnings: trainingIgnoredWarnings(data.steps) };
 }
 
 /** Mint a short-lived presigned URL for a single dataset blob. The browser POSTs the file straight to

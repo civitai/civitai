@@ -1,3 +1,4 @@
+import { AI_TOOLKIT_OPTION_FIELDS, aiToolkitOptionSupport } from '@civitai/shared/training-options';
 import {
   Accordion,
   Badge,
@@ -46,6 +47,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import {
   discountInfo,
   isValidRapid,
+  getAiToolkitEcosystem,
   isAiToolkitEnabled,
   isAiToolkitMandatory,
   isAudioTrainingBaseType,
@@ -419,6 +421,13 @@ export const AdvancedSettings = ({
   // reused both in the always-visible Steps/Checkpoints block (AI Toolkit) and inside the
   // collapsible "Advanced settings" accordion.
   const buildRow = (ts: (typeof trainingSettings)[number]) => {
+    const optionSupport = aiToolkitOptionSupport({
+      engine: selectedRun.params.engine,
+      ecosystem: getAiToolkitEcosystem(selectedRun.base, selectedRun.baseType) ?? '',
+      lrScheduler: selectedRun.params.lrScheduler,
+      steps: features.trainingStepsPricing ? selectedRun.params.targetSteps : undefined,
+    });
+
     let inp: React.ReactNode;
 
     const baseOverride = ts.overrides?.[runBase];
@@ -470,6 +479,8 @@ export const AdvancedSettings = ({
         inpMin = 1;
         inpMax = aiToolkitBatchMax(selectedRun.baseType);
       }
+
+      if (ts.name === 'lrWarmupSteps') inpMax = Math.min(10000, selectedRun.params.targetSteps);
 
       inp = (
         <NumberInputWrapper
@@ -659,18 +670,22 @@ export const AdvancedSettings = ({
     return {
       label: labelInner,
       value: inp,
-      visible: !(
-        ts.name === 'engine' ||
-        (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit') ||
-        // "Save every" is no longer surfaced for AI Toolkit steps pricing (the user sets the
-        // checkpoint count directly); keep it hidden everywhere it isn't relevant.
-        ts.name === 'saveEvery' ||
-        // Steps pricing (AI Toolkit): user sets Checkpoints (maxTrainEpochs) directly, numRepeats
-        // is deprecated, batchSize is configurable.
-        // Legacy AI Toolkit keeps the old layout (batchSize hidden, numRepeats shown).
-        (selectedRun.params.engine === 'ai-toolkit' &&
-          (features.trainingStepsPricing ? ts.name === 'numRepeats' : ts.name === 'trainBatchSize'))
-      ),
+      visible:
+        !AI_TOOLKIT_OPTION_FIELDS.some((field) => field === ts.name && !optionSupport[field]) &&
+        !(
+          ts.name === 'engine' ||
+          (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit') ||
+          // "Save every" is no longer surfaced for AI Toolkit steps pricing (the user sets the
+          // checkpoint count directly); keep it hidden everywhere it isn't relevant.
+          ts.name === 'saveEvery' ||
+          // Steps pricing (AI Toolkit): user sets Checkpoints (maxTrainEpochs) directly, numRepeats
+          // is deprecated, batchSize is configurable.
+          // Legacy AI Toolkit keeps the old layout (batchSize hidden, numRepeats shown).
+          (selectedRun.params.engine === 'ai-toolkit' &&
+            (features.trainingStepsPricing
+              ? ts.name === 'numRepeats'
+              : ts.name === 'trainBatchSize'))
+        ),
     };
   };
 

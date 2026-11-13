@@ -1,0 +1,70 @@
+diff --git a/dist/generated/types.gen.d.ts b/dist/generated/types.gen.d.ts
+index 9d3218c1c5ca70a37c7cd33e811dc6be42628885..9a89a9864dd9b543eeea51b009276222d30493c2 100644
+--- a/dist/generated/types.gen.d.ts
++++ b/dist/generated/types.gen.d.ts
+@@ -48,6 +48,22 @@ export type AiToolkitTrainingInput = Omit<TrainingInput, 'engine'> & {
+    * You can change the learning rate in the middle of learning. A scheduler is a setting for how to change the learning rate.
+    */
+   lrScheduler?: 'constant' | 'constant_with_warmup' | 'cosine' | 'linear' | 'step';
++  /**
++   * Warmup steps for constant learning rate, up to the total training steps. Omit to keep the scheduler default.
++   */
++  lrWarmupSteps?: null | number;
++  /**
++   * Chance of training without a caption, from 0 to 1. Omit to keep the model default.
++   */
++  captionDropoutRate?: null | number;
++  /**
++   * LoRA rank dropout probability, from 0 (off) to less than 1. Defaults to off.
++   */
++  rankDropout?: null | number;
++  /**
++   * Enable AI Toolkit's eligible convolution adapters at rank 16. Omit to keep the model default.
++   */
++  trainConv?: null | boolean;
+   /**
+    * The optimizer determines how to update the neural net weights during training.
+    * Various methods have been proposed for smart learning, but the most commonly used in LoRA learning is "adamw8bit".
+@@ -11955,6 +11971,7 @@ export type WorkflowStepWarning = {
+   replacement?: null | string;
+ };
+ export declare const WorkflowStepWarningCode: {
++  readonly FIELD_IGNORED: 'fieldIgnored';
+   readonly MODEL_DEPRECATED: 'modelDeprecated';
+   readonly FIELD_DEPRECATED: 'fieldDeprecated';
+ };
+@@ -12443,6 +12460,22 @@ export type AiToolkitTrainingInputWritable = Omit<TrainingInputWritable2, 'engin
+    * You can change the learning rate in the middle of learning. A scheduler is a setting for how to change the learning rate.
+    */
+   lrScheduler?: 'constant' | 'constant_with_warmup' | 'cosine' | 'linear' | 'step';
++  /**
++   * Warmup steps for constant learning rate, up to the total training steps. Omit to keep the scheduler default.
++   */
++  lrWarmupSteps?: null | number;
++  /**
++   * Chance of training without a caption, from 0 to 1. Omit to keep the model default.
++   */
++  captionDropoutRate?: null | number;
++  /**
++   * LoRA rank dropout probability, from 0 (off) to less than 1. Defaults to off.
++   */
++  rankDropout?: null | number;
++  /**
++   * Enable AI Toolkit's eligible convolution adapters at rank 16. Omit to keep the model default.
++   */
++  trainConv?: null | boolean;
+   /**
+    * The optimizer determines how to update the neural net weights during training.
+    * Various methods have been proposed for smart learning, but the most commonly used in LoRA learning is "adamw8bit".
+diff --git a/dist/generated/types.gen.js b/dist/generated/types.gen.js
+index c27b91b486b1c302332770224caaf5705514217a..2e58e6b9938ed91e2e9e5f683bd8b9b424b89005 100644
+--- a/dist/generated/types.gen.js
++++ b/dist/generated/types.gen.js
+@@ -490,6 +490,7 @@ export const WorkflowStatus = {
+     CANCELED: 'canceled',
+ };
+ export const WorkflowStepWarningCode = {
++    FIELD_IGNORED: 'fieldIgnored',
+     MODEL_DEPRECATED: 'modelDeprecated',
+     FIELD_DEPRECATED: 'fieldDeprecated',
+ };

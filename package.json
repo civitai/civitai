@@ -467,7 +467,8 @@
       "@civitai/next-axiom@0.17.0": "patches/@civitai__next-axiom@0.17.0.patch",
       "react@18.3.1": "patches/react@18.3.1.patch",
       "@tanstack/react-query@5.101.0": "patches/@tanstack__react-query@5.101.0.patch",
-      "@tabler/icons-react@3.34.1": "patches/@tabler__icons-react@3.34.1.patch"
+      "@tabler/icons-react@3.34.1": "patches/@tabler__icons-react@3.34.1.patch",
+      "@civitai/orchestration-client@0.2.3": "patches/@civitai__orchestration-client@0.2.3.patch"
     }
   }
 }

@@ -20,6 +20,7 @@
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
+  import { parseAiToolkitOptions } from '@civitai/shared/training-options';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
@@ -56,6 +57,7 @@
     promptHasTrigger,
     runCard,
     runExtraCapabilities,
+    runTrainingSettings,
     runParamsKey,
     runTakesSampleImages,
     runTrainsPairs,
@@ -199,13 +201,8 @@
     const v = runVersion(run);
     const p = paramsAt(i);
     return {
-      ecosystem: v.ecosystem,
-      modelVariant: v.modelVariant,
-      version: v.version,
-      engine: v.engine,
+      ...runTrainingSettings(run, p, labelMode, trigger),
       model: isCustom(run) ? run.customAir?.trim() || undefined : v.air,
-      steps: p.steps,
-      epochs: p.epochs > 0 ? p.epochs : undefined,
       imageCount: imageCount > 0 ? imageCount : undefined,
       editTraining: runTrainsPairs(run) || undefined,
     };
@@ -217,15 +214,25 @@
     const { steps } = paramsAt(i);
     return !(steps >= TARGET_STEPS.min && steps <= TARGET_STEPS.max);
   };
+  const optionsProblem = (i: number): string | null => {
+    const input = quoteInputAt(i);
+    try {
+      parseAiToolkitOptions({ ...input, engine: input.engine ?? 'ai-toolkit' }, input);
+      return null;
+    } catch {
+      return 'Check dropout rates and warmup steps. Warmup cannot exceed total steps; rank dropout must be below 1.';
+    }
+  };
+  const quoteInvalid = (i: number) => stepsInvalid(i) || optionsProblem(i) !== null;
   const quoteState = debouncedQuote(
     () =>
       JSON.stringify(
-        selection.runs.map((_, i) => (stepsInvalid(i) ? 'invalid' : quoteInputAt(i)))
+        selection.runs.map((_, i) => (quoteInvalid(i) ? 'invalid' : quoteInputAt(i)))
       ),
     () =>
       Promise.all(
         selection.runs.map((_, i) =>
-          stepsInvalid(i)
+          quoteInvalid(i)
             ? Promise.resolve(null)
             : backend()
                 .quoteRun(quoteInputAt(i))
@@ -235,11 +242,11 @@
   );
   const quotes = $derived(quoteState.value);
   const quoting = $derived(quotes === undefined);
-  const quoteFailed = (i: number) => !quoting && !stepsInvalid(i) && quotes?.[i] == null;
+  const quoteFailed = (i: number) => !quoting && !quoteInvalid(i) && quotes?.[i]?.cost == null;
 
   // `null` (unpriced/invalid) for any run blanks the whole total (shown as "—") rather than
   // summing a total that quietly misses a run; `undefined` (still quoting) does the same, briefly.
-  const runCostAt = (i: number) => quotes?.[i] ?? null;
+  const runCostAt = (i: number) => quotes?.[i]?.cost ?? null;
   const runTotal = $derived.by(() => {
     let sum = 0;
     for (let i = 0; i < selection.runs.length; i++) {
@@ -310,6 +317,10 @@
     { field: 'optimizer', kind: 'select', options: OPTIMIZERS },
   ];
   const EXTRA_KIND: Record<ExtraParamField, FieldDef['kind']> = {
+    lrWarmupSteps: 'number',
+    captionDropoutRate: 'number',
+    rankDropout: 'number',
+    trainConv: 'bool',
     shuffleTokens: 'bool',
     keepTokens: 'number',
     minSnrGamma: 'number',
@@ -325,7 +336,7 @@
 
   const defaultsAt = (i: number) =>
     defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
-  const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
+  const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode, paramsAt(i));
   const deviationsByRun = $derived(
     selection.runs.map((run, i) =>
       paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
@@ -931,6 +942,13 @@
       {@const devs = deviationsAt(i).filter((d) => d.field !== 'steps' && d.field !== 'epochs')}
       {@const p = paramsAt(i)}
       <div class="mt-2.5 border-t border-dark-4 pt-2.5 text-sm">
+        {#if optionsProblem(i)}
+          <p class="text-sm text-red-300" role="alert">{optionsProblem(i)}</p>
+        {/if}
+        {#each quotes?.[i]?.warnings ?? [] as warning (warning)}
+          <p class="text-sm text-buzz" role="status">Setting not applied: {warning}</p>
+        {/each}
+
         <div class="font-semibold text-dark-0">
           {multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}
           {runVersionLabel(run)}

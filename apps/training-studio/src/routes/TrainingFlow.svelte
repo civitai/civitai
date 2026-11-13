@@ -295,7 +295,7 @@
           existing &&
           JSON.stringify(existing) ===
             JSON.stringify(defaultRunParams(run, paramsSeedTrigger, paramsSeedLoraType));
-        return [key, existing && !untouched ? existing : defaultRunParams(run, t, loraType)];
+        return [key, existing && !untouched ? { ...defaultRunParams(run, t, loraType), ...existing } : defaultRunParams(run, t, loraType)];
       })
     );
     paramsSeedTrigger = t;

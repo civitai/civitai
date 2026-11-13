@@ -23,6 +23,7 @@
     "./training-audio": "./src/training-audio.ts",
     "./training-review": "./src/training-review.ts",
     "./training-custom-model": "./src/training-custom-model.ts",
+    "./training-options": "./src/training-options.ts",
     "./training-text-encoder": "./src/training-text-encoder.ts",
     "./job-queue": "./src/job-queue.ts",
     "./rated-entity-sql": "./src/rated-entity-sql.ts",

@@ -1,3 +1,6 @@
+import { ZodError } from 'zod';
+import { parseAiToolkitOptions, type AiToolkitOptions } from '@civitai/shared/training-options';
+import type { AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
 // client. Env-derived concerns are parameters — the shell's server wrappers (lib/server/train.ts)
@@ -32,6 +35,7 @@ import {
 } from './orchestrator-core';
 import {
   isProdigy,
+  trainingLearningRates,
   MAX_NON_PRODIGY_LR,
   teTrainingUnsupportedReason,
   type ExtraParamField,
@@ -47,7 +51,6 @@ import {
   workflowToRow,
 } from '$lib/data/trainingRows';
 import {
-  EXTRA_PARAM_FIELDS,
   TARGET_STEPS,
   ecosystemAllowsCustomBase,
   ecosystemTakesSampleImages,
@@ -78,7 +81,7 @@ export interface TrainingItem {
 
 /** Everything the client assembles for one training run. Params arrive as the numbers the orchestrator
  *  wants (the Review step's string inputs are parsed client-side). */
-export interface TrainingRunInput {
+export interface TrainingRunInput extends AiToolkitOptions {
   ecosystem: string;
   modelVariant?: string;
   /** Ecosystem version selector (e.g. qwen's `version`). */
@@ -200,7 +203,7 @@ export function trainingBlobKey(air: string): string {
 }
 
 /** The extra knobs `obj` actually carries — a submit or continuation sends only what was set, never
- *  an invented default. Iterates `EXTRA_PARAM_FIELDS` so a sixth knob can't be dropped here. */
+ *  an invented default. */
 function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unknown> {
   const source = obj as Record<string, unknown>;
   const out: Record<string, unknown> = {};
@@ -228,13 +231,12 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
   // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
   // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0 (TE off), and an ecosystem
   // that can't train the TE is forced to 0 before Prodigy is considered.
-  const prodigy = isProdigy(run.optimizer);
-  const lr = prodigy ? 1 : run.unetLr;
-  const textEncoderLr = teTrainingUnsupportedReason(run.ecosystem)
-    ? 0
-    : prodigy && run.textEncoderLr > 0
-    ? 1
-    : run.textEncoderLr;
+  const { lr, textEncoderLr } = trainingLearningRates(
+    run.ecosystem,
+    run.optimizer,
+    run.unetLr,
+    run.textEncoderLr
+  );
 
   const step = isFlux2(run.engine)
     ? {
@@ -270,13 +272,19 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           batchSize: run.batchSize,
           lr,
           textEncoderLr,
-          trainTextEncoder: textEncoderLr > 0,
+          trainTextEncoder: (textEncoderLr ?? 0) > 0,
           lrScheduler: run.lrScheduler,
           optimizerType,
           networkDim: run.networkDim,
           networkAlpha: run.networkAlpha,
-          resolution: run.resolution,
-          ...pick(run, EXTRA_PARAM_FIELDS),
+          ...(parseAiToolkitOptions(
+            { ...run, engine: run.engine ?? 'ai-toolkit' },
+            run
+          ) satisfies Pick<AiToolkitTrainingInput, keyof AiToolkitOptions>),
+          ...pick(run, ['shuffleTokens', 'keepTokens', 'noiseOffset', 'flipAugmentation']),
+          ...(['sd1', 'sdxl'].includes(run.ecosystem) && run.minSnrGamma !== undefined
+            ? { minSnrGamma: run.minSnrGamma }
+            : {}),
           triggerWord: run.trigger,
           // "Keep training": continue from a previous checkpoint's weights instead of the base model.
           ...(run.continueFrom ? { continueFrom: run.continueFrom } : {}),
@@ -508,6 +516,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   for (const key of OPTIONAL_BOOLEAN_FIELDS) {
     if (run[key] !== undefined && typeof run[key] !== 'boolean')
       fail(`${field}.${key}`, 'must be a boolean.');
+  }
+  try {
+    parseAiToolkitOptions({ ...run, engine: run.engine ?? 'ai-toolkit' }, run);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      const issue = error.issues[0]!;
+      fail(`${field}.${issue.path.join('.')}`, issue.message);
+    }
+    throw error;
   }
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
@@ -939,8 +956,28 @@ async function buildContinuation(
     optimizerType: input.optimizerType,
     networkDim: input.networkDim,
     networkAlpha: input.networkAlpha,
-    resolution: input.resolution,
-    ...pick(input, EXTRA_PARAM_FIELDS),
+    ...parseAiToolkitOptions(
+      {
+        engine: 'ai-toolkit',
+        ecosystem: String(input.ecosystem),
+        lrScheduler: typeof input.lrScheduler === 'string' ? input.lrScheduler : undefined,
+        steps,
+      },
+      {
+        lrWarmupSteps:
+          typeof input.lrWarmupSteps === 'number'
+            ? Math.min(input.lrWarmupSteps, steps ?? 10000)
+            : undefined,
+        captionDropoutRate:
+          typeof input.captionDropoutRate === 'number' ? input.captionDropoutRate : undefined,
+        rankDropout: typeof input.rankDropout === 'number' ? input.rankDropout : undefined,
+        trainConv: typeof input.trainConv === 'boolean' ? input.trainConv : undefined,
+      }
+    ),
+    ...pick(input, ['shuffleTokens', 'keepTokens', 'noiseOffset', 'flipAugmentation']),
+    ...(['sd1', 'sdxl'].includes(String(input.ecosystem))
+      ? { minSnrGamma: input.minSnrGamma }
+      : {}),
     triggerWord: input.triggerWord,
     continueFrom,
     ...(traceMode !== 'none' ? { trace: traceMode } : {}),
