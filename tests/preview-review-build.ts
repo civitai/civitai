@@ -19,7 +19,7 @@ export type ReviewStatusLike = {
 /** `blocks.getMyAutoReviewBuildBudget`. */
 export type AutoBuildBudgetLike =
   | { available: true; scope: string; limit: number; remaining: number }
-  | { available: false; scope: string; limit: number };
+  | { available: false; scope: string };
 
 export type ReviewBuildVerdict = { done: false } | { done: true; pass: boolean; message: string };
 

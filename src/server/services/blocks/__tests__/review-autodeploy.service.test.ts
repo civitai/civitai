@@ -903,25 +903,36 @@ describe('agent review auto-start: concurrent go-lives share the budget', () => 
 describe('test-fixture accounts: an automatic-build budget per app slug', () => {
   const FIXTURE = 2000000001;
   // A literal, not the exported constant: the expectation must not come from the code under test.
-  const AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY = 10;
+  const AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY = 20;
+  const AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY = 200;
   const day = () => new Date().toISOString().slice(0, 10);
+  const slugKey = (slug: string) =>
+    `system:blocks:review-auto-builds:fixture:${FIXTURE}:${slug}:${day()}`;
+  const totalKey = () => `system:blocks:review-auto-builds:fixture:${FIXTURE}:${day()}`;
 
   /** A real counter per Redis key, shared by the MULTI's INCR, DECR (refund) and GET (read). */
   function realCounters() {
     const counts = new Map<string, number>();
     redisMock.sysRedis.multi.mockImplementation(() => {
-      let key = '';
+      // Like a real MULTI: commands queue, EXEC answers one reply per queued command, in order.
+      const queued: string[] = [];
       const chain = {
-        set: vi.fn((k: string) => {
-          key = k;
+        set: vi.fn(() => {
+          queued.push('');
           return chain;
         }),
-        incr: vi.fn(() => chain),
-        exec: vi.fn(async () => {
-          const n = (counts.get(key) ?? 0) + 1;
-          counts.set(key, n);
-          return ['OK', n];
+        incr: vi.fn((k: string) => {
+          queued.push(k);
+          return chain;
         }),
+        exec: vi.fn(async () =>
+          queued.map((k) => {
+            if (!k) return 'OK';
+            const n = (counts.get(k) ?? 0) + 1;
+            counts.set(k, n);
+            return n;
+          })
+        ),
       };
       return chain;
     });
@@ -965,9 +976,26 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
       Array(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY).fill('queued')
     );
     expect(outcomes[AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY]).toBe('budget-refused');
-    expect([...counts.keys()]).toEqual([
-      `system:blocks:review-auto-builds:fixture:${FIXTURE}:ci-a:${day()}`,
-    ]);
+    expect([...counts.keys()]).toEqual([slugKey('ci-a'), totalKey()]);
+  });
+
+  it("a fixture account's total across slugs is capped, so test runs cannot grow without bound", async () => {
+    const counts = realCounters();
+    // The day's total already at its ceiling, from other slugs.
+    counts.set(totalKey(), AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY);
+    expect(await submitN(1, FIXTURE, 'ci-new')).toEqual(['budget-refused']);
+    expect(await readAutoBuildBudget(FIXTURE, 'ci-new')).toEqual({
+      available: true,
+      scope: 'fixture-slug',
+      limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY,
+      remaining: 0,
+    });
+  });
+
+  it('CONTROL: one build under the total ceiling still starts', async () => {
+    const counts = realCounters();
+    counts.set(totalKey(), AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY - 1);
+    expect(await submitN(1, FIXTURE, 'ci-new')).toEqual(['queued']);
   });
 
   it('one slug spending its allowance leaves another slug of the same fixture account untouched', async () => {
@@ -1008,7 +1036,8 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
         slug: 'ci-a',
       })
     ).toBe('not-queued');
-    expect(counts.get(`system:blocks:review-auto-builds:fixture:${FIXTURE}:ci-a:${day()}`)).toBe(0);
+    expect(counts.get(slugKey('ci-a'))).toBe(0);
+    expect(counts.get(totalKey())).toBe(0);
   });
 
   it('readAutoBuildBudget reports what is left without spending any', async () => {
@@ -1027,9 +1056,7 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
     await submitN(AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY, FIXTURE, 'ci-a');
     expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toMatchObject({ remaining: 0 });
     // The reads themselves took nothing.
-    expect(counts.get(`system:blocks:review-auto-builds:fixture:${FIXTURE}:ci-a:${day()}`)).toBe(
-      3 + AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY
-    );
+    expect(counts.get(slugKey('ci-a'))).toBe(3 + AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY);
     expect(await readAutoBuildBudget(9, 'app-one')).toEqual({
       available: true,
       scope: 'account',
@@ -1043,7 +1070,6 @@ describe('test-fixture accounts: an automatic-build budget per app slug', () => 
     expect(await readAutoBuildBudget(FIXTURE, 'ci-a')).toEqual({
       available: false,
       scope: 'fixture-slug',
-      limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
     });
   });
 });

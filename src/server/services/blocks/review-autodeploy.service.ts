@@ -35,7 +35,14 @@ export const AUTO_REVIEW_BUILDS_PER_USER_PER_DAY = 20;
  * its own slug, so counting per slug gives every run its own allowance: one run cannot spend
  * another's, and none of them touch a real account's budget. Still a cap, so a looping run stops.
  */
-export const AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY = 10;
+export const AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY = 20;
+
+/**
+ * A test-fixture account's automatic review builds per UTC day across ALL its slugs. Per-slug
+ * counting alone would let the fixture's total grow with the number of test runs; this keeps it
+ * bounded, so test runs cannot crowd real submissions out of the review build pipeline.
+ */
+export const AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY = 200;
 
 const AUTO_BUILD_BUDGET_TTL_SECONDS = 26 * 60 * 60;
 
@@ -282,16 +289,18 @@ export async function autoStartReviewPreview(args: {
 }
 
 /**
- * Which counter an automatic build of `slug` by `userId` is charged to, and its limit. The one
- * definition the take, the refund and the read share.
+ * Which counters an automatic build of `slug` by `userId` is charged to, and their limits. The one
+ * definition the take, the refund and the read share. A build is admitted only while EVERY counter
+ * is within its limit.
  *
  * A real account has one counter per UTC day for all its apps. A test-fixture account
- * (`APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS`) has one per app slug per UTC day, in a separate key
- * space, so a fixture's builds never count against a real account and vice versa.
+ * (`APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS`) has one per app slug per UTC day plus one daily total
+ * across its slugs, in a separate key space, so a fixture's builds never count against a real
+ * account, one test run cannot spend another's, and the fixture's total stays bounded.
  */
+export type AutoBuildBudgetCounter = { key: RedisKeyTemplateSys; limit: number };
 export type AutoBuildBudgetBucket = {
-  key: RedisKeyTemplateSys;
-  limit: number;
+  counters: AutoBuildBudgetCounter[];
   scope: 'account' | 'fixture-slug';
 };
 
@@ -307,38 +316,46 @@ export async function autoBuildBudgetBucket(
   const base = REDIS_SYS_KEYS.BLOCKS.REVIEW_AUTO_BUILDS;
   if (env.APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS.includes(userId)) {
     return {
-      key: `${base}:fixture:${userId}:${slug}:${day}` as const,
-      limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
+      counters: [
+        {
+          key: `${base}:fixture:${userId}:${slug}:${day}` as const,
+          limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY,
+        },
+        {
+          key: `${base}:fixture:${userId}:${day}` as const,
+          limit: AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY,
+        },
+      ],
       scope: 'fixture-slug',
     };
   }
   return {
-    key: `${base}:${userId}:${day}` as const,
-    limit: AUTO_REVIEW_BUILDS_PER_USER_PER_DAY,
+    counters: [
+      { key: `${base}:${userId}:${day}` as const, limit: AUTO_REVIEW_BUILDS_PER_USER_PER_DAY },
+    ],
     scope: 'account',
   };
 }
 
 /**
- * Count one automatic build against its bucket. Fails CLOSED: an unreadable counter is
- * `unavailable`, which the caller treats like a spent budget.
+ * Count one automatic build against every counter of its bucket. Fails CLOSED: an unreadable
+ * counter is `unavailable`, which the caller treats like a spent budget.
  */
 async function takeAutoBuildBudget(
   bucket: AutoBuildBudgetBucket
 ): Promise<'ok' | 'limited' | 'unavailable'> {
   const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-  const { key } = bucket;
   try {
-    const res = await withSysReadDeadline(
-      sysRedis
-        .multi()
-        .set(key, '0', { NX: true, EX: AUTO_BUILD_BUDGET_TTL_SECONDS })
-        .incr(key)
-        .exec()
-    );
-    const used = Number(res?.[1]);
-    if (!Number.isFinite(used)) return 'unavailable';
-    return used <= bucket.limit ? 'ok' : 'limited';
+    const tx = sysRedis.multi();
+    for (const { key } of bucket.counters) {
+      tx.set(key, '0', { NX: true, EX: AUTO_BUILD_BUDGET_TTL_SECONDS });
+      tx.incr(key);
+    }
+    const res = await withSysReadDeadline(tx.exec());
+    // Replies come in (SET, INCR) pairs, one pair per counter.
+    const used = bucket.counters.map((_, i) => Number(res?.[i * 2 + 1]));
+    if (!used.every(Number.isFinite)) return 'unavailable';
+    return used.every((n, i) => n <= bucket.counters[i].limit) ? 'ok' : 'limited';
   } catch {
     return 'unavailable';
   }
@@ -348,7 +365,7 @@ async function takeAutoBuildBudget(
 async function refundAutoBuildBudget(bucket: AutoBuildBudgetBucket): Promise<void> {
   try {
     const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    await withSysReadDeadline(sysRedis.decr(bucket.key));
+    for (const { key } of bucket.counters) await withSysReadDeadline(sysRedis.decr(key));
   } catch {
     // The counter expires with the day; a lost refund costs one build of budget.
   }
@@ -356,27 +373,33 @@ async function refundAutoBuildBudget(bucket: AutoBuildBudgetBucket): Promise<voi
 
 export type AutoBuildBudgetReading =
   | { available: true; scope: AutoBuildBudgetBucket['scope']; limit: number; remaining: number }
-  | { available: false; scope: AutoBuildBudgetBucket['scope']; limit: number };
+  | { available: false; scope: AutoBuildBudgetBucket['scope'] };
 
 /**
- * How many automatic review builds `userId` has left today for `slug`, without spending one.
- * `remaining` 0 means the next submission's preview waits for a moderator. `available: false`
- * when the counter cannot be read, which the take would treat as spent.
+ * How many automatic review builds `userId` has left today for `slug`, without spending one: the
+ * smallest remainder over the bucket's counters, with that counter's `limit`. `remaining` 0 means
+ * the next submission's preview waits for a moderator. `available: false` when a counter cannot be
+ * read, which the take would treat as spent.
  */
 export async function readAutoBuildBudget(
   userId: number,
   slug: string
 ): Promise<AutoBuildBudgetReading> {
-  const bucket = await autoBuildBudgetBucket(userId, slug);
-  const { scope, limit } = bucket;
+  const { counters, scope } = await autoBuildBudgetBucket(userId, slug);
   try {
     const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    const raw = await withSysReadDeadline(sysRedis.get(bucket.key));
-    const used = raw == null ? 0 : Number(raw);
-    if (!Number.isFinite(used)) return { available: false, scope, limit };
-    return { available: true, scope, limit, remaining: Math.max(0, limit - used) };
+    let tightest: { limit: number; remaining: number } | null = null;
+    for (const { key, limit } of counters) {
+      const raw = await withSysReadDeadline(sysRedis.get(key));
+      const used = raw == null ? 0 : Number(raw);
+      if (!Number.isFinite(used)) return { available: false, scope };
+      const remaining = Math.max(0, limit - used);
+      if (!tightest || remaining < tightest.remaining) tightest = { limit, remaining };
+    }
+    if (!tightest) return { available: false, scope };
+    return { available: true, scope, ...tightest };
   } catch {
-    return { available: false, scope, limit };
+    return { available: false, scope };
   }
 }
 

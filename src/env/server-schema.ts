@@ -1277,8 +1277,9 @@ export const serverSchema = z
     // build settles. Past it, automatic starts are refused; a moderator can still start one.
     AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
     // Test-fixture accounts (the CI smoke users of a test environment) whose AUTOMATIC review
-    // builds are counted per app slug instead of per account (review-autodeploy.service,
-    // AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY), so the many test runs that share one fixture
+    // builds are counted per app slug, under a daily total, instead of per account
+    // (review-autodeploy.service, AUTO_REVIEW_BUILDS_PER_FIXTURE_SLUG_PER_DAY and
+    // AUTO_REVIEW_BUILDS_PER_FIXTURE_PER_DAY), so the many test runs that share one fixture
     // account each get their own allowance. Set only in test environments; unset (the default)
     // leaves every account on the per-account budget. A malformed list reads as unset.
     APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: commaDelimitedNumberArray()

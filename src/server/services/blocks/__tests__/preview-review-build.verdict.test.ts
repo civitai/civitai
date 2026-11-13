@@ -78,9 +78,9 @@ describe('preview e2e: the automatic-build budget', () => {
   });
 
   it('an unreadable budget blocks the build too', () => {
-    expect(
-      budgetBlocksReviewBuild({ available: false, scope: 'account', limit: 20 }, 'ci-x')
-    ).toMatch(/could not be read/);
+    expect(budgetBlocksReviewBuild({ available: false, scope: 'account' }, 'ci-x')).toMatch(
+      /could not be read/
+    );
   });
 
   it('CONTROL: one build left does not block', () => {
