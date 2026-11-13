@@ -2,6 +2,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import { CF_VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/edge-verified-bot';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -19,6 +21,7 @@ const BROWSER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130.0 Safari/5
 const GOOGLEBOT_IP = '192.178.4.1';
 const OTHER_IP = '203.0.113.9';
 const POD = 'test-pod-7';
+const EDGE_SECRET = 'trpc-route-edge-secret';
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/createContext', () => ({
@@ -48,6 +51,7 @@ let server: http.Server | undefined;
 let baseUrl = '';
 
 beforeAll(async () => {
+  setEnv({ CF_VERIFIED_BOT_HEADER_SECRET: EDGE_SECRET });
   vi.stubEnv('PODNAME', POD);
   const route = (await import('~/pages/api/trpc/[trpc]')).default as NextApiHandler;
   server = http.createServer((req, res) => {
@@ -125,6 +129,7 @@ describe('/api/trpc applies the API policy with no proxy in front', () => {
       'cf-ipcountry': 'US',
       'user-agent': GOOGLEBOT,
       'cf-connecting-ip': GOOGLEBOT_IP,
+      [CF_VERIFIED_BOT_HEADER]: EDGE_SECRET,
     });
     expect(botSeen(o)).toBe('googlebot');
   });

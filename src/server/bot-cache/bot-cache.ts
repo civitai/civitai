@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { isNextDataRequest } from '~/server/prom/ssr-cpu.metrics';
 import { applyShellPrivateHeaders } from '~/server/shell/shell-response';
@@ -7,7 +6,10 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
 import { getRegion, isRegionBlocked, isRegionRestricted } from '~/server/utils/region-blocking';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isHostForColor } from '~/server/utils/server-domain';
-import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
+import {
+  CF_VERIFIED_BOT_HEADER,
+  edgeVerifiedBotRefusal,
+} from '~/server/utils/bot-detection/edge-verified-bot';
 import {
   BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
   BOT_CACHE_REQ_KEY,
@@ -31,9 +33,6 @@ import { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
 
 export { BOT_CACHE_ROUTES } from '~/server/bot-cache/bot-cache-routes';
 export type { BotCacheRouteName, BotCacheRoutePattern } from '~/server/bot-cache/bot-cache-routes';
-
-/** Set by the edge on a verified crawler's request, to `CF_VERIFIED_BOT_HEADER_SECRET`. */
-export const CF_VERIFIED_BOT_HEADER = 'x-civ-cf-verified-bot';
 
 /** Why a request is not answered with a cacheable render. See `botCacheRefusal`. */
 export type BotCacheRefusal =
@@ -77,10 +76,6 @@ function carriesTokenParam(req: BotCacheRequest) {
   return requestCarriesQueryToken(req as never);
 }
 
-function headerValue(raw: string | string[] | undefined) {
-  return Array.isArray(raw) ? raw[0] : raw;
-}
-
 /**
  * The first reason `req` must not get a cacheable render, or `null` when it may. `pathname`
  * is the page pattern Next rendered (`ctx.pathname`). `degraded`: the settings bootstrap failed, so
@@ -101,11 +96,8 @@ export function botCacheRefusal(
   const region = getRegion(req);
   if (isRegionBlocked(region) || isRegionRestricted(region)) return 'region';
 
-  const presented = headerValue(req.headers[CF_VERIFIED_BOT_HEADER]);
-  if (!presented) return 'no-bot-header';
-  const secret = env.CF_VERIFIED_BOT_HEADER_SECRET;
-  if (!secret) return 'no-secret';
-  if (!timingSafeEqualStrings(secret, presented)) return 'bot-header-mismatch';
+  const edgeRefusal = edgeVerifiedBotRefusal(req.headers[CF_VERIFIED_BOT_HEADER]);
+  if (edgeRefusal) return edgeRefusal;
 
   if (degraded) return 'degraded';
   if (!flagGate()) return 'kill-switch';

@@ -1,7 +1,9 @@
 import { NextRequest } from 'next/server';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import { runMiddlewares } from '~/server/middleware/index';
+import { CF_VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/edge-verified-bot';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 
 /**
@@ -15,13 +17,19 @@ const GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.co
 // GOOGLEBOT_IP is in a googlebot-ips.json range; OTHER_IP is in no crawler range.
 const GOOGLEBOT_IP = '192.178.4.1';
 const OTHER_IP = '203.0.113.9';
+const EDGE_SECRET = 'inbound-header-edge-secret';
+
+beforeEach(() => {
+  setEnv({ CF_VERIFIED_BOT_HEADER_SECRET: EDGE_SECRET });
+});
 
 function requestTo(
   path: string,
   carriesHeader: boolean | string,
-  { ua = BROWSER, ip = OTHER_IP }: { ua?: string; ip?: string } = {}
+  { ua = BROWSER, ip = OTHER_IP, edge }: { ua?: string; ip?: string; edge?: string } = {}
 ) {
   const headers = new Headers({ 'user-agent': ua, 'cf-connecting-ip': ip });
+  if (edge) headers.set(CF_VERIFIED_BOT_HEADER, edge);
   if (carriesHeader)
     headers.set(VERIFIED_BOT_HEADER, carriesHeader === true ? 'googlebot' : carriesHeader);
   return new NextRequest(`https://civitai.red${path}`, { headers });
@@ -62,13 +70,21 @@ describe('botDetectionMiddleware and an inbound crawler header', () => {
     ['with its own value', true],
     ['with a different value', 'bingbot'],
   ])('sets it for a verified crawler arriving %s', async (_, carriesHeader) => {
-    const request = requestTo('/images/123', carriesHeader, { ua: GOOGLEBOT, ip: GOOGLEBOT_IP });
+    const request = requestTo('/images/123', carriesHeader, {
+      ua: GOOGLEBOT,
+      ip: GOOGLEBOT_IP,
+      edge: EDGE_SECRET,
+    });
     const response = await runMiddlewares(request, [botDetectionMiddleware]);
     expect(headerSeenByApp(response, request)).toBe('googlebot');
   });
 
   it('verifies crawlers only on the paths that use it', async () => {
-    const request = requestTo('/images', true, { ua: GOOGLEBOT, ip: GOOGLEBOT_IP });
+    const request = requestTo('/images', true, {
+      ua: GOOGLEBOT,
+      ip: GOOGLEBOT_IP,
+      edge: EDGE_SECRET,
+    });
     const response = await runMiddlewares(request, [botDetectionMiddleware]);
     expect(headerSeenByApp(response, request)).toBeNull();
   });
