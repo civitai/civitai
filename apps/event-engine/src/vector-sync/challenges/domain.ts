@@ -7,10 +7,11 @@ export const CHALLENGE_TOPICS = ['postgres.Challenge', 'postgres.ChallengeEvent'
 
 /**
  * What a CDC message touches: a challenge row names itself; an event row names every challenge
- * whose point carries its eventId, since the event title is in the document. Cover-image scans
- * change neither table, so a cover's later scan, rating or flag reaches the point only when the
- * challenge next changes: at the latest when it activates or completes, since a user challenge
- * cannot activate unscanned. The site re-checks eligibility on what it shows.
+ * whose point carries its eventId, since the event title is in the document. A change to the
+ * cover image alone (its scan, rating or flag) changes neither table, so the point keeps its old
+ * eligibility and coverNsfwLevel until the challenge next changes or a backfill re-reads it,
+ * which for a finished challenge may be never. The site must hydrate every hit through the
+ * feed's own query and never trust the payload.
  */
 export function challengeRefFromEvent(topic: string, value: unknown): DomainRef | null {
   const event = value as {
