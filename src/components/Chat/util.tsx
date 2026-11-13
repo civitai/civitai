@@ -105,6 +105,8 @@ export const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.
 /** Markdown the one-line preview would otherwise show raw: links, bold and inline code. */
 export const stripMarkdownForPreview = (text: string) =>
   text
+    // Escapes first, as markdown reads them: a group-rename note escapes the name's markdown.
+    .replace(/\\([\\`*_[\]()<>!#~|])/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/(\*\*|__)(.+?)\1/g, '$2')
     .replace(/`([^`]*)`/g, '$1');

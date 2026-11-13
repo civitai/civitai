@@ -12,8 +12,10 @@ import {
   MODERATOR_BADGE_COSMETIC_ID,
   renderLink,
   showsChatModeratorMark,
+  stripMarkdownForPreview,
   validateLink,
 } from '~/components/Chat/util';
+import { groupRenamedNote } from '~/shared/utils/chat';
 
 // linkify only turns a URL into a link when validateLink.url passes; this is the
 // gate the fix actually flips, so a revert (dropping `civitai.red` from
@@ -174,6 +176,12 @@ describe('getLinkHref', () => {
 
   it('returns undefined for an empty href', () => {
     expect(getLinkHref(undefined)).toBeUndefined();
+  });
+});
+
+describe('a group-rename note in the chat list preview', () => {
+  it.each(['Weekend_crew!', 'Art (WIP)', '[Open] <x> \\ #~|'])('shows %s as typed', (name) => {
+    expect(stripMarkdownForPreview(groupRenamedNote(name))).toBe(`Group renamed to "${name}"`);
   });
 });
 
