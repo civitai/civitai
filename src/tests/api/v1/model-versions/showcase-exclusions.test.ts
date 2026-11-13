@@ -328,3 +328,16 @@ describe('id, a version the region is not served', () => {
     expect(noStore(res)).toBe(kept);
   });
 });
+
+describe('by-hash batch, a version above the level a region is served', () => {
+  it.each([
+    [true, 0],
+    [false, 1],
+  ])('restricted %s: %s versions returned', async (restricted, count) => {
+    region.restricted = restricted;
+    serve(NsfwLevel.R, [UNTAGGED_R]);
+    const { res } = await call('by-hash batch', 'civitai.com');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveLength(count);
+  });
+});

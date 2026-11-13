@@ -49,15 +49,17 @@ export default PublicEndpoint(
       },
     });
 
-    // Versions the caller may not see are left out, as if their hashes had not matched.
+    const browsingLevel = apiBrowsingLevel(req);
+    // Versions the caller may not see are left out, as if their hashes had not matched: those above
+    // the request's level, as `[id]` refuses them, and those the visibility rules hide.
+    const atLevel = matched.filter((file) => (file.modelVersion.nsfwLevel & browsingLevel) !== 0);
     const hidden = await getHiddenModelVersionIds(
-      matched.map((file) => file.modelVersion),
+      atLevel.map((file) => file.modelVersion),
       async () => (await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }))?.user
     );
-    const files = matched.filter((file) => !hidden.has(file.modelVersion.id));
+    const files = atLevel.filter((file) => !hidden.has(file.modelVersion.id));
 
     const modelVersionIds = [...new Set(files.map((file) => file.modelVersion.id))];
-    const browsingLevel = apiBrowsingLevel(req);
     const images = await getVersionShowcaseImages(modelVersionIds, browsingLevel);
     const paidAccess = await getPublicPaidAccessForModelVersions(modelVersionIds);
 
