@@ -1506,7 +1506,7 @@ describe("buying a creator's mystery pack", () => {
     const result = await buy();
 
     expect(mocks.createTx).toHaveBeenCalled();
-    expect(result.boxItemIds).toHaveLength(1);
+    expect(result).toMatchObject({ kind: 'box', boxItemIds: [expect.any(String)] });
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(recordedMeta()).toBeUndefined();
   }, 15_000);
