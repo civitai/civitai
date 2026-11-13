@@ -22,7 +22,7 @@ const zImageModeVersionOptions = [
 ];
 const zImageSamplers = ['euler', 'heun'] as const;
 /**
- * Presets must name ComfyUI samplers from `zImageSamplers` (sampler-presets.test.ts). The shared
+ * Presets must name ComfyUI samplers from `zImageSamplers` (no-unoffered-sampler-preset.test.ts). The shared
  * `defaultSamplerPresets` ('Euler a' / 'DPM++ 2M Karras') are SD names this family does not offer,
  * and `selectDef` silently corrected both buttons to the default.
  * - Fast: euler, one model evaluation per step; the family has no ancestral variant.
