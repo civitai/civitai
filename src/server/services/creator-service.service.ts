@@ -7,6 +7,8 @@ import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
 import { updateServiceOfferingNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { scanServiceOffering } from '~/server/services/service-offering-moderation.adapter';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getHiddenOrBlockedUserIds } from '~/server/services/user-preferences.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { countOpenDealsByOffering } from '~/server/services/creator-service-deal.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
@@ -19,7 +21,9 @@ import {
 import { NotificationCategory } from '~/server/common/enums';
 import { SERVICE_DEAL_OPEN_STATUSES } from '~/shared/constants/creator-services.constants';
 import type {
+  GetServiceOfferingFeedInput,
   GetShopServiceOfferingsInput,
+  ServiceOfferingFeedSort,
   SetServiceOfferingStatusInput,
   TakedownServiceOfferingInput,
   UpsertServiceOfferingInput,
@@ -283,6 +287,41 @@ export const shopRatingFilter = (matureRatings: readonly number[]) =>
       }
     : { maxNsfwLevel: { lte: NsfwLevel.PG13 } };
 
+/**
+ * The storefront's listing rule, shared by a seller's storefront and the cross-seller feed: Active
+ * offerings of a seller in good standing, at the ratings this viewer and domain may see, whose
+ * content checks have completed.
+ */
+const listableServiceOfferingWhere = ({
+  browsingLevel,
+  servable,
+}: {
+  browsingLevel: number | undefined;
+  servable: number;
+}) => {
+  const matureRatings = visibleMatureServiceRatings({ browsingLevel, servable });
+  return {
+    status: ServiceOfferingStatus.Active,
+    seller: { bannedAt: null, deletedAt: null, muted: false },
+    ...shopRatingFilter(matureRatings),
+    ...serviceOfferingShowableWhere(matureRatings),
+  } satisfies Prisma.ServiceOfferingWhereInput;
+};
+
+// Display only: `requestServiceDeal` enforces the cap against the same count.
+async function withOpenSlots<T extends { id: number; maxOpenDeals: number | null }>(
+  offerings: T[]
+) {
+  const open = await countOpenDealsByOffering(offerings.map((o) => o.id));
+  return offerings.map((offering) => ({
+    ...offering,
+    slotsOpen:
+      offering.maxOpenDeals == null
+        ? null
+        : Math.max(0, offering.maxOpenDeals - (open.get(offering.id) ?? 0)),
+  }));
+}
+
 export async function getShopServiceOfferings({
   userId,
   browsingLevel,
@@ -296,27 +335,61 @@ export async function getShopServiceOfferings({
   isModerator?: boolean;
 }) {
   await assertCreatorShopVisible({ userId, viewerId, isModerator });
-  const matureRatings = visibleMatureServiceRatings({ browsingLevel, servable });
   const offerings = await dbRead.serviceOffering.findMany({
-    where: {
-      sellerId: userId,
-      status: ServiceOfferingStatus.Active,
-      seller: { bannedAt: null, deletedAt: null, muted: false },
-      ...shopRatingFilter(matureRatings),
-      ...serviceOfferingShowableWhere(matureRatings),
-    },
+    where: { sellerId: userId, ...listableServiceOfferingWhere({ browsingLevel, servable }) },
     select: serviceOfferingSelect,
     orderBy: { createdAt: 'asc' },
   });
-  // Display only: `requestServiceDeal` enforces the cap against the same count.
-  const open = await countOpenDealsByOffering(offerings.map((o) => o.id));
-  return offerings.map((offering) => ({
-    ...offering,
-    slotsOpen:
-      offering.maxOpenDeals == null
-        ? null
-        : Math.max(0, offering.maxOpenDeals - (open.get(offering.id) ?? 0)),
-  }));
+  return withOpenSlots(offerings);
+}
+
+const feedOrderBy = {
+  newest: [{ createdAt: 'desc' }, { id: 'desc' }],
+  price_asc: [{ price: 'asc' }, { id: 'asc' }],
+  price_desc: [{ price: 'desc' }, { id: 'desc' }],
+} satisfies Record<ServiceOfferingFeedSort, Prisma.ServiceOfferingOrderByWithRelationInput[]>;
+
+/**
+ * Active offerings across every seller whose storefront a visitor could open: the storefront's
+ * listing rule, plus a published shop and no block either way (`assertCreatorShopVisible`), and
+ * minus the creators this viewer hid. Owners and moderators get no bypass: the feed is what
+ * visitors see.
+ */
+export async function getServiceOfferingFeed({
+  browsingLevel,
+  servable,
+  viewerId,
+  sort,
+  cursor,
+  limit,
+}: GetServiceOfferingFeedInput & {
+  /** What this domain may be sent: `domainServableLevels(ctx)`. */
+  servable: number;
+  viewerId?: number;
+}) {
+  const excludedSellerIds = viewerId ? await getHiddenOrBlockedUserIds(viewerId) : [];
+  const listable = listableServiceOfferingWhere({ browsingLevel, servable });
+  const rows = await dbRead.serviceOffering.findMany({
+    where: {
+      ...listable,
+      seller: {
+        ...listable.seller,
+        // The card links to the storefront, which is addressed by username.
+        username: { not: null },
+        settings: { path: ['creatorShop', 'enabled'], equals: true },
+      },
+      ...(excludedSellerIds.length ? { sellerId: { notIn: excludedSellerIds } } : {}),
+    },
+    select: { ...serviceOfferingSelect, seller: { select: simpleUserSelect } },
+    orderBy: feedOrderBy[sort],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+  const page = rows.slice(0, limit);
+  return {
+    items: await withOpenSlots(page),
+    nextCursor: rows.length > limit ? page[page.length - 1].id : undefined,
+  };
 }
 
 export async function upsertServiceOffering({

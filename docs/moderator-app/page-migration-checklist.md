@@ -254,7 +254,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
     `resolveUserRestriction` (the mod endpoint).
 - [x] **`/moderator/review/training-data`** (index + `[versionId]`) — **Migrated** to the spoke at
   **`/audit/training-data`** and **`/audit/training-data/[versionId]`**.
-  - Spoke: `training-moderation.service.ts` (`getPausedTrainingVersions`, `getTrainingVersionDetail`,
+  - Spoke: `training-moderation.service.ts` (`getTrainingReviewQueue`, `getTrainingVersionDetail`,
     `moderateTrainingData`). The detail read goes through the WRITE connection — `ModelFile.metadata` is
     TOASTed jsonb the logical subscriber drops on UPDATE, so on the replica `trainingResults` is empty.
   - Approve/deny releases the orchestrator's moderation gate for the workflow

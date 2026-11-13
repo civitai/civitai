@@ -29,6 +29,7 @@ const OTHER_SAME: BaseModel[] = [
   'Ideogram 4.0',
   'MiniMax H3',
   'MiniMax H3 Image',
+  'Fibo 2.0',
   'Krea 2',
   'Krea 2 Turbo',
 ];

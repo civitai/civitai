@@ -1,7 +1,8 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { abortableSleep, createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { createPollingAdapter } from '~/server/registry-adapter/cursor';
+import { abortableSleep } from '~/utils/errorHandling';
 import { createDocFeed } from '~/server/registry-adapter/doc-feed';
 import { composeAdapter, resolveFromCatalog } from '~/server/registry-adapter/doc-streams';
 import type { CatalogApp } from '~/server/registry-adapter/entities';
