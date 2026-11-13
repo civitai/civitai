@@ -15,7 +15,8 @@ import { registerFliptSnapshotStore } from '~/server/flipt/snapshot-store';
 beforeEach(() => {
   resetSharedMocks();
   registered.store = undefined;
-  delete process.env.FLIPT_SNAPSHOT_MAX_AGE_MS;
+  // Opt in (24h): the store is DARK by default, pinned by the last test.
+  process.env.FLIPT_SNAPSHOT_MAX_AGE_MS = '86400000';
   delete process.env.FLIPT_ENVIRONMENT;
 });
 
@@ -60,6 +61,12 @@ describe('registerFliptSnapshotStore', () => {
 
   it('FLIPT_SNAPSHOT_MAX_AGE_MS=0 registers nothing (no reads, no writes)', () => {
     process.env.FLIPT_SNAPSHOT_MAX_AGE_MS = '0';
+    registerFliptSnapshotStore();
+    expect(registered.store).toBeUndefined();
+  });
+
+  it('is DARK by default: FLIPT_SNAPSHOT_MAX_AGE_MS unset registers nothing', () => {
+    delete process.env.FLIPT_SNAPSHOT_MAX_AGE_MS;
     registerFliptSnapshotStore();
     expect(registered.store).toBeUndefined();
   });

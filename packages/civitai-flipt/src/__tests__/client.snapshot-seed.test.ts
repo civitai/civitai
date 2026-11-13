@@ -58,9 +58,18 @@ function memoryStore(initial: FliptSnapshot | null = null) {
   return { store, saves };
 }
 
-function client(url: string, store: FliptSnapshotStore | undefined, logs: string[] = []) {
+// Seeding is DARK by default (FLIPT_SNAPSHOT_MAX_AGE_MS unset = 0), so these tests opt in.
+const ON = 24 * 60 * 60 * 1000;
+
+function client(
+  url: string,
+  store: FliptSnapshotStore | undefined,
+  logs: string[] = [],
+  snapshotMaxAgeMs: number = ON
+) {
   const flipt = createFliptClient({
     url,
+    snapshotMaxAgeMs,
     clientToken: 'token',
     environment: 'test-env',
     localOverrides: {},
@@ -150,6 +159,7 @@ describe('the snapshot round trip between processes', () => {
       log: () => {},
       onInitError: () => {},
       snapshotStore: store,
+      snapshotMaxAgeMs: ON,
       failureCooldownMs: 0,
       evalCacheTtlMs: 0,
     });
@@ -162,5 +172,50 @@ describe('the snapshot round trip between processes', () => {
     expect(await flipt.isEnabled('default-on-flag')).toBe(false); // live state
     // ...on the sync readers too, which read whichever client is current.
     expect(flipt.isEnabledSync('default-on-flag')).toBe(false);
+  });
+});
+
+describe('dark by default (FLIPT_SNAPSHOT_MAX_AGE_MS unset)', () => {
+  /** A client built from env tuning only: no snapshotMaxAgeMs override. */
+  function defaultClient(url: string, store: FliptSnapshotStore) {
+    delete process.env.FLIPT_SNAPSHOT_MAX_AGE_MS;
+    const flipt = createFliptClient({
+      url,
+      clientToken: 'token',
+      environment: 'test-env',
+      localOverrides: {},
+      log: () => {},
+      onInitError: () => {},
+      snapshotStore: store,
+    });
+    clients.push(flipt);
+    return flipt;
+  }
+
+  it('does not seed: a cold process with Flipt down and a fresh snapshot stored still reads false', async () => {
+    let loads = 0;
+    const store: FliptSnapshotStore = {
+      load: async () => {
+        loads++;
+        return { savedAt: Date.now(), data: snapshotData };
+      },
+      save: async () => {},
+    };
+    const flipt = defaultClient(await downUrl(), store);
+
+    expect(await flipt.isEnabled('default-on-flag')).toBe(false);
+    expect(loads).toBe(0);
+  });
+
+  it('does not write: a healthy process saves nothing to the store', async () => {
+    const liveUrl = await listen((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', etag: '"v1"' });
+      res.end(JSON.stringify(snapshotData));
+    });
+    const { store, saves } = memoryStore(null);
+    const flipt = defaultClient(liveUrl, store);
+
+    expect(await flipt.isEnabled('default-on-flag')).toBe(true); // positive control: live works
+    expect(saves).toHaveLength(0);
   });
 });

@@ -99,9 +99,8 @@ beforeEach(() => {
   // reset, not clear: a never-settling implementation must not leak into the next test.
   vi.resetAllMocks();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
-  // Each test starts as a fresh process: nothing read before. (Optional-called: an older build
-  // has no last-known state to reset.)
-  __resetGenerationConfigLastKnownForTests?.();
+  // Each test starts as a fresh process: nothing read before.
+  __resetGenerationConfigLastKnownForTests();
 });
 
 describe('getGenerationStatus — sysRedis soft-dependency', () => {
