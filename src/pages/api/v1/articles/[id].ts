@@ -13,7 +13,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/articles/[id] — public, edge-cacheable article detail.
+ * GET /api/v1/articles/[id] — public article detail.
  *
  * Wraps the EXISTING `getArticleById` service (the same one `articleRouter.getById`
  * — a public procedure — uses for anonymous website visitors). This endpoint
@@ -48,8 +48,7 @@ export default MixedAuthEndpoint(async function handler(
   user: Session['user'] | undefined
 ) {
   // Conservative per-client rate limit (before the service call). Keys on
-  // CF-Connecting-IP / userId — guards only the cache-MISS path; the response
-  // body itself never varies by user.
+  // CF-Connecting-IP / userId; the response body itself never varies by user.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
