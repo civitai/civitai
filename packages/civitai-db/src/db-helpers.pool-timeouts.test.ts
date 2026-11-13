@@ -1,6 +1,7 @@
 import net from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPool, queryWithTimeout } from './db-helpers';
+import { isDbConnectionError } from './db-errors';
 import { startFakePgServer, type FakePgServer } from './test-support/fake-pg-server';
 
 // A real pg.Pool built by createPool, against servers that misbehave the way an outage does:
@@ -125,4 +126,62 @@ describe('queryWithTimeout on a connection whose answer never comes', () => {
     // The wedged client was not handed back for the next caller to queue behind.
     expect(pool.totalCount).toBe(0);
   }, 10_000);
+});
+
+/** A local port with nothing listening: connecting to it is refused at once. */
+async function refusedUrl() {
+  const server = net.createServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return `postgresql://user:pass@127.0.0.1:${port}/testdb`;
+}
+
+// A raw socket error counts as the DATABASE's only when createPool marked it while acquiring a
+// connection (db-errors.ts). Kysely and queryWithTimeout acquire through the PROMISE form of
+// pool.connect, a separate branch of the wrapper from the callback form pool.query uses.
+describe('a refused connection is marked as database-originated', () => {
+  it('pool.connect() (promise form) rejects with a marked ECONNREFUSED', async () => {
+    const pool = createPool({ connectionString: await refusedUrl(), ssl: false });
+    cleanups.push(() => pool.end());
+
+    const { outcome } = await within(pool.connect(), 5_000);
+
+    expect(outcome.kind).toBe('err');
+    const error = (outcome as { error: Error & { code?: string } }).error;
+    // POSITIVE CONTROL: it is the raw socket error, which db-errors.ts matches only when marked.
+    expect(error.code).toBe('ECONNREFUSED');
+    expect(
+      isDbConnectionError(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })),
+      'an UNMARKED ECONNREFUSED classified as the database — this test cannot see the marking'
+    ).toBe(false);
+    expect(
+      isDbConnectionError(error),
+      'the promise-form connect error was not marked, so it reads as a generic 500'
+    ).toBe(true);
+  });
+
+  it('queryWithTimeout surfaces the same marked error', async () => {
+    const pool = createPool({ connectionString: await refusedUrl(), ssl: false });
+    cleanups.push(() => pool.end());
+
+    const { outcome } = await within(queryWithTimeout(pool, 1_000, 'select 1'), 5_000);
+
+    expect(outcome.kind).toBe('err');
+    const error = (outcome as { error: Error & { code?: string } }).error;
+    expect(error.code).toBe('ECONNREFUSED');
+    expect(isDbConnectionError(error)).toBe(true);
+  });
+
+  it('pool.query (callback form) rejects with a marked ECONNREFUSED', async () => {
+    const pool = createPool({ connectionString: await refusedUrl(), ssl: false });
+    cleanups.push(() => pool.end());
+
+    const { outcome } = await within(pool.query('select 1'), 5_000);
+
+    expect(outcome.kind).toBe('err');
+    const error = (outcome as { error: Error & { code?: string } }).error;
+    expect(error.code).toBe('ECONNREFUSED');
+    expect(isDbConnectionError(error)).toBe(true);
+  });
 });

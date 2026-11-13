@@ -34,8 +34,11 @@ export function isNotFoundError(error: unknown): boolean {
 const UNAVAILABLE_TRPC_CODES = new Set(['SERVICE_UNAVAILABLE', 'TIMEOUT']);
 
 /**
- * A dependency failed to answer, as opposed to a bug in the page: a tRPC 503/timeout, an
- * unreachable database, or a raw socket failure (refused, reset, timed out). Anything else is
+ * A dependency failed to answer, as opposed to a bug in the page: a tRPC SERVICE_UNAVAILABLE or
+ * TIMEOUT (on the error or on its `data`), or a database-unavailable error as `isDbUnavailableError`
+ * classifies it — a Prisma/pg connection or pool-acquire failure. A raw socket error (refused,
+ * reset, timed out) counts only when `createPool` marked it as raised while acquiring a database
+ * connection; an unmarked one could be any dependency's and is NOT matched here. Anything else is
  * still rethrown with no-store, as a 500.
  */
 export function isDependencyUnavailableError(error: unknown): boolean {
