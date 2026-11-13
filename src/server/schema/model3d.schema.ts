@@ -42,10 +42,7 @@ export const upsertModel3DSchema = z.object({
   licenseId: z.number().int().positive(),
   licenseDetails: z.string().nullish(),
   thumbnailImageId: z.number().int().positive().nullish(),
-  // Generation provenance — set by the workflow result handler. Surfaced here
-  // so the upsert can carry them through when a Draft is being completed.
-  workflowId: z.string().nullish(),
-  sourceImageId: z.number().int().positive().nullish(),
+  // workflowId and sourceImageId are absent on purpose: only the workflow result handler sets them.
   generationParams: z.unknown().nullish(),
   status: z.enum(Model3DStatus).optional(),
   nsfw: z.boolean().optional(),

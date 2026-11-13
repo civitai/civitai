@@ -769,7 +769,7 @@ export const upsertModel3D = async ({
   }
 
   // Moderators included: the thumbnail must be one of the model owner's images.
-  if (typeof data.thumbnailImageId === 'number') {
+  if (data.thumbnailImageId != null) {
     const ownerId = existing?.userId ?? user.id;
     const image = await dbWrite.image.findUnique({
       where: { id: data.thumbnailImageId },

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { upsertModel3DSchema } from '~/server/schema/model3d.schema';
 import { upsertModel3D } from '~/server/services/model3d.service';
 import type { SessionUser } from '~/types/session';
 
@@ -66,6 +67,7 @@ describe('upsertModel3D thumbnail ownership', () => {
     expect(b.status).toBe('rejected');
     const ra = (a as PromiseRejectedResult).reason;
     const rb = (b as PromiseRejectedResult).reason;
+    expect(ra.code).toBe('BAD_REQUEST');
     expect([ra.code, ra.message]).toEqual([rb.code, rb.message]);
   });
 
@@ -92,5 +94,24 @@ describe('upsertModel3D thumbnail ownership', () => {
     await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: null }, user: owner });
     expect(written().thumbnailImageId).toBeNull();
     expect(db.image.findUnique).not.toHaveBeenCalled();
+  });
+
+  // Through the router's input schema, as a real request arrives.
+  it('drops server-owned provenance fields from the request', async () => {
+    const update = upsertModel3DSchema.parse({
+      ...base,
+      id: MODEL_ID,
+      sourceImageId: 22,
+      workflowId: 'someone-elses-workflow',
+    });
+    await upsertModel3D({ input: update, user: owner });
+    expect(written()).not.toHaveProperty('sourceImageId');
+    expect(written()).not.toHaveProperty('workflowId');
+
+    db.model3D.update.mockClear();
+    const create = upsertModel3DSchema.parse({ ...base, sourceImageId: 22, workflowId: 'wf' });
+    await upsertModel3D({ input: create, user: owner });
+    expect(written()).not.toHaveProperty('sourceImageId');
+    expect(written()).not.toHaveProperty('workflowId');
   });
 });
