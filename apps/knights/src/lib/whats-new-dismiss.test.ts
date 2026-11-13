@@ -1,6 +1,12 @@
 import type { ActionResult } from '@sveltejs/kit';
 import { describe, expect, it, vi } from 'vitest';
-import { DISMISS_FAILED, dismissWhatsNew, type DismissState } from './whats-new-dismiss';
+import {
+  DISMISS_FAILED,
+  dismissWhatsNew,
+  forgetDismissal,
+  whatsNewShowing,
+  type DismissState,
+} from './whats-new-dismiss';
 
 type Answer = (opts: { result: ActionResult; update: () => Promise<void> }) => Promise<void>;
 
@@ -44,5 +50,32 @@ describe('dismissWhatsNew', () => {
     });
     expect(unreachable).toEqual({ hidden: false, message: DISMISS_FAILED });
     expect(noUpdate).not.toHaveBeenCalled();
+  });
+
+  it("treats What's new as closed once it has been submitted", async () => {
+    const state: DismissState = { hidden: false, message: null };
+    expect(whatsNewShowing(true, state)).toBe(true);
+    await submitWith(state);
+    expect(whatsNewShowing(true, state)).toBe(false);
+  });
+
+  it('blocks the keys again when the dismiss fails', async () => {
+    const state: DismissState = { hidden: false, message: null };
+    const answer = await submitWith(state);
+    await answer({
+      result: { type: 'error', error: new TypeError('Failed to fetch') },
+      update: vi.fn(),
+    });
+    expect(whatsNewShowing(true, state)).toBe(true);
+  });
+
+  it("shows a later What's new after a successful dismiss", async () => {
+    const state: DismissState = { hidden: false, message: null };
+    const answer = await submitWith(state);
+    await answer({ result: { type: 'success', status: 200 }, update: vi.fn(async () => {}) });
+    // The load re-ran and stopped sending it.
+    forgetDismissal(state, false);
+    expect(whatsNewShowing(false, state)).toBe(false);
+    expect(whatsNewShowing(true, state)).toBe(true);
   });
 });

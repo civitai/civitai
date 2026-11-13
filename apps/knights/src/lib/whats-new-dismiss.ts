@@ -22,3 +22,11 @@ export const dismissWhatsNew =
       await update();
     };
   };
+
+/** The one answer to "is the What's new dialog up": the layout renders by it and /play blocks its keys by it. */
+export const whatsNewShowing = (sent: boolean, state: DismissState) => sent && !state.hidden;
+
+/** Once the load stops sending the copy, the flag that hid it goes too, so a later copy shows. */
+export const forgetDismissal = (state: DismissState, sent: boolean) => {
+  if (!sent) state.hidden = false;
+};

@@ -21,6 +21,7 @@
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress } from './keys';
+  import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
@@ -67,7 +68,8 @@
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
-  let dialogOpen = $derived(!!data.whatsNew || guideOpen || data.progress?.kind === 'rank');
+  const whatsNew = whatsNewView();
+  let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
