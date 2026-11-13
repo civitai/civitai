@@ -1,3 +1,3 @@
-FROM postgres:17@sha256:e38411452a464af89e5adadb8d223bf53b898d47d6ef918b2d58c08707350449
+FROM postgres:17@sha256:846a7ddaa67a4b354ae1d21087b683901aa6113a4ed626d3787cfbf6c85e3e07
 COPY ./docker-init/*.sql /docker-entrypoint-initdb.d/
 RUN chmod a+r /docker-entrypoint-initdb.d/*
