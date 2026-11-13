@@ -20,12 +20,17 @@ const SCHEMA = `
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   INSERT INTO "User" VALUES (1, NULL, NULL), (2, now(), NULL), (3, NULL, now()), (4, NULL, NULL),
-    (5, NULL, NULL), (6, NULL, NULL);
-  -- 4 is a CsamReport's subject, 5 its secondary user, 6 under an evidence hold.
+    (5, NULL, NULL), (6, NULL, NULL), (-1, NULL, NULL);
+  -- 4 is a CsamReport's subject, 5 its secondary user, 6 under an evidence hold, -1 the placeholder
+  -- owner (named on a report, which holds none of its kept images).
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   INSERT INTO "CsamReport" ("userId", details, images) VALUES
-    (4, '{}', '[]'), (NULL, '{"secondaryUserId": "5"}', '[{"id": 2100}]');
+    (4, '{}', '[]'), (NULL, '{"secondaryUserId": "5"}', '[{"id": 2100}]'), (NULL, '{}', '["2600"]'),
+    (-1, '{}', '[]'),
+    -- Malformed rows the rule must read past without failing the statement.
+    (NULL, '{"secondaryUserId": "abc"}', '{"id": 100}'),
+    (NULL, '{"secondaryUserId": "123456789012345678901"}', '"100"');
   CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
   INSERT INTO "EvidenceHold" VALUES (6, NULL);
   CREATE VIEW "EvidenceHeldUser" AS
@@ -62,6 +67,8 @@ const eligible = {
   availability: `'Public'`,
   /** Chapter 1's image (userId, needsReview, blockedFor), or false for none. */
   image: `1, NULL, NULL` as string | false,
+  /** A second image on chapter 1's post, the same shape, or false. */
+  secondImage: false as string | false,
 };
 
 const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}): ParityRow => {
@@ -82,6 +89,13 @@ const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}
                   `INSERT INTO "Image" VALUES (${id * 100}, ${
                     c.image.split(',')[0]
                   }, ${postId},${c.image.slice(c.image.indexOf(',') + 1)})`,
+                ]),
+            ...(c.secondImage === false
+              ? []
+              : [
+                  `INSERT INTO "Image" VALUES (${id * 100 + 1}, ${
+                    c.secondImage.split(',')[0]
+                  }, ${postId},${c.secondImage.slice(c.secondImage.indexOf(',') + 1)})`,
                 ]),
           ]
         : []),
@@ -136,6 +150,14 @@ const spec: ParitySpec = {
     storyline(23, 'imageBlockedCsam', { image: `1, NULL, 'CSAM'` }),
     storyline(24, 'imageOwnerHeld', { image: `4, NULL, NULL` }),
     storyline(25, 'eligible:noImage', { image: false }),
+    storyline(26, 'imageListedAsText', {}),
+    storyline(27, 'imageOwnerSecondaryReported', { image: `5, NULL, NULL` }),
+    storyline(28, 'imageOwnerEvidenceHold', { image: `6, NULL, NULL` }),
+    // An owner's verification block is theirs to lift, so it does not count their report against it.
+    storyline(29, 'eligible:aiNotVerifiedImage', { image: `4, NULL, 'AiNotVerified'` }),
+    storyline(30, 'eligible:placeholderImageOwner', { image: `-1, NULL, NULL` }),
+    // One held image among clean ones is enough.
+    storyline(31, 'anyImageHeld', { secondImage: `1, 'csam', NULL` }),
   ],
   clauses: [
     'tosViolation',
@@ -159,6 +181,10 @@ const spec: ParitySpec = {
     'imageCsamReview',
     'imageBlockedCsam',
     'imageOwnerHeld',
+    'imageListedAsText',
+    'imageOwnerSecondaryReported',
+    'imageOwnerEvidenceHold',
+    'anyImageHeld',
   ],
   site: async (prisma) =>
     (await prisma.$queryRawUnsafe<{ id: number }[]>(SITE)).map((r) => Number(r.id)),

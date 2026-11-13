@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
-import type { Domain } from './sync';
+import { logger } from '@/utils/logger';
+import type { Domain, DomainRef } from './sync';
 
 /**
  * The next `batch` ids of the domain's table after `cursor`, by keyset, and the cursor for the
@@ -17,4 +18,44 @@ export async function nextRefreshIds(
   );
   const ids = rows.map((r) => Number(r.id));
   return { ids, next: ids.length < batch ? 0 : ids[ids.length - 1] };
+}
+
+type RefreshQueue = {
+  lanes: Map<string, { add(ref: DomainRef): void }>;
+  readonly isFull: boolean;
+};
+
+/**
+ * Starts each refreshing domain's walk: every `everyMs`, its next `batch` ids go into its lane for
+ * the queue's normal flush. A tick is skipped while the previous read runs or the queue is full;
+ * a failed read keeps the cursor. The position is kept in memory, so a restart begins again from
+ * the first id. Returns the timers, for shutdown.
+ */
+export function startRefreshers(
+  domains: Domain<any>[],
+  queue: RefreshQueue,
+  pg: Pick<Pool, 'query'>
+): ReturnType<typeof setInterval>[] {
+  return domains.flatMap((domain) => {
+    const { refresh } = domain;
+    const lane = queue.lanes.get(domain.name);
+    if (!refresh || !lane) return [];
+    let cursor = 0;
+    let running = false;
+    return [
+      setInterval(() => {
+        if (running || queue.isFull) return;
+        running = true;
+        nextRefreshIds(pg, domain, cursor, refresh.batch)
+          .then(({ ids, next }) => {
+            for (const id of ids) lane.add({ id });
+            cursor = next;
+          })
+          .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh read failed`))
+          .finally(() => {
+            running = false;
+          });
+      }, refresh.everyMs),
+    ];
+  });
 }

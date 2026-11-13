@@ -7,7 +7,7 @@ import { Embedder } from '../embedder';
 import { serveMetrics } from '../metrics';
 import { connectorBlock } from '../sync';
 import { DomainSyncQueue } from './queue';
-import { nextRefreshIds } from './refresh';
+import { startRefreshers } from './refresh';
 import type { Domain, DomainRef } from './sync';
 
 /** The domain rows one message touches. */
@@ -80,29 +80,7 @@ export async function runSyncConsumer(opts: {
   await checkGates();
   const gate = setInterval(() => void checkGates(), 60_000);
 
-  // The walk's position is kept in memory: a restart begins it again from the first id.
-  const refreshers = domains.flatMap((domain) => {
-    const { refresh } = domain;
-    const lane = queue.lanes.get(domain.name);
-    if (!refresh || !lane) return [];
-    let cursor = 0;
-    let running = false;
-    return [
-      setInterval(() => {
-        if (running || queue.isFull) return;
-        running = true;
-        nextRefreshIds(pg, domain, cursor, refresh.batch)
-          .then(({ ids, next }) => {
-            for (const id of ids) lane.add({ id });
-            cursor = next;
-          })
-          .catch((err) => logger.error({ err }, `${domain.name}-sync: refresh read failed`))
-          .finally(() => {
-            running = false;
-          });
-      }, refresh.everyMs),
-    ];
-  });
+  const refreshers = startRefreshers(domains, queue, pg);
 
   let stopping = false;
   const timer = setInterval(() => {

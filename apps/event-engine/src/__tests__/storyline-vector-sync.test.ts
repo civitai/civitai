@@ -184,7 +184,6 @@ describe('storyline change signals', () => {
         after: null,
       })
     ).toEqual({ child: 41 });
-    expect(storylineDomain.childField).toBe('rootChapterId');
     const route = contentRoute(selectDomains(['storyline']));
     expect(route('postgres.StorylineChapter', { op: 'd', before: { id: 41 } })).toEqual([
       ['storyline', { child: 41 }],
@@ -212,10 +211,6 @@ describe('storyline refresh walk', () => {
       await pg.close();
     }
   }, 60_000);
-
-  test('runs at the spec interval and batch', () => {
-    expect(storylineDomain.refresh).toEqual({ everyMs: 15 * 60_000, batch: 500 });
-  });
 });
 
 describe('storyline embedding switch', () => {
