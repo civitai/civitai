@@ -794,12 +794,18 @@ describe('manifest storage — collection schemas', () => {
   });
 });
 
+/** The submission gate also requires a surface (here a `page`), which BASE does not declare. */
+const submittable = (m: Record<string, unknown>) => ({
+  ...m,
+  page: { path: '/', title: 'Test Block' },
+});
+
 describe('manifest storage — collection schema patterns at submission (ReDoS gate)', () => {
   it('refuses a pattern that backtracks catastrophically', async () => {
     const m = withPrefs({
       schema: { properties: { code: { type: 'string', pattern: '^(a+)+$', maxLength: 40 } } },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual(
       refused(
         `${SCHEMA_AT}.properties.code.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
       )
@@ -808,7 +814,10 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
 
   it('accepts a linear pattern (control: the gate is not refusing every pattern)', async () => {
     expect(
-      await BlockManifestValidator.validateSubmission(withPrefs({ schema: CARD_SCHEMA }), APP_CTX)
+      await BlockManifestValidator.validateSubmission(
+        submittable(withPrefs({ schema: CARD_SCHEMA })),
+        APP_CTX
+      )
     ).toEqual({ valid: true });
   });
 
@@ -822,7 +831,7 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
     const m = withPrefs({
       schema: { properties: { name: { type: 'string', pattern, maxLength: 40 } } },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual(
       refused(
         `${SCHEMA_AT}.properties.name.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
       )
@@ -839,7 +848,9 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
         },
       },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual({ valid: true });
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual({
+      valid: true,
+    });
   });
 
   // Invariant guard, not regression coverage: refused before the flag fix too (as "unknown").
@@ -849,7 +860,7 @@ describe('manifest storage — collection schema patterns at submission (ReDoS g
         properties: { code: { type: 'string', pattern: '^(\\u{61}+)+$', maxLength: 40 } },
       },
     });
-    expect(await BlockManifestValidator.validateSubmission(m, APP_CTX)).toEqual(
+    expect(await BlockManifestValidator.validateSubmission(submittable(m), APP_CTX)).toEqual(
       refused(
         `${SCHEMA_AT}.properties.code.pattern is vulnerable to ReDoS (catastrophic backtracking) — remove nested or overlapping unbounded quantifiers (e.g. "(a+)+") or simplify the expression`
       )
