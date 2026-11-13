@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 
 /**
@@ -71,6 +71,17 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: vi.fn().mockResolvedValue(false),
+  // No flag is known (as with no Flipt client), so `kysely-hot-reads-11` reads OFF unless a test
+  // below turns it on. A client "exists", so the gate never tries to start Flipt.
+  isFliptSync: vi.fn().mockReturnValue(null),
+  getFliptClientSync: vi.fn(() => ({})),
+}));
+// `kysely-hot-reads-11`'s one statement and the lazily loaded Kysely clients: stubbed, so the ON
+// case below can tell which path served the page's metrics and linked components.
+vi.mock('@civitai/db-queries/hot-reads-11', () => ({ getModelsWithVersionsStatsRow: vi.fn() }));
+const { kyselyReadSentinel } = vi.hoisted(() => ({ kyselyReadSentinel: { name: 'kyselyRead' } }));
+vi.mock('~/server/db/kyselyDb.lazy', () => ({
+  loadKyselyDb: async () => ({ kyselyRead: kyselyReadSentinel, kyselyWrite: {} }),
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
@@ -115,6 +126,9 @@ vi.mock('~/server/redis/client', async () => ({
 
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { getModelsWithVersionsStatsRow } from '@civitai/db-queries/hot-reads-11';
+import { isFliptSync } from '~/server/flipt/client';
+import { resetHotReads11GateForTests } from '~/server/services/hot-reads-11.reads';
 
 /** One primary file, as the version-file cache stores it. */
 function baseFile() {
@@ -279,5 +293,86 @@ describe('getModelsWithVersions serves flags without the partner bits', () => {
     const { items } = await callGetModelsWithVersions();
     expect(items).toHaveLength(1);
     expect(items[0].modelVersions[0].flags).toBe(served);
+  });
+});
+
+// Shares this file's scaffold: `kysely-hot-reads-11` ON must feed the SAME page from the one Kysely
+// statement. The Prisma mocks stay primed with different values, so every asserted value below can
+// only have come from the Kysely row.
+describe('getModelsWithVersions with kysely-hot-reads-11 on', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetHotReads11GateForTests();
+  });
+  afterEach(() => {
+    vi.mocked(isFliptSync).mockReset().mockReturnValue(null);
+    resetHotReads11GateForTests();
+  });
+
+  it("serves the page's linked VAE, metrics and version meta from the Kysely row", async () => {
+    vi.mocked(isFliptSync).mockImplementation((key) =>
+      key === 'kysely-hot-reads-11' ? true : null
+    );
+    primeOneModelWithALinkedVae();
+    // Prisma would say: no metrics, no meta. Kysely says otherwise.
+    vi.mocked(getModelsWithVersionsStatsRow).mockResolvedValue({
+      vaeLinks: [
+        {
+          sourceId: VERSION_ID,
+          resourceId: VAE_VERSION_ID,
+          settings: { isLinkedComponent: true, componentType: 'VAE' },
+        },
+      ],
+      modelMetrics: [
+        {
+          modelId: MODEL_ID,
+          downloadCount: 7101,
+          thumbsUpCount: 7102,
+          thumbsDownCount: 7103,
+          commentCount: 7104,
+          tippedAmountCount: 7105,
+        },
+      ],
+      versionMetrics: [
+        {
+          modelVersionId: VERSION_ID,
+          downloadCount: 7201,
+          thumbsUpCount: 7202,
+          thumbsDownCount: 7203,
+        },
+      ],
+      versionMeta: [{ id: VERSION_ID, meta: {} }],
+    } as never);
+
+    const { items } = await callGetModelsWithVersions();
+
+    expect(vi.mocked(getModelsWithVersionsStatsRow).mock.calls).toEqual([
+      [kyselyReadSentinel, { modelIds: [MODEL_ID], modelVersionIds: [VERSION_ID] }],
+    ]);
+    for (const read of [
+      mockDbRead.recommendedResource.findMany,
+      mockDbRead.modelMetric.findMany,
+      mockDbRead.modelVersionMetric.findMany,
+      mockDbRead.modelVersion.findMany,
+    ])
+      expect(read).not.toHaveBeenCalled();
+    expect(items).toHaveLength(1);
+    // The moderator viewer sees every counter.
+    expect(items[0].stats).toEqual({
+      downloadCount: 7101,
+      thumbsUpCount: 7102,
+      thumbsDownCount: 7103,
+      commentCount: 7104,
+      tippedAmountCount: 7105,
+    });
+    expect(items[0].modelVersions[0].stats).toEqual({
+      downloadCount: 7201,
+      thumbsUpCount: 7202,
+      thumbsDownCount: 7203,
+    });
+    expect(items[0].modelVersions[0].files.map((f) => f.name)).toEqual([
+      'base.safetensors',
+      'linked.vae.safetensors',
+    ]);
   });
 });
