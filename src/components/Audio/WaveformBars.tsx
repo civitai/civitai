@@ -20,7 +20,7 @@ export function WaveformBars({
           data-played={i < played}
           className={clsx(
             'min-w-px flex-1 rounded-full',
-            i < played ? 'bg-[var(--mantine-color-pink-6)]' : 'bg-black/20 dark:bg-white/35'
+            i < played ? 'bg-[var(--mantine-primary-color-filled)]' : 'bg-black/20 dark:bg-white/35'
           )}
           style={{ height: `${Math.max(8, peak * 100)}%` }}
         />
