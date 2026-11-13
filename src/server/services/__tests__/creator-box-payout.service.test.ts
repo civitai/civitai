@@ -3,9 +3,6 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// A creator box sale pays the creator their pool, once per sale however often it is retried, and
-// records the payout where the takedown and refunds reverse it.
-
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     createTx: vi.fn(),
@@ -35,7 +32,7 @@ const sale = {
   buzzTransactionId: P,
   buyerId: BUYER,
   sellerId: SELLER,
-  // floor(857 * 0.7) = 599: the creator's pool, the platform keeps 258.
+  // floor(857 * 0.7)
   unitAmount: 857,
   color: 'yellow' as const,
   title: 'Pack',
@@ -183,6 +180,20 @@ describe('sweepCreatorBoxPayouts', () => {
         accountId: BUYER,
         accountType: 'green',
       },
+      // Under the same prefix but not the buyer's charge: the seller's payout, and another
+      // account's leg. Counted, either would make two colours.
+      {
+        transactionId: 'pay',
+        externalTransactionId: `${P}:sell:${SELLER}:yellow`,
+        accountId: SELLER,
+        accountType: 'yellow',
+      },
+      {
+        transactionId: 'other',
+        externalTransactionId: `${P}-yellow`,
+        accountId: 999,
+        accountType: 'yellow',
+      },
     ]);
 
     const result = await sweepCreatorBoxPayouts();
@@ -216,7 +227,7 @@ describe('sweepCreatorBoxPayouts', () => {
 
     expect(result.paid).toBe(0);
     expect(result.failed).toEqual([
-      { buzzTransactionId: P, error: expect.stringContaining('2 account types') },
+      { buzzTransactionId: P, error: expect.stringContaining('not from exactly one account') },
     ]);
     expect(mocks.createTx).not.toHaveBeenCalled();
   });

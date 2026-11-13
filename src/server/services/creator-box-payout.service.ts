@@ -9,6 +9,7 @@ import {
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import { refundTransactionOnce } from '~/server/services/buzz-prefix-refund';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -28,14 +29,13 @@ export async function assertCreatorBoxSellable({
 }: {
   sellerId: number;
   buyerId: number;
-  /** `creatorMysteryPacksEnabled(features)`. */
   enabled: boolean | undefined;
   isPack: boolean;
   buzzType: BuzzSpendType;
 }) {
   if (!enabled) throw throwBadRequestError(NOT_AVAILABLE);
   if (sellerId === buyerId) throw throwBadRequestError("You can't buy your own mystery pack");
-  // Creator listings never carry pack terms; a payout is one creator's share of one box.
+  // Pack terms would split one payout across several boxes.
   if (isPack) throw throwBadRequestError(NOT_AVAILABLE);
   // The payout is paid in the colour charged, and Blue would need the shelf's proration.
   if (buzzType === 'blue') throw throwBadRequestError(NOT_AVAILABLE);
@@ -46,22 +46,26 @@ export async function assertCreatorBoxSellable({
     throw throwBadRequestError(NOT_AVAILABLE);
 }
 
+/** The one account a charge was debited from, or undefined when it is none or several. */
+export function singleColorOf(legs: { accountType: string }[]) {
+  const colors = new Set(legs.map((leg) => leg.accountType));
+  return colors.size === 1 ? ([...colors][0] as BuzzSpendType) : undefined;
+}
+
 export type CreatorBoxSale = {
   buzzTransactionId: string;
   buyerId: number;
   sellerId: number;
   unitAmount: number;
-  /** The one account the buyer was charged from. */
   color: BuzzSpendType;
   title: string;
 };
 
 /**
- * Pays the creator their pool for one box sale and records it in the purchase's `meta.payouts`, the
- * shape the takedown and refunds reverse by transaction id. Safe to repeat: the external id is fixed
- * per sale, a duplicate is answered 409 and read back from the purchase's ledger.
+ * Records the payout in `meta.payouts`, the shape the takedown and refunds reverse by transaction id.
+ * Idempotent: the external id is fixed per sale and a 409 is read back from the ledger.
  */
-export async function payCreatorBoxSale(sale: CreatorBoxSale) {
+export async function payCreatorBoxSale(sale: CreatorBoxSale): Promise<'paid' | 'reversed'> {
   const { creatorPool, platformCut } = computeCreatorShopSplit(sale.unitAmount);
   const externalTransactionId = `${sale.buzzTransactionId}:sell:${sale.sellerId}:${sale.color}`;
   let transactionId: string | undefined;
@@ -89,11 +93,23 @@ export async function payCreatorBoxSale(sale: CreatorBoxSale) {
     payouts: [{ userId: sale.sellerId, amount: creatorPool, color: sale.color, transactionId }],
     platformCut,
   };
-  // Merged: the purchase's meta may already hold other keys.
-  await dbWrite.$executeRaw`
+  // Only onto an unrefunded sale. A refund flips `refunded` before it reads `meta.payouts`, and the
+  // row lock orders the two writes: either it sees this payout, or this sees its flip and reverses.
+  const recorded = await dbWrite.$executeRaw`
     UPDATE "UserCosmeticShopPurchases" p
     SET meta = ${asJsonbObjectSql('p.meta')} || ${JSON.stringify(meta)}::jsonb
-    WHERE p."buzzTransactionId" = ${sale.buzzTransactionId}`;
+    WHERE p."buzzTransactionId" = ${sale.buzzTransactionId} AND NOT p.refunded`;
+  if (recorded) return 'paid';
+  if (!transactionId)
+    throw new Error(
+      `Payout ${externalTransactionId} landed on a refunded sale with no id to reverse`
+    );
+  await refundTransactionOnce(transactionId, `Refund: mystery pack sale refunded - ${sale.title}`);
+  await logPayout('info', 'Creator box payout reversed: the sale was refunded first', {
+    ...sale,
+    transactionId,
+  });
+  return 'reversed';
 }
 
 const logPayout = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
@@ -117,7 +133,7 @@ const SWEEP_BATCH = 100;
 
 /**
  * Pays every creator-box sale whose payout isn't recorded: the purchase's own attempt failed, or the
- * process died between the grant and the payout. Refunded purchases are left alone.
+ * process died between the grant and the payout.
  */
 export async function sweepCreatorBoxPayouts({ limit = SWEEP_BATCH }: { limit?: number } = {}) {
   const sales = await dbWrite.$queryRaw<
@@ -138,10 +154,12 @@ export async function sweepCreatorBoxPayouts({ limit = SWEEP_BATCH }: { limit?: 
       -- Old enough that the purchase's own payout attempt is over.
       AND p."purchasedAt" < now() - interval '10 minutes'
       AND p.meta -> 'payouts' IS NULL
-    ORDER BY p."purchasedAt"
+    -- A sale that failed before goes behind the rest, so stuck ones never fill the batch.
+    ORDER BY p.meta -> 'payoutAttempt' ->> 'at' NULLS FIRST, p."purchasedAt"
     LIMIT ${limit}`;
 
   let paid = 0;
+  let reversed = 0;
   const failed: { buzzTransactionId: string; error: string }[] = [];
   for (const sale of sales) {
     try {
@@ -151,20 +169,26 @@ export async function sweepCreatorBoxPayouts({ limit = SWEEP_BATCH }: { limit?: 
           leg.accountId === sale.buyerId &&
           (leg.externalTransactionId ?? '').startsWith(`${sale.buzzTransactionId}-`)
       );
-      const colors = [...new Set(debits.map((leg) => leg.accountType))];
-      if (colors.length !== 1)
-        throw new Error(`Charge has ${colors.length} account types; pay it by hand`);
-      await payCreatorBoxSale({ ...sale, color: colors[0] as BuzzSpendType });
-      paid++;
+      const color = singleColorOf(debits);
+      if (!color) throw new Error('The charge is not from exactly one account; pay it by hand');
+      if ((await payCreatorBoxSale({ ...sale, color })) === 'paid') paid++;
+      else reversed++;
     } catch (error) {
-      failed.push({ buzzTransactionId: sale.buzzTransactionId, error: errorMessage(error) });
+      const message = errorMessage(error);
+      failed.push({ buzzTransactionId: sale.buzzTransactionId, error: message });
+      await dbWrite.$executeRaw`
+        UPDATE "UserCosmeticShopPurchases" p
+        SET meta = ${asJsonbObjectSql('p.meta')} || jsonb_build_object(
+          'payoutAttempt', jsonb_build_object('at', now(), 'error', ${message}::text)
+        )
+        WHERE p."buzzTransactionId" = ${sale.buzzTransactionId}`.catch(() => undefined);
     }
   }
-  if (failed.length || paid)
-    await logPayout(failed.length ? 'error' : 'info', 'Creator box payout sweep', {
+  if (failed.length)
+    await logPayout('error', 'Creator box payout sweep left sales unpaid', {
       found: sales.length,
       paid,
       failed,
     });
-  return { found: sales.length, paid, failed };
+  return { found: sales.length, paid, reversed, failed };
 }

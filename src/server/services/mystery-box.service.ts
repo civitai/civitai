@@ -33,6 +33,7 @@ import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import {
   assertCreatorBoxSellable,
   payCreatorBoxSaleAfterGrant,
+  singleColorOf,
 } from '~/server/services/creator-box-payout.service';
 import { ITEM_HOLDER_BUSY_MESSAGE, lockItemHolder } from '~/server/services/item-holder-lock';
 import {
@@ -825,7 +826,6 @@ export async function purchaseMysteryBox({
   payWith?: 'default' | 'blue-first';
   buzzType: BuzzSpendType;
   mysteryBoxEnabled: boolean | undefined;
-  /** `creatorMysteryPacksEnabled(features)`: a creator's box is sold only behind it. */
   creatorMysteryPacksEnabled?: boolean;
   countryCode: string | null | undefined;
 }): Promise<MysteryBoxPurchaseResult> {
@@ -1069,14 +1069,17 @@ export async function purchaseMysteryBox({
     throw throwBadRequestError('Failed to purchase box');
   }
 
-  // After the grant commits, outside its try: a failed payout must never refund the buyer.
-  if (box.sellerId != null)
+  // Outside the grant's try: a payout failure must not refund the buyer. Paid in the colour the
+  // charge came from, which a resumed claim may not share with this request; the sweep pays a
+  // charge from several accounts, or refuses it.
+  const chargedColor = singleColorOf(transaction.transactionIds);
+  if (box.sellerId != null && chargedColor)
     await payCreatorBoxSaleAfterGrant({
       buzzTransactionId: transactionId,
       buyerId: userId,
       sellerId: box.sellerId,
       unitAmount,
-      color: buzzType,
+      color: chargedColor,
       title: shopItem.title,
     });
   return purchaseResult(items);

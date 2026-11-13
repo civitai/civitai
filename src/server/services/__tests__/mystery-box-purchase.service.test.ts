@@ -431,7 +431,7 @@ beforeEach(() => {
   dbMock.dbWrite.$executeRaw.mockReset();
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   dbMock.dbWrite.$queryRaw.mockReset();
-  // The seller's restriction read: an active account.
+  // creatorIsRestricted's read: an active seller.
   dbMock.dbWrite.$queryRaw.mockResolvedValue([{ muted: false, bannedAt: null, deletedAt: null }]);
   mocks.assertEventPurchasable.mockResolvedValue(undefined);
   mocks.getEventBuyerTeam.mockResolvedValue(undefined);
@@ -1485,11 +1485,27 @@ describe("buying a creator's mystery pack", () => {
     });
   });
 
+  // A resumed claim can be charged under another domain's colour than this request's.
+  it('pays in the colour the charge came from, not the request’s', async () => {
+    mocks.createMultiTx.mockResolvedValue({
+      ...legs(),
+      transactionIds: [{ transactionId: 'tx-0', accountType: 'green', amount: PRICE }],
+    });
+
+    await buy();
+
+    expect(mocks.createTx.mock.calls[0][0]).toMatchObject({
+      toAccountType: 'green',
+      externalTransactionId: `${txId(KEY_A)}:sell:${SELLER_ID}:green`,
+    });
+  });
+
   it('keeps the sale when the payout fails: the buyer is not refunded and keeps the box', async () => {
     mocks.createTx.mockRejectedValue(new Error('buzz down'));
 
     const result = await buy();
 
+    expect(mocks.createTx).toHaveBeenCalled();
     expect(result.boxItemIds).toHaveLength(1);
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(recordedMeta()).toBeUndefined();

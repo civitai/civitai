@@ -425,7 +425,6 @@ describe('opening a mystery box', () => {
     });
   });
 
-  // Its money moved at purchase; opening a creator's box is the same no-money draw.
   it("opens a creator's mystery pack like any other box", async () => {
     (world.box as { sellerId?: number }).sellerId = 10;
     mocks.randomInt.mockReturnValueOnce(3).mockReturnValueOnce(0);
