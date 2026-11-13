@@ -1675,8 +1675,16 @@ export const getModel3DRelatedPosts = async ({
             post.images.filter((image) => image.userId !== viewerId).map((image) => image.id)
           )
         );
-    for (const post of items)
-      post.images = post.images.filter((image) => !restricted.has(image.id)).slice(0, 1);
+    for (const post of items) {
+      post.images = post.images
+        .filter((image) => !restricted.has(image.id))
+        .slice(0, 1)
+        .map((image) =>
+          image.hideMeta && !isModerator && image.userId !== viewerId
+            ? { ...image, meta: null }
+            : image
+        );
+    }
 
     let nextCursor: number | undefined;
     if (items.length > take) {

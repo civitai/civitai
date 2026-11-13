@@ -70,7 +70,7 @@ const post = (id: number, nsfwLevel: number, images: Row[], over: Row = {}) => (
 });
 const { PG, R, X, XXX, Blocked } = NsfwLevel;
 const POSTS = [
-  post(1, PG, [image(PG)]),
+  post(1, PG, [image(PG, { hideMeta: true, meta: { prompt: 'hidden' } })]),
   post(2, XXX, [image(XXX)]),
   post(3, 0, [image(PG, { ingestion: 'Pending' })]),
   post(4, PG | R, [image(R), image(PG)]),
@@ -157,6 +157,13 @@ describe('getModel3DRelatedPosts', () => {
     expect((await listed(undefined)).map((p) => p.id)).toEqual([13, 4, 1]);
   });
 
+  it("gives a signed-in PG viewer another user's post with a PG cover, not its R image", async () => {
+    expect((await listed({ id: 77 }, publicBrowsingLevelsFlag)).find((p) => p.id === 4)).toEqual({
+      id: 4,
+      cover: PG,
+    });
+  });
+
   it('lists an R viewer nothing that shares only X or XXX', async () => {
     expect((await listed({ id: 77 }, R)).map((p) => p.id)).toEqual([15, 4]);
     // Post 15's first image is a restricted model's mature one: the next is its cover.
@@ -191,6 +198,16 @@ describe('getModel3DRelatedPosts', () => {
     const b = await page(undefined, publicBrowsingLevelsFlag, { limit: 2, cursor: a.nextCursor });
     expect(b.items.map((p) => p.id)).toEqual([1]);
     expect(b.nextCursor).toBeUndefined();
+  });
+
+  it("withholds a cover's hidden prompt from everyone but its owner and moderators", async () => {
+    const meta = async (user: Parameters<typeof page>[0]) =>
+      (await page(user, publicBrowsingLevelsFlag, { limit: 50 })).items.find((p) => p.id === 1)
+        ?.images[0]?.meta;
+    expect(await meta(undefined)).toBeNull();
+    expect(await meta({ id: STRANGER })).toBeNull();
+    expect(await meta({ id: OWNER })).toEqual({ prompt: 'hidden' });
+    expect(await meta({ id: 1, isModerator: true })).toEqual({ prompt: 'hidden' });
   });
 
   it('shows a moderator every post with its first image (control)', async () => {
