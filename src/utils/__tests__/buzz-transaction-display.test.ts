@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   GENERATION_TIP_FILTER,
+  TRANSACTION_TYPE_FILTER_OPTIONS,
   filterTransactionsByDisplayType,
   getServerTransactionType,
   getTransactionBadgeLabel,
@@ -40,5 +41,20 @@ describe('transaction display type', () => {
     expect(getServerTransactionType(GENERATION_TIP_FILTER)).toBe(TransactionType.Compensation);
     expect(getServerTransactionType('Refund')).toBe(TransactionType.Refund);
     expect(getServerTransactionType(null)).toBeUndefined();
+  });
+
+  it('offers App Author Fee as a filter that queries the AppAuthorFee type', () => {
+    const option = TRANSACTION_TYPE_FILTER_OPTIONS.find(
+      (o) => getServerTransactionType(o.value) === TransactionType.AppAuthorFee
+    );
+    expect(option).toEqual({ value: 'AppAuthorFee', label: 'App Author Fee' });
+    // Every option still maps to a stored type the server accepts.
+    for (const o of TRANSACTION_TYPE_FILTER_OPTIONS)
+      expect(getServerTransactionType(o.value), o.value).toBeTypeOf('number');
+  });
+
+  it('badges an author-fee row with a readable name, not the enum key', () => {
+    expect(getTransactionBadgeLabel({ type: TransactionType.AppAuthorFee })).toBe('App Author Fee');
+    expect(getTransactionBadgeLabel({ type: TransactionType.Tip })).toBe('Tip');
   });
 });

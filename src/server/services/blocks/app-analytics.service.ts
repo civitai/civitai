@@ -178,8 +178,8 @@ export type AppAnalytics = {
    * to stop them believing a fabricated zero.
    *
    * PRECEDENT — #3581 settled the shape of this answer for the sibling
-   * `getMyRevenue`: ONE value, not two, because `getRevenueForOwner` never
-   * *computes* ownership (it scopes by `appOwnerUserId` in the WHERE clause),
+   * `getMyRevenue`: ONE value, not two, because its reads never
+   * *compute* ownership (they scope by `appOwnerUserId` in the WHERE clause),
    * so a not-owned request there returns a truthful zero-row aggregate and
    * `notOwned` is unproducible — declaring it would force an unreachable branch
    * into every renderer. Analytics DOES compute ownership up front, which is
@@ -354,9 +354,9 @@ export type OwnedAppBlock = { id: string; manifest: unknown };
  * 🔴 WIDENED FOR COLLABORATORS, and the widening is SAFE HERE for a reason that does
  * NOT generalise to the earnings path. This function is app-scoped by construction:
  * it resolves a permitted-id SET and `getMyAppAnalytics` filters every downstream
- * aggregate by `appBlockId IN thatSet`. The earnings reads (`getRevenueForOwner`,
- * `getRecentAttributionsForOwner`, `getMyApps`' groupBy) instead key on
- * `BlockBuzzAttribution.appOwnerUserId`, which does not mention the app at all — the
+ * aggregate by `appBlockId IN thatSet`. The owner earnings reads
+ * (`getAuthorFeeEarningsForOwner`, `getGoodsSalesForOwner`) instead key on the
+ * snapshotted `appOwnerUserId`, which does not mention the app at all — the
  * equivalent "widening" there would hand an editor the OWNER'S ENTIRE PORTFOLIO. Those
  * are served by `app-collaborator-earnings.service` instead. Do not copy this pattern
  * onto an `appOwnerUserId`-keyed query.
