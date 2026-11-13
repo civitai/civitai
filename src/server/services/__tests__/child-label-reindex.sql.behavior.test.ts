@@ -5,12 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { Prisma } from '@prisma/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
-/**
- * The child-label reindex route's work, with its SQL run on an in-memory Postgres (only the columns
- * the SQL reads): which images it selects, that a dry run writes nothing, that a real bust refreshes
- * exactly the selected images and stops when the refreshed entries still lack the label, and which
- * models and collections a reindex queues.
- */
+// The SQL runs on an in-memory Postgres with only the columns it reads.
 
 const { refresh, fetch, queueModelsReindex, collectionsQueueUpdate } = vi.hoisted(() => ({
   refresh: vi.fn(async (_ids: number[]) => undefined),
@@ -144,7 +139,7 @@ describe('child-label reindex: bust', () => {
       maxChunks: 1,
     });
     expect(refreshedIds()).toEqual([2]);
-    expect(result).toMatchObject({ images: 2, chunks: 1, lastImageId: 2 });
+    expect(result).toMatchObject({ images: 1, chunks: 1, lastImageId: 2 });
   });
 
   it('stops after the first chunk when the refreshed entries still lack the child tag', async () => {
@@ -213,10 +208,33 @@ describe('child-label reindex: reindex', () => {
       Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
     );
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
-    expect(fetch).toHaveBeenCalledWith([1, 2, 3], { bypassLocal: true, writeBack: false });
+    expect(fetch).toHaveBeenCalledWith([1, 3], { bypassLocal: true, writeBack: false });
     expect(queueModelsReindex).not.toHaveBeenCalled();
     expect(collectionsQueueUpdate).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ probe: 3, probeVerified: 0, aborted: expect.any(String) });
+    expect(result).toMatchObject({ probe: 2, probeVerified: 0, aborted: expect.any(String) });
+  });
+
+  it('looks up models and collections a chunk of images at a time', async () => {
+    await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 2 });
+    const modelLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([sql]) =>
+      (sql as unknown as Prisma.Sql).text?.includes('"ModelVersion"')
+    );
+    expect(modelLookups.map(([sql]) => (sql as unknown as Prisma.Sql).values[0])).toEqual([
+      [1, 2],
+      [3],
+    ]);
+  });
+
+  it('refuses to queue after a bust that stopped before the last chunk', async () => {
+    // A bust with chunkSize 2 that stopped after its first chunk: only images 1 and 2 are fixed.
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(
+        ids.map((id) => [id, { imageId: id, tags: id === 3 ? [9001] : [9001, CHILD] }])
+      )
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 2 });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ probe: 3, probeVerified: 2, aborted: expect.any(String) });
   });
 
   it('a dry run counts and queues nothing', async () => {

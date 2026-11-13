@@ -16,13 +16,15 @@ import { booleanString } from '~/utils/zod-helpers';
  * Params (query):
  *   step      - required. `bust`: refresh each selected image's tagIdsForImagesCache entry from the
  *               database and read it back (`verified`); stops after the first chunk if any entry
- *               lacks a child tag. `reindex`: read back up to 50 selected entries and, only if all
- *               hold a child tag, queue the models and collections whose search documents can show
- *               those images.
- *   dryRun    - default true. Count images, chunks, models and collections; write nothing.
- *   chunkSize - default 500. Image ids per WD14 check and per refresh; ids per queue push.
+ *               lacks a child tag. `reindex`: read back the first and last selected entry of every
+ *               chunk and, only if all hold a child tag, queue the models and collections whose
+ *               search documents can show those images.
+ *   dryRun    - default true. Count images, chunks, models and collections; write nothing
+ *               (`refreshed` and `verified` stay 0).
+ *   chunkSize - default 500. Image ids per selection page, WD14 check, lookup and refresh; ids per
+ *               queue push.
  *   after     - default 0. Only images above this id; resume a bust from its `lastImageId`.
- *   maxChunks - optional, bust only. Stop after this many chunks.
+ *   maxChunks - optional, bust only. Select and refresh at most this many chunks.
  */
 
 const schema = z.object({

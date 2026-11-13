@@ -6,11 +6,7 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type { Prisma } from '@prisma/client';
 import type * as SystemCache from '~/server/services/system-cache';
 
-/**
- * step=bust through the real tagIdsForImagesCache: its lookup, with the cache cluster faked and the
- * tag rows on an in-memory Postgres. A selected image (child label from Rekognition, WD14 also
- * tagged) is rewritten with the child tag id and verified, so the run does not stop.
- */
+// The real tagIdsForImagesCache lookup, with the cache cluster faked and tag rows on PGlite.
 
 vi.mock('~/server/services/system-cache', async (importOriginal) => ({
   ...(await importOriginal<typeof SystemCache>()),

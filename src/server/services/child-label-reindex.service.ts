@@ -5,17 +5,20 @@ import { dbRead } from '~/server/db/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { collectionsSearchIndex } from '~/server/search-index';
 import { queueModelsReindex } from '~/server/search-index/queue-models-reindex';
+import { chunkIds } from '~/utils/array-helpers';
 
 const CHILD_TAG_IDS = [...childBrowsingTagIds];
 
-/** Images with an enabled child browsing tag from Rekognition, above imageId `after`. */
-export const childLabelImageIdsSql = (after: number) => Prisma.sql`
+/** The next `limit` images above `after` with an enabled child browsing tag from Rekognition. */
+export const childLabelImageIdsSql = (after: number, limit: number) => Prisma.sql`
   SELECT DISTINCT "imageId"
   FROM "TagsOnImageDetails"
   WHERE "tagId" = ANY(${CHILD_TAG_IDS}::int[])
     AND "source" = 'Rekognition'::"TagSource"
     AND "disabled" = false
     AND "imageId" > ${after}
+  ORDER BY "imageId"
+  LIMIT ${limit}
 `;
 
 /** Which of these images WD14 also tagged (enabled tags, as the cache lookup reads them). */
@@ -65,25 +68,41 @@ export const collectionIdsForImagesSql = (imageIds: number[], modelIds: number[]
 const ids = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ id: number }[]>(sql)).map((r) => r.id);
 
-/** The selected images, ascending: child-labelled by Rekognition and also tagged by WD14. */
-async function selectImageIds(after: number, chunkSize: number) {
-  const candidates = (
-    await dbRead.$queryRaw<{ imageId: number }[]>(childLabelImageIdsSql(after))
-  ).map((r) => r.imageId);
+/**
+ * The selected images, ascending: child-labelled by Rekognition and also tagged by WD14. Read in
+ * pages of `chunkSize` from a cursor that advances, stopping once `limit` are selected.
+ */
+async function selectImageIds(after: number, chunkSize: number, limit?: number) {
   const selected: number[] = [];
-  for (let i = 0; i < candidates.length; i += chunkSize) {
-    const rows = await dbRead.$queryRaw<{ imageId: number }[]>(
-      wd14ImageIdsSql(candidates.slice(i, i + chunkSize))
-    );
-    for (const r of rows) selected.push(r.imageId);
+  let cursor = after;
+  while (limit === undefined || selected.length < limit) {
+    const page = (
+      await dbRead.$queryRaw<{ imageId: number }[]>(childLabelImageIdsSql(cursor, chunkSize))
+    ).map((r) => r.imageId);
+    if (!page.length) break;
+    const rows = await dbRead.$queryRaw<{ imageId: number }[]>(wd14ImageIdsSql(page));
+    selected.push(...rows.map((r) => r.imageId).sort((a, b) => a - b));
+    cursor = page[page.length - 1];
+    if (page.length < chunkSize) break;
   }
-  return selected.sort((a, b) => a - b);
+  return limit === undefined ? selected : selected.slice(0, limit);
 }
 
-const chunked = (list: number[], size: number) =>
-  Array.from({ length: Math.ceil(list.length / size) }, (_, i) =>
-    list.slice(i * size, (i + 1) * size)
-  );
+/** The models and collections whose search documents can show these images, a chunk at a time. */
+async function documentIdsForImages(imageIds: number[], chunkSize: number) {
+  const modelIds = new Set<number>();
+  const collectionIds = new Set<number>();
+  for (const chunk of chunkIds(imageIds, chunkSize)) {
+    const chunkModelIds = await ids(modelIdsForImagesSql(chunk));
+    for (const id of chunkModelIds) modelIds.add(id);
+    for (const id of await ids(collectionIdsForImagesSql(chunk, chunkModelIds)))
+      collectionIds.add(id);
+  }
+  return { modelIds: [...modelIds], collectionIds: [...collectionIds] };
+}
+
+const holdsChildTag = (entry?: { tags: number[] }) =>
+  !!entry?.tags.some((tagId) => CHILD_TAG_IDS.includes(tagId));
 
 export type ChildLabelReindexOptions = {
   step: 'bust' | 'reindex';
@@ -95,16 +114,7 @@ export type ChildLabelReindexOptions = {
   maxChunks?: number;
 };
 
-/**
- * step=bust rewrites each selected image's tagIdsForImagesCache entry from the database
- * (`refresh`), then reads it back: `verified` counts entries now holding a child tag id (`refreshed`
- * counts ids sent; refresh swallows its own errors). If any of the first chunk's lack it, the run
- * stops: the deployed lookup still drops the label.
- * step=reindex first reads back up to 50 selected entries and stops unless all hold a child tag
- * (dryRun reports the count), then queues the models and collections whose search documents can
- * carry those images.
- * dryRun counts and writes nothing.
- */
+// `refreshed` counts ids sent: refresh swallows its own errors, so only `verified` proves a write.
 export async function runChildLabelReindex({
   step,
   dryRun,
@@ -112,11 +122,13 @@ export async function runChildLabelReindex({
   after = 0,
   maxChunks,
 }: ChildLabelReindexOptions) {
-  const imageIds = await selectImageIds(after, chunkSize);
-
   if (step === 'bust') {
-    const all = chunked(imageIds, chunkSize);
-    const chunks = maxChunks ? all.slice(0, maxChunks) : all;
+    const imageIds = await selectImageIds(
+      after,
+      chunkSize,
+      maxChunks ? maxChunks * chunkSize : undefined
+    );
+    const chunks = chunkIds(imageIds, chunkSize);
     let refreshed = 0;
     let verified = 0;
     let lastImageId: number | undefined;
@@ -128,9 +140,7 @@ export async function runChildLabelReindex({
           bypassLocal: true,
           writeBack: false,
         });
-        const ok = chunk.filter((id) =>
-          entries[id]?.tags.some((tagId) => CHILD_TAG_IDS.includes(tagId))
-        ).length;
+        const ok = chunk.filter((id) => holdsChildTag(entries[id])).length;
         verified += ok;
         lastImageId = chunk[chunk.length - 1];
         if (index === 0 && ok < chunk.length)
@@ -157,14 +167,18 @@ export async function runChildLabelReindex({
     };
   }
 
-  // Documents are rebuilt from the cache, so a reindex waits until a sample reads back fixed.
-  const probe = imageIds.slice(0, Math.min(chunkSize, 50));
+  const imageIds = await selectImageIds(after, chunkSize);
+  // Documents are rebuilt from the cache, so a reindex waits until the first and last image of
+  // every bust chunk read back fixed: a bust that stopped early fails it.
+  const probe = [
+    ...new Set(
+      chunkIds(imageIds, chunkSize).flatMap((chunk) => [chunk[0], chunk[chunk.length - 1]])
+    ),
+  ];
   const probeEntries = probe.length
     ? await tagIdsForImagesCache.fetch(probe, { bypassLocal: true, writeBack: false })
     : {};
-  const probeVerified = probe.filter((id) =>
-    probeEntries[id]?.tags.some((tagId) => CHILD_TAG_IDS.includes(tagId))
-  ).length;
+  const probeVerified = probe.filter((id) => holdsChildTag(probeEntries[id])).length;
   if (!dryRun && probeVerified < probe.length)
     return {
       step,
@@ -175,14 +189,11 @@ export async function runChildLabelReindex({
       aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
     };
 
-  const modelIds = imageIds.length ? await ids(modelIdsForImagesSql(imageIds)) : [];
-  const collectionIds = imageIds.length
-    ? await ids(collectionIdsForImagesSql(imageIds, modelIds))
-    : [];
+  const { modelIds, collectionIds } = await documentIdsForImages(imageIds, chunkSize);
   const models = await queueModelsReindex(modelIds, { dryRun, chunkSize });
   let collectionsQueued = 0;
   if (!dryRun) {
-    for (const chunk of chunked(collectionIds, chunkSize)) {
+    for (const chunk of chunkIds(collectionIds, chunkSize)) {
       await collectionsSearchIndex.queueUpdate(
         chunk.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
