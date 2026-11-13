@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import type * as ImageService from '~/server/services/image.service';
 import type * as ModelService from '~/server/services/model.service';
@@ -33,6 +34,12 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
   getGallerySettingsByModelId: async () => null,
   getHeldGalleryLevel: async () => undefined,
   getHeldLevelsByPost: async () => new Map(),
+}));
+const { addons } = vi.hoisted(() => ({ addons: [] as object[] }));
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getBrowsingSettingAddons: async () => addons,
+  getBlockedBrowsingTags: async () => [],
 }));
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
@@ -225,9 +232,12 @@ describe('image.getImagesForModelVersion on a capped site', () => {
   it.each([
     ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
     ['a moderator', { user: { id: 7, isModerator: true }, features: { canViewNsfw: false } }],
-    ['an uncapped viewer', { user: { id: 6 }, features: { canViewNsfw: true } }],
   ])('keeps every image for %s', async (_label, context) => {
     expect(await run(context)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('keeps every rated image for an uncapped viewer, and an unrated one only for its owner', async () => {
+    expect(await run({ user: { id: 6 }, features: { canViewNsfw: true } })).toEqual([1, 2, 4, 5]);
   });
 
   it("keeps a verified crawler's answer out of the edge cache, since humans get a capped one", async () => {
@@ -239,5 +249,81 @@ describe('image.getImagesForModelVersion on a capped site', () => {
     const human = { edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 };
     await run({ features: { canViewNsfw: true }, req: { headers: {} }, cache: human });
     expect(human).toEqual({ edgeTTL: 60, browserTTL: 60, staleWhileRevalidate: 30 });
+  });
+});
+
+describe('image.getImagesForModelVersion viewer filtering', () => {
+  const image = (
+    id: number,
+    extra: { poi?: boolean; minor?: boolean; nsfwLevel?: number } = {}
+  ) => ({
+    id,
+    nsfwLevel: NsfwLevel.PG,
+    userId: OWNER,
+    ...extra,
+  });
+  const run = async (context: object, flags = { minor: false, sfwOnly: false }) => {
+    versionImages.mockResolvedValueOnce({
+      20: {
+        modelVersionId: 20,
+        images: [
+          image(1),
+          image(2, { poi: true }),
+          image(3, { minor: true }),
+          image(4, { nsfwLevel: NsfwLevel.X }),
+        ],
+      },
+    } as never);
+    dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({
+      modelId: 10,
+      model: { userId: OWNER, ...flags },
+    } as never);
+    const result = await getImagesForModelVersionHandler({
+      input: { id: 20 },
+      ctx: { req: { headers: {} }, ip: '127.0.0.1', ...context } as never,
+    });
+    return result[20].images.map((i) => i.id);
+  };
+  const uncapped = { user: { id: 6 }, features: { canViewNsfw: true } };
+
+  beforeEach(() => {
+    addons.length = 0;
+  });
+
+  it('drops poi and minor entries the resolved settings hide', async () => {
+    addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true, disableMinor: true });
+    expect(await run(uncapped)).toEqual([1, 4]);
+  });
+
+  it('keeps them when no setting hides them, and for their owner', async () => {
+    expect(await run(uncapped)).toEqual([1, 2, 3, 4]);
+    addons.push({ type: 'some', nsfwLevels: [NsfwLevel.PG], disablePoi: true, disableMinor: true });
+    expect(await run({ user: { id: OWNER }, features: { canViewNsfw: true } })).toEqual([
+      1, 2, 3, 4,
+    ]);
+  });
+
+  describe('a minor or SFW-only model', () => {
+    const held = { minor: false, sfwOnly: true };
+    beforeEach(() => {
+      const get = redisMock.redis.get.getMockImplementation();
+      redisMock.redis.get.mockImplementation((async (key: string) =>
+        key.startsWith('model:gallery-settings')
+          ? JSON.stringify({ sfwHeld: true, level: NsfwLevel.PG | NsfwLevel.PG13 })
+          : get?.(key)) as never);
+    });
+
+    it('holds its showcase at the gallery level for an uncapped viewer', async () => {
+      expect(await run(uncapped, held)).toEqual([1, 2, 3]);
+    });
+
+    it('serves it whole to the owner and a moderator on a session', async () => {
+      expect(await run({ user: { id: OWNER }, features: { canViewNsfw: true } }, held)).toEqual([
+        1, 2, 3, 4,
+      ]);
+      expect(
+        await run({ user: { id: 7, isModerator: true }, features: { canViewNsfw: true } }, held)
+      ).toEqual([1, 2, 3, 4]);
+    });
   });
 });
