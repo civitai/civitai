@@ -172,7 +172,7 @@ export async function searchSemanticImages({
     const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
     return work.finally(() => end());
   };
-  // "Made On-site" is judged from the image's meta, so only hydration applies it.
+  // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
     timed(
       'hydrate',
