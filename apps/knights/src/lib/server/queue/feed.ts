@@ -2,7 +2,7 @@ import { NsfwLevel } from '@civitai/shared';
 
 /** How the feed picks what to serve. Product rules, kept in one place. */
 export const FEED = {
-  /** Candidates read per level bucket, per tier, per stage; the pick is made among these. */
+  /** Candidates read per level bucket per stage (escalated items: this times the bucket count, in one read); the pick is made among these. */
   bucketWindowSize: 10,
   /** After moving up a stage an item is served ahead of normal priority for this long, then ordered normally. */
   escalationPriorityHours: 24,
@@ -90,7 +90,7 @@ const BUCKET_ORDER: (LevelBucket | null)[] = [...BUCKETS.map(([, bucket]) => buc
 /**
  * Orders a stage's window for one player. Candidates must already be in serving order (tier, priority, age). Each pick
  * draws a bucket with equal probability among the buckets that still have candidates, leaving out the player's recent
- * buckets unless that leaves none (the null bucket is never left out). Within the bucket it takes the first candidate
+ * buckets unless that leaves none. Within the bucket it takes the first candidate
  * of the leading tier and priority in the player's own order; about one pick in ten takes the bucket's oldest instead.
  */
 export function orderFeed<T extends FeedCandidate>(
@@ -112,7 +112,7 @@ export function orderFeed<T extends FeedCandidate>(
 
   while (served.length < input.limit && pools.size > 0) {
     const open = [...pools.keys()];
-    const fresh = open.filter((b) => b === null || !recent.includes(b));
+    const fresh = open.filter((b) => !recent.includes(b));
     const choices = fresh.length > 0 ? fresh : open;
     const bucket =
       choices[Math.min(choices.length - 1, Math.floor(input.random() * choices.length))];

@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { settleFinalItems } from '../progression/progression';
 import {
   castVote,
   applyPendingResolutions,
@@ -310,14 +311,30 @@ describe('getFeed', () => {
     }
   });
 
-  it('still serves an item whose level has no bucket', async () => {
+  it('reads only the five level buckets, so an item whose level has none is not served', async () => {
     await player(1, 'Knight');
     await image(10, 3);
     await image(11, 8);
-    const odd = await item(10);
+    await item(10);
     const x = await item(11);
 
-    expect(new Set((await getFeed(db, 1))?.items.map((i) => i.id))).toEqual(new Set([odd, x]));
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([x]);
+  });
+
+  it('serves escalated items of every bucket first at a later stage, from one read', async () => {
+    await player(1, 'Templar');
+    const escalated: number[] = [];
+    for (const [n, level] of [1, 2, 4, 8, 16, 4, 4].entries()) {
+      await image(500 + n, level);
+      escalated.push(await item(500 + n, { minRank: 'Templar', priority: 3 }));
+    }
+    await pg.query(`UPDATE "KnightsQueueItem" SET "escalatedAt" = $1`, [afterMinutes(-60)]);
+    await image(600, 4);
+    const normal = await item(600, { minRank: 'Templar', priority: 1 });
+
+    const served = (await getFeed(db, 1, { limit: 10 }))?.items.map((i) => i.id) ?? [];
+    expect(new Set(served.slice(0, escalated.length))).toEqual(new Set(escalated));
+    expect(served).toContain(normal);
   });
 });
 
@@ -1146,6 +1163,13 @@ describe('escalateExpired', () => {
       resolvedValue: null,
     });
     expect(await counterValue('knights_escalations_total', { reason: 'expired' })).toBe(before + 1);
+    // The escalation only grades the leftover vote; the tick's settle step pays it (nothing), one item at a time.
+    expect(await voteRow(id, 3)).toMatchObject({ verdict: 'inconclusive', settledAt: null });
+    expect(await settleFinalItems(db, { now: hoursAfter(144) })).toMatchObject({
+      items: 1,
+      votes: 1,
+      failed: 0,
+    });
     expect(await voteRow(id, 3)).toMatchObject({ verdict: 'inconclusive', gold: 0 });
     expect((await voteRow(id, 3)).settledAt).not.toBeNull();
     expect(await goldEarned(3)).toBe(0);
@@ -1177,7 +1201,7 @@ describe('escalateExpired', () => {
       reason: 'expired',
       minRank: 'Templar',
     });
-    expect(await voteRow(id, 1)).toMatchObject({ verdict: 'inconclusive', gold: 0 });
+    expect(await voteRow(id, 1)).toMatchObject({ verdict: 'inconclusive', settledAt: null });
   });
 
   it('expires a zero-vote item in the same tick that escalates a voted one', async () => {

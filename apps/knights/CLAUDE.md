@@ -30,9 +30,10 @@ Everything takes the Kysely client as an argument so `queue.pglite.test.ts` runs
 SQL on PGlite.
 
 - `enqueueItem`: an item's `minRank` defaults to its question's, an override wins; `votesNeeded` can only lower the votes a stage needs (`STAGE_RULES`), never raise them. `minRank` must be a stage rank (Knight, Templar, Paladin); anything else throws.
-- `getFeed`: the highest stage the player may judge with an unjudged open item, from a per-stage window read per level bucket (`feed.ts`: `bucketWindowSize` per bucket and tier,
-  PG/PG-13/R/X/XXX by prediction else image level, plus a no-bucket group; `bucketLevelSql` is `itemBucket` in SQL). Each pick draws a bucket with equal probability among those with candidates, avoiding the
-  player's last judged buckets when it can; within the bucket, items escalated in the last day first, then priority, in a per-player hash order, and about one pick in ten takes the bucket's oldest. An image the player judged for the question is never
+- `getFeed`: the highest stage the player may judge with an unjudged open item, from a per-stage window (`feed.ts`): one read of the items escalated in the last day (none at the entry stage),
+  then `bucketWindowSize` items per level bucket, PG/PG-13/R/X/XXX by prediction else image level (`bucketLevelSql` is `itemBucket` in SQL; an item whose level has no bucket is served only once escalated).
+  Each pick draws a bucket with equal probability among those with candidates, avoiding the player's last judged buckets when it can; within the bucket, escalated items first, then priority, in a
+  per-player hash order, and about one pick in ten takes the bucket's oldest. An image the player judged for the question is never
   served again, at any stage or earlier item (served by the `("playerId","imageId")` index). `canVote` (`ranks.ts`, shared with `castVote`) says which ranks judge a stage; Inquisitors and Acolytes get no feed. It never selects the
   rating or a hidden check, and serves only images the public feeds would show (`servableImage` in `@civitai/db/knights`).
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote that would weigh 0 (`no-weight`; a held player's is stored at weight 0 instead, and `decideChoice`/`decideYesNo`/`escalateExpired` ignore weight 0, so it never moves a verdict; clearing the hold does not re-weight it), writes the ledger row, and decides the votes cast at the item's current stage

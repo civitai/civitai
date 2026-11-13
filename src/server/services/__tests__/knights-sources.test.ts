@@ -182,9 +182,7 @@ describe('intake backpressure', () => {
     await queueOwnerRatingForKnights(3);
 
     expect(queuedIds()).toEqual([3]);
-    const [strings, ...values] = openCount.mock.calls[0];
-    expect(strings.join('?')).toMatch(/"status" = \?.*"minRank" = \?.*limit \?/s);
-    expect(values).toEqual(['Open', 'Knight', 11]);
+    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 11]);
   });
 
   it('queues scan samples again at the cap', async () => {
@@ -230,33 +228,48 @@ describe('intake backpressure', () => {
     expect(queuedIds()).toEqual([3]);
   });
 
-  it('queues anyway when the count fails, never throws, and counts again on the next scan', async () => {
+  it('queues anyway when the count fails, never throws, and waits 10 s before counting again', async () => {
+    vi.useFakeTimers();
     configured({ enabled: true, maxOpen: 10 });
     openCount.mockRejectedValueOnce(new Error('db down'));
     await expect(
       queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0)
     ).resolves.toBeUndefined();
-    expect(queuedIds()).toEqual([1]);
 
     openItems(11);
     await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(1);
+    expect(queuedIds()).toEqual([1, 2]);
+
+    vi.advanceTimersByTime(11_000);
+    await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
     expect(openCount).toHaveBeenCalledTimes(2);
-    expect(queuedIds()).toEqual([1]);
+    expect(queuedIds()).toEqual([1, 2]);
   });
 
-  it('queues anyway when the count never answers, instead of stalling the scan', async () => {
+  it('runs one slow count, queues while it is out, logs it once, and uses its answer when it lands', async () => {
     vi.useFakeTimers();
     configured({ enabled: true, maxOpen: 10 });
-    openCount.mockReturnValueOnce(new Promise(() => undefined));
+    let answer: (rows: unknown[]) => void = () => undefined;
+    openCount.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
 
-    const queued = queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
-    await vi.advanceTimersByTimeAsync(1_000);
-    await queued;
-    expect(queuedIds()).toEqual([1]);
+    for (const imageId of [1, 2]) {
+      const queued = queueScanSampleForKnights({ imageId, nsfw: false }, () => 0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await queued;
+    }
+    expect(queuedIds()).toEqual([1, 2]);
+    expect(openCount).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
 
-    openItems(11);
-    await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
-    expect(openCount).toHaveBeenCalledTimes(2);
-    expect(queuedIds()).toEqual([1]);
+    answer([{ n: '11' }]);
+    await vi.advanceTimersByTimeAsync(0);
+    await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
+    expect(openCount).toHaveBeenCalledTimes(1);
+    expect(queuedIds()).toEqual([1, 2]);
   });
 });

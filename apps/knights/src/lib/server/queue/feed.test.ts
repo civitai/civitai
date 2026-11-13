@@ -111,23 +111,39 @@ describe('orderFeed', () => {
     expect(order(window, { recent: ['X'], random: never, limit: 1 })).toEqual([1]);
   });
 
-  it('picks buckets with equal probability, whatever their priority', () => {
-    const buckets = ['PG', 'PG-13', 'R', 'X', 'XXX'] as const;
-    // PG and PG-13 hold the urgent class, as owner ratings do; the mix must still reach the rest.
-    const window = buckets.flatMap((bucket, b) =>
-      [...Array(20).keys()].map((i) =>
-        candidate(b * 100 + i + 1, { bucket, priority: b < 2 ? 1 : 2, createdAt: i })
+  it('picks buckets with equal probability, whatever their size or priority', () => {
+    // PG holds most of the supply and the urgent class, as owner ratings do; the small buckets must still get their share.
+    const sizes = { PG: 30, X: 3, XXX: 3 } as const;
+    const window = Object.entries(sizes).flatMap(([bucket, size], b) =>
+      [...Array(size).keys()].map((i) =>
+        candidate(b * 100 + i + 1, {
+          bucket: bucket as keyof typeof sizes,
+          priority: bucket === 'PG' ? 1 : 2,
+          createdAt: i,
+        })
       )
     );
-    const served = order(window, { random: seeded(7), limit: 50 });
-    const counts = buckets.map(
-      (bucket) => served.filter((id) => window.find((c) => c.id === id)?.bucket === bucket).length
-    );
-    for (const count of counts) {
-      expect(count).toBeGreaterThanOrEqual(5);
-      expect(count).toBeLessThanOrEqual(15);
+    const bucketOf = (id: number) => window.find((c) => c.id === id)?.bucket;
+    for (const seed of [1, 7, 42]) {
+      // While every bucket has supply (9 picks), each takes about a third, not its 30:3:3 share of the window.
+      const served = order(window, { random: seeded(seed), limit: 9 });
+      for (const bucket of Object.keys(sizes)) {
+        const count = served.filter((id) => bucketOf(id) === bucket).length;
+        expect(count).toBeGreaterThanOrEqual(2);
+        expect(count).toBeLessThanOrEqual(4);
+      }
+      expect(order(window, { random: seeded(seed), limit: 9 })).toEqual(served);
     }
-    expect(order(window, { random: seeded(7), limit: 50 })).toEqual(served);
+  });
+
+  it('never draws a bucket that has no candidates', () => {
+    const window = [candidate(1, { bucket: 'PG' }), candidate(2, { bucket: 'XXX' })];
+    // One draw value per slot of the five-bucket list: an empty bucket in the draw would be hit by the middle ones.
+    for (const draw of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+      const served = order(window, { random: () => draw, limit: 1 });
+      expect(served).toHaveLength(1);
+      expect([1, 2]).toContain(served[0]);
+    }
   });
 
   it('drops a bucket once it is empty and keeps serving the others', () => {
@@ -137,6 +153,11 @@ describe('orderFeed', () => {
     ];
     const served = order(window, { random: seeded(3), limit: 10 });
     expect([...served].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it('avoids a recent no-bucket item like any other bucket', () => {
+    const window = [candidate(1, { bucket: null }), candidate(2, { bucket: 'R' })];
+    expect(order(window, { recent: [null], limit: 1 })).toEqual([2]);
   });
 
   it("serves a bucket's escalated items before its other items", () => {

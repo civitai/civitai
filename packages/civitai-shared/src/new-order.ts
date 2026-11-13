@@ -60,7 +60,7 @@ const clampRate = (value: unknown, fallback: number) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : fallback;
 
 const readCap = (value: unknown) =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
+  Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : undefined;
 
 /** `stored` is false for an absent or unreadable value, which reads as off. */
 export function readKnightsSourcesConfig(raw: string | Buffer | null): {

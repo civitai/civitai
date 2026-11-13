@@ -16,7 +16,7 @@ Extension lasts until two stage windows after the item entered the stage (`escal
 
 ## Rule 3: an item still unvoted after its extension expires
 
-An item that still has no counted vote at its current stage once its extension is used up closes instead of moving on: status `Closed`, `reason = 'expired'`, at any stage. Unvoted overflow never becomes moderator work. Nothing is decided: no label, no write-back, and the image keeps its level. Any vote left on it (a held player's at weight 0, or one from an earlier stage) becomes `inconclusive` and settles unpaid, as `closeWithoutOutcome` does.
+An item that still has no counted vote at its current stage once its extension is used up closes instead of moving on: status `Closed`, `reason = 'expired'`, at any stage. Unvoted overflow never becomes moderator work. Nothing is decided: no label, no write-back, and the image keeps its level. Any vote left on it (a held player's at weight 0, or one from an earlier stage) becomes `inconclusive`; the tick's settle step (`settleFinalItems`, which runs next) then settles it unpaid, one item at a time, so one failed settlement cannot hold up the expiry batch.
 
 An item at a stage nobody can serve is not extended. It is handed up as rule 1 says when a later stage is served, and expires when that hand-up would reach the Inquisitors with no counted vote at its stage.
 
