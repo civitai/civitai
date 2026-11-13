@@ -13,7 +13,7 @@
  *   - Run 1: the dry run prints counts only: listed, controls, scan-in-flight (workflow present,
  *     requested after scanned, both: shown separately), skipped:<reason> (not-scanned, needs-review,
  *     blocked-for, tos, minor, poi, image-hold, owner-hold, pending-collection-item, open-report,
- *     article-image, app-listing-asset, crucible-image, external-url, odd-url, head-error, now-200),
+ *     open-post-report, article-image, app-listing-asset, crucible-image, external-url, odd-url, head-error, now-200),
  *     still-404, no-row, would-hide.
  *   - Then `--apply --limit 1`, read the row back (public hidden, moderator sees it), then the rest.
  *   - Undo: `--undo --apply`. It does not touch the existence cache, which holds "gone" for up to 5
@@ -205,6 +205,11 @@ const linkageSql = (ids: number[]) => Prisma.sql`(CASE
     SELECT 1 FROM "ImageReport" ir JOIN "Report" rp ON rp.id = ir."reportId"
     WHERE ir."imageId" = i.id AND rp.status::text IN ('Pending', 'Processing')
   ) THEN 'open-report'
+  -- A report on the post is a queue item too, and it names the image's post.
+  WHEN EXISTS (
+    SELECT 1 FROM "PostReport" pr JOIN "Report" rp ON rp.id = pr."reportId"
+    WHERE pr."postId" = i."postId" AND rp.status::text IN ('Pending', 'Processing')
+  ) THEN 'open-post-report'
   -- Article covers/banners and app-listing assets read NotFound as an error state, with no notice.
   WHEN EXISTS (SELECT 1 FROM "Article" ar WHERE ar."coverId" = i.id OR ar."bannerId" = i.id)
   THEN 'article-image'

@@ -10,8 +10,11 @@ import type * as LegalHold from '~/server/services/legal-hold.service';
 // a held owner one listed in "OwnerHeld".
 vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
   ...(await importOriginal<typeof LegalHold>()),
+  // An image on post 777 stands for a predicate that comes back NULL: read that as held.
   captureImageHeldSql: (alias: string) =>
-    Prisma.sql`(${Prisma.raw(alias)}.id IN (SELECT "imageId" FROM "ImageHeld"))`,
+    Prisma.sql`(CASE WHEN ${Prisma.raw(alias)}."postId" = 777 THEN NULL ELSE ${Prisma.raw(
+      alias
+    )}.id IN (SELECT "imageId" FROM "ImageHeld") END)`,
   // Owner 13 stands for a predicate that comes back NULL: the script must read that as held.
   ownerHeldSql: (owner: Prisma.Sql) =>
     Prisma.sql`(CASE WHEN ${owner} = 13 THEN NULL ELSE ${owner} IN (SELECT "userId" FROM "OwnerHeld") END)`,
@@ -95,6 +98,7 @@ beforeAll(async () => {
     CREATE TABLE "CollectionItem" ("imageId" int, status text NOT NULL);
     CREATE TABLE "Report" (id int PRIMARY KEY, status text NOT NULL);
     CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+    CREATE TABLE "PostReport" ("postId" int, "reportId" int);
     CREATE TABLE "Article" ("coverId" int, "bannerId" int);
     CREATE TABLE app_listings (icon_id int, cover_id int);
     CREATE TABLE app_listing_screenshots (image_id int);
@@ -114,7 +118,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "Article", app_listings, app_listing_screenshots;
+    TRUNCATE "Image", "ImageHeld", "OwnerHeld", "CollectionItem", "Crucible", "CrucibleEntry", "Report", "ImageReport", "PostReport", "Article", app_listings, app_listing_screenshots;
     INSERT INTO "Image" (id, url, "userId", "postId") VALUES
       (1,'gone-1',10,100),(2,'gone-2',10,100),(3,'gone-3',11,101),
       (900,'live-900',12,102),(901,'live-901',12,102);
@@ -296,6 +300,25 @@ describe('hide-lost-original-images', () => {
     expect(await ingestion(1)).toBe('Scanned');
     expect(counts[`skipped:${reason}`]).toBe(1);
     expect(counts.hidden).toBe(2);
+  });
+
+  it('leaves an image alone whose post has an open report, not one with a closed report', async () => {
+    await db.exec(`INSERT INTO "Report" VALUES (1,'Pending'),(2,'Actioned')`);
+    await db.exec(`INSERT INTO "PostReport" VALUES (100,1),(101,2)`);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(await ingestion(2)).toBe('Scanned');
+    expect(await ingestion(3)).toBe('NotFound');
+    expect(counts['skipped:open-post-report']).toBe(2);
+  });
+
+  it('reads an image-hold predicate that comes back NULL as held', async () => {
+    await db.exec(`UPDATE "Image" SET "postId" = 777 WHERE id = 1`);
+    const { deps } = makeDeps();
+    const counts = await run(options(), GONE, deps);
+    expect(await ingestion(1)).toBe('Scanned');
+    expect(counts['skipped:image-hold']).toBe(1);
   });
 
   it('reads a hold predicate that comes back NULL as held', async () => {
