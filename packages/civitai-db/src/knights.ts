@@ -4,7 +4,9 @@ import * as shared from '@civitai/shared';
 import { withheldCosmeticIds } from '@civitai/shared/knights-shop';
 
 // tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
-const { NsfwLevel } = (shared as { default?: typeof shared }).default ?? shared;
+// Checked with `in`, not read: reading a missing `default` off a vitest module mock throws.
+const { NsfwLevel } =
+  'default' in shared ? (shared as { default?: typeof shared }).default ?? shared : shared;
 
 export const REFERENCE_POOL = { trials: 'trials', hiddenCheck: 'hiddenCheck' } as const;
 export const REFERENCE_SOURCE = {
