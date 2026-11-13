@@ -78,7 +78,12 @@ const items = async () =>
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(
-    `CREATE TABLE "Image" (id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false);`
+    `CREATE TABLE "Post" (id integer PRIMARY KEY, "publishedAt" timestamp);
+     CREATE TABLE "Image" (
+       id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
+       type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
+       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer
+     );`
   );
   await pg.exec(migration('20261210120000_knights_v2_tables'));
   db = new Kysely<DB>({ dialect: dialect(pg) });
@@ -89,7 +94,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pg.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image";`);
+  await pg.exec(`DELETE FROM "KnightsQueueItem"; DELETE FROM "Image"; DELETE FROM "Post";`);
   await pg.exec(`INSERT INTO "Image" (id) VALUES (1), (2), (3), (4);`);
 });
 
@@ -118,6 +123,52 @@ describe('enqueueKnightsItems', () => {
       { imageId: 2, outcome: 'enqueued' },
     ]);
     expect((await items()).map((i) => i.imageId)).toEqual([2]);
+  });
+
+  it('refuses a Blocked image and an unpublished one as not-servable when the caller asks for servable images, and queues the rest', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01'), (20, NULL);
+      UPDATE "Image" SET "postId" = 10 WHERE id IN (1, 3);
+      UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 1;
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 10, "needsReview" = 'minor' WHERE id = 4;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'dataset-import',
+        questionKey: Q,
+        items: [1, 2, 3, 4, 99].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { servableOnly: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 2, outcome: 'refused', reason: 'not-servable' },
+      { imageId: 3, outcome: 'enqueued' },
+      { imageId: 4, outcome: 'refused', reason: 'held-for-review' },
+      { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([3]);
+  });
+
+  it('still queues an unpublished image for a caller that does not ask (intake)', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES (20, NULL);
+      UPDATE "Image" SET "postId" = 20 WHERE id = 1;
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      { source: 'scan-sample', questionKey: Q, items: [{ imageId: 1, priority: 1 }] },
+      NOW
+    );
+
+    expect(outcomes).toMatchObject([{ imageId: 1, outcome: 'enqueued' }]);
+    expect((await items()).map((i) => i.imageId)).toEqual([1]);
   });
 
   it('writes items with the question defaults and per-item overrides', async () => {

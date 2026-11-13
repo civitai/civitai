@@ -32,9 +32,12 @@ export default defineModeratorEndpoint('knights.enqueue', {
     'Each item gets its own outcome: `enqueued` (with `itemId`), `duplicate` (the image already has an open item for this question) or `refused` (with a `reason`). A 200 does not mean every item was queued.',
     '`minRank` and `votesNeeded` default to the question’s; `expiresAt` defaults to one stage from now, `null` means never.',
     '`priority` 1 is served first.',
+    'Refusal reasons include `image-not-found`, `held-for-review` and `not-servable` (not one the public feeds would show, for example Blocked or not yet published).',
   ],
   async handler(input) {
-    const results = await enqueueKnightsItems(kyselyWrite, input);
+    const results = await enqueueKnightsItems(kyselyWrite, input, undefined, {
+      servableOnly: true,
+    });
     return {
       results,
       affected: {

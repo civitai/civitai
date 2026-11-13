@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
@@ -27,7 +28,16 @@ export type EnqueueRefusal =
   | 'bad-votes'
   | 'bad-expiry'
   | 'image-not-found'
-  | 'held-for-review';
+  | 'held-for-review'
+  | 'not-servable';
+
+export type EnqueueOptions = {
+  /**
+   * Refuse images the public feeds would not show. Intake leaves it off: scan results often
+   * arrive before the post is published.
+   */
+  servableOnly?: boolean;
+};
 
 export type EnqueueOutcome = { imageId: number } & (
   | { outcome: 'enqueued'; itemId: number }
@@ -49,7 +59,8 @@ type Planned = {
 export async function enqueueKnightsItems(
   db: Kysely<DB>,
   input: EnqueueInput,
-  now: Date = new Date()
+  now: Date = new Date(),
+  { servableOnly = false }: EnqueueOptions = {}
 ): Promise<EnqueueOutcome[]> {
   const refuseAll = (reason: EnqueueRefusal): EnqueueOutcome[] =>
     input.items.map((item) => ({ imageId: item.imageId, outcome: 'refused', reason }));
@@ -62,16 +73,28 @@ export async function enqueueKnightsItems(
   if (!question) return refuseAll('unknown-question');
   if (!question.active) return refuseAll('inactive-question');
 
-  const images = new Map<number, boolean>(
+  const images = new Map<number, { held: boolean; servable: boolean }>(
     input.items.length === 0
       ? []
       : (
           await db
-            .selectFrom('Image')
-            .select(['id', 'needsReview', 'acceptableMinor'])
-            .where('id', 'in', [...new Set(input.items.map((i) => i.imageId))])
+            .selectFrom('Image as img')
+            .leftJoin('Post as p', 'p.id', 'img.postId')
+            .select((eb) => [
+              'img.id',
+              'img.needsReview',
+              'img.acceptableMinor',
+              servableImage(eb).as('servable'),
+            ])
+            .where('img.id', 'in', [...new Set(input.items.map((i) => i.imageId))])
             .execute()
-        ).map((row) => [row.id, row.needsReview !== null || row.acceptableMinor])
+        ).map((row) => [
+          row.id,
+          {
+            held: row.needsReview !== null || row.acceptableMinor,
+            servable: Boolean(row.servable),
+          },
+        ])
   );
 
   const outcomes: (EnqueueOutcome | null)[] = [];
@@ -94,9 +117,10 @@ export async function enqueueKnightsItems(
         ? new Date(now.getTime() + KNIGHTS_STAGE_TTL_HOURS * 3_600_000)
         : item.expiresAt;
     if (expiresAt && expiresAt.getTime() <= now.getTime()) return refuse('bad-expiry');
-    const held = images.get(item.imageId);
-    if (held === undefined) return refuse('image-not-found');
-    if (held) return refuse('held-for-review');
+    const image = images.get(item.imageId);
+    if (image === undefined) return refuse('image-not-found');
+    if (image.held) return refuse('held-for-review');
+    if (servableOnly && !image.servable) return refuse('not-servable');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;

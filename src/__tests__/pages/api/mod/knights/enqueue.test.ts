@@ -93,7 +93,7 @@ describe('knights.enqueue', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(mockEnqueue).toHaveBeenCalledWith(expect.anything(), {
+    expect(mockEnqueue.mock.calls[0][1]).toEqual({
       source: 'dataset-import',
       questionKey: 'knights.image.nsfwLevel',
       items: [
@@ -114,6 +114,14 @@ describe('knights.enqueue', () => {
       { imageId: 6, outcome: 'duplicate' },
       { imageId: 7, outcome: 'refused', reason: 'bad-rank' },
     ]);
+  });
+
+  it('asks the queue to refuse what it could not serve', async () => {
+    await call(valid);
+
+    expect(mockEnqueue).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined, {
+      servableOnly: true,
+    });
   });
 
   it('needs the knightsEnqueue grant on top of the moderator role', async () => {
