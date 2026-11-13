@@ -289,7 +289,7 @@ export const storylineRouter = router({
     .input(addStorylineTextSchema)
     .mutation(({ input, ctx }) => addPostText({ ...input, userId: ctx.user.id })),
 
-  // The editor saves 2 s after typing stops, and each save that changes the text bills a scan.
+  // The editor autosaves as the author types, and each save that changes the text bills a scan.
   setText: storylineTextProcedure
     .input(setStorylineTextSchema)
     .use(rateLimit({ limit: 300, period: CacheTTL.hour }))

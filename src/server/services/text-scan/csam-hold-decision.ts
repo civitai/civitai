@@ -311,8 +311,8 @@ export async function decideCsamHold(args: DecideArgs) {
         },
       });
       if (count === 0) throw throwConflictError('Hold already decided or missing.');
-      // The decision sets a text's held flag either way, so a confirmed text stays from readers even
-      // when its scan never marked it held.
+      // A confirm sets the text's held flag and a dismissal clears it, so a confirmed text stays
+      // from readers even when its scan never marked it held.
       if (hold.entityType === 'PostText')
         await tx.postText.updateMany({
           where: { id: hold.entityId },
