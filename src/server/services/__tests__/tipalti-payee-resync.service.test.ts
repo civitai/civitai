@@ -200,8 +200,25 @@ describe('resyncTipaltiPayees', () => {
     const [row] = await run(false);
 
     expect(row).toMatchObject({ applied: true, direction: null });
+    expect(createNotification).toHaveBeenCalledTimes(1);
     expect(createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ userId: USER_ID, type: 'creators-program-rejected-tipalti' })
+    );
+  });
+
+  it('notifies against the state the write was conditioned on, not an in-between read', async () => {
+    // A webhook flipped the row to true and back to false between the resync's read and the
+    // service's own read; the conditional write still lands on false, so this is an enable.
+    arrange(stored(false), payee());
+    dbMock.dbWrite.userPaymentConfiguration.findUnique
+      .mockResolvedValueOnce(stored(false))
+      .mockResolvedValueOnce(stored(true));
+
+    const [row] = await run(false);
+
+    expect(row).toMatchObject({ applied: true, direction: 'enable' });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'creators-program-payments-enabled' })
     );
   });
 

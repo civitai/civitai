@@ -313,7 +313,7 @@ export async function updateByTipaltiAccount({
   unpayableReasons?: string[];
   userId?: number;
   /** Write only if the row still holds this state; otherwise throw TipaltiStaleWriteError. */
-  expect?: { tipaltiAccountStatus: string | null; tipaltiPaymentsEnabled: boolean };
+  expect?: { tipaltiAccountStatus: string; tipaltiPaymentsEnabled: boolean };
 }) {
   const found = await dbWrite.userPaymentConfiguration.findUnique({
     where: { tipaltiAccountId, userId },

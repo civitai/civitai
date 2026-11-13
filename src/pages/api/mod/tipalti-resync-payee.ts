@@ -18,7 +18,7 @@ export default defineModeratorEndpoint('tipalti.resyncPayee', {
     `At most ${TIPALTI_RESYNC_MAX_USERS} ids per call; a malformed or repeated id rejects the call. 5 calls a minute per moderator.`,
     "unpayableReasons is reported, never written, and is not passed on: a disable here sends no tax-form email. Enabling sends the user the usual 'payments enabled' notification.",
     "A write that newly moves an unpayable payee's status to Blocked or BlockedByProvider sends the user the 'creators-program-rejected-tipalti' notification, a status-only change included.",
-    'The write is conditional on the stored state the dry-run comparison used; if a webhook changed it first, nothing is written or sent and the row is refused.',
+    'The write is conditional on the stored state read at the start of this call; if a webhook changed it first, nothing is written or sent and the row is refused.',
   ],
   rateLimit: { max: 5, windowSeconds: 60 },
   input: z.object({
