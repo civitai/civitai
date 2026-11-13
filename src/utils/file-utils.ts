@@ -23,7 +23,7 @@ export async function fetchBlob(
 ) {
   if (src instanceof Blob) return src;
   if (idleTimeoutMs) return fetchBlobWithIdleTimeout(src, timeoutMs, idleTimeoutMs, requireOk);
-  // Intentionally NOT behind the hot-path-fetch-timeouts Flipt kill-switch: this
+  // Intentionally NOT behind the outbound-fetch-timeouts-off Flipt switch: this
   // is isomorphic (bundled client-side) so it can't import the server-only
   // isFliptSync, and its callers are background/media downloads where an abort is benign.
   // credentials:'omit' — every caller fetches cross-origin presigned/orchestrator/CDN

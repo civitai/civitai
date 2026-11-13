@@ -34,6 +34,7 @@ import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker
 import { MAX_CHAT_MEMBERS } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
@@ -198,7 +199,12 @@ export const signalChatMembersUpdated = async ({
   await Promise.all(
     urls.map((url) =>
       withSignals(() =>
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+        outboundFetch(url, {
+          timeoutMs: 10_000,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        })
       ).catch(() => undefined)
     )
   );
@@ -335,7 +341,8 @@ export const upsertChat = async ({
   if (isModerator) {
     for (const cmId of userIds) {
       withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/groups`, {
+          timeoutMs: 10_000,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${createdChat.id}`),
@@ -345,7 +352,8 @@ export const upsertChat = async ({
   } else {
     // - add self to group
     withSignals(() =>
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        timeoutMs: 10_000,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(`chat:${createdChat.id}`),
@@ -449,7 +457,8 @@ export const upsertDealChat = async ({
 
   for (const userId of userIds)
     withSignals(() =>
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        timeoutMs: 10_000,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(`chat:${created.id}`),
