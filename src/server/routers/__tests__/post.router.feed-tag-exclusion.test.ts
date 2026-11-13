@@ -30,7 +30,7 @@ const h = vi.hoisted(() => ({
   rows: undefined as number | undefined,
 }));
 
-const POSTS = [1, 2, 3, 4, 5, 6, 7, 8, 9].map((id) => ({
+const POSTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((id) => ({
   id,
   userId: CREATOR,
   cursorId: id,
@@ -45,6 +45,7 @@ const image = (id: number, postId: number, over: Record<string, unknown> = {}) =
   postId,
   userId: CREATOR,
   nsfwLevel: NsfwLevel.PG,
+  ingestion: 'Scanned',
   poi: false,
   minor: false,
   tagIds: [] as number[],
@@ -63,6 +64,7 @@ const IMAGES = [
   image(81, 8, { nsfwLevel: NsfwLevel.R, minor: true }),
   image(91, 9, { nsfwLevel: NsfwLevel.Blocked }),
   image(92, 9, { nsfwLevel: 0 }), // unrated
+  image(101, 10, { ingestion: 'Blocked' }), // only its creator and moderators get it
 ];
 
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
@@ -72,10 +74,19 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 // Mocked whole: spreading the original loads post.service first, which then binds the real one.
 vi.mock('~/server/services/image.service', () => ({
   // As the real query: an image of the asked level, and any rating when no level is asked.
-  getImagesForPosts: vi.fn(async ({ browsingLevel }: { browsingLevel?: number }) =>
-    IMAGES.filter((i) => !browsingLevel || (i.nsfwLevel & browsingLevel) !== 0).map((i) => ({
-      ...i,
-    }))
+  getImagesForPosts: vi.fn(
+    async ({
+      browsingLevel,
+      user,
+    }: {
+      browsingLevel?: number;
+      user?: { id: number; isModerator?: boolean };
+    }) =>
+      IMAGES.filter(
+        (i) =>
+          (!browsingLevel || (i.nsfwLevel & browsingLevel) !== 0) &&
+          (i.ingestion !== 'Blocked' || !!user?.isModerator || i.userId === user?.id)
+      ).map((i) => ({ ...i }))
   ),
   getImageMetricsObject: vi.fn(),
   imagesForModelVersionsCache: { bust: vi.fn() },
@@ -147,6 +158,8 @@ const feed = async (user: Viewer, browsingLevel: number, apiKey: boolean | 'full
 const VIEWER = { id: 9 };
 const MATURE = NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
 const ALL = { 1: [11], 2: [21], 3: [31], 4: [41], 5: [51, 52], 6: [61], 7: [71], 8: [81] };
+/** What a moderator or the creator gets: also the blocked image. */
+const ALL_WITH_BLOCKED = { ...ALL, 10: [101] };
 
 beforeEach(() => {
   h.addons = [
@@ -194,17 +207,17 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
 
   it("keeps every image of the creator's own posts for the creator", async () => {
     h.hiddenTagsByUser[CREATOR] = [{ id: VIEWER_HIDDEN_TAG, hidden: true }];
-    expect(await feed({ id: CREATOR }, MATURE)).toEqual(ALL);
+    expect(await feed({ id: CREATOR }, MATURE)).toEqual(ALL_WITH_BLOCKED);
   });
 
   it.each([
     ['a session', false],
     ['a full-scope key', 'full'],
   ] as const)("does not hold a moderator to the site's tags through %s", async (_, apiKey) => {
-    expect(await feed({ id: 1, isModerator: true }, MATURE, apiKey)).toEqual(ALL);
+    expect(await feed({ id: 1, isModerator: true }, MATURE, apiKey)).toEqual(ALL_WITH_BLOCKED);
   });
 
-  it("holds a moderator's narrow-scope key to the site's tags, as anyone's", async () => {
+  it("holds a moderator's narrow-scope key to the site's tags and blocked images, as anyone's", async () => {
     expect(await feed({ id: 1, isModerator: true }, MATURE, true)).toEqual({
       1: [11],
       4: [41],
@@ -228,12 +241,21 @@ describe('post.getInfinite applies tag exclusions on the server', () => {
     }
   );
 
+  it('reads an empty level as public for a signed-out caller too', async () => {
+    expect(await feed(undefined, 0)).toEqual({ 1: [11], 3: [31], 4: [41], 5: [52], 7: [71] });
+  });
+
   it("pages by the query's rows: a post that drops is not refilled, and the cursor is the row past the page", async () => {
     h.rows = 3; // limit 2, plus the one past the page
     const result = await page(undefined, NsfwLevel.PG, false, 2);
     // Post 2's only image is excluded: its slot is not refilled by post 3.
     expect(result.items.map((p) => p.id)).toEqual([1]);
+    // The cursor is post 3's, as when nothing is excluded and post 2 is the last listed.
+    h.addons = [];
+    const unfiltered = await page(undefined, NsfwLevel.PG, false, 2);
+    expect(unfiltered.items.map((p) => p.id)).toEqual([1, 2]);
     expect(result.nextCursor).toBeDefined();
+    expect(result.nextCursor).toEqual(unfiltered.nextCursor);
     h.rows = 2;
     expect((await page(undefined, NsfwLevel.PG, false, 2)).nextCursor).toBeUndefined();
   });
