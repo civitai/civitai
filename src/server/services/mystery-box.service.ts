@@ -1070,8 +1070,8 @@ export async function purchaseMysteryBox({
   }
 
   // Outside the grant's try: a payout failure must not refund the buyer. Paid in the colour the
-  // charge came from, which a resumed claim may not share with this request; the sweep pays a
-  // charge from several accounts, or refuses it.
+  // charge came from, which a resumed claim may not share with this request; a charge from several
+  // accounts is left to the sweep, which refuses it for a person to pay.
   const chargedColor = singleColorOf(transaction.transactionIds);
   if (box.sellerId != null && chargedColor)
     await payCreatorBoxSaleAfterGrant({

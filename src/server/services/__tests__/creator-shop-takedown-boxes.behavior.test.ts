@@ -623,16 +623,34 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.clawedBack).toBe(560);
   });
 
-  // Unreachable while creator boxes are not sold; kept so the first sale without a record is loud.
-  it('leaves a creator box sale with no payout record to a moderator, against the creator', async () => {
+  it('leaves a creator box payout the ledger shows unreversed to a moderator, for what was paid', async () => {
     const boxId = await seedBox({ sellerId: CREATOR });
-    await seedOpening(boxId);
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
 
     const result = await takedown();
 
     expect(result.failures).toEqual([
-      expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId }),
+      expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId, amount: 560 }),
     ]);
+  });
+
+  // The payout failed, or landed after the refund began and reversed itself: nothing is owed.
+  it('files no clawback for a creator box sale whose ledger shows no unreversed payout', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
   });
 });
 

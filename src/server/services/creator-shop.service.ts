@@ -2573,6 +2573,16 @@ async function refundPurchasePrefix(input: {
   } satisfies PrefixRefund;
 }
 
+/** The purchase's `:sell:` payout legs on the ledger that its refund did not reverse. */
+async function unreversedPayoutLegs(buzzTransactionId: string, refund: PrefixRefund) {
+  const reversed = new Set(refund.refundedTransactions.map((t) => t.originalTransactionId));
+  return (await getMultiAccountTransactionsByPrefix(buzzTransactionId)).filter(
+    (leg) =>
+      (leg.externalTransactionId ?? '').startsWith(`${buzzTransactionId}:sell:`) &&
+      !reversed.has(leg.transactionId)
+  );
+}
+
 const logTakedown = (level: 'info' | 'error', message: string, data: MixedObject) =>
   logToAxiom({ level, name: 'cosmetic-takedown', message, data }).catch(() => undefined);
 
@@ -2968,16 +2978,25 @@ export const takedownCosmeticShopItem = async ({
           recordedPayouts,
           new Set(refund.refundedTransactions.map((t) => t.originalTransactionId))
         );
-      // A platform box paid only the bank. A creator's box paid its creator, in a split only the
-      // record knows, so like a pack it is left to a moderator.
-      else if (!recordedPayouts && purchase.sellerId !== null)
-        failures.push({
-          stage: 'clawback',
-          userId: purchase.sellerId,
-          amount: purchase.unitAmount,
-          boxId: purchase.boxDefinitionId,
-          error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
-        });
+      // A platform box paid only the bank. A creator's box with no record may never have paid its
+      // creator (the payout failed, or landed after the refund began and reversed itself), so the
+      // ledger decides: only a payout leg the refund above didn't reverse is left to a moderator.
+      else if (!recordedPayouts && purchase.sellerId !== null) {
+        const unreversed = await unreversedPayoutLegs(purchase.buzzTransactionId, refund).catch(
+          () => null
+        );
+        if (unreversed === null || unreversed.length)
+          failures.push({
+            stage: 'clawback',
+            userId: purchase.sellerId,
+            amount: unreversed?.reduce((sum, leg) => sum + leg.amount, 0) ?? purchase.unitAmount,
+            boxId: purchase.boxDefinitionId,
+            error:
+              unreversed === null
+                ? `Box purchase ${purchase.buzzTransactionId} has no recorded payouts and its ledger could not be read`
+                : `Box purchase ${purchase.buzzTransactionId} paid its creator and the payout was not reversed`,
+          });
+      }
     }
 
     let owedPackBoxes: OwedPackBoxRefund[] = [];
