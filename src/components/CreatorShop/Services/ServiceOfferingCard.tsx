@@ -48,14 +48,19 @@ function BlurCaption({ level }: { level: number }) {
       <ImageGuard2.BlurToggle>
         {(toggle) => (
           <div className="flex flex-col items-center gap-2 text-white">
-            <Text size="sm" className="hidden shadow-black/50 text-shadow-sm @[240px]:block">
-              This image is rated
-            </Text>
-            <BrowsingLevelBadge
-              browsingLevel={level}
-              size="lg"
-              className="min-w-[32px] text-center shadow shadow-black/30"
-            />
+            <div className="flex items-center gap-2 @[300px]:flex-col">
+              <Text size="sm" className="shadow-black/50 text-shadow-sm @[300px]:hidden">
+                Rated
+              </Text>
+              <Text size="sm" className="hidden shadow-black/50 text-shadow-sm @[300px]:block">
+                This image is rated
+              </Text>
+              <BrowsingLevelBadge
+                browsingLevel={level}
+                size="lg"
+                className="min-w-[32px] text-center shadow shadow-black/30"
+              />
+            </div>
             <Button
               className="pointer-events-auto"
               size="compact-sm"
@@ -97,17 +102,19 @@ export function ServiceOfferingCard({
   const header = (
     <div className="flex w-full items-start justify-between gap-2">
       <ServiceRatingBadge rating={offering.maxNsfwLevel} />
-      <div className="ml-auto">
+      <div className="ml-auto rounded-sm bg-black/60 backdrop-blur-sm">
         <ServiceSlotsBadge slotsOpen={slotsOpen ?? null} />
       </div>
     </div>
   );
   const price = (
-    <CurrencyBadge
-      currency={Currency.BUZZ}
-      type={domain === 'green' ? 'green' : 'yellow'}
-      unitAmount={offering.price}
-    />
+    <div className="rounded-full bg-black/60 backdrop-blur-sm">
+      <CurrencyBadge
+        currency={Currency.BUZZ}
+        type={domain === 'green' ? 'green' : 'yellow'}
+        unitAmount={offering.price}
+      />
+    </div>
   );
 
   return (
