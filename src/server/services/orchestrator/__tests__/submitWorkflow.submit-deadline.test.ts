@@ -68,14 +68,14 @@ function rejectOnlyOnAbort({ signal }: StubOptions) {
 }
 
 /** Drive fake time 1s at a time until the submit settles, capped at 120s of fake time. */
-async function runUntilSettled(run: () => Promise<unknown>) {
+async function runUntilSettled(run: () => Promise<unknown>, capSeconds = 120) {
   const start = Date.now();
   let settled: { ok: boolean; value: unknown } | undefined;
   run().then(
     (value) => (settled = { ok: true, value }),
     (value) => (settled = { ok: false, value })
   );
-  for (let i = 0; i < 120 && !settled; i++) await vi.advanceTimersByTimeAsync(1_000);
+  for (let i = 0; i < capSeconds && !settled; i++) await vi.advanceTimersByTimeAsync(1_000);
   return { settled, elapsedMs: Date.now() - start };
 }
 
@@ -242,5 +242,54 @@ describe('submitWorkflow — a caller that asks the orchestrator to wait (query.
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
     expect(elapsedMs).toBeGreaterThanOrEqual(90_000);
     expect(elapsedMs).toBeLessThanOrEqual(106_000);
+  });
+
+  // A retry after a network error must still have the whole wait available, or it is a second
+  // charged completion that is then cut off. With wait=120 the floor is 135s; after a reset at 20s
+  // only ~114.5s of the deadline remains, so no second attempt is started.
+  it('a wait=120 submit that hits a network error at 20s does not start a second attempt', async () => {
+    mockSubmitWorkflow
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  Object.assign(new TypeError('fetch failed'), {
+                    cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+                  })
+                ),
+              20_000
+            )
+          )
+      )
+      .mockImplementation(answerAfter(1_000));
+
+    const { settled } = await runUntilSettled(
+      () => submitWorkflow({ token: 'tok', body: { steps: [] } as never, query: { wait: 120 } }),
+      200
+    );
+
+    expect(settled, 'submit never settled within 200s of fake time').toBeDefined();
+    expect(settled?.ok).toBe(false);
+    expect((settled?.value as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  // Above ~300s the HTTP client's own headers timeout would fire first and surface as a network
+  // error (which IS retried). Capping the floor at 280s keeps the abort ours: a timeout, not retried.
+  it('a wait=290 submit is cut off by the bound at 280s, in one attempt', async () => {
+    mockSubmitWorkflow.mockImplementation(settleOnlyOnAbort);
+
+    const { settled, elapsedMs } = await runUntilSettled(
+      () => submitWorkflow({ token: 'tok', body: { steps: [] } as never, query: { wait: 290 } }),
+      400
+    );
+
+    expect(settled, 'submit never settled within 400s of fake time').toBeDefined();
+    expect((settled?.value as TRPCError).code).toBe('SERVICE_UNAVAILABLE');
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    expect(elapsedMs).toBeGreaterThanOrEqual(280_000);
+    expect(elapsedMs).toBeLessThanOrEqual(281_000);
   });
 });

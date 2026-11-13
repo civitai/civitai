@@ -119,20 +119,29 @@ const WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS = 8_000;
 // flight, so it is never retried (a 5xx or a network error still is); a generate submit's error
 // tells the user to check their queue before retrying. A caller that asks the orchestrator to hold
 // the request open (`query.wait`, in seconds) gets at least that wait plus SUBMIT_WAIT_MARGIN_MS
-// for the attempt and the deadline. `ORCHESTRATOR_SUBMIT_BOUNDS=off` is the off-switch (read per
-// call).
+// for the attempt and the deadline, and no retry is started with less than that left. The floor is
+// capped at SUBMIT_WAIT_FLOOR_MAX_MS, under the HTTP client's ~300s headers timeout, so a very long
+// wait ends as our own (unretried) timeout rather than a retried network error.
+// `ORCHESTRATOR_SUBMIT_BOUNDS=off` is the off-switch (read per call).
 const SUBMIT_ATTEMPT_TIMEOUT_MS = 30_000;
 const SUBMIT_DEADLINE_MS = 60_000;
 const SUBMIT_WAIT_MARGIN_MS = 15_000;
+const SUBMIT_WAIT_FLOOR_MAX_MS = 280_000;
+
+/** The budget an attempt needs to cover the caller's `query.wait` (seconds), or undefined. */
+function waitFloorMs(query: unknown) {
+  const wait = (query as { wait?: unknown } | undefined)?.wait;
+  if (typeof wait !== 'number' || !(wait > 0)) return undefined;
+  return Math.min(wait * 1000 + SUBMIT_WAIT_MARGIN_MS, SUBMIT_WAIT_FLOOR_MAX_MS);
+}
 
 /** Never cut off a wait the caller asked the orchestrator for: raise both bounds to cover it. */
 function boundsCoveringWait(
   bounds: { perAttemptTimeoutMs?: number; deadlineMs?: number },
   query: unknown
 ) {
-  const wait = (query as { wait?: unknown } | undefined)?.wait;
-  if (typeof wait !== 'number' || !(wait > 0)) return bounds;
-  const floorMs = wait * 1000 + SUBMIT_WAIT_MARGIN_MS;
+  const floorMs = waitFloorMs(query);
+  if (floorMs == null) return bounds;
   return {
     ...(bounds.perAttemptTimeoutMs == null
       ? {}
@@ -657,8 +666,11 @@ async function submitWorkflowRetryLoop(
   // `(user, externalId)` dedupe being atomic against an in-flight first attempt, which is
   // unverified. So a timed-out real submit is never retried.
   const ambiguousRetryIsSafe = source === 'whatIf';
-  // Whether another attempt may start after `delayMs` of backoff.
-  const canStartAnother = (delayMs: number) => remainingMs() - delayMs >= MIN_SUBMIT_ATTEMPT_MS;
+  // Whether another attempt may start after `delayMs` of backoff. A retry must have at least the
+  // budget the caller's `wait` needs: one that would be cut off before its wait could end is a
+  // second (charged) workflow followed by a failure.
+  const minAttemptMs = Math.max(MIN_SUBMIT_ATTEMPT_MS, waitFloorMs(options.query) ?? 0);
+  const canStartAnother = (delayMs: number) => remainingMs() - delayMs >= minAttemptMs;
 
   // Count the retry BEFORE handing control to the caller's own hook, so neither a caller that supplies
   // one nor a caller whose hook throws can suppress the counter. Wiring this at all is the fix for a
