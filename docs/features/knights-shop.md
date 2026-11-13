@@ -1,6 +1,6 @@
 # Knights of New Order: the gold shop
 
-Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembership` in `src/server/services/subscriptions.service.ts`. Prices live in data. Gold is anchored at 20 gold = 1 Buzz (`CONVERSION.goldPerBuzz`, which the header's Buzz value reads). Launch price sheet, entered from the moderator page (Buzz packs 50 / 130 / 275 / 600 Buzz for 1,000 / 2,500 / 5,000 / 10,000 gold, a 100-use sticker pack 100 gold (the price is for the pack, not per use), badge 15,000, nameplate 30,000, avatar decoration 25,000 / 50,000 from Templar / 80,000 from Paladin, membership week bronze 60,000 / silver 150,000 / gold 300,000).
+Code: `apps/knights/src/lib/server/shop`, `apps/knights/src/routes/shop` (shop) and `routes/shop/inventory`. Main-app side: `src/pages/api/mod/knights/shop/{membership,cosmetics}.ts`, `src/server/services/knights/shop.service.ts` and `grantBuzzPurchaseMembership` in `src/server/services/subscriptions.service.ts`. Prices live in data. Gold is anchored at 20 gold = 1 Buzz (`CONVERSION.goldPerBuzz`, which the header's Buzz value reads). The launch catalog and its prices are in [Launch catalog](#launch-catalog); they are entered from the moderator page.
 
 ## Data and deploy
 
@@ -13,6 +13,7 @@ Tables `KnightsShopItem`, `KnightsShopItemChange` and `KnightsShopPurchase` come
 `routes/knights-of-new-order/shop` has three URL-driven views. **Items** (`?tab=items`, filters `q`, `status` = live | retired | all, `kind`) opens with today's stock (deals, rotating picks, count of items always on sale, a countdown to 00:00 UTC), then a table grouped like the Knights shop (Buzz packs, memberships, cosmetics). Add and Edit open one right-hand sheet: kind chosen first, a thumbnail picker for cosmetics, and a live "How players see it" card; an edit shows the kind-defining fields read-only and has a History tab backed by `shop/history` (one item's audit rows). **Preview** (`?tab=preview&day=`) draws one UTC day from the same rows and `stockFor` as Knights, laid out like the player view. **Audit** (`?tab=audit&item=&before=`) groups changes by UTC day with diff chips. `stockView` in the service serves both the items view (today) and the preview, so they cannot disagree.
 
 The sheet and the retire dialog warn only when the change reaches players: `impact.ts` draws today's stock before and after with `stockFor` and names what drops out, comes in or becomes a deal, or that a new price refuses purchases in flight. A new item has no id, so its draw cannot be simulated and it gets a general warning.
+
 - `KnightsShopPurchase`: the gold ledger. `requestKey` is the buyer's idempotency key (unique per player; the confirm dialog makes a fresh one each time it opens), `externalKey` is the server's key for the downstream grant (the `UserCosmetic.claimKey`, the membership grant key), `conversionId` links a Buzz pack to its `KnightsGoldConversion`, `dealDay` marks a deal price (one per player, item and UTC day, enforced by a partial unique index).
 
 ## Daily stock and deals
@@ -64,3 +65,29 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 `shop/purchase.pglite.test.ts` (in-review cosmetic refused, one ledger clock, replay, hold, kill switch, insufficient gold, badge once, sticker uses, career reset, Buzz retry and rejection, membership rules, retry, rejection and forfeiture, balance fields), `shop/catalog.pglite.test.ts` (in-review cosmetic not listed), `shop/inventory.pglite.test.ts`, `packages/civitai-shared/src/__tests__/knights-shop.test.ts`, `shop/main-app.test.ts`, `routes/shop/load.test.ts`, `routes/shop/inventory/actions.test.ts`; main app: `src/__tests__/pages/api/mod/knights/shop.test.ts` (the real `WebhookEndpoint`), `src/server/services/__tests__/subscriptions.grant-buzz-membership.test.ts` and `buzz-membership-badge.behavior.test.ts`; `src/server/__tests__/creator-shop-withheld.test.ts` (also runs the Knights rule on the same rows); moderator app: `src/lib/server/knights/__tests__/shop-catalog.pglite.test.ts`, `src/routes/knights-of-new-order/shop/__tests__/{actions,history,impact,audit,shop-view}.test.ts`.
 
 The two simultaneous-purchase tests run on one PGlite connection that takes the transactions in turn, so they prove the second purchase reads the first one's spend, not the row lock itself; that needs a real Postgres and is not covered.
+
+## Launch catalog
+
+Prices approved on 2026-11-09, entered in each environment from the moderator page (`/knights-of-new-order/shop`); no deploy is needed to change them. Cosmetic ids are the production `Cosmetic` rows.
+
+| Item                                                                                                             | Kind                                      | Cosmetic  | Price (gold)                   | Min rank |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | --------- | ------------------------------ | -------- |
+| 50 Buzz                                                                                                          | buzz_pack                                 | –         | 1,000                          | –        |
+| 150 Buzz (+7%)                                                                                                   | buzz_pack                                 | –         | 2,800                          | –        |
+| 300 Buzz (+9%)                                                                                                   | buzz_pack                                 | –         | 5,500                          | –        |
+| 600 Buzz (+14%)                                                                                                  | buzz_pack                                 | –         | 10,500                         | –        |
+| Bronze membership week                                                                                           | membership                                | –         | 60,000                         | –        |
+| Silver membership week                                                                                           | membership                                | –         | 145,000                        | –        |
+| Gold membership week                                                                                             | membership                                | –         | 290,000                        | –        |
+| Seal of the Order Badge                                                                                          | cosmetic (badge, once)                    | 4210      | 15,000                         | –        |
+| Crossed Blades Badge                                                                                             | cosmetic (badge, once)                    | 4211      | 15,000                         | –        |
+| Order Banner Badge                                                                                               | cosmetic (badge, once)                    | 4212      | 15,000                         | –        |
+| Knights Steel Frame                                                                                              | cosmetic (avatar decoration)              | 4216      | 25,000                         | –        |
+| Templar Crown Frame                                                                                              | cosmetic (avatar decoration)              | 4217      | 50,000                         | Templar  |
+| Paladin Wings Frame                                                                                              | cosmetic (avatar decoration)              | 4218      | 80,000                         | Paladin  |
+| Knights stickers: Smite!, Skill Check Passed, Worthy, Unworthy, Verdict: Approved, Heresy!, Huzzah!, By My Sword | cosmetic (sticker, 100 uses per purchase) | 4219–4226 | 10,000 each (100 gold per use) | –        |
+| Knights Steel Nameplate                                                                                          | cosmetic (nameplate)                      | 4227      | 30,000                         | –        |
+| Crimson Order Nameplate                                                                                          | cosmetic (nameplate)                      | 4228      | 30,000                         | –        |
+| Paladin Radiance Nameplate                                                                                       | cosmetic (nameplate)                      | 4229      | 30,000                         | –        |
+
+Not sold: the Paladin rank badge (4208, worn by rank) and the Watch streak badges 4213–4215 (granted at 7, 30 and 100 days).
