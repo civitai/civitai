@@ -228,7 +228,7 @@ export const getModel3DReviews = async ({
         tosViolation: model3d.tosViolation,
         ownerId: model3d.userId,
         userId: user?.id,
-        isModerator: user?.isModerator,
+        isModerator: !!user?.isModerator,
       })
     )
       return getPagingData({ items: [], count: 0 }, take, input.page);
