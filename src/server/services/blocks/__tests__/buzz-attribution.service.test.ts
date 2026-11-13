@@ -62,6 +62,7 @@ import {
   getGoodsSalesForOwner,
   isMissingGoodsTableError,
   unreadableGoodsSales,
+  unreadableIfGoodsTableMissing,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
   voidAttributionsForPayment,
@@ -549,6 +550,33 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
  * name, so an aggregate that read the wrong `_sum` field, the wrong status bucket
  * or the wrong row count cannot land on a right-looking number by coincidence.
  */
+describe('unreadableIfGoodsTableMissing — the one degradation the goods rail allows', () => {
+  it('a missing table gives the UNREADABLE summary and logs with the caller’s context', async () => {
+    mockLog.mockClear();
+    const missing = Object.assign(new Error('The table `block_good_purchase` does not exist'), {
+      code: 'P2021',
+    });
+    const result = await unreadableIfGoodsTableMissing(Promise.reject(missing), {
+      appBlockId: 'apb_ctx',
+    });
+    expect(result).toStrictEqual(unreadableGoodsSales());
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'block-goods-earnings', appBlockId: 'apb_ctx' }),
+      'civitai-prod'
+    );
+  });
+
+  it('any other error RETHROWS, unchanged', async () => {
+    const other = Object.assign(new Error('Unknown argument `bluePaidBuzz`'), { code: 'P2009' });
+    await expect(unreadableIfGoodsTableMissing(Promise.reject(other), {})).rejects.toBe(other);
+  });
+
+  it('a successful read passes through untouched (control)', async () => {
+    const sales = emptyGoodsSales();
+    await expect(unreadableIfGoodsTableMissing(Promise.resolve(sales), {})).resolves.toBe(sales);
+  });
+});
+
 describe('getGoodsSalesForOwner — the goods → earnings bridge', () => {
   const GOODS_OWNER = 4242;
 

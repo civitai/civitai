@@ -1,17 +1,15 @@
-import { logToAxiom } from '~/server/logging/client';
 import {
   listingKindSupports,
   resolveListingAccess,
   resolveAccessibleAppBlockIds,
 } from '~/server/services/blocks/app-access.service';
 import {
-  getAuthorFeeEarningsForApp,
+  getAuthorFeeEarningsForOwner,
   type AuthorFeeEarnings,
 } from '~/server/services/blocks/author-fee-earnings.service';
 import {
   getGoodsSalesForOwner,
-  isMissingGoodsTableError,
-  unreadableGoodsSales,
+  unreadableIfGoodsTableMissing,
   type GoodsSalesSummary,
 } from '~/server/services/blocks/buzz-attribution.service';
 
@@ -137,29 +135,12 @@ export async function getAppEarnings(opts: {
   // caller's id. See the module header; dropping either one is the leak.
   const ownerUserId = access.ownerUserId;
   const [authorFees, goods] = await Promise.all([
-    getAuthorFeeEarningsForApp({
-      appBlockId,
-      currentOwnerUserId: ownerUserId,
-      from: opts.from,
-      to: opts.to,
-    }),
-    // Same narrow degradation as `blocks.getMyRevenue`: only the missing table is reported as
-    // unreadable; any other failure rethrows.
-    getGoodsSalesForOwner({ ownerUserId, appBlockId, from: opts.from, to: opts.to }).catch(
-      (error) => {
-        if (!isMissingGoodsTableError(error)) throw error;
-        logToAxiom(
-          {
-            name: 'block-goods-earnings',
-            type: 'error',
-            message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
-            appBlockId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          'civitai-prod'
-        ).catch(() => undefined);
-        return unreadableGoodsSales();
-      }
+    // The app's CURRENT owner, not the caller: owner and editors see the same whole-app
+    // figure, and a transferred app shows only what accrued to the owner now holding it.
+    getAuthorFeeEarningsForOwner({ ownerUserId, appBlockId, from: opts.from, to: opts.to }),
+    unreadableIfGoodsTableMissing(
+      getGoodsSalesForOwner({ ownerUserId, appBlockId, from: opts.from, to: opts.to }),
+      { appBlockId }
     ),
   ]);
 

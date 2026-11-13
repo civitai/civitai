@@ -45,7 +45,7 @@ export const AUTHOR_FEE_RECENT_LIMIT = 20;
 
 /**
  * The default window for paid fees when the caller gives no range, so a revenue load does not group
- * an owner's whole fee history. One constant for both entry points.
+ * an owner's or app's whole fee history.
  */
 export const AUTHOR_FEE_DEFAULT_WINDOW_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -159,33 +159,4 @@ export async function getAuthorFeeEarningsForOwner({
   result.recent = recent;
   result.paidWindowDays = explicit ? null : AUTHOR_FEE_DEFAULT_WINDOW_DAYS;
   return result;
-}
-
-/**
- * One app's author-fee earnings, for the collaborator surface (`appCollaborators.getAppEarnings`).
- *
- * Scoped to the app AND to its CURRENT owner, never to the caller, so the owner and every accepted
- * editor see the same whole-app figure, and a transferred app shows only what accrued to the owner
- * now holding it (the previous owner keeps theirs on their own revenue page).
- */
-export function getAuthorFeeEarningsForApp({
-  appBlockId,
-  currentOwnerUserId,
-  from,
-  to,
-  now,
-}: {
-  appBlockId: string;
-  currentOwnerUserId: number;
-  from?: Date;
-  to?: Date;
-  now?: Date;
-}): Promise<AuthorFeeEarnings> {
-  return getAuthorFeeEarningsForOwner({
-    ownerUserId: currentOwnerUserId,
-    appBlockId,
-    from,
-    to,
-    now,
-  });
 }

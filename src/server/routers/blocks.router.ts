@@ -202,8 +202,7 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
   getGoodsSalesForOwner,
-  isMissingGoodsTableError,
-  unreadableGoodsSales,
+  unreadableIfGoodsTableMissing,
 } from '~/server/services/blocks/buzz-attribution.service';
 import { getAuthorFeeEarningsForOwner } from '~/server/services/blocks/author-fee-earnings.service';
 import {
@@ -8625,43 +8624,12 @@ export const blocksRouter = router({
           from,
           to,
         }),
-        // 🔴 THE ONLY BRANCH THAT MAY DEGRADE, and only for ONE error. The table
-        // `block_good_purchase` is applied BY HAND per environment (see the
-        // migration header), so this code can legitimately run against a database
-        // that does not have it. Unguarded, that takes down BOTH revenue pages
-        // entirely — including the author-fee figures, which are readable.
-        //
-        // 🔴 `isMissingGoodsTableError` IS WHAT MAKES THIS SAFE, AND THE WIDE
-        // VERSION OF THIS CATCH WAS A BUG. Catching every rejection means a column
-        // rename, a bad argument or a `TypeError` in the aggregate is reported to
-        // the owner as "sales could not be loaded" — politely, in production,
-        // indefinitely. That is the invisible-revenue defect this change exists to
-        // fix, re-entering through the error path. Anything that is not the missing
-        // table RETHROWS and the proc fails loudly, as it should.
-        //
-        // 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `emptyGoodsSales()` here
-        // would report "no sales" for a rail that was never read — the fabricated
-        // zero this surface is built to prevent. `unreadableGoodsSales()` carries
-        // `unavailable: 'unreadable'` and `RevenuePanel` branches on it.
-        getGoodsSalesForOwner({
-          ownerUserId: user.id,
-          appBlockId: input.appBlockId,
-          from,
-          to,
-        }).catch((error) => {
-          if (!isMissingGoodsTableError(error)) throw error;
-          logToAxiom(
-            {
-              name: 'block-goods-earnings',
-              type: 'error',
-              message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
-              ownerUserId: user.id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            'civitai-prod'
-          ).catch(() => undefined);
-          return unreadableGoodsSales();
-        }),
+        // The one branch that may degrade, and only for a missing `block_good_purchase`
+        // table; see `unreadableIfGoodsTableMissing`.
+        unreadableIfGoodsTableMissing(
+          getGoodsSalesForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
+          { ownerUserId: user.id }
+        ),
       ]);
       return { authorFees, goods };
     }),

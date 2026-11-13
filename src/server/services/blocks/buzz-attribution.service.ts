@@ -1840,6 +1840,43 @@ export async function getGoodsSalesForOwner({
 }
 
 /**
+ * `read` with the ONE degradation the goods rail allows, for every caller of
+ * `getGoodsSalesForOwner` that serves a revenue page.
+ *
+ * 🔴 ONLY THE MISSING TABLE DEGRADES. `block_good_purchase` is applied by hand per
+ * environment, so a database can legitimately lack it, and unguarded that takes down the
+ * whole revenue payload, including figures that are readable. Anything else (a column
+ * rename, a bad argument, a `TypeError`) RETHROWS: catching it would report a real defect
+ * to the owner as "sales could not be loaded", indefinitely.
+ *
+ * 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `unreadableGoodsSales()` carries
+ * `unavailable: 'unreadable'`, which the panels branch on; `emptyGoodsSales()` would
+ * report "no sales" for a rail that was never read.
+ *
+ * Takes the read as a promise, not its arguments, so callers' tests can still stub
+ * `getGoodsSalesForOwner` at the module boundary.
+ */
+export function unreadableIfGoodsTableMissing(
+  read: Promise<GoodsSalesSummary>,
+  logContext: Record<string, unknown>
+): Promise<GoodsSalesSummary> {
+  return read.catch((error: unknown) => {
+    if (!isMissingGoodsTableError(error)) throw error;
+    logToAxiom(
+      {
+        name: 'block-goods-earnings',
+        type: 'error',
+        message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
+        ...logContext,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'civitai-prod'
+    ).catch(() => undefined);
+    return unreadableGoodsSales();
+  });
+}
+
+/**
  * Why there is exactly ONE reason value and not two.
  *
  * No revenue read *computes* ownership — each scopes its aggregate with

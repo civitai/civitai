@@ -210,8 +210,9 @@ const SUBTITLE =
 
 /**
  * The author-fee card's cadence claim, pinned whole. Like the goods tooltip it PROMISES a
- * disbursement, so it is admissible only while the daily settlement job is registered and
- * the "paid" figure reads the rows that job settles — both asserted below.
+ * disbursement, so it is admissible only while the daily settlement job is registered on a
+ * daily cron (asserted below). That the "paid" figure is the rows that job settles is proven
+ * against real queries in `author-fee-earnings.pglite.test.ts`.
  */
 const AUTHOR_FEE_PAYOUT_COPY =
   'Viewers pay your author fee when they run a generation in your app. Fees are paid into ' +
@@ -435,9 +436,6 @@ describe('app earnings copy does not promise a payout pipeline that does not run
         String.raw`${AUTHOR_FEE_JOB_EXPORT}\s*=\s*createJob\(\s*'[^']+',\s*'\d+ \d+ \* \* \*'`
       )
     );
-    // ...and "paid to you" is the rows that job settles, not a separate figure.
-    const service = stripComments(read(AUTHOR_FEE_EARNINGS_SERVICE));
-    expect(service).toMatch(/\.status\s*===\s*STATUS_SETTLED\s*\?\s*'settled'/);
   });
 
   it('no author surface renders the card-purchase share, which is never paid out', () => {
