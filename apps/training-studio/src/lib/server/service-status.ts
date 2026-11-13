@@ -13,7 +13,10 @@ export const TRAINING_STATUS_UNKNOWN_MESSAGE =
 
 // The last status this process read. The "training paused" flag is a moderator control on a paid
 // submit, so a failed read must not turn an operator's "paused" back into "available". No age
-// bound: while the store is unreachable its value cannot change either.
+// bound, and that is a trade-off, not a guarantee: a pod cut off from sys-redis keeps serving its
+// last-known value for as long as the outage lasts, so a pause (or an un-pause) a moderator saves
+// meanwhile, through a process that can still reach sys-redis, is not seen by the cut-off pod
+// until its reads succeed again.
 let lastKnown: TrainingServiceStatus | undefined;
 
 async function readRaw(): Promise<unknown> {
@@ -48,7 +51,8 @@ export async function getTrainingServiceStatus(): Promise<TrainingServiceStatus>
       name: 'training-studio-status-read',
       type: 'error',
       message: 'training status read failed',
-      served: failOpen ? 'defaults' : lastKnown ? 'last-known-good' : 'paused',
+      // Same vocabulary as the main app's reader (`last-known-good` | `fail-closed` | `defaults`).
+      served: failOpen ? 'defaults' : lastKnown ? 'last-known-good' : 'fail-closed',
       error: safeError(err),
     });
     if (failOpen) return parseServiceStatus(null);

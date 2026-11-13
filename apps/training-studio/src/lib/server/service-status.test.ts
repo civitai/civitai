@@ -50,7 +50,7 @@ describe('getTrainingServiceStatus', () => {
       blockedModelReasons: {},
     });
     expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'training-studio-status-read', served: 'paused' })
+      expect.objectContaining({ name: 'training-studio-status-read', served: 'fail-closed' })
     );
   });
 

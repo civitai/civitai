@@ -69,6 +69,7 @@ vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
 
 import {
   getTrainingServiceStatus,
+  getTrainingServiceStatusState,
   TRAINING_STATUS_UNKNOWN_MESSAGE,
   __resetTrainingStatusLastKnownForTests,
 } from '~/server/services/training.service';
@@ -106,7 +107,7 @@ describe('getTrainingServiceStatus — sysRedis hGet (fail-open to defaults, par
       'defaults-firing',
       'getTrainingServiceStatus',
       expect.any(Error),
-      { served: 'paused' }
+      { served: 'fail-closed' }
     );
   });
 
@@ -156,5 +157,44 @@ describe('getTrainingServiceStatus — sysRedis hGet (fail-open to defaults, par
       expect.any(Error),
       { served: 'defaults' }
     );
+  });
+});
+
+// `known` decides whether the public status endpoints may edge-cache the answer (see
+// training.router getStatus / getPublicStatus). Only the fail-closed fallback is unknown.
+describe('getTrainingServiceStatusState — known', () => {
+  it('a live read is known', async () => {
+    hGet.mockResolvedValue(JSON.stringify({ available: false, message: 'paused' }));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: true,
+      status: { available: false, message: 'paused' },
+    });
+  });
+
+  it('DOWN with nothing read yet: the fail-closed fallback is NOT known', async () => {
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: false,
+      status: { available: false, message: TRAINING_STATUS_UNKNOWN_MESSAGE },
+    });
+  });
+
+  it('DOWN after a good read: the last-known value is known', async () => {
+    hGet.mockResolvedValueOnce(JSON.stringify({ available: false, message: 'paused for upgrade' }));
+    await getTrainingServiceStatusState();
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: true,
+      status: { available: false, message: 'paused for upgrade' },
+    });
+  });
+
+  it('TRAINING_STATUS_FAIL_CLOSED off: the "available" default is known (cached, as before)', async () => {
+    setEnv({ TRAINING_STATUS_FAIL_CLOSED: false });
+    hGet.mockRejectedValue(new Error('sysRedis connection is down'));
+    await expect(getTrainingServiceStatusState()).resolves.toMatchObject({
+      known: true,
+      status: { available: true },
+    });
   });
 });
