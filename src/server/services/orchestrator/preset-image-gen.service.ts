@@ -382,7 +382,7 @@ export async function whatIfPresetImageGen(
   const { user, token, currencies, flags } = args;
   const input = graphInputOf(args, true);
 
-  const { externalCtx } = await buildGenerationContext(
+  const { externalCtx, status } = await buildGenerationContext(
     user.tier ?? 'free',
     flags,
     { id: user.id, isModerator: user.isModerator },
@@ -392,6 +392,10 @@ export async function whatIfPresetImageGen(
     // on-site and the App Blocks numbers.
     'preset'
   );
+  // As onsite refuses `whatIfFromGraph`: no price for a generation the switch would refuse.
+  if (env.PRESET_ENFORCE_GENERATION_STATUS) {
+    assertGenerationStatusAllows(status, { isModerator: user.isModerator, tier: user.tier });
+  }
 
   const result = await whatIfFromGraph({
     input,

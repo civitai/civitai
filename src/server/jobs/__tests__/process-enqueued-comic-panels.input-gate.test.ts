@@ -6,13 +6,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const h = vi.hoisted(() => ({
   submitPresetImageGen: vi.fn(async () => ({ id: 'wf-1' })),
   auditPromptServer: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
-  getHighestTierSubscription: vi.fn(
-    async (_userId: number): Promise<{ tier: string } | null> => null
+  getSessionUserById: vi.fn(
+    async (_userId: number): Promise<{ tier?: string } | null> => ({ tier: undefined })
   ),
 }));
 
-vi.mock('~/server/services/subscriptions.service', () => ({
-  getHighestTierSubscription: h.getHighestTierSubscription,
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: h.getSessionUserById },
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'token'),
@@ -36,6 +36,9 @@ import { GENERATION_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/generati
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
+import { GenerationConfigUnavailableError } from '~/server/services/generation/generation-kill-switch';
+import { throwServiceUnavailableError } from '~/server/utils/errorHandling';
 
 const OWNER = 5;
 const OTHER_USER = 7;
@@ -100,7 +103,8 @@ const run = () => processEnqueuedComicPanelsJob.run({}).result;
 beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbWrite.$queryRaw.mockReset();
-  h.getHighestTierSubscription.mockResolvedValue(null);
+  h.getSessionUserById.mockResolvedValue({ tier: undefined });
+  resetEnv();
 });
 
 describe('process-enqueued-comic-panels: reference image re-check', () => {
@@ -164,13 +168,7 @@ describe('process-enqueued-comic-panels: account restriction', () => {
  * retries it, rather than being Failed with the outage's message; the rest of the run stops.
  */
 describe('process-enqueued-comic-panels: prompt check unavailable', () => {
-  const unavailable = () =>
-    new TRPCError({
-      code: 'SERVICE_UNAVAILABLE',
-      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
-    });
-
-  beforeEach(() => resetEnv());
+  const unavailable = () => new PromptCheckUnavailableError(new Error('classifier down'));
 
   it('leaves the panel Enqueued, submits nothing, and stops the run', async () => {
     givenPanel(CDN, {}, 3);
@@ -209,10 +207,33 @@ describe('process-enqueued-comic-panels: prompt check unavailable', () => {
     expect(h.auditPromptServer).toHaveBeenCalledTimes(1);
   });
 
-  it("the submit's own check (inside submitPresetImageGen) leaves the panel Enqueued and stops the run", async () => {
+  /** What the submit (`submitPresetImageGen`) can throw as a 503, and what happens to the panel. */
+  const submitThrows = (error: unknown) => {
     givenPanel(CDN, {}, 2);
     givenPrivateImageOf(OWNER);
-    h.submitPresetImageGen.mockRejectedValueOnce(unavailable());
+    h.submitPresetImageGen.mockRejectedValueOnce(error);
+  };
+  const orchestratorTimeout = () =>
+    // The orchestrator submit's own 503 (a per-attempt timeout): the workflow may already be
+    // queued and charged.
+    new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Your generation may already be queued. Check your queue before trying again.',
+    });
+  const orchestrator5xx = () =>
+    (() => {
+      try {
+        throwServiceUnavailableError(null, new Error('upstream 502'));
+      } catch (e) {
+        return e;
+      }
+    })();
+
+  it.each([
+    ['the prompt check inside it', unavailable],
+    ['the generation settings read inside it', () => new GenerationConfigUnavailableError()],
+  ])('a 503 from %s leaves the panels Enqueued and stops the run', async (_, error) => {
+    submitThrows(error());
     await run();
     expect(panels.map((p) => p.status)).toEqual([
       ComicPanelStatus.Enqueued,
@@ -222,13 +243,41 @@ describe('process-enqueued-comic-panels: prompt check unavailable', () => {
     expect(h.submitPresetImageGen).toHaveBeenCalledTimes(1);
   });
 
-  it("PROMPT_CHECK_FAIL_CLOSED off: the submit's 503 fails the panel, as before", async () => {
-    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
-    givenPanel(CDN);
-    givenPrivateImageOf(OWNER);
-    h.submitPresetImageGen.mockRejectedValueOnce(unavailable());
+  // 🔴 Money: a 503 from the orchestrator itself may mean the workflow was queued and charged.
+  // Left Enqueued, the next run would submit it again with no externalId, a second charge.
+  it.each([
+    ['an orchestrator submit timeout', orchestratorTimeout],
+    ['an orchestrator 5xx', orchestrator5xx],
+  ])('a 503 from %s fails the panel, which is never resubmitted', async (_, error) => {
+    submitThrows(error());
     await run();
     expect(panels[0].status).toBe(ComicPanelStatus.Failed);
+    // The run goes on to the next panel: the outage is not ours to wait out.
+    expect(panels[1].status).toBe(ComicPanelStatus.Generating);
+    await run();
+    expect(h.submitPresetImageGen).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['PROMPT_CHECK_FAIL_CLOSED', unavailable],
+    ['PRESET_ENFORCE_GENERATION_STATUS', () => new GenerationConfigUnavailableError()],
+  ])('%s off: its 503 from the submit fails the panel, as before', async (name, error) => {
+    setEnv({ [name]: false });
+    submitThrows(error());
+    await run();
+    expect(panels[0].status).toBe(ComicPanelStatus.Failed);
+  });
+
+  it('PROMPT_CHECK_FAIL_CLOSED off leaves the generation settings 503 retried, and vice versa', async () => {
+    setEnv({ PROMPT_CHECK_FAIL_CLOSED: false });
+    submitThrows(new GenerationConfigUnavailableError());
+    await run();
+    expect(panels[0].status).toBe(ComicPanelStatus.Enqueued);
+    resetEnv();
+    setEnv({ PRESET_ENFORCE_GENERATION_STATUS: false });
+    submitThrows(unavailable());
+    await run();
+    expect(panels[0].status).toBe(ComicPanelStatus.Enqueued);
   });
 
   it('PROMPT_CHECK_FAIL_CLOSED off: the panel is Failed, as before', async () => {
@@ -257,21 +306,33 @@ describe('process-enqueued-comic-panels: prompt check unavailable', () => {
 
 /**
  * The job submits as the panel's owner: `submitPresetImageGen` applies the generation kill switch
- * with that user's moderator flag and subscription tier, and its refusal fails the panel.
+ * with that user's moderator flag and their SESSION tier (the auth hub's: active / trialing
+ * subscriptions and a membership override), so members-only treats them as onsite does.
  */
 describe('process-enqueued-comic-panels: generation kill switch', () => {
   it.each([
-    [{ isModerator: false }, null, { isModerator: false, tier: 'free' }],
-    [{ isModerator: false }, { tier: 'gold' }, { isModerator: false, tier: 'gold' }],
-    [{ isModerator: true }, null, { isModerator: true, tier: 'free' }],
-  ])('submits as the owner %j with subscription %j', async (owner, sub, expected) => {
+    // An override member (or an active subscriber): the session says gold.
+    ['a member by override', { isModerator: false }, { tier: 'gold' }, 'gold'],
+    // Only an incomplete or paused subscription: the session has no tier.
+    ['a user with no active subscription', { isModerator: false }, { tier: undefined }, 'free'],
+    ['a moderator', { isModerator: true }, { tier: undefined }, 'free'],
+  ])('submits %s with their session tier', async (_, owner, session, tier) => {
     givenPanel(CDN, owner);
     givenPrivateImageOf(OWNER);
-    h.getHighestTierSubscription.mockResolvedValue(sub);
+    h.getSessionUserById.mockResolvedValue(session);
     await run();
-    expect(h.getHighestTierSubscription).toHaveBeenCalledWith(OWNER);
+    expect(h.getSessionUserById).toHaveBeenCalledWith(OWNER);
     const [[args]] = h.submitPresetImageGen.mock.calls as unknown as [[{ user: unknown }]];
-    expect(args.user).toMatchObject({ id: OWNER, ...expected });
+    expect(args.user).toMatchObject({ id: OWNER, isModerator: owner.isModerator, tier });
+  });
+
+  it('leaves the panels Enqueued when the session cannot be read', async () => {
+    givenPanel(CDN);
+    givenPrivateImageOf(OWNER);
+    h.getSessionUserById.mockResolvedValue(null);
+    await run();
+    expect(panels[0].status).toBe(ComicPanelStatus.Enqueued);
+    expect(h.submitPresetImageGen).not.toHaveBeenCalled();
   });
 
   it("fails the panel with the operator's message when the switch refuses the owner", async () => {

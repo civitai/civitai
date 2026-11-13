@@ -79,6 +79,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
 import * as generationService from '~/server/services/generation/generation.service';
+import { GenerationConfigUnavailableError } from '~/server/services/generation/generation-kill-switch';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -150,10 +151,13 @@ describe('buildGenerationContext — kill switch and gate rules on a sysRedis fa
   it('sysRedis down with nothing read before: refused with a clear error, never enabled', async () => {
     sysRedisDown();
 
-    await expect(buildGenerationContext('free', {}, {}, 'onsite')).rejects.toMatchObject({
+    const error = await buildGenerationContext('free', {}, {}, 'onsite').catch((e: unknown) => e);
+    expect(error).toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
       message: 'Generation is temporarily unavailable. Please try again in a few minutes.',
     });
+    // Its own class: the comic-panels job retries this one, never an orchestrator 503.
+    expect(error).toBeInstanceOf(GenerationConfigUnavailableError);
   });
 
   it('...for a moderator and an App Blocks caller too', async () => {

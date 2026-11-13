@@ -19,9 +19,14 @@ import { describe, expect, it } from 'vitest';
  * What counts, from the parse (so a name in a comment, a string or a type never does): every VALUE
  * reference to either function's identifier — a call, and also an alias (`const f = …`), a
  * `.call(…)` or a parenthesized call, each of which is a reference to the name — plus a call
- * through a property (`mod.generateFromGraph(…)`). An import or destructure that renames either
- * function is refused outright, since the scan matches names. Not seen: a property READ that is
- * not called on the spot (`const f = mod.generateFromGraph`).
+ * through a property (`mod.generateFromGraph(…)`). An import, re-export or destructure that
+ * renames either function is refused outright, since the scan matches names. Not seen: a property
+ * READ that is not called on the spot (`const f = mod.generateFromGraph`).
+ *
+ * 🔴 NOT EVERY GENERATION PATH GOES THROUGH THESE TWO FUNCTIONS. App Blocks submits build their own
+ * workflows and reach the orchestrator through `submitWorkflow`, so this ledger cannot see them;
+ * they apply the switch in `blocks.router.ts` (`assertBlockGenerationAllowed`), and a new
+ * `submitWorkflow` caller is not caught here.
  */
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -129,7 +134,7 @@ function scan() {
         bucket[key] = (bucket[key] ?? 0) + 1;
       }
       if (
-        (ts.isImportSpecifier(node) || ts.isBindingElement(node)) &&
+        (ts.isImportSpecifier(node) || ts.isExportSpecifier(node) || ts.isBindingElement(node)) &&
         node.propertyName &&
         ts.isIdentifier(node.propertyName) &&
         isTarget(node.propertyName.text) &&

@@ -4,14 +4,19 @@ import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
 const mockBuildGenerationContext = vi.fn();
 const mockGenerateFromGraph = vi.fn();
+const mockWhatIfFromGraph = vi.fn();
 
 vi.mock('~/server/services/orchestrator/orchestration-new.service', () => ({
   buildGenerationContext: (...args: unknown[]) => mockBuildGenerationContext(...args),
   generateFromGraph: (...args: unknown[]) => mockGenerateFromGraph(...args),
-  whatIfFromGraph: vi.fn(),
+  whatIfFromGraph: (...args: unknown[]) => mockWhatIfFromGraph(...args),
 }));
 
-import { PRESET_MODEL_CONFIG, submitPresetImageGen } from '../preset-image-gen.service';
+import {
+  PRESET_MODEL_CONFIG,
+  submitPresetImageGen,
+  whatIfPresetImageGen,
+} from '../preset-image-gen.service';
 
 /**
  * Every preset entry point (comics, iterate, remix apps, article reframe, the queued comic-panels
@@ -45,6 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetEnv();
   mockGenerateFromGraph.mockResolvedValue({ id: 'wf_1' });
+  mockWhatIfFromGraph.mockResolvedValue({ cost: { total: 7 }, ready: true });
 });
 
 describe('submitPresetImageGen obeys the generation kill switch', () => {
@@ -81,4 +87,39 @@ describe('submitPresetImageGen obeys the generation kill switch', () => {
       expect(mockGenerateFromGraph).toHaveBeenCalledTimes(1);
     }
   );
+});
+
+// As onsite refuses `whatIfFromGraph`: no price for a generation the switch would refuse.
+describe('whatIfPresetImageGen obeys the generation kill switch', () => {
+  const priceAs = (user: { isModerator: boolean; tier?: string }) =>
+    whatIfPresetImageGen({
+      aspectRatio: '1:1',
+      modelConfig,
+      user: { id: 42, ...user } as never,
+      token: 'tok',
+      currencies: [],
+    });
+
+  it.each(['disabled', 'memberOnly'])('%s refuses a free user', async (mode) => {
+    givenSwitch(mode);
+    await expect(priceAs({ isModerator: false, tier: 'free' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: MESSAGE,
+    });
+    expect(mockWhatIfFromGraph).not.toHaveBeenCalled();
+  });
+
+  it('memberOnly prices for a member', async () => {
+    givenSwitch('memberOnly');
+    await expect(priceAs({ isModerator: false, tier: 'gold' })).resolves.toEqual({
+      cost: 7,
+      ready: true,
+    });
+  });
+
+  it('PRESET_ENFORCE_GENERATION_STATUS off: disabled prices again', async () => {
+    setEnv({ PRESET_ENFORCE_GENERATION_STATUS: false });
+    givenSwitch('disabled');
+    await expect(priceAs({ isModerator: false, tier: 'free' })).resolves.toMatchObject({ cost: 7 });
+  });
 });
