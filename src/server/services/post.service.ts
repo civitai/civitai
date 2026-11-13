@@ -973,10 +973,18 @@ async function getSongCovers<S extends Prisma.ImageSelect = typeof songCoverSele
       : [];
   });
   if (!links.length) return new Map<number, Cover>();
-  // The songs come back too, for their owner: a cover must be theirs.
+  // The songs come back too, for their owner: a cover must be theirs. Typed as the plain select so
+  // the generic `S` does not reach `findMany`'s inference (two Prisma client types, TS2719).
+  const select: Prisma.ImageSelect = {
+    ...coverSelect,
+    id: true,
+    userId: true,
+    postId: true,
+    metadata: true,
+  };
   const rows = (await (db as typeof dbRead).image.findMany({
     where: { id: { in: links.flatMap(({ songId, coverId }) => [songId, coverId]) } },
-    select: { ...coverSelect, id: true, userId: true, postId: true, metadata: true },
+    select,
   })) as unknown as ({
     id: number;
     userId: number;
