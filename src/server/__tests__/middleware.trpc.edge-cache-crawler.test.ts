@@ -19,6 +19,10 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const testRouter = router({
   cached: publicProcedure.use(edgeCacheIt({ ttl: 120 })).query(() => ({ ok: true })),
+  // A scheduled expiry overwrites the incoming TTL, so only the post-resolver check holds here.
+  expiring: publicProcedure
+    .use(edgeCacheIt({ expireAt: () => new Date(Date.now() + 900_000) }))
+    .query(() => ({ ok: true })),
 });
 const createCaller = createCallerFactory(testRouter);
 
@@ -45,5 +49,12 @@ describe('edgeCacheIt and verified crawlers', () => {
     await createCaller(root as unknown as Context).cached();
     expect(root.cache.edgeTTL).toBe(0);
     expect(willEdgeCache(root.cache)).toBe(false);
+  });
+
+  it("never raises the TTL for a verified crawler's call, even with a scheduled expiry", async () => {
+    const root = rootCtx({ 'x-civitai-verified-bot': 'googlebot' });
+    root.cache.edgeTTL = 0;
+    await createCaller(root as unknown as Context).expiring();
+    expect(root.cache.edgeTTL).toBe(0);
   });
 });
