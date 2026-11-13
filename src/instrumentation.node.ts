@@ -26,7 +26,6 @@ import {
 import { registerCpuProfiler, registerEventLoopStallProfiler } from '~/server/cpu-profiler';
 import { registerEventLoopLongTaskDetector } from '~/server/eventloop-longtask';
 import { registerLivenessHeartbeat } from '~/server/liveness-heartbeat';
-import { registerDrainSignalHandlers } from '~/server/drain-state';
 import { registerEventLoopWatchdog } from '~/server/eventloop-watchdog';
 import { registerPyroscope } from '~/server/pyroscope';
 import { registerStandaloneApiPolicy } from '~/server/middleware/standalone-api-policy';
@@ -104,11 +103,6 @@ registerEventLoopLongTaskDetector();
 // because it's served by the same saturated loop. See liveness-heartbeat.ts and
 // the liveness-probe history in the deployment manifests.
 registerLivenessHeartbeat();
-
-// Flag the process as draining on SIGTERM/SIGINT so /api/readyz stops reporting Ready while the
-// server shuts down. Only sets a flag; the server's own signal handler still does the exit.
-// See src/server/drain-state.ts.
-registerDrainSignalHandlers();
 
 // Spawn the off-loop event-loop wedge detector. Everything else that watches the
 // loop — the loopstall self-trigger above, the long-task detector, /api/metrics —

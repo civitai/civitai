@@ -3,8 +3,8 @@ import type client from 'prom-client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 
-// /api/readyz: pod-local readiness. It must answer from in-process state only, so a dependency
-// outage (which hits every pod at once) can never mark the whole fleet unready.
+// /api/readyz: pod-local readiness. 200 once warm, 503 before, from in-process state only, so a
+// dependency outage (which hits every pod at once) can never mark the whole fleet unready.
 
 // db and redis are the shared canonical mocks (src/__tests__/mocks): every call on them is
 // recorded, so `calledHybridNodes` lists any the route made. ClickHouse has no canonical mock, so
@@ -87,32 +87,24 @@ async function call(handler: (req: never, res: never) => unknown) {
   return res;
 }
 
-// A healthy pod: warm, heartbeat 1s old, not draining. Written straight onto the shared globals
-// so each test starts from a known state.
-function setHealthyPodState() {
-  globalThis.__civitaiWarmState = { ready: true, state: 'warmed-ok', durationMs: 1 };
-  globalThis.__civitaiLivenessHeartbeat = { lastBeatMs: Date.now() - 1_000 };
-  globalThis.__civitaiDrainState = { draining: false, sinceMs: null, handlersInstalled: true };
-}
-
-// The modules read the globals once at import (`globalThis.x ??= …`) and keep a reference, so
-// mutate the existing objects rather than replacing them after import.
-function warmState() {
-  return globalThis.__civitaiWarmState!;
-}
-function heartbeat() {
-  return globalThis.__civitaiLivenessHeartbeat!;
-}
-function drain() {
-  return globalThis.__civitaiDrainState!;
+const WARM_ENV = [
+  'WARMUP_ENABLED',
+  'WARMUP_ROUTES',
+  'WARM_INITIAL_JITTER_MAX_MS',
+  'WARM_INTER_ROUTE_JITTER_MAX_MS',
+] as const;
+function clearWarmEnv() {
+  for (const k of WARM_ENV) delete process.env[k];
 }
 
 let handler: (req: never, res: never) => unknown;
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(async () => {
+  clearWarmEnv();
   vi.resetModules();
-  setHealthyPodState();
+  // A warm pod, written onto the shared global before the modules read it.
+  globalThis.__civitaiWarmState = { ready: true, state: 'warmed-ok', durationMs: 1 };
   handler = (await import('~/pages/api/readyz')).default as never;
   runHealthChecks.mockClear();
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('readyz must not fetch'));
@@ -120,6 +112,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   fetchSpy.mockRestore();
+  clearWarmEnv();
 });
 
 describe('/api/readyz', () => {
@@ -142,127 +135,64 @@ describe('/api/readyz', () => {
     await expect(fetch('http://localhost/')).rejects.toThrow(/must not fetch/);
   });
 
-  it('is 503 "cold" before warmup finishes', async () => {
-    warmState().ready = false;
-    warmState().state = 'in-progress';
+  it('is 503 "cold" before warmup finishes, with no I/O either', async () => {
+    globalThis.__civitaiWarmState!.ready = false;
+    globalThis.__civitaiWarmState!.state = 'in-progress';
     const res = await call(handler);
     expect(res._status()).toBe(503);
-    expect(res._json()).toMatchObject({
-      ready: false,
-      reasons: ['cold'],
-      warmState: 'in-progress',
-    });
-  });
-
-  it('is 503 "draining" once the process is shutting down', async () => {
-    drain().draining = true;
-    const res = await call(handler);
-    expect(res._status()).toBe(503);
-    expect(res._json()).toMatchObject({ ready: false, reasons: ['draining'] });
-  });
-
-  it('is 503 "heartbeat-stale" when the heartbeat is older than the limit, 200 just under it', async () => {
-    const { READYZ_HEARTBEAT_MAX_AGE_MS } = await import('~/server/readiness');
-    expect(READYZ_HEARTBEAT_MAX_AGE_MS).toBe(15_000);
-
-    heartbeat().lastBeatMs = Date.now() - 20_000;
-    const stale = await call(handler);
-    expect(stale._status()).toBe(503);
-    expect(stale._json()).toMatchObject({ ready: false, reasons: ['heartbeat-stale'] });
-    expect((stale._json().heartbeatAgeMs as number) >= 20_000).toBe(true);
-
-    heartbeat().lastBeatMs = Date.now() - 10_000;
-    expect((await call(handler))._status()).toBe(200);
-  });
-
-  it('is 503 "heartbeat-missing" when the heartbeat never ticked in this process', async () => {
-    heartbeat().lastBeatMs = null;
-    const res = await call(handler);
-    expect(res._status()).toBe(503);
-    expect(res._json()).toMatchObject({ ready: false, reasons: ['heartbeat-missing'] });
-  });
-
-  it('reports every failing reason at once', async () => {
-    warmState().ready = false;
-    heartbeat().lastBeatMs = Date.now() - 60_000;
-    drain().draining = true;
-    const res = await call(handler);
-    expect(res._status()).toBe(503);
-    expect(res._json()).toMatchObject({ reasons: ['cold', 'heartbeat-stale', 'draining'] });
+    expect(res._json()).toEqual({ ready: false, reason: 'cold' });
+    expect(res._headers['cache-control']).toBe('no-store');
+    expect(runHealthChecks).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(calledHybridNodes(DEP_ROOTS)).toEqual([]);
   });
 });
 
-// The writers of this state run from instrumentation, which Next bundles separately from the API
-// routes, so the writer and the route each get their own instance of these modules. Reproduce
-// that here: import the handler, reset the module registry, import the writers again (a second,
-// independent instance) and write through them. A reader holding module-local state would never
-// see those writes, and every pod would stay 503.
-describe('/api/readyz reads state written by a separate module instance', () => {
+// The warmer runs from instrumentation, which Next bundles separately from the API routes, so the
+// writer and the route each get their own instance of warmup.ts. Reproduce that: import the route,
+// reset the module registry, and run the warmer from a second, independent instance. A route
+// holding module-local warm state would never see the flip, and every pod would stay 503.
+describe('/api/readyz reads warm state written by a separate module instance', () => {
   beforeEach(() => {
     delete globalThis.__civitaiWarmState;
-    delete globalThis.__civitaiLivenessHeartbeat;
-    delete globalThis.__civitaiDrainState;
   });
 
-  it('sees warm, heartbeat and draining set by the other instance', async () => {
+  it('flips to 200 when the other instance finishes warmup (warmer disabled)', async () => {
     vi.resetModules();
     const routeHandler = (await import('~/pages/api/readyz')).default as never;
-    // Fresh state, nothing written yet: cold, no heartbeat.
-    expect((await call(routeHandler))._json()).toMatchObject({
-      reasons: ['cold', 'heartbeat-missing'],
+    expect((await call(routeHandler))._status()).toBe(503);
+
+    vi.resetModules();
+    await (await import('~/server/warmup')).runWarmup();
+    expect((await call(routeHandler))._status()).toBe(200);
+  });
+
+  // The standalone server (scripts/trpc-server, both profiles) runs the same instrumentation
+  // register(), so the same warmer. It serves /api/live, which the warmer polls for the listener,
+  // but not most warm routes (SSR, and /api/v1/ under the trpc profile): those answer 404 there.
+  // Warmup must still complete and flip warm, or readyz would be 503 forever on that server.
+  it('flips to 200 when warmup is enabled and every warm route 404s (standalone server shape)', async () => {
+    vi.resetModules();
+    const routeHandler = (await import('~/pages/api/readyz')).default as never;
+    expect((await call(routeHandler))._status()).toBe(503);
+
+    process.env.WARMUP_ENABLED = 'true';
+    process.env.WARM_INITIAL_JITTER_MAX_MS = '0';
+    process.env.WARM_INTER_ROUTE_JITTER_MAX_MS = '0';
+    const urls: string[] = [];
+    fetchSpy.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      urls.push(url);
+      return new Response('', { status: url.includes('/api/live') ? 200 : 404 });
     });
 
     vi.resetModules();
-    const writerWarmup = await import('~/server/warmup');
-    const writerHeartbeat = await import('~/server/liveness-heartbeat-state');
-    const writerDrain = await import('~/server/drain-state');
+    const writer = await import('~/server/warmup');
+    await writer.runWarmup();
 
-    delete process.env.WARMUP_ENABLED; // disabled warmer flips warm immediately
-    await writerWarmup.runWarmup();
-    writerHeartbeat.recordHeartbeatTick();
+    // The warmer really ran and was answered 404 on its routes (not the disabled no-op).
+    expect(writer.getWarmState()).toBe('warmed-ok');
+    expect(urls.filter((u) => !u.includes('/api/live')).length).toBeGreaterThan(0);
     expect((await call(routeHandler))._status()).toBe(200);
-
-    writerDrain.markDraining();
-    const res = await call(routeHandler);
-    expect(res._status()).toBe(503);
-    expect(res._json()).toMatchObject({ reasons: ['draining'] });
-  });
-});
-
-describe('registerDrainSignalHandlers', () => {
-  it('sets draining on SIGTERM, ahead of the existing listeners, and installs once', async () => {
-    delete globalThis.__civitaiDrainState;
-    vi.resetModules();
-    const { registerDrainSignalHandlers, isDraining } = await import('~/server/drain-state');
-    // Stand-in for the server's own shutdown handler, already installed when instrumentation runs.
-    const serverShutdown = () => undefined;
-    process.on('SIGTERM', serverShutdown);
-    const before = process.listeners('SIGTERM');
-    const beforeInt = process.listeners('SIGINT');
-    try {
-      registerDrainSignalHandlers();
-      vi.resetModules();
-      // A second instance (the other bundle) must not install a second pair.
-      (await import('~/server/drain-state')).registerDrainSignalHandlers();
-
-      const after = process.listeners('SIGTERM');
-      expect(after.length).toBe(before.length + 1);
-      expect(process.listeners('SIGINT').length).toBe(beforeInt.length + 1);
-      const added = after[0] as () => void;
-      expect(before).not.toContain(added);
-      expect(after.indexOf(serverShutdown)).toBeGreaterThan(0);
-
-      expect(isDraining()).toBe(false);
-      added(); // what the process does on SIGTERM; not emitted, so the test runner is untouched
-      expect(isDraining()).toBe(true);
-    } finally {
-      process.removeListener('SIGTERM', serverShutdown);
-      for (const l of process.listeners('SIGTERM')) {
-        if (!before.includes(l)) process.removeListener('SIGTERM', l as never);
-      }
-      for (const l of process.listeners('SIGINT')) {
-        if (!beforeInt.includes(l)) process.removeListener('SIGINT', l as never);
-      }
-    }
   });
 });
