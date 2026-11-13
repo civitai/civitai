@@ -82,6 +82,13 @@ export class FakeSandboxService {
   readonly deleteBeforeOpen = new Set<string>();
   /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
   keepLimit = Infinity;
+  /**
+   * An unseeded create of a NEW app is refused with this 409 body (`code` and its details), as the
+   * service's app hibernate caps answer (`sleeping_limit` naming the `oldest`).
+   */
+  createRefusal: Record<string, unknown> | null = null;
+  /** Every seeded create's `seed`, as sent (a fork, or a wake with its ticket). */
+  readonly seeds: { app: string; seed: Record<string, unknown> }[] = [];
   readonly tools = new Map<string, FakeToolBody>();
   /** The host each sandbox's tunnel runs to (by sandbox name), as `tunnel_status` reports it. */
   readonly tunnelHosts = new Map<string, string>();
@@ -195,10 +202,25 @@ export class FakeSandboxService {
       const app = String((body as { app?: unknown } | undefined)?.app ?? '');
       if (this.deleteBeforeOpen.delete(app)) this.remove(app);
       const found = this.sandboxes.find((s) => s.app === app);
+      // A seeded create only creates, as the service's: an existing app is `already_exists`.
+      const seed = (body as { seed?: Record<string, unknown> } | undefined)?.seed;
+      if (seed) {
+        this.seeds.push({ app, seed });
+        if (found)
+          return json(409, {
+            error: 'a sandbox for this app already exists',
+            code: 'already_exists',
+          });
+        return json(201, {
+          ...this.#view(this.add(app, 'starting')),
+          seed: { files: 3, skipped: [] },
+        });
+      }
       if (found) {
         if (found.state === 'suspended') found.state = 'starting';
         return json(200, this.#view(found));
       }
+      if (this.createRefusal) return json(409, this.createRefusal);
       if (this.sandboxes.length >= this.keepLimit)
         return json(409, { error: `sandbox limit (${this.keepLimit}) reached; delete one first` });
       return json(201, this.#view(this.add(app, 'starting')));
@@ -207,6 +229,10 @@ export class FakeSandboxService {
     if (item) {
       const record = this.sandboxes.find((s) => s.name === item[1]);
       if (!record) return json(404, { error: 'not found' });
+      if (method === 'DELETE' && !item[2]) {
+        this.sandboxes.splice(this.sandboxes.indexOf(record), 1);
+        return json(200, { deleted: record.name });
+      }
       if (item[2]) record.state = 'suspended';
       else if (record.state === 'starting') {
         const looks = (this.#looks.get(record.name) ?? 0) + 1;
