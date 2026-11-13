@@ -132,7 +132,9 @@ export function MusicUpNextPanel({
   const onDragStart = ({ active }: DragStartEvent) => setDragId(Number(active.id));
   const onDragOver = ({ active, over }: DragOverEvent) => {
     const land = landing(active.id, over?.id);
-    setDropHint(land && over ? { id: over.id, side: 'side' in land ? land.side : 'before' } : null);
+    setDropHint(
+      land && over ? { id: over.id, side: ('side' in land && land.side) || 'before' } : null
+    );
   };
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     const land = landing(active.id, over?.id);

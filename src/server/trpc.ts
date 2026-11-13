@@ -42,6 +42,7 @@ import {
   runEnforceTokenScope,
 } from '~/server/services/oauth/enforce-token-scope';
 import { errorFormatter } from '~/server/trpc/error-formatter';
+import { toDbUnavailableError } from '~/server/utils/errorHandling';
 import type { Context } from './createContext';
 
 // Attribute + ship each devalue-write fallback (a non-POJO response payload that
@@ -315,8 +316,22 @@ const recordProcedureDuration = t.middleware(({ path, type, ctx, next }) => {
   return runRecordProcedureDuration(path, type, userId, caller, next);
 });
 
+// An unreachable database (or no pooled connection in time) answers a retryable 503 with a generic
+// message instead of a 500 carrying the driver's text. Database-originated errors only (db-errors.ts),
+// and each re-map logs a warning line, since a 503 skips the central error log. Inside
+// recordProcedureDuration, so the duration metric records the code the client actually gets.
+const mapDbUnavailable = t.middleware(async ({ path, next }) => {
+  const result = await next();
+  if (!result.ok) {
+    const mapped = toDbUnavailableError(result.error, path);
+    if (mapped) throw mapped;
+  }
+  return result;
+});
+
 export const publicProcedure = t.procedure
   .use(recordProcedureDuration)
+  .use(mapDbUnavailable)
   .use(isAcceptableOrigin)
   .use(enforceClientVersion)
   .use(applyDomainFeature)
@@ -431,9 +446,11 @@ export function guardFlagEnabled(
   return !!getFeatureFlags(ctx)[flag];
 }
 
-export const isFlagProtected = (flag: keyof FeatureAccess) =>
+/** Refuses unless the caller has at least one of `flags`. */
+export const isFlagProtected = (...flags: (keyof FeatureAccess)[]) =>
   middleware(({ ctx, next }) => {
-    if (!guardFlagEnabled(ctx, flag)) throw new TRPCError({ code: 'FORBIDDEN' });
+    if (!flags.some((flag) => guardFlagEnabled(ctx, flag)))
+      throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
   });

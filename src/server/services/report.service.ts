@@ -21,7 +21,7 @@ import type {
 } from '~/server/schema/report.schema';
 import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -680,8 +680,6 @@ export const createReport = async ({
       // has the Blocked row. Never throws.
       await refreshProfilePicturesForImagesLazy([id]);
       // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): search-index delete (Redis) inside the txn on the rare CSAM-block path. Moving out needs hoisting the CSAM guard post-commit; left for a focused change on this sensitive path.
-      await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-      // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): see above (CSAM-block path).
       await imagesMetricsSearchIndex.queueUpdate([
         { id, action: SearchIndexUpdateQueueAction.Delete },
       ]);

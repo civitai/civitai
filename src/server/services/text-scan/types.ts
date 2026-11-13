@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import type { CategoryTagType } from '~/server/services/system-cache';
 
 export const TEXT_SCAN_LABELS = [
   'nsfw',
@@ -63,6 +64,14 @@ export type TextScanProfile = {
   load: (ids: number[]) => Promise<Map<number, TextScanSubject>>;
   /** The subset of `labels` this subject is scanned for; all of them when absent. */
   labelsFor?: (subject: TextScanSubject) => TextScanLabel[];
+  /** Also classify the subject into one of these category tags, in a call apart from the scan. */
+  category?: TextScanCategoryHook;
+};
+
+export type TextScanCategoryHook = {
+  tagType: CategoryTagType;
+  /** null clears it. */
+  write: (entityId: number, tagId: number | null) => Promise<void>;
 };
 
 export type TextScanOutput = {

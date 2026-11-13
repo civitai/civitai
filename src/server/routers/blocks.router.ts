@@ -202,11 +202,9 @@ import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
   getGoodsSalesForOwner,
-  getRecentAttributionsForOwner,
-  getRevenueForOwner,
-  isMissingGoodsTableError,
-  unreadableGoodsSales,
+  unreadableIfGoodsTableMissing,
 } from '~/server/services/blocks/buzz-attribution.service';
+import { getAuthorFeeEarningsForOwner } from '~/server/services/blocks/author-fee-earnings.service';
 import {
   emptyAnalytics,
   getMyAppAnalytics,
@@ -432,6 +430,7 @@ import {
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
@@ -2402,6 +2401,23 @@ export const blocksRouter = router({
     }),
 
   /**
+   * The caller's remaining AUTOMATIC review builds today for `slug`, without spending one
+   * (review-autodeploy.service `readAutoBuildBudget`). `remaining: 0` means the next submission's
+   * review preview waits for a moderator instead of building on its own. Only the caller's own
+   * budget is readable.
+   */
+  getMyAutoReviewBuildBudget: appDeveloperProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getMyPendingForSlugSchema)
+    .query(async ({ ctx, input }) => {
+      const { readAutoBuildBudget } = await import(
+        '~/server/services/blocks/review-autodeploy.service'
+      );
+      if (!ctx.user) throw throwAuthorizationError();
+      return readAutoBuildBudget(ctx.user.id, input.slug);
+    }),
+
+  /**
    * APP DEV TUNNEL — start an on-site dev tunnel for one of the caller's OWN
    * apps. Mints a pubkey-bound tunnel credential + an unguessable
    * `dev-<16hex>.<APPS_DOMAIN>` host, and renders the ephemeral Traefik route.
@@ -4201,10 +4217,18 @@ export const blocksRouter = router({
       // first threw, the careful wording was discarded one layer below the test that asserted it
       // and the viewer saw a generic "something went wrong (ref: …)". 503 is that formatter's own
       // carve-out. Thrown AFTER the `finally`, so the teardown has already run.
+      //
+      // 🔴 `cause.consentRevokeRecorded` IS WHAT THE CLIENT BRANCHES ON, NOT THE 503 CODE. The
+      // `mapDbUnavailable` middleware in `src/server/trpc.ts` answers ANY unreachable-database error
+      // with a 503 — including one from the reads above, before anything was written. A client that
+      // read every 503 as "recorded" told the viewer "Permission removed" while the grant stayed
+      // live. `errorFormatter` lifts this flag onto `data.consentRevokeRecorded`, and only this
+      // throw sets it.
       if (publishFailed) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+          cause: { consentRevokeRecorded: true },
         });
       }
 
@@ -6988,6 +7012,12 @@ export const blocksRouter = router({
       // An anonymous subject is refused later, by each branch.
       const subjectId = parseSubjectUserId(claims.sub);
       if (subjectId != null) await assertAccountNotRestricted(subjectId);
+      // The global generation kill switch, as onsite generation applies it, ahead of every
+      // generation kind. Training is governed by its own status (checked on its arm), as onsite.
+      // BLOCKS_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+      if (input.body.kind !== 'training' && env.BLOCKS_ENFORCE_GENERATION_STATUS) {
+        await assertBlockGenerationAllowed(subjectId);
+      }
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
@@ -7062,7 +7092,7 @@ export const blocksRouter = router({
       // 🔴 ALWAYS SET (audit 🔴-1). When the block sends no key we MINT one
       // server-side instead of leaving `externalId` undefined. The double-charge
       // this closes is server-side and unconditional: `submitWorkflow` retries the
-      // real submit up to 3× with no per-attempt timeout, and a 502/504 AFTER the
+      // real submit up to 3× (5xx, network failure, timed-out attempt), and a 502/504 AFTER the
       // orchestrator created + charged the workflow makes each retry create another
       // one. Gating `externalId` on a client key closed nothing in practice — NO
       // shipped client sends one. Minted ONCE here (not per attempt): the body built
@@ -8551,7 +8581,9 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Publisher revenue summary. Caller must be the app owner — the
+   * Publisher earnings: the per-generation author fee and digital-goods sales.
+   * The card-purchase revenue share is recorded but never paid out, so it is not
+   * returned here. Caller must be the app owner — the
    * service filters by `app_owner_user_id` so even if the request
    * carries a different appBlockId, the rows are scoped to the caller.
    * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
@@ -8566,12 +8598,10 @@ export const blocksRouter = router({
    * consistent choice, for the reasons spelled out on getMyAppAnalytics.
    *
    * 🔴 DELIBERATELY **NOT** WIDENED FOR COLLABORATORS. This proc answers "what have
-   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId` — and,
-   * for the `goods` bucket, the snapshotted `block_good_purchase.app_owner_user_id`,
-   * which was chosen for the identical reason. Both arguments below therefore hold for
-   * both rails, which is what made the goods bridge a safe addition to THIS proc and
-   * not to the collaborator ones. That is exactly the right question for it to keep
-   * answering:
+   * *I* earned", keyed on the snapshotted `block_author_fee_accrual.app_owner_user_id`
+   * and `block_good_purchase.app_owner_user_id`, both chosen for the identical reason.
+   * Both arguments below therefore hold for both rails. That is exactly the right
+   * question for it to keep answering:
    *   - an editor calling it sees THEIR OWN portfolio, and nothing of the owner's —
    *     no leak, no change;
    *   - an owner who TRANSFERRED an app away still sees the rows they accrued before
@@ -8579,13 +8609,14 @@ export const blocksRouter = router({
    *     (`app-ownership-transfer.service` deliberately does not rewrite the column).
    * Widening it — or app-scoping it — would break that second property.
    *
-   * The collaborator surface is the SEPARATE app-scoped `getAppEarnings` below. Note
-   * the one rough edge left alone on purpose: an editor who calls THIS proc with the
-   * shared `appBlockId` gets zeros, because none of those rows are attributed to them.
-   * Making that case throw would create the ownership oracle this proc deliberately
-   * does not have (see `RevenueUnavailableReason`'s note on why there is no `notOwned`
-   * value). The client routes editors to `getAppEarnings`, which answers the question
-   * they actually mean and returns an explicit `notPermitted` rather than a zero.
+   * The collaborator surface is the SEPARATE app-scoped `appCollaborators.getAppEarnings`,
+   * read by the listing editor's Earnings tab, which accepted editors can open. It answers
+   * the question an editor means (the whole app's figures) and returns an explicit
+   * `notPermitted` rather than a zero. The one rough edge left alone on purpose: an editor
+   * who opens `/apps/<appBlockId>/revenue` reaches THIS proc and sees zeros, because none
+   * of those rows are attributed to them. Making that case throw would create the
+   * ownership oracle this proc deliberately does not have (see `RevenueUnavailableReason`'s
+   * note on why there is no `notOwned` value).
    */
   getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
@@ -8615,78 +8646,24 @@ export const blocksRouter = router({
       const user = ctx.user as SessionUser;
       const from = input.from ? new Date(input.from) : undefined;
       const to = input.to ? new Date(input.to) : undefined;
-      // THREE BRANCHES, **SEVEN** CONCURRENT READS — do not read this as "three
-      // queries". `getRevenueForOwner` is itself a `Promise.all` of five (four
-      // single-status aggregates plus a groupBy), `getRecentAttributionsForOwner`
-      // is one, and the goods bridge is one.
-      //
-      // ⚠️ SEVEN IS THE ONLY NUMBER HERE THAT IS DERIVABLE FROM THIS REPO, and an
-      // earlier version of this comment also claimed the call holds "~20% of a
-      // pod's read pool, so ~5 concurrent callers exhaust it". That was removed as
-      // unfounded: the pool size comes from `connection_limit` on `DATABASE_URL`,
-      // which is deployment configuration this repo does not set, and Prisma's
-      // default is `num_cpus * 2 + 1` — on a small pod that is single digits, under
-      // which seven concurrent reads is most of the pool rather than a fifth. A
-      // fabricated capacity figure is worse than none, because the next author
-      // widening this proc would have budgeted against it.
-      //
-      // What survives is the shape of the concern: this proc fans out SEVEN reads
-      // per call, it is only acceptable because `appDeveloperProcedure` plus the
-      // `appBlocks` flag keeps the audience tiny, and anyone widening the audience
-      // should measure the live pool rather than trust a number in a comment.
-      //
-      // Parallel rather than sequential is still right: the connections are held
-      // for the same total work either way, just longer, and
-      // `/apps/[appBlockId]/revenue` documents at its `<RevenuePanel>` mount that
-      // it refuses to serialize independent reads on a money screen.
-      //
-      // `getGoodsSalesForOwner` is the digital-goods bridge: sales record into
-      // `block_good_purchase` and write no attribution row, so the owner's own
-      // revenue page sees them only because this call is here. It is a READ, not
-      // a back-fill — see the function's docblock for why that distinction was
-      // chosen deliberately.
-      const [{ summary, topApps }, recentAttributions, goods] = await Promise.all([
-        getRevenueForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
-        getRecentAttributionsForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId }),
-        // 🔴 THE ONLY BRANCH THAT MAY DEGRADE, and only for ONE error. The table
-        // `block_good_purchase` is applied BY HAND per environment (see the
-        // migration header), so this code can legitimately run against a database
-        // that does not have it. Unguarded, that took down BOTH revenue pages
-        // entirely — including the card-purchase figures, which were readable.
-        //
-        // 🔴 `isMissingGoodsTableError` IS WHAT MAKES THIS SAFE, AND THE WIDE
-        // VERSION OF THIS CATCH WAS A BUG. Catching every rejection means a column
-        // rename, a bad argument or a `TypeError` in the aggregate is reported to
-        // the owner as "sales could not be loaded" — politely, in production,
-        // indefinitely. That is the invisible-revenue defect this change exists to
-        // fix, re-entering through the error path. Anything that is not the missing
-        // table RETHROWS and the proc fails loudly, as it should.
-        //
-        // 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `emptyGoodsSales()` here
-        // would report "no sales" for a rail that was never read — the fabricated
-        // zero this surface is built to prevent. `unreadableGoodsSales()` carries
-        // `unavailable: 'unreadable'` and `RevenuePanel` branches on it.
-        getGoodsSalesForOwner({
+      // FOUR concurrent reads: three in `getAuthorFeeEarningsForOwner`, one for goods. Acceptable only
+      // because `appDeveloperProcedure` plus the `appBlocks` flag keeps the audience tiny; measure the
+      // live read pool before widening it. The pool size is deployment configuration, not set here.
+      const [authorFees, goods] = await Promise.all([
+        getAuthorFeeEarningsForOwner({
           ownerUserId: user.id,
           appBlockId: input.appBlockId,
           from,
           to,
-        }).catch((error) => {
-          if (!isMissingGoodsTableError(error)) throw error;
-          logToAxiom(
-            {
-              name: 'block-goods-earnings',
-              type: 'error',
-              message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
-              ownerUserId: user.id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-            'civitai-prod'
-          ).catch(() => undefined);
-          return unreadableGoodsSales();
         }),
+        // The one branch that may degrade, and only for a missing `block_good_purchase`
+        // table; see `unreadableIfGoodsTableMissing`.
+        unreadableIfGoodsTableMissing(
+          getGoodsSalesForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
+          { ownerUserId: user.id }
+        ),
       ]);
-      return { summary, topApps, recentAttributions, goods };
+      return { authorFees, goods };
     }),
 
   /**
@@ -8838,40 +8815,32 @@ export const blocksRouter = router({
 
   /**
    * The apps the caller can act on (OWNED + apps they hold an ACCEPTED collaborator
-   * seat on) + lifetime revenue per app. Drives the per-app dropdown on /apps/revenue.
+   * seat on). Drives the per-app dropdown on /apps/revenue. The per-app lifetime
+   * card-purchase share is NOT returned: that share is recorded but never paid out.
    *
-   * 🔴 THE LIFETIME GROUPBY IS THE PORTFOLIO-LEAK SITE, so read this before editing it.
-   * It used to be `where: { appOwnerUserId: user.id }` with NO app filter — a
-   * USER-WIDE query, bucketed by app in JS afterwards. That is safe only while the
-   * caller owns everything they can see. The moment an editor is in scope, the
-   * "obvious" widening (pass the OWNER's id, since the editor has no attribution rows
-   * of their own) returns the OWNER'S ENTIRE PORTFOLIO — every app they ever published,
-   * including ones this editor was never invited to.
+   * 🔴 THE APP SET IS THE PORTFOLIO-LEAK SITE, so read this before editing it. It once came
+   * from `where: { appOwnerUserId: user.id }` — a USER-WIDE filter. The moment an editor is
+   * in scope, the "obvious" widening (pass the OWNER's id) returns the OWNER'S ENTIRE
+   * PORTFOLIO, including apps this editor was never invited to.
    *
-   * It is now served by `getMyAppsEarnings`, which resolves the permitted app-id SET
-   * first and filters `appBlockId IN thatSet`. Never reintroduce an
-   * `appOwnerUserId`-only filter on a collaborator-reachable read.
+   * It is now served by `getMyAppRoles`, which resolves the permitted app-id SET first.
+   * Never reintroduce an `appOwnerUserId`-only filter on a collaborator-reachable read.
    *
    * `role` is surfaced so the client can distinguish an owned app from a seat (only an
    * owner sees the manage-collaborators / transfer controls).
    */
   getMyApps: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
     const user = ctx.user as SessionUser;
-    const { getMyAppsEarnings } = await import(
+    const { getMyAppRoles } = await import(
       '~/server/services/blocks/app-collaborator-earnings.service'
     );
-    const earnings = await getMyAppsEarnings({ userId: user.id });
-    if (earnings.length === 0) return [];
-    const roleByApp = new Map(earnings.map((e) => [e.appBlockId, e.role] as const));
-    const lifetimeMap = new Map(
-      earnings.map(
-        (e) => [e.appBlockId, { shareCents: e.lifetimeShareCents, count: e.lifetimeCount }] as const
-      )
-    );
+    const myApps = await getMyAppRoles({ userId: user.id });
+    if (myApps.length === 0) return [];
+    const roleByApp = new Map(myApps.map((e) => [e.appBlockId, e.role] as const));
 
     const apps = await dbRead.appBlock.findMany({
       // The permitted set, not `app: { userId }` — that would drop every seated app.
-      where: { id: { in: earnings.map((e) => e.appBlockId) } },
+      where: { id: { in: myApps.map((e) => e.appBlockId) } },
       select: {
         id: true,
         blockId: true,
@@ -8899,8 +8868,6 @@ export const blocksRouter = router({
       appName: a.app?.name ?? null,
       manifest: a.manifest as Record<string, unknown>,
       role: roleByApp.get(a.id) ?? ('owner' as const),
-      lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
-      lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
     }));
   }),
 
@@ -9720,6 +9687,25 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   // belt's exemption is asserted by the subscription NOT being queried.
   const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
   return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
+}
+
+/**
+ * The global generation kill switch for an App Blocks submit: the same decision onsite generation
+ * applies (`generationStatusRefusal`), so a moderator's "disabled" or "members only" also stops a
+ * generator reached through an app. The subject is looked up only when the switch is not
+ * `enabled`, so the normal path costs the one sysRedis read and no database read. An anonymous
+ * subject is refused while the switch is on (it is no moderator and holds no tier).
+ * A switch that cannot be read (sysRedis down, never read in this process) is refused for every
+ * subject, moderators included, as `buildGenerationContext` refuses it onsite: the moderator bypass
+ * applies to an operator's decision, not to a state nobody knows.
+ */
+async function assertBlockGenerationAllowed(subjectId: number | null): Promise<void> {
+  const generation = await import('~/server/services/generation/generation.service');
+  const { status, known } = await generation.getGenerationStatusState();
+  if (!known) throw generation.generationConfigUnavailableError();
+  if (status.mode === 'enabled') return;
+  const user = subjectId == null ? null : await getBlockSessionUser(subjectId);
+  assertGenerationStatusAllows(status, { isModerator: !!user?.isModerator, tier: user?.tier });
 }
 
 /**
@@ -12604,6 +12590,7 @@ async function estimatePassThroughStepWorkflow(opts: {
   const userId = await assertStepRequestAllowed(claims);
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
+  await assertBlockTrainingModelsAllowed([body]);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12818,6 +12805,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // refund. A denylist the wire does not consult is decoration.
   assertPassThroughStepTypeAllowed(body.$type, body.input);
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
+  await assertBlockTrainingModelsAllowed([body]);
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   await auditPassThroughPrompts({
@@ -13401,6 +13389,7 @@ async function estimateMultiStepWorkflow(opts: {
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
+  await assertBlockTrainingModelsAllowed(prepared.steps);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -13484,6 +13473,7 @@ async function submitMultiStepWorkflow(opts: {
   const prepared = prepareMultiStepWorkflow(body);
   if ('refusal' in prepared) return prepared.refusal;
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
+  await assertBlockTrainingModelsAllowed(prepared.steps);
   const stepCount = prepared.steps.length;
 
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -14948,6 +14938,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           ...passThroughAuditContext(claims, userId, isGreen),
           steps: [body],
         });
+        await assertBlockTrainingModelsAllowed([body]);
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
@@ -15171,6 +15162,28 @@ async function assertBlockTrainingTriggerWordsAllowed(opts: {
   }
 }
 
+/**
+ * The training-model rule for a training `$type` an app names itself (a pass-through
+ * `kind:'step'`, every step of a `kind:'workflow'`): the training service's status and the
+ * blocked and disabled base models, as `kind:'training'` applies them through
+ * `resolveBlockTrainingRun`. Called by each estimate and submit before any quote or reservation.
+ */
+async function assertBlockTrainingModelsAllowed(
+  steps: ReadonlyArray<{ $type: string; input: unknown }>
+): Promise<void> {
+  const { collectTrainingStepModels, trainingStepModelRefusal } = await import(
+    '~/server/services/blocks/block-training-model-check'
+  );
+  const collected = collectTrainingStepModels(steps);
+  if ('error' in collected) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: collected.error });
+  }
+  if (collected.models.length === 0) return;
+  const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+  const refusal = trainingStepModelRefusal(collected.models, await getTrainingServiceStatus());
+  if (refusal) throw new TRPCError({ code: 'BAD_REQUEST', message: refusal });
+}
+
 function passThroughAuditContext(claims: BlockClaims, userId: number, isGreen: boolean) {
   return {
     userId,
@@ -15339,7 +15352,7 @@ function buildWorkflowTags(
   // recipe id here (with `baseModel` also the recipe id) so a customComfy job is
   // NOT mislabeled 'txt2img' — while the `app-block:*` provenance tags below are
   // preserved verbatim, so the per-app subqueue read (appBlockTag) is unaffected.
-  workflowType: string = 'txt2img'
+  workflowType = 'txt2img'
 ): string[] {
   return [
     WORKFLOW_TAGS.GENERATION,

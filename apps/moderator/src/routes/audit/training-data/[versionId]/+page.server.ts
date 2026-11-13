@@ -8,6 +8,7 @@ import {
   getDatasetItemStates,
   getTrainingVersionDetail,
   getTrainingWorkflowDetail,
+  invalidateTrainingReviewQueue,
   moderateTrainingData,
   reportTrainingDataCsam,
   type TrainingVersionDetail,
@@ -102,6 +103,7 @@ export const actions: Actions = {
       contents,
     });
     if (!result.ok) return fail(400, { error: result.error });
+    invalidateTrainingReviewQueue();
 
     return { success: true, ...('warning' in result ? { warning: result.warning } : {}) };
   }),

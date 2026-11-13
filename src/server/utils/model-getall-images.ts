@@ -1,3 +1,6 @@
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+
 /**
  * Wire-shape trimming for the browse-feed `model.getAll` tRPC response — the #1
  * producer of oversized / event-loop-freezing tRPC responses in the
@@ -213,6 +216,44 @@ export function selectSlimGetAllModelImages<T extends { nsfwLevel?: number | nul
 export function stripGetAllModelImage<T extends Record<string, unknown>>(image: T) {
   const { onSite, hasMeta, hasPositivePrompt, modelVersionId, availability, ...rest } = image;
   return rest as Omit<T, (typeof GETALL_DROPPED_IMAGE_FIELDS)[number]>;
+}
+
+/**
+ * The images a viewer may be sent: the level, poi and minor rules of the client's hidden-preferences
+ * filter (`useApplyHiddenPreferences`, models path), applied at the caller's `browsingLevel`. A model
+ * marked `nsfw` keeps everything up to the highest level; an unrated image is kept only for its owner
+ * or a moderator, which the client does not require on an `nsfw` model.
+ */
+export function filterImagesForViewer<
+  T extends { nsfwLevel: number; userId?: number; poi?: boolean | null; minor?: boolean | null }
+>(
+  images: T[],
+  {
+    browsingLevel,
+    modelNsfw,
+    disablePoi,
+    disableMinor,
+    viewer,
+  }: {
+    browsingLevel: number;
+    modelNsfw?: boolean | null;
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+    viewer?: { id: number; isModerator?: boolean | null };
+  }
+) {
+  const maxLevel = Math.max(0, ...parseBitwiseBrowsingLevel(browsingLevel));
+  return images.filter((image) => {
+    const isOwner = !!viewer && image.userId === viewer.id;
+    if (image.nsfwLevel === 0) return isOwner || !!viewer?.isModerator;
+    const levelShown = modelNsfw
+      ? image.nsfwLevel <= maxLevel
+      : Flags.intersects(image.nsfwLevel, browsingLevel);
+    if (!levelShown) return false;
+    if (image.poi && disablePoi && !isOwner) return false;
+    if (image.minor && disableMinor && !isOwner) return false;
+    return true;
+  });
 }
 
 /**

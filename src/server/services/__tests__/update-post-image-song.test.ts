@@ -196,6 +196,19 @@ describe("updatePostImage — a song's title and remix setting", () => {
     });
     expect(mocks.throwOnBlockedUserContent).not.toHaveBeenCalled();
   });
+
+  it('never writes metadata carried in the input, even past the input schema', async () => {
+    await updatePostImage({
+      id: IMAGE,
+      hideMeta: true,
+      metadata: { blockProvenance: { forged: true } },
+    } as never);
+
+    expect(await storedRow(IMAGE)).toEqual({
+      metadata: { width: 1, height: 1, title: 'kept' },
+      hideMeta: true,
+    });
+  });
 });
 
 describe('updatePostImage — overlapping saves on one song', () => {

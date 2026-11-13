@@ -65,6 +65,24 @@ describe('sendEmail', () => {
     ]);
   });
 
+  it.each(['off', 'OFF', '0', 'false'])(
+    'bounds the SMTP connect, greeting and socket waits; EMAIL_TIMEOUTS=%s drops them',
+    async (value) => {
+      const bounds = { connectionTimeout: 5_000, greetingTimeout: 5_000, socketTimeout: 30_000 };
+      await (await load()).sendEmail({ to: 'a@example.test', subject: 'Hi', html: '<p>Hi</p>' });
+      expect(seen.options.at(-1)).toMatchObject(bounds);
+
+      process.env.EMAIL_TIMEOUTS = value;
+      await (await load()).sendEmail({ to: 'a@example.test', subject: 'Hi', html: '<p>Hi</p>' });
+      const off = seen.options.at(-1) as Record<string, unknown>;
+      expect([off.connectionTimeout, off.greetingTimeout, off.socketTimeout]).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    }
+  );
+
   it('composes one message for every recipient, from EMAIL_FROM, with html and a text fallback', async () => {
     const { sendEmail } = await load();
     await sendEmail({

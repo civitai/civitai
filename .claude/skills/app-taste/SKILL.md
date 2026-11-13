@@ -29,11 +29,14 @@ The gradeable checklist, and how to grow the taste: `.claude/skills/app-taste/re
 
 ## Phase 0 — sync and measure
 
-🔴 **Do NOT `civitai app pull` to get a working clone.** It clones the forgejo
-**deploy mirror**, which carries the right slug, the right manifest version and a
-clean `main` — and does **not** contain the source commit the app was built from,
-so there is nothing to branch off and no PR target. Development is on GitHub, and
-the repo name is not derivable from the slug. Constraints §12 has the full trap.
+🔴 **`civitai app pull` is the dev clone ONLY if the app has a source repo.** A
+forked or App-Assistant-built app has one (`civitai-apps-src/<slug>`, real
+history), and `app pull` clones it. Every other app gets the **build repo**
+(`civitai-apps/<slug>`): right slug, right manifest version, a clean `main`, and
+**not** the source commit the app was built from, so nothing to branch off and no
+PR target. Those apps develop on GitHub, under a repo name not derivable from the
+slug. `git -C <clone> remote get-url origin` says which one you have
+(`civitai-apps-src/` or `civitai-apps/`). Constraints §12 has the trap.
 
 ```bash
 SLUG=app-requests
@@ -45,10 +48,12 @@ git -C "${APP:?set APP to your clone of the app repo}" show origin/main:block.ma
 Then answer all five in writing before touching a file:
 
 1. **Is the clone current, and is it the DEV repo?** The check that settles both
-   is `git cat-file -t <live source sha>` against the clone — a mirror fails it
-   while every other signal looks right. Comparing the manifest `version` alone
-   passes on the mirror and proves nothing. A stale clone silently reverts
-   shipped work.
+   is `git cat-file -t <live source sha>` against the clone — a build repo fails
+   it while every other signal looks right. Comparing the manifest `version`
+   alone passes on the build repo and proves nothing. If `app status` shows no
+   source commit (a push-originated submission leaves it empty), only the remote
+   URL above answers the DEV-repo half; say that currency is unverified. A stale
+   clone silently reverts shipped work.
 2. **What does the PINNED SDK actually expose?** Read the installed `.d.ts`, not
    the monorepo source — they diverge by several minor versions.
 3. **How big is the live dataset?** A cap that never binds is not a constraint; a

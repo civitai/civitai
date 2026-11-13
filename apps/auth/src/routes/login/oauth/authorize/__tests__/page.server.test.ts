@@ -38,6 +38,11 @@ vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: vi.fn(async (id: number) => ({ id, username: 'owner' })),
 }));
 
+const { getGrantedScope } = vi.hoisted(() => ({
+  getGrantedScope: vi.fn(async (): Promise<number | null> => null),
+}));
+vi.mock('$lib/server/oauth/granted-scope', () => ({ getGrantedScope }));
+
 import { load } from '../+page.server';
 
 function loadWith(scope: number | string, extra: Record<string, string> = {}) {
@@ -61,7 +66,10 @@ describe('consent screen load', () => {
 
   it('renders an ordinary request (positive control)', async () => {
     const page = await loadWith(TokenScope.UserRead);
-    expect(page).toMatchObject({ invalid: false, scopes: ['Read profile, settings & email'] });
+    expect(page).toMatchObject({
+      invalid: false,
+      scopes: [{ label: 'Read profile, settings & email', isNew: false }],
+    });
   });
 
   it('forbids framing the consent screen', async () => {
@@ -94,5 +102,38 @@ describe('consent screen — scope names and prompt', () => {
     expect(add.pathname).toBe('/login');
     expect(add.searchParams.get('prompt')).toBe('select_account');
     expect(add.searchParams.get('returnUrl')).toMatch(/^\/login\/oauth\/authorize\?/);
+  });
+});
+
+describe('consent screen — permissions new to this app', () => {
+  const READ = 'Read profile, settings & email';
+  const MODELS = 'Browse & download models';
+  const MEDIA = 'View images, videos & posts';
+  const request = TokenScope.ModelsRead | TokenScope.MediaRead;
+
+  it('marks only the permissions the app was not granted before', async () => {
+    getGrantedScope.mockResolvedValueOnce(TokenScope.UserRead | TokenScope.ModelsRead);
+    const page = await loadWith(request);
+    expect(page.scopes).toEqual([
+      { label: READ, isNew: false },
+      { label: MODELS, isNew: false },
+      { label: MEDIA, isNew: true },
+    ]);
+  });
+
+  it('marks nothing on a first consent', async () => {
+    getGrantedScope.mockResolvedValueOnce(null);
+    const page = await loadWith(request);
+    expect(page.scopes).toEqual([
+      { label: READ, isNew: false },
+      { label: MODELS, isNew: false },
+      { label: MEDIA, isNew: false },
+    ]);
+  });
+
+  it('looks up what this signed-in user granted this app', async () => {
+    getGrantedScope.mockClear();
+    await loadWith(request);
+    expect(getGrantedScope).toHaveBeenCalledWith(7, 'game-frame');
   });
 });

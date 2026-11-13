@@ -10,14 +10,15 @@
 // /api/metrics), same as trpc_procedure_duration etc. Cardinality-safe: only bounded `leg` / `outcome` labels,
 // NEVER per-user. The package emits the raw timings via injected callbacks (it stays infra-dep-free); this
 // module owns the prom-client wiring.
-import type { RefreshFailure } from '@civitai/auth';
+import type { RefreshFailure, RevocationDegradedVerdict } from '@civitai/auth';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
 
 // `identity` = token cookie path (getSessionUser); `identity-by-id` = API-key/OAuth by-userId read
 // (getSessionUserById); `hub-write` = the invalidate/refresh/invalidateAll hub writes; `jwks` = ES256 verify
 // key fetch; `revocation` = sysRedis TOKEN_STATE/ALL read.
 export type SessionLeg = 'identity' | 'identity-by-id' | 'hub-write' | 'jwks' | 'revocation';
-export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'error';
+// `breaker-open`: only the revocation leg, when the sys read breaker refused the read without waiting.
+export type SessionLegOutcome = 'hit' | 'miss' | 'timeout' | 'breaker-open' | 'error';
 
 // Sub-ms (cache/crypto) → ~30s (a fully-stalled hairpin, the incident tail). Covers the whole span so a
 // 40-90s stall lands in the +Inf bucket and the p99 is unmistakable.
@@ -29,7 +30,7 @@ const durationHistogram = registerHistogram({
     'Duration (seconds) of each session-resolution leg as seen by the CALLING app — the app→hub identity ' +
     'fetch (cookie + by-userId API-key/OAuth), the hub invalidate/refresh writes, the JWKS verify/refetch, ' +
     'and the sysRedis revocation read. The hub cannot observe these hops. Labeled by leg ' +
-    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|error).',
+    '(identity|identity-by-id|hub-write|jwks|revocation) + outcome (hit|miss|timeout|breaker-open|error).',
   labelNames: ['leg', 'outcome'] as const,
   buckets: [...SESSION_RESOLUTION_BUCKETS],
 });
@@ -55,6 +56,26 @@ export function observeSessionLeg(
 ): void {
   durationHistogram.observe({ leg, outcome }, durationSeconds);
   if (outcome === 'timeout') timeoutsCounter.inc({ leg });
+}
+
+// --- Revocation verdicts given without sysRedis ------------------------------------------------------------
+// When the revocation read fails, the verdict comes from the markers this process has already read (the
+// @civitai/auth revocation record). `deny_cached` = a known marker revoked the session; `allow_unknown` = no
+// known marker revoked it, so it was allowed. A sustained `allow_unknown` rate is the volume of sessions whose
+// revocation state nobody checked.
+const revocationDegradedCounter = registerCounterWithLabels({
+  name: 'session_revocation_degraded_total',
+  help:
+    'Session revocation checks answered without sysRedis because the read failed, timed out or was refused by ' +
+    'the read breaker, by verdict: deny_cached (a revocation marker this process had already read applied) or ' +
+    'allow_unknown (no known marker applied, so the session was allowed).',
+  labelNames: ['verdict'] as const,
+});
+for (const verdict of ['deny_cached', 'allow_unknown'] as const)
+  revocationDegradedCounter.inc({ verdict }, 0);
+
+export function observeRevocationDegraded(verdict: RevocationDegradedVerdict): void {
+  revocationDegradedCounter.inc({ verdict });
 }
 
 // --- Session-state fan-out (refreshSession / invalidateSession) -------------------------------------------

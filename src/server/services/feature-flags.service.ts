@@ -98,6 +98,10 @@ const featureFlags = createFeatureFlags({
   // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
   // DARK and fails CLOSED when the key is absent or Flipt is down.
   trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
+  // Sends `image.getImagesAsPostsInfinite` (signed in) to `/api/trpc-go`. Edge rules keyed on
+  // `/api/trpc/` do not match that path, so enable only once the edge routes it. See
+  // `GO_TRANSPORT_URL`. `[]` = DARK, fails CLOSED when absent or Flipt is down.
+  feedGoTransport: { availability: [], fliptKey: 'feed-go-transport' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -437,14 +441,23 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // All of image search: the Images entry in the pickers and tabs, /search/images (redirects to
-  // models without it), /search/semantic, "more like this", and the semanticImageSearch procedures.
+  // Image search on the search pages: /search/semantic, "more like this", the Images entry in the
+  // pickers and tabs, /search/images and the semanticImageSearch procedures. `feedSearch` (below)
+  // also offers the Images entry, opens the search procedure and redirects /search/images.
   // It answers from the semantic search, never Meilisearch. Mods until the Flipt flag exists; once it
   // does, Flipt decides both ways, so keep mods in its rule.
   imageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
+  // Search v3: the header bar filters the feed you are on (?query=) instead of opening /search/*.
+  // Images first. It switches between the old and the new search on its own (it opens the semantic
+  // search procedure without `imageSearch`), so a Flipt rollout moves people over; off is the old UI.
+  // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
+  // rollout splits signed-in users only.
+  feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
+  // Comic search on /search/comics, the same way.
+  semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {

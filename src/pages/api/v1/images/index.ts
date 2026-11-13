@@ -217,6 +217,14 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // Check if request is from restricted region and override browsing level
     const region = getRegion(req);
     let _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+    // The range check comes first because Flags works on 32-bit integers and the level is unvalidated.
+    const withinSfw =
+      Number.isInteger(_browsingLevel) &&
+      _browsingLevel >= 0 &&
+      _browsingLevel <= sfwBrowsingLevelsFlag &&
+      Flags.hasFlag(sfwBrowsingLevelsFlag, _browsingLevel);
+    if (!withinSfw) res.setHeader('Cache-Control', 'private, no-store');
     if (isRegionRestricted(region)) _browsingLevel = sfwBrowsingLevelsFlag;
     // A minor or SFW-only model's images are served only at its gallery's held level, and a
     // taken-down model's not at all.
@@ -241,7 +249,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
     const { items: found, nextCursor } = await runImageSearch(
-      { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
+      { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
     // Images picked by id name no model, so each is held by its own post's model.

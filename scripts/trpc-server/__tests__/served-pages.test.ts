@@ -44,6 +44,7 @@ describe('servedPages', () => {
       '/api/live',
       '/api/health',
       '/api/ready',
+      '/api/readyz',
       '/api/metrics',
     ]);
   });

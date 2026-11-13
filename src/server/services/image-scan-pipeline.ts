@@ -1,8 +1,6 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -57,8 +55,18 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  ingestionAfterScanErrorSql,
+  ingestionAfterVerdictSql,
+  ingestionKeptAfterVerdict,
+} from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
+import {
+  nsfwAxesScanSet,
+  writeWithNsfwAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -69,7 +77,7 @@ import {
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
-import { withRetries } from '~/utils/errorHandling';
+import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import {
   FEEDBACK_CAPTURE_OWNER_ID,
   isFeedbackCaptureOwner,
@@ -186,23 +194,6 @@ export async function sendIngestionSignal({
 
 // Blocked-content detection
 // --------------------------------------------------
-async function getIsImageBlocked(hash: bigint) {
-  if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
-
-  const client = clickhouse;
-  // $query has no retry of its own, and the observed failure is a dropped socket.
-  const rows = await withRetries(
-    () => client.$query<{ count: number }>`
-      SELECT cast(count() as int) as count
-      FROM blocked_images
-      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-    `,
-    2,
-    250
-  );
-
-  return (rows?.[0]?.count ?? 0) > 0;
-}
 
 export async function logPerceptualHashMatch({
   imageId,
@@ -307,7 +298,7 @@ export async function markImageScanError({
   >`
     UPDATE "Image"
     SET
-      "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+      "ingestion" = ${ingestionAfterScanErrorSql()},
       "scanJobs" = jsonb_set(
         jsonb_set(
           jsonb_set(
@@ -555,6 +546,7 @@ export async function resolveScanOutcome({
   prompt,
   negativePrompt,
   fixed,
+  axes,
   log = LEGACY_SCAN_LOG,
 }: {
   image: ScanImage;
@@ -575,21 +567,29 @@ export async function resolveScanOutcome({
     /** The scan found a minor involved, which the image row records as `minor`. */
     minor?: boolean;
   };
+  /** Rating axes, written with the verdict while `image-axis-shadow-write` is on. */
+  axes?: RatingAxes;
   log?: ScanLog;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
+  const axesSet = await nsfwAxesScanSet({ imageId: image.id, axes, workflowId });
+  const axesTarget = { imageId: image.id, workflowId };
 
   if (blocked) {
-    await dbWrite.$executeRaw`
+    await writeWithNsfwAxes(
+      (axesTerm) => dbWrite.$executeRaw`
       UPDATE "Image"
       SET
         "updatedAt" = ${updatedAt},
         "pHash" = COALESCE(${pHash ?? null}, "pHash"),
         "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
           workflowId
-        )}::jsonb)
+        )}::jsonb)${axesTerm}
       WHERE id = ${image.id}
-    `;
+    `,
+      axesSet,
+      axesTarget
+    );
     return {
       ingestion: ImageIngestionStatus.Blocked,
       blockedFor: blocked.reason,
@@ -719,12 +719,13 @@ export async function resolveScanOutcome({
   const scanLevel = toUpdate.nsfwLevel as number;
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
-  await dbWrite.$executeRaw`
+  await writeWithNsfwAxes(
+    (axesTerm) => dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
       "pHash" = ${pHash ?? null},
-      "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+      "ingestion" = ${ingestionAfterVerdictSql(toUpdate.ingestion as string)},
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${scanLevel},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
@@ -736,16 +737,31 @@ export async function resolveScanOutcome({
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END,
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
-      )}::jsonb)
+      )}::jsonb)${axesTerm}
     WHERE id = ${image.id}
-  `;
+  `,
+    axesSet,
+    axesTarget
+  );
 
   // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
   // after the write above, so a rating that landed after this scan loaded the image still holds; the
   // judge write takes the greater level too, so either order ends at the higher of the two. A floor
   // above the level the audit ran at sends the image back for a rescan, so its checks run there.
   let nsfwLevel = scanLevel;
-  let ingestion = toUpdate.ingestion as ImageIngestionStatus;
+  // What the guarded assignment above left. A row loaded as NotFound is read back, because a
+  // rescan request may have moved it before the write and the Scanned effects must then run.
+  // shortcut: a row that turned NotFound after the load is still reported Scanned.
+  let ingestion = ingestionKeptAfterVerdict(
+    image.ingestion,
+    toUpdate.ingestion as ImageIngestionStatus
+  );
+  if (ingestion === ImageIngestionStatus.NotFound) {
+    const [row] = await dbWrite.$queryRaw<{ ingestion?: ImageIngestionStatus }[]>`
+      SELECT "ingestion" FROM "Image" WHERE id = ${image.id}
+    `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
+    ingestion = row?.ingestion ?? ingestion;
+  }
   if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
@@ -766,7 +782,10 @@ export async function resolveScanOutcome({
           END
         WHERE id = ${image.id}
           AND NOT "nsfwLevelLocked"
-          AND ingestion != ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+          AND ingestion NOT IN (
+            ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus"
+          )
           AND "blockedFor" IS NULL
           AND "nsfwLevel" != ${NsfwLevel.Blocked}
           AND ${floor} > "nsfwLevel"
@@ -859,6 +878,7 @@ function fixedAudit({
   return {
     tags: [],
     nsfwLevel,
+    checkedLevel: nsfwLevel,
     nsfw: false,
     minorTags: [],
     poiTags: [],

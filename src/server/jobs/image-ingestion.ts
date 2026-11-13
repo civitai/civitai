@@ -16,6 +16,9 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import {
+  classifyImageScanFailure,
+  getImageScanRetryDelayMinutes,
+  ImageScanFailureClass,
   getImageScanRetryLimit,
   IMAGE_RESCAN_RETRY_LIMIT as IMAGE_SCANNING_RETRY_LIMIT,
 } from '~/server/services/image-scan-failure';
@@ -35,8 +38,6 @@ import {
   appealTrainingHeld,
   isAppealTrainingConfigured,
 } from '~/server/jobs/appeal-decision-records';
-
-const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 
 // Minutes a just-created image counts as "submit in flight" (see the double-submit
 // note below). Must stay above the upload-path submit's own ceiling or the window it
@@ -110,15 +111,20 @@ type IngestImageRow = IngestImageInput & {
   retryCount: number | null;
   /**
    * Reason-derived failure class stamped by the scan webhook
-   * (`scanJobs.error.failureClass`), used to pick the Error retry ceiling.
+   * (`scanJobs.error.failureClass`, or `scanJobs.lastFailure` once a re-submit has cleared
+   * the error), used to pick the Error retry ceiling.
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
+  /** `scanJobs.error.reason`, to reclassify a row stamped before a reason pattern was added. */
+  failureReason: string | null;
   /**
    * When its current run of 429 submits began; null unless the last submit was a 429.
    * A successful submit clears `scanJobs.error`, and with it this.
    */
   rateLimitedSince: Date | null;
+  /** True once a successful re-submit has moved the error to `lastFailure`: a scan is in flight. */
+  resubmitted: boolean;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -181,10 +187,12 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
-           i."scanJobs"->'error'->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'failureClass' as "failureClass",
+           COALESCE(i."scanJobs"->'error', i."scanJobs"->'lastFailure')->>'reason' as "failureReason",
            CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
              THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
            END as "rateLimitedSince",
+           (i."scanJobs" ? 'lastFailure' AND NOT i."scanJobs" ? 'error') as "resubmitted",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -197,10 +205,29 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   `) ?? [];
 
   const images = loadedImages;
+  // A row stamped Unknown before its reason was recognised retries as what it is now.
+  for (const img of images) {
+    if (
+      img.failureReason &&
+      (!img.failureClass || img.failureClass === ImageScanFailureClass.Unknown)
+    )
+      img.failureClass = classifyImageScanFailure({ reason: img.failureReason });
+  }
 
   // Filter based on status and retry logic
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
-  const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
+  // Shared by the retry filter and the waiting-for-retry mirror below, which must agree or a
+  // cooling-down Error row is neither sent nor kept, and gets pruned.
+  const errorRetryDue = (img: IngestImageRow) =>
+    !!img.scanRequestedAt &&
+    new Date(img.scanRequestedAt).getTime() <=
+      decreaseDate(
+        now,
+        // An in-flight re-submit waits the full delay: the shorter transient one is a failure
+        // cooldown, and would duplicate the workflow of any scan slower than it.
+        getImageScanRetryDelayMinutes(img.resubmitted ? null : img.failureClass),
+        'minutes'
+      ).getTime();
 
   // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
   // trigger queues a new image immediately, but `ingestImage` stamps
@@ -300,8 +327,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
-      img.scanRequestedAt &&
-      new Date(img.scanRequestedAt).getTime() <= errorRetryDate &&
+      errorRetryDue(img) &&
       Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass)
   );
 
@@ -340,8 +366,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         // Error but waiting for retry delay or under retry limit. Mirror the
         // reason-aware ceiling used by errorImages above.
         if (img.ingestion === 'Error') {
-          const waitingForDelay =
-            img.scanRequestedAt && new Date(img.scanRequestedAt).getTime() > errorRetryDate;
+          const waitingForDelay = !!img.scanRequestedAt && !errorRetryDue(img);
           const underRetryLimit =
             Number(img.retryCount ?? 0) < getImageScanRetryLimit(img.failureClass);
           return waitingForDelay && underRetryLimit;
@@ -407,9 +432,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     .filter((img) => img.ingestion === 'Rescan' && staleIdSet.has(img.id))
     .map((img) => img.id);
   if (exhaustedRescanIds.length > 0) {
+    // The flip to Error re-queues the row (the Image scan-queue trigger). Dropping lastFailure
+    // gives it the unknown cap, so an earlier episode's class does not re-open its retries.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
       WHERE id = ANY(${exhaustedRescanIds})
         AND ingestion = 'Rescan'::"ImageIngestionStatus"
     `;
@@ -426,9 +453,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // `pendingImages` -> `processedIds`, so not pruned), so next run they are
   // re-pulled and handled as Error.
   if (agedOutPendingIds.length > 0) {
+    // As above, dropping lastFailure gives the row the unknown cap, not an earlier episode's.
     await dbWrite.$executeRaw`
       UPDATE "Image"
-      SET ingestion = 'Error'::"ImageIngestionStatus"
+      SET ingestion = 'Error'::"ImageIngestionStatus", "scanJobs" = "scanJobs" - 'lastFailure'
       WHERE id = ANY(${agedOutPendingIds})
         AND ingestion = 'Pending'::"ImageIngestionStatus"
     `;

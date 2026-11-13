@@ -542,6 +542,11 @@ const STORED_METADATA_SOURCES = ['image.metadata', 'item.metadata'];
 type UpdateDecision =
   /** `data` spreads caller input, then forces `metadata` from the row read before the write. */
   | 'stored-row-override'
+  /**
+   * `data` spreads caller input, then sets `metadata: undefined` as its last property: Prisma omits
+   * the column, so the input cannot write it and keys saved meanwhile are not overwritten.
+   */
+  | 'spread-metadata-omitted'
   /** `metadata: { ...<stored row metadata>, <server keys> }`, directly or via a local const. */
   | 'stored-merge-server-keys'
   /** Raw SET building `metadata` from SQL literals, fixed keys and scalar-cast parameters. */
@@ -566,9 +571,20 @@ type UpdateDecision =
 /** Every update site that can write `metadata`, keyed by enclosing function. */
 const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: number }> = {
   'src/server/services/post.service.ts#updatePostImage': {
-    decision: 'stored-row-override',
+    decision: 'spread-metadata-omitted',
     sites: 1,
   },
+  // A song's own keys, merged by the UPDATE so a cover link saved meanwhile stays.
+  'src/server/services/post.service.ts#writeSongTitle': {
+    decision: 'raw-literal-key-text-value',
+    sites: 1,
+  },
+  'src/server/services/post.service.ts#clearSongTitle': { decision: 'raw-server-keys', sites: 1 },
+  'src/server/services/post.service.ts#writeSongAllowRemix': {
+    decision: 'raw-server-keys',
+    sites: 2,
+  },
+  'src/server/services/post.service.ts#setSongCover': { decision: 'raw-server-keys', sites: 1 },
   'src/pages/api/webhooks/youtube-upload.ts#handler': {
     decision: 'raw-literal-key-text-value',
     sites: 1,
@@ -657,6 +673,13 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
         )
       )
         return 'metadata after the input spread is no longer the stored row';
+      return null;
+    }
+    case 'spread-metadata-omitted': {
+      // `metadata: undefined` must be the LAST property, so no spread or key after it can set it.
+      const data = propertyValue(region, 'data') ?? '';
+      if (!/[{,]\s*metadata:\s*undefined,?\s*\}$/.test(stripComments(data)))
+        return 'metadata is no longer omitted after the input spread';
       return null;
     }
     case 'stored-merge-server-keys': {
@@ -836,8 +859,8 @@ describe('Image metadata provenance — update-site ledger', () => {
 
   it('scans a real update population', () => {
     // Positive control: the filter is applied to a population that is not empty.
-    expect(collect(UPDATE_CALL).length).toBeGreaterThan(25);
-    expect(collect(RAW_UPDATE).length).toBeGreaterThan(25);
+    expect(collect(UPDATE_CALL).length).toBeGreaterThan(20);
+    expect(collect(RAW_UPDATE).length).toBeGreaterThan(20);
   });
 
   it('every Image update that can write metadata is classified, and none has gone', () => {

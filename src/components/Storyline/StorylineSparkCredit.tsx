@@ -1,4 +1,5 @@
 import { Text } from '@mantine/core';
+import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
@@ -26,13 +27,18 @@ export function StorylineSparkCreditText({ username }: { username: string | null
  */
 export function StorylineSparkCredit({
   spark,
+  className = 'mb-3.5',
 }: {
   spark: { image: StorylineThumbImage; user: { username: string | null } };
+  className?: string;
 }) {
   return (
     <Link
       href={`/images/${spark.image.id}`}
-      className="mb-3.5 flex items-center gap-3 rounded-md text-inherit no-underline hover:opacity-90"
+      className={clsx(
+        'flex items-center gap-3 rounded-md text-inherit no-underline hover:opacity-90',
+        className
+      )}
       data-testid="storyline-spark-credit"
     >
       <StorylineThumb image={spark.image} width={48} className="shrink-0 rounded" />

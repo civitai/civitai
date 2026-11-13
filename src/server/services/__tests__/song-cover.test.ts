@@ -122,7 +122,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, type "MediaType" NOT NULL,
       url text NOT NULL, metadata jsonb, ingestion text NOT NULL DEFAULT 'Pending',
-      "nsfwLevel" int NOT NULL DEFAULT 0, "blockedFor" text
+      "nsfwLevel" int NOT NULL DEFAULT 0, "blockedFor" text, "updatedAt" timestamp
     );
   `);
   const INT4_OID = 23;

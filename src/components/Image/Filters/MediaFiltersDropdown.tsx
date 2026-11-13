@@ -1,7 +1,8 @@
 import type { ButtonProps } from '@mantine/core';
-import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group } from '@mantine/core';
+import { Chip, Divider, Drawer, Indicator, ScrollArea, Stack, Group, Text } from '@mantine/core';
 import { Popover, Tooltip } from '~/components/MantineOverlays';
 import { IconFilter } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
@@ -10,7 +11,8 @@ import { JumpToMonthFilter } from '~/components/Filters/JumpToMonthFilter';
 import { isJumpToSort, jumpToPatch, periodPatch } from '~/shared/utils/jump-to-month';
 import { StagedFiltersFooter } from '~/components/Filters/StagedFiltersFooter';
 import { useStagedFilters } from '~/components/Filters/useStagedFilters';
-import { getDefaultMediaTypes } from '~/components/Image/image.utils';
+import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
+import { getDefaultMediaTypes, useImageQueryParams } from '~/components/Image/image.utils';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useTeamColor } from '~/components/Events/events.utils';
@@ -24,10 +26,46 @@ import { BaseModelFilterSelect } from '~/components/SfwOnlyBadge/BaseModelFilter
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { GetInfiniteImagesOutput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { removeEmpty } from '~/utils/object-helpers';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 import type { MediaFilterKey } from '~/components/Image/Filters/media-filter-keys';
 
 export type { MediaFilterKey };
+
+const moderatorKeys: MediaFilterKey[] = [
+  'poiOnly',
+  'minorOnly',
+  'disablePoi',
+  'disableMinor',
+  'notPublished',
+];
+const hatTurfKeys: MediaFilterKey[] = ['hatTeams', 'hatTurfMine', 'hideTurfHats', 'hideWornHats'];
+
+// The URL params `useImageFilters` lets outrank the store that this dropdown edits. A store-backed
+// dropdown shows them, and moves them into the store on Apply or Clear so its change takes effect.
+const urlOverridableKeys = [
+  'period',
+  'types',
+  'withMeta',
+  'requiringMeta',
+  'hidden',
+  'fromPlatform',
+  'notPublished',
+  'scheduled',
+  'hideManualResources',
+  'hideAutoResources',
+  'tools',
+  'techniques',
+  'baseModels',
+  'remixesOnly',
+  'nonRemixesOnly',
+  'hideChallenges',
+  'disablePoi',
+  'disableMinor',
+  'poiOnly',
+  'minorOnly',
+  'includePG13',
+] as const satisfies readonly (keyof ImagesQueryParamSchema)[];
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -44,6 +82,7 @@ export function MediaFiltersDropdown({
   hideMediaTypes = false,
   hideTools = false,
   exclude,
+  unavailable,
   jumpToSort,
   style,
   ...buttonProps
@@ -66,20 +105,40 @@ export function MediaFiltersDropdown({
   const excluded = useMemo<MediaFilterKey[]>(
     () => [
       ...(exclude ?? []),
+      ...(unavailable?.keys ?? []),
       ...(hideMediaTypes ? (['types'] as const) : []),
       ...(hideBaseModels ? (['baseModels'] as const) : []),
       ...(hideTools ? (['tools'] as const) : []),
     ],
-    [exclude, hideMediaTypes, hideBaseModels, hideTools]
+    [exclude, unavailable, hideMediaTypes, hideBaseModels, hideTools]
   );
   const shows = useCallback((key: MediaFilterKey) => !excluded.includes(key), [excluded]);
   // Hat Turf's filters, on the main image feed for players only (as the server serves them).
   const showTurf = filterType === 'images' && !!isFeed && !!turfPlayer && shows('hideTurfHats');
   // A section whose every chip is excluded would otherwise render as a lone divider.
   const showResources = shows('hideManualResources') || shows('hideAutoResources');
-  const showModerator = (
-    ['poiOnly', 'minorOnly', 'disablePoi', 'disableMinor', 'notPublished', 'scheduled'] as const
-  ).some(shows);
+  // Greyed only where the control would otherwise appear for this viewer.
+  const offeredHere = (key: MediaFilterKey) => {
+    if (moderatorKeys.includes(key)) return !!isModerator;
+    if (hatTurfKeys.includes(key)) return filterType === 'images' && !!isFeed && !!turfPlayer;
+    switch (key) {
+      case 'scheduled':
+        return !!currentUser;
+      case 'requiringMeta':
+        return !!(isSameUser || isModerator);
+      case 'hidden':
+        return !!isFeed && !!currentUser;
+      case 'hideManualResources':
+      case 'hideAutoResources':
+        return filterType === 'modelImages';
+      case 'hideChallenges':
+        return showChallengeToggle;
+      default:
+        return true;
+    }
+  };
+  const greyed = unavailable?.keys.filter(offeredHere) ?? [];
+  const showModerator = ([...moderatorKeys, 'scheduled'] as const).some(shows);
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
@@ -91,14 +150,51 @@ export function MediaFiltersDropdown({
         : state.setModelImageFilters,
   }));
 
-  const committedFilters = useMemo(() => query || filters, [query, filters]);
+  const router = useRouter();
+  const { query: routeParams } = useImageQueryParams();
+  const urlOverrides = useMemo(() => {
+    if (query) return {};
+    const overrides: Partial<Pick<ImagesQueryParamSchema, (typeof urlOverridableKeys)[number]>> =
+      {};
+    for (const key of urlOverridableKeys) {
+      if (routeParams[key] !== undefined) Object.assign(overrides, { [key]: routeParams[key] });
+    }
+    return overrides;
+  }, [query, routeParams]);
+
+  const committedFilters = useMemo(
+    () => query || { ...filters, ...urlOverrides },
+    [query, filters, urlOverrides]
+  );
+
+  const setStoreFilters = useCallback(
+    (next: Partial<typeof filters>) => {
+      setFilters(next);
+      const overridden = Object.keys(urlOverrides);
+      // The raw router query, not the schema-parsed one: parsing drops dynamic route params
+      // (`/models/[id]`), and Next throws on a pathname missing them.
+      if (overridden.length)
+        router.replace(
+          {
+            pathname: router.pathname,
+            query: removeEmpty({
+              ...router.query,
+              ...Object.fromEntries(overridden.map((key) => [key, undefined])),
+            }),
+          },
+          undefined,
+          { shallow: true, scroll: false }
+        );
+    },
+    [setFilters, urlOverrides, router]
+  );
 
   const handleApply = useCallback(
     (next: typeof committedFilters) => {
       if (onChange) onChange(next);
-      else setFilters(next);
+      else setStoreFilters(next);
     },
-    [onChange, setFilters]
+    [onChange, setStoreFilters]
   );
 
   const handleClear = useCallback(() => {
@@ -153,12 +249,12 @@ export function MediaFiltersDropdown({
     // undefined so it's stripped from the query string.
     if (onChange) onChange({ ...reset, period: undefined });
     else
-      setFilters({
+      setStoreFilters({
         ...reset,
         types: getDefaultMediaTypes(filterType),
         period: MetricTimeframe.AllTime,
       });
-  }, [onChange, setFilters, filterType, shows, showJumpTo, showTurf]);
+  }, [onChange, setStoreFilters, filterType, shows, showJumpTo, showTurf]);
 
   const {
     opened,
@@ -558,6 +654,21 @@ export function MediaFiltersDropdown({
           </>
         )}
       </Stack>
+      {unavailable && greyed.length > 0 && (
+        <Stack gap={4} className="opacity-60" aria-disabled>
+          <Divider label={unavailable.title} className="text-sm font-bold" mb={4} />
+          <Text size="xs" c="dimmed">
+            {unavailable.reason}
+          </Text>
+          <div className="flex flex-wrap gap-2">
+            {greyed.map((key) => (
+              <FilterChip key={key} checked={false} disabled>
+                <span>{unavailable.labels[key]}</span>
+              </FilterChip>
+            ))}
+          </div>
+        </Stack>
+      )}
     </Stack>
   );
 
@@ -640,6 +751,13 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   hideTools?: boolean;
   /** Controls this caller cannot honour. Omitted keys render as usual. */
   exclude?: MediaFilterKey[];
+  /** Controls shown greyed in their own section, with the reason, instead of in place. */
+  unavailable?: {
+    title: string;
+    reason: string;
+    keys: readonly MediaFilterKey[];
+    labels: Partial<Record<MediaFilterKey, string>>;
+  };
   /** Offer the jump-to-month control; it only applies while this is a chronological sort. */
   jumpToSort?: string;
 };

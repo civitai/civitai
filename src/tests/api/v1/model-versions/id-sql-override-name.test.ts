@@ -18,6 +18,9 @@ void redisMock;
  */
 
 let db: PGlite;
+const mockHold = vi.hoisted(() =>
+  vi.fn(async (byVersion: unknown, _models: Map<number, unknown>) => byVersion)
+);
 
 vi.mock('~/server/services/model-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVisibility>()),
@@ -30,7 +33,10 @@ vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => ({
 vi.mock('~/server/services/training-data-restricted.service', () => ({
   trainingDataListing: async () => () => true,
 }));
-vi.mock('~/server/services/model.service', () => ({ getVaeFiles: async () => [] }));
+vi.mock('~/server/services/model.service', () => ({
+  getVaeFiles: async () => [],
+  holdShowcaseImages: mockHold,
+}));
 vi.mock('~/server/services/image.service', () => ({ getImagesForModelVersion: async () => [] }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: async () => ({}),
@@ -58,7 +64,7 @@ beforeAll(async () => {
     CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Published');
     CREATE TABLE "Model" (
       id int PRIMARY KEY, name text, "sfwName" text, type text, nsfw boolean, poi boolean,
-      mode text, availability text, "userId" int
+      mode text, availability text, "userId" int, minor boolean, "sfwOnly" boolean
     );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int, name text, "nsfwLevel" int, "createdAt" timestamp(3),
@@ -80,7 +86,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "ModelFileHash" ("fileId" int, type text, hash text);
 
-    INSERT INTO "Model" VALUES (7, 'Qwen Image', NULL, 'Checkpoint', false, false, NULL, 'Public', 1);
+    INSERT INTO "Model" VALUES (7, 'Qwen Image', NULL, 'Checkpoint', false, false, NULL, 'Public', 1, false, false);
     INSERT INTO "ModelVersion" VALUES (${VERSION_ID}, 7, 'v1', 1, now(), now(), 'Published', now(),
       '{}', NULL, NULL, 'SD 1.5', NULL, NULL, 'Created', 'Download', 'Public');
     INSERT INTO "ModelFile" VALUES
@@ -145,5 +151,29 @@ describe('GET /api/v1/model-versions/{id} — the raw SQL carries overrideName',
     expect(byId[12].name).toBe('creator-picked.safetensors');
     expect(byId[11].overrideName).toBeNull();
     expect(byId[11].name).not.toBe('creator-picked.safetensors');
+  });
+});
+
+describe('GET /api/v1/model-versions/{id} — the raw SQL carries the model flags to the showcase hold', () => {
+  afterAll(async () => {
+    await db.exec(`UPDATE "Model" SET minor = false, "sfwOnly" = false WHERE id = 7`);
+  });
+
+  it.each([
+    { minor: true, sfwOnly: false },
+    { minor: false, sfwOnly: true },
+    { minor: false, sfwOnly: false },
+  ])('passes minor=$minor, sfwOnly=$sfwOnly from the row, and serves neither', async (flags) => {
+    await db.exec(
+      `UPDATE "Model" SET minor = ${flags.minor}, "sfwOnly" = ${flags.sfwOnly} WHERE id = 7`
+    );
+    mockHold.mockClear();
+    const { statusCode, body } = await getVersion();
+    expect(statusCode).toBe(200);
+    expect(mockHold).toHaveBeenCalledTimes(1);
+    const models = mockHold.mock.calls[0][1];
+    expect(models.get(VERSION_ID)).toEqual({ modelId: 7, ...flags });
+    expect(body.model).not.toHaveProperty('minor');
+    expect(body.model).not.toHaveProperty('sfwOnly');
   });
 });

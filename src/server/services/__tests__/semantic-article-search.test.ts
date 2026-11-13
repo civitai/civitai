@@ -13,6 +13,15 @@ const h = vi.hoisted(() => ({
   includesPoi: vi.fn<(prompt?: string) => string | false>(),
   includesMinor: vi.fn<(prompt?: string) => boolean>(),
   addons: [] as unknown[],
+  isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
+  evalBoolean: vi.fn<() => { enabled: unknown }>(),
+  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isFlipt: h.isFlipt,
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => h.fliptClient,
 }));
 
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -95,6 +104,9 @@ const ranking =
   };
 
 beforeEach(() => {
+  h.isFlipt.mockReset().mockResolvedValue(false);
+  h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
+  h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
   sent = [];
   h.fetched = [];
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
@@ -189,17 +201,23 @@ describe('semantic article search: the query audit and the browsing level', () =
     }).then((result) => ({ result, track }));
   };
 
-  it('refuses a query the audit flags as minor, before asking the service, and records it', async () => {
+  it('refuses a minor query for a moderator, before asking the service', async () => {
     h.includesInappropriate.mockReturnValue('minor');
-    const { result, track } = await run();
-    expect(result.items).toEqual([]);
+    const { result } = await run({ browsingLevel: 31, user: MOD });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
     expect(sent).toHaveLength(0);
+  });
+
+  it('searches a minor query for a non-moderator instead of refusing it, and records it', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { result, track } = await run({ browsingLevel: 31 });
+    expect(result.items.map((a) => a.id)).toEqual([10]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
   });
 
-  it('refuses any flagged verdict for a moderator at NSFW levels, and records a masked minor match', async () => {
+  it('refuses a POI verdict for a moderator at NSFW levels, and records a masked minor match', async () => {
     h.includesInappropriate.mockReturnValue('poi');
     h.includesMinor.mockReturnValue(true);
     const { result, track } = await run({ browsingLevel: 31, user: MOD });
@@ -219,9 +237,31 @@ describe('semantic article search: the query audit and the browsing level', () =
     expect(sent).toHaveLength(0);
   });
 
-  it('searches a person-of-interest query when no add-on disables them', async () => {
+  it('refuses a person-of-interest query from a non-moderator with no add-on', async () => {
     h.includesPoi.mockReturnValue('someone');
     const { result } = await run();
+    expect(result.items).toEqual([]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('counts each flagged query by verdict and stage', async () => {
+    const { register } = await import('prom-client');
+    const count = async () =>
+      (
+        (await register.getSingleMetric('semantic_search_query_verdicts_total')?.get())?.values ??
+        []
+      )
+        .filter((v) => v.labels.verdict === 'poi' && v.labels.stage === 'query')
+        .reduce((n, v) => n + v.value, 0);
+    const before = await count();
+    h.includesPoi.mockReturnValue('someone');
+    await run();
+    expect(await count()).toBe(before + 1);
+  });
+
+  it('lets a moderator with no add-on search a person-of-interest query', async () => {
+    h.includesPoi.mockReturnValue('someone');
+    const { result } = await run({ user: MOD });
     expect(result.items.map((a) => a.id)).toEqual([10]);
   });
 
@@ -236,13 +276,56 @@ describe('semantic article search: the query audit and the browsing level', () =
     ['all levels', 31, [1, 2]],
     ['NSFW levels only', 4 | 8, [1]],
   ])('clamps a non-moderator asking for %s to the safe levels', async (_name, level, expected) => {
+    h.evalBoolean.mockReturnValue({ enabled: true });
     await run({ browsingLevel: level });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: expected });
     expect(h.includesInappropriate).toHaveBeenLastCalledWith(expect.anything(), false);
   });
 
   it('clamps a signed-out visitor too', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: true });
     await run({ browsingLevel: 31, user: undefined });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
+  });
+
+  it('lifts the clamp when the key is present and disabled', async () => {
+    h.evalBoolean.mockReturnValue({ enabled: false });
+    await run({ browsingLevel: 31 });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+  });
+
+  it.each([
+    ['the client is unavailable', () => (h.fliptClient = null)],
+    [
+      'the key is missing',
+      () =>
+        h.evalBoolean.mockImplementation(() => {
+          throw new Error('flag not found');
+        }),
+    ],
+    ['the answer is malformed', () => h.evalBoolean.mockReturnValue({ enabled: undefined })],
+  ])('holds the clamp when %s', async (_name, arrange) => {
+    arrange();
+    await run({ browsingLevel: 31 });
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
+  });
+
+  it("applies the level's add-on tag exclusions server-side", async () => {
+    h.addons = [{ type: 'some', nsfwLevels: [4], excludedTagIds: [9001] }];
+    await run({ browsingLevel: 31 });
+    expect(sent[0].excludedTagIds).toContain(9001);
+  });
+
+  it('recomputes the add-ons at the narrowed level', async () => {
+    h.addons = [{ type: 'none', nsfwLevels: [4, 8, 16], excludedTagIds: [9200] }];
+    h.includesInappropriate.mockReturnValue('minor');
+    await run({ browsingLevel: 31 });
+    expect(sent[0].excludedTagIds).toContain(9200);
+  });
+
+  it('narrows a minor query to the safe levels once the clamp is off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    await run({ browsingLevel: 31 });
     expect(sent[0].gate).toMatchObject({ nsfwLevels: [1, 2] });
   });
 
@@ -250,8 +333,18 @@ describe('semantic article search: the query audit and the browsing level', () =
     h.includesInappropriate.mockImplementation(({ prompt }) =>
       prompt === 'corrected' ? 'minor' : false
     );
+    const { register } = await import('prom-client');
+    const counted = async () =>
+      (
+        (await register.getSingleMetric('semantic_search_query_verdicts_total')?.get())?.values ??
+        []
+      )
+        .filter((v) => v.labels.verdict === 'minor' && v.labels.stage === 'correction')
+        .reduce((n, v) => n + v.value, 0);
+    const before = await counted();
     const { result, track } = await run({ correctedQuery: 'corrected' });
     expect(result).toMatchObject({ items: [], correctedQuery: undefined });
+    expect(await counted()).toBe(before + 1);
     expect(h.fetched).toEqual([]);
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })

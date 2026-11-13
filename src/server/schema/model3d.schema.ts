@@ -42,10 +42,7 @@ export const upsertModel3DSchema = z.object({
   licenseId: z.number().int().positive(),
   licenseDetails: z.string().nullish(),
   thumbnailImageId: z.number().int().positive().nullish(),
-  // Generation provenance — set by the workflow result handler. Surfaced here
-  // so the upsert can carry them through when a Draft is being completed.
-  workflowId: z.string().nullish(),
-  sourceImageId: z.number().int().positive().nullish(),
+  // workflowId and sourceImageId are absent on purpose: only the workflow result handler sets them.
   generationParams: z.unknown().nullish(),
   status: z.enum(Model3DStatus).optional(),
   nsfw: z.boolean().optional(),
@@ -126,8 +123,9 @@ export type SetModel3DNsfwLevelInput = z.infer<typeof setModel3DNsfwLevelSchema>
 export const setModel3DNsfwLevelSchema = z.object({
   id: z.number().int().positive(),
   nsfwLevel: z.number().int().min(0),
-  // When true, also append `'nsfwLevel'` to lockedProperties so the batch
-  // nsfwLevel recompute job skips this row.
+  // The thumbnail the moderator judged; the rating is refused if the model's has changed.
+  thumbnailImageId: z.number().int().positive().nullable(),
+  // Ignored: a moderator rating always locks. Kept so existing callers still validate.
   lock: z.boolean().optional(),
 });
 
@@ -165,6 +163,7 @@ export const getModel3DRelatedPostsSchema = z.object({
   model3dId: z.number().int().positive(),
   limit: z.number().int().min(1).max(50).default(12),
   cursor: z.number().int().positive().optional(),
+  browsingLevel: z.number().int().min(1).optional(),
 });
 
 export type GetModel3DReviewSummaryInput = z.infer<typeof getModel3DReviewSummarySchema>;

@@ -824,11 +824,6 @@ export const TrackLyricsSource = {
   transcribed: 'transcribed',
 } as const;
 export type TrackLyricsSource = (typeof TrackLyricsSource)[keyof typeof TrackLyricsSource];
-export const ImageAxisSource = {
-  rated: 'rated',
-  moderator: 'moderator',
-} as const;
-export type ImageAxisSource = (typeof ImageAxisSource)[keyof typeof ImageAxisSource];
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',
