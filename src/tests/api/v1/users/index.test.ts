@@ -298,3 +298,29 @@ describe('/api/v1/users system-request token', () => {
     expect(await includeSentFor({ token: 'the-old-secret' })).toEqual([]);
   });
 });
+
+describe('/api/v1/users avatar', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPublicApiContext2.mockResolvedValue({ user: { getAll: mockGetAll } });
+  });
+
+  async function avatarFor(avatarNsfw: unknown) {
+    mockGetAll.mockResolvedValue([{ id: 1, username: 'a', avatarUrl: 'avatar.png', avatarNsfw }]);
+    const { req, res } = createMocks({ query: { query: 'a' } });
+    await handler(req, res);
+    return res._getJSONData().items[0].avatarUrl;
+  }
+
+  it('serves no avatar when it is unrated', async () => {
+    expect(await avatarFor(0)).toBeNull();
+  });
+
+  it('serves no avatar above PG', async () => {
+    expect(await avatarFor(2)).toBeNull();
+  });
+
+  it('serves a PG avatar (control)', async () => {
+    expect(await avatarFor(1)).toBe('avatar.png');
+  });
+});

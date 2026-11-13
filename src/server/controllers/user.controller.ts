@@ -179,6 +179,7 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { profileImageSelect } from '~/server/selectors/image.selector';
 
 export const getAllUsersHandler = async ({
   input,
@@ -968,7 +969,7 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
         // model id per creator just to take `.length`. The only consumer
         // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
         _count: { select: { models: { where: { status: 'Published' } } } },
-        image: true,
+        profilePicture: { select: profileImageSelect },
       },
     });
 

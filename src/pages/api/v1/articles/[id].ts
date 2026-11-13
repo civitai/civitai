@@ -10,6 +10,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -24,9 +25,10 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
  * everyone, authed or not. There is no owner self-view branch here, so the
  * response is a pure function of the id (+ region) — byte-identical for an
  * anonymous caller and any authenticated caller. It is `private, no-store` for every
- * caller: the body depends on the caller's region and can carry content above SFW. A
- * private article is INDISTINGUISHABLE from a non-existent one (both 404), so this
- * is not an existence oracle.
+ * caller: the body depends on the caller's region. Outside a restricted region the article
+ * body follows the article's own level, so it can be above SFW; the cover, banner and author
+ * avatar are clamped to PG, or PG|PG13 in a restricted region. A private article is
+ * INDISTINGUISHABLE from a non-existent one (both 404), so this is not an existence oracle.
  *
  * Maturity: in a restricted region, an article above SFW (its own level, or any connected image
  * in its body) is the same 404 as a missing one, as on `/api/v1/posts/[id]`. The cover image is
@@ -122,7 +124,9 @@ export default MixedAuthEndpoint(async function handler(
       ingestion,
     }));
 
-    return res.status(200).json({ ...publicArticle, contentImages });
+    const user = publicArticle.user && withPublicAvatar(publicArticle.user, browsingLevel);
+
+    return res.status(200).json({ ...publicArticle, user, contentImages });
   } catch (e) {
     // getArticleById throws NOT_FOUND for a missing / non-visible article →
     // handleEndpointError maps it to a 404.
