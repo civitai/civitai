@@ -2,16 +2,8 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { jsonBuildObject } from './infra/helpers';
 
-// The Kysely port of the four per-page reads in `getModelsWithVersions` (model.service.ts, behind
-// the public /api/v1/models list and /api/v1/models/:id), served behind the default-off server
-// Flipt flag `kysely-hot-reads-11`; off, the Prisma reads run unchanged. Prisma issues one
-// statement per read: the versions' linked components ("RecommendedResource"), the models'
-// metrics ("ModelMetric"), the versions' metrics ("ModelVersionMetric") and the versions' `meta`
-// ("ModelVersion"). They depend only on the page's model and version ids, not on each other, so
-// this is ONE statement with four uncorrelated `json_agg` subqueries. The app-side wrapper
-// (<civitai>/src/server/services/hot-reads-11.reads.ts) returns them as the four lists, and
-// <civitai>/src/server/services/__tests__/hot-reads-11.kysely-parity.test.ts compares the two
-// paths against a real database.
+// Replaces the four per-page Prisma reads of `getModelsWithVersions` with ONE statement of four
+// uncorrelated `json_agg` subqueries, behind the default-off Flipt flag `kysely-hot-reads-11`.
 //
 // Shape notes, each pinned by the parity suite:
 // - Only the columns the caller reads are selected. The Prisma metric reads have no `select`, so

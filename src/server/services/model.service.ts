@@ -6641,8 +6641,6 @@ export async function getModelsWithVersions({
 
   const next = await nextCoverageEnabled();
   const modelIds = items.map(({ id }) => id);
-  // The page's linked components, model and version metrics, and version `meta`: four Prisma
-  // statements, or one Kysely statement while `kysely-hot-reads-11` is on (hot-reads-11.reads.ts).
   const { vaeLinkedRows, metrics, versionMetrics, versionMetaRows } =
     await readModelsWithVersionsStats({ modelIds, modelVersionIds });
   // Get VAE version IDs from linked components
@@ -6677,8 +6675,7 @@ export async function getModelsWithVersions({
   const apiMembershipMap = await getValidCreatorMembershipMap([...apiMembershipCandidates]);
 
   // Version-level meta isn't carried by dataForModelsCache, so fetch it to honor the
-  // version-OR-model-OR-user precedence for v1 version stats (a version-only hide). Read above,
-  // with the metrics.
+  // version-OR-model-OR-user precedence for v1 version stats (a version-only hide).
   const versionMetaMap = new Map<number, unknown>(versionMetaRows.map((v) => [v.id, v.meta]));
 
   function getStatsForModel(modelId: number, hidden: HiddenModelMetrics) {

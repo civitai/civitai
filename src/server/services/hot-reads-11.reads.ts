@@ -8,12 +8,8 @@ import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
 
 /**
- * The reads behind `kysely-hot-reads-11`: the four per-page reads of `getModelsWithVersions`
- * (model.service.ts, behind the public /api/v1/models list and /api/v1/models/:id), as a Prisma
- * reader and its Kysely twin taking the client, so the parity suite
- * (__tests__/hot-reads-11.kysely-parity.test.ts) runs the very code the service runs. The Prisma
- * reader is the original four reads, moved here verbatim and issued one after another as before.
- * The twin returns the same rows from ONE statement where Prisma issues four.
+ * Prisma reader and Kysely twin behind `kysely-hot-reads-11`, both taking the client so the parity
+ * suite runs the code the service runs.
  */
 
 /** The page's ids: every model on the page, and every version of those models. */
@@ -106,11 +102,7 @@ export function resetHotReads11GateForTests() {
   kyselyHotReads11 = createCachedFlagGate(readFlag);
 }
 
-/**
- * The four reads on the replica, as the Prisma reads always were: through Prisma while
- * `kysely-hot-reads-11` is off, through the one Kysely statement while it is on. The flag is read
- * once per call, from a per-process copy refreshed at most every few seconds.
- */
+/** The four reads on the replica: Prisma while `kysely-hot-reads-11` is off, one Kysely statement while on. */
 export async function readModelsWithVersionsStats(
   ids: ModelsWithVersionsIds
 ): Promise<ModelsWithVersionsStats> {
