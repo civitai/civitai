@@ -1,13 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { upsertModel3DSchema } from '~/server/schema/model3d.schema';
-import { upsertModel3D } from '~/server/services/model3d.service';
+import { Prisma } from '@prisma/client';
+import { setModel3DNsfwLevel, upsertModel3D } from '~/server/services/model3d.service';
 import type { SessionUser } from '~/types/session';
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   throwOnBlockedUserContent: vi.fn(),
 }));
+
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, userContentOverviewCache: { refresh: vi.fn() } };
+});
 
 const { enqueueJobs } = vi.hoisted(() => ({ enqueueJobs: vi.fn() }));
 vi.mock('~/server/services/job-queue.service', async (importOriginal) => ({
@@ -195,5 +201,52 @@ describe('upsertModel3D thumbnail ownership', () => {
     });
     expect(written().thumbnailImageId).toBe(11);
     expect(written()).not.toHaveProperty('nsfwLevel');
+  });
+
+  it('fails the save, not just the thumbnail, when a moderator locks the rating mid-save', async () => {
+    // The lock read saw no lock; by the write, a moderator has locked the rating.
+    db.model3D.update.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if ('NOT' in where) {
+        throw new Prisma.PrismaClientKnownRequestError('No record found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      }
+      return { id: MODEL_ID };
+    });
+
+    await expect(
+      upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner })
+    ).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(db.model3D.update.mock.calls[0][0].where).toEqual({
+      id: MODEL_ID,
+      NOT: { lockedProperties: { has: 'nsfwLevel' } },
+    });
+
+    // Saves that write no thumbnail are not guarded.
+    db.model3D.update.mockClear();
+    await upsertModel3D({ input: { ...base, id: MODEL_ID }, user: owner });
+    expect(db.model3D.update.mock.calls[0][0].where).toEqual({ id: MODEL_ID });
+  });
+
+  it("keeps a moderator's rating when the owner later swaps the thumbnail", async () => {
+    db.model3D.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      userId: owner.id,
+      lockedProperties: [],
+    });
+    await setModel3DNsfwLevel({ id: MODEL_ID, nsfwLevel: 16, user: moderator });
+    const rated = db.model3D.update.mock.calls[0][0].data;
+    expect(rated.nsfwLevel).toBe(16);
+
+    db.model3D.update.mockClear();
+    db.model3D.findUnique.mockResolvedValue({
+      id: MODEL_ID,
+      userId: owner.id,
+      lockedProperties: rated.lockedProperties,
+    });
+    await upsertModel3D({ input: { ...base, id: MODEL_ID, thumbnailImageId: 11 }, user: owner });
+    expect(written()).not.toHaveProperty('nsfwLevel');
+    expect(written()).not.toHaveProperty('thumbnailImageId');
   });
 });

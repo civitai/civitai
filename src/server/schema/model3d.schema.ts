@@ -123,8 +123,7 @@ export type SetModel3DNsfwLevelInput = z.infer<typeof setModel3DNsfwLevelSchema>
 export const setModel3DNsfwLevelSchema = z.object({
   id: z.number().int().positive(),
   nsfwLevel: z.number().int().min(0),
-  // When true, also append `'nsfwLevel'` to lockedProperties so the batch
-  // nsfwLevel recompute job skips this row.
+  // Ignored: a moderator rating always locks. Kept so existing callers still validate.
   lock: z.boolean().optional(),
 });
 

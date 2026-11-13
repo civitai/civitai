@@ -817,11 +817,15 @@ export const upsertModel3D = async ({
     ...(nsfwLevel !== undefined && { nsfwLevel }),
   } as Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput;
 
+  const guardRatingLock = !isModerator && data.thumbnailImageId !== undefined;
+
   try {
     if (id) {
       const updated = await dbWrite.$transaction(async (tx) => {
         const row = await tx.model3D.update({
-          where: { id },
+          // A moderator may lock the rating after the lock read above; refuse rather than
+          // swap the thumbnail under a locked rating.
+          where: guardRatingLock ? { id, NOT: { lockedProperties: { has: 'nsfwLevel' } } } : { id },
           data: writeData,
           select: model3dDetailSelect,
         });
@@ -863,6 +867,16 @@ export const upsertModel3D = async ({
     return created;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (
+      guardRatingLock &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    ) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'This model changed while you were saving. Reload it and try again.',
+      });
+    }
     throw throwDbError(error);
   }
 };
@@ -986,16 +1000,16 @@ export const deleteModel3D = async ({
 // ---------------------------------------------------------------------------
 
 /**
- * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. When
- * `lock` is true we also append `'nsfwLevel'` to `lockedProperties` so the
- * batch recompute (`updateModel3DNsfwLevels`) skips this row going forward.
+ * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. Like a moderator's
+ * image rating (`nsfwLevelLocked`), it always locks: `'nsfwLevel'` is added to
+ * `lockedProperties`, so neither the batch recompute (`updateModel3DNsfwLevels`) nor the
+ * owner (who then can't change the thumbnail) can move it. The `lock` input is ignored.
  *
  * Denormalized `Model3DMetric.nsfwLevel` is updated in lockstep.
  */
 export const setModel3DNsfwLevel = async ({
   id,
   nsfwLevel,
-  lock,
   user,
 }: SetModel3DNsfwLevelInput & { user: SessionUser }) => {
   if (!user.isModerator) throw throwAuthorizationError();
@@ -1006,9 +1020,7 @@ export const setModel3DNsfwLevel = async ({
   });
   if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
 
-  const nextLocked = lock
-    ? Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']))
-    : existing.lockedProperties;
+  const nextLocked = Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']));
 
   try {
     const updated = await dbWrite.$transaction(async (tx) => {
