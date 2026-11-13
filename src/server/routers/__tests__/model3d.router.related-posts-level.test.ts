@@ -22,7 +22,11 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const { model3dRouter } = await import('../model3d.router');
 
-const caller = (user: Record<string, unknown> | undefined, canViewNsfw: boolean) =>
+const caller = (
+  user: Record<string, unknown> | undefined,
+  canViewNsfw: boolean,
+  isGreen = !canViewNsfw
+) =>
   model3dRouter.createCaller({
     user,
     acceptableOrigin: true,
@@ -31,7 +35,7 @@ const caller = (user: Record<string, unknown> | undefined, canViewNsfw: boolean)
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
-    features: { model3dFeed: true, canViewNsfw, isGreen: !canViewNsfw },
+    features: { model3dFeed: true, canViewNsfw, isGreen },
     track: {},
   } as never);
 
@@ -72,5 +76,17 @@ describe('model3d.getRelatedPosts', () => {
     };
     expect(await servesUnrated(false)).toBe(false);
     expect(await servesUnrated(true)).toBe(true);
+  });
+
+  it('decides unrated by the domain, not by the viewer, for any viewer', async () => {
+    const viewer = { id: 7, isModerator: false, showNsfw: true, browsingLevel: NsfwLevel.PG };
+    const servesUnrated = async (isGreen: boolean) => {
+      related.mockClear();
+      // A mature-enabled viewer either way: only the domain differs.
+      await caller(viewer, true, isGreen).getRelatedPosts({ model3dId: 1 });
+      return (related.mock.calls[0][0] as { servesUnrated: boolean }).servesUnrated;
+    };
+    expect(await servesUnrated(true)).toBe(false);
+    expect(await servesUnrated(false)).toBe(true);
   });
 });
