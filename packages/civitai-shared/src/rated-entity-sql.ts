@@ -49,9 +49,16 @@ export function raiseNsfwLevelText(level: string, floor: string) {
   return `(CASE WHEN ${l} = 0 OR ${f} = 0 THEN ${l} WHEN (${l} & ~(${f} - 1)) = 0 THEN ${f} ELSE ${l} & ~(${f} - 1) END)`;
 }
 
+/** An XGuard (fallback check) row, which has no result version, that blocked or flagged nsfw. */
+const fallbackFlaggedText = (entityType: string, id: string) =>
+  `EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = '${entityType}' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels")))`;
+
 export function articleModerationFloorText(idColumn: string) {
   const id = identifier(idColumn);
-  return `GREATEST(CASE WHEN EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'Article' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))) OR EXISTS (SELECT 1 FROM "ArticleReport" ar JOIN "Report" r ON r.id = ar."reportId" WHERE ar."articleId" = ${id} AND r.reason = 'NSFW'::"ReportReason" AND r.status = 'Actioned'::"ReportStatus") THEN ${
+  return `GREATEST(CASE WHEN ${fallbackFlaggedText(
+    'Article',
+    id
+  )} OR EXISTS (SELECT 1 FROM "ArticleReport" ar JOIN "Report" r ON r.id = ar."reportId" WHERE ar."articleId" = ${id} AND r.reason = 'NSFW'::"ReportReason" AND r.status = 'Actioned'::"ReportStatus") THEN ${
     NsfwLevel.R
   } ELSE 0 END, ${scanFloorText('Article', id)})`;
 }
@@ -59,7 +66,7 @@ export function articleModerationFloorText(idColumn: string) {
 /** R for a flagged XGuard row, else the detected level of a text-scan verdict, else 0. */
 export function serviceOfferingTextFloorText(idColumn: string) {
   const id = identifier(idColumn);
-  return `GREATEST(CASE WHEN EXISTS (SELECT 1 FROM "EntityModeration" em WHERE em."entityType" = 'ServiceOffering' AND em."entityId" = ${id} AND em.result->>'version' IS NULL AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))) THEN ${
+  return `GREATEST(CASE WHEN ${fallbackFlaggedText('ServiceOffering', id)} THEN ${
     NsfwLevel.R
   } ELSE 0 END, ${scanFloorText('ServiceOffering', id)})`;
 }

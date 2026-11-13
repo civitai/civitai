@@ -618,6 +618,79 @@ describe('the moderation adapter', () => {
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
     });
 
+    describe('a scan skipped as already done', () => {
+      const skipped = async (reason: 'unchanged' | 'too-short') => {
+        row.updatedAt = (
+          await q<{ updatedAt: Date }>(`SELECT "updatedAt" FROM "ServiceOffering" WHERE id = $1`, [
+            OFFERING,
+          ])
+        )[0].updatedAt;
+        dbMock.dbWrite.serviceOffering.findUnique.mockResolvedValue({
+          ...TEXT,
+          updatedAt: row.updatedAt,
+        } as never);
+        route.submitTextModerationOrScan.mockImplementationOnce((async (opts: {
+          onActiveSkip: (r: string) => Promise<unknown>;
+        }) => {
+          await opts.onActiveSkip(reason);
+          return null;
+        }) as never);
+        await scanServiceOffering(OFFERING);
+      };
+      const stored = (triggeredLabels: string[]) =>
+        dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+          status: 'Succeeded',
+          nsfwLevel: PG13,
+          triggeredLabels,
+          result: { version: 1, textHash: currentHash },
+        } as never);
+      const pendingHold = () =>
+        dbMock.dbWrite.textScanHold.findMany.mockResolvedValueOnce([
+          { status: 'Pending', textHash: currentHash, meta: null },
+        ] as never);
+
+      it('holds an offering whose unchanged text still has a csam hold pending', async () => {
+        stored([]);
+        pendingHold();
+        await skipped('unchanged');
+        expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+      });
+
+      it('holds an offering whose unchanged text has a stored csam verdict', async () => {
+        stored(['csam']);
+        await skipped('unchanged');
+        expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+      });
+
+      it('settles an offering whose unchanged text has a clean stored verdict', async () => {
+        stored([]);
+        await skipped('unchanged');
+        expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
+      });
+
+      it.each([
+        [true, ServiceOfferingIngestionStatus.Blocked],
+        [false, ServiceOfferingIngestionStatus.Scanned],
+      ])(
+        'settles text too short to scan unless a hold is pending (%s)',
+        async (held, ingestion) => {
+          dbMock.dbWrite.textScanHold.findMany.mockResolvedValueOnce(
+            (held ? [{ status: 'Pending', textHash: 'h', meta: null }] : []) as never
+          );
+          await skipped('too-short');
+          expect(row.ingestion).toBe(ingestion);
+        }
+      );
+    });
+
+    it('holds an offering the fallback check passed while a csam hold is pending', async () => {
+      dbMock.dbWrite.textScanHold.findMany.mockResolvedValueOnce([
+        { status: 'Pending', textHash: 'h', meta: null },
+      ] as never);
+      await apply(false);
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
+    });
+
     it('holds a csam verdict with no text hash to compare', async () => {
       verdict(['csam'], null);
       await reconcile();

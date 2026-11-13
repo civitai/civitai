@@ -49,10 +49,10 @@ const forCurrentText = (offeringId: number, { workflowId, unchangedSince }: Curr
 });
 
 /**
- * Settles a check that passed: the rating takes the verdict, then the offering is marked scanned.
- * A blocked offering stays blocked; only a moderator releases it.
+ * The rating takes the verdict, then the offering is marked scanned; a blocked one stays blocked.
+ * Reached only through the hold checks below.
  */
-export async function settleServiceOfferingScan(offeringId: number, current: CurrentText = {}) {
+async function markServiceOfferingScanned(offeringId: number, current: CurrentText = {}) {
   await updateServiceOfferingNsfwLevels([offeringId]);
   await dbWrite.serviceOffering.updateMany({
     where: {
@@ -65,11 +65,14 @@ export async function settleServiceOfferingScan(offeringId: number, current: Cur
   });
 }
 
+const readCsamHolds = (offeringId: number) =>
+  dbWrite.textScanHold.findMany({
+    where: { entityType: ENTITY_TYPE, entityId: offeringId, label: 'csam' },
+    select: { status: true, textHash: true, meta: true },
+  });
+
 const hasPendingCsamHold = async (offeringId: number) =>
-  !!(await dbWrite.textScanHold.findFirst({
-    where: { entityType: ENTITY_TYPE, entityId: offeringId, label: 'csam', status: 'Pending' },
-    select: { id: true },
-  }));
+  csamHoldBars(null, await readCsamHolds(offeringId));
 
 export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';
 
@@ -81,10 +84,7 @@ export type ServiceOfferingHoldState = 'held' | 'clear' | 'unverified';
 export async function serviceOfferingHoldState(
   offeringId: number
 ): Promise<ServiceOfferingHoldState> {
-  const holds = await dbWrite.textScanHold.findMany({
-    where: { entityType: ENTITY_TYPE, entityId: offeringId, label: 'csam' },
-    select: { status: true, textHash: true, meta: true },
-  });
+  const holds = await readCsamHolds(offeringId);
   if (csamHoldBars(null, holds)) return 'held';
   const verdict = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: ENTITY_TYPE, entityId: offeringId } },
@@ -101,6 +101,17 @@ export async function serviceOfferingHoldState(
   return held ? 'held' : 'clear';
 }
 
+/** Settles a check with no stored verdict to read, unless it found csam or a hold is still pending. */
+async function settleUnlessHeld(
+  offeringId: number,
+  current: CurrentText = {},
+  { detected = false } = {}
+) {
+  if (detected || (await hasPendingCsamHold(offeringId)))
+    await blockServiceOffering(offeringId, current);
+  else await markServiceOfferingScanned(offeringId, current);
+}
+
 /**
  * Applies a passed check from the stored rows: a held offering is blocked, an unverified one is
  * left unshown. Returns what it found.
@@ -108,7 +119,7 @@ export async function serviceOfferingHoldState(
 export async function settleOrHoldServiceOffering(offeringId: number, current: CurrentText = {}) {
   const state = await serviceOfferingHoldState(offeringId);
   if (state === 'held') await blockServiceOffering(offeringId, current);
-  else if (state === 'clear') await settleServiceOfferingScan(offeringId, current);
+  else if (state === 'clear') await markServiceOfferingScanned(offeringId, current);
   return state;
 }
 
@@ -201,7 +212,8 @@ const settleSkipped = (offeringId: number, reason: SkipReason) =>
         ENTITY_TYPE,
         offeringId,
         reason,
-        () => settleServiceOfferingScan(offeringId),
+        (_level, { stored }) =>
+          stored ? settleOrHoldServiceOffering(offeringId) : settleUnlessHeld(offeringId),
         {
           offeringId,
         }
@@ -273,7 +285,7 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
 
   applyResult: async ({ entityId, workflowId, blocked }) => {
     if (blocked) await blockServiceOffering(entityId, { workflowId });
-    else await settleServiceOfferingScan(entityId, { workflowId });
+    else await settleUnlessHeld(entityId, { workflowId });
   },
 
   // Scoped to Pending so a failed rescan can't hide an offering that already passed.
@@ -285,9 +297,7 @@ export const serviceOfferingModerationAdapter: ModerationAdapter = {
   },
 
   // The outcome is this text's verdict; a hold still pending from earlier text holds it too.
-  applyTextScan: withCsamHold(ENTITY_TYPE, async ({ entityId, workflowId, outcome }) => {
-    if (outcome.csam?.detected || (await hasPendingCsamHold(entityId)))
-      await blockServiceOffering(entityId, { workflowId });
-    else await settleServiceOfferingScan(entityId, { workflowId });
-  }),
+  applyTextScan: withCsamHold(ENTITY_TYPE, ({ entityId, workflowId, outcome }) =>
+    settleUnlessHeld(entityId, { workflowId }, { detected: outcome.csam?.detected })
+  ),
 };
