@@ -27,7 +27,7 @@ import {
 } from '~/server/logging/client';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -86,7 +86,7 @@ import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadBreaker } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
@@ -169,7 +169,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   try {
     // Wall-clock deadline so a silent sysRedis half-open can't park every gen
     // tRPC call ~11min (a fast DOWN already rejects into the catch below).
-    genClient = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
+    genClient = await withSysReadBreaker(sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT));
   } catch (err) {
     logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
@@ -481,18 +481,7 @@ export const orchestratorRouter = router({
       }
 
       // Check generation status early
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       const result = await generateFromGraph({
         input: formInput,
@@ -597,18 +586,7 @@ export const orchestratorRouter = router({
         });
       }
 
-      if (status.mode === 'disabled' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
-      if (status.mode === 'memberOnly' && userTier === 'free' && !ctx.user.isModerator) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: status.message ?? generationStatusDefaultMessage,
-        });
-      }
+      assertGenerationStatusAllows(status, { isModerator: ctx.user.isModerator, tier: userTier });
 
       // Rides alongside the graph input rather than inside it — it is not a graph node.
       const { downloadPriority, acceptBoostRequired, ...graphInput } = (input ?? {}) as Record<

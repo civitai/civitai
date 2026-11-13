@@ -12,6 +12,7 @@ import {
   anchorBrowsingLevel,
   queryVerdictLevel,
   recordRefusal,
+  isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
   type QueryRefusal,
@@ -62,7 +63,11 @@ export async function searchSemanticImages({
   track?: QueryTracker;
   candidateSource?: CandidateSource;
 }) {
-  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -176,6 +181,8 @@ export async function searchSemanticImages({
     },
     // As the image search index: no NSFW images made with a base model whose license forbids it.
     // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
+    // Kept here, not only in hydration: Image."modelRestricted" is set by an hourly job, so a new
+    // image would pass hydration until it runs.
     mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
       ? [
           {
@@ -196,7 +203,7 @@ export async function searchSemanticImages({
   let correctedRefusal: QueryRefusal | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
-      const result = await candidateSource({ query, filter, offset, limit });
+      const result = await candidateSource({ query, filter, offset, limit, sort: input.sort });
       // The service embeds its spelling correction, not the text audited above.
       if (correctedRefusal === undefined && result.correctedQuery !== undefined)
         correctedRefusal =

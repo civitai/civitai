@@ -198,9 +198,10 @@ describe('the provisioned-dataset guard on the Axiom dual-write', () => {
 
   it('a provisioned datastream still records ingest failures normally', async () => {
     h.ingestEvents.mockRejectedValue(new Error('axiom down'));
-    const { logToAxiom } = createAxiomLogger(BASE);
+    const { logToAxiom, flush } = createAxiomLogger(BASE);
 
     await logToAxiom(ERR, ALLOWED_A);
+    await flush(); // the dual-write's outcome is recorded in the background
 
     // Positive control for the assertion above: the failure path is reachable and still works, so
     // "no axiom-ingest-failed" for the skipped stream is a real result, not a dead probe.

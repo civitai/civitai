@@ -262,6 +262,7 @@ import {
 } from '~/server/utils/minor-flag-meta';
 import {
   buildGetAllModelImages,
+  filterImagesForViewer,
   GET_ALL_IMAGES_PER_MODEL,
 } from '~/server/utils/model-getall-images';
 import {
@@ -1872,8 +1873,10 @@ export const getModelsWithImagesAndModelVersions = async ({
     modelVersionWhere = undefined;
   }
 
+  // getModelsRaw resolves the viewer's poi/minor exclusions onto this copy; the images use them too.
+  const rawInput = { ...input, take: input.limit };
   const { items, isPrivate, nextCursor } = await getModelsRaw({
-    input: { ...input, take: input.limit },
+    input: rawInput,
     user,
     domain,
     include: ['cosmetics'],
@@ -1979,11 +1982,21 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!version) {
           return null;
         }
-        const versionImages = imagesForFace(
+        const faceImages = imagesForFace(
           hoistCoverImage(modelVersionImages[version.id]?.images ?? [], coverImages.get(model.id)),
           model,
           showSfwFace
         );
+        // The image cache holds every level; send only what this viewer's settings show.
+        const versionImages = input.browsingLevel
+          ? filterImagesForViewer(faceImages, {
+              browsingLevel: input.browsingLevel,
+              modelNsfw: model.nsfw,
+              disablePoi: rawInput.disablePoi,
+              disableMinor: rawInput.disableMinor,
+              viewer: user,
+            })
+          : faceImages;
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
@@ -6592,6 +6605,29 @@ export async function getModelsWithVersions({
       )
     )
   );
+  // Card images follow the viewer's browsing-settings exclusions at the request's level, also on a
+  // by-id lookup, where `ignoreBrowsingAddons` only stops them deciding which models are found.
+  // Resolved onto a target of its own, which names no owner, so none of it is skipped.
+  const imageRules: {
+    browsingLevel?: number;
+    excludedTagIds?: number[];
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  } = { browsingLevel: input.browsingLevel };
+  await enforceBlockedBrowsingTagsForModels(imageRules, {
+    id: user?.id,
+    username: user?.username,
+    isModerator: user?.isModerator,
+  });
+  const excludedImageTagIds = new Set([
+    ...(imageRules.excludedTagIds ?? []),
+    ...(input.excludedTagIds ?? []),
+  ]);
+  const showsCardImage = (image: ImagesForModelVersions) =>
+    (!!user && image.userId === user.id) ||
+    (!(imageRules.disablePoi && image.poi) &&
+      !(imageRules.disableMinor && image.minor) &&
+      !(image.tags ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
   // const images = await getImagesForModelVersion({
   //   modelVersionIds,
   //   imagesPerVersion: 10,
@@ -6763,20 +6799,22 @@ export async function getModelsWithVersions({
                 //       ...image,
                 //     })
                 //   ),
-                images: (images[version.id]?.images ?? []).map(
-                  ({
-                    modelVersionId,
-                    name,
-                    userId,
-                    sizeKB,
-                    availability,
-                    metadata,
-                    tags,
-                    ...image
-                  }) => ({
-                    ...image,
-                  })
-                ),
+                images: (images[version.id]?.images ?? [])
+                  .filter(showsCardImage)
+                  .map(
+                    ({
+                      modelVersionId,
+                      name,
+                      userId,
+                      sizeKB,
+                      availability,
+                      metadata,
+                      tags,
+                      ...image
+                    }) => ({
+                      ...image,
+                    })
+                  ),
               };
             }
           ),

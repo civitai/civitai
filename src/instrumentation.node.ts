@@ -115,6 +115,17 @@ registerLivenessHeartbeat();
 // See src/server/eventloop-watchdog.ts.
 registerEventLoopWatchdog();
 
+// The last-known Flipt flag state in sysRedis (DARK unless FLIPT_SNAPSHOT_MAX_AGE_MS is set; then
+// nothing is registered, read or written): read only when this pod cannot reach Flipt at startup
+// (so its default-on flags are not all OFF), kept current by healthy pods. Registered BEFORE the
+// block below, whose awaited gate is this process's first Flipt init. Dynamic for the same reason as
+// that block (keeps Flipt and sysRedis out of this module's static graph); never affects boot.
+try {
+  (await import('~/server/flipt/snapshot-store')).registerFliptSnapshotStore();
+} catch (err) {
+  console.error('[instrumentation.node] flipt snapshot store not registered:', err);
+}
+
 // Arm the redis command metrics behind the `redis-command-metrics-batched` Flipt flag (dark until
 // it is on). Independent of OTEL: both metrics are prom-client. Dynamic, to keep the Flipt client out
 // of this module's static graph; a failure here must never affect boot — both metrics then keep
@@ -148,10 +159,27 @@ try {
 // HTTP listener — the warmer needs that listener up to self-request, so
 // awaiting here would deadlock boot. Any import/throw is swallowed: warmup must
 // never block or crash boot.
-void import('~/server/warmup')
+//
+// The background dependency-health metrics loop starts once the pod is warm (the warm flag, which
+// also flips on the warmer's fail-open timeout and when warming is disabled), or after a hard cap,
+// so its checks never compete with warming for the loop thread. It does NOT wait on runWarmup()
+// resolving, which a hung warm request can delay indefinitely. If the warmer module fails to load,
+// it starts at once. It runs the same runHealthChecks() as the probes, for metrics only: nothing
+// reads its result, so it cannot change readiness. It runs in every process that runs this file,
+// which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
+// calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
+const warmupModule = import('~/server/warmup');
+void warmupModule
   .then((m) => m.runWarmup())
   .catch((err) => {
     console.error('[instrumentation.node] warmup kick failed (fail-open):', err);
+  });
+void Promise.all([import('~/server/health/metrics-loop'), warmupModule.catch(() => null)])
+  .then(([loop, warmup]) =>
+    loop.startHealthMetricsLoopWhenWarm(warmup ? warmup.isWarm : () => true)
+  )
+  .catch((err) => {
+    console.error('[instrumentation.node] health metrics loop start failed (fail-open):', err);
   });
 
 // Attach the OTel sink to the shared structured logger.

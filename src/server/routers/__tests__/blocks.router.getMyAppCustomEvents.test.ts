@@ -14,8 +14,6 @@ import type * as AppCustomEventsModule from '~/server/services/blocks/app-custom
 const {
   mockIsAppBlocksEnabled,
   mockGetMyAppAnalytics,
-  mockGetRevenueForOwner,
-  mockGetRecentAttributionsForOwner,
   mockGetGoodsSalesForOwner,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
@@ -26,8 +24,6 @@ const {
   mockGetMyAppCustomEvents: vi.fn(),
   mockIsAppBlocksEnabled: vi.fn(),
   mockGetMyAppAnalytics: vi.fn(),
-  mockGetRevenueForOwner: vi.fn(),
-  mockGetRecentAttributionsForOwner: vi.fn(),
   mockGetGoodsSalesForOwner: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -74,8 +70,6 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 // reason — it is the function whose `unavailable` discriminator the flag-off test asserts.
 vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
-  getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
-  getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
   getGoodsSalesForOwner: (...a: unknown[]) => mockGetGoodsSalesForOwner(...a),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -163,10 +157,6 @@ beforeEach(() => {
   mockIsAppBlocksEnabled.mockImplementation(fakePerUserFlag);
   mockGetMyAppAnalytics.mockReset();
   mockGetMyAppAnalytics.mockResolvedValue(SENTINEL);
-  mockGetRevenueForOwner.mockReset();
-  mockGetRevenueForOwner.mockResolvedValue({ summary: {}, topApps: [] });
-  mockGetRecentAttributionsForOwner.mockReset();
-  mockGetRecentAttributionsForOwner.mockResolvedValue([]);
   mockGetGoodsSalesForOwner.mockReset();
   mockGetGoodsSalesForOwner.mockResolvedValue({
     sales: {

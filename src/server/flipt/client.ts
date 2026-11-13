@@ -19,6 +19,20 @@ export enum FLIPT_FEATURE_FLAGS {
   // On: "more like this" stops capping results at the anchor image's level. Off or missing, the cap
   // holds. Create the key in Flipt (disabled) before this deploys: a missing key logs on every eval.
   SEMANTIC_SIMILAR_ANCHOR_CAP_OFF = 'semantic-similar-anchor-cap-off',
+  // Enabled: every non-moderator semantic search is held at the safe levels (the containment
+  // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
+  // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
+  SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
+  // On: the image feed's feed-service call runs behind a circuit breaker, and an anonymous first
+  // page the feed fails to answer is served from that pod's last good copy (10 min) instead of a
+  // 503 (`~/server/services/feed-primary-degrade`). DEFAULT-OFF: `isFliptSync` returns null for an
+  // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
+  // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
+  FEED_SERVICE_DEGRADE = 'feed-service-degrade',
+  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
+  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
+  // read at most once per 5s per process (`createCachedFlagGate`).
+  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -198,10 +212,17 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
-  // Global flag for the anti-hang timeouts on server request-path fetches,
-  // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
-  // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
-  HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // OFF switch for the anti-hang deadlines on server-side outbound fetches
+  // (`fetchTimeoutSignal` / `outboundFetch`). The deadlines are ON unless this
+  // reads explicitly true; null (absent flag, uninitialised client) keeps them.
+  // Replaces the retired opt-in `hot-path-fetch-timeouts`, whose value no longer
+  // has any effect.
+  OUTBOUND_FETCH_TIMEOUTS_OFF = 'outbound-fetch-timeouts-off',
+  // getAvailableOAuthProviders: serve an expired provider list at once and refresh it in the
+  // background, and skip the hub for 30s after a failed fetch. DEFAULT-OFF: null (absent flag,
+  // uninitialised client) keeps the plain behaviour, a bounded refetch that falls back to the last
+  // list on failure.
+  OAUTH_PROVIDERS_SERVE_STALE = 'oauth-providers-serve-stale',
   // Writes superjson tRPC responses with `fastSuperjsonSerialize` (same output, cheaper walk)
   // instead of `superjson.serialize`. DEFAULT-OFF: `isFliptSync` returns null for an unknown flag
   // or an uninitialized client, which keeps `superjson.serialize`. Global boolean, evaluated with
@@ -392,9 +413,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // tables exist. Labels only; it never changes an image's visibility. Evaluated with the imageId.
   SCAN_LABEL_QUEUE_WRITER = 'scan-label-queue-writer',
 
-  // Stores the rating axes an imageScanning result already carries in ImageAxisRating. DEFAULT-OFF:
-  // leave it off until the ImageAxisRating migration is applied. Shadow only: never changes the
-  // verdict. Evaluated with the imageId, so ramp by percentage or boolean.
+  // Stores the rating axes an imageScanning result already carries in Image.nsfwAxes. DEFAULT-OFF:
+  // apply the nsfwAxes migration first. Shadow only: never changes the verdict. Evaluated with the
+  // imageId, so ramp by percentage or boolean.
   IMAGE_AXIS_SHADOW_WRITE = 'image-axis-shadow-write',
 
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
@@ -666,6 +687,10 @@ export const getFliptCacheStats = flipt.getCacheStats;
 // `close()` it on the way out — its config poller is a timer that otherwise keeps the
 // process alive. `getClientSync` closes over the instance (no `this`), like the above.
 export const getFliptClientSync = flipt.getClientSync;
+// Registers the last-known flag-state store. Called once at server boot by
+// ~/server/flipt/snapshot-store (it needs sysRedis, which this module must not import: it is in
+// the _app client graph, and ~/server/redis/client imports this module).
+export const setFliptSnapshotStore = flipt.setSnapshotStore;
 // A `FLIPT_LOCAL_OVERRIDES` value for one flag (never set in production), for a gate that reads the
 // SDK client directly and would otherwise not see it.
 export const getFliptLocalOverride = (flag: string): string | undefined =>

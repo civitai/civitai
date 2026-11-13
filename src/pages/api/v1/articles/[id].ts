@@ -13,7 +13,7 @@ import { Flags } from '~/shared/utils/flags';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/articles/[id] — public, edge-cacheable article detail.
+ * GET /api/v1/articles/[id] — public article detail.
  *
  * Wraps the EXISTING `getArticleById` service (the same one `articleRouter.getById`
  * — a public procedure — uses for anonymous website visitors). This endpoint
@@ -22,8 +22,8 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
  * for EVERY caller: a draft / unpublished / not-yet-scanned article is a 404 for
  * everyone, authed or not. There is no owner self-view branch here, so the
  * response is a pure function of the id (+ region) — byte-identical for an
- * anonymous caller and any authenticated caller — which makes the
- * `MixedAuthEndpoint` wrapper's `public, s-maxage=300` edge caching safe. A
+ * anonymous caller and any authenticated caller. It is `private, no-store` for every
+ * caller: the body depends on the caller's region and can carry content above SFW. A
  * private article is INDISTINGUISHABLE from a non-existent one (both 404), so this
  * is not an existence oracle.
  *
@@ -34,7 +34,7 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
  * `getArticleById` takes no browsing-level param, so the clamp is applied here as
  * a post-service filter. It is derived ONLY from the region (`cf-ipcountry`) — it
  * NEVER reads the caller's nsfw preference / browsingLevel cookie / session — so
- * the response stays a pure function of id + region and remains edge-cacheable.
+ * the response stays a pure function of id + region.
  */
 
 // Bound the coerced id to Postgres int4 (mirrors models/[id].ts): a huge numeric
@@ -48,8 +48,7 @@ export default MixedAuthEndpoint(async function handler(
   user: Session['user'] | undefined
 ) {
   // Conservative per-client rate limit (before the service call). Keys on
-  // CF-Connecting-IP / userId — guards only the cache-MISS path; the response
-  // body itself never varies by user.
+  // CF-Connecting-IP / userId; the response body itself never varies by user.
   const rateLimit = await checkPublicApiRateLimit({ req, family: 'articles', userId: user?.id });
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
@@ -66,16 +65,17 @@ export default MixedAuthEndpoint(async function handler(
   // Maturity/region ceiling — the SAME fixed PUBLIC default the list endpoint
   // uses (articles/index.ts), narrowed to SFW for restricted regions. Region-
   // derived ONLY (from `cf-ipcountry`); it NEVER reads the caller's nsfw
-  // preference/cookie/session, so the response stays a pure function of id +
-  // region and the `public` edge cache is leak-free.
+  // preference/cookie/session, so the response stays a pure function of id + region.
   const region = getRegion(req);
   let browsingLevel = publicBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  // The body depends on the caller's region, which the shared cache does not key on.
+  res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     // Evaluate as anonymous — NEVER pass the session userId/isModerator. This
     // pins published-only visibility for every caller (no owner-draft branch), so
-    // the response is caller-independent and edge-cacheable.
+    // the response is caller-independent.
     const article = await getArticleById({ id });
 
     // moderatorNsfwLevel is a moderator-only override the service includes for the

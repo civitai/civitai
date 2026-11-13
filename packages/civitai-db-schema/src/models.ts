@@ -200,8 +200,6 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AppealCategory = "Account" | "Article" | "Model" | "Other";
 
-export type ImageAxisSource = "rated" | "moderator";
-
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
@@ -1774,7 +1772,6 @@ export interface Image {
   storylineSparks?: Storyline[];
   storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
-  axisRating?: ImageAxisRating | null;
 }
 
 export interface ImageTagForReview {
@@ -2238,6 +2235,7 @@ export interface OauthClient {
   connectListings?: AppListing[];
   workerClient?: WorkerClient | null;
   workerDevices?: WorkerDevice[];
+  invites?: OauthInvite[];
 }
 
 export interface WorkerClient {
@@ -2940,6 +2938,16 @@ export interface OauthConsent {
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface OauthInvite {
+  tokenHash: string;
+  clientId: string;
+  client?: OauthClient;
+  email: string;
+  returnUrl: string;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 export interface TrustedSpokeDomain {
@@ -4946,22 +4954,6 @@ export interface ImageAudioScan {
   error: string | null;
   createdAt: Date;
   completedAt: Date | null;
-}
-
-export interface ImageAxisRating {
-  imageId: number;
-  image?: Image;
-  source: ImageAxisSource;
-  sexualLevel: number | null;
-  sexualHighWater: number | null;
-  violenceLevel: number | null;
-  languageLevel: number | null;
-  rater: string | null;
-  raterVersion: string | null;
-  ratedAt: Date;
-  workflowId: string | null;
-  setBy: number | null;
-  updatedAt: Date;
 }
 
 export interface ScanLabelVote {
