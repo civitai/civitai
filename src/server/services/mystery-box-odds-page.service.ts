@@ -103,11 +103,14 @@ export async function getMysteryBoxOddsPage({
   boxDefinitionId,
   viewer,
   mysteryBoxEnabled,
+  creatorPacksEnabled,
   countryCode,
 }: {
   boxDefinitionId: number;
   viewer: EventViewer;
   mysteryBoxEnabled: boolean | undefined;
+  /** `creatorMysteryPacksEnabled(features)`: a creator's pack shows only to a viewer with it. */
+  creatorPacksEnabled: boolean;
   countryCode: string | null | undefined;
 }) {
   if (!mysteryBoxEnabled || (await mysteryBoxesHiddenIn(countryCode))) return null;
@@ -122,6 +125,7 @@ export async function getMysteryBoxOddsPage({
       version: true,
       status: true,
       params: true,
+      seller: { select: { id: true, username: true } },
     },
   });
   if (
@@ -131,6 +135,7 @@ export async function getMysteryBoxOddsPage({
       box.status !== ITEM_DEFINITION_STATUS.archived)
   )
     return null;
+  if (box.seller && !creatorPacksEnabled) return null;
 
   const params = box.params ?? {};
   const event = isEventShopItemData(params)
@@ -221,6 +226,8 @@ export async function getMysteryBoxOddsPage({
     event: event ? { title: event.title } : null,
     teams,
     price: onSale?.unitAmount ?? null,
+    /** Who a creator's pack is sold by; null for a platform box. */
+    seller: box.seller,
     /** The pack on sale now: its first box draws only from `guaranteedTierIds` while any is left. */
     pack: packOnSale
       ? {

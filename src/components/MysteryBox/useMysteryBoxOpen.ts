@@ -36,7 +36,11 @@ export function useMysteryBoxViews(source: MysteryBoxSource) {
     { enabled: 'event' in source }
   );
   const held = trpc.mysteryBox.getHeld.useQuery(undefined, { enabled: 'inventory' in source });
-  const query = 'event' in source ? forEvent : held;
+  const forSeller = trpc.mysteryBox.getForSeller.useQuery(
+    { sellerId: 'seller' in source ? source.seller : 1 },
+    { enabled: 'seller' in source }
+  );
+  const query = 'event' in source ? forEvent : 'seller' in source ? forSeller : held;
   return { views: query.data as MysteryBoxView[] | undefined, isLoading: query.isLoading };
 }
 
@@ -62,17 +66,24 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
       undefined,
       (counts) => counts && { ...counts, unopenedBoxes: Math.max(0, counts.unopenedBoxes + change) }
     );
+  // The source's own read, as a list of the box views it shows; nothing for the inventory's.
+  const patchViews = (
+    patch: (views: MysteryBoxView[] | undefined) => MysteryBoxView[] | undefined
+  ) => {
+    if ('event' in source) utils.mysteryBox.getForEvent.setData({ event: source.event }, patch);
+    else if ('seller' in source)
+      utils.mysteryBox.getForSeller.setData({ sellerId: source.seller }, patch);
+  };
   const recordPurchase = (boxDefinitionId: number, boxItemIds: string[]) => {
-    if ('event' in source)
-      utils.mysteryBox.getForEvent.setData({ event: source.event }, (views) =>
-        views?.map((view) => {
-          if (view.boxDefinitionId !== boxDefinitionId) return view;
-          const added = boxItemIds.filter((id) => !view.heldBoxItemIds.includes(id));
-          return added.length
-            ? { ...view, heldBoxItemIds: [...view.heldBoxItemIds, ...added] }
-            : view;
-        })
-      );
+    patchViews((views) =>
+      views?.map((view) => {
+        if (view.boxDefinitionId !== boxDefinitionId) return view;
+        const added = boxItemIds.filter((id) => !view.heldBoxItemIds.includes(id));
+        return added.length
+          ? { ...view, heldBoxItemIds: [...view.heldBoxItemIds, ...added] }
+          : view;
+      })
+    );
     addToUnopenedCount(boxItemIds.length);
     void utils.mysteryBox.getHeld.invalidate();
   };
@@ -81,8 +92,8 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
   const recordOpen = (view: MysteryBoxView, opened: MysteryBoxOpenResult) => {
     const event = boxEventOf(source, view);
     const isThisBox = (other: MysteryBoxView) => other.boxDefinitionId === view.boxDefinitionId;
-    if ('event' in source) {
-      utils.mysteryBox.getForEvent.setData({ event: source.event }, (views) =>
+    if ('event' in source || 'seller' in source) {
+      patchViews((views) =>
         views?.map((other) => (isThisBox(other) ? afterOpen(other, opened) : other))
       );
       void utils.mysteryBox.getHeld.invalidate();
@@ -102,6 +113,8 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
   const refresh = () =>
     'event' in source
       ? utils.mysteryBox.getForEvent.invalidate({ event: source.event })
+      : 'seller' in source
+      ? utils.mysteryBox.getForSeller.invalidate({ sellerId: source.seller })
       : utils.mysteryBox.getHeld.invalidate();
 
   const playShow = () => {
@@ -140,9 +153,9 @@ export function useMysteryBoxOpen(source: MysteryBoxSource) {
               title: 'Your box is safe',
               error: error as Error,
               reason:
-                'event' in source
-                  ? 'It stays with you, unopened. Open it again from your Inventory.'
-                  : 'It stays with you, unopened. Try opening it again.',
+                'inventory' in source
+                  ? 'It stays with you, unopened. Try opening it again.'
+                  : 'It stays with you, unopened. Open it again from your Inventory.',
             }
       );
     }

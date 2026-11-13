@@ -15,10 +15,12 @@ import { ManageStats } from '~/components/CreatorShop/Manage/ManageStats';
 import { ManageToolbar } from '~/components/CreatorShop/Manage/ManageToolbar';
 import { PublishShopBanner } from '~/components/CreatorShop/Manage/PublishShopBanner';
 import { useManageItems } from '~/components/CreatorShop/Manage/manage.util';
+import { MysteryPacksManagePanel } from '~/components/CreatorShop/MysteryPack/MysteryPacksManagePanel';
 import { ManageServicesPanel } from '~/components/CreatorShop/Services/ManageServicesPanel';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { creatorMysteryPacksEnabled } from '~/server/schema/creator-shop.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -50,10 +52,19 @@ function ManageShopPage() {
   });
   const showServicesTab =
     servicesEnabled || (isOwner && !!mine && (mine.items.length > 0 || mine.hiddenOffDomain > 0));
-  const tab = showServicesTab && router.query.tab === 'services' ? 'services' : 'cosmetics';
+  // Mystery packs are for the owner and moderators, and only with every flag they need.
+  const showPacksTab = creatorMysteryPacksEnabled(features) && canManage;
+  const showTabs = showServicesTab || showPacksTab;
+  const queryTab = router.query.tab;
+  const tab =
+    showServicesTab && queryTab === 'services'
+      ? 'services'
+      : showPacksTab && queryTab === 'packs'
+      ? 'packs'
+      : 'cosmetics';
   const setTab = (value: string | null) =>
     router.replace(
-      { query: { ...router.query, tab: value === 'services' ? 'services' : undefined } },
+      { query: { ...router.query, tab: value === 'cosmetics' ? undefined : value } },
       undefined,
       { shallow: true }
     );
@@ -129,13 +140,19 @@ function ManageShopPage() {
         />
       )}
 
-      {showServicesTab ? (
+      {showTabs ? (
         <Tabs value={tab} onChange={setTab} keepMounted={false}>
           <Tabs.List mb="lg">
             <Tabs.Tab value="cosmetics">Cosmetics</Tabs.Tab>
-            <Tabs.Tab value="services">Services</Tabs.Tab>
+            {showPacksTab && <Tabs.Tab value="packs">Mystery packs</Tabs.Tab>}
+            {showServicesTab && <Tabs.Tab value="services">Services</Tabs.Tab>}
           </Tabs.List>
           <Tabs.Panel value="cosmetics">{cosmetics}</Tabs.Panel>
+          {showPacksTab && (
+            <Tabs.Panel value="packs">
+              <MysteryPacksManagePanel canBuild={isOwner} userId={manageUserId} />
+            </Tabs.Panel>
+          )}
           <Tabs.Panel value="services">
             <ManageServicesPanel
               servicesEnabled={servicesEnabled}

@@ -417,6 +417,8 @@ export type MysteryBoxView = {
   }[];
   /** The viewer's unopened boxes of it, as `Item.id` strings. */
   heldBoxItemIds: string[];
+  /** Who sells it, for a creator's pack; absent for a team box. */
+  seller?: { id: number; username: string | null };
 };
 
 // Archived boxes too: one still held still opens.

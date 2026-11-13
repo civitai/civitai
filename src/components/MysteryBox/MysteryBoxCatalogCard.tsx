@@ -5,6 +5,7 @@ import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
 import type { MysteryBoxCatalogView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   MYSTERY_BOX_FALLBACK_DESCRIPTION,
+  MYSTERY_PACK_FALLBACK_DESCRIPTION,
   mysteryBoxOddsPageUrl,
   sharedBaseTierOdds,
 } from '~/components/MysteryBox/mystery-box.utils';
@@ -16,9 +17,14 @@ const COLOR = 'var(--mantine-color-violet-5)';
 
 /**
  * A mystery box for a viewer not on a team: its base odds, a link to its contents and odds page, and
- * what it takes to open one (signing in, or joining a team).
+ * what it takes to open one (signing in, or joining a team). A creator's pack (`seller`) has no
+ * team, so it names its seller and sends the viewer to their shop to buy.
  */
-export function MysteryBoxCatalogCard({ box }: { box: MysteryBoxCatalogView }) {
+export function MysteryBoxCatalogCard({
+  box,
+}: {
+  box: MysteryBoxCatalogView & { seller?: { id: number; username: string | null } };
+}) {
   const currentUser = useCurrentUser();
   const odds = sharedBaseTierOdds(box);
 
@@ -35,7 +41,7 @@ export function MysteryBoxCatalogCard({ box }: { box: MysteryBoxCatalogView }) {
       <Stack gap={6}>
         <Group gap="xs">
           <Badge variant="filled" style={{ background: COLOR }}>
-            Mystery Box
+            {box.seller ? 'Mystery Pack' : 'Mystery Box'}
           </Badge>
           <Text size="sm" fw={700}>
             {numberWithCommas(box.unitAmount)} Buzz
@@ -44,8 +50,14 @@ export function MysteryBoxCatalogCard({ box }: { box: MysteryBoxCatalogView }) {
         <Text fw={700} size="lg">
           {box.name}
         </Text>
+        {box.seller?.username && (
+          <Text size="xs" c="dimmed">
+            Sold by @{box.seller.username}
+          </Text>
+        )}
         <Text size="sm" c="dimmed">
-          {box.description ?? MYSTERY_BOX_FALLBACK_DESCRIPTION}
+          {box.description ??
+            (box.seller ? MYSTERY_PACK_FALLBACK_DESCRIPTION : MYSTERY_BOX_FALLBACK_DESCRIPTION)}
         </Text>
         {odds ? (
           <MysteryBoxOddsBar tiers={odds} />
@@ -64,7 +76,15 @@ export function MysteryBoxCatalogCard({ box }: { box: MysteryBoxCatalogView }) {
         >
           See contents &amp; odds
         </Button>
-        {currentUser ? (
+        {box.seller ? (
+          <Button
+            component={NextLink}
+            href={`/user/${box.seller.username}/shop`}
+            data-testid="box-catalog-shop-link"
+          >
+            Visit shop to buy
+          </Button>
+        ) : currentUser ? (
           <Text size="sm" ta="center" maw={200} data-testid="box-catalog-join">
             Join a team to open boxes in your color.
           </Text>

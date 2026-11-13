@@ -217,6 +217,45 @@ export const useMutateCreatorShop = () => {
     onError: onError('Failed to update pack'),
   });
 
+  // A creator's packs show on their manage view, their storefront and the community shop.
+  const refreshMysteryPacks = async () => {
+    await queryUtils.creatorShop.getMyMysteryPacks.invalidate();
+    await queryUtils.mysteryBox.getForCreator.invalidate();
+    await queryUtils.mysteryBox.getForSeller.invalidate();
+  };
+
+  const submitMysteryPack = trpc.creatorShop.submitMysteryPack.useMutation({
+    async onSuccess() {
+      await refreshMysteryPacks();
+      showSuccessNotification({ message: 'Mystery pack submitted for review' });
+    },
+    onError: onSubmitError('Failed to submit mystery pack'),
+  });
+
+  const reviseMysteryPack = trpc.creatorShop.reviseMysteryPack.useMutation({
+    async onSuccess() {
+      await refreshMysteryPacks();
+      showSuccessNotification({ message: 'Edit submitted for review' });
+    },
+    onError: onError('Failed to submit edit'),
+  });
+
+  const withdrawMysteryPackRevision = trpc.creatorShop.withdrawMysteryPackRevision.useMutation({
+    async onSuccess() {
+      await refreshMysteryPacks();
+      showSuccessNotification({ message: 'Edit withdrawn' });
+    },
+    onError: onError('Failed to withdraw edit'),
+  });
+
+  const lowerMysteryPackPrice = trpc.creatorShop.lowerMysteryPackPrice.useMutation({
+    async onSuccess() {
+      await refreshMysteryPacks();
+      showSuccessNotification({ message: 'Price lowered' });
+    },
+    onError: onError('Failed to lower price'),
+  });
+
   const archiveItem = trpc.creatorShop.archiveItem.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getManageItems.invalidate();
@@ -353,6 +392,10 @@ export const useMutateCreatorShop = () => {
     updateItem,
     submitPack,
     updatePack,
+    submitMysteryPack,
+    reviseMysteryPack,
+    withdrawMysteryPackRevision,
+    lowerMysteryPackPrice,
     archiveItem,
     setItemListed,
     unarchiveItem,

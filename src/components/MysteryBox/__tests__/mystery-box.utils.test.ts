@@ -228,3 +228,15 @@ describe('boxOpenClaimKey', () => {
     expect(boxOpenClaimKey('501')).toBe('box-open-501');
   });
 });
+
+describe('tierColor for a creator pack', () => {
+  it('colours a tier by its name when none is stored, so Legendary is amber in any tier count', () => {
+    expect(tierColor({ key: 'legendary', color: null, sortOrder: 2 })).toBe('#f59e0b');
+    expect(tierColor({ key: 'common', color: null, sortOrder: 0 })).toBe('#9ca3af');
+  });
+
+  it('keeps a stored colour, and falls back by order for an unknown key', () => {
+    expect(tierColor({ key: 'legendary', color: '#123456', sortOrder: 2 })).toBe('#123456');
+    expect(tierColor({ key: 'custom', color: null, sortOrder: 1 })).toBe('#22c55e');
+  });
+});

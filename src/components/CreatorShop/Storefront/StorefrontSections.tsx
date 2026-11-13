@@ -5,6 +5,7 @@ import { CosmeticsSection } from '~/components/CreatorShop/Storefront/CosmeticsS
 import { FeaturedSection } from '~/components/CreatorShop/Storefront/FeaturedSection';
 import { MerchSection } from '~/components/CreatorShop/Storefront/MerchSection';
 import { ModelsSection } from '~/components/CreatorShop/Storefront/ModelsSection';
+import { MysteryPacksSection } from '~/components/CreatorShop/Storefront/MysteryPacksSection';
 import { ResoldSection } from '~/components/CreatorShop/Storefront/ResoldSection';
 import { ServicesSection } from '~/components/CreatorShop/Storefront/ServicesSection';
 import { storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
@@ -60,6 +61,7 @@ export function StorefrontSections({
     ),
     merch: <MerchSection />,
     models: <ModelsSection shop={shop} username={username} preview={preview} />,
+    mysteryPacks: <MysteryPacksSection ownerUserId={ownerUserId} />,
   };
 
   return (

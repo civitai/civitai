@@ -1,10 +1,17 @@
 import { itemHolderInFlightLimit } from '~/server/middleware.trpc';
 import {
+  getCreatorMysteryPacksInput,
   getEventMysteryBoxesInput,
   getMysteryBoxOddsPageInput,
+  getSellerMysteryBoxesInput,
   getMysteryBoxOpeningsInput,
   openMysteryBoxInput,
 } from '~/server/schema/mystery-box.schema';
+import { creatorMysteryPacksEnabled } from '~/server/schema/creator-shop.schema';
+import {
+  getCreatorMysteryPacks,
+  getMysteryPackViewsForSeller,
+} from '~/server/services/creator-mystery-pack-read.service';
 import { getMysteryBoxOddsPage } from '~/server/services/mystery-box-odds-page.service';
 import {
   getHeldMysteryBoxes,
@@ -17,6 +24,7 @@ import {
 } from '~/server/services/mystery-box.service';
 import { noEdgeCache } from '~/server/middleware.trpc';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { getRegion } from '~/server/utils/region-blocking';
 import { mysteryBoxViewer, publicMysteryBoxViewer } from '~/server/utils/mystery-box-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -30,7 +38,13 @@ export const mysteryBoxRouter = router({
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .use(noEdgeCache())
     .input(getMysteryBoxOddsPageInput)
-    .query(({ input, ctx }) => getMysteryBoxOddsPage({ ...input, ...publicMysteryBoxViewer(ctx) })),
+    .query(({ input, ctx }) =>
+      getMysteryBoxOddsPage({
+        ...input,
+        ...publicMysteryBoxViewer(ctx),
+        creatorPacksEnabled: creatorMysteryPacksEnabled(ctx.features),
+      })
+    ),
   // For a viewer not on a team, signed in or not. Per viewer, like the odds page.
   getCatalogForEvent: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
@@ -38,6 +52,30 @@ export const mysteryBoxRouter = router({
     .input(getEventMysteryBoxesInput)
     .query(({ input, ctx }) =>
       getMysteryBoxCatalogForEvent({ ...input, ...publicMysteryBoxViewer(ctx) })
+    ),
+  // Live creator packs, one creator's or the community's. Per viewer (flags, country), like the odds page.
+  getForCreator: publicProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .use(noEdgeCache())
+    .input(getCreatorMysteryPacksInput)
+    .query(({ input, ctx }) =>
+      getCreatorMysteryPacks({
+        sellerId: input.sellerId,
+        enabled: creatorMysteryPacksEnabled(ctx.features),
+        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+      })
+    ),
+  // One creator's packs as the signed-in viewer sees them (their odds, their unopened boxes).
+  getForSeller: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsRead })
+    .input(getSellerMysteryBoxesInput)
+    .query(({ input, ctx }) =>
+      getMysteryPackViewsForSeller({
+        sellerId: input.sellerId,
+        userId: ctx.user.id,
+        enabled: creatorMysteryPacksEnabled(ctx.features),
+        countryCode: ctx.req ? getRegion(ctx.req).countryCode : null,
+      })
     ),
   open: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite, blockApiKeys: true })

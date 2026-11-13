@@ -139,16 +139,11 @@ type ProposalInput = {
 };
 
 /**
- * Every check `checkProposal` makes, reported rather than thrown, so the review pane can show why an
- * approval would fail. Values and checks each content by the creator's own listing of it
- * (`addedById`) only. Bounds are null unless the layout and every content are valid.
+ * The creator's cosmetics with their own listing of each (`addedById` only), chosen by `where`.
+ * `readContentRows` is the one query behind both the pack checks and the composer's picker.
  */
-export async function evaluateProposal(
-  client: Tx,
-  { creatorId, steepness, tiers, price, stickersEnabled }: ProposalInput
-) {
-  const ids = tiers.flat();
-  const rows = await client.$queryRaw<ContentRow[]>`
+export function readContentRows(client: Tx, creatorId: number, where: Prisma.Sql) {
+  return client.$queryRaw<ContentRow[]>`
     SELECT c.id AS "cosmeticId", c.name, c.type::text AS type, c."createdById", c.data,
       l."addedById", l.status::text AS status, l."archivedAt", l."availableQuantity",
       l."availableFrom", l."availableTo", l.listed, l."unitAmount"
@@ -161,43 +156,62 @@ export async function evaluateProposal(
       ORDER BY (s.status = 'Published' AND s."archivedAt" IS NULL) DESC, s.id DESC
       LIMIT 1
     ) l ON true
-    WHERE c.id = ANY(${ids}::int[])`;
+    WHERE ${where}`;
+}
+
+/** One content row's verdict and value: the predicate submit, revise and approve all use. */
+export function evaluateContentRow(
+  row: ContentRow,
+  { creatorId, stickersEnabled, now }: { creatorId: number; stickersEnabled: boolean; now: Date }
+): EvaluatedContent {
+  const candidate: CreatorBoxCandidate = {
+    cosmeticId: row.cosmeticId,
+    type: row.type,
+    createdById: row.createdById,
+    data: row.data,
+    listing:
+      row.status === null
+        ? null
+        : {
+            addedById: row.addedById,
+            status: row.status,
+            archivedAt: row.archivedAt,
+            availableQuantity: row.availableQuantity,
+            availableFrom: row.availableFrom,
+            availableTo: row.availableTo,
+          },
+  };
+  const problem = creatorBoxContentProblem(candidate, {
+    creatorId,
+    types: creatorCosmeticTypes,
+    stickersEnabled,
+    now,
+  });
+  const value = problem
+    ? null
+    : creatorBoxContentValue(
+        { listed: row.listed!, unitAmount: row.unitAmount! },
+        cosmeticPriceFloor(row.type)
+      );
+  return { ...row, value, problem };
+}
+
+/**
+ * Every check `checkProposal` makes, reported rather than thrown, so the review pane can show why an
+ * approval would fail. Values and checks each content by the creator's own listing of it
+ * (`addedById`) only. Bounds are null unless the layout and every content are valid.
+ */
+export async function evaluateProposal(
+  client: Tx,
+  { creatorId, steepness, tiers, price, stickersEnabled }: ProposalInput
+) {
+  const ids = tiers.flat();
+  const rows = await readContentRows(client, creatorId, Prisma.sql`c.id = ANY(${ids}::int[])`);
   const byId = new Map(rows.map((row) => [row.cosmeticId, row]));
   const missing = ids.filter((id) => !byId.has(id));
 
   const now = new Date();
-  const contents: EvaluatedContent[] = rows.map((row) => {
-    const candidate: CreatorBoxCandidate = {
-      cosmeticId: row.cosmeticId,
-      type: row.type,
-      createdById: row.createdById,
-      data: row.data,
-      listing:
-        row.status === null
-          ? null
-          : {
-              addedById: row.addedById,
-              status: row.status,
-              archivedAt: row.archivedAt,
-              availableQuantity: row.availableQuantity,
-              availableFrom: row.availableFrom,
-              availableTo: row.availableTo,
-            },
-    };
-    const problem = creatorBoxContentProblem(candidate, {
-      creatorId,
-      types: creatorCosmeticTypes,
-      stickersEnabled,
-      now,
-    });
-    const value = problem
-      ? null
-      : creatorBoxContentValue(
-          { listed: row.listed!, unitAmount: row.unitAmount! },
-          cosmeticPriceFloor(row.type)
-        );
-    return { ...row, value, problem };
-  });
+  const contents = rows.map((row) => evaluateContentRow(row, { creatorId, stickersEnabled, now }));
 
   const layout = creatorBoxWeights(
     tiers.map((tier) => tier.length),

@@ -94,6 +94,7 @@ type Box = {
   name: string;
   description: string | null;
   params: unknown;
+  seller?: { id: number; username: string | null } | null;
 };
 type Listing = {
   id: number;
@@ -245,6 +246,7 @@ const read = (overrides: Partial<Parameters<typeof getMysteryBoxOddsPage>[0]> = 
     boxDefinitionId: BOX,
     viewer: undefined,
     mysteryBoxEnabled: true,
+    creatorPacksEnabled: false,
     countryCode: 'US',
     ...overrides,
   });
@@ -372,6 +374,22 @@ describe('who sees the odds page', () => {
   it('shows nothing while the event is closed to the viewer', async () => {
     mocks.catalogAccess.mockResolvedValue(null);
     expect(await read()).toBeNull();
+  });
+
+  it('names the seller of a creator pack and its price, to a viewer with creator packs', async () => {
+    theBox().seller = { id: 77, username: 'testcreator' };
+    expect(await read({ creatorPacksEnabled: true })).toMatchObject({
+      seller: { id: 77, username: 'testcreator' },
+      price: 500,
+    });
+  });
+
+  it('shows a creator pack to nobody without the creator pack flag', async () => {
+    theBox().seller = { id: 77, username: 'testcreator' };
+    expect(await read({ creatorPacksEnabled: false })).toBeNull();
+    expect(
+      await read({ creatorPacksEnabled: false, viewer: { id: 5, isModerator: true } })
+    ).toBeNull();
   });
 
   it('shows nothing with boxes off', async () => {

@@ -34,3 +34,10 @@ export const getMysteryBoxOpeningsInput = z.object({
 });
 
 export type GetMysteryBoxOpeningsInput = z.infer<typeof getMysteryBoxOpeningsInput>;
+
+/** Live creator packs of one creator, or of every creator when no `sellerId` is given. */
+export const getCreatorMysteryPacksInput = z.object({
+  sellerId: z.number().int().positive().optional(),
+});
+
+export const getSellerMysteryBoxesInput = z.object({ sellerId: z.number().int().positive() });
