@@ -22,6 +22,7 @@ vi.mock('~/server/services/nsfwLevels.service', async (importOriginal) => ({
 const { addPostText, setPostText, deletePostText, getPostTextsForViewer, getStorylineTextStubs } =
   await import('~/server/services/post-text.service');
 const { throwOnBlockedUserContent } = await import('~/server/services/blocklist.service');
+const { setStorylineTextSchema } = await import('~/server/schema/storyline.schema');
 const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 const { updatePostNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 
@@ -76,6 +77,23 @@ describe('addPostText', () => {
 });
 
 describe('setPostText', () => {
+  it('refuses to change held text', async () => {
+    w.$queryRaw.mockResolvedValue([{ postId: POST }] as never);
+    await expect(setPostText({ id: TEXT, content: '', userId: AUTHOR })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(w.postText.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps text only: media and embeds are stripped on the way in', () => {
+    const { content } = setStorylineTextSchema.parse({
+      id: 1,
+      content:
+        '<p><strong>a</strong> <img src="https://x/y.png"><iframe src="https://www.youtube.com/embed/z"></iframe></p>',
+    });
+    expect(content).toBe('<p><strong>a</strong> </p>');
+  });
+
   it('resets the rating to 0 in the same write, scans the new text and recomputes the post', async () => {
     await setPostText({ id: TEXT, content: '<p>new</p>', userId: AUTHOR });
     expect(w.postText.update).toHaveBeenCalledWith({

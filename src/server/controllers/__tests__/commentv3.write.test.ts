@@ -417,6 +417,22 @@ describe('commentv3 create', () => {
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 
+  it('refuses a comment on storyline text, and its edit, to a moderator too', async () => {
+    await expect(
+      createCommentV3Handler({
+        ctx: ctx(STRANGER, true),
+        input: { entityType: 'postText', entityId: 1, content: '<p>x</p>' } as never,
+      })
+    ).rejects.toBeTruthy();
+    m.stored.set(500, row(500, { entityType: 'postText', entityId: 1, userId: STRANGER }));
+    for (const isModerator of [false, true])
+      await expect(update(STRANGER, 500, isModerator)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+      });
+    expect(m.insertComment).not.toHaveBeenCalled();
+    expect(m.updateCommentContent).not.toHaveBeenCalled();
+  });
+
   it('refuses an entity type with no comment section', async () => {
     await expect(create(STRANGER, { entityType: 'nope' })).rejects.toMatchObject({
       code: 'NOT_FOUND',

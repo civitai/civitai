@@ -78,6 +78,8 @@ export async function setPostText({
   isModerator?: boolean;
 }) {
   const text = await getOwnText(id, userId);
+  if ((await heldPostTextPostIds({ textIds: [id] })).length)
+    throw throwBadRequestError('This text is held for review and cannot be changed');
   await assertChapterPostAuthor({
     postId: text.postId,
     postUserId: text.post.userId,

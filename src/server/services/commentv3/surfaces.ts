@@ -291,6 +291,10 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     assertVisible: async () => {
       throw throwNotFoundError('Text not found');
     },
+    // Moderators skip assertVisible, and an edit asks only this.
+    assertWritable: async () => {
+      throw throwBadRequestError('Comments on storyline text are closed.');
+    },
   },
 };
 

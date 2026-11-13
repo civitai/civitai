@@ -12,6 +12,7 @@ import {
   STORYLINE_CEILING_LEVELS,
   STORYLINE_PATH_LIMIT,
 } from '~/shared/utils/storyline';
+import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 
 const ceilingSchema = z
   .number()
@@ -74,7 +75,8 @@ export const addStorylineTextSchema = z.object({
 
 export const setStorylineTextSchema = z.object({
   id: z.number().int().positive(),
-  content: getSanitizedStringSchema(),
+  // Text only: the scan rates words, so media in a text item would go unrated.
+  content: getSanitizedStringSchema({ allowedTags: COMMENT_ALLOWED_TAGS }),
 });
 
 export const storylineTextIdSchema = z.object({ id: z.number().int().positive() });
