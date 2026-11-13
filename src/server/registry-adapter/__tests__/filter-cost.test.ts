@@ -8,7 +8,7 @@ import { createRegistryServer } from '~/server/registry-adapter/serve';
  * A request's `filter` is evaluated synchronously, per entity and per poll, on the one event loop
  * that serves every stream. One whose cost is not bounded by its size is refused with
  * `bad_request` (the registry spec's rule 6: applied in full or refused, never ignored), so an
- * anonymous consumer cannot stall the source. Before, each refused case was streamed unfiltered.
+ * anonymous consumer cannot stall the source.
  */
 
 const APPS = 'urn:schema:apps.civitai.com:app@v1';

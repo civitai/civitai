@@ -51,6 +51,19 @@ describe('registerFliptSnapshotStore', () => {
     expect(redisMock.withSysReadDeadline).toHaveBeenCalledTimes(1);
   });
 
+  // save() reads the meta key through the same kv.get, so a stalled sysRedis bounds it with the
+  // same deadline as load().
+  it("save()'s meta read also goes through the sysRedis read deadline", async () => {
+    registerFliptSnapshotStore();
+    redisMock.sysRedis.get.mockResolvedValue(null);
+
+    await registered.store!.save({ savedAt: 5_000, etag: '"e"', data: { flags: [] } }, true);
+
+    expect(redisMock.sysRedis.get).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.get).toHaveBeenCalledWith('system:flipt:snapshot:civitai-app:meta');
+    expect(redisMock.withSysReadDeadline).toHaveBeenCalledTimes(1);
+  });
+
   it('a non-default environment gets its own key', async () => {
     process.env.FLIPT_ENVIRONMENT = 'spoke-env';
     registerFliptSnapshotStore();

@@ -51,6 +51,7 @@ const PUBLIC_ACTION_ROUTES = ['/invite', '/login', '/login/oauth/authorize', '/l
 
 const ADMIN_ACTION_ROUTES = [
   '/admin/access',
+  '/admin/access/[id]',
   '/admin/membership',
   '/admin/roles',
   '/admin/roles/[role]',

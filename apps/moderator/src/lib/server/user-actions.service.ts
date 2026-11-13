@@ -36,6 +36,7 @@ import {
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { writeMayHaveLanded } from '@civitai/buzz';
 import { getBuzz } from './buzz';
 import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
@@ -1023,10 +1024,11 @@ export async function sendBuzz(input: {
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
-    // A write we stopped waiting for may still commit after we look: a lookup that finds nothing
-    // then means "not yet", not "never".
-    const name = (e as { name?: string } | null)?.name;
-    const timedOut = name === 'TimeoutError' || name === 'AbortError';
+    // A write that may have reached the service may still commit after we look: a lookup that
+    // finds nothing then means "not yet", not "never". That is every failure but a connection
+    // that never opened and a refusal the service answered, including the runtime's own transport
+    // timeout (a TypeError), which is how a hung write ends when the client sets no deadline.
+    const mayHaveLanded = writeMayHaveLanded(e);
     // A timeout or a 5xx does not say the write did not happen, so ask the ledger before telling a
     // moderator it failed: "failed" invites a resubmit, and a resubmit of a write that landed is a
     // second grant (or deduction).
@@ -1039,7 +1041,7 @@ export async function sendBuzz(input: {
     } catch (lookupError) {
       console.error('[user-actions] buzz lookup after a failed write failed', lookupError);
     }
-    if (landed === undefined || (!landed && timedOut))
+    if (landed === undefined || (!landed && mayHaveLanded))
       return {
         ok: false,
         error:

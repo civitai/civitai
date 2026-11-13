@@ -29,9 +29,20 @@ describe('one resolver for the per-user app caps', () => {
     ]);
   });
 
+  // The sleeping-app plan limits: the hibernation service's wiring reads them for `begin` and
+  // `commit` alike, so the limit refused at one is the limit refused at the other.
+  it('the sleeping-app limits: only the hibernation wiring reads them', () => {
+    expect(importersOf(CAPS, 'sleepingAppLimits')).toEqual([
+      'server/services/app-hibernation/hibernation-deps.ts',
+    ]);
+  });
+
   it('nothing else imports the resolver module', () => {
     expect(importersOf(CAPS)).toEqual([
       'server/routers/blocks.router.ts',
+      // A type import only (`SleepingAppLimits`).
+      'server/services/app-hibernation/app-hibernation.service.ts',
+      'server/services/app-hibernation/hibernation-deps.ts',
       'server/services/apps/doc-store-maintenance.instance.ts',
       'server/services/apps/doc-store-viewer-usage.service.ts',
       'server/services/apps/doc-store.instance.ts',

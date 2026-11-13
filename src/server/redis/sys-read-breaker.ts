@@ -5,13 +5,15 @@ import { ErrorReply } from 'redis';
  *
  * `withSysReadDeadline` bounds one read (REDIS_SYS_READ_TIMEOUT_MS). While the system Redis is hung,
  * every read still waits out that deadline before its caller's fail-open branch runs, and the reads
- * that run on every request pay it on every request. `withSysReadBreaker` adds a breaker for those
- * reads only:
+ * that run on every request pay it on every request. `withSysReadBreaker` and
+ * `withRevocationReadBreaker` add a breaker for those reads only:
  *
- * BREAKER (dark; REDIS_SYS_READ_BREAKER_ENABLED). One per process (globalThis, because the server
- * evaluates this module once per bundler module graph), shared by every opted-in read. After
- * REDIS_SYS_READ_BREAKER_THRESHOLD consecutive failed reads (a timeout or a client/connection error;
- * an error reply from the store is not a failure, see storeAnswered) it OPENS: opted-in reads
+ * BREAKER (dark; REDIS_SYS_READ_BREAKER_ENABLED). Two per process (globalThis, because the server
+ * evaluates this module once per bundler module graph), with the same settings: one shared by the
+ * opted-in hot reads, and one for the session revocation read alone, so the others' failures never
+ * refuse it. After REDIS_SYS_READ_BREAKER_THRESHOLD consecutive failed reads through one breaker (a
+ * timeout or a client/connection error; an error reply from the store is not a failure, see
+ * storeAnswered) that breaker OPENS: its reads
  * reject at once with a SysReadUnavailableError('breaker-open'), so the caller's fail-open runs in
  * ~0ms. After REDIS_SYS_READ_BREAKER_COOLDOWN_MS one read is let through as a probe (HALF-OPEN; every
  * other read still fails fast); the probe's success closes the breaker, its failure re-opens it for
@@ -19,9 +21,9 @@ import { ErrorReply } from 'redis';
  * off) is abandoned and the next read probes instead, so a hung probe cannot hold the breaker
  * half-open. A null reply is a success, and so is an error reply (the store answered).
  *
- * This module is the mechanism only. The process-wide instance lives, unexported, in
- * ./sys-read-deadline.ts, so `withSysReadBreaker` is the only way in (the call-site ledger pins its
- * callers).
+ * This module is the mechanism only. The process-wide instances live, unexported, in
+ * ./sys-read-deadline.ts, so `withSysReadBreaker` and `withRevocationReadBreaker` are the only ways in
+ * (the call-site ledger pins their callers).
  *
  * The caller passes the command's promise, so while the breaker is open the command has already been
  * issued; the breaker stops the caller WAITING for it, and it settles in the background, bounded by the

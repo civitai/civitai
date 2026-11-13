@@ -231,6 +231,7 @@ const versionRow = {
   publishedAt: new Date('2024-01-01T00:00:00Z'),
   modelId: 77,
   modelName: 'Test Model',
+  nsfwLevel: 1,
   baseModel: 'SD 1.5',
   status: 'Published',
   modelStatus: 'Published',
