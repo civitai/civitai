@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '../progression/levels';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { expForLevel } from '../progression/levels';
@@ -17,6 +18,8 @@ import {
 
 const T0 = new Date('2026-12-25T12:00:00Z');
 const YESNO_Q = 'knights.yesno.violence';
+
+vi.mock('../axiom', () => ({ logToAxiom: vi.fn() }));
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -463,12 +466,14 @@ describe('promotion', () => {
     await player(1, { exp: justShort() });
     await rating(1);
     await history(1, rows(99, 74));
+    const before = await counterValue('knights_rank_ups_total', { rank: 'Knight' });
 
     const { result } = await answerNext(1, true);
 
     expect(result).toMatchObject({ status: 'recorded', correct: true, promoted: true });
     expect(await rankOf(1)).toBe('Knight');
     expect(getLevelProgression(await expOf(1)).level).toBe(20);
+    expect(await counterValue('knights_rank_ups_total', { rank: 'Knight' })).toBe(before + 1);
   });
 
   it('keeps an Acolyte below the bar at level 20 playing, with nothing reset, until accuracy recovers', async () => {

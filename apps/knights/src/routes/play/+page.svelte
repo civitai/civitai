@@ -20,7 +20,7 @@
   import { heartsLeft, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress } from './keys';
+  import { answerForKey, answerForKeyPress, optionsOnScreen } from './keys';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import {
     MAX_EXCLUDED,
@@ -78,8 +78,9 @@
       '[role="dialog"][aria-modal="true"]:not([aria-labelledby="block-reason-title"])'
     );
 
-  // The number keys answer in option order (a yes/no question also takes Y and N), and Space skips the item, even while an answer button has focus (the browser would
-  // otherwise press it). Typing in a field or holding a modifier is left alone.
+  // The number keys answer in option order (a yes/no question also takes Y and N), in the queue and the apprenticeship alike,
+  // and Space skips a queue item, even while an answer button has focus (the browser would otherwise press it). Typing in a
+  // field or holding a modifier is left alone.
   function onkeydown(event: KeyboardEvent) {
     if (headerDialogOpen()) return;
     if (choosingReason) {
@@ -87,17 +88,21 @@
       if (reason && !event.ctrlKey && !event.metaKey && !event.altKey) pickReason(reason as BlockReason);
       return;
     }
-    if (event.repeat || dialogOpen || !view || submitting) return;
+    const options = optionsOnScreen({
+      question: view?.question,
+      apprentice: data.mode === 'apprentice' ? data.apprentice : null,
+    });
+    if (event.repeat || dialogOpen || !options || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select, [contenteditable], header')) return;
     if (event.key === ' ') {
       event.preventDefault();
-      skipForm?.requestSubmit();
+      if (view) skipForm?.requestSubmit();
       return;
     }
     if (imageFailed) return;
-    const value = answerForKeyPress(view.question.options, event.key, yesNo);
+    const value = answerForKeyPress(options, event.key, yesNo);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
   }
 
@@ -547,7 +552,7 @@
     <WatchMeta
       value={strip.value}
       max={strip.max}
-      streak={data.daily.streak}
+      streak={withVotesSent(data.daily, sentVotes).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
     />
@@ -604,10 +609,11 @@
           {@render levelToast(true)}
         </div>
         <div class="controls" class:yesno={yesNo}>
-          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice}>
+          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
             <input type="hidden" name="kind" value={data.apprentice.item.kind} />
             <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
             <input type="hidden" name="version" value={data.apprentice.item.version ?? ''} />
+            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
             {#each data.apprentice.options as option, index (option.value)}
               {@render pill(option, index, false, false)}
             {/each}
@@ -625,6 +631,7 @@
       {@render levelToast(false)}
       <CheckpointRecap
         recap={data.apprentice}
+        noticeShown={!!levelNotice}
         message={formMessage}
         {submitting}
         submit={submitCheckpoint}

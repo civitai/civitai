@@ -209,4 +209,19 @@ describe('withVotesSent', () => {
   it('leaves the status alone with nothing in flight', () => {
     expect(withVotesSent(daily, 0)).toBe(daily);
   });
+
+  it('advances the streak with the vote that completes the Watch', () => {
+    expect(withVotesSent({ ...daily, streak: 0 }, 5)).toMatchObject({ streak: 1, watchDone: true });
+    expect(withVotesSent({ ...daily, votes: 9, streak: 4 }, 1)).toMatchObject({ streak: 5 });
+  });
+
+  it('leaves the streak alone before the Watch is done and once it already is', () => {
+    expect(withVotesSent({ ...daily, streak: 4 }, 4)).toMatchObject({
+      streak: 4,
+      watchDone: false,
+    });
+    expect(withVotesSent({ ...daily, votes: 10, watchDone: true, streak: 5 }, 1)).toMatchObject({
+      streak: 5,
+    });
+  });
 });

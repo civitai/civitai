@@ -4,7 +4,7 @@
   import { count, formatClock, formatWait } from '$lib/format';
   import Icon from '$lib/Icon.svelte';
   import { reducedMotion, tween } from '$lib/motion';
-  import { PENDING_TEXT } from '$lib/shop-view';
+  import { PENDING_TEXT, buyClick } from '$lib/shop-view';
   import PurchaseDialog from './PurchaseDialog.svelte';
   import ShopCard from './ShopCard.svelte';
   import type { PageData } from './$types';
@@ -37,7 +37,7 @@
   let reloadedFor = '';
   let confirming = $state<Card | null>(null);
   let requestKey = $state('');
-  let short = $state<{ id: number; key: number; by: number } | null>(null);
+  let short = $state<{ id: number; key: number; by: number; refusal: string | null } | null>(null);
   let notice = $state<string | null>(null);
   let noticePending = $state(false);
   let noticeInventory = $state(false);
@@ -59,9 +59,14 @@
 
   function openConfirm(card: Card) {
     notice = null;
-    if (balance.held) return;
-    if (balance.convertible < card.price) {
-      short = { id: card.id, key: (short?.key ?? 0) + 1, by: card.price - balance.convertible };
+    const click = buyClick(balance, card.price);
+    if (click.kind !== 'confirm') {
+      short = {
+        id: card.id,
+        key: (short?.key ?? 0) + 1,
+        by: click.kind === 'short' ? click.by : 0,
+        refusal: click.kind === 'refused' ? click.text : null,
+      };
       return;
     }
     short = null;
@@ -186,6 +191,7 @@
             clock={formatClock(msLeft / 1000)}
             shortBy={short?.id === card.id ? short.by : 0}
             shakeKey={short?.id === card.id ? short.key : 0}
+            refusal={short?.id === card.id ? short.refusal : null}
             stamped={stamped === card.id}
             onbuy={openConfirm}
           />
@@ -206,6 +212,7 @@
             index={deals.length + i}
             shortBy={short?.id === card.id ? short.by : 0}
             shakeKey={short?.id === card.id ? short.key : 0}
+            refusal={short?.id === card.id ? short.refusal : null}
             stamped={stamped === card.id}
             onbuy={openConfirm}
           />
@@ -225,6 +232,7 @@
                 index={deals.length + packs.length + i}
                 shortBy={short?.id === card.id ? short.by : 0}
                 shakeKey={short?.id === card.id ? short.key : 0}
+                refusal={short?.id === card.id ? short.refusal : null}
                 stamped={stamped === card.id}
                 onbuy={openConfirm}
               />
@@ -243,6 +251,7 @@
                 index={deals.length + packs.length + memberships.length + i}
                 shortBy={short?.id === card.id ? short.by : 0}
                 shakeKey={short?.id === card.id ? short.key : 0}
+                refusal={short?.id === card.id ? short.refusal : null}
                 stamped={stamped === card.id}
                 onbuy={openConfirm}
               />

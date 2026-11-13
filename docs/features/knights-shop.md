@@ -57,7 +57,7 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 
 ## Motion (M9, M10)
 
-`routes/shop/+page.svelte`, `ShopCard.svelte`, `PurchaseDialog.svelte`, `inventory/+page.svelte`. The purse counts down (`tween`, 360ms) only after the server has answered, the dialog fades out, the OWNED seal stamps (`mo-stamp`) and a floater rises; any click or key during the 720ms jumps to the end state. Cards stagger in (first six, 40ms apart), the deal card sheens once on load and every 8s, a Buy pressed without the gold shakes twice and fades in the shortfall line, an equipped item cross-fades to verdigris with the check drawing in. Under `prefers-reduced-motion` the count lands at once, there is no floater, shake or sheen, and the rest are 150ms fades. The coin clink of the design is not built: there is no sound asset for it yet.
+`routes/shop/+page.svelte`, `ShopCard.svelte`, `PurchaseDialog.svelte`, `inventory/+page.svelte`. The purse counts down (`tween`, 360ms) only after the server has answered, the dialog fades out, the OWNED seal stamps (`mo-stamp`) and a floater rises; any click or key during the 720ms jumps to the end state. Cards stagger in (first six, 40ms apart), the deal card sheens once on load and every 8s, a Buy pressed without the gold shakes twice and fades in the shortfall line (a held player's Buy does the same with the hold refusal, `refusalText('held')`, and opens no dialog), an equipped item cross-fades to verdigris with the check drawing in. Under `prefers-reduced-motion` the count lands at once, there is no floater, shake or sheen, and the rest are 150ms fades. The coin clink of the design is not built: there is no sound asset for it yet.
 
 ## Tests
 

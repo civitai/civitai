@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedGradedVotes, seedImage, seedPlayer } from '../../../test/seed';
 import { getPlayerStatus } from '../player-status';
@@ -16,6 +17,9 @@ import { expForLevel } from './levels';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
+
+const logToAxiom = vi.hoisted(() => vi.fn());
+vi.mock('../axiom', () => ({ logToAxiom }));
 
 let pg: PGlite;
 let db: Kysely<DB>;
@@ -120,8 +124,17 @@ describe('rank-up when votes settle', () => {
 
   it('can skip Templar', async () => {
     await player(1, 'Knight', { level: 95, correct: 100, days: 60 });
+    const before = await counterValue('knights_rank_ups_total', { rank: 'Paladin' });
+    logToAxiom.mockClear();
     await settleCorrect(1);
     expect(await rankOf(1)).toBe('Paladin');
+    expect(await counterValue('knights_rank_ups_total', { rank: 'Paladin' })).toBe(before + 1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'knights-rank-up',
+        details: { playerId: 1, rank: 'Paladin' },
+      })
+    );
   });
 
   // The settled vote's own day counts, so these seed one day fewer than the total.

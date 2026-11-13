@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { addCreatorShopStandIns } from './creator-cosmetic.fixture';
 import { seedPlayer, setGold } from '../../../test/seed';
@@ -165,9 +166,16 @@ beforeEach(async () => {
 describe('a Buzz pack', () => {
   it('spends its gold, grants the Buzz once under the conversion machinery, and shows as granted', async () => {
     const buzz = fakeBuzz();
+    const granted = { item_kind: 'buzz_pack', outcome: 'granted' };
+    const purchasesBefore = await counterValue('knights_shop_purchases_total', granted);
+    const spentBefore = await counterValue('knights_gold_spent_total', { item_kind: 'buzz_pack' });
     const result = await buy('buzz-50', { deps: defaultDeps({ buzz: buzz.port }) });
 
     expect(result).toMatchObject({ status: 'granted', buzz: 50, gold: 1000, replayed: false });
+    expect(await counterValue('knights_shop_purchases_total', granted)).toBe(purchasesBefore + 1);
+    expect(await counterValue('knights_gold_spent_total', { item_kind: 'buzz_pack' })).toBe(
+      spentBefore + 1000
+    );
     expect(buzz.grantYellow).toHaveBeenCalledTimes(1);
     expect(buzz.grantYellow.mock.calls[0][0]).toMatchObject({ userId: 1, amount: 50 });
     expect(await player()).toMatchObject({ goldEarned: 20_000, goldConverted: 1000 });
@@ -258,7 +266,17 @@ describe('spending gold', () => {
     const buzz = fakeBuzz();
     const deps = defaultDeps({ buzz: buzz.port });
     const first = await buy('buzz-50', { key: 'same-request', deps });
+    const counted = await counterValue('knights_shop_purchases_total', {
+      item_kind: 'buzz_pack',
+      outcome: 'granted',
+    });
     const again = await buy('buzz-50', { key: 'same-request', deps });
+    expect(
+      await counterValue('knights_shop_purchases_total', {
+        item_kind: 'buzz_pack',
+        outcome: 'granted',
+      })
+    ).toBe(counted);
 
     expect(again).toMatchObject({
       status: 'granted',

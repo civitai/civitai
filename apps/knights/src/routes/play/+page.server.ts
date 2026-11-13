@@ -9,6 +9,7 @@ import {
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { requireMember } from '$lib/server/membership';
+import { getPlayerStatus } from '$lib/server/player-status';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
@@ -190,6 +191,25 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     item: picked?.item ?? null,
   };
 };
+
+/**
+ * The milestone card is for the item it appeared with: the page flags an answer (or the recap's Continue) given while it
+ * was on screen, and the standing it showed, read before the answer moves it, is recorded as seen. A milestone this very
+ * answer crosses still gets its own card. Never fails the answer: a read or store that is down leaves the card up.
+ */
+async function standingOnCard(form: FormData, userId: number) {
+  if (form.get('noticeShown') !== '1') return null;
+  try {
+    const status = await getPlayerStatus(db, userId);
+    return status ? { rank: status.rank, level: status.level } : null;
+  } catch (error) {
+    console.error('knights: could not read the standing behind the level notice', {
+      userId,
+      error,
+    });
+    return null;
+  }
+}
 
 const limitedFailure = (until: Date) =>
   fail(429, {
@@ -384,6 +404,7 @@ export const actions: Actions = {
       return fail(400, { message: 'Pick an answer.' });
     }
 
+    const onCard = await standingOnCard(form, locals.user.id);
     try {
       const result = await answerApprentice(
         db,
@@ -399,6 +420,7 @@ export const actions: Actions = {
       if (result.status === 'rejected') {
         return fail(409, { message: APPRENTICE_REJECTION_TEXT[result.reason] });
       }
+      if (onCard) await dismissProgress(seenStore, locals.user.id, onCard);
       // Only whether the pick was right: the page plays a sound and shows no verdict.
       return { success: true, correct: result.correct, promoted: result.promoted };
     } catch (error) {
@@ -407,13 +429,15 @@ export const actions: Actions = {
     }
   },
 
-  continueCheckpoint: async ({ locals }) => {
+  continueCheckpoint: async ({ request, locals }) => {
+    const onCard = await standingOnCard(await request.formData(), locals.user.id);
     try {
       await acknowledgeCheckpoint(db, locals.user.id, apprenticeDeps.now());
     } catch (error) {
       console.error('knights: could not move past the checkpoint', { error });
       return fail(500, { message: 'Could not continue. Try again.' });
     }
+    if (onCard) await dismissProgress(seenStore, locals.user.id, onCard);
     return { success: true };
   },
 };

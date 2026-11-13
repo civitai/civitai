@@ -4,6 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from './levels';
 import { finalItem } from '../queue/item-state';
 import { workOffSmites } from '../smites/smites.service';
+import { metrics } from '../metrics';
 import { grantRankBadges } from './badges';
 import { PROGRESSION, RANK_LADDER } from './config';
 import { accuracyOf, earnedRank, type Ledger } from './rating';
@@ -187,7 +188,10 @@ export async function payOutVotes(
     total.xp += bulk;
     total.pending += reset ? 0 : gold;
     total.earned += paid ? gold : 0;
-    if (paid) total.correct++;
+    if (paid) {
+      total.correct++;
+      metrics.goldEarned(vote.itemId < 0 ? 'hidden_check' : 'vote', gold);
+    }
     perPlayer.set(vote.playerId, total);
   }
 
@@ -214,6 +218,7 @@ export async function payOutVotes(
         .where('userId', '=', playerId)
         .execute();
       await grantRankBadges(trx, playerId, earned);
+      metrics.rankUp(earned, playerId);
     }
     if (total.correct > 0) await workOffSmites(trx, playerId, now);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });

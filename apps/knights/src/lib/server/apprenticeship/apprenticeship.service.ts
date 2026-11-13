@@ -5,6 +5,7 @@ import { grantAcolyteLevelGold } from './level-gold';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REFERENCE_POOL, REFERENCE_SOURCE, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
+import { metrics } from '../metrics';
 import { grantRankBadges } from '../progression/badges';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
 import type { QuestionOption } from '../queue/queue.service';
@@ -477,5 +478,7 @@ export async function promoteToKnight(db: Executor, userId: number) {
     .where('rankType', '=', 'Acolyte')
     .returning('userId')
     .executeTakeFirst();
-  if (promoted) await grantRankBadges(db, userId, 'Knight');
+  if (!promoted) return;
+  await grantRankBadges(db, userId, 'Knight');
+  metrics.rankUp('Knight', userId);
 }

@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
+import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
@@ -192,12 +193,16 @@ describe('the Daily Watch', () => {
     for (let i = 0; i < DAILY.watchSize - 1; i++) await voteOnFreshItem(1, NOON(D1));
     expect((await dayRow(1, D1)).watchCompletedAt).toBeNull();
     expect((await wallet(1)).goldEarned).toBe(0);
+    const before = await counterValue('knights_gold_earned_total', { source: 'streak_bonus' });
 
     await voteOnFreshItem(1, NOON(D1));
     expect(await dayRow(1, D1)).toMatchObject({
       votes: DAILY.watchSize,
       bonusGold: DAILY.watchBonusGold,
     });
+    expect(await counterValue('knights_gold_earned_total', { source: 'streak_bonus' })).toBe(
+      before + DAILY.watchBonusGold
+    );
     expect((await dayRow(1, D1)).watchCompletedAt).not.toBeNull();
     expect((await wallet(1)).goldEarned).toBe(DAILY.watchBonusGold);
 
