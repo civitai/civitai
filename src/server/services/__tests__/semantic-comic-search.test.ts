@@ -104,6 +104,8 @@ describe('levelsWithin', () => {
     expect(levelsWithin(0)).toEqual([]);
     // Bits that are no level are ignored, so a wild input cannot blow up the list.
     expect(levelsWithin((2 ** 30) | PG)).toEqual([PG]);
+    // Blocked is a real level: a moderator can search it.
+    expect(levelsWithin(NsfwLevel.Blocked)).toEqual([NsfwLevel.Blocked]);
   });
 });
 

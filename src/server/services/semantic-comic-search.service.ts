@@ -1,3 +1,4 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { SemanticComicSearchInput } from '~/server/schema/semantic-comic-search.schema';
@@ -43,7 +44,7 @@ const searchServiceCandidates = searchServiceSource('comics', {
  */
 export function levelsWithin(browsingLevel: number) {
   // Only real level bits: the input is unbounded, and the submasks double with each bit.
-  const level = browsingLevel & allBrowsingLevelsFlag;
+  const level = browsingLevel & (allBrowsingLevelsFlag | NsfwLevel.Blocked);
   const levels: number[] = [];
   for (let m = level; m > 0; m = (m - 1) & level) levels.push(m);
   return levels.sort((a, b) => a - b);
