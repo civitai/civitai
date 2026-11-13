@@ -1,3 +1,6 @@
+/** Written beside a `review` row, never alone, so a count of actions taken skips them. */
+export const COMPANION_ACTIVITIES = ['clearMinor', 'minorQueueAccept'];
+
 // Filtered out of the default view, not dropped — one toggle brings them back.
 //
 // 🔴 Filter in SQL, never over a fetched page: `getModActivity` limits four queries and merges them,
@@ -8,8 +11,6 @@
 // `setNsfwLevel` is deliberately NOT here: `updateImageNsfwLevel` records it, and that is how the
 // ingestion-error, ratings and downleveled queues BLOCK an image. It reads as a rating and is
 // sometimes an enforcement action.
-/** Written beside a `review` row, never alone, so a count of actions taken skips them. */
-export const COMPANION_ACTIVITIES = ['clearMinor', 'minorQueueAccept'];
 
 export const RATING_ACTIVITIES = [
   // Knights of New Order crowd votes — not a moderator's decision at all, and a busy image carries several.

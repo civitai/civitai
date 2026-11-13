@@ -32,6 +32,7 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { acceptImage } = await import('../image-moderation.service');
+const { getYouToday } = await import('../moderation-board.service');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -74,6 +75,7 @@ CREATE TABLE "ModActivity" (
   "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
   UNIQUE ("activity", "entityType", "entityId")
 );
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "status" TEXT, "statusSetBy" INTEGER, "statusSetAt" TIMESTAMP(3));
 `;
 
 const MOD = 2;
@@ -161,5 +163,15 @@ describe('acceptImage: minor-queue activity', () => {
 
     expect(await minorOf(TAG_QUEUE)).toBe(true);
     expect((await activitiesFor(TAG_QUEUE)).map((r) => r.activity)).toEqual(['review']);
+  });
+});
+
+describe('getYouToday', () => {
+  it('counts the accept and not the companion row written beside it', async () => {
+    await acceptImage({ imageId: MINOR_PG, userId: MOD, removeMinorFlag: true });
+    await acceptImage({ imageId: MINOR_UNFLAGGED, userId: MOD });
+    await acceptImage({ imageId: TAG_QUEUE, userId: MOD });
+
+    expect((await getYouToday(MOD)).actions).toBe(3);
   });
 });

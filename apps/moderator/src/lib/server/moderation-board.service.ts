@@ -1,11 +1,11 @@
 import { sql } from '@civitai/db/kysely';
 import {
   activityLabel,
+  COMPANION_ACTIVITIES,
   DIRECTIONAL_ACTIVITIES,
   PURGE_UNCONFIRMED_ACTIVITY,
 } from '$lib/mod-activity';
 import type { task_enum_0648e184 } from './moderator-db/enums';
-import { COMPANION_ACTIVITIES } from '$lib/mod-activity';
 import { createCache } from './cache';
 import { dbRead } from './db';
 import { getModeratorDb } from './moderator-db';
