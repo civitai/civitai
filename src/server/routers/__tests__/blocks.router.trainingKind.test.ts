@@ -95,6 +95,10 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
   assertTrainingTriggerWordAllowed: (input: { triggerWord: string }) => h.checkTriggerWord(input),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
 }));

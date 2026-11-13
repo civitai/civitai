@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
 import JSZip from 'jszip';
+import { previewAppBlockManifest } from './preview-app-block-manifest';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
@@ -30,7 +31,12 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *     pre-withdraw any leftover pending row before submitting.
  *   - submit only pushes to the REVIEW org (`civitai-apps-review/<slug>`), which
  *     deliberately has NO build webhook, plus a MinIO object + one dev-DB row —
- *     so it triggers NO Tekton build, NO `civitai-apps` Deployment, NO CF DNS.
+ *     so it creates NO `civitai-apps` Deployment and NO CF DNS. It CAN start an
+ *     automatic REVIEW PREVIEW build of the submission (when automatic review
+ *     previews are enabled and the submitter's daily build budget allows). This
+ *     spec neither waits for nor asserts that build, and the withdraw below ends
+ *     the preview. The manifest is built to pass that build's checks
+ *     (preview-app-block-manifest.ts).
  *   - We `withdrawPublishRequest` in `finally` so a mid-test failure still
  *     leaves no pending row and re-runs don't accumulate/collide.
  *
@@ -67,7 +73,6 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
 const ROLE = 'mod' as const;
 const PREVIEW_URL = process.env.PREVIEW_URL ?? '';
 const APPS_DOMAIN = process.env.APPS_DOMAIN ?? 'civit.ai';
-const VERSION = '0.1.0';
 
 // Per-preview slug so concurrent previews don't collide on the pending-per-slug
 // unique index. Derive from the preview host's first label (e.g.
@@ -96,21 +101,10 @@ type PendingList = { items: PendingItem[]; nextCursor: string | null };
 // Bundle whose manifest OMITS iframe.src and which contains NO Dockerfile —
 // exactly the shape the DX change is meant to accept.
 async function buildBundleBase64(): Promise<string> {
-  const manifest = {
-    blockId: SLUG,
-    version: VERSION,
+  const manifest = previewAppBlockManifest({
+    slug: SLUG,
     name: 'CI Smoke — publish DX (omits iframe.src)',
-    contentRating: 'g',
-    scopes: [] as string[],
-    // NOTE: no `src`. The rest stays developer-authored, and must be approvable: submit runs the
-    // approve-time manifest validator.
-    iframe: {
-      minHeight: 300,
-      maxHeight: null,
-      resizable: true,
-      sandbox: 'allow-scripts allow-forms',
-    },
-  };
+  });
   const zip = new JSZip();
   zip.file('block.manifest.json', JSON.stringify(manifest, null, 2));
   zip.file('index.html', '<!doctype html><html><body>ci-smoke-pub-dx</body></html>');
