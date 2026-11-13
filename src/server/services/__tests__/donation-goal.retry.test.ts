@@ -73,6 +73,8 @@ beforeEach(() => {
       ) ?? null) as never
   );
 
+  // Reset, not just cleared: a once-queued answer a test never reached must not leak.
+  for (const fn of Object.values(buzz)) fn.mockReset();
   ledger = createFakeBuzzLedger();
   buzz.createMultiAccountBuzzTransaction.mockImplementation(
     ledger.createMultiAccountBuzzTransaction
@@ -90,6 +92,7 @@ describe('a donation across an unknown outcome', () => {
     ledger.queueFault('lose-response');
     // What the donor is told is pinned below; here only that it failed and recorded nothing.
     await expect(donate(KEY)).rejects.toThrow();
+    ledger.clearFaults();
     expect(donations).toHaveLength(0);
 
     await donate(KEY);
@@ -160,6 +163,7 @@ describe('a donation across an unknown outcome', () => {
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');
     await donate(KEY).catch(() => undefined);
+    ledger.clearFaults();
 
     await donate(KEY, 300);
 

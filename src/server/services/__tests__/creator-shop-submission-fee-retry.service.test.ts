@@ -165,6 +165,8 @@ beforeEach(() => {
       : []
   );
 
+  // Reset, not just cleared: a once-queued answer a test never reached must not leak.
+  for (const fn of Object.values(buzz)) fn.mockReset();
   ledger = createFakeBuzzLedger();
   buzz.createBuzzTransaction.mockImplementation(ledger.createBuzzTransaction);
   buzz.resendBuzzTransaction.mockImplementation(ledger.resendBuzzTransaction);
@@ -183,6 +185,7 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     ledger.queueFault('lose-response');
     // What the creator is told is pinned below; here only that it failed and created nothing.
     await expect(site.submit({ idempotencyKey: KEY })).rejects.toThrow();
+    ledger.clearFaults();
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
 
     await site.submit({ idempotencyKey: KEY });
@@ -256,6 +259,7 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');
     await site.submit({ idempotencyKey: KEY }).catch(() => undefined);
+    ledger.clearFaults();
     await site.submit({ idempotencyKey: KEY });
     expect(mocks.shopItemCreate).toHaveBeenCalledTimes(1);
 
@@ -270,6 +274,7 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');
     await site.submit({ idempotencyKey: KEY }).catch(() => undefined);
+    ledger.clearFaults();
 
     await site.submit({ idempotencyKey: OTHER_KEY, name: 'Another listing' });
 

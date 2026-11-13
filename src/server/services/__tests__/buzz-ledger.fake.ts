@@ -52,6 +52,10 @@ export function createFakeBuzzLedger() {
     charges: () => [...held.values()].filter((t) => !t.externalTransactionId.startsWith('refund-')),
     refunds: () => [...held.values()].filter((t) => t.externalTransactionId.startsWith('refund-')),
     queueFault: (fault: Fault) => faults.push(fault),
+    /** Drops faults a request did not reach, so they cannot fall on the next request. */
+    clearFaults: () => {
+      faults.length = 0;
+    },
     failLookups: (error: Error | null = new Error('buzz read failed')) => {
       lookupError = error;
     },

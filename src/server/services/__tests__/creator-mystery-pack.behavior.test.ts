@@ -1091,6 +1091,7 @@ describe('the mystery pack submission fee across an unknown outcome', () => {
     ledger.queueFault('lose-response');
     // What the creator is told is pinned below; here only that it failed and wrote nothing.
     await expect(submit({ idempotencyKey: KEY } as never)).rejects.toThrow();
+    ledger.clearFaults();
     expect(await packCount()).toBe(0);
 
     const { shopItemId } = await submit({ idempotencyKey: KEY } as never);

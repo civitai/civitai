@@ -88,6 +88,8 @@ beforeEach(() => {
   mockUpsertBuzzTip.mockResolvedValue(undefined);
   mockCreateNotification.mockResolvedValue(undefined);
   mockUpdateEntityMetric.mockResolvedValue(undefined);
+  // Reset, not just cleared: a once-queued answer a test never reached must not leak.
+  for (const fn of Object.values(buzz)) fn.mockReset();
   ledger = createFakeBuzzLedger();
   buzz.createBuzzTransactionMany.mockImplementation(ledger.createBuzzTransactionMany);
   buzz.getTransactionByExternalId.mockImplementation(ledger.getTransactionByExternalId);
@@ -100,6 +102,7 @@ describe('on-site tip across an unknown outcome', () => {
     ledger.queueFault('lose-response');
     // What the tipper is told is pinned below; here only that it failed.
     await expect(imageTip(KEY)).rejects.toThrow();
+    ledger.clearFaults();
 
     await imageTip(KEY);
 
@@ -173,6 +176,7 @@ describe('on-site tip across an unknown outcome', () => {
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');
     await imageTip(KEY).catch(() => undefined);
+    ledger.clearFaults();
 
     const result = await imageTip(KEY, 250);
 
