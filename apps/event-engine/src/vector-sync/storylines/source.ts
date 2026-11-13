@@ -19,8 +19,7 @@ export const STORYLINE_FROM = `"Storyline" st
 /**
  * Which storylines get a point: the site's `storylineSemanticEligibleText`
  * (storyline-visibility.sql.ts) as SQL, held to it by the site's storyline-eligibility parity test.
- * Nothing held is indexed: not the owner, chapter 1's author, or any of chapter 1's images. A
- * storyline that stops matching loses its point at its next sync (an event, or the refresh walk).
+ * Nothing held is indexed: not the owner, chapter 1's author, or any of chapter 1's images.
  * Whether the publication time has passed is not part of it: the payload's rootPublishedAt is
  * filtered at query time.
  */

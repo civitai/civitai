@@ -26,11 +26,9 @@ type RefreshQueue = {
 };
 
 /**
- * Starts each refreshing domain's walk: every `everyMs`, one full pass over its table, `batch` ids a
- * read, each into its lane for the queue's normal flush. So whatever the table size or restarts, a
- * row is revisited within one tick. A pass stops early when the queue fills or a read fails, and the
- * next tick resumes it from there; a tick is skipped while the previous pass runs or the queue is
- * full. Returns the timers, for shutdown.
+ * Every `everyMs`, walks the domain's whole table `batch` ids a read into its lane. A pass stops
+ * early when the queue fills or a read fails and resumes on the next tick; a tick is skipped while
+ * the previous pass runs or the queue is full.
  */
 export function startRefreshers(
   domains: Domain<any>[],
