@@ -97,6 +97,21 @@ const POSTS = [
   post(16, Blocked, [image(Blocked)]),
   // A post level that has drifted from its images: rated XXX, its one image PG.
   post(17, XXX, [image(PG)]),
+  // Another user's unrated draft: its image not yet rated.
+  post(18, 0, [image(0, { userId: STRANGER, ingestion: 'Pending' })], {
+    userId: STRANGER,
+    publishedAt: null,
+  }),
+  // Their PG draft whose first image is not yet rated.
+  post(
+    19,
+    PG,
+    [image(0, { userId: STRANGER, ingestion: 'Pending' }), image(PG, { userId: STRANGER })],
+    {
+      userId: STRANGER,
+      publishedAt: null,
+    }
+  ),
 ];
 const RESTRICTED_MATURE = new Set([9001]);
 
@@ -107,7 +122,13 @@ type Args = {
   select: { images: { where?: Row; take: number; select: Row } };
 };
 beforeEach(() => {
-  dbMock.dbRead.model3D.findUnique.mockResolvedValue({ id: MODEL3D, userId: OWNER } as never);
+  dbMock.dbRead.model3D.findUnique.mockResolvedValue({
+    id: MODEL3D,
+    userId: OWNER,
+    status: 'Published',
+    deletedAt: null,
+    tosViolation: false,
+  } as never);
   // The restricted-model lookup, over the cover candidates it is asked about.
   dbMock.dbRead.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
@@ -142,12 +163,13 @@ beforeEach(() => {
 const page = (
   user: { id: number; isModerator?: boolean } | undefined,
   level?: number,
-  extra: { limit?: number; cursor?: number } = {}
+  extra: { limit?: number; cursor?: number; servesUnrated?: boolean } = {}
 ) =>
   getModel3DRelatedPosts({
     input: { model3dId: MODEL3D, limit: extra.limit ?? 12, cursor: extra.cursor },
     user: user as never,
     browsingLevel: level,
+    servesUnrated: extra.servesUnrated,
   });
 const listed = async (...args: Parameters<typeof page>) =>
   (await page(...args)).items.map((p) => ({ id: p.id, cover: p.images[0]?.nsfwLevel ?? null }));
@@ -200,11 +222,25 @@ describe('getModel3DRelatedPosts', () => {
     ]);
   });
 
-  it('shows a viewer their own draft with their own cover, and not to anyone else', async () => {
-    const own = await listed({ id: STRANGER }, publicBrowsingLevelsFlag);
-    expect(own.find((p) => p.id === 5)).toEqual({ id: 5, cover: R });
+  it('shows a viewer their own draft within their level, and not to anyone else', async () => {
+    const own = async (level: number, servesUnrated = false) =>
+      (await listed({ id: STRANGER }, level, { limit: 50, servesUnrated })).filter((p) =>
+        [5, 18].includes(p.id)
+      );
+    expect(await own(PG | R)).toEqual([{ id: 5, cover: R }]);
+    // Their R draft is above a PG level, own or not.
+    expect(await own(PG)).toEqual([]);
+    // Unrated, only where the domain serves unrated content.
+    expect(await own(PG, true)).toEqual([{ id: 18, cover: 0 }]);
+    // An unrated image is passed over for a rated cover where the domain doesn't serve unrated.
+    const draft = async (servesUnrated: boolean) =>
+      (await listed({ id: STRANGER }, PG, { limit: 50, servesUnrated })).find((p) => p.id === 19);
+    expect(await draft(false)).toEqual({ id: 19, cover: PG });
+    expect(await draft(true)).toEqual({ id: 19, cover: 0 });
     expect(
-      (await listed({ id: 77 }, allBrowsingLevelsFlag, { limit: 50 })).some((p) => p.id === 5)
+      (await listed({ id: 77 }, allBrowsingLevelsFlag, { limit: 50, servesUnrated: true })).some(
+        (p) => [5, 18, 19].includes(p.id)
+      )
     ).toBe(false);
   });
 
@@ -226,11 +262,41 @@ describe('getModel3DRelatedPosts', () => {
     }
   });
 
-  it('shows a moderator every post with its first image (control)', async () => {
-    const all = await listed({ id: 1, isModerator: true }, publicBrowsingLevelsFlag, { limit: 50 });
-    expect(all).toHaveLength(POSTS.length);
+  it('shows a moderator posts in any state, but only within their level', async () => {
+    const mod = { id: 1, isModerator: true };
+    const atPG = await listed(mod, publicBrowsingLevelsFlag, { limit: 50 });
+    // A draft and posts whose only image is in review or flagged: a moderator still sees them.
+    expect(atPG.find((p) => p.id === 8)).toEqual({ id: 8, cover: PG });
+    expect(atPG.find((p) => p.id === 7)).toEqual({ id: 7, cover: PG });
+    // Nothing above PG: no XXX post, no XXX cover, and no unrated post on a SFW-only domain.
+    expect(atPG.some((p) => [2, 11, 17, 3, 18].includes(p.id))).toBe(false);
+    expect(atPG.every((p) => p.cover === null || p.cover === PG)).toBe(true);
+    expect(atPG.find((p) => p.id === 12)).toEqual({ id: 12, cover: null });
+    // Unrated, where the domain serves it.
+    const unrated = await listed(mod, publicBrowsingLevelsFlag, { limit: 50, servesUnrated: true });
+    expect(unrated.find((p) => p.id === 18)).toEqual({ id: 18, cover: 0 });
+    // At every level they see every post that has one (control).
+    const all = await listed(mod, allBrowsingLevelsFlag, { limit: 50, servesUnrated: true });
     expect(all.find((p) => p.id === 2)).toEqual({ id: 2, cover: XXX });
-    expect(all.find((p) => p.id === 8)).toEqual({ id: 8, cover: PG });
+  });
+
+  it('answers for a draft, deleted or ToS-flagged 3D model only to its owner and moderators', async () => {
+    for (const state of [{ status: 'Draft' }, { deletedAt: past }, { tosViolation: true }]) {
+      dbMock.dbRead.model3D.findUnique.mockResolvedValue({
+        id: MODEL3D,
+        userId: OWNER,
+        status: 'Published',
+        deletedAt: null,
+        tosViolation: false,
+        ...state,
+      } as never);
+      await expect(page(undefined, publicBrowsingLevelsFlag)).rejects.toThrow(/No 3D model/);
+      await expect(page({ id: STRANGER }, publicBrowsingLevelsFlag)).rejects.toThrow(/No 3D model/);
+      await expect(page({ id: OWNER }, publicBrowsingLevelsFlag)).resolves.toBeDefined();
+      await expect(
+        page({ id: 1, isModerator: true }, publicBrowsingLevelsFlag)
+      ).resolves.toBeDefined();
+    }
   });
 });
 

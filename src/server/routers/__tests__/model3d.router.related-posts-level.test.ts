@@ -62,4 +62,15 @@ describe('model3d.getRelatedPosts', () => {
     related.mockClear();
     expect(await levelPassed(user, true, NsfwLevel.XXX)).toBe(NsfwLevel.XXX);
   });
+
+  it('lets unrated content through only where the domain serves mature content', async () => {
+    const moderator = { id: 1, isModerator: true, showNsfw: true, browsingLevel: NsfwLevel.PG };
+    const servesUnrated = async (canViewNsfw: boolean) => {
+      related.mockClear();
+      await caller(moderator, canViewNsfw).getRelatedPosts({ model3dId: 1 });
+      return (related.mock.calls[0][0] as { servesUnrated: boolean }).servesUnrated;
+    };
+    expect(await servesUnrated(false)).toBe(false);
+    expect(await servesUnrated(true)).toBe(true);
+  });
 });

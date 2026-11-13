@@ -61,7 +61,8 @@ import {
   createModel3DReport,
   createModel3DReviewReport,
 } from '~/server/services/model3d-report.service';
-import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
+import { domainServableLevels, relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 // All model3d procedures are gated by the `model3dFeed` flag. The feed flag
 // controls viewing + commenting + reviewing the Model3D entity itself; the
@@ -198,6 +199,8 @@ export const model3dRouter = router({
         input,
         user: ctx.user,
         browsingLevel: relatedPostsBrowsingLevel(ctx, input.browsingLevel),
+        // Unrated content is never served where the domain serves only safe levels.
+        servesUnrated: domainServableLevels(ctx) === allBrowsingLevelsFlag,
       })
     ),
 

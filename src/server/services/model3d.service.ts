@@ -1590,36 +1590,53 @@ export const getModel3DRelatedPosts = async ({
   input,
   user,
   browsingLevel = publicBrowsingLevelsFlag,
+  servesUnrated = false,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
   /** The viewer's resolved, capped level (`relatedPostsBrowsingLevel`); unset reads PG only. */
   browsingLevel?: number;
+  /** Whether this domain may serve unrated (level 0) content; the SFW domain may not. */
+  servesUnrated?: boolean;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
     const isModerator = !!user?.isModerator;
 
+    const viewerId = user?.id;
     const model3d = await dbRead.model3D.findUnique({
       where: { id: model3dId },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, status: true, deletedAt: true, tosViolation: true },
     });
-    if (!model3d) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
+    // The rail answers only for a 3D model the viewer may see: a draft, deleted or ToS-flagged
+    // one only to its owner and moderators.
+    const visible =
+      !!model3d &&
+      canViewModel3d({
+        status: model3d.status,
+        deletedAt: model3d.deletedAt,
+        ownerId: model3d.userId,
+        userId: viewerId,
+        isModerator,
+      }) &&
+      (!model3d.tosViolation || isModerator || model3d.userId === viewerId);
+    if (!visible) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
 
-    const viewerId = user?.id;
-
-    // Visibility:
-    //  - Moderators see everything.
-    //  - Everyone else sees published+public posts rated within their level AND their own posts
-    //    (any state, so a user who just created a draft post linked to this
-    //    model3d sees it on the page immediately, before they hit Publish).
     // A post's level is its images' combined level: it is listed when it shares a level with the
-    // viewer's, as the post feed does, and an unrated post (0) never is; nor is one with no cover
-    // the viewer may see. Blocked is never a level a viewer browses at.
+    // viewer's, as the post feed does. Blocked is never a level a viewer browses at, and the level
+    // is already held to the domain's cap. Moderators see posts in any state, and a viewer their
+    // own (a draft shows before they hit Publish), but both only within that level; an unrated
+    // post or image (0) as well, where the domain serves unrated content.
     const level = onlySelectableLevels(browsingLevel);
-    // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
-    // their level, out of review and never blocked. A mature image of a restricted model is
-    // dropped below: that column is not in the Prisma schema.
+    const levelPosts: Prisma.PostWhereInput = servesUnrated
+      ? { OR: [{ nsfwLevel: { in: postLevelsWithin(level) } }, { nsfwLevel: 0 }] }
+      : { nsfwLevel: { in: postLevelsWithin(level) } };
+    const levelImages: Prisma.ImageWhereInput = {
+      nsfwLevel: { in: [...parseBitwiseBrowsingLevel(level), ...(servesUnrated ? [0] : [])] },
+    };
+    // The cover of someone else's post, as the feed shows images: scanned, within the viewer's
+    // level, out of review and never blocked. A mature image of a restricted model is dropped
+    // below: that column is not in the Prisma schema.
     const coverGate: Prisma.ImageWhereInput = {
       ingestion: 'Scanned',
       nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
@@ -1635,15 +1652,15 @@ export const getModel3DRelatedPosts = async ({
       nsfwLevel: { in: postLevelsWithin(level) },
       images: { some: coverGate },
     };
-    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
-      ? undefined
+    const coverWhere: Prisma.ImageWhereInput = isModerator
+      ? levelImages
       : viewerId
-      ? { OR: [{ userId: viewerId }, coverGate] }
+      ? { OR: [{ userId: viewerId, ...levelImages }, coverGate] }
       : coverGate;
     const visibility: Prisma.PostWhereInput = isModerator
-      ? {}
+      ? levelPosts
       : viewerId
-      ? { OR: [publishedClause, { userId: viewerId }] }
+      ? { OR: [publishedClause, { userId: viewerId, ...levelPosts }] }
       : publishedClause;
 
     const where: Prisma.PostWhereInput = {
