@@ -132,7 +132,12 @@ export async function searchSemanticImages({
   const fetchVisible = async (
     ids: number[],
     level: number,
-    filters: { tags?: number[]; excludedTagIds: number[]; fromPlatform?: boolean }
+    filters: {
+      tags?: number[];
+      excludedTagIds: number[];
+      fromPlatform?: boolean;
+      withMeta?: boolean;
+    }
   ) => {
     const { items } = await getAllImages({
       ...getInfiniteImagesSchema.parse({
@@ -171,7 +176,12 @@ export async function searchSemanticImages({
   const hydrate: Hydrate<HydratedImage> = (ids) =>
     timed(
       'hydrate',
-      fetchVisible(ids, level, { tags: tagIds, excludedTagIds, fromPlatform: input.fromPlatform })
+      fetchVisible(ids, level, {
+        tags: tagIds,
+        excludedTagIds,
+        fromPlatform: input.fromPlatform,
+        withMeta: input.withMeta,
+      })
     );
   const cachedSource = withCandidateCache(
     IMAGE_COLLECTION,

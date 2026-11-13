@@ -306,20 +306,24 @@ describe('tags that cannot be browsed', () => {
   });
 });
 
-describe('Made On-site', () => {
-  it('applies Made On-site to hydration only, not the anchor check', async () => {
+describe('Made On-site and Metadata only', () => {
+  it('applies both to hydration only, not the anchor check', async () => {
     const hydrated: unknown[] = [];
     h.fakeGetAllImages = async (args) => {
-      hydrated.push((args as { fromPlatform?: boolean }).fromPlatform);
+      const { fromPlatform, withMeta } = args as { fromPlatform?: boolean; withMeta?: boolean };
+      hydrated.push({ fromPlatform, withMeta });
       return visibleOnly(new Set([5]))(args);
     };
     const { source } = rankedSource([5]);
     await searchSemanticImages({
-      input: input({ fromPlatform: true }),
+      input: input({ fromPlatform: true, withMeta: true }),
       user: VIEWER,
       candidateSource: source,
     });
-    expect(hydrated).toEqual([undefined, true]);
+    expect(hydrated).toEqual([
+      { fromPlatform: undefined, withMeta: false },
+      { fromPlatform: true, withMeta: true },
+    ]);
   });
 });
 
