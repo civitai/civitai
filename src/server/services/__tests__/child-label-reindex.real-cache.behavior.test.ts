@@ -48,18 +48,13 @@ beforeAll(async () => {
 });
 afterAll(() => db.close());
 
-// The route's SQL arrives as Prisma.Sql; the cache's own row read is a tagged template with the id
-// array as its one value. Both run on PGlite, so `fromWrite` reaching dbWrite reads the same rows.
+// The route's SQL arrives as Prisma.Sql and the cache's own row read as a tagged template; both run
+// as written on PGlite, so `fromWrite` reaching dbWrite reads the same rows.
 const runQuery = (async (sqlOrStrings: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
   if ('text' in sqlOrStrings)
     return (await db.query(sqlOrStrings.text, sqlOrStrings.values as unknown[])).rows;
-  return (
-    await db.query(
-      `SELECT "imageId", source, "tagId" FROM "TagsOnImageDetails"
-       WHERE "imageId" = ANY($1::int[]) AND disabled = false`,
-      [values[0]]
-    )
-  ).rows;
+  const text = sqlOrStrings.reduce((sql, part, i) => sql + '$' + i + part);
+  return (await db.query(text, values)).rows;
 }) as never;
 const tagRows = (async (args: { where: { id: { in: number[] } } }) =>
   args.where.id.in.map((id) => ({
