@@ -33,7 +33,7 @@ export type EnqueueRefusal =
 
 export type EnqueueOptions = {
   /**
-   * Refuse images the queue could not serve yet. Intake leaves it off: its scan results often
+   * Refuse images the public feeds would not show. Intake leaves it off: scan results often
    * arrive before the post is published.
    */
   servableOnly?: boolean;
