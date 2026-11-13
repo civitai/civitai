@@ -57,7 +57,9 @@ import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service
 import { eventViewerOf } from '~/server/events/event-viewer';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { isArticleServableWhenRestricted } from '~/server/utils/article-region';
+import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getCaller } from '~/server/routers/remix-app.router';
 import {
@@ -140,6 +142,19 @@ export const articleRouter = router({
           return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
         }),
       ]);
+      // Region-dependent above SFW: a restricted region gets the same NOT_FOUND as a missing article
+      // (as on /api/v1/articles/[id]), its owner and moderators excepted, and the answer stays out of
+      // the edge cache, which does not key on region.
+      if (!isArticleServableWhenRestricted(article)) {
+        const viewerMayRead = ctx.user?.isModerator || ctx.user?.id === article.userId;
+        if (!viewerMayRead && isRegionRestricted(getRegion(ctx.req)))
+          throw throwNotFoundError(`No article with id ${input.id}`);
+        if (ctx.cache) {
+          ctx.cache.edgeTTL = 0;
+          ctx.cache.browserTTL = 0;
+          ctx.cache.staleWhileRevalidate = 0;
+        }
+      }
       return { ...article, eventDecoration: eventDecorations[article.id] ?? null };
     }),
   // Deliberately narrower than `getScanStatus`, which is owner/moderator-facing and returns
