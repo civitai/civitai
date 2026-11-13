@@ -121,18 +121,26 @@ const MODEL = {
   },
 };
 
+/** Each image's moderation state, by id, as the image gate reads it. */
+const imageStates = (stateOf: (id: number) => object) =>
+  dbMock.dbRead.image.findMany.mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => where.id.in.map((id) => ({ id, ...stateOf(id) }))) as never);
+
 beforeEach(() => {
   // No image is a restricted model's mature one, unless a test says so.
   dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
   // The source image is one the viewer may see.
-  dbMock.dbRead.image.findUnique.mockResolvedValue({
+  imageStates(() => ({
     nsfwLevel: 1,
     ingestion: 'Scanned',
     blockedFor: null,
     needsReview: null,
     minor: false,
     poi: false,
-  } as never);
+  }));
   dbMock.dbRead.model3D.findUnique.mockImplementation((async (args: { select: Select }) =>
     applySelect(MODEL, args.select)) as never);
   dbMock.dbRead.model3D.findMany.mockImplementation((async (args: { select: Select }) => [
@@ -213,7 +221,7 @@ describe("a 3D model's source image", () => {
     poi: false,
   };
   const sourceFor = async (user: unknown, state: object, browsingLevel = 1) => {
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, ...state } as never);
+    imageStates(() => ({ ...passing, ...state }));
     const model = await getModel3DById({ id: 9, user: user as never, browsingLevel });
     return model.sourceImage?.id ?? null;
   };
@@ -264,11 +272,7 @@ describe("a 3D model's thumbnail and rating", () => {
       applySelect({ ...MODEL, nsfwLevel }, args.select)) as never);
 
   it('leaves out a thumbnail the feed would not show, for another viewer, and keeps the source image', async () => {
-    dbMock.dbRead.image.findUnique.mockImplementation((async ({
-      where,
-    }: {
-      where: { id: number };
-    }) => (where.id === 1 ? { ...passing, blockedFor: 'tos' } : passing)) as never);
+    imageStates((id) => (id === 1 ? { ...passing, blockedFor: 'tos' } : passing));
     for (const user of [null, { id: 6 }]) {
       const model = await getModel3DById({ id: 9, user: user as never });
       expect(model.thumbnailImage).toBeNull();
@@ -294,7 +298,7 @@ describe("a 3D model's thumbnail and rating", () => {
 
   it('is found by a viewer whose level includes its rating (control)', async () => {
     rated(4);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, nsfwLevel: 4 } as never);
+    imageStates(() => ({ ...passing, nsfwLevel: 4 }));
     expect(
       (await getModel3DById({ id: 9, user: { id: 6 } as never, browsingLevel: 1 | 4 })).id
     ).toBe(9);
@@ -346,14 +350,14 @@ describe("a 3D model's files and post chip", () => {
 
   it('are found by a viewer whose level includes its rating (control)', async () => {
     rated(4);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, nsfwLevel: 4 } as never);
+    imageStates(() => ({ ...passing, nsfwLevel: 4 }));
     expect((await files({ id: 6 }, 1 | 4)).id).toBe(9);
     expect((await chip({ id: 6 }, 1 | 4))?.thumbnailImage?.id).toBe(1);
   });
 
   it('the chip leaves out a thumbnail the feed would not show, for another viewer', async () => {
     rated(1);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({ ...passing, blockedFor: 'tos' } as never);
+    imageStates(() => ({ ...passing, blockedFor: 'tos' }));
     for (const user of [null, { id: 6 }]) {
       const result = await chip(user);
       expect(result?.id).toBe(9);
@@ -381,5 +385,60 @@ describe("a 3D model's generation params", () => {
     ['a moderator', { id: 1, isModerator: true }],
   ])('reach %s whole', async (_, user) => {
     expect(await paramsFor(user)).toEqual(MODEL.generationParams);
+  });
+});
+
+describe("a 3D model feed card's thumbnail", () => {
+  const passing = {
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    blockedFor: null,
+    needsReview: null,
+    minor: false,
+    poi: false,
+  };
+  // A 20-card page: card i has thumbnail 100 + i; card 0's owner is user 5, the rest user 7.
+  const page = () =>
+    dbMock.dbRead.model3D.findMany.mockImplementation((async (args: { select: Select }) =>
+      Array.from({ length: 20 }, (_, i) =>
+        applySelect(
+          { ...MODEL, id: 100 + i, userId: i === 0 ? 5 : 7, thumbnailImage: image(100 + i) },
+          args.select
+        )
+      )) as never);
+  const thumbnails = async (user: unknown) => {
+    const { items } = await getModel3DsInfinite({ limit: 50, user, browsingLevel: 1 } as never);
+    return new Map(items.map((item) => [item.id, item.thumbnailImage?.url ?? null]));
+  };
+
+  it('is left out for another viewer when the feed would not show it, and the card stays', async () => {
+    page();
+    imageStates((id) => (id === 100 ? { ...passing, blockedFor: 'tos' } : passing));
+    for (const user of [null, { id: 6 }]) {
+      const urls = await thumbnails(user);
+      expect(urls.size).toBe(20);
+      expect(urls.get(100)).toBeNull();
+      // A clean thumbnail keeps its URL (control).
+      expect(urls.get(101)).toBe('img-101');
+    }
+  });
+
+  it.each([
+    ['its owner', { id: 5 }],
+    ['a moderator', { id: 1, isModerator: true }],
+  ])('reaches %s whatever its state', async (_, user) => {
+    page();
+    imageStates(() => ({ ...passing, blockedFor: 'tos' }));
+    expect((await thumbnails(user)).get(100)).toBe('img-100');
+  });
+
+  it('is checked for a whole page in a constant number of reads', async () => {
+    page();
+    dbMock.dbRead.image.findMany.mockClear();
+    dbMock.dbRead.$queryRaw.mockClear();
+    await thumbnails({ id: 6 });
+    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 });

@@ -235,6 +235,44 @@ const periodStartDate = (period: MetricTimeframe): Date | null => {
 // Read helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Of these images, the ones the feed would show at these levels: scanned, out of review, never
+ * blocked, not flagged, within the levels, and not a restricted model's mature image.
+ */
+async function servableImageIds(ids: number[], levels: number[]) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Set<number>();
+  const [states, restricted] = await Promise.all([
+    dbRead.image.findMany({
+      where: { id: { in: unique } },
+      select: {
+        id: true,
+        nsfwLevel: true,
+        ingestion: true,
+        blockedFor: true,
+        needsReview: true,
+        minor: true,
+        poi: true,
+      },
+    }),
+    restrictedMatureImageIds(unique),
+  ]);
+  return new Set(
+    states
+      .filter(
+        (state) =>
+          state.ingestion === 'Scanned' &&
+          !state.blockedFor &&
+          !state.needsReview &&
+          !state.minor &&
+          !state.poi &&
+          levels.includes(state.nsfwLevel) &&
+          !restricted.has(state.id)
+      )
+      .map((state) => state.id)
+  );
+}
+
 // Anyone but its owner and moderators gets a model, and its images, as the feed shows them: a
 // model rated within the viewer's level, and images scanned, out of review, never blocked, not
 // flagged, within that level, and not a restricted model's mature image.
@@ -254,34 +292,13 @@ const model3dAccess = ({
 }) => {
   const levels = parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel));
   const exempt = isModerator || ownerId === userId;
-  const servable = async (imageId: number) => {
-    const state = await dbRead.image.findUnique({
-      where: { id: imageId },
-      select: {
-        nsfwLevel: true,
-        ingestion: true,
-        blockedFor: true,
-        needsReview: true,
-        minor: true,
-        poi: true,
-      },
-    });
-    return (
-      !!state &&
-      state.ingestion === 'Scanned' &&
-      !state.blockedFor &&
-      !state.needsReview &&
-      !state.minor &&
-      !state.poi &&
-      levels.includes(state.nsfwLevel) &&
-      !(await restrictedMatureImageIds([imageId])).has(imageId)
-    );
-  };
   return {
     exempt,
     modelVisible: exempt || levels.includes(nsfwLevel),
     servableImage: async <T extends { id: number }>(image: T | null) =>
-      image && (exempt || (await servable(image.id))) ? image : null,
+      image && (exempt || (await servableImageIds([image.id], levels)).has(image.id))
+        ? image
+        : null,
   };
 };
 
@@ -719,6 +736,17 @@ export const getModel3DsInfinite = async ({
         : [];
     const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
 
+    // A card's thumbnail as the model page shows it: its owner and moderators always get it.
+    const othersThumbnailIds = isModerator
+      ? []
+      : rows.flatMap((r) =>
+          r.thumbnailImage && r.userId !== user?.id ? [r.thumbnailImage.id] : []
+        );
+    const servableThumbnails = await servableImageIds(
+      othersThumbnailIds,
+      parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel || publicBrowsingLevelsFlag))
+    );
+
     // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
     // `useApplyHiddenPreferences` hook can apply tag-based filtering with
     // the same shape it uses for the `'models'` branch.
@@ -726,10 +754,13 @@ export const getModel3DsInfinite = async ({
       const review = reviewByModel.get(rest.id);
       return {
         ...rest,
-        thumbnailImage: rest.thumbnailImage && {
-          ...rest.thumbnailImage,
-          metadata: cardMetadata(rest.thumbnailImage.metadata),
-        },
+        thumbnailImage:
+          rest.thumbnailImage &&
+          (isModerator ||
+            rest.userId === user?.id ||
+            servableThumbnails.has(rest.thumbnailImage.id))
+            ? { ...rest.thumbnailImage, metadata: cardMetadata(rest.thumbnailImage.metadata) }
+            : null,
         tags: tags.map((t) => t.tagId),
         userReview: review ? { id: review.id, recommended: review.recommended } : null,
       };
