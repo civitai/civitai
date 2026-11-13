@@ -24,8 +24,8 @@ vi.mock('~/server/services/system-cache', () => ({ getBrowsingSettingAddons: asy
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: async () => ({
     hiddenUsers: [{ id: 901 }],
-    blockedUsers: [],
-    blockedByUsers: [],
+    blockedUsers: [{ id: 902 }],
+    blockedByUsers: [{ id: 903 }],
     hiddenTags: [],
   }),
 }));
@@ -102,6 +102,8 @@ describe('levelsWithin', () => {
     expect(levelsWithin(PG | R)).toEqual([PG, R, PG | R]);
     expect(levelsWithin(PG)).toEqual([PG]);
     expect(levelsWithin(0)).toEqual([]);
+    // Bits that are no level are ignored, so a wild input cannot blow up the list.
+    expect(levelsWithin((2 ** 30) | PG)).toEqual([PG]);
   });
 });
 
@@ -113,7 +115,7 @@ describe('semantic comic search', () => {
         kind: 'level',
         nsfwLevels: [PG, PG13, PG | PG13, R, PG | R, PG13 | R, PG | PG13 | R],
       },
-      excludedUserIds: [901],
+      excludedUserIds: [901, 902, 903],
       anyOf: { genre: ['Action'] },
     });
   });
@@ -134,9 +136,11 @@ describe('semantic comic search', () => {
   it('drops a deleted owner and a hidden owner, and caps one creator per page', async () => {
     h.rows.set(10, comic(10, { deleted: true }));
     h.rows.set(11, comic(11, { userId: 901 }));
+    h.rows.set(12, comic(12, { userId: 902 }));
+    h.rows.set(13, comic(13, { userId: 903 }));
     for (const id of [20, 21, 22, 23]) h.rows.set(id, comic(id, { userId: 7 }));
     h.rows.set(30, comic(30));
-    const result = await search([10, 11, 20, 21, 22, 23, 30]);
+    const result = await search([10, 11, 12, 13, 20, 21, 22, 23, 30]);
     expect(ids(result)).toEqual([20, 21, 22, 30]);
     expect(result.items.filter((c) => c.userId === 7)).toHaveLength(MAX_HITS_PER_USER);
   });
@@ -190,6 +194,8 @@ describe('semantic comic search: the query audit', () => {
       user: MOD,
       correctedQuery: 'corrected',
     });
-    expect(result.items).toEqual([]);
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    // The refused correction's candidates are never hydrated.
+    expect(h.fetched).toEqual([]);
   });
 });

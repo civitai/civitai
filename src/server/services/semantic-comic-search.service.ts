@@ -25,6 +25,7 @@ import {
   type Hydrate,
 } from '~/server/services/semantic-search-client';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 
@@ -41,9 +42,10 @@ const searchServiceCandidates = searchServiceSource('comics', {
  * Meilisearch comics filter does); an unrated comic is left out.
  */
 export function levelsWithin(browsingLevel: number) {
+  // Only real level bits: the input is unbounded, and the submasks double with each bit.
+  const level = browsingLevel & allBrowsingLevelsFlag;
   const levels: number[] = [];
-  // Every non-empty submask of browsingLevel.
-  for (let m = browsingLevel; m > 0; m = (m - 1) & browsingLevel) levels.push(m);
+  for (let m = level; m > 0; m = (m - 1) & level) levels.push(m);
   return levels.sort((a, b) => a - b);
 }
 
