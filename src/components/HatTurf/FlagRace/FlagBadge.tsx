@@ -5,7 +5,12 @@ import clsx from 'clsx';
 import { Popover } from '~/components/MantineOverlays';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
-import { flagGap, flagLeader, formatClock } from '~/components/HatTurf/FlagRace/flag-race.utils';
+import {
+  flagCounting,
+  flagGap,
+  flagLeader,
+  formatClock,
+} from '~/components/HatTurf/FlagRace/flag-race.utils';
 import { useFlagClock } from '~/components/HatTurf/FlagRace/FlagCountdown';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import {
@@ -31,12 +36,15 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
   const { summary, flag, rank } = found;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
   const closed = summary.closed;
-  const winners = flag.winners;
+  const counting = flagCounting(summary);
+  const winners = counting ? [] : flag.winners;
   const leader = closed && winners.length === 1 ? winners[0] : flagLeader(flag.hatsByTeam);
   const finalHour = !closed && Date.now() >= new Date(summary.closesAt).getTime() - HOUR_MS;
   const arcs = ringArcs(flag.hatsByTeam);
   const label = closed
-    ? winners.length
+    ? counting
+      ? `Flag ${rank}: closed, counting results.`
+      : winners.length
       ? `Flag ${rank}: closed, ${winners.join(' and ')} won.`
       : `Flag ${rank}: closed.`
     : `Flag ${rank}: ${flag.pot} points up for grabs${leader ? `, ${leader} holds it` : ''}.`;
@@ -101,7 +109,11 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
           </span>
           {closed ? (
             <span className={clsx(classes.count, classes.margin)} data-testid="flag-badge-closed">
-              {winners.length ? `${winners.join(' & ')} won` : 'Closed'}
+              {counting
+                ? 'Counting results…'
+                : winners.length
+                ? `${winners.join(' & ')} won`
+                : 'Closed'}
             </span>
           ) : (
             clock && (
@@ -140,7 +152,7 @@ function FlagDetails({ imageId }: { imageId: number }) {
       </Text>
       {summary.closed ? (
         <Text size="sm">
-          {flag.winners.length
+          {!flagCounting(summary) && flag.winners.length
             ? `${flag.winners.join(' and ')} won this flag.`
             : 'This flag is done taking hats. Its result is on its way.'}
         </Text>

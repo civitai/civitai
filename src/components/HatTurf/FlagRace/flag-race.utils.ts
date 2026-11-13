@@ -38,6 +38,13 @@ const FINAL_HOUR_MS = 60 * 60 * 1000;
  * Where a flag day's race stands for its clocks. The cut is a secret moment in the final hour, so the
  * clock counts to the start of that hour, then the race "could end any moment" until it closes.
  */
+/**
+ * Cut, but not yet paid: the freeze runs at the first hourly settle after the cut. A summary cached
+ * before `frozen` existed has no field and reads as paid, as it did then.
+ */
+export const flagCounting = (summary: { closed: boolean; frozen?: boolean }) =>
+  summary.closed && summary.frozen === false;
+
 export function flagClock(nowMs: number, closesAt: Date | string, closed: boolean) {
   if (closed) return { phase: 'closed' as const, secondsLeft: 0 };
   const finalAt = new Date(closesAt).getTime() - FINAL_HOUR_MS;

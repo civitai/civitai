@@ -237,11 +237,11 @@ describe('the shared flag summary', () => {
   it('hides the cut until it passes, then names the winner', async () => {
     await add(5);
     const open = await getFlagSummary('e', BEFORE);
-    expect(open).toMatchObject({ closed: false, cutAt: null });
+    expect(open).toMatchObject({ closed: false, cutAt: null, frozen: false });
     expect(open?.flags[0]).toMatchObject({ hatsByTeam: { Blue: 5 }, winners: [] });
 
     const closed = await getFlagSummary('e', CUT);
-    expect(closed).toMatchObject({ closed: true, cutAt: CUT });
+    expect(closed).toMatchObject({ closed: true, cutAt: CUT, frozen: false });
     expect(closed?.flags[0].winners).toEqual(['Blue']);
   });
 
@@ -257,6 +257,7 @@ describe('the shared flag summary', () => {
     expect(closed?.flags[0].winners).toEqual(['Pink']);
     // And the row's "Race complete" chips: the points each team was paid, from the frozen rows.
     expect(closed?.teamPoints).toEqual({ Pink: 10 });
+    expect(closed?.frozen).toBe(true);
   });
 
   it('caches an open or unfrozen day for seconds, and a frozen day for longer', async () => {

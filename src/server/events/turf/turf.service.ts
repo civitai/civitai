@@ -578,6 +578,8 @@ export type FlagSummary = {
   // The cut falls in the hour before this.
   closesAt: Date;
   flags: FlagStanding[];
+  // Cut, and the freeze has paid it. Between the cut and the next settle the results are still counting.
+  frozen: boolean;
   // Once frozen: the points each team won across the day's flags. Empty before.
   teamPoints: Record<string, number>;
 };
@@ -685,6 +687,7 @@ async function buildFlagSummary(
   const tally = await flagTally(event, day, closed ? dbWrite : dbRead);
   const results = closed ? await frozenFlagResults(eventName, day.id) : undefined;
   const paid = results?.winners;
+  const frozen = !!paid?.size;
   const at = closed ? day.cutAt : now;
   const summary: FlagSummary = {
     flagDayId: day.id,
@@ -696,10 +699,10 @@ async function buildFlagSummary(
       const frozen = paid?.get(imageId);
       return frozen ? { ...standing, winners: frozen } : standing;
     }),
+    frozen,
     teamPoints: results?.teamPoints ?? {},
   };
   const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime(), gen };
-  const frozen = !!paid?.size;
   await sysRedis
     .set(key, JSON.stringify(value), {
       EX: frozen ? FLAG_SUMMARY_FROZEN_TTL_S : FLAG_SUMMARY_TTL_S,

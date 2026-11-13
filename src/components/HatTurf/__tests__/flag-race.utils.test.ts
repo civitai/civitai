@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   flagClock,
+  flagCounting,
   flagGap,
   flagHatChoices,
   flagLeader,
@@ -40,6 +41,17 @@ describe('the flag hat picker', () => {
     expect(flagHatChoices(7.6)).toEqual([1, 5, 7]);
     expect(flagHatChoices(0)).toEqual([]);
     expect(flagHatChoices(0.4)).toEqual([]);
+  });
+});
+
+describe('counting results between the cut and the freeze', () => {
+  it('counts only once cut and not yet frozen', () => {
+    expect(flagCounting({ closed: true, frozen: false })).toBe(true);
+    expect(flagCounting({ closed: true, frozen: true })).toBe(false);
+    expect(flagCounting({ closed: false, frozen: false })).toBe(false);
+  });
+  it('reads a summary cached before the field existed as frozen', () => {
+    expect(flagCounting({ closed: true })).toBe(false);
   });
 });
 

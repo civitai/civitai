@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { Badge, Group } from '@mantine/core';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { FALLBACK_COLOR } from '~/components/HatTurf/hat-turf.utils';
-import { flagClock, formatClock } from '~/components/HatTurf/FlagRace/flag-race.utils';
+import {
+  flagClock,
+  flagCounting,
+  formatClock,
+} from '~/components/HatTurf/FlagRace/flag-race.utils';
 import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -26,6 +30,12 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
   const clock = useFlagClock(summary);
   const teamColor = useTeamColor();
   if (!clock) return null;
+  if (flagCounting(summary))
+    return (
+      <Badge variant="light" color="gray" size="lg" radius="xl" data-testid="flag-race-header">
+        ⏳ Counting results…
+      </Badge>
+    );
   if (clock.phase === 'closed') {
     const won = Object.entries(summary.teamPoints ?? {})
       .filter(([, points]) => points > 0)
