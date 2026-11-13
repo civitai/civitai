@@ -5,7 +5,7 @@
  *
  * With the flag on, `shouldUseGoTransport` in `~/utils/trpc` sends the procedures below to
  * `GO_TRANSPORT_URL` instead of `/api/trpc`, so an exact-path route can hand a per-user cohort to
- * the Go port in `apps/feed-go`.
+ * a separate Go feed service.
  */
 
 /**

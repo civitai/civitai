@@ -399,7 +399,7 @@ export default defineNextConfig(
     },
     poweredByHeader: false,
     // The `feedGoTransport` client path (`GO_TRANSPORT_URL` in src/utils/trpc-go-transport.ts). An
-    // exact-path route in front of this app may send it to the Go port in apps/feed-go; whatever
+    // exact-path route in front of this app may send it to a separate Go feed service; whatever
     // reaches this app is served by the ordinary tRPC route, so the flag can never strand a request
     // (edge rules keyed on `/api/trpc/` still do not match this path; see `feedGoTransport`).
     // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
