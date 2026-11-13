@@ -5,6 +5,7 @@ import type * as UserService from '~/server/services/user.service';
 import type { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * `image.get` is public and its result is dehydrated into `/images/[id]`, so the route itself has
@@ -55,10 +56,12 @@ function ctxFor({
   user,
   canViewNsfw,
   bot,
+  scopedToken,
 }: {
   user?: { id: number; isModerator?: boolean };
   canViewNsfw: boolean;
   bot?: 'googlebot';
+  scopedToken?: boolean;
 }) {
   // `cache: null` is what the SSR helpers pass (getServerProxySSGHelpers).
   return {
@@ -66,6 +69,13 @@ function ctxFor({
     features: { canViewNsfw },
     req: { headers: bot ? { [VERIFIED_BOT_HEADER]: bot } : {} },
     cache: null,
+    // A personal key limited to reading models; no key fields is a browser session.
+    ...(scopedToken && {
+      apiKeyId: 9,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: TokenScope.ModelsRead,
+    }),
   } as unknown as HandlerCtx;
 }
 
@@ -101,6 +111,16 @@ describe('getImageHandler', () => {
       expect(
         await urlFor(ctxFor({ canViewNsfw: false, user: { id: 43 } }), NsfwLevel.R)
       ).toBeNull();
+    } finally {
+      manages.mockImplementation(async () => false);
+    }
+  });
+
+  it("holds a collection manager to the cap on a scoped token, as the image's owner is", async () => {
+    manages.mockImplementation(async ({ userId }) => userId === 42);
+    try {
+      const judge = ctxFor({ canViewNsfw: false, user: { id: 42 }, scopedToken: true });
+      expect(await urlFor(judge, NsfwLevel.R)).toBeNull();
     } finally {
       manages.mockImplementation(async () => false);
     }
