@@ -217,7 +217,7 @@ describe('getInfiniteChallenges — by id', () => {
   });
 
   it('matches nothing for an empty id list', async () => {
-    const result = await getInfiniteChallenges({ ...base, ids: [] } as Parameters<
+    const result = await getInfiniteChallenges({ ...base, ids: [] as number[] } as Parameters<
       typeof getInfiniteChallenges
     >[0]);
     expect(result.items).toEqual([]);
