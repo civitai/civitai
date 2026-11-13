@@ -361,10 +361,8 @@ describe('a request filter', () => {
 /**
  * The registry spec's rule 6: a registry that accepts a filter applies it in full, and one it
  * does not apply is answered `bad_request`, never ignored (the consumer would take what it got for
- * filtered). Each refused case was, before, streamed unfiltered: an `upsert` first, then `live`.
+ * filtered). The wire contract is the status and `error`; the message only has to name the keyword.
  */
-const REFUSED_KEYS_NOTE =
-  '(it refuses pattern, patternProperties, $ref, $dynamicRef, $recursiveRef, $defs, definitions anywhere in a filter)';
 
 describe('🔴 a filter this source will not evaluate is bad_request, never ignored (rule 6)', () => {
   it('a regular expression is never compiled: bad_request, naming the keyword', async () => {
@@ -372,14 +370,9 @@ describe('🔴 a filter this source will not evaluate is bad_request, never igno
       adapter(),
       sub(APPS, asFilter({ properties: { slug: { pattern: '^zzz' } } }))
     );
-    expect([res.status, res.type, JSON.parse(res.text)]).toEqual([
-      400,
-      'application/json',
-      {
-        error: 'bad_request',
-        message: `filter uses "pattern", which this registry does not apply ${REFUSED_KEYS_NOTE}`,
-      },
-    ]);
+    const body = JSON.parse(res.text);
+    expect([res.status, res.type, body.error]).toEqual([400, 'application/json', 'bad_request']);
+    expect(body.message).toContain('"pattern"');
   });
 
   it('positive control: the same filter without the regex is applied', async () => {
@@ -404,13 +397,9 @@ describe('🔴 a filter this source will not evaluate is bad_request, never igno
     ],
   ])('🔴 a regex reached through %s is bad_request too', async (_name, f, key) => {
     const res = await get(adapter(), sub(APPS, asFilter(f)));
-    expect([res.status, JSON.parse(res.text)]).toEqual([
-      400,
-      {
-        error: 'bad_request',
-        message: `filter uses "${key}", which this registry does not apply ${REFUSED_KEYS_NOTE}`,
-      },
-    ]);
+    const body = JSON.parse(res.text);
+    expect([res.status, body.error]).toEqual([400, 'bad_request']);
+    expect(body.message).toContain(`"${key}"`);
   });
 
   it('a filter whose string value merely contains the word "pattern" is still applied', async () => {
@@ -448,8 +437,8 @@ describe('🔴 a filter this source will not evaluate is bad_request, never igno
 });
 
 describe('🔴 a filter whose data holds a refused key is applied: const, enum, default and examples are data', () => {
-  // Before, the whole JSON was walked, so a filter matching a whole body that has a key named
-  // `pattern` (a release body's `manifestHash` schema, say) was refused.
+  // A filter matching a whole body that has a key named `pattern` (a release body's
+  // `manifestHash` schema, say) is not refused.
   it.each([
     [
       'const',

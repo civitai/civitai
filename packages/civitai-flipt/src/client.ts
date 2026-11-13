@@ -246,12 +246,8 @@ export function createFliptClient(options: FliptOptions = {}): FliptFeatureFlags
     store.save(snapshot, changed).catch((e) => log('[flipt] snapshot save failed:', e));
   }
 
-  // Runs after every failed init attempt, not just the first, so a process that alone cannot reach
-  // Flipt follows the snapshots its healthy siblings keep saving instead of evaluating its boot-time
-  // one forever. A stored snapshot no newer than the seeded one changes nothing. The age limit
-  // admits the first seed only: once seeded, a newer snapshot is always an improvement, and the
-  // seeded one is never dropped for age (a fleet-wide outage past the limit must not flip every
-  // seeded process's flags off together while live processes keep theirs).
+  // Runs after every failed init attempt. A snapshot no newer than the seeded one changes nothing;
+  // the age limit admits the first seed only (see the snapshotStore option).
   async function seedFromSnapshot(): Promise<void> {
     const store = snapshotStore;
     if (!store || config.snapshotMaxAgeMs <= 0) return;
