@@ -37,38 +37,77 @@ const REFUSED_FILTER_KEYS = [
 ] as const;
 
 /**
- * Whether this source refuses to evaluate `filter`: a {@link REFUSED_FILTER_KEYS} key ANYWHERE in
- * its JSON — in every object and array, whatever the key above it — or nesting deeper than
- * {@link FILTER_MAX_DEPTH}. A refused construct reaches ajv through more than the schema keywords
- * one would list (`dependencies`, a member of the document, an `enum`'s neighbour), so walking
- * everything is the only complete check. It can refuse a harmless filter (an `enum` value or a
- * property that happens to be named `pattern`); an unapplied filter only costs traffic, since the
- * registry checks it anyway (spec rule 6).
+ * Keywords whose value is data, never a schema: ajv compares against it (`const`, `enum`) or
+ * ignores it (`default`, `examples`), and evaluates nothing inside it. A filter matching a whole
+ * body, `{"const": <body>}`, holds the body's own keys there, `pattern` or `$ref` among them.
+ */
+const DATA_KEYWORDS: ReadonlySet<string> = new Set(['const', 'enum', 'default', 'examples']);
+
+/**
+ * Keywords whose value is a map from a NAME (a property, a definition) to a schema. A key of that
+ * map is a name, not a keyword: a property named `const` holds a schema, so it is walked.
+ */
+const NAME_MAP_KEYWORDS: ReadonlySet<string> = new Set([
+  'properties',
+  'patternProperties',
+  'dependentSchemas',
+  'dependencies',
+  '$defs',
+  'definitions',
+]);
+
+/**
+ * Why this source refuses to evaluate `filter`, or null when it does not: a
+ * {@link REFUSED_FILTER_KEYS} key in any object of its JSON, whatever the key above it, except
+ * inside the value of a {@link DATA_KEYWORDS} keyword (data ajv evaluates nothing in) — or nesting
+ * deeper than {@link FILTER_MAX_DEPTH}. A refused construct reaches ajv through more than the
+ * schema keywords one would list (`dependencies`, a member of the document), so everything but
+ * data is walked. A data keyword is skipped only where it IS a keyword: under a
+ * {@link NAME_MAP_KEYWORDS} map the same key is a name whose value is a schema, and is walked. It
+ * can still refuse a harmless filter (a property that happens to be named `pattern`). A refused
+ * filter is answered `bad_request` ({@link createFilterCompiler}): the spec's rule 6 lets a
+ * registry decline a filter that way, never ignore it, since a consumer would take what it got
+ * for filtered.
  *
  * ajv validation is synchronous and runs per entity, per poll, on the one event loop that serves
  * every stream, so a costly filter would stall every consumer, not just its sender.
  */
-export function refusesFilter(filter: unknown): boolean {
-  const stack: Array<{ node: unknown; depth: number }> = [{ node: filter, depth: 0 }];
+export function filterRefusal(filter: unknown): string | null {
+  // `names`: the node is a NAME_MAP_KEYWORDS map, whose keys are names rather than keywords.
+  const stack: Array<{ node: unknown; depth: number; names: boolean }> = [
+    { node: filter, depth: 0, names: false },
+  ];
   while (stack.length > 0) {
-    const { node, depth } = stack.pop()!;
+    const { node, depth, names } = stack.pop()!;
     if (!node || typeof node !== 'object') continue;
-    if (depth > FILTER_MAX_DEPTH) return true;
-    const children = Array.isArray(node) ? node : Object.values(node as Record<string, unknown>);
-    if (!Array.isArray(node)) {
-      const record = node as Record<string, unknown>;
-      if (REFUSED_FILTER_KEYS.some((key) => Object.hasOwn(record, key))) return true;
+    if (depth > FILTER_MAX_DEPTH) {
+      return `filter nests deeper than ${FILTER_MAX_DEPTH} levels, which this registry does not apply`;
     }
-    for (const child of children) stack.push({ node: child, depth: depth + 1 });
+    if (Array.isArray(node)) {
+      for (const child of node) stack.push({ node: child, depth: depth + 1, names: false });
+      continue;
+    }
+    const record = node as Record<string, unknown>;
+    const key = REFUSED_FILTER_KEYS.find((k) => Object.hasOwn(record, k));
+    if (key !== undefined) {
+      return (
+        `filter uses "${key}", which this registry does not apply ` +
+        `(it refuses ${REFUSED_FILTER_KEYS.join(', ')} anywhere in a filter)`
+      );
+    }
+    for (const [k, child] of Object.entries(record)) {
+      if (!names && DATA_KEYWORDS.has(k)) continue;
+      stack.push({ node: child, depth: depth + 1, names: !names && NAME_MAP_KEYWORDS.has(k) });
+    }
   }
-  return false;
+  return null;
 }
 
 /**
- * A request's `filter` as a predicate over bodies; `undefined` when there is none, or when this
- * source will not evaluate it — a filter over {@link FILTER_MAX_BYTES}, or one
- * {@link refusesFilter} refuses. A source may send more than a filter admits: the registry checks
- * every entity against the filter itself, so an unapplied filter only costs traffic.
+ * A request's `filter` as a predicate over bodies; `undefined` when there is none. A filter this
+ * source will not evaluate — longer than {@link FILTER_MAX_BYTES} as JSON, or one
+ * {@link filterRefusal} refuses — is `bad_request`, as is one that is not a JSON Schema: a
+ * registry that accepts a filter applies it in full, and never ignores one (spec rule 6).
  *
  * Compiled filters are cached by their text, at most `maxCached` of them (the cache is emptied
  * when full), so many distinct filters cost compile time, never unbounded memory.
@@ -80,7 +119,14 @@ export function createFilterCompiler(maxCached = 100) {
   return (filter: JsonSchema | undefined): BodyPredicate | undefined => {
     if (filter === undefined) return undefined;
     const text = JSON.stringify(filter);
-    if (text.length > FILTER_MAX_BYTES || refusesFilter(filter)) return undefined;
+    if (text.length > FILTER_MAX_BYTES) {
+      throw new ProtocolError(
+        'bad_request',
+        `filter is longer than ${FILTER_MAX_BYTES} characters as JSON, which this registry does not apply`
+      );
+    }
+    const refusal = filterRefusal(filter);
+    if (refusal !== null) throw new ProtocolError('bad_request', refusal);
     const hit = cache.get(text);
     if (hit) return hit;
     let validate: ValidateFunction;

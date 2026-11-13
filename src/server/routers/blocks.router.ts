@@ -430,6 +430,7 @@ import {
 } from '~/server/services/generation-input-urls';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
@@ -2400,6 +2401,23 @@ export const blocksRouter = router({
     }),
 
   /**
+   * The caller's remaining AUTOMATIC review builds today for `slug`, without spending one
+   * (review-autodeploy.service `readAutoBuildBudget`). `remaining: 0` means the next submission's
+   * review preview waits for a moderator instead of building on its own. Only the caller's own
+   * budget is readable.
+   */
+  getMyAutoReviewBuildBudget: appDeveloperProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getMyPendingForSlugSchema)
+    .query(async ({ ctx, input }) => {
+      const { readAutoBuildBudget } = await import(
+        '~/server/services/blocks/review-autodeploy.service'
+      );
+      if (!ctx.user) throw throwAuthorizationError();
+      return readAutoBuildBudget(ctx.user.id, input.slug);
+    }),
+
+  /**
    * APP DEV TUNNEL — start an on-site dev tunnel for one of the caller's OWN
    * apps. Mints a pubkey-bound tunnel credential + an unguessable
    * `dev-<16hex>.<APPS_DOMAIN>` host, and renders the ephemeral Traefik route.
@@ -4199,10 +4217,18 @@ export const blocksRouter = router({
       // first threw, the careful wording was discarded one layer below the test that asserted it
       // and the viewer saw a generic "something went wrong (ref: …)". 503 is that formatter's own
       // carve-out. Thrown AFTER the `finally`, so the teardown has already run.
+      //
+      // 🔴 `cause.consentRevokeRecorded` IS WHAT THE CLIENT BRANCHES ON, NOT THE 503 CODE. The
+      // `mapDbUnavailable` middleware in `src/server/trpc.ts` answers ANY unreachable-database error
+      // with a 503 — including one from the reads above, before anything was written. A client that
+      // read every 503 as "recorded" told the viewer "Permission removed" while the grant stayed
+      // live. `errorFormatter` lifts this flag onto `data.consentRevokeRecorded`, and only this
+      // throw sets it.
       if (publishFailed) {
         throw new TRPCError({
           code: 'SERVICE_UNAVAILABLE',
           message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+          cause: { consentRevokeRecorded: true },
         });
       }
 
@@ -6986,6 +7012,12 @@ export const blocksRouter = router({
       // An anonymous subject is refused later, by each branch.
       const subjectId = parseSubjectUserId(claims.sub);
       if (subjectId != null) await assertAccountNotRestricted(subjectId);
+      // The global generation kill switch, as onsite generation applies it, ahead of every
+      // generation kind. Training is governed by its own status (checked on its arm), as onsite.
+      // BLOCKS_ENFORCE_GENERATION_STATUS=off skips it (the previous behaviour).
+      if (input.body.kind !== 'training' && env.BLOCKS_ENFORCE_GENERATION_STATUS) {
+        await assertBlockGenerationAllowed(subjectId);
+      }
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
@@ -9655,6 +9687,25 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   // belt's exemption is asserted by the subscription NOT being queried.
   const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
   return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
+}
+
+/**
+ * The global generation kill switch for an App Blocks submit: the same decision onsite generation
+ * applies (`generationStatusRefusal`), so a moderator's "disabled" or "members only" also stops a
+ * generator reached through an app. The subject is looked up only when the switch is not
+ * `enabled`, so the normal path costs the one sysRedis read and no database read. An anonymous
+ * subject is refused while the switch is on (it is no moderator and holds no tier).
+ * A switch that cannot be read (sysRedis down, never read in this process) is refused for every
+ * subject, moderators included, as `buildGenerationContext` refuses it onsite: the moderator bypass
+ * applies to an operator's decision, not to a state nobody knows.
+ */
+async function assertBlockGenerationAllowed(subjectId: number | null): Promise<void> {
+  const generation = await import('~/server/services/generation/generation.service');
+  const { status, known } = await generation.getGenerationStatusState();
+  if (!known) throw generation.generationConfigUnavailableError();
+  if (status.mode === 'enabled') return;
+  const user = subjectId == null ? null : await getBlockSessionUser(subjectId);
+  assertGenerationStatusAllows(status, { isModerator: !!user?.isModerator, tier: user?.tier });
 }
 
 /**

@@ -105,7 +105,6 @@ import type {
   TechniqueType,
   AppealStatus,
   AppealCategory,
-  ImageAxisSource,
   AuctionType,
   ModerationRuleAction,
   ChangelogType,
@@ -3549,38 +3548,6 @@ export type ImageAudioScan = {
   createdAt: Generated<Timestamp>;
   completedAt: Timestamp | null;
 };
-export type ImageAxisRating = {
-  imageId: number;
-  source: ImageAxisSource;
-  sexualLevel: number | null;
-  /**
-   * Highest sexualLevel any scan has rated; only a moderator lowers it.
-   */
-  sexualHighWater: number | null;
-  violenceLevel: number | null;
-  /**
-   * No rater produces a language axis yet.
-   */
-  languageLevel: number | null;
-  /**
-   * The rater's modelRef; null on a moderator row.
-   */
-  rater: string | null;
-  /**
-   * The rater checkpoint's sha256; null on a moderator row.
-   */
-  raterVersion: string | null;
-  /**
-   * The scan workflow's completion time; an older result never replaces a newer one.
-   */
-  ratedAt: Timestamp;
-  workflowId: string | null;
-  /**
-   * The moderator's user id on a moderator row.
-   */
-  setBy: number | null;
-  updatedAt: Generated<Timestamp>;
-};
 export type ImageCaption = {
   imageId: number;
   /**
@@ -6797,7 +6764,6 @@ export type DB = {
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
   ImageAudioScan: ImageAudioScan;
-  ImageAxisRating: ImageAxisRating;
   ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;

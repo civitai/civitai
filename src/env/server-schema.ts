@@ -1,6 +1,7 @@
 // @ts-check
 import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import { isEnvSwitchOn } from '@civitai/shared/env-switch';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
   commaDelimitedNumberArray,
@@ -778,6 +779,16 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
+    // Fail-closed OFF-switches (each ON when unset; `off` / `0` / `false`, any case, turns it
+    // off — see `@civitai/shared/env-switch`; any other value keeps it on).
+    // PROMPT_CHECK_FAIL_CLOSED: a classifier error refuses the submit with a 503; off restores
+    // the pass-through on the word lists alone (auditPromptServer).
+    PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
+    // BLOCKS_ENFORCE_GENERATION_STATUS: App Blocks submits obey the global generation kill switch.
+    BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    // TRAINING_STATUS_FAIL_CLOSED: a failed training-status read serves the last status read, or
+    // "paused" when there is none; off restores "available" (getTrainingServiceStatus).
+    TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
     // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
     // visible as the instant its series appear — which is the only thing that distinguishes "no
@@ -1298,6 +1309,14 @@ export const serverSchema = z
     // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
     // build settles. Past it, automatic starts are refused; a moderator can still start one.
     AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
+    // Test-fixture accounts (the CI smoke users of a test environment) whose automatic review
+    // builds get a per-slug budget instead of the per-account one. Set only in test environments;
+    // unset (the default) leaves every account on the per-account budget. A malformed list reads
+    // as unset.
+    APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
     // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCollectionSchemaUrn, registryUrn } from '~/server/registry-adapter/urn';
+import { parseCollectionSchemaUrn, registryUrn, urnNamespace } from '~/server/registry-adapter/urn';
 
 describe('registryUrn', () => {
   it.each([
@@ -77,5 +77,22 @@ describe('parseCollectionSchemaUrn', () => {
     'urn:apps.civitai.com:pixel-garden/seed_packs/k1',
   ])('null for %s', (urn) => {
     expect(parseCollectionSchemaUrn(urn)).toBeNull();
+  });
+});
+
+describe('urnNamespace', () => {
+  it.each([
+    ['urn:apps.civitai.com:app/pixel-garden', 'apps.civitai.com'],
+    ['urn:schema:apps.civitai.com:app@v1', 'apps.civitai.com'],
+    ['urn:huggingface:black-forest-labs/FLUX.3-dev@a1b2c3d', 'huggingface'],
+    ['urn:schema:elsewhere.example:model@v1', 'elsewhere.example'],
+    // The reserved `schema` namespace names no origin, and neither does a URN with nothing after it.
+    ['urn:schema:apps.civitai.com', null],
+    ['urn:apps.civitai.com:', null],
+    ['urn::app/x', null],
+    ['https://json-schema.org/draft/2020-12/schema', null],
+    ['pixel-garden', null],
+  ])('%s → %s', (urn, ns) => {
+    expect(urnNamespace(urn)).toBe(ns);
   });
 });

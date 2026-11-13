@@ -43,6 +43,9 @@ CustomErrorPage.getInitialProps = async (ctx: NextPageContext): Promise<Props> =
   // HTTP status that never occurred, and dropping the "see the browser console" hint that support
   // triage reads off a user's screenshot. `next/error` renders the client-exception copy precisely
   // when this is undefined.
+  // A page whose dependency was unavailable (`DependencyUnavailableError` from
+  // `~/server/utils/ssr-not-found`) answers 503: Next has already set 500 for the throw.
+  if (res && err?.statusCode === 503) res.statusCode = 503;
   const statusCode = res?.statusCode ?? err?.statusCode;
 
   // `typeof window` is the guard, not `!res`: Next calls this on the client for the

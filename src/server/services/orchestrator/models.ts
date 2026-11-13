@@ -14,6 +14,7 @@ import {
   type ModelVersionAirInput,
 } from '~/server/utils/resource-air';
 import { modelFileScanAir, type ModelFileScanAirInput } from '~/shared/utils/model-file-scan-air';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export async function getModelClient({
   token,
@@ -41,10 +42,14 @@ async function invalidateOrchestratorResource(air: string, etag: string, userId?
   const query = new URLSearchParams({ etag });
   if (userId != null) query.set('userId', String(userId));
 
-  const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v2/resources/${air}?${query}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
-  });
+  const response = await outboundFetch(
+    `${env.ORCHESTRATOR_ENDPOINT}/v2/resources/${air}?${query}`,
+    {
+      timeoutMs: 30_000,
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}` },
+    }
+  );
   // 401/403 here means the system token lacks the role the endpoint requires. That must be loud:
   // this function spent ~2.5 months commented out, and a silently-swallowed authz failure is
   // indistinguishable from the no-op it replaced — stale prices in the generator, no signal.
