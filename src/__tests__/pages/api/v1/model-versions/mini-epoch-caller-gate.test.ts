@@ -71,7 +71,8 @@ async function request(
   caller: Caller = {},
   row: Partial<typeof versionRow> = {},
   file: object = TRAINING_FILE,
-  versionRows: object[] = [{ ...versionRow, ...row }]
+  versionRows: object[] = [{ ...versionRow, ...row }],
+  query: Record<string, string> = {}
 ) {
   h.user.value = caller.user;
   dbMock.dbWrite.$queryRaw.mockReset();
@@ -88,7 +89,7 @@ async function request(
   await handler(
     {
       method: 'GET',
-      query: { id: String(VERSION_ID) },
+      query: { id: String(VERSION_ID), ...query },
       headers: {
         host: 'civitai.com',
         ...(caller.authorization ? { authorization: caller.authorization } : {}),
@@ -465,5 +466,46 @@ describe('mini/[id] epoch arm, a stored blob url', () => {
 
     expect(body.downloadUrls).toEqual([FRESH]);
     expect(h.refreshBlobs).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('mini/[id] ?epoch= from the query string', () => {
+  const EARLY =
+    'https://orchestration.civitai.com/v2/consumer/jobs/job-abc-123/assets/epoch-000005.safetensors';
+  const twoEpochs = {
+    ...TRAINING_FILE,
+    metadata: {
+      ...TRAINING_FILE.metadata,
+      trainingResults: {
+        epochs: [
+          { epoch_number: 5, model_url: EARLY },
+          { epoch_number: 10, model_url: EPOCH_URL },
+        ],
+      },
+    },
+  };
+  const ask = (query: Record<string, string>) => request(owner, {}, twoEpochs, undefined, query);
+
+  beforeEach(() => {
+    h.variant.value = 'enforce';
+  });
+
+  it('serves the epoch the query string names', async () => {
+    const { status, body } = await ask({ epoch: '5' });
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EARLY]);
+  });
+
+  it('serves the latest epoch when none is named', async () => {
+    const { status, body } = await ask({});
+    expect(status).toBe(200);
+    expect(body.downloadUrls).toEqual([EPOCH_URL]);
+  });
+
+  it.each([
+    ['a word', 'latest'],
+    ['a fraction', '5.5'],
+  ])('400s an epoch that is %s', async (_, epoch) => {
+    expect((await ask({ epoch })).status).toBe(400);
   });
 });

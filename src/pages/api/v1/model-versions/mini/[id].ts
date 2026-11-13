@@ -86,7 +86,7 @@ export const schema = z.object({
   // → the existing 400 path fires. (The `if (!id)` guard below still covers a
   // legitimately absent id.)
   id: z.coerce.number().int().gt(0).lte(2147483647),
-  epoch: z.number().optional(),
+  epoch: z.coerce.number().int().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
   // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
