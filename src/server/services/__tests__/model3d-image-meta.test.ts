@@ -1,8 +1,26 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
-const { getModel3DById, getModel3DsInfinite } = await import('~/server/services/model3d.service');
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  throwOnBlockedUserContent: vi.fn(),
+}));
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  userContentOverviewCache: { refresh: vi.fn() },
+}));
+
+const {
+  getModel3DById,
+  getModel3DsInfinite,
+  publishModel3D,
+  restoreModel3D,
+  setModel3DNsfwLevel,
+  toggleModel3DFlag,
+  unpublishModel3D,
+  upsertModel3D,
+} = await import('~/server/services/model3d.service');
 
 type Row = Record<string, unknown>;
 type Select = { [key: string]: boolean | { select: Select } | unknown };
@@ -50,6 +68,21 @@ beforeEach(() => {
   ]) as never);
   dbMock.dbRead.model3DReview.findUnique.mockResolvedValue(null as never);
   dbMock.dbRead.model3DReview.findMany.mockResolvedValue([] as never);
+
+  const write = dbMock.dbWrite;
+  write.model3D.findUnique.mockResolvedValue({
+    ...MODEL,
+    status: Model3DStatus.Unpublished,
+    thumbnailImageId: 1,
+    lockedProperties: [],
+    tosViolation: false,
+  } as never);
+  write.model3D.update.mockImplementation((async (args: { select: Select }) =>
+    applySelect(MODEL, args.select)) as never);
+  write.model3D.create.mockImplementation((async (args: { select: Select }) =>
+    applySelect(MODEL, args.select)) as never);
+  write.$transaction.mockImplementation((async (cb: (tx: unknown) => unknown) =>
+    cb(write)) as never);
 });
 
 describe('a 3D model page', () => {
@@ -67,5 +100,28 @@ describe('a 3D model page', () => {
     const { items } = await getModel3DsInfinite({ limit: 10, user: null } as never);
     expect(items[0]?.thumbnailImage?.id).toBe(1);
     expect(items[0]?.thumbnailImage).not.toHaveProperty('meta');
+  });
+});
+
+describe('a 3D model edit or moderation action', () => {
+  const owner = { id: 5 } as never;
+  const moderator = { id: 1, isModerator: true } as never;
+  it.each([
+    ['saving it', () => upsertModel3D({ input: { id: 9, name: 'model' } as never, user: owner })],
+    ['creating it', () => upsertModel3D({ input: { name: 'model' } as never, user: owner })],
+    ['publishing it', () => publishModel3D({ input: { id: 9 }, user: owner })],
+    ['unpublishing it', () => unpublishModel3D({ input: { id: 9 }, user: owner })],
+    [
+      'rating it',
+      () => setModel3DNsfwLevel({ id: 9, nsfwLevel: 4, thumbnailImageId: 1, user: moderator }),
+    ],
+    ['flagging it', () => toggleModel3DFlag({ id: 9, field: 'poi', user: moderator })],
+    ['restoring it', () => restoreModel3D({ id: 9, user: moderator })],
+  ])("%s returns the model without its images' generation data", async (_, act) => {
+    const model = await act();
+    expect(model.sourceImage?.id).toBe(2);
+    expect(model.thumbnailImage?.id).toBe(1);
+    expect(model.sourceImage).not.toHaveProperty('meta');
+    expect(model.thumbnailImage).not.toHaveProperty('meta');
   });
 });
