@@ -65,6 +65,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
   getPolyGenPostBlock,
@@ -1558,13 +1559,22 @@ export const upsertModel3DFromWorkflow = async ({
 // Related Posts ("Makes & Uses") + Review summary
 // ---------------------------------------------------------------------------
 
+/** Every post level (a combination of image levels, Blocked included) sharing a level with `level`. */
+const postLevelsWithin = (level: number) =>
+  Array.from({ length: 2 * NsfwLevel.Blocked - 1 }, (_, i) => i + 1).filter(
+    (v) => (v & level) !== 0
+  );
+
 export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
 export const getModel3DRelatedPosts = async ({
   input,
   user,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
+  /** The viewer's resolved, capped level (`relatedPostsBrowsingLevel`); unset reads PG only. */
+  browsingLevel?: number;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
@@ -1580,13 +1590,30 @@ export const getModel3DRelatedPosts = async ({
 
     // Visibility:
     //  - Moderators see everything.
-    //  - Everyone else sees published+public posts AND their own posts
+    //  - Everyone else sees published+public posts rated within their level AND their own posts
     //    (any state, so a user who just created a draft post linked to this
     //    model3d sees it on the page immediately, before they hit Publish).
+    // A post's level is its images' combined level: it is listed when it shares a level with the
+    // viewer's, as the post feed does, and an unrated post (0) never is.
     const publishedClause: Prisma.PostWhereInput = {
       publishedAt: { lte: new Date() },
       availability: { not: 'Private' },
+      nsfwLevel: { in: postLevelsWithin(browsingLevel) },
     };
+    // The cover, for a post that is not the viewer's: scanned, within their level, out of review.
+    const coverGate: Prisma.ImageWhereInput = {
+      ingestion: 'Scanned',
+      nsfwLevel: { in: parseBitwiseBrowsingLevel(browsingLevel) },
+      needsReview: null,
+      acceptableMinor: false,
+      poi: false,
+      minor: false,
+    };
+    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
+      ? undefined
+      : viewerId
+      ? { OR: [{ userId: viewerId }, coverGate] }
+      : coverGate;
     const visibility: Prisma.PostWhereInput = isModerator
       ? {}
       : viewerId
@@ -1612,6 +1639,7 @@ export const getModel3DRelatedPosts = async ({
         nsfwLevel: true,
         user: { select: userWithCosmeticsSelect },
         images: {
+          where: coverWhere,
           take: 1,
           orderBy: { index: 'asc' },
           select: imageSelect,
