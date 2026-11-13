@@ -2,6 +2,12 @@
 // resolve `$app/server`.
 import { sql } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
+import {
+  heldTextIncludes,
+  parseVersionTextHits,
+  type VersionTextHit,
+  type VersionTextHitText,
+} from '$lib/csam-holds/version-text-hits';
 import { PREVIEW_COUNT_CAP } from '$lib/minor-flags/model-detail';
 import { dbRead } from './db';
 import { escapeLike } from './like';
@@ -49,6 +55,8 @@ export type CsamHoldRow = {
   otherPendingByAuthor: number;
   /** Other pending holds by the same author in the same chat; 0 for any hold that is not a chat message. */
   otherPendingInChat: number;
+  /** For a Model hold from the civitai.com version-text check: which version names or trigger words were flagged. */
+  versionTextHits: VersionTextHit[] | null;
 };
 
 export type CsamHoldSearch = { id: number } | { username: string };
@@ -220,7 +228,9 @@ export async function listCsamHolds({
       previous,
       ruledBefore,
       textUpdatedAt,
+      comVersionTextHits,
     } = (meta ?? {}) as {
+      comVersionTextHits?: unknown;
       textUpdatedAt?: unknown;
       previous?: unknown;
       ruledBefore?: unknown;
@@ -251,9 +261,42 @@ export async function listCsamHolds({
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
       decision: typeof decision === 'string' ? decision : null,
+      versionTextHits: row.entityType === 'Model' ? parseVersionTextHits(comVersionTextHits) : null,
     };
   });
   return { items, hasMore: rows.length > limit };
+}
+
+/**
+ * The current version names and trigger words a Model hold's meta points at, read only from the
+ * hold's own model. Null when the hold is missing, not a Model hold, or names no positions.
+ */
+export async function getHoldVersionTexts(holdId: number): Promise<VersionTextHitText[] | null> {
+  const hold = await dbRead
+    .selectFrom('TextScanHold')
+    .select(['entityId', 'text', 'meta'])
+    .where('id', '=', holdId)
+    .where('label', '=', 'csam')
+    .where('entityType', '=', 'Model')
+    .executeTakeFirst();
+  const hits = parseVersionTextHits(
+    (hold?.meta as { comVersionTextHits?: unknown } | null)?.comVersionTextHits
+  );
+  if (!hold || !hits) return null;
+
+  const versions = await dbRead
+    .selectFrom('ModelVersion')
+    .select(['id', 'name', 'trainedWords'])
+    .where('modelId', '=', hold.entityId)
+    .where('id', 'in', [...new Set(hits.map((hit) => hit.versionId))])
+    .execute();
+  const byId = new Map(versions.map((version) => [version.id, version]));
+  return hits.map((hit) => {
+    const version = byId.get(hit.versionId);
+    const text =
+      (hit.field === 'name' ? version?.name : version?.trainedWords?.[hit.index]) ?? null;
+    return { ...hit, text, inHeldText: text !== null && heldTextIncludes(hold.text, text) };
+  });
 }
 
 export type AuthorHoldSummary = {

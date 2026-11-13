@@ -34,6 +34,7 @@
   import HoldConversation from './HoldConversation.svelte';
   import HoldParentCard from './HoldParentCard.svelte';
   import HoldProfileCard from './HoldProfileCard.svelte';
+  import HoldVersionTextHits from './HoldVersionTextHits.svelte';
   import {
     alsoDecidable,
     ALSO_MAX,
@@ -331,6 +332,9 @@
         </details>
       {/if}
     </TriageCard>
+    {#if row.versionTextHits}
+      <HoldVersionTextHits holdId={row.id} hits={row.versionTextHits} modelHref={entityHref} />
+    {/if}
     {#if row.profile}
       <HoldProfileCard profile={row.profile} blurred={!imageReveal.on} />
     {/if}
