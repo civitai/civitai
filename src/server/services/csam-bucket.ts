@@ -1,4 +1,4 @@
-import { S3Client } from '@aws-sdk/client-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
 import { env } from '~/env/server';
 
 /** A client for the CSAM evidence bucket, and the bucket's name. */
@@ -11,7 +11,7 @@ export function getCsamBucket() {
     !env.CSAM_BUCKET_NAME
   )
     throw new Error('missing CSAM env vars');
-  const client = new S3Client({
+  const client = newS3Client({
     credentials: { accessKeyId: env.CSAM_UPLOAD_KEY, secretAccessKey: env.CSAM_UPLOAD_SECRET },
     region: env.CSAM_UPLOAD_REGION,
     endpoint: env.CSAM_UPLOAD_ENDPOINT,

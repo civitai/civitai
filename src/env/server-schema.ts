@@ -125,6 +125,9 @@ export const serverSchema = z
     // (~OS-keepalive minutes) per request without this. Bounds the request handler and
     // fails open. 0 disables it. See redis/sys-read-deadline.ts withSysReadDeadline().
     REDIS_SYS_READ_TIMEOUT_MS: z.coerce.number().default(2000),
+    // On: an upload route answers 503 instead of handing out a key whose issue record could not
+    // be written. Off: the key is handed out and the save-time ownership check decides.
+    UPLOAD_KEY_REFUSE_UNRECORDED: zc.booleanString.default(false),
     // Bound on the sys client's node-redis command queue. The sys client has no
     // socketTimeout, so on a SILENT half-open it is only cleared by OS TCP keepalive
     // (minutes), during which every authenticated request enqueues a MULTI that never
@@ -185,6 +188,25 @@ export const serverSchema = z
     // instrumentCommands() and utils/cache-helpers.ts (fetchThroughCache + createCachedArray
     // fail-open).
     REDIS_CLUSTER_COMMAND_TIMEOUT_MS: z.coerce.number().default(15000),
+
+    // ── CLUSTER CACHE FAST-FAIL (redis/cluster-cache-guard.ts) ────────────────────────
+    // Wall-clock bound on a request-path cluster-cache call wrapped by clusterCacheGuard; a call
+    // that misses it is treated as a cache miss (or the caller's own fallback). On by default: it
+    // only bounds a wait. 0 turns the deadline off (the 15s backstop above then applies).
+    REDIS_CACHE_READ_DEADLINE_MS: z.coerce.number().default(250),
+    // Process-wide breaker over the same calls: after THRESHOLD consecutive failures, guarded calls
+    // fail without touching the client until COOLDOWN passes and one probe succeeds. Dark by
+    // default — while off, every call still goes to the client.
+    REDIS_CACHE_BREAKER_ENABLED: zc.booleanString.default(false),
+    REDIS_CACHE_BREAKER_THRESHOLD: z.coerce.number().int().positive().default(5),
+    REDIS_CACHE_BREAKER_COOLDOWN_MS: z.coerce.number().int().positive().default(5000),
+    // fetchThroughCache: when the origin fetch throws and an expired entry is still cached, answer
+    // with that entry instead of the error — only for callers that opt in (serveStaleOnError: true).
+    // Dark by default.
+    FETCH_THROUGH_CACHE_SERVE_STALE: zc.booleanString.default(false),
+    // Bound on the replication-lag flag read (db/db-lag-helpers.ts). A read that misses it or
+    // fails routes to the replica, which is what a missing flag already does. 0 disables the bound.
+    REPLICATION_LAG_CHECK_TIMEOUT_MS: z.coerce.number().default(200),
 
     // ── CLUSTER CLIENT SELF-HEAL WATCHDOG (FIX #1, the inflight-leak wedge) ──────────
     //
@@ -1276,6 +1298,14 @@ export const serverSchema = z
     // Platform-wide ceiling (USD per UTC day) on agent reviews started AUTOMATICALLY when a review
     // build settles. Past it, automatic starts are refused; a moderator can still start one.
     AGENT_REVIEW_AUTOSTART_DAILY_BUDGET_USD: z.coerce.number().nonnegative().default(40),
+    // Test-fixture accounts (the CI smoke users of a test environment) whose automatic review
+    // builds get a per-slug budget instead of the per-account one. Set only in test environments;
+    // unset (the default) leaves every account on the per-account budget. A malformed list reads
+    // as unset.
+    APP_REVIEW_AUTO_BUILD_FIXTURE_USER_IDS: commaDelimitedNumberArray()
+      .default([])
+      .catch([])
+      .transform((ids) => ids.filter((id) => id !== 0)),
     // AGENTIC MOD CODE-REVIEW (App Blocks P1) — CONTAINMENT. Base URL the review
     // agent pod POSTs its report to. Set to the IN-CLUSTER civitai-web service URL
     // (e.g. `http://<svc>.<ns>.svc.cluster.local`) so the adversarial report + the

@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv';
+import { envTimeoutMs } from '@/utils/env-timeout';
 
 dotenv.config();
 
@@ -57,6 +58,13 @@ export const CONTENT_EXCLUDED_COLUMNS = {
 export const config = {
   postgres: {
     connectionString: process.env.DATABASE_URL!,
+    // Bounds on the event processor's pool, so a stalled database turns an awaited handler query into
+    // an error instead of a partition that silently stops moving while its heartbeat keeps it in the
+    // consumer group. connectionTimeoutMs covers both opening a connection and waiting for a free one.
+    // queryTimeoutMs is client-side (pg's query_timeout), so it holds through any connection pooler.
+    // Either set to 0 turns that bound off.
+    connectionTimeoutMs: envTimeoutMs(process.env.PG_CONNECTION_TIMEOUT_MS, 5_000),
+    queryTimeoutMs: envTimeoutMs(process.env.PG_QUERY_TIMEOUT_MS, 30_000),
   },
   clickhouse: {
     url: process.env.CLICKHOUSE_URL!,

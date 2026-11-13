@@ -1975,6 +1975,7 @@ export interface Tag {
   tagsOnImageVotes?: TagsOnImageVote[];
   tagsOnPosts?: TagsOnPost[];
   tagsOnArticles?: TagsOnArticle[];
+  systemCategoryArticles?: Article[];
   tagsOnCollection?: TagsOnCollection[];
   tagsOnImageComposite?: ImageTag[];
   tagsOnModelComposite?: ModelTag[];
@@ -2237,6 +2238,7 @@ export interface OauthClient {
   connectListings?: AppListing[];
   workerClient?: WorkerClient | null;
   workerDevices?: WorkerDevice[];
+  invites?: OauthInvite[];
 }
 
 export interface WorkerClient {
@@ -2939,6 +2941,16 @@ export interface OauthConsent {
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface OauthInvite {
+  tokenHash: string;
+  clientId: string;
+  client?: OauthClient;
+  email: string;
+  returnUrl: string;
+  expiresAt: Date;
+  createdAt: Date;
 }
 
 export interface TrustedSpokeDomain {
@@ -3751,6 +3763,8 @@ export interface Article {
   lockedProperties: string[];
   isOfficial: boolean;
   status: ArticleStatus;
+  systemCategoryId: number | null;
+  systemCategory?: Tag | null;
   reactions?: ArticleReaction[];
   tags?: TagsOnArticle[];
   reports?: ArticleReport[];

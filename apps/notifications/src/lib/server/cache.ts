@@ -2,11 +2,15 @@
 // category, plus the `__complete` and `__floor` markers. A missing redis client no-ops the counter side; the
 // base-row queries still work.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { NotificationCategory } from '@civitai/notifications';
 import { getRedis } from './clients/redis';
 import { health } from './health';
 import { redisErrorsTotal } from './metrics';
+
+/** What {@link redisWithin} saw: the value, or that the call failed or ran out of time. */
+export type RedisSettled<T> = { ok: true; value: T } | { ok: false; reason: 'error' | 'timeout' };
 
 const NOTIFICATION_CACHE_TIME = 60 * 60 * 24 * 7; // one week
 // Written only by setUser, in the same EVAL as the counts. A hash without it was assembled by increments
@@ -32,15 +36,58 @@ function userKey(userId: number) {
  * `.catch()` degrade to no-op); this makes it scrapeable via `notifications_redis_errors_total{operation}`
  * and feeds each outcome to the /health redis check.
  */
-async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+export async function withRedisErrorCount<T>(operation: string, fn: () => Promise<T>): Promise<T> {
   try {
     const result = await fn();
-    health.recordRedisSuccess();
+    if (!abandoned.getStore()?.timedOut) health.recordRedisSuccess();
     return result;
   } catch (err) {
-    redisErrorsTotal.inc({ operation });
-    health.recordRedisFailure();
+    if (!abandoned.getStore()?.timedOut) {
+      redisErrorsTotal.inc({ operation });
+      health.recordRedisFailure();
+    }
     throw err;
+  }
+}
+
+// Set by redisWithin around the call it bounds. Once that call has timed out (and been counted), its late
+// outcome is not recorded again: a timeout that later rejects is one failure, and a late success says
+// nothing about redis now.
+const abandoned = new AsyncLocalStorage<{ timedOut: boolean }>();
+
+/**
+ * Settle one best-effort redis call within `ms`, never throwing, for a caller that routes around the
+ * failure (the worker's counter bump, the count path). A timeout is counted exactly as an error is —
+ * `notifications_redis_errors_total{operation}` plus the /health redis signal — so a hung redis is as
+ * visible as a failing one. Errors are counted where the call is made (withRedisErrorCount), not here,
+ * and an error arriving after the timeout is not counted again.
+ * The abandoned call carries on in the background; its late rejection is handled.
+ */
+export async function redisWithin<T>(
+  operation: string,
+  work: () => Promise<T>,
+  ms: number
+): Promise<RedisSettled<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const call = { timedOut: false };
+  const timedOut = new Promise<RedisSettled<T>>((resolve) => {
+    timer = setTimeout(() => {
+      call.timedOut = true;
+      redisErrorsTotal.inc({ operation });
+      health.recordRedisFailure();
+      resolve({ ok: false, reason: 'timeout' });
+    }, ms);
+  });
+  const settled = abandoned
+    .run(call, () => Promise.resolve().then(work))
+    .then(
+      (value): RedisSettled<T> => ({ ok: true, value }),
+      (): RedisSettled<T> => ({ ok: false, reason: 'error' })
+    );
+  try {
+    return await Promise.race([settled, timedOut]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

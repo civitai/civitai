@@ -28,6 +28,9 @@ export const semanticImageSearchSchema = baseQuerySchema
     limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
     // Offset into the ranked candidate list.
     cursor: z.number().int().min(0).optional(),
+    // newest: the best matches by similarity, newest first (text queries only; "more like this"
+    // stays in similarity order). Absent or relevance: similarity order.
+    sort: z.enum(['relevance', 'newest']).optional(),
   })
   .refine((x) => !!x.query || !!x.imageId, { message: 'Enter a query' });
 
