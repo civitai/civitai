@@ -333,7 +333,12 @@
       {/if}
     </TriageCard>
     {#if row.versionTextHits}
-      <HoldVersionTextHits holdId={row.id} hits={row.versionTextHits} modelHref={entityHref} />
+      <HoldVersionTextHits
+        holdId={row.id}
+        modelId={row.entityId}
+        hits={row.versionTextHits}
+        {civitaiUrl}
+      />
     {/if}
     {#if row.profile}
       <HoldProfileCard profile={row.profile} blurred={!imageReveal.on} />

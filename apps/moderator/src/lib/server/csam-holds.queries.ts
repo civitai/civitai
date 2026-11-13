@@ -3,7 +3,7 @@
 import { sql } from 'kysely';
 import type { CsamHoldSort, CsamHoldStatusFilter } from '$lib/csam-holds/hold-filters';
 import {
-  heldTextIncludes,
+  heldTextHas,
   parseVersionTextHits,
   type VersionTextHit,
   type VersionTextHitText,
@@ -295,7 +295,7 @@ export async function getHoldVersionTexts(holdId: number): Promise<VersionTextHi
     const version = byId.get(hit.versionId);
     const text =
       (hit.field === 'name' ? version?.name : version?.trainedWords?.[hit.index]) ?? null;
-    return { ...hit, text, inHeldText: text !== null && heldTextIncludes(hold.text, text) };
+    return { ...hit, text, inHeldText: text !== null && heldTextHas(hold.text, hit.field, text) };
   });
 }
 

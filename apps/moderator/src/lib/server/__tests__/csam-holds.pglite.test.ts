@@ -1052,6 +1052,37 @@ describe('version text hits on Model holds', () => {
     ]);
   });
 
+  it('counts a string as held only as a whole value of its own field', async () => {
+    await db.exec(`
+      INSERT INTO "ModelVersion" ("id","modelId","name","trainedWords") VALUES
+        (702, 70, 'alpha', '{"v one",alp,"A model name"}');
+    `);
+    await holdWith(95, {
+      comVersionTextHits: [
+        { versionId: 702, field: 'name' },
+        { versionId: 702, field: 'trainedWords', index: 0 },
+        { versionId: 702, field: 'trainedWords', index: 1 },
+        { versionId: 702, field: 'trainedWords', index: 2 },
+      ],
+    });
+    await expect(getHoldVersionTexts(95)).resolves.toEqual([
+      { versionId: 702, field: 'name', text: 'alpha', inHeldText: false },
+      { versionId: 702, field: 'trainedWords', index: 0, text: 'v one', inHeldText: false },
+      { versionId: 702, field: 'trainedWords', index: 1, text: 'alp', inHeldText: false },
+      { versionId: 702, field: 'trainedWords', index: 2, text: 'A model name', inHeldText: false },
+    ]);
+  });
+
+  it('lists a repeated position once', async () => {
+    await holdWith(96, {
+      comVersionTextHits: [
+        { versionId: 700, field: 'name' },
+        { versionId: 700, field: 'name' },
+      ],
+    });
+    await expect(getHoldVersionTexts(96)).resolves.toHaveLength(1);
+  });
+
   it("never reads another model's version, whatever the meta names", async () => {
     await holdWith(92, { comVersionTextHits: [{ versionId: 710, field: 'name' }] });
     await expect(getHoldVersionTexts(92)).resolves.toEqual([
