@@ -369,7 +369,10 @@ export async function updateByTipaltiAccount({
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
-      }).catch();
+      }).catch(() => {
+        // The row is already written: a throw here would hide that from the caller.
+        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      });
     }
   } else if (isBlockedTipaltiStatus(tipaltiAccountStatus)) {
     if (!isBlockedTipaltiStatus(userPaymentConfig.tipaltiAccountStatus)) {

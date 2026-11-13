@@ -77,6 +77,36 @@ describe('/api/mod/tipalti-resync-payee', () => {
     expect(resync).toHaveBeenCalledWith({ userIds: [7, 8], dryRun: false, actorId: MOD });
   });
 
+  it('writes an audit row naming the users it changed', async () => {
+    resync.mockResolvedValue([
+      {
+        userId: 7,
+        applied: true,
+        before: { status: 'Active', paymentsEnabled: false },
+        direction: 'enable',
+      },
+      { userId: 8, applied: false, before: null, direction: null },
+    ]);
+
+    await call('POST', { userIds: '7,8', execute: 'true' });
+
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'tipalti.resyncPayee',
+        outcome: 'ok',
+        affected: {
+          applied: [
+            {
+              userId: 7,
+              before: { status: 'Active', paymentsEnabled: false },
+              direction: 'enable',
+            },
+          ],
+        },
+      })
+    );
+  });
+
   it('refuses a GET, so a link can never reach Tipalti or write', async () => {
     const { status } = await call('GET', { userIds: '7', execute: 'true' });
 
