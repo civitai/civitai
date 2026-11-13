@@ -149,11 +149,16 @@ describe('a donation across an unknown outcome', () => {
 
   it('a retry after the donation was recorded (response lost) charges nothing more', async () => {
     await donate(KEY);
+    vi.clearAllMocks();
 
     await donate(KEY);
 
     expect(ledger.charges()).toHaveLength(1);
     expect(donations).toHaveLength(1);
+    // Answered from the record before the ledger or the lock is touched.
+    expect(buzz.getMultiAccountTransactionsByPrefix).not.toHaveBeenCalled();
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('refuses to record a charge that was refunded, so the client starts over', async () => {
@@ -218,6 +223,22 @@ describe('a donation across an unknown outcome', () => {
       message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE,
     });
     expect(ledger.charges()).toHaveLength(0);
+    expect(donations).toHaveLength(0);
+  });
+
+  // Another request with the key failed its record and refunded the charge after this one charged
+  // but before it got the lock: only the check under the lock can see that.
+  it('refuses to record a charge refunded while it waited for the lock', async () => {
+    locks.onNextLock(async () => {
+      await ledger.refundMultiAccountTransaction({
+        externalTransactionIdPrefix: `donation-k-${GOAL_ID}-${DONOR}-500-${KEY}`,
+      });
+    });
+
+    await expect(donate(KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: PAYMENT_REFUNDED_MESSAGE,
+    });
     expect(donations).toHaveLength(0);
   });
 

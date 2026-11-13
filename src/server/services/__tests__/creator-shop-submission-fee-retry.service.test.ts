@@ -333,6 +333,20 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
   });
 
+  // Another request with the key failed its write and refunded the charge after this one charged
+  // but before it got the lock: only the check under the lock can see that.
+  it('refuses to list on a charge refunded while it waited for the lock', async () => {
+    locks.onNextLock(async () => {
+      await ledger.refundTransaction(ledger.charges()[0].transactionId);
+    });
+
+    await expect(site.submit({ idempotencyKey: KEY })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: PAYMENT_REFUNDED_MESSAGE,
+    });
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+
   it('takes the lock on the fee charge id', async () => {
     await site.submit({ idempotencyKey: KEY });
     expect(locks.taken()).toEqual([submissionFeeTransactionId(site.kind, USER, KEY)]);

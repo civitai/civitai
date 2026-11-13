@@ -12,6 +12,7 @@ export function createFakeAdvisoryLocks() {
   const holders = new Map<string, Promise<void>>();
   const taken: string[] = [];
   let open = 0;
+  let onNextLock: (() => Promise<void> | void) | undefined;
 
   async function transaction<T>(run: (tx: unknown) => Promise<T>, tx: Record<string, unknown>) {
     const mine: (() => void)[] = [];
@@ -22,6 +23,9 @@ export function createFakeAdvisoryLocks() {
       let release!: () => void;
       holders.set(key, new Promise<void>((resolve) => (release = resolve)));
       taken.push(key);
+      const hook = onNextLock;
+      onNextLock = undefined;
+      await hook?.();
       mine.push(() => {
         holders.delete(key);
         release();
@@ -38,7 +42,15 @@ export function createFakeAdvisoryLocks() {
   }
 
   /** `open()`: transactions currently open, i.e. pooled connections held. */
-  return { transaction, taken: () => [...taken], open: () => open };
+  return {
+    transaction,
+    taken: () => [...taken],
+    open: () => open,
+    /** Runs `fn` as the next lock is granted: what another request did just before this one got it. */
+    onNextLock: (fn: () => Promise<void> | void) => {
+      onNextLock = fn;
+    },
+  };
 }
 
 /** Lets pending promise callbacks run, so a concurrent request reaches the point it waits at. */
