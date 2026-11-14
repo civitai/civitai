@@ -1,7 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { Principal, Recheck } from '~/server/registry-adapter/auth';
 import {
@@ -37,6 +37,26 @@ import {
   createMemorySnapshotStore,
   fixtureDocSource,
 } from '../../../../scripts/registry-adapter-fixture/fixture-source';
+
+// The site reads its region lists when its module loads, so they are set before any import: one
+// country restricted to SFW (`ZY`) and the site's default block list spelled out (`GB`). No other
+// case here sends a region header, so only the production-rule cases below see them.
+const regionEnvBefore = vi.hoisted(() => {
+  const before = {
+    REGION_RESTRICTION_CONFIG: process.env.REGION_RESTRICTION_CONFIG,
+    REGION_BLOCK_CONFIG: process.env.REGION_BLOCK_CONFIG,
+  };
+  process.env.REGION_RESTRICTION_CONFIG = 'ZY:2025-01-01';
+  process.env.REGION_BLOCK_CONFIG = 'GB:2025-07-24';
+  return before;
+});
+// The environment is the worker's, so it is put back for the files that run after this one.
+afterAll(() => {
+  for (const [name, value] of Object.entries(regionEnvBefore)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 /**
  * Per-token content-rating enforcement (the registry's auth extension, as an origin serves it):
@@ -1276,5 +1296,76 @@ describe('🔴 from a region the site restricts to SFW, a token is sent no matur
       `upsert ${DOC}`,
       'live',
     ]);
+  });
+});
+
+/**
+ * The production region rule: the cases above replace it; these build each server WITHOUT a rule,
+ * so the site's own lists (set at the top of this file) decide. A binding that ignored the rule
+ * (`?? (() => false)`) sends every one of these the x app.
+ */
+describe('🔴 the production region rule: restricted (ZY) and blocked (GB) regions are held to SFW', () => {
+  it.each([
+    ['ZY, restricted', NOTES, 'x', DOC],
+    ['GB, blocked', NOTES, 'x', DOC],
+    ['GB, blocked', APPS, 'r', `"urn":"${APP_URN}"`],
+    ['GB, blocked', RELEASES, 'x', RELEASE_URN],
+  ])(
+    '%s: %s, app rated %s, is sent nothing for an X token over HTTP',
+    async (_n, schema, rating, named) => {
+      const country = _n.slice(0, 2);
+      const port = await httpServer(source({ rating }).adapter);
+      const res = await get(port, q(schema), { ...bearer('x-token'), 'cf-ipcountry': country });
+      expect(res.status).toBe(200);
+      expect(events(res.text)).toEqual(['live']);
+      expect(res.text.includes(named)).toBe(false);
+    }
+  );
+
+  it('positive control: the same X token from DE is sent the x app over HTTP', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const res = await get(port, q(NOTES), { ...bearer('x-token'), 'cf-ipcountry': 'DE' });
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it('a cursor issued to the X token in DE is cursor_expired from GB', async () => {
+    const port = await httpServer(source({ rating: 'x' }).adapter);
+    const first = await get(port, q(NOTES), { ...bearer('x-token'), 'cf-ipcountry': 'DE' });
+    const cursor = liveCursor(first.text);
+    const res = await get(port, q(NOTES, `&cursor=${encodeURIComponent(cursor)}`), {
+      ...bearer('x-token'),
+      'cf-ipcountry': 'GB',
+    });
+    expect([res.status, JSON.parse(res.text).error]).toEqual([410, 'cursor_expired']);
+    expect(res.text.includes(DOC)).toBe(false);
+  });
+
+  it('invariant: re-checks from GB keep the stream open', async () => {
+    const port = await httpServer(source({ rating: 'pg' }).adapter);
+    const started = Date.now();
+    const res = await get(
+      port,
+      q(NOTES),
+      { ...bearer('x-token'), 'cf-ipcountry': 'GB' },
+      (t) => t.includes('event: error') || Date.now() - started > 600
+    );
+    expect(events(res.text)).toEqual(['upsert', 'live']);
+  });
+
+  it.each([['ZY'], ['GB']])(
+    'gRPC from %s: the X token is sent nothing of the x app',
+    async (country) => {
+      const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+        metadata: { 'cf-ipcountry': country },
+      });
+      expect(shapes(res.events)).toEqual(['live']);
+    }
+  );
+
+  it('positive control: gRPC from DE is sent the x app', async () => {
+    const res = await viaGrpc(source({ rating: 'x' }).adapter, NOTES, 'x-token', undefined, {
+      metadata: { 'cf-ipcountry': 'DE' },
+    });
+    expect(shapes(res.events)).toEqual([`upsert ${DOC}`, 'live']);
   });
 });

@@ -46,7 +46,7 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
-import type { SubscriptionLimiter } from '~/server/registry-adapter/limits';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
@@ -435,7 +435,7 @@ export function createGrpcServer(
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {
         let unwatch: (() => void) | undefined;
-        let release: (() => void) | undefined;
+        let slot: SubscriptionSlot | undefined;
         try {
           const r = call.request;
           const request = subscribeRequest({
@@ -445,14 +445,13 @@ export function createGrpcServer(
             filter: r.filter,
           });
           const origin = originOf(call);
+          // The total and per-address caps before the token is verified; per token once it is.
+          slot = opts.limiter?.acquire(clientAddress(origin));
           const restricted = opts.regionRestricted ?? regionRestricted;
           const principal = await authenticate(authorizationOf(call), opts.verifyToken, {
             regionRestricted: () => restricted(origin),
           });
-          release = opts.limiter?.acquire({
-            subject: principal.subject,
-            address: clientAddress(origin),
-          });
+          slot?.claim(principal.subject);
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),
@@ -480,7 +479,7 @@ export function createGrpcServer(
           call.emit('error', status);
         } finally {
           unwatch?.();
-          release?.();
+          slot?.release();
         }
       };
       void run();

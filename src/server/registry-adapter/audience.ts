@@ -31,7 +31,8 @@
  * One difference: this source fails closed on a rating it does not know ({@link audienceAdmits}).
  *
  * The registry is treated as a mature-capable surface, so the user's own settings are what narrow
- * a stream, except in a region the site restricts to SFW content. The site sends such a request
+ * a stream, except in a region the site restricts to SFW content (or blocks outright, which this
+ * source holds to the same rule: `request-origin.ts`). The site sends a restricted request
  * to its SFW domain, where `canViewNsfw` is off and no host is mature-capable; this source has no
  * other domain, so it applies that domain's rule to the request instead: no mature rating,
  * whatever the user's settings ({@link audienceForUser}, `request-origin.ts`). Anonymous is

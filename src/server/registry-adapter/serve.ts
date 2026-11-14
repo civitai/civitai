@@ -37,7 +37,7 @@ import {
   watchPrincipal,
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
-import type { SubscriptionLimiter } from '~/server/registry-adapter/limits';
+import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
 import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
 import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
@@ -217,7 +217,7 @@ export function handleRequest(
     }
     let stream: ReturnType<typeof openStream> | undefined;
     let unwatch: (() => void) | undefined;
-    let release: (() => void) | undefined;
+    let slot: SubscriptionSlot | undefined;
     try {
       const request = subscribeRequest({
         schema: url.searchParams.get('schema'),
@@ -230,6 +230,8 @@ export function handleRequest(
         // Optional: a request handed to `handleRequest` directly need not carry a socket.
         remoteAddress: req.socket?.remoteAddress,
       };
+      // The total and per-address caps before the token is verified; per token once it is.
+      slot = opts.limiter?.acquire(clientAddress(origin));
       const restricted = opts.regionRestricted ?? regionRestricted;
       const principal = await authenticate(
         lastHeader(req.headers.authorization),
@@ -238,10 +240,7 @@ export function handleRequest(
           regionRestricted: () => restricted(origin),
         }
       );
-      release = opts.limiter?.acquire({
-        subject: principal.subject,
-        address: clientAddress(origin),
-      });
+      slot?.claim(principal.subject);
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).
@@ -259,7 +258,7 @@ export function handleRequest(
       sendError(res, err, opts.onError, metadataUrl);
     } finally {
       unwatch?.();
-      release?.();
+      slot?.release();
     }
   };
 }

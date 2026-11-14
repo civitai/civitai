@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `request-origin.ts` reads a request's region and client address with the site's own helpers.
- * The region rule is configured from `REGION_RESTRICTION_CONFIG` when the site's module loads,
- * so each case loads it afresh under a configuration it sets.
+ * The region rules are configured from `REGION_RESTRICTION_CONFIG` and `REGION_BLOCK_CONFIG`
+ * when the site's module loads, so each case loads it afresh under the configuration it sets.
  */
-async function load(config: string | undefined) {
+async function load(config: string | undefined, blocked?: string) {
   vi.resetModules();
   // Empty is unset to the site's parser, which then takes its own default.
   vi.stubEnv('REGION_RESTRICTION_CONFIG', config ?? '');
+  vi.stubEnv('REGION_BLOCK_CONFIG', blocked ?? '');
   return import('~/server/registry-adapter/request-origin');
 }
 
@@ -46,6 +47,53 @@ describe('🔴 regionRestricted is the site’s region-restriction rule', () => 
   it('with no configuration nothing is restricted (the site’s default list is empty)', async () => {
     const { regionRestricted } = await load(undefined);
     expect(regionRestricted({ headers: { 'cf-ipcountry': 'ZZ' } }, NOW)).toBe(false);
+  });
+});
+
+describe('🔴 a region the site blocks is held to SFW as well', () => {
+  it.each([
+    // The site's default block list: GB from 2025-07-24, AU from 2026-03-15.
+    ['GB, by default', true, { 'cf-ipcountry': 'GB' }, NOW],
+    ['GB through the site’s x-isuk header', true, { 'x-isuk': 'true' }, NOW],
+    ['AU, by default, after its date', true, { 'cf-ipcountry': 'AU' }, NOW],
+    ['AU, by default, before its date', false, { 'cf-ipcountry': 'AU' }, new Date('2026-03-01')],
+    ['another country', false, { 'cf-ipcountry': 'DE' }, NOW],
+  ])('%s: held = %s', async (_name, held, headers, at) => {
+    const { regionRestricted } = await load(undefined);
+    expect(regionRestricted({ headers }, at)).toBe(held);
+  });
+
+  it('a configured block list replaces the default', async () => {
+    const { regionRestricted } = await load(undefined, 'ZX:2026-01-01');
+    expect(regionRestricted({ headers: { 'cf-ipcountry': 'ZX' } }, NOW)).toBe(true);
+    expect(regionRestricted({ headers: { 'cf-ipcountry': 'GB' } }, NOW)).toBe(false);
+  });
+});
+
+describe('describeRegionConfig: the startup lines', () => {
+  it('names both lists, with no warning when a region is restricted', async () => {
+    const { describeRegionConfig } = await load('ZZ:2026-01-01,US:NY:2026-02-01');
+    expect(describeRegionConfig()).toEqual({
+      info: [
+        'SFW-restricted regions (2): ZZ from 2026-01-01, US:NY from 2026-02-01',
+        'blocked regions, held to SFW (2): GB from 2025-07-24, AU from 2026-03-15',
+      ],
+      warn: [],
+    });
+  });
+
+  it('warns when the restriction list is empty', async () => {
+    const { describeRegionConfig } = await load(undefined, 'ZX:2026-01-01');
+    expect(describeRegionConfig()).toEqual({
+      info: [
+        'SFW-restricted regions (0): none',
+        'blocked regions, held to SFW (1): ZX from 2026-01-01',
+      ],
+      warn: [
+        'REGION_RESTRICTION_CONFIG is empty or unset: no region is restricted to SFW ' +
+          '(blocked regions still are); set it as the site does',
+      ],
+    });
   });
 });
 

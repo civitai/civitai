@@ -37,10 +37,24 @@ function openSource(): Adapter {
   };
 }
 
-const verifyToken = async (token: string) =>
-  token.startsWith('user-')
+/** Token verifications made, so a case can tell a refusal that never looked a token up. */
+let verified = 0;
+const verifyToken = async (token: string) => {
+  verified++;
+  return token.startsWith('user-')
     ? { subject: `${token}/client:a`, user: { showNsfw: false }, expiresAt: null }
     : null;
+};
+
+/** A source whose snapshot fails: the subscription ends with `unavailable` before `live`. */
+function failingSource(): Adapter {
+  return {
+    ...openSource(),
+    snapshot: async () => {
+      throw new Error('the catalog could not be read');
+    },
+  };
+}
 
 const servers: Server[] = [];
 const grpcServers: grpc.Server[] = [];
@@ -54,8 +68,8 @@ afterEach(async () => {
   }
 });
 
-async function httpServer(limiter: SubscriptionLimiter) {
-  const server = createRegistryServer(openSource(), { verifyToken, limiter });
+async function httpServer(limiter: SubscriptionLimiter, source: Adapter = openSource()) {
+  const server = createRegistryServer(source, { verifyToken, limiter });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return (server.address() as AddressInfo).port;
@@ -99,45 +113,68 @@ async function openCount(limiter: SubscriptionLimiter, n: number) {
 const errorOf = (body: string) => JSON.parse(body) as { error: string; message: string };
 const from = (address: string) => ({ 'cf-connecting-ip': address });
 
+/** A slot for `subject` from `address`, as a binding takes it: address first, token after. */
+const take = (limiter: SubscriptionLimiter, address: string, subject: string | null = null) => {
+  const slot = limiter.acquire(address);
+  try {
+    slot.claim(subject);
+  } catch (err) {
+    slot.release();
+    throw err;
+  }
+  return slot;
+};
+
 describe('the limiter', () => {
   it('🔴 refuses past each cap with unavailable, and a freed slot is taken again', () => {
     const limiter = createSubscriptionLimiter({ total: 3, perSubject: 1, perAddress: 2 });
-    const a1 = limiter.acquire({ subject: 'user:1', address: '192.0.2.1' });
-    expect(() => limiter.acquire({ subject: 'user:1', address: '192.0.2.2' })).toThrow(
+    const a1 = take(limiter, '192.0.2.1', 'user:1');
+    expect(() => take(limiter, '192.0.2.2', 'user:1')).toThrow(
       new ProtocolError('unavailable', 'too many open subscriptions for this token; retry later')
     );
-    limiter.acquire({ subject: null, address: '192.0.2.1' });
-    expect(() => limiter.acquire({ subject: null, address: '192.0.2.1' })).toThrow(
+    // The refused token's slot was given back.
+    expect(limiter.open()).toBe(1);
+    take(limiter, '192.0.2.1');
+    expect(() => limiter.acquire('192.0.2.1')).toThrow(
       'too many open subscriptions from this address; retry later'
     );
-    limiter.acquire({ subject: null, address: '192.0.2.3' });
+    take(limiter, '192.0.2.3');
     expect(limiter.open()).toBe(3);
-    expect(() => limiter.acquire({ subject: 'user:2', address: '192.0.2.4' })).toThrow(
+    expect(() => limiter.acquire('192.0.2.4')).toThrow(
       'too many open subscriptions on this source; retry later'
     );
-    a1();
+    a1.release();
     expect(limiter.open()).toBe(2);
     // The freed slot counted against the token and the address as well as the total.
-    limiter.acquire({ subject: 'user:1', address: '192.0.2.1' });
+    take(limiter, '192.0.2.1', 'user:1');
     expect(limiter.open()).toBe(3);
+  });
+
+  it('the total and per-address caps refuse before any token is named', () => {
+    const limiter = createSubscriptionLimiter({ total: 1, perSubject: 10, perAddress: 10 });
+    limiter.acquire('192.0.2.1');
+    // `acquire` takes no token: a request over these caps is refused before one is verified.
+    expect(() => limiter.acquire('192.0.2.2')).toThrow(
+      'too many open subscriptions on this source; retry later'
+    );
   });
 
   it('a slot freed twice is freed once', () => {
     const limiter = createSubscriptionLimiter({ total: 2, perSubject: 2, perAddress: 2 });
-    const release = limiter.acquire({ subject: null, address: '192.0.2.1' });
-    limiter.acquire({ subject: null, address: '192.0.2.1' });
-    release();
-    release();
+    const first = take(limiter, '192.0.2.1', 'user:1');
+    take(limiter, '192.0.2.1');
+    first.release();
+    first.release();
     expect(limiter.open()).toBe(1);
-    limiter.acquire({ subject: null, address: '192.0.2.1' });
-    expect(() => limiter.acquire({ subject: null, address: '192.0.2.1' })).toThrow(ProtocolError);
+    take(limiter, '192.0.2.1', 'user:1');
+    expect(() => limiter.acquire('192.0.2.1')).toThrow(ProtocolError);
   });
 
   it('anonymous subscriptions count against no token', () => {
     const limiter = createSubscriptionLimiter({ total: 10, perSubject: 1, perAddress: 10 });
-    limiter.acquire({ subject: null, address: '192.0.2.1' });
-    limiter.acquire({ subject: null, address: '192.0.2.1' });
-    limiter.acquire({ subject: 'user:1', address: '192.0.2.1' });
+    take(limiter, '192.0.2.1');
+    take(limiter, '192.0.2.1');
+    take(limiter, '192.0.2.1', 'user:1');
     expect(limiter.open()).toBe(3);
   });
 });
@@ -227,6 +264,32 @@ describe('🔴 over HTTP, a subscription over a cap is 503 unavailable before it
     expect([res.status, errorOf(res.body).error]).toEqual([401, 'invalid_token']);
     expect(limiter.open()).toBe(0);
   });
+
+  it('🔴 over the total or per-address cap, the token is never looked up', async () => {
+    const limiter = createSubscriptionLimiter({ total: 1, perSubject: 10, perAddress: 10 });
+    const port = await httpServer(limiter);
+    expect((await subscribe(port, from('192.0.2.1'))).status).toBe(200);
+    const before = verified;
+    const res = await subscribe(port, { authorization: 'Bearer user-1', ...from('192.0.2.2') });
+    expect([res.status, errorOf(res.body)]).toEqual([
+      503,
+      { error: 'unavailable', message: 'too many open subscriptions on this source; retry later' },
+    ]);
+    expect(verified).toBe(before);
+    // Positive control: under the cap, the same request's token is looked up.
+    const open = createSubscriptionLimiter({ total: 10, perSubject: 10, perAddress: 10 });
+    const openPort = await httpServer(open);
+    await subscribe(openPort, { authorization: 'Bearer user-1', ...from('192.0.2.2') });
+    expect(verified).toBe(before + 1);
+  });
+
+  it('a snapshot that throws frees its slot', async () => {
+    const limiter = createSubscriptionLimiter({ total: 1, perSubject: 1, perAddress: 1 });
+    const port = await httpServer(limiter, failingSource());
+    const res = await subscribe(port, from('192.0.2.1'));
+    expect([res.status, errorOf(res.body).error]).toEqual([503, 'unavailable']);
+    await openCount(limiter, 0);
+  });
 });
 
 const Client = grpc.makeGenericClientConstructor(REGISTRY_SERVICE, 'Registry');
@@ -237,7 +300,8 @@ interface SourceClient {
 /** One gRPC call: `live` (then held open), or the status it was refused with. */
 function grpcSubscribe(
   port: number,
-  metadata: Record<string, string>
+  metadata: Record<string, string>,
+  onCall: (cancel: () => void) => void = () => undefined
 ): Promise<{ live: boolean; error?: { code: number; reason: string | null } }> {
   const client = new Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const md = new grpc.Metadata();
@@ -250,6 +314,7 @@ function grpcSubscribe(
     call.cancel();
     client.close();
   });
+  onCall(() => abort.abort());
   return new Promise((resolve) => {
     call.on('data', (e: StreamEvent) => {
       if (e.type === 'live') resolve({ live: true });
@@ -288,5 +353,32 @@ describe('🔴 over gRPC, the same caps, UNAVAILABLE / unavailable', () => {
       live: false,
       error: { code: grpc.status.UNAVAILABLE, reason: 'unavailable' },
     });
+  });
+
+  it('🔴 a cancelled call frees its slot', async () => {
+    const limiter = createSubscriptionLimiter({ total: 1, perSubject: 1, perAddress: 1 });
+    const server = createGrpcServer(openSource(), { verifyToken, limiter });
+    grpcServers.push(server);
+    const port = await listenGrpc(server, 0);
+    let cancel: () => void = () => undefined;
+    expect(await grpcSubscribe(port, from('192.0.2.1'), (c) => (cancel = c))).toEqual({
+      live: true,
+    });
+    await openCount(limiter, 1);
+    cancel();
+    await openCount(limiter, 0);
+    expect(await grpcSubscribe(port, from('192.0.2.1'))).toEqual({ live: true });
+  });
+
+  it('a snapshot that throws frees its slot', async () => {
+    const limiter = createSubscriptionLimiter({ total: 1, perSubject: 1, perAddress: 1 });
+    const server = createGrpcServer(failingSource(), { verifyToken, limiter });
+    grpcServers.push(server);
+    const port = await listenGrpc(server, 0);
+    expect(await grpcSubscribe(port, from('192.0.2.1'))).toEqual({
+      live: false,
+      error: { code: grpc.status.UNAVAILABLE, reason: 'unavailable' },
+    });
+    await openCount(limiter, 0);
   });
 });

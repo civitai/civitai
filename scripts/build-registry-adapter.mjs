@@ -51,33 +51,42 @@ if (forbidden.length > 0) {
   process.exit(1);
 }
 
-// Fail at build, not at startup: every external the bundle requires must load with this Node
-// from this checkout's node_modules. `require` of an ES module package can still fail on that
-// package's own imports (`ERR_UNSUPPORTED_DIR_IMPORT` for a directory import, which an ESM
-// resolver refuses), and the bundle would then crash on its first line. Checked in a child
-// process, so nothing a package does when loaded touches this one.
-const externals = [
-  ...new Set(
-    Object.values(result.metafile.outputs).flatMap((output) =>
-      output.imports
-        .filter(
-          (i) => i.external && !i.path.startsWith('node:') && !builtinModules.includes(i.path)
-        )
-        .map((i) => i.path)
-    )
-  ),
-].sort();
+// Fail at build, not at startup: every external the bundle loads must load with this Node from
+// this checkout's node_modules, the way the bundle loads it: `require` for a `require` call (all
+// of them, in this CommonJS bundle, unless code uses `import()`), `import()` for a dynamic import
+// the bundle keeps. `require` of an ES module package can still fail on that package's own
+// imports (`ERR_UNSUPPORTED_DIR_IMPORT` for a directory import, which an ESM resolver refuses),
+// and the bundle would then crash as it starts. Checked in a child process, so nothing a package
+// does when loaded touches this one.
+//
+// This runs wherever `build:registry-adapter` runs, and in the unit-test CI job (shard 1).
+const externals = new Map(); // path -> how the bundle loads it
+for (const output of Object.values(result.metafile.outputs)) {
+  for (const i of output.imports) {
+    if (!i.external || i.path.startsWith('node:') || builtinModules.includes(i.path)) continue;
+    const how = i.kind === 'dynamic-import' ? 'import' : 'require';
+    // Loaded both ways: check both.
+    const seen = externals.get(i.path);
+    externals.set(i.path, seen && seen !== how ? 'both' : how);
+  }
+}
+const toLoad = [...externals].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 const load = spawnSync(
   process.execPath,
   [
     '-e',
-    `const failed = [];
-for (const name of JSON.parse(process.argv[1])) {
-  try { require(name); } catch (err) { failed.push(name + ': ' + (err.code ?? '') + ' ' + String(err.message).split('\\n')[0]); }
-}
-if (failed.length) { console.error(failed.join('\\n')); process.exit(1); }
-process.exit(0);`,
-    JSON.stringify(externals),
+    `(async () => {
+  const failed = [];
+  const note = (name, how, err) =>
+    failed.push(name + ' (' + how + '): ' + (err.code ?? '') + ' ' + String(err.message).split('\\n')[0]);
+  for (const [name, how] of JSON.parse(process.argv[1])) {
+    if (how !== 'import') { try { require(name); } catch (err) { note(name, 'require', err); } }
+    if (how !== 'require') { try { await import(name); } catch (err) { note(name, 'import', err); } }
+  }
+  if (failed.length) { console.error(failed.join('\\n')); process.exit(1); }
+  process.exit(0);
+})();`,
+    JSON.stringify(toLoad),
   ],
   { cwd: root, encoding: 'utf8', timeout: 120_000 }
 );
@@ -88,6 +97,10 @@ if (load.status !== 0) {
   );
   process.exit(1);
 }
+const kinds = toLoad.reduce((n, [, how]) => ({ ...n, [how]: (n[how] ?? 0) + 1 }), {});
 console.log(
-  `build-registry-adapter: ${externals.length} externals load under node ${process.version}`
+  `build-registry-adapter: ${toLoad.length} externals load under node ${process.version} ` +
+    `(${Object.entries(kinds)
+      .map(([how, n]) => `${n} by ${how}`)
+      .join(', ')})`
 );

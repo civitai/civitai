@@ -6,10 +6,11 @@
  * what sets this process's load on the database, the document store and Redis. A subscription
  * over a cap is refused before its stream starts, with `unavailable` (HTTP 503, gRPC
  * UNAVAILABLE): the spec's "anything else", which a consumer retries with backoff. Three caps
- * apply, each checked in turn:
- *   - in total, for the process;
- *   - per token subject (a user's client), for a request with a token;
- *   - per client address (`request-origin.ts`), for every request, a token or not.
+ * apply:
+ *   - in total, for the process, and per client address (`request-origin.ts`), for every
+ *     request, a token or not: both checked before the token is verified, so a request over
+ *     either costs no token lookup;
+ *   - per token subject (a user's client), for a request with a token, once it is verified.
  * A slot is held until the subscription's stream ends, however it ends, and freed once.
  */
 import { ProtocolError } from '~/server/registry-adapter/protocol';
@@ -54,13 +55,25 @@ export function subscriptionLimitsFromEnv(
   return { total: read('total'), perSubject: read('perSubject'), perAddress: read('perAddress') };
 }
 
+/** One subscription's slot: held from {@link SubscriptionLimiter.acquire} until `release`. */
+export type SubscriptionSlot = {
+  /**
+   * Counts the slot against `subject`, the token's (null: anonymous, which counts against none),
+   * or throws `unavailable` when that token is at its cap. Called once, after the token is
+   * verified; the caller still releases the slot when it throws.
+   */
+  claim(subject: string | null): void;
+  /** Frees the slot, and its token's count if claimed; a second call does nothing. */
+  release(): void;
+};
+
 export type SubscriptionLimiter = {
   /**
-   * Takes a slot for a subscription of `subject` (null: anonymous) from `address`, or throws
-   * `unavailable` when a cap is reached. Returns the function that frees it; a second call does
-   * nothing.
+   * Takes a slot for a subscription from `address`, or throws `unavailable` when the total or
+   * that address is at its cap. Called before the token is verified, so a refused request costs
+   * no token lookup.
    */
-  acquire(who: { subject: string | null; address: string }): () => void;
+  acquire(address: string): SubscriptionSlot;
   /** Subscriptions holding a slot now. */
   open(): number;
 };
@@ -80,22 +93,27 @@ export function createSubscriptionLimiter(limits: SubscriptionLimits): Subscript
     new ProtocolError('unavailable', `too many open subscriptions ${what}; retry later`);
 
   return {
-    acquire({ subject, address }) {
+    acquire(address) {
       if (total >= limits.total) throw refuse('on this source');
-      if (subject !== null && (bySubject.get(subject) ?? 0) >= limits.perSubject) {
-        throw refuse('for this token');
-      }
       if ((byAddress.get(address) ?? 0) >= limits.perAddress) throw refuse('from this address');
       total++;
-      if (subject !== null) take(bySubject, subject);
       take(byAddress, address);
       let held = true;
-      return () => {
-        if (!held) return;
-        held = false;
-        total--;
-        if (subject !== null) give(bySubject, subject);
-        give(byAddress, address);
+      let claimed: string | null = null;
+      return {
+        claim(subject) {
+          if (!held || claimed !== null || subject === null) return;
+          if ((bySubject.get(subject) ?? 0) >= limits.perSubject) throw refuse('for this token');
+          take(bySubject, subject);
+          claimed = subject;
+        },
+        release() {
+          if (!held) return;
+          held = false;
+          total--;
+          give(byAddress, address);
+          if (claimed !== null) give(bySubject, claimed);
+        },
       };
     },
     open: () => total,
