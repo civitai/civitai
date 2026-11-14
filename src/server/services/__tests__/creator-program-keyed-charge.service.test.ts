@@ -344,6 +344,22 @@ describe('bank deposit with a client key', () => {
     expect(ledger.charges().map((t) => t.amount)).toEqual([CAP - 6_000, 6_000]);
   });
 
+  it('a retry whose lookups lag, clamped to another amount, continues from the earlier deposit', async () => {
+    // 16,000 of cap left: the first attempt banks the full 10,000, and its answer is lost.
+    await bank(OTHER_KEY, CAP - 16_000);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await outcome(bank(KEY, 10_000));
+    ledger.clearFaults();
+    // The retry's two lookups before sending miss that deposit, so it is clamped to the 6,000
+    // left and sent; the ledger answers with the earlier 10,000 deposit, which the read-back finds.
+    buzz.getTransactionByExternalId.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+
+    await expect(bank(KEY, 10_000)).resolves.toBeUndefined();
+
+    expect(ledger.charges().map((t) => t.amount)).toEqual([CAP - 16_000, 10_000]);
+  });
+
   it('a lookup that fails before anything is checked is "may have gone through", and banks nothing', async () => {
     ledger.failLookups();
 

@@ -140,8 +140,8 @@ describe('chargeByExternalId with a reused id', () => {
     const error = await refusal(chargeByExternalId(charge(), { reusable: true }));
 
     expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
-    // One read before charging, then the read-back's three reads.
-    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(4);
+    // One read before charging, then the read-back's four reads (KEYED_READ_RETRY_DELAYS_MS).
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(5);
     expect(ledger.charges()).toHaveLength(1);
   });
 
@@ -183,8 +183,8 @@ describe('chargeByExternalId with a reused id', () => {
     ledger.setBalance(42, 0);
 
     await expect(chargeByExternalId(charge(), { reusable: true })).rejects.toThrow(/enough funds/);
-    // One read before charging, then the three reads after the decline.
-    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(4);
+    // One read before charging, then the four reads after the decline.
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(5);
     expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
     expect(ledger.charges()).toHaveLength(0);
   });

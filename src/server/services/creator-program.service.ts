@@ -657,9 +657,11 @@ export async function bankBuzz(
         // An unknown outcome is resent once under the same id; a resend that fails too is "may
         // have gone through" and the client keeps its key. The ledger is the deposit's only
         // record (the banked total is read from it), so there is no row to write under a lock.
+        // The amount is not compared here either: a read-back that finds an earlier attempt's
+        // deposit (its lookup above lagged) may hold a differently clamped amount.
         await keyed.chargeByExternalId(
           { ...deposit(), externalTransactionId: keyedId },
-          { reusable: true, declinedMessage }
+          { reusable: true, declinedMessage, matchAmount: false }
         );
       } else {
         await createBuzzTransaction(deposit());

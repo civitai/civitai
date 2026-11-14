@@ -144,16 +144,16 @@ function keyReused(outcomeContext: {
 }
 
 /**
- * How many times, and how far apart, a keyed charge reads the ledger for something it expects to
- * be there before treating it as absent: a write the ledger committed can be missing from its
- * first read. Used after a refused send and for the read-back after a send.
+ * The waits before each re-read when a keyed charge reads the ledger for something it expects to
+ * be there: a write the ledger committed can be missing from its first read. Four reads over about
+ * 1.4s at most. Used after a refused send (both paths), for the read-back after a send, and by the
+ * withdrawal's ready-cash check.
  */
-export const HELD_AFTER_REFUSAL_LOOKUPS = 3;
-export const HELD_AFTER_REFUSAL_PAUSE_MS = 250;
+export const KEYED_READ_RETRY_DELAYS_MS = [200, 400, 800] as const;
 
 /**
- * The one bounded not-found re-read: `read` until `found` says so, at most
- * `HELD_AFTER_REFUSAL_LOOKUPS` times, `HELD_AFTER_REFUSAL_PAUSE_MS` apart; the last read otherwise.
+ * The one bounded not-found re-read: `read` until `found` says so, once and then again after each
+ * of `KEYED_READ_RETRY_DELAYS_MS`; the last read otherwise.
  * A read that fails says nothing, so it is "may have gone through" (the client keeps its key).
  * Holds no database transaction.
  */
@@ -163,16 +163,17 @@ async function readUntilFound<T>(
   outcomeContext: { externalTransactionId: string; userId: number; amount?: number },
   reason: string
 ): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    let value: T;
+  let value!: T;
+  for (const delayMs of [0, ...KEYED_READ_RETRY_DELAYS_MS]) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
     try {
       value = await read();
     } catch (lookupError) {
       throw paymentOutcomeUnknown(outcomeContext, `${reason} failed`, { lookupError });
     }
-    if (found(value) || attempt >= HELD_AFTER_REFUSAL_LOOKUPS) return value;
-    await new Promise((resolve) => setTimeout(resolve, HELD_AFTER_REFUSAL_PAUSE_MS));
+    if (found(value)) return value;
   }
+  return value;
 }
 
 /** The ledger's transaction under `externalTransactionId` (bounded re-read); null if never found. */
