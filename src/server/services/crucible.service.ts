@@ -1989,13 +1989,6 @@ export const getKeyedCrucibleEntryTransactionPrefix = (
   idempotencyKey: string
 ): string => `crucible-entry-k-${userId}-${crucibleId}-${imageId}-${idempotencyKey}`;
 
-/**
- * Check if a string is a valid crucible entry transaction prefix
- */
-export const isCrucibleEntryTransactionPrefix = (prefix: string): boolean => {
-  return prefix.startsWith('crucible-entry-') && prefix.split('-').length >= 5;
-};
-
 /** What a submit answers with, whether it saved the entry or found it saved under its key. */
 const submittedEntrySelect = {
   id: true,
