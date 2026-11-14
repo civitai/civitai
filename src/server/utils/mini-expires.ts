@@ -11,7 +11,7 @@ const LINK_REFRESH_BELOW_REUSE_MS = 10 * 60 * 1000;
 
 /**
  * Mini's `X-Expires` (ms): when the orchestrator's cached copy of the response goes stale, the
- * earliest of `alreadySet`, the moderation block's hour, the re-signed epoch URL's usable-until and
+ * earliest of `alreadySet`, the moderation block's hour, the re-signed epoch URL's usable-until (at most the hour) and
  * the download link's refresh point. Undefined when none applies.
  */
 export function miniResponseExpiresAt({
@@ -33,7 +33,10 @@ export function miniResponseExpiresAt({
   if (alreadySet !== undefined && !isNaN(alreadySet)) candidates.push(alreadySet);
   if (moderation) candidates.push(now + MINI_MODERATION_EXPIRES_MS);
   const epochUsableUntil = epochUrl ? blobUrlUsableUntil(epochUrl) : undefined;
-  if (epochUsableUntil !== undefined) candidates.push(epochUsableUntil);
+  // Capped at the hour: the URL is signed for months, and its expiry alone would keep a response
+  // cached far longer than the orchestrator holds one that names no expiry.
+  if (epochUsableUntil !== undefined)
+    candidates.push(Math.min(epochUsableUntil, now + MINI_MODERATION_EXPIRES_MS));
   if (downloadLinkExpiresAt !== undefined)
     candidates.push(
       downloadLinkExpiresAt -

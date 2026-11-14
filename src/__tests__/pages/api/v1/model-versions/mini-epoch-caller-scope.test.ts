@@ -212,6 +212,18 @@ describe('mini/[id] epoch arm, X-Expires', () => {
     expect(body.downloadUrls).toEqual([soon]);
     expect(new Map(headers).get('X-Expires')).toBe(new Date(exp - 5 * 60_000).toISOString());
   });
+
+  it('is at most an hour out for a url signed far ahead', async () => {
+    const before = Date.now();
+    const { body, headers } = await request(
+      { user: { id: OWNER_ID }, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [BLOB_FILE]
+    );
+    expect(body.downloadUrls).toEqual([FRESH]);
+    const expires = Date.parse(String(new Map(headers).get('X-Expires'))) - before;
+    expect(expires).toBeGreaterThanOrEqual(60 * 60_000);
+    expect(expires).toBeLessThanOrEqual(60 * 60_000 + 1000);
+  });
 });
 
 describe('mini/[id], a moderator', () => {
