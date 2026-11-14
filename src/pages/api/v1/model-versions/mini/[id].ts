@@ -71,8 +71,6 @@ import {
   hasVersionGrant,
 } from '~/server/utils/mini-epoch-caller';
 import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
-import { headerApiKeyCredential } from '~/server/services/download-link/download-link-minter';
-import { mintProviderLink } from '~/server/services/download-link/download-link.service';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -842,6 +840,11 @@ async function providerDownloadLink(
   fileId: number,
   isScopeRefused: () => Promise<boolean>
 ): Promise<{ url: string; expiresAt: string } | undefined> {
+  // Loaded on demand: only an orchestrator call that asks for a link needs the download-link graph.
+  const [{ headerApiKeyCredential }, { mintProviderLink }] = await Promise.all([
+    import('~/server/services/download-link/download-link-minter'),
+    import('~/server/services/download-link/download-link.service'),
+  ]);
   const credential = headerApiKeyCredential(req);
   if (!credential || (await isScopeRefused())) return undefined;
   const minted = await mintProviderLink(credential, {

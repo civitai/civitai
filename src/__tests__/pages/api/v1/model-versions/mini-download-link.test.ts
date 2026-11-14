@@ -271,9 +271,9 @@ describe('mini/[id] downloadLink', () => {
     );
     expect(headers['cache-control']).toBe('private, no-store');
     // The moderation hour is sooner than the link's refresh.
-    const expires = Date.parse(headers['x-expires']) - before;
-    expect(expires).toBeGreaterThanOrEqual(HOUR);
-    expect(expires).toBeLessThanOrEqual(HOUR + 1000);
+    const expires = Date.parse(headers['x-expires']);
+    expect(expires).toBeGreaterThanOrEqual(before + HOUR);
+    expect(expires).toBeLessThanOrEqual(Date.now() + HOUR);
   });
 
   it('sets X-Expires below the reuse floor when the link expires before the moderation hour', async () => {
