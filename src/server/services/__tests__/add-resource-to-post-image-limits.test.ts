@@ -6,6 +6,7 @@ import {
 } from '~/server/common/constants';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import type * as CommonService from '~/server/services/common.service';
+import type * as RestrictedImagesService from '~/server/services/restricted-images.service';
 import { Availability, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { manualResourceLimitMessages } from '~/utils/manual-image-resources';
 
@@ -89,6 +90,13 @@ vi.mock('~/server/services/tool.service', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
   throwOnBlockedUserContent: vi.fn(),
+}));
+const { flagImagesOnRestrictedVersions } = vi.hoisted(() => ({
+  flagImagesOnRestrictedVersions: vi.fn(async () => ({ flagged: 0, postIds: [] })),
+}));
+vi.mock('~/server/services/restricted-images.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof RestrictedImagesService>()),
+  flagImagesOnRestrictedVersions,
 }));
 const { hasEntityAccess } = vi.hoisted(() => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/common.service', async (importOriginal) => ({
@@ -291,6 +299,25 @@ describe('addResourceToPostImage post cache busting', () => {
     // The post ids reach the query as one joined parameter.
     const params = (dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[]).slice(1);
     expect(params).toContainEqual(expect.objectContaining({ values: [7, 8] }));
+  });
+});
+
+describe('addResourceToPostImage restricted base models', () => {
+  it('applies the restricted-base-model rule to the images it credited', async () => {
+    arrange({ adding: ModelType.Checkpoint, existing: [], imageIds: [IMAGE_ID, OTHER_IMAGE_ID] });
+    await add([IMAGE_ID, OTHER_IMAGE_ID]);
+    expect(flagImagesOnRestrictedVersions).toHaveBeenCalledTimes(1);
+    expect(flagImagesOnRestrictedVersions).toHaveBeenCalledWith({
+      modelVersionIds: [NEW_VERSION_ID],
+      imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
+    });
+  });
+
+  it('has nothing to apply when every resource was already credited', async () => {
+    arrange({ adding: ModelType.Checkpoint, existing: [] });
+    tx.imageResourceNew.createManyAndReturn.mockResolvedValue([]);
+    await add();
+    expect(flagImagesOnRestrictedVersions).not.toHaveBeenCalled();
   });
 });
 
