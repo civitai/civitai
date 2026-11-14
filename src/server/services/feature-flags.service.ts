@@ -963,6 +963,8 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
+  // Storylines: text items between a chapter's images (PostText), their slides and threads.
+  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

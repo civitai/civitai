@@ -1627,6 +1627,21 @@ describe('reading', () => {
       });
     });
 
+    it("returns the chapters' text stubs only for a reader with the text flag", async () => {
+      r.postText.findMany.mockResolvedValue([
+        { id: 1, postId: 101, index: 2, nsfwLevel: NsfwLevel.PG, refused: false },
+      ] as never);
+      const read = { chapterId: 4, viewer: { id: 99 }, browsingLevel: NsfwLevel.PG };
+      expect((await getStorylinePath(read)).texts).toEqual([]);
+      expect(r.postText.findMany).not.toHaveBeenCalled();
+
+      const { texts } = await getStorylinePath({ ...read, withTexts: true });
+      expect(texts).toEqual([{ id: 1, postId: 101, index: 2, nsfwLevel: NsfwLevel.PG }]);
+      const where = r.postText.findMany.mock.calls[0][0]?.where as { postId: { in: number[] } };
+      // Chapter 1 only: the removed chapter and the one above the reader's level are tombstones.
+      expect(where.postId.in).toEqual([101]);
+    });
+
     // A ban is the one removal no row on the chapter or post records: the post stays published and
     // untaken-down, only its author's account changed. The chapter must still read as removed to
     // everyone but moderators — the story's owner included — and must not cut the path short.

@@ -452,6 +452,7 @@ export const CommentEntityType = {
   appListing: 'appListing',
   crucible: 'crucible',
   storyline: 'storyline',
+  postText: 'postText',
 } as const;
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {
