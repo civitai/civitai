@@ -32,6 +32,8 @@ export const withholdDetail = (detail: TrainingDetail): TrainingDetail => ({
   ...detail,
   traces: [],
   liveTraceUrl: undefined,
+  dataset: [],
+  sourceImages: undefined,
   epochs: detail.epochs.map(({ id, number, samples }) => ({
     id,
     number,

@@ -82,7 +82,7 @@ export async function listEditGenerations(
       const inputs = step.input?.images;
       if (!Array.isArray(inputs) || inputs.length !== 1 || typeof inputs[0] !== 'string') continue;
       const sourceUrl = inputs[0];
-      if (!sourceUrl.includes(ORCHESTRATOR_BLOB_PATH)) continue;
+      if (!IMAGE_BLOB.test(sourceUrl)) continue;
       const prompt = [step.input?.prompt, params?.prompt].find(
         (p): p is string => typeof p === 'string' && p.trim().length > 0
       );

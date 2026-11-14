@@ -30,6 +30,9 @@ const detail = {
   name: 'Run',
   traces: [{ epoch: 1, url: `https://x/t?${MARK}`, done: true }],
   liveTraceUrl: `https://x/t?${MARK}`,
+  dataset: [{ air: `https://x/ds?${MARK}`, caption: 'c' }],
+  sourceImages: [`https://x/src?${MARK}`],
+  prompts: ['a photo'],
   epochs: [
     {
       id: '1-0',
@@ -81,8 +84,10 @@ describe.each([
   ['the detail load', () => detailLoad(event())],
   ['GET /api/run-detail', () => runDetailGet(event())],
 ])('%s', (_label, read) => {
-  it('hides every epoch output of a withheld run', async () => {
-    expect(await body(await read())).not.toContain(MARK);
+  it('hides every epoch output and the dataset of a withheld run, keeping its prompts', async () => {
+    const out = await body(await read());
+    expect(out).not.toContain(MARK);
+    expect(JSON.parse(out).detail?.prompts ?? JSON.parse(out).prompts).toEqual(['a photo']);
     expect(withheldRuns).toHaveBeenCalledWith({ cookie: COOKIE, userId: 1 }, ['wf-1']);
   });
 

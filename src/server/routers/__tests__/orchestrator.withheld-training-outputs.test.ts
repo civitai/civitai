@@ -6,12 +6,14 @@ import type * as Workflows from '~/server/services/orchestrator/workflows';
 const h = vi.hoisted(() => ({
   getWorkflow: vi.fn(),
   queryWorkflows: vi.fn(),
+  updateWorkflow: vi.fn(),
   withheld: vi.fn(async (_userId: number, _ids: string[]) => [] as string[]),
 }));
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
   getWorkflow: h.getWorkflow,
   queryWorkflows: h.queryWorkflows,
+  updateWorkflow: h.updateWorkflow,
 }));
 vi.mock('~/server/services/orchestrator/training/studio-withheld', () => ({
   studioWithheldWorkflowIds: h.withheld,
@@ -103,5 +105,16 @@ describe('orchestrator.queryWorkflowsByTags', () => {
     expect(JSON.stringify(items[0])).not.toContain(MARK);
     expect(JSON.stringify(items[1])).toContain(MARK);
     expect(items[2]).toEqual(generation);
+  });
+});
+
+// Not gated: this mutation answers with the formatted generation view, which carries nothing of a
+// training step. Pinned so a change to that formatter cannot start leaking a withheld run.
+describe('orchestrator.updateWorkflow on a training run', () => {
+  it('answers without any training-step input, output or metadata', async () => {
+    h.updateWorkflow.mockResolvedValue(run('wf-1'));
+    const result = await caller().updateWorkflow({ workflowId: 'wf-1' });
+    expect(result).toMatchObject({ id: 'wf-1' });
+    expect(JSON.stringify(result)).not.toContain(MARK);
   });
 });

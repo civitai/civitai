@@ -6,6 +6,10 @@ vi.mock('@civitai/orchestration-client', () => ({
   getWorkflow: (...args: unknown[]) => getWorkflow(...args),
 }));
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
+const withheld = vi.fn(async (_asker: unknown, _ids: string[]) => new Set<string>());
+vi.mock('$lib/server/model-status', () => ({
+  mainAppWithheldRuns: (asker: unknown, ids: string[]) => withheld(asker, ids),
+}));
 
 const { GET } = await import('./+server');
 
@@ -39,7 +43,15 @@ const editGeneration = {
   steps: [
     {
       $type: 'imageGen',
-      input: { images: [`${BLOB}start-1.png?sig=1`, `${BLOB}weights-key.safetensors`] },
+      input: {
+        images: [
+          `${BLOB}start-1.png?sig=1`,
+          `${BLOB}start-2.jpg?sig=1`,
+          `${BLOB}start-3.jpeg`,
+          `${BLOB}start-4.webp?sig=1`,
+          `${BLOB}weights-key.safetensors`,
+        ],
+      },
     },
   ],
 };
@@ -53,6 +65,7 @@ let nextUser = 1;
 const get = (query: string, userId = nextUser++) =>
   GET({
     locals: { user: { id: userId } },
+    request: new Request('http://x', { headers: { cookie: 'civ-token=x' } }),
     url: new URL(`http://x/api/dataset-blob?${query}`),
     fetch: upstream,
   } as unknown as Parameters<typeof GET>[0]);
@@ -148,5 +161,27 @@ describe('GET /api/dataset-blob', () => {
     getWorkflow.mockResolvedValueOnce({ data: { ...trainingRun, steps: [] } });
     expect(await status(() => get('air=ds-1.png&workflowId=wf-1', 905))).toBe(404);
     expect(await (await get('air=ds-1.png&workflowId=wf-1', 905)).text()).toBe('bytes');
+  });
+
+  it.each(['start-2.jpg?sig=1', 'start-3.jpeg', 'start-4.webp?sig=1'])(
+    "serves an image edit's %s starting image",
+    async (name) => {
+      const air = encodeURIComponent(`${BLOB}${name}`);
+      expect(await (await get(`air=${air}&workflowId=gen-1`)).text()).toBe('bytes');
+    }
+  );
+
+  it('never streams a blob that is not media, whatever it is named', async () => {
+    upstream.mockResolvedValueOnce(
+      new Response('weights', { headers: { 'content-type': 'application/octet-stream' } })
+    );
+    expect(await status(() => get('air=ds-1.png&workflowId=wf-1'))).toBe(404);
+  });
+
+  it("refuses a withheld run's dataset images, without reading or fetching them", async () => {
+    withheld.mockImplementationOnce(async () => new Set(['wf-1']));
+    expect(await status(() => get('air=ds-1.png&workflowId=wf-1', 906))).toBe(403);
+    expect(getWorkflow).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
   });
 });
