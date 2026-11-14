@@ -2,9 +2,15 @@ import { IconPlayerPauseFilled, IconPlayerPlayFilled } from '@tabler/icons-react
 import type { CSSProperties } from 'react';
 import { ViewerBrowsingLevelScope } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { Tooltip } from '~/components/MantineOverlays';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { SongLyrics } from '~/components/Music/SongDetail/SongLyrics';
 import { useMoreFromCreator } from '~/components/Music/SongDetail/useMoreFromCreator';
-import { accentAt, Equalizer, SongArt } from '~/components/MusicPlayer/MusicPlayerParts';
+import {
+  accentAt,
+  Equalizer,
+  SongArt,
+  songCreatorHref,
+} from '~/components/MusicPlayer/MusicPlayerParts';
 import type { SongImage } from '~/components/MusicPlayer/PostSong';
 import { songTrack } from '~/components/MusicPlayer/PostSong';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
@@ -74,21 +80,21 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
     <div
       data-lyrics-scroll
       data-testid="song-detail-stage"
-      className="flex size-full flex-col gap-6 overflow-y-auto px-4 pb-6 pt-1 text-white @md:flex-row @md:items-center @md:gap-10 @md:overflow-hidden @md:px-16 @md:py-10"
+      className="flex size-full flex-col gap-6 overflow-y-auto px-4 pb-6 pt-1 text-white @md:flex-row @md:items-center @md:justify-center @md:gap-10 @md:overflow-hidden @md:px-16 @md:py-10 @lg:gap-16"
       style={
         (accent
           ? { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }
           : undefined) as CSSProperties
       }
     >
-      <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px]">
+      <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px] @lg:w-[400px]">
         <div
-          className="relative h-[300px] w-full shrink-0 rounded-2xl @md:size-80 @md:rounded-3xl"
+          className="relative h-[300px] w-full shrink-0 rounded-2xl @md:size-80 @md:rounded-3xl @lg:size-[400px]"
           style={{ boxShadow: `0 20px 60px ${accentAt(40)}` }}
         >
           <SongArt
             url={revealed ? cover?.url : undefined}
-            width={320}
+            width={400}
             iconSize={72}
             className="size-full rounded-2xl @md:rounded-3xl"
           />
@@ -120,15 +126,24 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
             {title}
           </h1>
           <span className="text-[13px] text-white/70">
-            {[track.creator.username, formatPlaybackTime(track.durationSec)]
-              .filter(Boolean)
-              .join(' · ')}
+            {track.creator.username && (
+              <>
+                <NextLink
+                  href={songCreatorHref(track.creator.username)}
+                  className="hover:text-white hover:underline"
+                >
+                  {track.creator.username}
+                </NextLink>
+                {' · '}
+              </>
+            )}
+            {formatPlaybackTime(track.durationSec)}
           </span>
         </div>
       </div>
       <div
         data-lyrics-scroll
-        className="min-w-0 flex-1 @md:max-h-full @md:self-stretch @md:overflow-y-auto @md:py-[10%] @md:[mask-image:linear-gradient(to_bottom,transparent,black_8%,black_92%,transparent)]"
+        className="min-w-0 flex-1 @md:max-h-full @md:max-w-[720px] @md:self-stretch @md:overflow-y-auto @md:py-[10%] @md:[mask-image:linear-gradient(to_bottom,transparent,black_8%,black_92%,transparent)]"
       >
         <div className="@md:flex @md:min-h-full @md:flex-col @md:justify-center">
           {lyricsState === 'loading' && <LyricsPlaceholder />}

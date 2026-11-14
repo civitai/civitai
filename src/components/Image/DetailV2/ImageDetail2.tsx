@@ -569,7 +569,13 @@ function ImageDetail2Content() {
                             </DownloadImage>
                           </div>
                         </div>
-                        <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
+                        {/* A song's stage contrasts with the sidebar, so the toggle keeps the header's padding. */}
+                        <div
+                          className={clsx(
+                            '@max-md:hidden',
+                            sidebarOpen && (isSong ? 'ml-3' : '-mr-3 ml-3')
+                          )}
+                        >
                           <LegacyActionIcon
                             {...sharedActionIconProps}
                             onClick={handleSidebarToggle}

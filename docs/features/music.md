@@ -6,6 +6,8 @@ surfaces below change anything.
 
 - **Global player:** `src/store/music-player.store.ts` holds the current song, Up next and playback; one
   `<audio>` element (`MusicPlayerAudio`) plays it. Every surface starts a song with `playFromList`.
+  The bar's cover and title open the song's detail view, and the creator's name opens their profile
+  (`songCreatorHref`; profiles have no music section yet).
 - **Lyrics:** stored in `TrackLyrics.lines` as `[{ t, text }]`, `t` in milliseconds or null when the
   line has no time.
 - **Visibility:** a song shows only once it is reviewed (`songReviewedSql` / `imageReviewedSql` in
@@ -18,7 +20,7 @@ pieces live in `src/components/Music/SongDetail/`.
 
 | Part | Behaviour |
 |------|-----------|
-| Stage (`SongDetailStage`) | The carousel slide of a song: the cover with a play button, title, creator and length, and the lyrics beside it. Arrows still browse the feed the view was opened from. |
+| Stage (`SongDetailStage`) | The carousel slide of a song: the cover with a play button, title, creator (linking to their profile) and length, and the lyrics beside it, centred as one group (lyrics at most 720px wide; the cover grows from 320px to 400px from the `lg` container width). Arrows still browse the feed the view was opened from. |
 | Colour environment (`SongStageBackdrop`) | The cover, blurred, over a wash of its accent (`music-accent.ts`), under a dark scrim, once the image guard reveals the song. No cover the viewer may see: the Civitai primary. |
 | Playback | Through the global player only. Opening a song never autoplays. Play starts the song with the creator's other songs as Up next, which reads "Next from <creator>"; on the current song the button pauses and resumes instead of restarting. The cover shows "Playing m:ss" or "Paused" while it is the current song. |
 | Synced lyrics (`SongLyrics`) | While the song is current, the line the playhead has reached is highlighted and followed. Clicking a timed line seeks there; when another song is current, this one starts at that line. A line with `t: null` renders as text and is not clickable. Lyrics with no times at all are plain text: no highlight, nothing to click. `[Verse 1]`-style lines render as section labels. |

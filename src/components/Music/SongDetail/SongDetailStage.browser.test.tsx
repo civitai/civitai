@@ -90,7 +90,10 @@ describe('the song stage', () => {
     await expect
       .element(page.getByRole('heading', { name: 'Midnight Arcade' }))
       .toBeInTheDocument();
-    await expect.element(page.getByText('neonwave · 2:58')).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('link', { name: 'neonwave' }))
+      .toHaveAttribute('href', '/user/neonwave');
+    await expect.element(page.getByText('· 2:58')).toBeInTheDocument();
     expect(player().current).toBeNull();
   });
 

@@ -10,6 +10,9 @@ export const accentAt = (percent: number) =>
 
 export const dimmed = 'text-gray-6 dark:text-dark-2';
 
+/** Where a song's creator name leads: their profile, until profiles have a music section. */
+export const songCreatorHref = (username: string) => `/user/${username}`;
+
 // Pencil `VKZHS`: playing and paused bar heights.
 const EQ_HEIGHTS = { playing: [10, 16, 7, 13], paused: [6, 10, 5, 8] };
 

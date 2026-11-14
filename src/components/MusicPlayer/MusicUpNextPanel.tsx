@@ -29,7 +29,7 @@ import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
-import { MUSIC_UP_NEXT_Z_INDEX, PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
+import { MUSIC_UP_NEXT_Z_INDEX, PlayerTooltip, MUSIC_PLAYER_BAR_HEIGHT } from '~/components/MusicPlayer/MusicPlayerLayers';
 import {
   ACCENT,
   accentAt,
@@ -177,9 +177,9 @@ export function MusicUpNextPanel({
           {
             ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
             zIndex: MUSIC_UP_NEXT_Z_INDEX,
-            bottom: 'calc(112px + var(--safe-area-inset-bottom) + 12px)',
+            bottom: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom) + 12px)`,
             maxHeight:
-              'calc(100dvh - var(--header-height, 0px) - 112px - var(--safe-area-inset-bottom) - 24px)',
+              `calc(100dvh - var(--header-height, 0px) - ${MUSIC_PLAYER_BAR_HEIGHT}px - var(--safe-area-inset-bottom) - 24px)`,
           } as CSSProperties
         }
       >

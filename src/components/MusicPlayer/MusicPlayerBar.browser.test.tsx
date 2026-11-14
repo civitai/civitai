@@ -115,6 +115,27 @@ describe('the global player bar', () => {
     await expect.element(page.getByText('3:32')).toBeInTheDocument();
   });
 
+  test("the cover and title open the song's detail; the creator opens their profile", async () => {
+    await renderWithProviders(<MusicPlayerBar />);
+    const region = page.getByRole('region', { name: 'Music player' });
+    const detailLinks = region
+      .getByRole('link')
+      .elements()
+      .filter((el) => el.getAttribute('href')?.includes(`/images/${SONG_ID}`));
+    // The cover, and the title.
+    expect(detailLinks).toHaveLength(2);
+    expect(detailLinks[1].textContent).toBe('Midnight Arcade');
+    await expect
+      .element(region.getByRole('link', { name: 'neonwave' }))
+      .toHaveAttribute('href', '/user/neonwave');
+  });
+
+  test('is slim: 72px tall on desktop', async () => {
+    await renderWithProviders(<MusicPlayerBar />);
+    await expect.element(page.getByText('Midnight Arcade')).toBeInTheDocument();
+    expect(bar().getBoundingClientRect().height).toBe(72);
+  });
+
   test('seeks from the waveform by keyboard and by pointer', async () => {
     // The desktop width the bar is drawn for, so the waveform has room to seek across.
     await page.viewport(1440, 800);
