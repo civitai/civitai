@@ -115,6 +115,39 @@ export const getBountyTransactionPrefix = (bountyId: number, userId: number) => 
   return `bounty-${bountyId}-${userId}-${randomBytes(6).toString('hex')}-${Date.now()}`;
 };
 
+/**
+ * The creation charge's prefix for a keyed bounty: the creator, the client's key (a uuid, minted
+ * once per new bounty and resent on its retries), then the time the client minted the key. The
+ * same on every retry, so the ledger holds one charge for it; the user comes first, so a key can
+ * only ever name this creator's charge. The time stays last, where award pricing reads it
+ * (`prefixChargedAt`), and is chosen once per key: a time taken per request would make each retry
+ * a new prefix. `bounty-k-` keeps it apart from the keyless form (`bounty-<bountyId>-…`), whose
+ * second segment is a number.
+ */
+export const getKeyedBountyTransactionPrefix = (
+  userId: number,
+  idempotencyKey: string,
+  chargedAt: number
+) => `bounty-k-${userId}-${idempotencyKey}-${chargedAt}`;
+
+/**
+ * How far a keyed creation's client-chosen charge time may sit from the server's clock. A retry can
+ * come long after the key was minted; a time ahead of the server is a client clock running fast.
+ * Outside the window the key is not used and the creation is charged as an unkeyed one (a new
+ * prefix per call, as before keys): a client with a badly wrong clock keeps the old behaviour
+ * rather than being refused, and a backdated time cannot reach the pricing.
+ */
+export const KEYED_BOUNTY_CHARGED_AT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const KEYED_BOUNTY_CHARGED_AT_MAX_LEAD_MS = 24 * 60 * 60 * 1000;
+
+/** The client's charge time for a keyed creation, or undefined when it is outside the window. */
+export function keyedBountyChargedAt(chargedAt: number | undefined, now = Date.now()) {
+  if (chargedAt === undefined) return undefined;
+  if (chargedAt < now - KEYED_BOUNTY_CHARGED_AT_MAX_AGE_MS) return undefined;
+  if (chargedAt > now + KEYED_BOUNTY_CHARGED_AT_MAX_LEAD_MS) return undefined;
+  return chargedAt;
+}
+
 export const isBountyTransactionPrefix = (prefix: string) => {
   return prefix.startsWith('bounty-') && prefix.split('-').length >= 4;
 };
@@ -234,6 +267,8 @@ export const createBounty = async ({
   buzzType,
   addLockedProperties,
   blurbUses,
+  idempotencyKey,
+  chargedAt,
   ...data
 }: CreateBountyInput & {
   userId: number;
@@ -246,12 +281,26 @@ export const createBounty = async ({
   blurbUses?: BlurbUse[];
 }) => {
   const { userId } = data;
+  // A Buzz bounty with the client's key and a usable charge time is charged once across retries
+  // (createKeyedBuzzBounty); anything else is charged as before keys.
+  const keyedChargedAt =
+    currency === Currency.BUZZ && idempotencyKey !== undefined
+      ? keyedBountyChargedAt(chargedAt)
+      : undefined;
+  const keyed =
+    idempotencyKey !== undefined && keyedChargedAt !== undefined
+      ? { idempotencyKey, chargedAt: keyedChargedAt }
+      : undefined;
+  const assertCanAffordBounty = async () => {
+    const account = await getUserBuzzAccount({ accountId: userId });
+    if ((account[0]?.balance ?? 0) < unitAmount) {
+      throw throwInsufficientFundsError();
+    }
+  };
   switch (currency) {
     case Currency.BUZZ:
-      const account = await getUserBuzzAccount({ accountId: userId });
-      if ((account[0]?.balance ?? 0) < unitAmount) {
-        throw throwInsufficientFundsError();
-      }
+      // A keyed charge checks the balance only when nothing is held under its key yet.
+      if (!keyed) await assertCanAffordBounty();
       break;
     default: // Do no checks
       break;
@@ -274,105 +323,140 @@ export const createBounty = async ({
   let imagesToIngest: IngestImageInput[] = [];
   const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
-  const bounty = await dbWrite.$transaction(
-    async (tx) => {
-      const bounty = await tx.bounty.create({
-        data: {
-          ...data,
-          lockedProperties: lockedProperties.length ? lockedProperties : undefined,
-          startsAt,
-          expiresAt,
-          // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
-          entryMode: BountyEntryMode.BenefactorsOnly,
-          details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
-          tags: tags
-            ? {
-                create: tags.map((tag) => {
-                  const name = tag.name.toLowerCase().trim();
-                  return {
-                    tag: {
-                      connectOrCreate: {
-                        where: { name },
-                        create: { name, target: [TagTarget.Bounty] },
-                      },
+  // The bounty row with its files and images, on the caller's transaction. `id` is set only for a
+  // keyed creation, which picks the id before it charges (see createKeyedBuzzBounty).
+  const writeBountyRows = async (tx: Prisma.TransactionClient, id?: number) => {
+    const bounty = await tx.bounty.create({
+      data: {
+        ...(id !== undefined ? { id } : {}),
+        ...data,
+        lockedProperties: lockedProperties.length ? lockedProperties : undefined,
+        startsAt,
+        expiresAt,
+        // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
+        entryMode: BountyEntryMode.BenefactorsOnly,
+        details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
+        tags: tags
+          ? {
+              create: tags.map((tag) => {
+                const name = tag.name.toLowerCase().trim();
+                return {
+                  tag: {
+                    connectOrCreate: {
+                      where: { name },
+                      create: { name, target: [TagTarget.Bounty] },
                     },
-                  };
-                }),
-              }
-            : undefined,
-        },
+                  },
+                };
+              }),
+            }
+          : undefined,
+      },
+    });
+
+    if (files) {
+      await updateEntityFiles({
+        tx,
+        entityId: bounty.id,
+        entityType: 'Bounty',
+        files,
+        ownRights: !!ownRights,
       });
+    }
 
-      if (files) {
-        await updateEntityFiles({
-          tx,
-          entityId: bounty.id,
-          entityType: 'Bounty',
-          files,
-          ownRights: !!ownRights,
-        });
-      }
+    if (images) {
+      imagesToIngest = await createEntityImages({
+        images,
+        tx,
+        userId,
+        keysCheckedFor,
+        entityId: bounty.id,
+        entityType: 'Bounty',
+      });
+    }
+    return bounty;
+  };
+  const writeBenefactor = (tx: Prisma.TransactionClient, bountyId: number, prefix: string) =>
+    tx.bountyBenefactor.create({
+      data: {
+        userId,
+        bountyId,
+        unitAmount,
+        currency,
+        buzzTransactionId: [prefix],
+      },
+    });
+  const writeBlurbReferences = async (tx: Prisma.TransactionClient, bountyId: number) => {
+    if (blurbUses)
+      await reconcileBlurbReferences({
+        entityType: 'Bounty',
+        entityId: bountyId,
+        uses: blurbUses,
+        tx,
+      });
+  };
 
-      if (images) {
-        imagesToIngest = await createEntityImages({
-          images,
-          tx,
-          userId,
-          keysCheckedFor,
-          entityId: bounty.id,
-          entityType: 'Bounty',
-        });
-      }
+  let bounty: Awaited<ReturnType<typeof writeBountyRows>>;
+  if (keyed) {
+    if (!buzzType) throw throwBadRequestError('buzzType is required for Buzz bounties');
+    const created = await createKeyedBuzzBounty({
+      userId,
+      unitAmount,
+      buzzType,
+      ...keyed,
+      assertCanAffordBounty,
+      write: async (tx, id, prefix) => {
+        const written = await writeBountyRows(tx, id);
+        await writeBenefactor(tx, written.id, prefix);
+        await writeBlurbReferences(tx, written.id);
+        return written;
+      },
+    });
+    // An earlier request under this key created the bounty and did what follows.
+    if (!created.createdHere)
+      return { ...created.bounty, details: created.bounty.details as BountyDetailsSchema | null };
+    bounty = created.bounty;
+  } else {
+    bounty = await dbWrite.$transaction(
+      async (tx) => {
+        const bounty = await writeBountyRows(tx);
 
-      switch (currency) {
-        case Currency.BUZZ: {
-          if (!buzzType) {
-            throw throwBadRequestError('buzzType is required for Buzz bounties');
+        switch (currency) {
+          case Currency.BUZZ: {
+            if (!buzzType) {
+              throw throwBadRequestError('buzzType is required for Buzz bounties');
+            }
+
+            const prefix = getBountyTransactionPrefix(bounty.id, userId);
+            // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz charge inside the txn for a keyless creation (a client from before keys). A keyed one charges outside and records after (createKeyedBuzzBounty).
+            await createMultiAccountBuzzTransaction({
+              fromAccountId: userId,
+              fromAccountTypes: [buzzType],
+              externalTransactionIdPrefix: prefix,
+              toAccountId: 0,
+              amount: unitAmount,
+              type: TransactionType.Bounty,
+              details: {
+                entityId: bounty.id,
+                entityType: 'Bounty',
+              },
+            });
+
+            await writeBenefactor(tx, bounty.id, prefix);
+
+            break;
           }
-
-          const prefix = getBountyTransactionPrefix(bounty.id, userId);
-          // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz charge inside the txn. Moving it out needs charge→tx→refund-on-failure compensation (a Postgres rollback can't undo an external Buzz charge); left for a domain-owner change.
-          await createMultiAccountBuzzTransaction({
-            fromAccountId: userId,
-            fromAccountTypes: [buzzType],
-            externalTransactionIdPrefix: prefix,
-            toAccountId: 0,
-            amount: unitAmount,
-            type: TransactionType.Bounty,
-            details: {
-              entityId: bounty.id,
-              entityType: 'Bounty',
-            },
-          });
-
-          await tx.bountyBenefactor.create({
-            data: {
-              userId,
-              bountyId: bounty.id,
-              unitAmount,
-              currency,
-              buzzTransactionId: [prefix],
-            },
-          });
-
-          break;
+          default: // Do no checks
+            break;
         }
-        default: // Do no checks
-          break;
-      }
 
-      if (blurbUses)
-        await reconcileBlurbReferences({
-          entityType: 'Bounty',
-          entityId: bounty.id,
-          uses: blurbUses,
-          tx,
-        });
+        await writeBlurbReferences(tx, bounty.id);
 
-      return bounty;
-    },
-    { maxWait: 10000, timeout: 30000 }
-  );
+        return bounty;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
+  }
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -386,6 +470,115 @@ export const createBounty = async ({
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
+
+/**
+ * A new bounty id, taken before the creation is charged so the charge can name the bounty it pays
+ * for (`details.entityId`, which links the creator's transaction to it). Null when it cannot be
+ * taken: the charge then names no bounty and the row takes its id on insert.
+ */
+async function reserveBountyId(): Promise<number | null> {
+  try {
+    const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT nextval(pg_get_serial_sequence('"Bounty"', 'id'))::int AS id
+    `;
+    return typeof row?.id === 'number' ? row.id : null;
+  } catch {
+    return null;
+  }
+}
+
+type CreatedBounty = Prisma.BountyGetPayload<true>;
+
+/**
+ * A keyed Buzz bounty: charged once across the client's retries and created once.
+ *
+ * The charge runs first and OUTSIDE any transaction (`chargeByPrefix` under the keyed prefix:
+ * looked up first, the balance checked only when nothing is held, an unknown outcome resent once
+ * and otherwise "may have gone through", a held charge reused only for the same terms). Then the
+ * bounty and its benefactor row are written in one short transaction under the key's lock
+ * (`recordKeyedCharge`): a benefactor row already holding the prefix answers the retry with its
+ * bounty, a refunded charge is refused, and a failed write refunds the charge under the lock.
+ *
+ * The id is reserved before the charge, so the charge names the bounty. A retry reserves a new one
+ * and creates the bounty under it, so a charge whose first request never recorded it names an id
+ * no bounty took; the benefactor row (which award pricing and refunds read) always holds the prefix.
+ */
+async function createKeyedBuzzBounty({
+  userId,
+  unitAmount,
+  buzzType,
+  idempotencyKey,
+  chargedAt,
+  assertCanAffordBounty,
+  write,
+}: {
+  userId: number;
+  unitAmount: number;
+  buzzType: BuzzSpendType;
+  idempotencyKey: string;
+  chargedAt: number;
+  assertCanAffordBounty: () => Promise<void>;
+  write: (
+    tx: Prisma.TransactionClient,
+    id: number | undefined,
+    prefix: string
+  ) => Promise<CreatedBounty>;
+}): Promise<{ bounty: CreatedBounty; createdHere: boolean }> {
+  // Imported here, not at the top, as report.service does: only a keyed creation needs them.
+  const { chargeByPrefix, prefixWasRefunded } = await import('~/server/services/buzz-keyed-charge');
+  const { CHARGE_LOCKED_READ, CHARGE_LOCKED_REFUND, recordKeyedCharge } = await import(
+    '~/server/services/buzz-charge-lock'
+  );
+  const { refundMultiAccountTransaction } = await import('~/server/services/buzz.service');
+
+  const prefix = getKeyedBountyTransactionPrefix(userId, idempotencyKey, chargedAt);
+  const context = { userId, amount: unitAmount };
+  const id = (await reserveBountyId()) ?? undefined;
+
+  await chargeByPrefix(prefix, context, {
+    reusable: true,
+    expected: {
+      amount: unitAmount,
+      fromAccountId: userId,
+      fromAccountTypes: [buzzType],
+      toAccountId: 0,
+      type: TransactionType.Bounty,
+    },
+    beforeCharging: assertCanAffordBounty,
+    charge: () =>
+      createMultiAccountBuzzTransaction({
+        fromAccountId: userId,
+        fromAccountTypes: [buzzType],
+        externalTransactionIdPrefix: prefix,
+        toAccountId: 0,
+        amount: unitAmount,
+        type: TransactionType.Bounty,
+        details: { ...(id !== undefined ? { entityId: id } : {}), entityType: 'Bounty' },
+      }),
+    declined: () => new TRPCError({ code: 'BAD_REQUEST', message: 'Unable to charge the bounty' }),
+  });
+
+  return recordKeyedCharge<{ bounty: CreatedBounty; createdHere: boolean }>(prefix, context, {
+    findRecorded: async (tx) => {
+      const recorded = await tx.bountyBenefactor.findFirst({
+        where: { userId, buzzTransactionId: { has: prefix } },
+        select: { bounty: true },
+      });
+      return recorded ? { bounty: recorded.bounty, createdHere: false } : null;
+    },
+    isRefunded: () => prefixWasRefunded(prefix, context, CHARGE_LOCKED_READ),
+    record: async (tx) => ({ bounty: await write(tx, id, prefix), createdHere: true }),
+    refund: () =>
+      refundMultiAccountTransaction(
+        {
+          externalTransactionIdPrefix: prefix,
+          description: 'Reason: Bounty refund, the bounty was not created',
+          details: { entityType: 'Bounty', reason: 'bounty-not-created' },
+        },
+        CHARGE_LOCKED_REFUND
+      ),
+  });
+}
 
 export const updateBountyById = async ({
   id,

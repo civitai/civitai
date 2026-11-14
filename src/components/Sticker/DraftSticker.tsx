@@ -20,6 +20,7 @@ import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
@@ -302,14 +303,21 @@ export function DraftSticker({
     if (perUse == null) return;
 
     try {
-      await buyUses.mutateAsync({
+      const input = {
         cosmeticId: draft.cosmeticId,
         quantity: 1,
         // What the button charged for. The server refuses if the creator has
         // moved the price since this rendered.
         expectedPricePerUse: perUse,
-        payWith: 'default',
-      });
+        payWith: 'default' as const,
+      };
+      // One key per draft's use, held across a failure that may have charged, so
+      // pressing again is the same use, charged and granted once. The draft is part
+      // of it: two copies of one sticker each buying their use are two top-ups.
+      await withPaymentIntentKey(
+        submissionIntent('sticker-topup', { draftId: draft.id, ...input }),
+        (idempotencyKey) => buyUses.mutateAsync({ ...input, idempotencyKey })
+      );
       // 🔴 THE USE BELONGS TO THE DRAFT THAT PAID FOR IT. Coverage is otherwise
       // assigned in creation order, so buying from the second of two copies
       // raised the balance and covered the FIRST — this button would not change,
