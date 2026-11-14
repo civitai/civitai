@@ -797,6 +797,25 @@ export const articleContentImageSelect = {
   height: true,
 } satisfies Prisma.ImageSelect;
 
+/** What deciding whether to serve each body image takes; kept out of the page payload. */
+export async function getArticleBodyImageStates(articleId: number) {
+  const connections = await dbRead.imageConnection.findMany({
+    where: { entityId: articleId, entityType: ImageConnectionType.Article },
+    select: {
+      image: {
+        select: {
+          url: true,
+          nsfwLevel: true,
+          ingestion: true,
+          needsReview: true,
+          tosViolation: true,
+        },
+      },
+    },
+  });
+  return connections.map((connection) => connection.image);
+}
+
 export const getArticleById = async ({
   id,
   userId,
