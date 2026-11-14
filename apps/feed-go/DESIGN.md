@@ -127,7 +127,9 @@ internal/fallback    the fallback error and its reasons
   (`feed-go:getAllImages:v1:<sha256>`), but adds its keys to the **same** `tag:images-model…` sets,
   so the existing invalidation on image upload / update clears both services' entries at once.
 - **The image feed service** (`FEED_SERVICE_URL`, the same variable and value the Node pools carry):
-  `GET <base>/v1/feed?<query>` with a 5s timeout and `x-request-source: primary`, the query built
+  `GET <base>/v1/feed?<query>` with a 5s timeout, `x-request-source: shadow` and
+  `x-replay-id: feed-go-shadow` (the feed service labels its metrics by the replay id, so shadow load
+  stays out of its live series), at most four completion fetches at once per request, the query built
   exactly as `mapSearchInputToFeedQuery(input, 'primary', 'website')` builds it (`internal/feedsvc`,
   tests pin the literal query strings). A mapper refusal Node answers with an empty page is answered
   with an empty page here too; one Node answers with a 400 falls back. The feed's ids are hydrated

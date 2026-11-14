@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,6 +185,69 @@ func TestCompletePosts(t *testing.T) {
 	err := completePosts(context.Background(), src, newPosts(), []int{10}, map[int]int{10: 2})
 	if fallback.Reason(err) != "feed-unavailable" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// slowPosts is a page source whose completion fetches take a while and record how many ran at once.
+type slowPosts struct {
+	mu       sync.Mutex
+	inFlight int
+	maxSeen  int
+	calls    int
+}
+
+func (s *slowPosts) Page(context.Context, Cursor, int) ([]Image, Cursor, error) {
+	return nil, Cursor{}, nil
+}
+
+func (s *slowPosts) Posts(context.Context, []int, int) ([]Image, error) {
+	s.mu.Lock()
+	s.calls++
+	s.inFlight++
+	s.maxSeen = max(s.maxSeen, s.inFlight)
+	s.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+	return nil, nil
+}
+
+func TestCompletePostsBoundsConcurrentFetches(t *testing.T) {
+	// Twelve posts of completionRowsPerFetch rows each: one completion fetch per post. Node runs all
+	// twelve at once; a shadow comparison must hold them to completionConcurrency at a time.
+	posts := map[int][]Image{}
+	counts := map[int]int{}
+	var ids []int
+	for id := 1; id <= 12; id++ {
+		posts[id] = []Image{pimg(id*100, id)}
+		counts[id] = completionRowsPerFetch
+		ids = append(ids, id)
+	}
+	src := &slowPosts{}
+	if err := completePosts(context.Background(), src, posts, ids, counts); err != nil {
+		t.Fatal(err)
+	}
+	if src.calls != 12 {
+		t.Fatalf("completion fetches = %d, want 12", src.calls)
+	}
+	if src.maxSeen > 4 {
+		t.Fatalf("%d completion fetches ran at once, want at most 4", src.maxSeen)
+	}
+}
+
+func TestIndexSourceCallerBudgetIsNotAFeedOutage(t *testing.T) {
+	// The comparison's own deadline expiring mid-call is this service's error, not a feed-unavailable
+	// fallback (which would count the sample as a shape feed-go cannot serve).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	src := &indexSource{
+		feed: &fakeFeed{err: context.Canceled},
+		base: feedsvc.Query{BrowsingLevel: 1, ModelVersionID: 9, Sort: SortNewest},
+	}
+	_, _, err := src.Page(ctx, Cursor{}, 8)
+	if !errors.Is(err, context.Canceled) || fallback.Reason(err) != "" {
+		t.Fatalf("err = %v (fallback reason %q), want the context's error", err, fallback.Reason(err))
 	}
 }
 

@@ -119,6 +119,10 @@ func (s *indexSource) serve(ctx context.Context, q feedsvc.Query) ([]Image, Curs
 	}
 	ans, err := s.feed.Fetch(ctx, query)
 	if err != nil {
+		if ctx.Err() != nil {
+			// The caller's budget ran out: an error of this service, not a feed outage.
+			return nil, Cursor{}, ctx.Err()
+		}
 		// Node answers a failed call with a 503, or (feed-service-degrade on) with the pod's last good
 		// copy of the page, which this service does not hold.
 		return nil, Cursor{}, fallback.Newf("feed-unavailable", "%v", err)
@@ -164,6 +168,12 @@ const (
 	completionPostsPerFetch = 25
 	completionRowsPerFetch  = feedsvc.MaxLimit
 )
+
+// completionConcurrency caps the completion fetches one request runs at once. Node runs them all
+// at once (Promise.all); a shadow comparison only re-runs a served request, so it is held to a few
+// at a time to bound what it adds to the feed service and the pool. Results land by batch index,
+// so the cap changes timing only, never the page.
+const completionConcurrency = 4
 
 // packPostCompletions groups posts into completion fetches of at most completionPostsPerFetch posts
 // and completionRowsPerFetch rows, in order; a post larger than one fetch goes alone.
@@ -240,6 +250,7 @@ func completePosts(ctx context.Context, src pageSource, posts map[int][]Image, p
 	batches := packPostCompletions(partial, rowCountOf)
 	results := make([][]Image, len(batches))
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(completionConcurrency)
 	for i, batch := range batches {
 		limit := 0
 		for _, id := range batch {

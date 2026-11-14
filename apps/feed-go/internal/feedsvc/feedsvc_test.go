@@ -136,9 +136,10 @@ func TestCursorCodec(t *testing.T) {
 }
 
 func TestClientFetch(t *testing.T) {
-	var gotPath, gotQuery, gotSource string
+	var gotPath, gotQuery, gotSource, gotReplay string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath, gotQuery, gotSource = r.URL.Path, r.URL.RawQuery, r.Header.Get("x-request-source")
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		gotSource, gotReplay = r.Header.Get("x-request-source"), r.Header.Get("x-replay-id")
 		if r.URL.Query().Get("sort") == "oldest" {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte("bad"))
@@ -154,10 +155,14 @@ func TestClientFetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/v1/feed" || gotQuery != "levels=1&sort=newest&limit=2" || gotSource != "primary" {
-		t.Fatalf("request = %s ? %s (source %q)", gotPath, gotQuery, gotSource)
+	if gotPath != "/v1/feed" || gotQuery != "levels=1&sort=newest&limit=2" {
+		t.Fatalf("request = %s ? %s", gotPath, gotQuery)
 	}
-	if a.Status != 200 || !reflect.DeepEqual(a.IDs, []int{30, 10, 20}) || a.NextCursor != "1700|10" || a.Route != "walk" {
+	// Shadow calls are marked as such: never the served-traffic source, and out of the live series.
+	if gotSource != "shadow" || gotReplay != "feed-go-shadow" {
+		t.Fatalf("headers: x-request-source=%q x-replay-id=%q, want shadow / feed-go-shadow", gotSource, gotReplay)
+	}
+	if a.Status != 200 || !reflect.DeepEqual(a.IDs, []int{30, 10, 20}) || a.NextCursor != "1700|10" {
 		t.Fatalf("answer = %+v", a)
 	}
 	a, err = c.Fetch(context.Background(), "sort=oldest")

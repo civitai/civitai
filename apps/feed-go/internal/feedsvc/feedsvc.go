@@ -315,8 +315,17 @@ type Answer struct {
 	Status     int
 	IDs        []int
 	NextCursor string // the feed's own `<a>|<b>`, "" = end
-	Route      string
 }
+
+// Shadow-traffic headers. feed-go only re-runs sampled requests, so its calls must not read as the
+// site's served traffic. `x-request-source: shadow` is FeedQueryMode's non-serving value
+// (feed-shadow.service.ts; Node's served reads send `primary`, and the feed service reads neither
+// today). The feed service labels its route, estimate and duration metrics with `x-replay-id`
+// (`replay`, "live" when absent), so this id is what keeps feed-go's load out of the live series.
+const (
+	RequestSource = "shadow"
+	ReplayID      = "feed-go-shadow"
+)
 
 // Timeout is FEED_PRIMARY_TIMEOUT_MS.
 const Timeout = 5 * time.Second
@@ -341,8 +350,8 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 	if err != nil {
 		return Answer{}, err
 	}
-	// The source Node sends for a primary (served) read, so the feed treats both callers alike.
-	req.Header.Set("x-request-source", "primary")
+	req.Header.Set("x-request-source", RequestSource)
+	req.Header.Set("x-replay-id", ReplayID)
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient
@@ -357,16 +366,15 @@ func (c *Client) Fetch(ctx context.Context, query string) (Answer, error) {
 		return Answer{Status: res.StatusCode}, nil
 	}
 	var body struct {
-		Items      []any  `json:"items"`
-		NextCursor any    `json:"nextCursor"`
-		Route      string `json:"route"`
+		Items      []any `json:"items"`
+		NextCursor any   `json:"nextCursor"`
 	}
 	dec := json.NewDecoder(io.LimitReader(res.Body, 8<<20))
 	dec.UseNumber()
 	if err := dec.Decode(&body); err != nil {
 		return Answer{}, fmt.Errorf("feed answer: %w", err)
 	}
-	a := Answer{Status: res.StatusCode, Route: body.Route, IDs: Ints(body.Items)}
+	a := Answer{Status: res.StatusCode, IDs: Ints(body.Items)}
 	if s, ok := body.NextCursor.(string); ok {
 		a.NextCursor = s
 	}

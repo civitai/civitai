@@ -118,7 +118,11 @@ func run(log *slog.Logger) error {
 	// Without FEED_SERVICE_URL the Node app answers from Postgres (feedPrimaryAvailable() false: local
 	// development only); with the index flag mirrored on, those requests fall back here instead.
 	if cfg.FeedServiceURL != "" {
-		deps.Feed = &feedsvc.Client{BaseURL: cfg.FeedServiceURL, HTTP: &http.Client{Timeout: feedsvc.Timeout}}
+		// Fetch bounds each call (feedsvc.Timeout); the transport keeps enough idle connections for
+		// the shadow workers' bounded completion fan-out, so a burst does not open new ones per call.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.MaxIdleConnsPerHost = 16
+		deps.Feed = &feedsvc.Client{BaseURL: cfg.FeedServiceURL, HTTP: &http.Client{Transport: tr}}
 	}
 	srv := &server.Server{
 		Resolver:       resolver,
