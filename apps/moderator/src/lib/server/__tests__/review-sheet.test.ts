@@ -9,7 +9,7 @@ import type * as ReviewBatchModule from '../review-batch';
  * hub identity are replaced, so what is under test is who gets which image.
  */
 
-type Entry = { value: string; expiresAt: number | null };
+type Entry = { value: string | Set<string>; expiresAt: number | null };
 
 const {
   store,
@@ -36,13 +36,42 @@ const {
       store.set(key, { value, expiresAt: opts?.EX ? Date.now() + opts.EX * 1000 : null });
       return 'OK';
     }),
-    get: vi.fn(async (key: string) => live(key)?.value ?? null),
+    get: vi.fn(async (key: string) => {
+      const v = live(key)?.value;
+      return typeof v === 'string' ? v : null;
+    }),
+    exists: vi.fn(async (key: string) => (live(key) ? 1 : 0)),
+    // Sets, as Redis: each command is atomic; a ticked await between them lets requests interleave.
+    sAdd: vi.fn(async (key: string, value: string) => {
+      await Promise.resolve();
+      const e = live(key);
+      const set = e?.value instanceof Set ? e.value : new Set<string>();
+      const had = set.has(value);
+      set.add(value);
+      if (!e) store.set(key, { value: set, expiresAt: null });
+      return had ? 0 : 1;
+    }),
+    sRem: vi.fn(async (key: string, value: string) => {
+      const v = live(key)?.value;
+      return v instanceof Set && v.delete(value) ? 1 : 0;
+    }),
+    sCard: vi.fn(async (key: string) => {
+      await Promise.resolve();
+      const v = live(key)?.value;
+      return v instanceof Set ? v.size : 0;
+    }),
+    sMembers: vi.fn(async (key: string) => {
+      const v = live(key)?.value;
+      return v instanceof Set ? [...v] : [];
+    }),
     getDel: vi.fn(async (key: string) => {
       const e = live(key);
       store.delete(key);
-      return e?.value ?? null;
+      return typeof e?.value === 'string' ? e.value : null;
     }),
-    del: vi.fn(async (key: string) => (store.delete(key) ? 1 : 0)),
+    del: vi.fn(async (keys: string | string[]) =>
+      [keys].flat().reduce((n, key) => n + (store.delete(key) ? 1 : 0), 0)
+    ),
     expire: vi.fn(async (key: string, seconds: number) => {
       const e = live(key);
       if (!e) return 0;
@@ -117,6 +146,7 @@ const reviewExchange = await import('../../../routes/api/review-media/auth/excha
 const heldItem = await import('../../../routes/api/held-media/b/[batchId]/[n]/+server');
 const reviewItem = await import('../../../routes/api/review-media/b/[batchId]/[n]/+server');
 const reviewCount = await import('../../../routes/api/review-media/b/[batchId]/+server');
+const signout = await import('../../../routes/api/review-media/auth/signout/+server');
 const { handle } = await import('../../../hooks.server');
 const { reviewBatchHash } = await import('@civitai/shared/review-batch');
 
@@ -297,22 +327,255 @@ describe('signing in to a batch', () => {
     const { locals } = await hook(`/api/review-media/b/${GENERAL_2}`, `${COOKIE.review}=${token}`);
     expect(locals.reviewSheet!.batches).toHaveLength(2);
   });
+});
 
-  it('the review cookie alone cannot enroll a batch', async () => {
-    const token = (await signIn('review', GENERAL))!;
+// Deliberate product decision: one general sign-in lasts the day, so the review cookie itself joins
+// each new general batch minted for this moderator. Making the cookie unable to enroll a batch
+// again puts a Continue tap back on every batch.
+describe('one general sign-in a day', () => {
+  const H = (id: string) => reviewBatchHash(id);
+  const open = async (family: Family, batchId: string, token: string, n = '0') => {
     const { res, locals } = await hook(
-      `/api/review-media/b/${GENERAL_2}`,
-      `${COOKIE.review}=${token}`
+      `/api/${family}-media/b/${batchId}/${n}`,
+      `${COOKIE[family]}=${token}`
     );
-    expect(res.status).toBe(299);
-    expect(locals.reviewSheet!.batches).toEqual([reviewBatchHash(GENERAL)]);
-    expect(
-      (
-        await Promise.resolve(
-          reviewCount.GET({ params: { batchId: GENERAL_2 }, locals } as never)
-        ).catch((e: { status: number }) => e)
-      ).status
-    ).toBe(404);
+    if (res.status !== 299) return res.status;
+    return (await item(family, batchId, n, locals)).status;
+  };
+  const batchesOf = async (token: string) =>
+    (await hook(`/api/review-media/b/${GENERAL}`, `${COOKIE.review}=${token}`)).locals.reviewSheet
+      ?.batches ?? null;
+
+  it('the review cookie joins a second live general batch minted for this moderator', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', GENERAL_2, token)).toBe(200);
+    expect(await batchesOf(token)).toEqual([H(GENERAL), H(GENERAL_2)]);
+  });
+
+  it('a held session never joins a batch by its cookie, even its own viewer with a live key', async () => {
+    const HELD_2 = 'Y'.repeat(22);
+    seedBatch(HELD_2, 'held');
+    const held = (await signIn('held', HELD))!;
+    expect(await open('held', HELD, held)).toBe(200);
+    expect(await open('held', HELD_2, held)).toBe(404);
+  });
+
+  it("another moderator's general batch is refused and not joined", async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', OTHER_VIEWER, token)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL)]);
+  });
+
+  it('a held batch on the general route is refused and not joined', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', HELD, token)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL)]);
+  });
+
+  it('the 21st batch is refused', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const ids = Array.from({ length: 20 }, (_, i) => `B${String(i).padStart(21, '0')}`);
+    ids.forEach((id) => seedBatch(id, 'general'));
+    for (const id of ids.slice(0, 19)) expect(await open('review', id, token)).toBe(200);
+    expect(await batchesOf(token)).toHaveLength(20);
+    expect(await open('review', ids[19], token)).toBe(404);
+    expect(await batchesOf(token)).toHaveLength(20);
+  });
+
+  it("a code signs in fresh when the cookie's session is full or another moderator's", async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const ids = Array.from({ length: 19 }, (_, i) => `B${String(i).padStart(21, '0')}`);
+    ids.forEach((id) => seedBatch(id, 'general'));
+    for (const id of ids) expect(await open('review', id, token)).toBe(200);
+    const full = await batchesOf(token);
+    expect(full).toHaveLength(20);
+
+    const fresh = await signIn('review', GENERAL_2, token);
+    expect(fresh).not.toBeNull();
+    expect(fresh).not.toBe(token);
+    expect(await batchesOf(fresh!)).toEqual([H(GENERAL_2)]);
+    expect(await batchesOf(token)).toEqual(full);
+
+    const OTHER_MOD = { ...MOD, id: 999, username: 'mod999' };
+    verifyToken.mockResolvedValueOnce({ ...CLAIMS, sub: '999' });
+    getSessionUserById.mockImplementation(async (id: number) => (id === 999 ? OTHER_MOD : MOD));
+    const started = await startPost('review', OTHER_VIEWER, OTHER_MOD);
+    expect(started.status).toBe(303);
+    const code = new URL(started.headers.get('location')!).searchParams.get('code')!;
+    const res = await exchange('review', code, `${COOKIE.review}=${fresh}`);
+    expect(res.status).toBe(204);
+    const theirs = new RegExp(`${COOKIE.review}=([^;]+)`).exec(res.headers.get('set-cookie')!)![1];
+    expect(theirs).not.toBe(fresh);
+    expect(await batchesOf(fresh!)).toEqual([H(GENERAL_2)]);
+  });
+
+  it('after a web sign out and back in, a new code signs in fresh instead of joining the dead session', async () => {
+    const old = (await signIn('review', GENERAL))!;
+    isRevoked.mockImplementation(async (web) => (web as { jti?: string }).jti === CLAIMS.jti);
+    verifyToken.mockResolvedValue({ ...CLAIMS, jti: 'web-session-2' });
+    const fresh = await signIn('review', GENERAL_2, old);
+    expect(fresh).not.toBeNull();
+    expect(fresh).not.toBe(old);
+    expect(await open('review', GENERAL_2, fresh!)).toBe(200);
+    expect(await open('review', GENERAL, old)).toBe(401);
+  });
+
+  it('a batch whose minting key is revoked, or that is no longer live, is refused and not joined', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    mintingKeyLive.mockResolvedValueOnce(false);
+    expect(await open('review', GENERAL_2, token)).toBe(404);
+    store.delete(`app:review-batch:${H(GENERAL_2)}`);
+    expect(await open('review', GENERAL_2, token)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL)]);
+  });
+
+  it('idle for 8 h and a minute ends it; so does 24 h and a minute, however active', async () => {
+    vi.useFakeTimers();
+    try {
+      const idle = (await signIn('review', GENERAL))!;
+      vi.advanceTimersByTime(8 * 3600_000 - 60_000);
+      expect(await open('review', GENERAL, idle)).toBe(200);
+      vi.advanceTimersByTime(8 * 3600_000 + 60_000);
+      expect(await open('review', GENERAL, idle)).toBe(401);
+
+      const busy = (await signIn('review', GENERAL))!;
+      for (let h = 4; h < 24; h += 4) {
+        vi.advanceTimersByTime(4 * 3600_000);
+        expect(await open('review', GENERAL, busy)).toBe(200);
+      }
+      vi.advanceTimersByTime(4 * 3600_000 - 120_000);
+      expect(await open('review', GENERAL, busy)).toBe(200);
+      vi.advanceTimersByTime(180_000);
+      expect(await open('review', GENERAL, busy)).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the count route joins a batch the same way, and refuses one it may not', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const count = async (batchId: string) => {
+      const { res, locals } = await hook(
+        `/api/review-media/b/${batchId}`,
+        `${COOKIE.review}=${token}`
+      );
+      if (res.status !== 299) return res.status;
+      return Promise.resolve(reviewCount.GET({ params: { batchId }, locals } as never)).then(
+        (r: Response) => r.status,
+        (e: { status: number }) => e.status
+      );
+    };
+    expect(await count(GENERAL_2)).toBe(200);
+    expect(await count(OTHER_VIEWER)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL), H(GENERAL_2)]);
+  });
+
+  it('concurrent first opens never take a session past 20 batches or drop a joined one', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const ids = Array.from({ length: 25 }, (_, i) => `C${String(i).padStart(21, '0')}`);
+    ids.forEach((id) => seedBatch(id, 'general'));
+    const statuses = await Promise.all(ids.map((id) => open('review', id, token)));
+    const held = await batchesOf(token);
+    expect(held!.length).toBeLessThanOrEqual(20);
+    const opened = ids.filter((_, i) => statuses[i] === 200).map(H);
+    expect(opened.every((h) => held!.includes(h))).toBe(true);
+  });
+
+  it('a request in flight cannot bring a signed-out session back', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    let release!: () => void;
+    getSessionUserById.mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve({ ...MOD })))
+    );
+    const inFlight = open('review', GENERAL_2, token);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    release();
+    expect(await inFlight).not.toBe(200);
+    expect(await open('review', GENERAL, token)).toBe(401);
+  });
+
+  it('a join in flight when sign out lands leaves nothing behind', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    let release!: () => void;
+    // Paused after the session was read and slid, before the batch joins.
+    mintingKeyLive.mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve(true)))
+    );
+    const inFlight = open('review', GENERAL_2, token);
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    release();
+    expect(await inFlight).toBe(404);
+    expect([...store.keys()].filter((k) => k.startsWith('app:review-sheet:session'))).toEqual([]);
+  });
+
+  it('a revoked web session ends it on the next request', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', GENERAL, token)).toBe(200);
+    isRevoked.mockResolvedValue(true);
+    expect(await open('review', GENERAL, token)).toBe(401);
+  });
+
+  it('a ban, or losing the moderator role, ends it on the next request', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    getSessionUserById.mockResolvedValueOnce({ ...MOD, bannedAt: new Date() });
+    expect(await open('review', GENERAL, token)).toBe(401);
+    getSessionUserById.mockResolvedValueOnce({ ...MOD, isModerator: false });
+    expect(await open('review', GENERAL, token)).toBe(401);
+    expect(await open('review', GENERAL, token)).toBe(200);
+  });
+
+  it('a joined batch still answers 409 for an image that became held', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    getBatchMedia.mockResolvedValue({
+      imageId: 101,
+      url: 'k',
+      type: 'image',
+      mimeType: null,
+      held: true,
+    });
+    expect(await open('review', GENERAL_2, token)).toBe(409);
+    expect(streamStoredMedia).not.toHaveBeenCalled();
+  });
+
+  it('sign out ends the session on the server, not just the cookie, with no web session', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    // Through the hook, as the phone sends it: the review cookie and nothing else.
+    const url = new URL(`${ORIGIN}/api/review-media/auth/signout`);
+    const event = {
+      url,
+      request: new Request(url, {
+        method: 'POST',
+        headers: { cookie: `${COOKIE.review}=${token}` },
+      }),
+      locals: {},
+      route: { id: '/api/review-media/auth/signout' },
+    };
+    const resolve = vi.fn(async () =>
+      signout.POST({
+        cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+      } as never)
+    );
+    const res = await handle({ event, resolve } as never);
+    expect(resolve).toHaveBeenCalled();
+    expect(res.status).toBe(204);
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(await open('review', GENERAL, token)).toBe(401);
+  });
+
+  it('a failed sign out keeps the cookie, so the sheet can try again', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    redis.del.mockRejectedValueOnce(new Error('down'));
+    const res = await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('set-cookie')).toBeNull();
   });
 });
 
