@@ -265,6 +265,11 @@ describe('remove-old-drafts and models a moderator acted on', () => {
 
   it('keeps a taken-down model and one deleted by a moderator, and reaps owner and account deletes', async () => {
     await (removeOldDrafts as unknown as () => Promise<void>)();
-    expect(await remainingModels()).toEqual(CASES.filter((c) => c.kept).map((c) => c.id));
+    const kept = CASES.filter((c) => c.kept).map((c) => c.id);
+    expect(await remainingModels()).toEqual(kept);
+    expect(axiomEvents('Kept old draft models a moderator acted on')).toEqual([
+      expect.objectContaining({ modelIds: kept }),
+    ]);
+    expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
   });
 });

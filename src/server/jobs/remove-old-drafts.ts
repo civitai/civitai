@@ -265,18 +265,28 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
       // Reporting only, so a failure here must not fail a batch whose deletes have committed.
       const notDeleted = deletable.filter((id) => !deletedSet.has(id));
       if (notDeleted.length > 0) {
-        await dbWrite.$queryRaw<{ id: number }[]>`
-          SELECT id FROM "Model" WHERE id = ANY(${notDeleted}) ORDER BY id
+        await dbWrite.$queryRaw<{ id: number; moderated: boolean }[]>`
+          SELECT m.id, ${moderatedSql(Prisma.raw('m'))} AS moderated
+          FROM "Model" m WHERE m.id = ANY(${notDeleted}) ORDER BY m.id
         `.then(
           (rows) => {
-            heldCount += rows.length;
+            const held = rows.filter((r) => !r.moderated).map((r) => r.id);
+            const moderated = rows.filter((r) => r.moderated).map((r) => r.id);
+            heldCount += held.length;
             // Model ids only: the same held drafts come up every night.
-            if (rows.length > 0)
+            if (held.length > 0)
               logToAxiom({
                 type: 'info',
                 name: 'remove-old-drafts',
                 message: 'Kept old draft models of owners under a legal hold',
-                modelIds: rows.map((r) => r.id),
+                modelIds: held,
+              });
+            if (moderated.length > 0)
+              logToAxiom({
+                type: 'info',
+                name: 'remove-old-drafts',
+                message: 'Kept old draft models a moderator acted on',
+                modelIds: moderated,
               });
           },
           (error: unknown) =>
