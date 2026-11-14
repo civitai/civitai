@@ -5,7 +5,7 @@ import {
   foldStepTypeCase,
   isTrainingStepTypeIgnoringCase,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
-import { collectBlockStepTemplates } from '~/server/services/blocks/workflow-graph';
+import { collectBlockStepTemplates, foldCase } from '~/server/services/blocks/workflow-graph';
 import {
   auditPromptServer,
   classifyPromptServer,
@@ -141,11 +141,11 @@ const GRAPH_STEP_TYPES: ReadonlySet<string> = new Set(['customcomfy', 'comfy']);
 
 /** The orchestrator's reference predicate (`$ref` and `path`, nothing else but `default`/`format`). */
 function refSource(value: Record<string, unknown>): PromptRefSource | null {
-  const keys = Object.keys(value).map((key) => key.toLowerCase());
+  const keys = Object.keys(value).map((key) => foldCase(key));
   if (!keys.includes('$ref') || !keys.includes('path')) return null;
   if (keys.some((key) => !REF_KEYS.has(key))) return null;
-  const target = Object.entries(value).find(([key]) => key.toLowerCase() === '$ref')?.[1];
-  return typeof target === 'string' && target.toLowerCase() === '$arguments' ? 'argument' : 'step';
+  const target = Object.entries(value).find(([key]) => foldCase(key) === '$ref')?.[1];
+  return typeof target === 'string' && foldCase(target) === '$arguments' ? 'argument' : 'step';
 }
 
 /**
@@ -188,7 +188,7 @@ export function collectPassThroughAuditText(
       if (at.text || at.graph || !at.media) promptRefs.push(ref);
       // A reference's `default` is literal text the step may use in its place.
       for (const [key, child] of Object.entries(value))
-        if (key.toLowerCase() === 'default') walk(child, at, depth + 1);
+        if (foldCase(key) === 'default') walk(child, at, depth + 1);
       return;
     }
     for (const [key, child] of Object.entries(value)) {
@@ -198,7 +198,7 @@ export function collectPassThroughAuditText(
           text: at.text || TEXT_KEY.test(key),
           negative: at.negative || NEGATIVE_KEY.test(key),
           graph: at.graph,
-          media: at.media || MEDIA_KEYS.has(key.toLowerCase()),
+          media: at.media || MEDIA_KEYS.has(foldCase(key)),
         },
         depth + 1
       );
@@ -218,7 +218,7 @@ export function collectPassThroughAuditText(
       else if (training) {
         if (!isPlainObject(template.input)) continue;
         for (const [key, child] of Object.entries(template.input))
-          if (TRAINING_SAMPLE_KEYS.has(key.toLowerCase()))
+          if (TRAINING_SAMPLE_KEYS.has(foldCase(key)))
             walk(
               child,
               {

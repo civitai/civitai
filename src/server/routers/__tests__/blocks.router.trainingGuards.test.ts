@@ -408,9 +408,11 @@ describe('the trigger word of a training step inside a `kind:workflow`', () => {
     const body = workflowBody([{ $type: 'training', input: { $ref: '$arguments', path: 'cfg' } }], {
       cfg: { triggerWord: 'badword' },
     });
+    const refused = expect.stringContaining('a step input must be an object, not a reference');
     for (const call of [estimate, submit]) {
-      const outcome = await call(body).catch((error: unknown) => error);
-      expect(JSON.stringify(outcome)).toContain('a step input must be an object, not a reference');
+      await expect(call(body)).resolves.toMatchObject({
+        snapshot: { status: 'failed', errorCode: 'workflow_ref_invalid', error: refused },
+      });
     }
     expect(h.check).not.toHaveBeenCalled();
     expect(h.submitWorkflow).not.toHaveBeenCalled();

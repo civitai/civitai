@@ -78,12 +78,16 @@ export type BlockWorkflowGraphResult =
     };
 
 /**
- * Case-fold for comparing keys and `$type`s: upper-casing first maps `ı` and `ſ`
- * onto I and S, so a key the orchestrator may bind ignoring case cannot hide.
+ * THE one case fold for comparing a caller-supplied `$type` or key against a
+ * server-owned name. The denylist, the training checks, the pass-through audit and
+ * this graph all use it, so no two can disagree about what "the same name" means.
+ * Upper-casing first maps `ı` and `ſ` onto I and S.
  */
-function fold(text: string): string {
+export function foldCase(text: string): string {
   return text.toUpperCase().toLowerCase();
 }
+
+const fold = foldCase;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -314,9 +318,7 @@ export const MEDIA_REF_ANALYSERS: readonly string[] = [
   'videoMetadata',
 ];
 
-const ANALYSER_TYPES: ReadonlySet<string> = new Set(
-  MEDIA_REF_ANALYSERS.map((type) => type.toLowerCase())
-);
+const ANALYSER_TYPES: ReadonlySet<string> = new Set(MEDIA_REF_ANALYSERS.map((type) => fold(type)));
 /** The analysers' media inputs, from their declared input types. */
 const ANALYSER_MEDIA_KEYS: ReadonlySet<string> = new Set(['mediaUrl', 'image', 'video']);
 
@@ -337,7 +339,7 @@ const WHOLE_INPUT_REF_ERROR = 'a step input must be an object, not a reference';
  * allow-list: a new `$type` starts refused.
  */
 const MEDIA_REF_CONSUMERS: ReadonlySet<string> = new Set([
-  ...MEDIA_REF_ANALYSERS.map((type) => type.toLowerCase()),
+  ...MEDIA_REF_ANALYSERS.map((type) => fold(type)),
   'imagegen',
   'texttoimage',
   'imageupscaler',
@@ -388,9 +390,7 @@ export function chatImageModalityProblem(stepType: unknown, input: unknown): str
   if (!('modalities' in input)) return null;
   const { modalities } = input;
   if (!Array.isArray(modalities) || modalities.length === 0) return CHAT_IMAGE_MODALITY_ERROR;
-  return modalities.every(
-    (m) => typeof m === 'string' && CHAT_OUTPUT_MODALITIES.has(m.toLowerCase())
-  )
+  return modalities.every((m) => typeof m === 'string' && CHAT_OUTPUT_MODALITIES.has(fold(m)))
     ? null
     : CHAT_IMAGE_MODALITY_ERROR;
 }
@@ -427,7 +427,7 @@ const TEXT_REF_LEAVES: ReadonlySet<string> = new Set(
     'duration',
     'count',
     'status',
-  ].map((leaf) => leaf.toLowerCase())
+  ].map((leaf) => fold(leaf))
 );
 
 export const MEDIA_REF_ERROR =
@@ -456,7 +456,7 @@ export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
     return (
       typeof input.provider === 'string' &&
       /^[\x20-\x7e]+$/.test(input.provider) &&
-      SCANNED_VIDEO_GEN_PROVIDERS.has(input.provider.toLowerCase())
+      SCANNED_VIDEO_GEN_PROVIDERS.has(fold(input.provider))
     );
   }
   if (type === 'composemedia') {
@@ -563,11 +563,6 @@ function isRefObject(value: Record<string, unknown>): boolean {
 
 const RECASED_REF_ERROR = 'a reference key must be spelled "$ref", "path", "default" or "format"';
 
-/**
- * An object with `$ref` under any casing and a reference key spelled otherwise.
- * Whether the orchestrator binds a re-cased key is not something this repo can
- * know, so such an object is refused rather than walked as plain data.
- */
 const MALFORMED_REF_ERROR = 'a reference may carry only "$ref", "path", "default" and "format"';
 
 /** `$ref` and `path` with another key: not a reference here, and not plain data either. */
@@ -580,6 +575,11 @@ function isMalformedRef(value: Record<string, unknown>): boolean {
   );
 }
 
+/**
+ * An object with `$ref` under any casing and a reference key spelled otherwise.
+ * Whether the orchestrator binds a re-cased key is not something this repo can
+ * know, so such an object is refused rather than walked as plain data.
+ */
 function hasRecasedRefKey(value: Record<string, unknown>): boolean {
   const keys = Object.keys(value);
   if (!keys.some(isRefKey)) return false;

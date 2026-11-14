@@ -8,6 +8,7 @@ import {
   isTrainingStepTypeIgnoringCase,
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { isTrainingStepType } from '~/server/services/blocks/steps/output';
+import { foldCase } from '~/server/services/blocks/workflow-graph';
 import { assertStepInvariants, listRegisteredSteps } from '~/server/services/blocks/steps';
 
 /**
@@ -303,5 +304,13 @@ describe('isTrainingStepTypeIgnoringCase', () => {
     // `isTrainingStepType` stays exact: it reads a `$type` the orchestrator returned.
     expect(isTrainingStepType('training')).toBe(true);
     expect(isTrainingStepType('Training')).toBe(false);
+  });
+
+  it('🔴 folds exactly as the workflow graph does, including ı and ſ', () => {
+    expect(foldCase('ſ')).toBe('s');
+    expect(foldCase('ı')).toBe('i');
+    for (const text of ['XGuardModeration', 'ſ', 'ı', 'tranſcode', 'fıelds', 'İ']) {
+      expect(foldStepTypeCase(text)).toBe(foldCase(text));
+    }
   });
 });

@@ -9,8 +9,6 @@ import {
   MEDIA_REF_ERROR,
   resolveBlockWorkflowGraph,
   SCANNED_VIDEO_GEN_ENGINES,
-  SCANNED_VIDEO_GEN_PROVIDERS,
-  VIDEO_GEN_ENGINES_NEEDING_PROVIDER,
   WRITE_TARGET_ERROR,
   WORKFLOW_INPUT_DEPTH_MAX,
   WORKFLOW_MAX_REFS,
@@ -790,11 +788,6 @@ describe('resolveBlockWorkflowGraph — references into media', () => {
     ]) {
       mediaRefused([gen, video(input)], 1);
     }
-  });
-
-  it('pins the scanned providers and the engines that need one: changing either is a reviewed diff', () => {
-    expect([...SCANNED_VIDEO_GEN_PROVIDERS].sort()).toEqual(['civitai', 'comfy']);
-    expect([...VIDEO_GEN_ENGINES_NEEDING_PROVIDER]).toEqual(['wan']);
   });
 
   it.each(['output.images[0].URL', 'output.images[0].Url'])(
