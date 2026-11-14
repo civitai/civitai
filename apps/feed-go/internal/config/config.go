@@ -39,6 +39,8 @@ type Config struct {
 	RegionRules      []browsing.RegionRule
 	CreatorPromotion bool            // FEED_GO_CREATOR_PROMOTIONS: mirrors the `creator-promotions` flag
 	LazyPostImages   bool            // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
+	ImageIndexFeed   bool            // FEED_GO_IMAGE_INDEX_FEED: mirrors `image-index-feed`
+	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: event decorations visible to everyone
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
 
@@ -78,6 +80,8 @@ func Load() (*Config, error) {
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: boolEnv("FEED_GO_CREATOR_PROMOTIONS", true),
 		LazyPostImages:   boolEnv("FEED_GO_LAZY_POST_IMAGES", true),
+		ImageIndexFeed:   boolEnv("FEED_GO_IMAGE_INDEX_FEED", true),
+		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 

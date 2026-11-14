@@ -25,8 +25,13 @@ const (
 
 // Input is the parsed getInfiniteImagesSchema for the supported subset.
 type Input struct {
-	Limit               int
-	Cursor              int // 0 = none
+	Limit int
+	// Cursor is the cursor's numeric value: a number, or a string of digits (0 = none or not numeric).
+	Cursor int
+	// CursorText is the cursor as sent when it was a non-empty string: the feed service's
+	// `feed:<a>:<b>`, the search index's `offset|entry`, or a numeric string. The page source decides
+	// what it means (see Serve); "" when the cursor was a number or absent.
+	CursorText          string
 	Sort                string
 	Period              string // AllTime, Day, Week, Month, Year
 	PeriodMode          string // published, stats
@@ -37,19 +42,26 @@ type Input struct {
 	Model3DID           int
 	Types               []string
 	Generation          []string
-	WithMeta            bool
-	FromPlatform        bool
-	DisablePoi          bool
-	DisableMinor        bool
-	HideChallenges      bool
-	ExcludedTagIDs      []int
-	ExcludedUserIDs     []int
+	// WithMeta is `include` holding 'meta' (the schema adds it for `withMeta`): what the SQL reads.
+	WithMeta bool
+	// WithMetaFlag is the input's own `withMeta`: what the feed-service query reads.
+	WithMetaFlag    bool
+	RequiringMeta   bool
+	HasRemixOfID    bool
+	FromPlatform    bool
+	DisablePoi      bool
+	DisableMinor    bool
+	HideChallenges  bool
+	ExcludedTagIDs  []int
+	ExcludedUserIDs []int
 }
 
 // unsupportedKeys are input keys that change the query in ways not ported yet. Present with a
 // non-empty value, they make the request fall back. Keys outside the schema are ignored (zod strips
-// them), and so are schema keys the DB path never reads (hat*, includePG13, remix*, requiringMeta,
-// hideAutoResources, hideManualResources).
+// them), and so are schema keys neither page source reads (hat*, includePG13, remixesOnly,
+// nonRemixesOnly, hideAutoResources, hideManualResources — the feed-service path drops the last four
+// in withoutUnservedFilters). `requiringMeta` and `remixOfId` are read only on the feed-service path,
+// where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
 var unsupportedKeys = []string{
 	"collectionId", "collectionTagId", "postId", "postIds", "userId", "username", "hubId",
 	"hubExcludedSources", "imageId", "reviewId", "skip", "ids", "tags", "techniques", "tools",
@@ -77,7 +89,7 @@ func Parse(m map[string]any) (*Input, error) {
 		}
 	}
 	if v, ok := m["cursor"]; ok && v != nil {
-		if in.Cursor, err = cursor(v); err != nil {
+		if in.Cursor, in.CursorText, err = cursor(v); err != nil {
 			return nil, err
 		}
 	}
@@ -126,7 +138,12 @@ func Parse(m map[string]any) (*Input, error) {
 	if in.Generation, err = stringList(m["generation"], map[string]bool{"txt2img": true, "txt2imgHiRes": true, "img2img": true, "inpainting": true}); err != nil {
 		return nil, err
 	}
-	in.WithMeta = boolOf(m["withMeta"])
+	in.WithMetaFlag = boolOf(m["withMeta"])
+	in.WithMeta = in.WithMetaFlag
+	in.RequiringMeta = boolOf(m["requiringMeta"])
+	if v, ok := m["remixOfId"]; ok && !isEmpty(v) && !isZero(v) {
+		in.HasRemixOfID = true
+	}
 	in.FromPlatform = boolOf(m["fromPlatform"])
 	in.DisablePoi = boolOf(m["disablePoi"])
 	in.DisableMinor = boolOf(m["disableMinor"])
@@ -236,24 +253,49 @@ func intIn(v any, lo, hi int) (int, error) {
 	return int(f), nil
 }
 
-// cursor accepts the keyset cursor this sort set emits: a non-negative int4 (number, or the string the
-// image feed's own nextCursor round-trips as). A date or compound cursor falls back.
-func cursor(v any) (int, error) {
+// cursor reads keysetCursorSchema's number and string members. A number must be a non-negative int4
+// (the schema's bound). A string is kept as sent, for the page source to interpret, with its numeric
+// value when it is a plain non-negative integer. An empty string is no cursor (both page sources test
+// it for truthiness). Any other type (a superjson Date or bigint) falls back.
+func cursor(v any) (int, string, error) {
 	switch t := v.(type) {
 	case json.Number, float64:
 		n, err := intIn(t, 0, math.MaxInt32)
 		if err != nil {
-			return 0, fallback.Newf("input-invalid", "cursor: %v", err)
+			return 0, "", fallback.Newf("input-invalid", "cursor: %v", err)
 		}
-		return n, nil
+		return n, "", nil
 	case string:
+		if t == "" {
+			return 0, "", nil
+		}
 		n, err := strconv.Atoi(t)
 		if err != nil || n < 0 {
-			return 0, fallback.Newf("input-cursor", "%q", t)
+			return 0, t, nil
 		}
-		return n, nil
+		return n, t, nil
 	}
-	return 0, fallback.Newf("input-cursor", "%T", v)
+	return 0, "", fallback.Newf("input-cursor", "%T", v)
+}
+
+// NumericCursor reports whether the cursor is one the Postgres page source reads as this service
+// does: none, a number, or a string of positive digits. Anything else (`feed:…`, `offset|entry`, a
+// date) is a 400 there; a string "0" is truthy there and bound as `<= 0`, an empty page this service
+// does not reproduce, so it falls back too.
+func (in *Input) NumericCursor() bool {
+	if in.CursorText == "" {
+		return true
+	}
+	n, err := strconv.Atoi(in.CursorText)
+	return err == nil && n > 0
+}
+
+func isZero(v any) bool {
+	if n, ok := v.(json.Number); ok {
+		f, err := n.Float64()
+		return err == nil && f == 0
+	}
+	return false
 }
 
 func stringList(v any, allowed map[string]bool) ([]string, error) {

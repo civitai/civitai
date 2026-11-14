@@ -64,6 +64,32 @@ func TestAllowedOriginHosts(t *testing.T) {
 	}
 }
 
+func TestLoadFeedServiceMirrors(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	// Unset: both mirrors default ON (the production value of both flags); no feed service.
+	t.Setenv("FEED_GO_IMAGE_INDEX_FEED", "")
+	t.Setenv("FEED_GO_LAZY_POST_IMAGES", "")
+	t.Setenv("FEED_SERVICE_URL", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ImageIndexFeed || !c.LazyPostImages || c.FeedServiceURL != "" {
+		t.Fatalf("defaults: index=%v lazy=%v url=%q", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL)
+	}
+	t.Setenv("FEED_GO_IMAGE_INDEX_FEED", "false")
+	t.Setenv("FEED_GO_LAZY_POST_IMAGES", "false")
+	t.Setenv("FEED_SERVICE_URL", "http://feed.internal")
+	if c, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if c.ImageIndexFeed || c.LazyPostImages || c.FeedServiceURL != "http://feed.internal" {
+		t.Fatalf("set: index=%v lazy=%v url=%q", c.ImageIndexFeed, c.LazyPostImages, c.FeedServiceURL)
+	}
+}
+
 func TestLoadModerationAccountID(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)

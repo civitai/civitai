@@ -34,5 +34,6 @@ Tests run in CI (`feed-go vet + test + build`). Unit tests sit next to the code 
 ## Config
 
 See `.env.example`. Variable names match the main app's where the value is the same thing. The
-`FEED_GO_*` flag mirrors default to the fail-safe value (the affected requests fall back); set them to
-the corresponding Flipt flag's real value (DESIGN.md §8).
+`FEED_GO_*` flag mirrors default to ON; set each to its Flipt flag's real value (DESIGN.md §8). `FEED_GO_IMAGE_INDEX_FEED` (on by default, as in production) also needs
+`FEED_SERVICE_URL`, the image feed service the Node app reads its pages from; without it every request
+falls back (`index-feed-unconfigured`).
