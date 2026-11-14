@@ -361,7 +361,7 @@ describe('mini/[id] epoch arm, cache', () => {
     async (variant) => {
       h.variant.value = variant;
       for (const caller of [anonymous, stranger, grantee, owner, moderator, service])
-        for (const query of [{}, { epoch: '5' }]) {
+        for (const query of [{}, { epoch: '5' }] as Record<string, string>[]) {
           const { cacheControl } = await request(caller, {}, undefined, undefined, query);
           expect(cacheControl, JSON.stringify({ caller, query })).toBe('private, no-store');
         }
