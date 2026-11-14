@@ -26,6 +26,10 @@ const { setStorylineTextSchema } = await import('~/server/schema/storyline.schem
 const { OWNER_CONTENT_KEPT } = await import('~/server/services/legal-hold.service');
 const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 const { updatePostNsfwLevels } = await import('~/server/services/nsfwLevels.service');
+const { postTextTextScanSubject } = await import(
+  '~/server/services/text-scan/profiles/post-text.profile'
+);
+const { scannableTextForms } = await import('~/server/services/blocklist.service');
 
 const w = dbMock.dbWrite;
 const r = dbMock.dbRead;
@@ -114,6 +118,23 @@ describe('setPostText', () => {
     expect(content).toBe('<p><strong>a</strong> </p>');
   });
 
+  it('keeps headings and lists, without attributes', () => {
+    const { content } = setStorylineTextSchema.parse({
+      id: 1,
+      content:
+        '<h2 style="color:red" class="x">Title</h2><h3>Sub</h3><ul><li>one</li></ul><ol><li>two</li></ol><h1>big</h1>',
+    });
+    expect(content).toBe('<h2>Title</h2><h3>Sub</h3><ul><li>one</li></ul><ol><li>two</li></ol>big');
+  });
+
+  it('scans and blocklist-checks list items and headings as separate words', () => {
+    const content = '<h2>sea</h2>side<ul><li>fire</li><li>arm</li></ul>';
+    expect(postTextTextScanSubject({ userId: AUTHOR, content }).fields[0].text).toBe(
+      'sea side fire arm'
+    );
+    expect(scannableTextForms(content)).toContain('sea side fire arm');
+  });
+
   it('resets the rating to 0 in the same write, scans the new text and recomputes the post', async () => {
     await setPostText({ id: TEXT, content: '<p>new</p>', userId: AUTHOR });
     expect(written()).toEqual({ resetLevel: true, values: ['<p>new</p>', TEXT] });
@@ -154,6 +175,19 @@ describe('setPostText', () => {
     await expect(
       setPostText({ id: TEXT, content: '<p><a href="https://x.test">old</a></p>', userId: AUTHOR })
     ).rejects.toThrow('blocked');
+    expect(w.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('runs the blocklist over a markup-only edit into a list', async () => {
+    stored('<p>old new</p>');
+    vi.mocked(throwOnBlockedUserContent).mockRejectedValueOnce(new Error('blocked'));
+    await expect(
+      setPostText({ id: TEXT, content: '<ul><li>old</li><li>new</li></ul>', userId: AUTHOR })
+    ).rejects.toThrow('blocked');
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
+      '<ul><li>old</li><li>new</li></ul>',
+      expect.anything()
+    );
     expect(w.$executeRaw).not.toHaveBeenCalled();
   });
 
