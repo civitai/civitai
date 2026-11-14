@@ -28,7 +28,8 @@ export function heldUserSql(column: string): string {
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
       -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
       -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
-      -- row would fail every request. The filter keeps NULLs out, so IN is never unknown.
+      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
+      -- NULL user.
       OR COALESCE(${user} IN (
         SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
                     THEN (hs.details ->> 'secondaryUserId')::bigint END
