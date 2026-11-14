@@ -70,6 +70,7 @@ const OTHER_KEY = '0e9d8c7b-6a5f-4e3d-8c2b-1a0f9e8d7c6b';
 // Minted a minute ago, as a retry would carry it: not the request's own clock.
 const CHARGED_AT = Date.now() - 60_000;
 const PREFIX = `bounty-k-${USER}-${KEY}-${CHARGED_AT}`;
+// The first id `nextval` hands out; rows inserted without one (keyless) are numbered from 1.
 const FIRST_ID = 9001;
 
 type BountyRow = { id: number; userId: number; name: string; details: unknown };
@@ -79,6 +80,7 @@ let ledger: ReturnType<typeof createFakeBuzzLedger>;
 let bounties: BountyRow[];
 let benefactors: BenefactorRow[];
 let nextId: number;
+let nextReserved: number;
 let locks = createFakeAdvisoryLocks();
 const benefactorCreate = vi.fn();
 
@@ -107,7 +109,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   bounties = [];
   benefactors = [];
-  nextId = FIRST_ID;
+  nextId = 1;
+  nextReserved = FIRST_ID;
+  // The id a keyed creation reserves before it charges.
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+    strings.join('').includes('nextval') ? [{ id: nextReserved++ }] : []) as never);
   benefactorCreate.mockImplementation(async ({ data }: { data: BenefactorRow }) => {
     benefactors.push(data);
     return data;
@@ -116,8 +122,8 @@ beforeEach(() => {
 
   const tx = {
     bounty: {
-      create: async ({ data }: { data: Omit<BountyRow, 'id'> }) => {
-        const row = { ...data, id: nextId++ } as BountyRow;
+      create: async ({ data }: { data: Omit<BountyRow, 'id'> & { id?: number } }) => {
+        const row = { ...data, id: data.id ?? nextId++ } as BountyRow;
         bounties.push(row);
         return row;
       },
@@ -232,6 +238,8 @@ describe('a keyed bounty creation across an unknown outcome', () => {
     expect(ledger.charges()).toHaveLength(1);
     expect(bounties).toHaveLength(1);
     expect(a.id).toBe(b.id);
+    // The bounty takes the id the one charge names, whichever request charged first.
+    expect(a.id).toBe(ledger.charges()[0].details?.entityId);
   });
 
   it('holds no transaction while the Buzz charge is pending', async () => {
@@ -259,18 +267,56 @@ describe('a keyed bounty creation across an unknown outcome', () => {
     expect(Number(benefactors[0].buzzTransactionId[0].split('-').at(-1))).toBe(CHARGED_AT);
   });
 
-  // The bounty does not exist when it is charged; the benefactor row links the two.
-  it('charges as a bounty with no entity id, and links the charge through the benefactor row', async () => {
+  // The "View Bounty" link in the creator's transactions reads the charge's entityId.
+  it('a first attempt names the bounty it creates on its charge', async () => {
     const created = await keyed();
 
     expect(created.id).toBe(FIRST_ID);
     const [charge] = buzz.createMultiAccountBuzzTransaction.mock.calls[0];
     expect(charge).toMatchObject({ type: TransactionType.Bounty });
-    expect(charge.details).toEqual({ entityType: 'Bounty' });
+    expect(charge.details).toEqual({ entityId: FIRST_ID, entityType: 'Bounty' });
     expect(benefactors).toEqual([
       expect.objectContaining({ bountyId: FIRST_ID, buzzTransactionId: [PREFIX] }),
     ]);
-    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  // The retry reserves a new id, but its charge is the first attempt's: the bounty takes the id that
+  // charge names, so its link points at this bounty.
+  it('a retry after a lost charge creates the bounty under the id the held charge names', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(keyed()).rejects.toMatchObject({ message: PAYMENT_OUTCOME_UNKNOWN_MESSAGE });
+    ledger.clearFaults();
+
+    const created = await keyed();
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(ledger.charges()[0].details).toEqual({ entityId: FIRST_ID, entityType: 'Bounty' });
+    expect(created.id).toBe(FIRST_ID);
+    expect(bounties.map((b) => b.id)).toEqual([FIRST_ID]);
+  });
+
+  // A charge held from before the id was sent names none: the bounty is still created, under the id
+  // this request reserved, and only that charge's link is missing.
+  it('a held charge that names no bounty still creates the bounty', async () => {
+    await ledger.createMultiAccountBuzzTransaction({
+      externalTransactionIdPrefix: PREFIX,
+      amount: UNIT_AMOUNT,
+      fromAccountId: USER,
+      fromAccountTypes: ['yellow'],
+      toAccountId: 0,
+      type: TransactionType.Bounty,
+      details: { entityType: 'Bounty' },
+    } as never);
+
+    const created = await keyed();
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(created.id).toBe(FIRST_ID);
+    expect(bounties).toHaveLength(1);
+    expect(benefactors).toEqual([
+      expect.objectContaining({ bountyId: FIRST_ID, buzzTransactionId: [PREFIX] }),
+    ]);
   });
 
   it('a new bounty (a new key) charges again', async () => {

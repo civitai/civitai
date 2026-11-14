@@ -329,10 +329,12 @@ export const createBounty = async ({
   let imagesToIngest: IngestImageInput[] = [];
   const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
-  // The bounty row with its files and images, on the caller's transaction.
-  const writeBountyRows = async (tx: Prisma.TransactionClient) => {
+  // The bounty row with its files and images, on the caller's transaction. `id` is set only for a
+  // keyed creation, whose charge names the id (see createKeyedBuzzBounty).
+  const writeBountyRows = async (tx: Prisma.TransactionClient, id?: number) => {
     const bounty = await tx.bounty.create({
       data: {
+        ...(id !== undefined ? { id } : {}),
         ...data,
         lockedProperties: lockedProperties.length ? lockedProperties : undefined,
         startsAt,
@@ -409,8 +411,8 @@ export const createBounty = async ({
       buzzType,
       ...keyed,
       assertCanAffordBounty,
-      write: async (tx, prefix) => {
-        const written = await writeBountyRows(tx);
+      write: async (tx, id, prefix) => {
+        const written = await writeBountyRows(tx, id);
         await writeBenefactor(tx, written.id, prefix);
         await writeBlurbReferences(tx, written.id);
         return written;
@@ -475,6 +477,44 @@ export const createBounty = async ({
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
 
+/**
+ * A new bounty id, taken before a keyed creation is charged so the charge can name the bounty it
+ * pays for (`details.entityId`: the "View Bounty" link in the creator's transactions and the
+ * export's entity url). Bounty.id is a SERIAL, so the row can be inserted with it: `nextval` has
+ * already moved the sequence past it. Null when it cannot be taken; the charge then names no bounty
+ * and the row takes its id on insert.
+ */
+async function reserveBountyId(): Promise<number | null> {
+  try {
+    const [row] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT nextval(pg_get_serial_sequence('"Bounty"', 'id'))::int AS id
+    `;
+    return typeof row?.id === 'number' ? row.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The bounty id a held keyed charge names (`details.entityId`, set by the request that charged it).
+ * Undefined when no leg names one (a charge made before the id was sent) or the read fails: the
+ * bounty is then created under a fresh id and that one charge links to nothing.
+ */
+async function heldChargeBountyId(prefix: string): Promise<number | undefined> {
+  try {
+    const legs = await getMultiAccountTransactionsByPrefix(prefix);
+    for (const leg of legs) {
+      const held = await getTransactionByExternalId(leg.externalTransactionId);
+      const entityId = held?.details?.entityId;
+      if (typeof entityId === 'number' && Number.isSafeInteger(entityId) && entityId > 0)
+        return entityId;
+    }
+  } catch {
+    // A read gap: the bounty is still created, under the id this request reserved.
+  }
+  return undefined;
+}
+
 type CreatedBounty = Prisma.BountyGetPayload<true>;
 
 /**
@@ -487,9 +527,13 @@ type CreatedBounty = Prisma.BountyGetPayload<true>;
  * (`recordKeyedCharge`): a benefactor row already holding the prefix answers the retry with its
  * bounty, a refunded charge is refused, and a failed write refunds the charge under the lock.
  *
- * The bounty does not exist yet when it is charged, so the charge carries no `entityId`: the
- * benefactor row, which award pricing and refunds read, is what links the charge (its prefix) to
- * the bounty.
+ * The bounty's id is chosen before the charge, so the charge can name it (`details.entityId`):
+ * - first attempt: a fresh id (`reserveBountyId`), sent on the charge;
+ * - the charge was already held (a retry, or a concurrent request under the key charged first):
+ *   the id the held charge names, so the bounty is created under the id its charge links to,
+ *   whichever request records it. A concurrent loser's reserved id is simply never used.
+ * A held charge that names no id (or cannot be read) gets the fresh id, and its link is missing.
+ * The benefactor row, which award pricing and refunds read, links charge and bounty either way.
  */
 async function createKeyedBuzzBounty({
   userId,
@@ -506,7 +550,11 @@ async function createKeyedBuzzBounty({
   idempotencyKey: string;
   chargedAt: number;
   assertCanAffordBounty: () => Promise<void>;
-  write: (tx: Prisma.TransactionClient, prefix: string) => Promise<CreatedBounty>;
+  write: (
+    tx: Prisma.TransactionClient,
+    id: number | undefined,
+    prefix: string
+  ) => Promise<CreatedBounty>;
 }): Promise<{ bounty: CreatedBounty; createdHere: boolean }> {
   // Imported here, not at the top, as report.service does: only a keyed creation needs them.
   const { chargeByPrefix, prefixWasRefunded } = await import('~/server/services/buzz-keyed-charge');
@@ -517,8 +565,9 @@ async function createKeyedBuzzBounty({
 
   const prefix = getKeyedBountyTransactionPrefix(userId, idempotencyKey, chargedAt);
   const context = { userId, amount: unitAmount };
+  const reserved = (await reserveBountyId()) ?? undefined;
 
-  await chargeByPrefix(prefix, context, {
+  const { replayed } = await chargeByPrefix(prefix, context, {
     reusable: true,
     expected: {
       amount: unitAmount,
@@ -536,10 +585,15 @@ async function createKeyedBuzzBounty({
         toAccountId: 0,
         amount: unitAmount,
         type: TransactionType.Bounty,
-        details: { entityType: 'Bounty' },
+        details: {
+          ...(reserved !== undefined ? { entityId: reserved } : {}),
+          entityType: 'Bounty',
+        },
       }),
     declined: () => new TRPCError({ code: 'BAD_REQUEST', message: 'Unable to charge the bounty' }),
   });
+  // Held: the charge names the id of the request that made it, which may not be this one.
+  const id = replayed ? (await heldChargeBountyId(prefix)) ?? reserved : reserved;
 
   return recordKeyedCharge<{ bounty: CreatedBounty; createdHere: boolean }>(prefix, context, {
     findRecorded: async (tx) => {
@@ -550,7 +604,7 @@ async function createKeyedBuzzBounty({
       return recorded ? { bounty: recorded.bounty, createdHere: false } : null;
     },
     isRefunded: () => prefixWasRefunded(prefix, context, CHARGE_LOCKED_READ),
-    record: async (tx) => ({ bounty: await write(tx, prefix), createdHere: true }),
+    record: async (tx) => ({ bounty: await write(tx, id, prefix), createdHere: true }),
     refund: () =>
       refundMultiAccountTransaction(
         {
