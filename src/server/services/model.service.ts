@@ -138,8 +138,9 @@ import {
 } from '~/server/selectors/model.selector';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
+import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
-import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
@@ -5902,22 +5903,13 @@ export async function toggleLockComments({ id, locked }: { id: number; locked: b
 
 export const getSimpleModelWithVersions = async ({
   id,
-  ctx,
 }: GetByIdInput & {
+  // Unused: the read never depended on the viewer (`getModel` ignores its `user`).
   ctx?: Context;
 }) => {
-  const model = await getModel({
-    id,
-    user: ctx?.user,
-    select: {
-      id: true,
-      name: true,
-      createdAt: true,
-      locked: true,
-      status: true,
-      user: { select: userWithCosmeticsSelect },
-    },
-  });
+  // `getModel`'s read with this select (`findModel`), behind `kysely-hot-reads-12`: one Kysely
+  // statement where Prisma issues one for the model and one per relation of its owner.
+  const model = await readSimpleModelWithOwner(id);
   if (!model) throw throwNotFoundError();
   return model;
 };
