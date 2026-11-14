@@ -4,7 +4,6 @@ import { registerCounterWithLabels, registerHistogram } from '~/server/prom/clie
 import {
   admitFeedCall,
   feedDegradeEnabled,
-  feedTimeoutWidened,
   lastGoodKey,
   readLastGood,
   recordFeedCall,
@@ -20,14 +19,11 @@ import {
   type FeedAnswer,
 } from '~/server/services/feed-shadow.service';
 
-// Over 7 days (2026-11) the feed service's own query time was over 2.5s for 0.09% of queries and
-// over 5s for 0.04%. That is server time, a lower bound on what this caller waits: network and
-// queueing are not in it. At the old 5s budget the caller timed out on 0.035% of requests, about
-// the server's own 0.04%, so that gap was small at the tail. A failing call holds a heavy-route
-// slot for the whole budget, so 2.5s frees it twice as fast for at least ~0.05% more slow pages
-// turned away. `feed-service-timeout-widen` (Flipt, default off) puts the budget back to 5s.
-export const FEED_PRIMARY_TIMEOUT_MS = 2_500;
-export const FEED_PRIMARY_WIDE_TIMEOUT_MS = 5_000;
+// The feed-service call's budget. A 2.5s budget was tried (2026-11) and turned slow but healthy
+// pages into 503s: timeouts rose about threefold while the feed service's own query time stayed
+// flat, so the extra time is spent on the caller's side of the call, not in the feed's query.
+// feed_primary_fetch_duration_seconds measures that caller-side time.
+export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
 const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
@@ -101,6 +97,17 @@ function logUnmapped(reason: string, input: CapturableSearchInput) {
     'civitai-prod'
   ).catch(() => undefined);
 }
+
+// The caller's wall-clock time for the feed call, from just before the request to the parsed answer
+// (or the error). The feed's answer carries no server time of its own, so this is the whole call as
+// this process sees it; compare it with the feed service's own query-time metric to find the
+// caller-side share. `outcome` is ok (any answer below 500), timeout or error (thrown or 5xx).
+const fetchDuration = registerHistogram({
+  name: 'feed_primary_fetch_duration_seconds',
+  help: 'Caller wall-clock time of the image feed call to the feed service, by route and outcome',
+  labelNames: ['route', 'outcome'] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5],
+});
 
 const hydrateDuration = registerHistogram({
   name: 'feed_primary_hydrate_duration_seconds',
@@ -256,11 +263,10 @@ export async function serveFromFeed<T extends { id: number }>(
     stale = true;
   } else {
     let failure: string | undefined;
+    // Date.now rather than an hrtime timer, so a test with a faked clock can pin the value.
+    const fetchStarted = Date.now();
     try {
-      const timeoutMs =
-        deps.timeoutMs ??
-        (feedTimeoutWidened() ? FEED_PRIMARY_WIDE_TIMEOUT_MS : FEED_PRIMARY_TIMEOUT_MS);
-      answer = await deps.fetchFeed(mapping.query, timeoutMs);
+      answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
       if (answer.status >= 500) failure = `status:${answer.status}`;
     } catch (e) {
       const name = (e as Error)?.name;
@@ -268,9 +274,14 @@ export async function serveFromFeed<T extends { id: number }>(
       failure = reason;
       answer = { status: 0, ms: 0, ids: [] };
     }
+    const fetchOutcome = !failure ? 'ok' : failure === 'timeout' ? 'timeout' : 'error';
+    fetchDuration.observe(
+      { route: lastGoodRoute, outcome: fetchOutcome },
+      (Date.now() - fetchStarted) / 1000
+    );
     if (admission) recordFeedCall(admission, failure !== undefined);
     // Counted whether or not a stale page then answers, so the timeout and error rates stay the
-    // feed's own (they are what the timeout off-switch is decided on).
+    // feed's own.
     if (failure === 'timeout') count('timeout');
     else if (failure === 'error') count('error', 'fetch');
     else if (failure) count('error', failure);
