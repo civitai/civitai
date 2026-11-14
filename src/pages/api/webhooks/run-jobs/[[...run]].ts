@@ -108,6 +108,7 @@ import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs'
 import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
 import { creatorShopWithdrawnRefundsJob } from '~/server/jobs/creator-shop-withdrawn-refunds';
 import { creatorBoxPayoutSweepJob } from '~/server/jobs/creator-box-payout-sweep';
+import { mysteryBoxOverPoolRefundsJob } from '~/server/jobs/mystery-box-over-pool-refunds';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -342,6 +343,7 @@ export const jobs: Job[] = [
   ...creatorServiceDealFileJobs,
   creatorShopWithdrawnRefundsJob,
   creatorBoxPayoutSweepJob,
+  mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,
