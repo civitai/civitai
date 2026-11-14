@@ -21,6 +21,7 @@ import {
   queryWorkflows,
   setWorkflowDownloadPriority,
   submitWorkflow,
+  submitWorkflowWithRetry,
 } from '~/server/services/orchestrator/workflows';
 
 const MARKER = 'CALLBACK-CONFIG-MARKER';
@@ -67,5 +68,10 @@ describe('orchestrator workflow service — callback configuration is not handed
 
   it('setWorkflowDownloadPriority', async () => {
     expectNoCallbacks(await setWorkflowDownloadPriority({ token: 't', workflowId: 'wf-1' }));
+  });
+
+  it('submitWorkflowWithRetry', async () => {
+    const result = await submitWorkflowWithRetry({ body: { steps: [] } } as never);
+    expectNoCallbacks(result.data);
   });
 });
