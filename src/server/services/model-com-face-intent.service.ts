@@ -1,0 +1,232 @@
+import { Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { logToAxiom } from '~/server/logging/client';
+import type { ComFaceIntentRecord, ModelMeta } from '~/server/schema/model.schema';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import type { TextScanField } from '~/server/services/text-scan/types';
+import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { removeTags } from '~/utils/string-helpers';
+
+/** `meta.systemNsfwLock.source` on a lock the listing intent check added at .com-face time. */
+export const COM_FACE_INTENT_LOCK_SOURCE = 'com-face-intent';
+
+export type ComFaceIntentListing = {
+  name: string;
+  description?: string | null;
+  triggerWords: string[];
+};
+
+/** The fields the intent check reads: the model's own listing, as civitai.red shows it. */
+export function comFaceIntentFields({
+  name,
+  description,
+  triggerWords,
+}: ComFaceIntentListing): TextScanField[] {
+  const text = removeTags(description ?? '').trim();
+  return [
+    { heading: 'Name', text: name },
+    ...(text ? [{ heading: 'Description', text }] : []),
+    ...(triggerWords.length ? [{ heading: 'Trained words', text: triggerWords.join(', ') }] : []),
+  ];
+}
+
+export const comFaceIntentTextHash = (listing: ComFaceIntentListing) =>
+  textScanTextHash({ fields: comFaceIntentFields(listing), declared: {} });
+
+/** The stored verdict, while it was read from this exact listing text. */
+export function reusableComFaceIntent(
+  meta: unknown,
+  textHash: string
+): Pick<ComFaceIntentRecord, 'detected' | 'reason'> | null {
+  const record = (meta as ModelMeta | null)?.comFaceIntent;
+  if (!record || typeof record !== 'object' || record.textHash !== textHash) return null;
+  if (typeof record.detected !== 'boolean') return null;
+  // An overturned detection stands as allowed for the text it was ruled on.
+  return { detected: record.detected && !record.overturnedAt, reason: record.reason };
+}
+
+export async function readComFaceIntentModel(modelId: number) {
+  return dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      description: true,
+      nsfw: true,
+      minor: true,
+      poi: true,
+      sfwOnly: true,
+      lockedProperties: true,
+      meta: true,
+    },
+  });
+}
+
+/** Stores a fresh verdict for the listing text it read, never over a ruling's overturn of that same
+ *  text. Best effort: a failed write only costs a re-judgement next time. */
+export async function recordComFaceIntent(
+  modelId: number,
+  record: Omit<ComFaceIntentRecord, 'at'>
+) {
+  const value = JSON.stringify({ ...record, at: new Date().toISOString() });
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    -- What the intent lock carries (the marker it replaced, a verdict that landed under it) stays
+    -- with the verdict until that lock ends.
+    SET meta = ${asJsonbObjectSql(
+      'meta'
+    )} || jsonb_build_object('comFaceIntent', ${value}::jsonb || jsonb_strip_nulls(jsonb_build_object(
+      'priorSystemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock',
+      'laterVerdict', meta->'comFaceIntent'->'laterVerdict'
+    )))
+    WHERE id = ${modelId}
+      AND NOT COALESCE(meta->'comFaceIntent'->>'textHash' = ${record.textHash}
+        AND meta->'comFaceIntent' ? 'overturnedAt', FALSE)
+  `.catch((error: Error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-com-face-intent',
+      message: 'verdict not stored',
+      modelId,
+      error: error.message,
+    })
+  );
+}
+
+/**
+ * A sexual-intent detection on a mature model's own stored listing: the model is made for sexual
+ * content, so its nsfw rating is locked, with the system marker so the owner can dispute it through
+ * a locked-setting review. Guarded in the WHERE: only while the stored verdict is still this
+ * detection for this text, not overturned, and no lock, minor or real-person flag is on.
+ * A model that is not mature keeps listing by its images, so it is refused a face but not locked.
+ * A text-scan rating marker it replaces is kept on the verdict and put back when the lock is lifted
+ * (`overturnComFaceIntentSql`): an allowed dispute rules on the intent, not on the rating.
+ */
+export async function lockForComFaceIntent(modelId: number, textHash: string) {
+  const locked = await dbWrite.$transaction(async (tx) => {
+    const updated = await tx.$executeRaw`
+      UPDATE "Model" m
+      SET "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
+          meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+            'systemNsfwLock',
+            jsonb_build_object('source', ${COM_FACE_INTENT_LOCK_SOURCE}::text, 'at', now()),
+            'comFaceIntent',
+            ((m.meta->'comFaceIntent') - 'priorSystemNsfwLock' - 'laterVerdict') || CASE
+              WHEN jsonb_typeof(m.meta->'systemNsfwLock') = 'object'
+              THEN jsonb_build_object('priorSystemNsfwLock', m.meta->'systemNsfwLock')
+              ELSE '{}'::jsonb END
+          )
+      WHERE m.id = ${modelId}
+        AND m.nsfw AND NOT m.minor AND NOT m.poi AND NOT m."sfwOnly"
+        AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+        AND m.meta->'comFaceIntent'->>'textHash' = ${textHash}
+        AND m.meta->'comFaceIntent'->>'detected' = 'true'
+        AND NOT (m.meta->'comFaceIntent' ? 'overturnedAt')
+    `;
+    if (updated)
+      await tx.modActivity.create({
+        data: { activity: 'comFaceIntentLock', entityType: 'model', entityId: modelId },
+      });
+    return updated > 0;
+  });
+  if (locked) await preventReplicationLag('model', modelId);
+  return locked;
+}
+
+export async function getOwnTriggerWords({
+  modelId,
+  userId,
+  db = dbRead,
+}: {
+  modelId: number;
+  userId: number;
+  db?: Pick<typeof dbRead, 'modelVersion'>;
+}) {
+  const versions = await db.modelVersion.findMany({
+    where: { modelId, model: { userId } },
+    select: { trainedWords: true },
+    // A fixed order: the words feed the intent verdict's text hash.
+    orderBy: { id: 'asc' },
+  });
+  return [...new Set(versions.flatMap((version) => version.trainedWords))];
+}
+
+/** The hash of the listing the model has stored now, as the intent check reads it; null when gone. */
+export async function storedListingTextHash(modelId: number) {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { name: true, description: true, userId: true },
+  });
+  if (!model) return null;
+  return comFaceIntentTextHash({
+    name: model.name,
+    description: model.description,
+    triggerWords: await getOwnTriggerWords({ modelId, userId: model.userId, db: dbWrite }),
+  });
+}
+
+/**
+ * After a ruling lifted the intent lock: puts back the rating marker the lock replaced, whatever
+ * verdict is stored now. Runs after the caller cleared the lock's own marker. The ruling decided the
+ * intent, not the rating, so the marker is stamped just after it: the unlock the ruling itself logs
+ * must not read as a moderator's ruling on the rating (`assertScanRatingKept`); a later one does.
+ */
+export const restoreReplacedRatingMarkerSql = (modelId: number) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = meta || jsonb_build_object(
+    'systemNsfwLock', (meta->'comFaceIntent'->'priorSystemNsfwLock')
+      || jsonb_build_object('at', now() + interval '1 second'),
+    'comFaceIntent', (meta->'comFaceIntent') - 'priorSystemNsfwLock' - 'laterVerdict'
+  )
+  WHERE id = ${modelId}
+    AND jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
+`;
+
+/** Drops what an intent lock carried (the marker it replaced, a later verdict) once the lock is
+ *  gone; under any other lock they no longer stand for the rating. */
+export const dropReplacedRatingMarkerSql = (modelId: number) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = jsonb_set(meta, '{comFaceIntent}',
+    (meta->'comFaceIntent') - 'priorSystemNsfwLock' - 'laterVerdict')
+  WHERE id = ${modelId}
+    AND jsonb_typeof(meta->'comFaceIntent') = 'object'
+`;
+
+/**
+ * A system rating verdict that the intent lock kept from applying: recorded on the verdict, so the
+ * dispute job leaves the dispute to a moderator and the moderator sees it. Only under the intent
+ * check's own lock; a moderator's lock still skips with nothing written.
+ */
+export const recordVerdictUnderIntentLock = (
+  db: Pick<typeof dbWrite, '$executeRaw'>,
+  modelId: number,
+  source: string
+) => db.$executeRaw`
+  UPDATE "Model" m
+  SET meta = jsonb_set(m.meta, '{comFaceIntent,laterVerdict}',
+    jsonb_build_object('source', ${source}::text, 'at', now()))
+  WHERE m.id = ${modelId}
+    AND 'nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[]))
+    AND m.meta->'systemNsfwLock'->>'source' = ${COM_FACE_INTENT_LOCK_SOURCE}
+    AND jsonb_typeof(m.meta->'comFaceIntent') = 'object'
+`;
+
+/**
+ * After a ruling lifted the intent lock: marks the stored detection overturned only when it was
+ * read from `ruledTextHash`, the listing the ruling was made on. A detection of other text stands,
+ * so restoring that text is refused again.
+ */
+export const overturnComFaceIntentSql = (
+  modelId: number,
+  ruledTextHash: string | null
+) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text))
+  WHERE id = ${modelId}
+    AND jsonb_typeof(meta->'comFaceIntent') = 'object'
+    AND meta->'comFaceIntent'->>'textHash' = ${ruledTextHash}
+    AND meta->'comFaceIntent'->>'detected' = 'true'
+    AND NOT (meta->'comFaceIntent' ? 'overturnedAt')
+`;

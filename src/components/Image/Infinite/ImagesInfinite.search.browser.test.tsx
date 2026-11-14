@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchInputs: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
+  features: {} as Record<string, boolean>,
   periodWrites: [] as unknown[],
 }));
 
@@ -89,7 +90,7 @@ vi.mock('~/components/Search/useSearchRefusal', () => ({
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
-  useFeatureFlags: () => ({}),
+  useFeatureFlags: () => state.features,
 }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevel>()),
@@ -123,6 +124,7 @@ describe('ImagesInfinite with a search', () => {
     state.refusal = undefined;
     state.searchInputs = [];
     state.feedEnabled = [];
+    state.features = {};
     state.periodWrites = [];
     savedFilters.reset();
     localStorage.clear();
@@ -197,5 +199,22 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.length).toBeGreaterThan(0);
     expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
     expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('ignores ?searchSort=newest without the Newest sort flag', async () => {
+    useRouter().query = { query: 'red dragon', searchSort: 'newest' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', sort: undefined });
+  });
+
+  test('asks for newest first with the Newest sort flag on', async () => {
+    state.features = { imageSearchNewestSort: true };
+    useRouter().query = { query: 'red dragon', searchSort: 'newest' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', sort: 'newest' });
   });
 });

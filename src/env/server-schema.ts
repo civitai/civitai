@@ -493,9 +493,16 @@ export const serverSchema = z
     DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: commaDelimitedStringArray().default([]),
     // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
     // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
+    // Review sheet batches (`POST /api/mod/review-batches`). Both lists are private; while either is
+    // unset every batch is routed to the held tier.
+    REVIEW_SHEET_SUSPECT_TERMS: z.string().optional(),
+    REVIEW_SHEET_BLOCKEDFOR_PATTERNS: z.string().optional(),
+    // The moderator app origin a batch link names; production's when unset.
+    REVIEW_SHEET_ORIGIN: z.string().url().optional(),
     // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
@@ -504,7 +511,8 @@ export const serverSchema = z
       .int()
       .positive()
       .default(6 * 60 * 60),
-    // Mints (reused ones included) per minute.
+    // Mints per minute: on /api/v1/download-links reused ones included, for mini's provider links
+    // fresh ones only.
     DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
     DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
@@ -798,6 +806,7 @@ export const serverSchema = z
     PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     PRESET_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
     // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain

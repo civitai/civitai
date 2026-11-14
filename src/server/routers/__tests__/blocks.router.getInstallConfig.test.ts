@@ -370,6 +370,31 @@ describe('blocks.grantScopes — consent budget', () => {
     expect(out.buzzBudgetPerDay).toBe(750);
   });
 
+  it("records the limit change on the viewer's Activity feed, kept out of owner analytics", async () => {
+    dbMock.dbWrite.blockScopeInvocation.create.mockClear();
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await caller.grantScopes({
+      appBlockId: 'ab_x',
+      scopes: ['ai:write:budgeted'],
+      buzzBudgetPerDay: 750,
+    });
+    expect(dbMock.dbWrite.blockScopeInvocation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        appBlockId: 'ab_x',
+        source: 'viewer-consent',
+        endpoint: 'consent:daily-limit',
+        detail: { action: 'limit.change', previousLimit: null, limit: 750 },
+      }),
+    });
+  });
+
+  it('control: a grant with no limit in it records no limit change', async () => {
+    dbMock.dbWrite.blockScopeInvocation.create.mockClear();
+    const caller = blocksRouter.createCaller(consentCtx() as never);
+    await caller.grantScopes({ appBlockId: 'ab_x', scopes: ['ai:write:budgeted'] });
+    expect(dbMock.dbWrite.blockScopeInvocation.create).not.toHaveBeenCalled();
+  });
+
   it('IGNORES a budget sent without any spend scope (does not error, stores nothing)', async () => {
     const caller = blocksRouter.createCaller(consentCtx() as never);
     const out = await caller.grantScopes({

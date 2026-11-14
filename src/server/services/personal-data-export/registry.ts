@@ -56,6 +56,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   ResourceReview: { subject: ['userId'] },
   ResourceReviewReaction: { subject: ['userId'] },
   Post: { subject: ['userId'] },
+  PostText: { subject: ['userId'] },
   Image: { subject: ['userId'], rule: 'image-media' },
   ImageEngagement: { subject: ['userId'] },
   ArticleRatingReview: { subject: ['userId'], staff: ['resolvedBy'] },

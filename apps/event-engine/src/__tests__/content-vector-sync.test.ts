@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { EmbedInput } from '@/vector-sync/embedder';
 import { syncIds, type Domain, type DomainPayload } from '@/vector-sync/domain/sync';
 import { DomainSyncQueue } from '@/vector-sync/domain/queue';
+import { backfillDomain } from '@/vector-sync/domain/backfill';
 import { vectorSyncMetrics } from '@/vector-sync/metrics';
 import { contentRoute, OUTBOX_TOPIC, selectDomains } from '@/vector-sync/content/consumer';
 import type { VectorPoint } from '@/vector-sync/qdrant';
@@ -105,6 +106,32 @@ describe('domain sync writes nothing for an unchanged row', () => {
     expect(store.points.get(1)!.payload.docHash).toBe(doc('dungeon').docHash);
   });
 
+  test("a domain's embedInput decides what is embedded; null deletes the point's old vector", async () => {
+    const { rows, getDocs, store, deps } = setup();
+    const sent: EmbedInput[] = [];
+    const capturing = {
+      embed: async (inputs: EmbedInput[], o: Parameters<typeof embedder.embed>[1]) => {
+        sent.push(...inputs);
+        return embedder.embed(inputs, o);
+      },
+    };
+    const imageOf = (id: number, p: Payload) =>
+      p.title === 'no image' ? null : { id: String(id), imageUrl: `img/${p.title}` };
+    const withImage = { ...(deps as object), embedder: capturing, embedInput: imageOf } as never;
+    rows.set(1, doc('castle', 1));
+    await syncIds(getDocs, [1], withImage);
+    expect(sent).toEqual([{ id: '1', imageUrl: 'img/castle' }]);
+
+    // The new document cannot be embedded: the old vector goes rather than outlive its source.
+    rows.set(1, { ...doc('no image', 16) });
+    store.writes = [];
+    const stats = await syncIds(getDocs, [1], withImage);
+    expect(sent).toHaveLength(1);
+    expect(stats.failed).toBe(1);
+    expect(store.writes).toEqual(['delete 1']);
+    expect(store.points.has(1)).toBe(false);
+  });
+
   test('a point written before payloadHash existed is rewritten once, then left alone', async () => {
     const { rows, getDocs, store, deps } = setup();
     rows.set(1, doc('castle'));
@@ -198,6 +225,56 @@ describe('one queue over several domains', () => {
     b.store.failNext = false;
     await q.flush();
     expect(commits).toEqual([[{ ...at, offset: '10' }]]);
+  });
+});
+
+describe("a domain's own embed input", () => {
+  const imageOf = (id: number, p: Payload) => ({ id: String(id), imageUrl: `img/${p.title}` });
+  const capture = () => {
+    const sent: EmbedInput[] = [];
+    return {
+      sent,
+      embedder: {
+        embed: async (inputs: EmbedInput[], o: Parameters<typeof embedder.embed>[1]) => {
+          sent.push(...inputs);
+          return embedder.embed(inputs, o);
+        },
+      },
+    };
+  };
+
+  test('reaches the embedder through the queue', async () => {
+    const { rows, getDocs, deps } = setup();
+    rows.set(1, doc('castle'));
+    const { sent, embedder: e } = capture();
+    const q = new DomainSyncQueue(
+      [
+        {
+          domain: domain('model3d', { getDocs, embedInput: imageOf }),
+          deps: { ...(deps as object), embedder: e } as never,
+        },
+      ],
+      async () => {}
+    );
+    q.add('model3d', { id: 1 }, { topic: OUTBOX_TOPIC, partition: 0, offset: '1' });
+    await q.flush();
+    expect(sent).toEqual([{ id: '1', imageUrl: 'img/castle' }]);
+  });
+
+  test('reaches the embedder through the backfill', async () => {
+    const { rows, getDocs, store } = setup();
+    rows.set(1, doc('castle'));
+    const { sent, embedder: e } = capture();
+    await backfillDomain(
+      { name: 'model3d', table: 'Model3D', getDocs, embedInput: imageOf },
+      { from: 0, to: 2, page: 10 },
+      {
+        pg: { query: async () => ({ rows: [{ id: 1 }] }) } as never,
+        store: Object.assign(store, { idsInRange: async () => [] }) as never,
+        embedder: e as never,
+      }
+    );
+    expect(sent).toEqual([{ id: '1', imageUrl: 'img/castle' }]);
   });
 });
 

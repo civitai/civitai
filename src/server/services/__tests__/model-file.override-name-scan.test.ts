@@ -71,7 +71,24 @@ describe('updateFile — the display name', () => {
 
   it('saves a changed name the blocklist accepts', async () => {
     await expect(save('clean name.safetensors')).resolves.toBeDefined();
-    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['clean name.safetensors'], expect.anything());
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
+      ['clean name.safetensors'],
+      expect.anything()
+    );
+  });
+});
+
+describe('updateFile — the saved display name', () => {
+  const written = () => dbMock.dbWrite.modelFile.updateMany.mock.calls[0]?.[0]?.data;
+
+  it('ends with the extension of the upload name sent in the same save', async () => {
+    await updateFile({ id: 1, userId: 7, name: 'new.ckpt', overrideName: 'my model' } as never);
+    expect(written()?.overrideName).toBe('my model.ckpt');
+  });
+
+  it('clears the override when nothing is left after cleaning', async () => {
+    await updateFile({ id: 1, userId: 7, overrideName: '  ...  ' } as never);
+    expect(written()?.overrideName).toBeNull();
   });
 });
 

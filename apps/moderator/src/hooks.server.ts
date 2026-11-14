@@ -13,9 +13,15 @@ import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
 import {
+  batchPathTier,
+  reviewBatchesEnabled,
+  clearedReviewCookie,
   clearedSheetCookie,
   isSheetImagePath,
+  resolveHeldSession,
+  resolveReviewSession,
   resolveSheetSession,
+  REVIEW_SHEET_COOKIE,
   SHEET_COOKIE,
 } from '$lib/server/held-sheet';
 
@@ -32,7 +38,53 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   ok        → authenticated moderator → populate locals.user and continue
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
 // where there is no cookie) and the sign-in routes. Everything else is gated.
-const SHEET_EXCHANGE_PATH = '/api/held-media/auth/exchange';
+const SHEET_EXCHANGE_PATHS = new Set([
+  '/api/held-media/auth/exchange',
+  '/api/review-media/auth/exchange',
+]);
+
+const noStore = (status: number, extra: Record<string, string> = {}) =>
+  new Response(null, { status, headers: { 'cache-control': 'no-store', ...extra } });
+
+/**
+ * A review batch route answers to its own tier's sheet cookie and nothing else: never the web session,
+ * which an old app build would carry by opening the link in a browser, and never an API token.
+ */
+async function handleBatchRoute(
+  event: Parameters<Handle>[0]['event'],
+  resolve: Parameters<Handle>[0]['resolve'],
+  tier: 'general' | 'held'
+): Promise<Response> {
+  if (!reviewBatchesEnabled()) return noStore(404);
+  if (event.request.method !== 'GET' && event.request.method !== 'HEAD') return noStore(405);
+  const name = tier === 'held' ? SHEET_COOKIE : REVIEW_SHEET_COOKIE;
+  const cleared = tier === 'held' ? clearedSheetCookie() : clearedReviewCookie();
+  const cookieHeader = event.request.headers.get('cookie') ?? '';
+  const sent = cookieHeader
+    .split(';')
+    .filter((c) => c.includes('=') && c.slice(0, c.indexOf('=')).trim() === name);
+  if (sent.length !== 1) return noStore(401);
+  const token = parseCookieHeader(cookieHeader)[name];
+
+  const session = await (tier === 'held'
+    ? resolveHeldSession(token).then(
+        (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [] }
+      )
+    : resolveReviewSession(token)
+  ).catch(() => {
+    console.error('[review-sheet] session lookup failed');
+    return undefined;
+  });
+  if (session === undefined) return noStore(503);
+  if (!session || !session.batches.length) return noStore(401, { 'set-cookie': cleared });
+
+  event.locals.user = session.user;
+  event.locals.heldCredential = 'sheet';
+  event.locals.reviewSheet = { tier, batches: session.batches };
+  applyGrants(await loadPageAccessGrants());
+  event.locals.grants = resolvePermissions(session.user);
+  return resolve(event);
+}
 
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
@@ -108,11 +160,13 @@ export const init: ServerInit = async () => {
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
-  // The held-media sheet: its code exchange carries no session, and its scoped cookie stands in for
-  // the web session on the image route alone, and only when there is no valid web session. Anywhere
-  // else the cookie is ignored.
-  if (event.url.pathname === SHEET_EXCHANGE_PATH && event.request.method === 'POST')
+  // The sheets' code exchanges carry no session. A batch route answers to its tier's sheet cookie
+  // alone. The held cookie also stands in for the web session on the held image route, only when
+  // there is no valid web session. Outside these routes and the exchanges, both are ignored.
+  if (SHEET_EXCHANGE_PATHS.has(event.url.pathname) && event.request.method === 'POST')
     return resolve(event);
+  const batchTier = batchPathTier(event.url.pathname);
+  if (batchTier) return handleBatchRoute(event, resolve, batchTier);
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
   // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
   // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified

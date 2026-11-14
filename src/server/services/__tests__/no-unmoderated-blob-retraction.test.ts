@@ -58,8 +58,10 @@ function parseWorkspaceRoots(yaml: string): string[] {
   // indented items are the only thing read.
   const block = /^packages:[^\S\n]*\n((?:[^\S\n]+\S.*\n|[^\S\n]*\n)*)/m.exec(yaml)?.[1] ?? '';
   const globs = [...block.matchAll(/^\s*-\s*['"]?([^'"\s]+)['"]?\s*$/gm)].map((m) => m[1]);
-  // `.` is the root package, whose own code is `src`; the rest are `<root>/*` globs.
-  return uniq(globs.filter((g) => g !== '.').map((g) => g.split('/')[0]));
+  // `.` is the root package, whose own code is `src`; the rest are `<root>/*` globs. A `!`-prefixed
+  // entry is an EXCLUSION (`'!apps/feed-go'` keeps a non-Node dir out of the workspace), not a
+  // root: read as one it becomes `!apps`, which no walk can reach.
+  return uniq(globs.filter((g) => g !== '.' && !g.startsWith('!')).map((g) => g.split('/')[0]));
 }
 
 function workspaceRoots(): string[] {
@@ -233,6 +235,22 @@ describe('no-unmoderated-blob-retraction', () => {
         '',
         'ignoredBuiltDependencies:',
         '  - core-js',
+        '',
+      ].join('\n')
+    );
+    expect(roots).toEqual(['packages', 'apps']);
+  });
+
+  // An exclusion in the packages block (`'!apps/feed-go'`) is not a root. Read as one, it parses
+  // as `!apps`, contributes no files, and takes the breadth control red on any PR that adds one.
+  it('does not read a negated packages entry as a workspace root', () => {
+    const roots = parseWorkspaceRoots(
+      [
+        'packages:',
+        "  - '.'",
+        "  - 'packages/*'",
+        "  - 'apps/*'",
+        "  - '!apps/feed-go'",
         '',
       ].join('\n')
     );

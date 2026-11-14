@@ -13,7 +13,10 @@ const SCHEMA = `
   CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
   CREATE TYPE "CrucibleIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error');
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
-  CREATE TABLE "Image" (id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL);
+  CREATE TABLE "Image" (
+    id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
+    "tosViolation" boolean NOT NULL DEFAULT false
+  );
   CREATE TABLE "Crucible" (
     id int PRIMARY KEY, status "CrucibleStatus" NOT NULL,
     ingestion "CrucibleIngestionStatus" NOT NULL, "imageId" int, "takenDownAt" timestamp(3)
@@ -26,13 +29,17 @@ type Over = {
   takenDownAt?: string;
   /** The cover's ingestion, or false for no cover. */
   cover?: false | string;
+  /** SQL values for the cover's needsReview, tosViolation, e.g. `'Minor', false`. Default: not held. */
+  review?: string;
 };
 
 /** One crucible; its cover image has the same id. */
 const crucible = (id: number, name: string, include: boolean, over: Over = {}): ParityRow => {
   const cover = over.cover ?? 'Scanned';
   const sql = [
-    ...(cover === false ? [] : [`INSERT INTO "Image" VALUES (${id}, '${cover}')`]),
+    ...(cover === false
+      ? []
+      : [`INSERT INTO "Image" VALUES (${id}, '${cover}', ${over.review ?? 'NULL, false'})`]),
     `INSERT INTO "Crucible" VALUES (${id}, '${over.status ?? 'Active'}',
       '${over.ingestion ?? 'Scanned'}', ${cover === false ? 'NULL' : id},
       ${over.takenDownAt ?? 'NULL'})`,
@@ -55,11 +62,20 @@ const spec: ParitySpec = {
     crucible(5, 'notTakenDown', false, { status: 'Completed', takenDownAt: 'now()' }),
     crucible(6, 'noCover', false, { cover: false }),
     crucible(7, 'blocked', false, { ingestion: 'Blocked' }),
+    crucible(10, 'coverNotInReview', false, { review: `'minor', false` }),
+    crucible(11, 'coverNotTos', false, { review: `NULL, true` }),
     // Upcoming and finished crucibles stay searchable; the caller filters status.
     crucible(8, 'pending', true, { status: 'Pending' }),
     crucible(9, 'completed', true, { status: 'Completed' }),
   ],
-  clauses: ['scanned', 'coverScanned', 'notCancelled', 'notTakenDown'],
+  clauses: [
+    'scanned',
+    'coverScanned',
+    'coverNotInReview',
+    'coverNotTos',
+    'notCancelled',
+    'notTakenDown',
+  ],
   site: async (prisma) =>
     (
       await prisma.$queryRaw<{ id: number }[]>`
