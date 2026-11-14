@@ -74,6 +74,8 @@ const routers = {
     import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
   semanticComicSearch: () =>
     import('./semantic-comic-search.router').then((m) => m.semanticComicSearchRouter),
+  semanticModel3DSearch: () =>
+    import('./semantic-model3d-search.router').then((m) => m.semanticModel3DSearchRouter),
   semanticStorylineSearch: () =>
     import('./semantic-storyline-search.router').then((m) => m.semanticStorylineSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
