@@ -1146,8 +1146,9 @@ export type BlockWorkflowSnapshot = {
    * another node instead of a literal value. Estimate and submit alike, before anything is
    * reserved.
    *
-   * `'source-scan-pending'` — a `kind:'step'` or `kind:'workflow'` input, or an inline
-   * `customComfy` graph, names the viewer's own upload whose scan has not finished. Retry once the scan completes. Estimate and
+   * `'source-scan-pending'` — a `kind:'textToImage'` source image, a `kind:'step'` or
+   * `kind:'workflow'` input, or an inline `customComfy` graph, names the viewer's own upload
+   * (or a source kept with `PERSIST_GENERATION_SOURCE`) whose scan has not finished. Retry once the scan completes. Estimate and
    * submit alike, before anything is reserved.
    */
   errorCode?:

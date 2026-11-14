@@ -789,10 +789,11 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
 
-### Generation input images (`kind: 'step'` and `kind: 'workflow'`)
+### Generation input images (`kind: 'textToImage'`, `kind: 'step'` and `kind: 'workflow'`)
 
 An image a generation input names must be an image stored on Civitai that has finished its
-scan and may be used as a source, the viewer's own uploads included.
+scan and may be used as a source, the viewer's own uploads included. For `kind: 'textToImage'`
+that is each `sourceImage` / `sourceImages` entry.
 
 - **Still being scanned.** An upload whose scan has not finished is refused by the estimate
   and the submit with a failed snapshot whose `errorCode` is `'source-scan-pending'`, before
