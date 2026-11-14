@@ -53,92 +53,107 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
     : `Flag ${rank}: ${flag.pot} points up for grabs${leader ? `, ${leader} holds it` : ''}.`;
 
   return (
-    <Popover
-      opened={open}
-      onChange={setOpen}
-      withinPortal
-      position="bottom-start"
-      withArrow
-      shadow="md"
-    >
-      <Popover.Target>
-        <button
-          type="button"
-          className={clsx(classes.badge, classes.chip, finalHour && 'animate-pulse', className)}
-          style={{ '--hat-turf-badge-size': '18px' } as React.CSSProperties}
-          aria-label={`${label} Show details`}
-          aria-expanded={open}
-          data-testid="flag-badge"
-          data-leader={leader ?? ''}
-          data-closed={closed}
-          onClick={(event) => {
-            // The card is a link and this sits inside it.
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(!open);
-          }}
-        >
-          <span className={classes.dial}>
-            <svg viewBox="0 0 48 48" className={classes.ring} aria-hidden="true">
-              <g transform="rotate(-90 24 24)">
-                <circle className={classes.track} cx="24" cy="24" r={RING_RADIUS} />
-                {arcs.map((arc) => (
-                  <circle
-                    key={arc.team}
-                    className={classes.arc}
-                    cx="24"
-                    cy="24"
-                    r={RING_RADIUS}
-                    stroke={colorOf(arc.team)}
-                    strokeDasharray={`${arc.length} ${RING_LENGTH - arc.length}`}
-                    strokeDashoffset={-arc.offset}
-                  />
-                ))}
-              </g>
-              <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
-              <circle
-                className={clsx(classes.discFill, !leader && classes.neutral)}
-                cx="24"
-                cy="24"
-                r={DISC_RADIUS}
-                fill={leader ? colorOf(leader) : undefined}
-              />
-            </svg>
-            <span className={classes.disc}>
-              <IconFlag size={8} stroke={2.5} />
-            </span>
-          </span>
-          <span className={classes.count} data-testid="flag-badge-pot">
-            {abbreviateNumber(flag.pot)} pts
-          </span>
-          {closed ? (
-            <span className={clsx(classes.count, classes.margin)} data-testid="flag-badge-closed">
-              {counting ? 'Counting…' : winners.length ? `${winners.join(' & ')} won` : 'Closed'}
-            </span>
-          ) : (
-            clock && (
-              <span
-                className={clsx(classes.count, classes.margin)}
-                style={
-                  clock.phase === 'final' ? { color: 'var(--mantine-color-yellow-4)' } : undefined
-                }
-                data-testid="flag-badge-clock"
-              >
-                <IconClock size={11} stroke={2.5} className="mr-0.5 inline align-[-1px]" />
-                {clock.phase === 'final' ? (
-                  'Any moment'
-                ) : (
-                  <FinalHourCountdown closesAt={summary.closesAt} />
-                )}
+    // The status is a chip of its own after the badge, so on a narrow card it wraps under it.
+    <div className="flex min-w-0 flex-wrap items-center gap-1">
+      <Popover
+        opened={open}
+        onChange={setOpen}
+        withinPortal
+        position="bottom-start"
+        withArrow
+        shadow="md"
+      >
+        <Popover.Target>
+          <button
+            type="button"
+            className={clsx(classes.badge, classes.chip, finalHour && 'animate-pulse', className)}
+            style={{ '--hat-turf-badge-size': '18px' } as React.CSSProperties}
+            aria-label={`${label} Show details`}
+            aria-expanded={open}
+            data-testid="flag-badge"
+            data-leader={leader ?? ''}
+            data-closed={closed}
+            onClick={(event) => {
+              // The card is a link and this sits inside it.
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(!open);
+            }}
+          >
+            <span className={classes.dial}>
+              <svg viewBox="0 0 48 48" className={classes.ring} aria-hidden="true">
+                <g transform="rotate(-90 24 24)">
+                  <circle className={classes.track} cx="24" cy="24" r={RING_RADIUS} />
+                  {arcs.map((arc) => (
+                    <circle
+                      key={arc.team}
+                      className={classes.arc}
+                      cx="24"
+                      cy="24"
+                      r={RING_RADIUS}
+                      stroke={colorOf(arc.team)}
+                      strokeDasharray={`${arc.length} ${RING_LENGTH - arc.length}`}
+                      strokeDashoffset={-arc.offset}
+                    />
+                  ))}
+                </g>
+                <circle className={classes.gap} cx="24" cy="24" r={RING_RADIUS - RING_STROKE / 2} />
+                <circle
+                  className={clsx(classes.discFill, !leader && classes.neutral)}
+                  cx="24"
+                  cy="24"
+                  r={DISC_RADIUS}
+                  fill={leader ? colorOf(leader) : undefined}
+                />
+              </svg>
+              <span className={classes.disc}>
+                <IconFlag size={8} stroke={2.5} />
               </span>
-            )
+            </span>
+            <span className={classes.count} data-testid="flag-badge-pot">
+              {abbreviateNumber(flag.pot)} pts
+            </span>
+          </button>
+        </Popover.Target>
+        <Popover.Dropdown p="sm" w={248} onClick={(event) => event.stopPropagation()}>
+          <FlagDetails imageId={imageId} />
+        </Popover.Dropdown>
+      </Popover>
+      {(closed || clock) && (
+        <span
+          className={clsx(
+            classes.chip,
+            classes.count,
+            'inline-flex h-[18px] items-center gap-0.5 rounded-full pl-1.5'
           )}
-        </button>
-      </Popover.Target>
-      <Popover.Dropdown p="sm" w={248} onClick={(event) => event.stopPropagation()}>
-        <FlagDetails imageId={imageId} />
-      </Popover.Dropdown>
-    </Popover>
+          style={
+            !closed && clock?.phase === 'final'
+              ? { color: 'var(--mantine-color-yellow-4)' }
+              : undefined
+          }
+          data-testid={closed ? 'flag-badge-closed' : 'flag-badge-clock'}
+        >
+          {closed ? (
+            counting ? (
+              'Counting…'
+            ) : winners.length ? (
+              `${winners.join(' & ')} won`
+            ) : (
+              'Closed'
+            )
+          ) : (
+            <>
+              <IconClock size={11} stroke={2.5} />
+              {clock?.phase === 'final' ? (
+                'Any moment'
+              ) : (
+                <FinalHourCountdown closesAt={summary.closesAt} />
+              )}
+            </>
+          )}
+        </span>
+      )}
+    </div>
   );
 }
 

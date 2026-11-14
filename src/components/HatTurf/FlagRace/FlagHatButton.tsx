@@ -98,7 +98,7 @@ export function FlagHatButton({ imageId }: { imageId: number }) {
             </Text>
           ) : (
             <>
-              <Text size="sm" fw={600} mb={6} id={`flag-hats-q-${imageId}`}>
+              <Text size="xs" c="dimmed" maw={150} mb={6} id={`flag-hats-q-${imageId}`}>
                 How many hats would you like to place?
               </Text>
               <Group gap={6} wrap="nowrap" role="group" aria-labelledby={`flag-hats-q-${imageId}`}>
