@@ -41,6 +41,17 @@ export const STORY_LEVEL_SQL = `(SELECT CASE WHEN lv.l = 0 OR lv.f = 0 THEN lv.l
   FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${BLOCKED}), st."maxNsfwLevel") AS l,
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
 
+/** The site's STORYLINE_MINOR_CEILING (NsfwLevel.PG13). */
+const MINOR_CEILING = 2;
+
+/**
+ * Chapter 1 within the storyline's ceiling, the site's `storylineRootWithinCeilingText`, pinned to
+ * it and to the reading path by the parity test. Above it, readers get a tombstone, so the
+ * document leaves chapter 1's text out.
+ */
+export const ROOT_WITHIN_CEILING_SQL = `((rp."nsfwLevel" & ~((CASE WHEN st."minorByScan"
+  THEN LEAST(st."maxNsfwLevel", ${MINOR_CEILING}) ELSE st."maxNsfwLevel" END) * 2 - 1)) = 0)`;
+
 /** Characters of chapter 1 read; the document keeps far fewer. */
 const OPENING_READ_CHARS = 20_000;
 
@@ -79,6 +90,7 @@ type Row = {
   rootChapterId: number;
   openingTitle: string | null;
   openingDetail: string | null;
+  openingShown: boolean;
   userId: number;
   username: string | null;
   coverImageId: number | null;
@@ -94,6 +106,7 @@ export async function getStorylineDocs(
     `SELECT st.id, st.title, st.status::text AS status, st."whoCanContinue"::text AS "whoCanContinue",
        ${STORY_LEVEL_SQL} AS level, rp."publishedAt" AS "rootPublishedAt", rc.id AS "rootChapterId",
        rp.title AS "openingTitle", left(rp.detail, ${OPENING_READ_CHARS}) AS "openingDetail",
+       ${ROOT_WITHIN_CEILING_SQL} AS "openingShown",
        st."userId", u.username, st."coverImageId"
      FROM ${STORYLINE_FROM}
      WHERE st.id = ANY($1::int[]) AND ${STORYLINE_ELIGIBLE_SQL}`,
@@ -104,8 +117,8 @@ export async function getStorylineDocs(
     const { text, docHash } = storylineDocument({
       title: row.title,
       username: row.username,
-      openingTitle: row.openingTitle,
-      openingDetail: row.openingDetail,
+      openingTitle: row.openingShown ? row.openingTitle : null,
+      openingDetail: row.openingShown ? row.openingDetail : null,
     });
     docs.set(row.id, {
       title_normalized: normalizeTitle(row.title),

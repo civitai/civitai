@@ -2,6 +2,7 @@ import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { NsfwLevel } from '~/server/common/enums';
 import { heldUserSql } from '@civitai/shared/held-media';
 import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import { STORYLINE_MINOR_CEILING } from '~/shared/utils/storyline';
 
 /**
  * Storyline visibility as SQL text, for callers that build raw strings (the notification
@@ -21,6 +22,18 @@ const storylineRootText = ({ rc = 'rc', rp = 'rp', ru = 'ru' }, published: strin
  */
 export const storylineRootVisibleText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {}) =>
   storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" < now()`);
+
+/** `storylineCeiling` for storyline `st`, as text; `storylineCeilingSql` is the service's Prisma form. */
+export const storylineCeilingText = (st = 'st') =>
+  `(CASE WHEN ${st}."minorByScan" THEN LEAST(${st}."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE ${st}."maxNsfwLevel" END)`;
+
+/**
+ * `storylineLevelAllowed` for chapter 1's post `rp` under storyline `st`'s ceiling: no level bit
+ * above it. Above it, readers get the chapter as a tombstone, so the search document leaves its
+ * text out. Unrated and Blocked posts are the eligibility rule's to refuse.
+ */
+export const storylineRootWithinCeilingText = ({ st = 'st', rp = 'rp' } = {}) =>
+  `((${rp}."nsfwLevel" & ~(${storylineCeilingText(st)} * 2 - 1)) = 0)`;
 
 /**
  * Which storylines the semantic search may return: the feed's gates for an outside reader, plus

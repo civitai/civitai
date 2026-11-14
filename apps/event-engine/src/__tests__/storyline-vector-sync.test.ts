@@ -11,7 +11,7 @@ const SCHEMA = `
     "deletedAt" timestamp);
   CREATE TABLE "Storyline" (id int PRIMARY KEY, title text, status text, "whoCanContinue" text,
     "userId" int, "tosViolation" boolean, "maxNsfwLevel" int, "nsfwLevel" int,
-    "moderatorNsfwLevel" int, "coverImageId" int);
+    "moderatorNsfwLevel" int, "coverImageId" int, "minorByScan" boolean NOT NULL DEFAULT false);
   CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int, title text, detail text,
     "tosViolation" boolean, "nsfwLevel" int, "publishedAt" timestamp, availability text);
   CREATE TABLE "StorylineChapter" (id int PRIMARY KEY, "storylineId" int, "postId" int,
@@ -98,6 +98,41 @@ describe('storyline payload, against the real query', () => {
       expect(docs.get(1)?.search_text).toBe(
         'Title: The Long Road\nCreator: someone\nOpening: Dawn. She left at dawn'
       );
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
+});
+
+describe("chapter 1's text above the storyline's ceiling", () => {
+  test('is left out of the document, as readers get a tombstone', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    // 1: within its ceiling. 2: chapter 1 at X under an R ceiling. 3: chapter 1 at R under an X
+    // ceiling the title scan lowered to the minor ceiling.
+    await pg.exec(`${SCHEMA}
+      INSERT INTO "User" VALUES (7, 'someone', NULL, NULL);
+      INSERT INTO "Storyline" VALUES
+        (1, 'Shown', 'Ongoing', 'Anyone', 7, false, 16, 0, NULL, NULL, false),
+        (2, 'Over', 'Ongoing', 'Anyone', 7, false, 4, 0, NULL, NULL, false),
+        (3, 'Minor', 'Ongoing', 'Anyone', 7, false, 16, 0, NULL, NULL, true);
+      INSERT INTO "Post" VALUES
+        (10, 7, 'Dawn', 'She left', false, 1, '2026-01-01', 'Public'),
+        (20, 7, 'Dusk', 'She came back', false, 16, '2026-01-01', 'Public'),
+        (30, 7, 'Noon', 'She stayed', false, 4, '2026-01-01', 'Public');
+      INSERT INTO "StorylineChapter" VALUES (10, 1, 10, 0, NULL), (20, 2, 20, 0, NULL),
+        (30, 3, 30, 0, NULL);
+    `);
+    try {
+      const docs = await getStorylineDocs(
+        pg as unknown as Parameters<typeof getStorylineDocs>[0],
+        [1, 2, 3]
+      );
+      expect(docs.get(1)?.search_text).toBe(
+        'Title: Shown\nCreator: someone\nOpening: Dawn. She left'
+      );
+      expect(docs.get(2)?.search_text).toBe('Title: Over\nCreator: someone\nOpening: ');
+      expect(docs.get(3)?.search_text).toBe('Title: Minor\nCreator: someone\nOpening: ');
     } finally {
       await pg.close();
     }

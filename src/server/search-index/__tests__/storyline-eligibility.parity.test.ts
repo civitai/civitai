@@ -7,14 +7,17 @@ import {
 } from '~/__tests__/eligibility-parity';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
 import {
+  ROOT_WITHIN_CEILING_SQL,
   STORY_LEVEL_SQL,
   STORYLINE_ELIGIBLE_SQL,
   STORYLINE_FROM,
 } from '../../../../apps/event-engine/src/vector-sync/storylines/source';
 import {
   storyLevelText,
+  storylineRootWithinCeilingText,
   storylineSemanticEligibleText,
 } from '~/server/services/storyline-visibility.sql';
+import { storylineCeiling, storylineLevelAllowed } from '~/shared/utils/storyline';
 
 const SCHEMA = `
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
@@ -39,7 +42,8 @@ const SCHEMA = `
     "needsReview" text, "blockedFor" text);
   CREATE TABLE "Storyline" (
     id int PRIMARY KEY, "userId" int NOT NULL, "tosViolation" boolean NOT NULL,
-    "maxNsfwLevel" int NOT NULL, "nsfwLevel" int NOT NULL, "moderatorNsfwLevel" int
+    "maxNsfwLevel" int NOT NULL, "nsfwLevel" int NOT NULL, "moderatorNsfwLevel" int,
+    "minorByScan" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "tosViolation" boolean NOT NULL,
@@ -252,6 +256,50 @@ describe('storyline semantic search eligibility', () => {
         expect([row.id, Number(row.copy)]).toEqual([row.id, Number(row.site)]);
       // The cases reach more than one level, so a constant copy would fail.
       expect(new Set(rows.map((r) => Number(r.site))).size).toBeGreaterThan(3);
+    } finally {
+      await harness.stop();
+    }
+  });
+  it("chapter 1's ceiling check is the reading path's", async () => {
+    const harness = await startPglitePrisma(SCHEMA);
+    try {
+      // (post level, owner's ceiling, minorByScan): under, at and over the ceiling, mixed bits,
+      // and the minor ceiling lowering an owner's X.
+      const cases: [number, number, boolean][] = [
+        [1, 16, false],
+        [16, 16, false],
+        [8, 4, false],
+        [5, 4, false],
+        [12, 4, false],
+        [1, 16, true],
+        [2, 16, true],
+        [4, 16, true],
+        [16, 16, true],
+        [4, 1, true],
+      ];
+      for (const [i, [post, ceiling, minor]] of cases.entries()) {
+        const id = i + 1;
+        await harness.pg.exec(`
+          INSERT INTO "Storyline" VALUES (${id}, 1, false, ${ceiling}, 0, NULL, ${minor});
+          INSERT INTO "Post" VALUES (${id}, 1, false, ${post}, now(), 'Public');
+          INSERT INTO "StorylineChapter" VALUES (${id}, ${id}, ${id}, 0, NULL);`);
+      }
+      const { rows } = await harness.pg.query<{ id: number; site: boolean; copy: boolean }>(
+        `SELECT st.id, ${storylineRootWithinCeilingText()} AS site, ${ROOT_WITHIN_CEILING_SQL} AS copy
+         FROM ${STORYLINE_FROM} ORDER BY st.id`
+      );
+      expect(rows).toHaveLength(cases.length);
+      const reader = cases.map(([postLevel, maxNsfwLevel, minorByScan]) =>
+        storylineLevelAllowed({
+          postLevel,
+          maxNsfwLevel: storylineCeiling({ maxNsfwLevel, minorByScan }),
+        })
+      );
+      expect(rows.map((r) => r.site)).toEqual(reader);
+      expect(rows.map((r) => r.copy)).toEqual(reader);
+      // Both answers occur, with and without the minor ceiling.
+      expect(new Set(reader.slice(0, 5)).size).toBe(2);
+      expect(new Set(reader.slice(5)).size).toBe(2);
     } finally {
       await harness.stop();
     }
