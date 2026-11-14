@@ -188,15 +188,20 @@ export async function getPostTextsForViewer({
     },
   });
   return rows
-    .filter((row) => !row.refused && !row.csamHeld)
-    .filter(
-      (row) =>
-        seesAll ||
-        isImageCaptionShown(row, {
-          browsingLevel,
-          maxNsfwLevel: getHighestBrowsingLevelBit(browsingLevel),
-          failClosed: true,
-        })
-    )
+    .filter((row) => isPostTextShownToViewer(row, { browsingLevel, seesAll }))
     .map(({ id, index, content, nsfwLevel }) => ({ id, index, content, nsfwLevel }));
+}
+
+/** The row rule of `getPostTextsForViewer`, which a text's comment thread shares. */
+export function isPostTextShownToViewer(
+  row: { refused: boolean; csamHeld: boolean; nsfwLevel: number },
+  { browsingLevel, seesAll }: { browsingLevel: number; seesAll: boolean }
+) {
+  if (row.refused || row.csamHeld) return false;
+  if (seesAll) return true;
+  return isImageCaptionShown(row, {
+    browsingLevel,
+    maxNsfwLevel: getHighestBrowsingLevelBit(browsingLevel),
+    failClosed: true,
+  });
 }
