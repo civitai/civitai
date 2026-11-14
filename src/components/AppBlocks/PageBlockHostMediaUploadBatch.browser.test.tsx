@@ -478,20 +478,27 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — a batch that outlives its to
     expect(tokensOf(h.record)).toEqual(new Array(5).fill('tok_refreshed'));
   });
 
-  test('a call refused UNAUTHORIZED is retried once with the token read again', async () => {
+  test('a call refused UNAUTHORIZED is retried once, with the token as it is NOW', async () => {
     const replies = await mountReady();
-    h.record.mockRejectedValueOnce(
-      Object.assign(new Error('invalid block token'), {
+    // The token expires under the first record, and the host's refresh lands before the retry.
+    h.record.mockImplementationOnce(async () => {
+      await mounted!.rerender(
+        <>
+          <PageBlockHost {...baseProps} token="tok_after_401" />
+          <DialogProvider />
+        </>
+      );
+      throw Object.assign(new Error('invalid block token'), {
         data: { code: 'UNAUTHORIZED', httpStatus: 401 },
-      })
-    );
+      });
+    });
     postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_401', wavs(1)));
     await confirm();
     const reply = await oneReply(replies, 'rq_401');
     expect(reply.results).toEqual([
       { index: 0, selected: expect.objectContaining({ kind: 'audio' }) },
     ]);
-    expect(h.record).toHaveBeenCalledTimes(2);
+    expect(tokensOf(h.record)).toEqual(['tok_abc', 'tok_after_401']);
   });
 });
 

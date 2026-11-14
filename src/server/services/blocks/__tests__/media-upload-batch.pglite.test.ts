@@ -67,17 +67,18 @@ beforeEach(async () => {
 const presign = (batchId: number, index: number, actor = ACTOR, now = NOW) =>
   presignMediaUploadBatchItem({ actor, batchId, index, token: 'viewer-token', now });
 
-describe('presign: at most two upload URLs per declared file', () => {
-  it('a file’s third URL is refused while another file still gets its own', async () => {
+describe('presign: at most three upload URLs per declared file', () => {
+  it('a file’s fourth URL is refused while another file still gets its own', async () => {
     const id = await batch(2);
     await expect(presign(id, 0)).resolves.toEqual({ uploadUrl: 'u', expiresAt: 'e' });
+    await expect(presign(id, 0)).resolves.toBeDefined();
     await expect(presign(id, 0)).resolves.toBeDefined();
     await expect(presign(id, 0)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'this batch cannot take more uploads',
     });
     await expect(presign(id, 1)).resolves.toBeDefined();
-    expect(presignSpy).toHaveBeenCalledTimes(3);
+    expect(presignSpy).toHaveBeenCalledTimes(4);
   });
 
   it('a position past the files the batch declared is refused', async () => {
@@ -92,12 +93,13 @@ describe('presign: at most two upload URLs per declared file', () => {
     await expect(presign(id, 0)).rejects.toThrow('upstream 503');
     await expect(presign(id, 0)).resolves.toBeDefined();
     await expect(presign(id, 0)).resolves.toBeDefined();
+    await expect(presign(id, 0)).resolves.toBeDefined();
     await expect(presign(id, 0)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     const { rows } = await db.query<{ presign_count: number; presign_counts: number[] }>(
       'SELECT presign_count, presign_counts FROM app_block_upload_batches WHERE id = $1',
       [id]
     );
-    expect(rows[0]).toEqual({ presign_count: 2, presign_counts: [2] });
+    expect(rows[0]).toEqual({ presign_count: 3, presign_counts: [3] });
   });
 
   it.each([
@@ -115,17 +117,40 @@ describe('record: one key per declared file, no repeats', () => {
   const record = (batchId: number, blobKey: string) =>
     recordMediaUploadBatchItem({ actor: ACTOR, batchId, blobKey, now: NOW });
 
-  it('appends keys up to the file count, refusing a repeat and the one past the count', async () => {
+  it('appends keys up to the file count, refusing the one past the count', async () => {
     const id = await batch(1);
     await expect(record(id, KEY_A)).resolves.toEqual({
       expiresAt: new Date('2026-12-11T10:00:00.000Z'),
     });
-    await expect(record(id, KEY_A)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(record(id, KEY_B)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     const { rows } = await db.query<{ blob_keys: string[] }>(
       'SELECT blob_keys FROM app_block_upload_batches WHERE id = $1',
       [id]
     );
     expect(rows[0].blob_keys).toEqual([KEY_A]);
+  });
+
+  it('recording a key already recorded succeeds again, leaving exactly one copy', async () => {
+    // A retried record whose first attempt committed but whose answer was lost.
+    const id = await batch(2);
+    const expiresAt = new Date('2026-12-11T10:00:00.000Z');
+    await expect(record(id, KEY_A)).resolves.toEqual({ expiresAt });
+    await expect(record(id, KEY_A)).resolves.toEqual({ expiresAt });
+    const { rows } = await db.query<{ blob_keys: string[] }>(
+      'SELECT blob_keys FROM app_block_upload_batches WHERE id = $1',
+      [id]
+    );
+    expect(rows[0].blob_keys).toEqual([KEY_A]);
+  });
+
+  it('a key recorded in another viewer’s batch is not success for this one', async () => {
+    const other = await batch(1, NOW, USER + 1);
+    await recordMediaUploadBatchItem({
+      actor: { userId: USER + 1, appBlockId: 'apb_alpha' },
+      batchId: other,
+      blobKey: KEY_A,
+      now: NOW,
+    });
+    await expect(record(other, KEY_A)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

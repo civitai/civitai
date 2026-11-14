@@ -178,6 +178,15 @@ describe('startMediaUploadBatch', () => {
       ),
     ],
     [
+      'the model client’s own error shape',
+      Object.assign(
+        new Error(
+          'Invalid `prisma.appBlockUploadBatch.create()` invocation:\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "42501", message: "permission denied for table app_block_upload_batches", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })'
+        ),
+        { name: 'PrismaClientUnknownRequestError' }
+      ),
+    ],
+    [
       'a permission error on the id sequence',
       new Error('permission denied for sequence app_block_upload_batches_id_seq'),
     ],
