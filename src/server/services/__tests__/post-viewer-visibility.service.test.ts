@@ -63,6 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getPostDetail.mockResolvedValue({ id: POST, user: { id: AUTHOR } });
   mocks.amIBlockedByUser.mockResolvedValue(false);
+  dbMock.dbRead.textScanHold.findMany.mockResolvedValue([] as never);
 });
 
 describe("a storyline text's thread is readable exactly where post.get serves the text", () => {
@@ -103,6 +104,16 @@ describe("a storyline text's thread is readable exactly where post.get serves th
     ]) {
       givenText(row);
       for (const user of [author, moderator]) expect(await threadReadable(ctx(user))).toBe(false);
+    }
+  });
+
+  it('a text with a Pending csam hold has no readable thread, author and moderators included', async () => {
+    givenText(scanned);
+    dbMock.dbRead.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
+    for (const user of [undefined, member, author, moderator]) {
+      const c = ctx(user);
+      expect(await threadReadable(c)).toBe(false);
+      expect(await servedByPostGet(c)).toBe(false);
     }
   });
 
