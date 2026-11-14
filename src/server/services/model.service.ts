@@ -515,6 +515,10 @@ export function feedVersionCanGenerate({
   });
 }
 
+/** Which site's cover a picked cover id is: the .com one when it is the .com column's. */
+const coverSite = (model: { sfwCoverImageId?: number | null }, coverId: number | null) =>
+  coverId != null && coverId === model.sfwCoverImageId ? ('com' as const) : ('red' as const);
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -2000,6 +2004,7 @@ export const getModelsWithImagesAndModelVersions = async ({
       ownerId: model.user.id,
       shownVersionId: model.modelVersions[0]?.id,
       coverId: pickCoverImageId(model, showSfwFace),
+      site: coverSite(model, pickCoverImageId(model, showSfwFace)),
     })),
     modelVersionImages,
     // Under a base-model filter the card shows that version, so a cover from another stays put.
@@ -4212,6 +4217,7 @@ export const upsertModel = async (
     await assertCoverImagesValid({
       modelId: id,
       ownerId: beforeUpdate.userId,
+      modelNsfw: data.nsfw ?? beforeUpdate.nsfw,
       coverImageId: data.coverImageId,
       sfwCoverImageId: data.sfwCoverImageId,
     });
@@ -4508,13 +4514,29 @@ export const upsertModel = async (
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
         // The cover gate compared against the first read; a cover written since then (the listing
         // re-check clearing it) would be overwritten without the gate running.
+        // The showcase writes both covers too, so either one changing since the first read conflicts.
         const lockedCover =
-          !isModerator && data.sfwCoverImageId !== undefined
-            ? await tx.model.findUnique({ where: { id }, select: { sfwCoverImageId: true } })
+          !isModerator && (data.sfwCoverImageId !== undefined || data.coverImageId !== undefined)
+            ? await tx.model.findUnique({
+                where: { id },
+                select: { sfwCoverImageId: true, coverImageId: true },
+              })
             : null;
-        if (lockedCover && lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null))
+        if (
+          lockedCover &&
+          data.sfwCoverImageId !== undefined &&
+          lockedCover.sfwCoverImageId !== (beforeUpdate.sfwCoverImageId ?? null)
+        )
           throw throwConflictError(
             'This model’s civitai.com card changed while you were editing. Reload and save again.'
+          );
+        if (
+          lockedCover &&
+          data.coverImageId !== undefined &&
+          lockedCover.coverImageId !== (beforeUpdate.coverImageId ?? null)
+        )
+          throw throwConflictError(
+            'This model’s cover changed while you were editing. Reload and save again.'
           );
         // A .com cover this save changed (through the gate, for an owner) ends the re-check's
         // removal, and so does turning the face off: there is no face left to have removed.

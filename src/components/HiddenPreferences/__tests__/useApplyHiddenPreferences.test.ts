@@ -63,6 +63,7 @@ const BROWSING_LEVEL = 1;
 
 const emptyPrefs = (): HiddenPreferencesState => ({
   hiddenUsers: new Map(),
+  blockRelations: new Map(),
   hiddenTags: new Map(),
   hiddenModels: new Map(),
   hiddenModel3Ds: new Map(),
@@ -254,12 +255,39 @@ describe("filterPreferences — 'images' branch drops every hidden dimension (la
 
   // [label, the-image-that-must-drop, filter opts]. Each pairs the dirty image with
   // a clean sibling (id 1) and asserts the clean one survives while the dirty drops.
-  const cases: Array<[string, ReturnType<typeof makeImage>, RunImagesOpts, keyof ReturnType<typeof runImages>['hidden']]> = [
+  const cases: Array<
+    [
+      string,
+      ReturnType<typeof makeImage>,
+      RunImagesOpts,
+      keyof ReturnType<typeof runImages>['hidden']
+    ]
+  > = [
     ['browsing-level mismatch', makeImage({ id: 2, nsfwLevel: 2 }), {}, 'browsingLevel'],
-    ['hidden image id', makeImage({ id: 3 }), { hiddenPreferences: prefsWith({ images: [3] }) }, 'images'],
-    ['hidden user', makeImage({ id: 4, userId: 555 }), { hiddenPreferences: prefsWith({ users: [555] }) }, 'users'],
-    ['hidden tag', makeImage({ id: 5, tagIds: [88] }), { hiddenPreferences: prefsWith({ tags: [88] }) }, 'tags'],
-    ['system hidden tag', makeImage({ id: 6, tagIds: [77] }), { hiddenPreferences: prefsWith({ systemTags: [77] }) }, 'tags'],
+    [
+      'hidden image id',
+      makeImage({ id: 3 }),
+      { hiddenPreferences: prefsWith({ images: [3] }) },
+      'images',
+    ],
+    [
+      'hidden user',
+      makeImage({ id: 4, userId: 555 }),
+      { hiddenPreferences: prefsWith({ users: [555] }) },
+      'users',
+    ],
+    [
+      'hidden tag',
+      makeImage({ id: 5, tagIds: [88] }),
+      { hiddenPreferences: prefsWith({ tags: [88] }) },
+      'tags',
+    ],
+    [
+      'system hidden tag',
+      makeImage({ id: 6, tagIds: [77] }),
+      { hiddenPreferences: prefsWith({ systemTags: [77] }) },
+      'tags',
+    ],
     ['poi (disablePoi)', makeImage({ id: 7, poi: true }), { poiDisabled: true }, 'poi'],
     ['minor (disableMinor)', makeImage({ id: 8, minor: true }), { minorDisabled: true }, 'minor'],
   ];
@@ -410,5 +438,43 @@ describe("filterPreferences — 'comics' gates on ALL aggregate bits within the 
     );
     expect(items.map((c) => c.id)).toEqual([1]);
     expect(hidden.browsingLevel).toBe(1);
+  });
+});
+
+describe('filterPreferences: a cover featured from someone else', () => {
+  // A model whose card image is by another author: a cover the creator featured in its showcase.
+  const featuredCover = (authorId: number) => ({
+    id: 1,
+    user: { id: 9999 },
+    nsfwLevel: 1,
+    nsfw: false,
+    name: 'm',
+    images: [
+      { id: 10, nsfwLevel: 1, userId: authorId },
+      { id: 11, nsfwLevel: 1, userId: 9999 },
+    ],
+  });
+  const run = (model: ReturnType<typeof featuredCover>, hiddenUserId: number) =>
+    filterPreferences({
+      type: 'models',
+      data: [model],
+      hiddenPreferences: { ...emptyPrefs(), hiddenUsers: new Map([[hiddenUserId, true]]) },
+      browsingLevel: BROWSING_LEVEL,
+      currentUser: null as never,
+      canViewNsfw: true,
+    });
+
+  it("drops the image of an author the viewer hid, keeping the creator's", () => {
+    const { items } = run(featuredCover(77), 77);
+    expect((items[0] as ReturnType<typeof featuredCover>).images.map((image) => image.id)).toEqual([
+      11,
+    ]);
+  });
+
+  it('keeps it when the viewer hid someone else', () => {
+    const { items } = run(featuredCover(77), 78);
+    expect((items[0] as ReturnType<typeof featuredCover>).images.map((image) => image.id)).toEqual([
+      10, 11,
+    ]);
   });
 });

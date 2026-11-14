@@ -1289,6 +1289,8 @@ model ModelVersionShowcaseItem {
   source         String // 'Owner' | 'Community' (CHECK in the migration)
   position       Int?     @db.SmallInt
   excluded       Boolean  @default(false)
+  /// The image's author or a moderator removed it; kept so the owner can't add it back.
+  removed        Boolean  @default(false)
   addedById      Int
   createdAt      DateTime @default(now())
 

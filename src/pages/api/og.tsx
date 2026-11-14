@@ -23,6 +23,10 @@ import {
   getUserMetricPrivacyDefaults,
   resolveModelHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
 import { isModelWithheld } from '~/shared/utils/model-withhold';
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
@@ -178,6 +182,7 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
       sfwDescription: true,
       coverImageId: true,
       sfwCoverImageId: true,
+      nsfw: true,
       meta: true,
       mode: true,
       userId: true,
@@ -213,8 +218,10 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
   });
 
   // Run metric + image queries in parallel
-  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on.
-  const coverId = (model.sfwName != null ? model.sfwCoverImageId : null) ?? model.coverImageId;
+  // Link previews have no signed-in viewer, so they get the .com cover whenever the face is on, or
+  // whenever the model isn't mature (its .com showcase sets that cover).
+  const coverId =
+    (model.sfwName != null || !model.nsfw ? model.sfwCoverImageId : null) ?? model.coverImageId;
   // A taken-down model's card is drawn without any of its images.
   const withheld = isModelWithheld(model);
   const ownPosts = model.userId === -1 ? {} : { userId: model.userId };
@@ -270,6 +277,19 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
         })
       : null,
   ]);
+  // A cover that is someone else's image the creator featured in the showcase: served only while
+  // it still passes the showcase's filters, and credited to its author.
+  const communityCover =
+    !coverImage && coverId && !withheld
+      ? isShowcaseCoverImage(
+          await getShowcaseCommunityCovers([{ modelId: id, imageId: coverId }]),
+          {
+            modelId: id,
+            imageId: coverId,
+            site: coverId === model.sfwCoverImageId ? 'com' : 'red',
+          }
+        )
+      : undefined;
 
   const stats: StatItem[] = metric
     ? [
@@ -291,9 +311,15 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 
   return {
     title: sfwName ?? model.name,
-    description: cleanDescription(description),
+    description: cleanDescription(
+      communityCover?.authorUsername
+        ? `Cover image by @${communityCover.authorUsername}. ${description}`
+        : description
+    ),
     creator: model.user.username ?? 'Unknown',
-    ...buildEntityImage(getSafeImage(coverImage) ?? getSafeImage(defaultImage)),
+    ...buildEntityImage(
+      getSafeImage(coverImage) ?? getSafeImage(communityCover) ?? getSafeImage(defaultImage)
+    ),
     stats,
   };
 }

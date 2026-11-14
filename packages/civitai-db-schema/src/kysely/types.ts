@@ -4478,6 +4478,10 @@ export type ModelVersionShowcaseItem = {
   source: string;
   position: number | null;
   excluded: Generated<boolean>;
+  /**
+   * The image's author or a moderator removed it; kept so the owner can't add it back.
+   */
+  removed: Generated<boolean>;
   addedById: number;
   createdAt: Generated<Timestamp>;
 };

@@ -1714,6 +1714,15 @@ export const setUserSettingHandler = async ({
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+    if (
+      'hideFromVersionShowcases' in restInput &&
+      !!restSettings.hideFromVersionShowcases !== !!restInput.hideFromVersionShowcases
+    ) {
+      const { bustVersionShowcasesForUser } = await import(
+        '~/server/services/version-showcase.service'
+      );
+      await bustVersionShowcasesForUser(id);
+    }
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
     // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and

@@ -27,6 +27,7 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import classes from './ModelCarousel.module.css';
+import { VersionShowcaseEditButton } from '~/components/Model/VersionShowcase/VersionShowcaseEditButton';
 import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import {
   getEventDecorationClearLeftCss,
@@ -44,6 +45,10 @@ export function ModelCarousel(props: Props) {
   return (
     <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>
       <BrowsingSettingsAddonsProvider>
+        <VersionShowcaseEditButton
+          modelVersionId={props.modelVersionId}
+          modelUserId={props.modelUserId}
+        />
         {forceMinorLevel ? (
           <HiddenPreferencesProvider>
             <ModelCarouselContent {...props} />
@@ -193,7 +198,11 @@ function ModelCarouselContent({
                               state={{ imageId: image.id, images }}
                             >
                               <Indicator
-                                label="From Community"
+                                label={
+                                  image.user.username
+                                    ? `By ${image.user.username}`
+                                    : 'From Community'
+                                }
                                 radius="sm"
                                 position="top-center"
                                 size={24}

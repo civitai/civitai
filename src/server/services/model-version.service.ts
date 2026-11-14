@@ -4167,6 +4167,9 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+  // After the merge commits, and best effort: the showcase never decides whether a merge succeeds.
+  const { repointVersionShowcases } = await import('~/server/services/version-showcase.service');
+  await repointVersionShowcases(targetVersionId, sourceVersionIds);
   // Then the AIRs read before the write, and the file-pinned AIRs, which version busts never reach: a
   // pinned AIR names its version, so a moved file is cached under its source's AIR, and the target's
   // coverage now counts the moved files.

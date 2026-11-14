@@ -29,6 +29,11 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   preventModelVersionLagBatch: vi.fn(),
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
+// Showcase busts query on their own; they are covered by version-showcase tests.
+vi.mock('~/server/services/version-showcase.service', () => ({
+  bustVersionShowcasesForModels: vi.fn(),
+  bustVersionShowcasesForPosts: vi.fn(),
+}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
 vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));

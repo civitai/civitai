@@ -1132,6 +1132,23 @@ async function toggleBlockUser({
 
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
+  // A block either way takes each one's images out of the other's model showcases (and back).
+  const { bustVersionShowcasesForUser } = await import(
+    '~/server/services/version-showcase.service'
+  );
+  await Promise.all([
+    bustVersionShowcasesForUser(targetUserId, userId),
+    bustVersionShowcasesForUser(userId, targetUserId),
+  ]).catch((error) =>
+    logToAxiom({
+      name: 'block-user',
+      type: 'error',
+      message: 'block committed but the version showcases were not refreshed',
+      userId,
+      targetUserId,
+      error: (error as Error).message,
+    }).catch(() => null)
+  );
 
   // Every block cascades, not only a newly established one. `declinePlacementsOnBlock`
   // touches only `pending` rows and caps at 200 per run, so a user with a larger

@@ -1,23 +1,42 @@
-import { dbRead } from '~/server/db/client';
+import type { Prisma } from '@prisma/client';
+import { Tracker } from '~/server/clickhouse/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  getShowcaseCommunityCovers,
+  isShowcaseCoverImage,
+} from '~/server/services/version-showcase.service';
+import type { VersionShowcaseSite } from '~/shared/constants/version-showcase.constants';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
+import {
+  throwBadRequestError,
+  throwConflictError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import type { ComCoverState } from '~/shared/utils/model-sfw-face';
 import { comCoverState, isComSafeLevel } from '~/shared/utils/model-sfw-face';
 import { isDefined } from '~/utils/type-guards';
 
 /**
- * A picked cover must be the creator's own published image on this model, and the .com one must
- * be rated PG or PG13. Throws on the first id that is not.
+ * A picked cover must be the creator's own published image on this model, or a community image the
+ * creator featured in this model's showcase for that site. The .com one must be rated PG or PG-13,
+ * and on a mature model it must be the creator's own: the model is listed on .com through its own
+ * .com cover, and someone else's image must not decide that. Throws on the first id that is not.
  */
 export async function assertCoverImagesValid({
   modelId,
   ownerId,
+  modelNsfw,
   coverImageId,
   sfwCoverImageId,
 }: {
   modelId: number;
   ownerId: number;
+  modelNsfw?: boolean;
   coverImageId?: number | null;
   sfwCoverImageId?: number | null;
 }) {
@@ -32,16 +51,32 @@ export async function assertCoverImagesValid({
     select: { id: true, nsfwLevel: true },
   });
   const byId = new Map(images.map((image) => [image.id, image]));
+  const notOwned = ids.filter((id) => !byId.has(id));
+  const community = notOwned.length
+    ? await getShowcaseCommunityCovers(
+        notOwned.map((imageId) => ({ modelId, imageId })),
+        { primary: true }
+      )
+    : new Map();
 
-  if (coverImageId && !byId.has(coverImageId))
-    throw throwBadRequestError('The cover must be one of your published images on this model.');
+  const featuredOn = (imageId: number, site: VersionShowcaseSite) =>
+    isShowcaseCoverImage(community, { modelId, imageId, site });
+  if (coverImageId && !byId.has(coverImageId) && !featuredOn(coverImageId, 'red'))
+    throw throwBadRequestError(
+      'The cover must be one of your published images on this model, or an image featured in its civitai.red showcase.'
+    );
   if (sfwCoverImageId) {
-    const image = byId.get(sfwCoverImageId);
-    if (!image)
+    const owned = byId.get(sfwCoverImageId);
+    const featured = featuredOn(sfwCoverImageId, 'com');
+    if (!owned && (featured ?? featuredOn(sfwCoverImageId, 'red')) && modelNsfw)
       throw throwBadRequestError(
-        'The civitai.com cover must be one of your published images on this model.'
+        'On a mature model the civitai.com cover must be one of your own images.'
       );
-    if (!isComSafeLevel(image.nsfwLevel))
+    if (!owned && !featured)
+      throw throwBadRequestError(
+        'The civitai.com cover must be one of your published images on this model, or an image featured in its civitai.com showcase.'
+      );
+    if (!isComSafeLevel(owned?.nsfwLevel ?? featured?.nsfwLevel ?? 0))
       throw throwBadRequestError('The civitai.com cover must be an image rated PG or PG-13.');
   }
 }
@@ -57,7 +92,14 @@ export async function getCoverImages({
   modelVersionImages,
   sameVersionOnly,
 }: {
-  covers: { modelId: number; ownerId: number; shownVersionId?: number; coverId: number | null }[];
+  covers: {
+    modelId: number;
+    ownerId: number;
+    shownVersionId?: number;
+    coverId: number | null;
+    /** The site whose cover this is: which showcase a community cover must be featured in. */
+    site?: VersionShowcaseSite;
+  }[];
   modelVersionImages: Record<number, { images: ImagesForModelVersions[] }>;
   sameVersionOnly: boolean;
 }) {
@@ -74,7 +116,8 @@ export async function getCoverImages({
     if (image) found.set(cover.modelId, image);
     else pending.push(cover);
   }
-  if (!pending.length || sameVersionOnly) return found;
+  if (!pending.length) return found;
+  if (sameVersionOnly) return withCommunityCovers(found, pending, true);
 
   const rows = await dbRead.image.findMany({
     where: { id: { in: pending.map((cover) => cover.coverId) } },
@@ -92,7 +135,7 @@ export async function getCoverImages({
       row?.post?.modelVersion?.modelId === cover.modelId && row.post.userId === cover.ownerId;
     return owned && versionId ? [{ ...cover, versionId }] : [];
   });
-  if (!located.length) return found;
+  if (!located.length) return withCommunityCovers(found, pending, false);
 
   const byVersion = await getImagesForModelVersionCache([
     ...new Set(located.map((cover) => cover.versionId)),
@@ -102,6 +145,38 @@ export async function getCoverImages({
       (candidate) => candidate.id === cover.coverId
     );
     if (image) found.set(cover.modelId, image);
+  }
+  return withCommunityCovers(found, pending, false);
+}
+
+/**
+ * Fills in covers that are community images featured in the model's showcase (with the author's
+ * username for credit). Under `sameVersionOnly`, only a community image on the shown version counts.
+ */
+async function withCommunityCovers(
+  found: Map<number, ImagesForModelVersions>,
+  pending: {
+    modelId: number;
+    shownVersionId?: number;
+    coverId: number;
+    site?: VersionShowcaseSite;
+  }[],
+  sameVersionOnly: boolean
+) {
+  const missing = pending.filter((cover) => !found.has(cover.modelId));
+  if (!missing.length) return found;
+  const community = await getShowcaseCommunityCovers(
+    missing.map((cover) => ({ modelId: cover.modelId, imageId: cover.coverId }))
+  );
+  for (const cover of missing) {
+    const featured = isShowcaseCoverImage(community, {
+      modelId: cover.modelId,
+      imageId: cover.coverId,
+      site: cover.site ?? 'red',
+    });
+    if (!featured) continue;
+    if (sameVersionOnly && featured.modelVersionId !== cover.shownVersionId) continue;
+    found.set(cover.modelId, featured);
   }
   return found;
 }
@@ -166,4 +241,192 @@ export async function getComCoverState(model: {
       versionPublished: image.post?.modelVersion?.status === 'Published',
     }
   );
+}
+
+type CoverColumns = { coverImageId: number | null; sfwCoverImageId: number | null };
+
+/**
+ * The checks a showcase cover change runs before it is stored: the .com face text when the model
+ * has a face and its .com cover is being set, then the covers themselves. The model editor
+ * (`upsertModel`) runs the same two checks inline, within its own save.
+ */
+export async function assertCoverChange({
+  model,
+  next,
+  actorUserId,
+  isModerator,
+}: {
+  model: CoverColumns & {
+    id: number;
+    userId: number;
+    nsfw: boolean;
+    name: string;
+    description: string | null;
+    sfwName: string | null;
+    sfwDescription: string | null;
+  };
+  next: Partial<CoverColumns>;
+  actorUserId: number;
+  isModerator: boolean;
+}) {
+  const coverImageId =
+    next.coverImageId !== undefined && next.coverImageId !== model.coverImageId
+      ? next.coverImageId
+      : undefined;
+  const sfwCoverImageId =
+    next.sfwCoverImageId !== undefined && next.sfwCoverImageId !== model.sfwCoverImageId
+      ? next.sfwCoverImageId
+      : undefined;
+  if (!isModerator && model.sfwName && sfwCoverImageId) {
+    const { assertSfwFaceSafe } = await import('~/server/services/model-sfw-face.service');
+    await assertSfwFaceSafe({
+      sfwName: model.sfwName,
+      sfwDescription: model.sfwDescription,
+      name: model.name,
+      description: model.description,
+      modelId: model.id,
+      userId: actorUserId,
+    });
+  }
+  await assertCoverImagesValid({
+    modelId: model.id,
+    ownerId: model.userId,
+    modelNsfw: model.nsfw,
+    coverImageId,
+    sfwCoverImageId,
+  });
+}
+
+/**
+ * Stores a model's covers outside the model editor: the showcase's "make first", a contributor
+ * removing their featured image, and the busts that drop an image that no longer qualifies. Runs
+ * the same checks and follow-ups as an editor save, and refuses (409) when the stored covers changed
+ * since they were read, as the listing re-check can clear the .com one at any time. A null clears.
+ */
+export async function saveModelCovers({
+  modelId,
+  covers,
+  actorUserId,
+  isModerator = false,
+  systemReason,
+  tracker,
+}: {
+  modelId: number;
+  covers: Partial<CoverColumns>;
+  actorUserId: number;
+  isModerator?: boolean;
+  /** A system clear of an image that no longer qualifies: no checks (nothing new is set), and the
+   *  change is recorded as the system's, with this reason. */
+  systemReason?: string;
+  tracker?: Tracker;
+}) {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: {
+      id: true,
+      userId: true,
+      nsfw: true,
+      name: true,
+      description: true,
+      sfwName: true,
+      sfwDescription: true,
+      coverImageId: true,
+      sfwCoverImageId: true,
+      meta: true,
+    },
+  });
+  if (!model) throw throwNotFoundError('Model not found');
+
+  const after: CoverColumns = {
+    coverImageId: covers.coverImageId !== undefined ? covers.coverImageId : model.coverImageId,
+    sfwCoverImageId:
+      covers.sfwCoverImageId !== undefined ? covers.sfwCoverImageId : model.sfwCoverImageId,
+  };
+  const before: CoverColumns = {
+    coverImageId: model.coverImageId,
+    sfwCoverImageId: model.sfwCoverImageId,
+  };
+  if (
+    after.coverImageId === before.coverImageId &&
+    after.sfwCoverImageId === before.sfwCoverImageId
+  )
+    return false;
+
+  if (!systemReason) await assertCoverChange({ model, next: covers, actorUserId, isModerator });
+
+  // A .com cover this write sets ends the listing re-check's removal, as an editor save does.
+  let meta = (model.meta ?? {}) as ModelMeta;
+  if (after.sfwCoverImageId && after.sfwCoverImageId !== before.sfwCoverImageId) {
+    const { comFaceRemoved: _removed, ...rest } = meta;
+    meta = rest;
+  }
+  const { count } = await dbWrite.model.updateMany({
+    where: { id: modelId, ...before },
+    data: { ...after, meta: meta as Prisma.InputJsonValue },
+  });
+  if (!count)
+    throw throwConflictError('This model’s cover changed in the meantime. Reload and try again.');
+
+  await afterCoverChange({
+    modelId,
+    ownerId: model.userId,
+    actorUserId,
+    isModerator,
+    keepsFace: !!model.sfwName,
+    before,
+    after,
+    systemReason,
+    tracker,
+  });
+  return true;
+}
+
+/** What follows a stored cover change, wherever it was made. */
+async function afterCoverChange({
+  modelId,
+  ownerId,
+  actorUserId,
+  isModerator,
+  keepsFace,
+  before,
+  after,
+  systemReason,
+  tracker,
+}: {
+  modelId: number;
+  ownerId: number;
+  actorUserId: number;
+  isModerator: boolean;
+  keepsFace: boolean;
+  before: CoverColumns;
+  after: CoverColumns;
+  systemReason?: string;
+  tracker?: Tracker;
+}) {
+  const [{ queueComFaceRecheck }, { updateModelNsfwLevels }, { bustPublicModelResponseCache }] =
+    await Promise.all([
+      import('~/server/services/model-com-face-recheck.service'),
+      import('~/server/services/nsfwLevels.service'),
+      import('~/server/services/model-version.service'),
+    ]);
+  if (!isModerator && !systemReason && keepsFace) await queueComFaceRecheck(modelId);
+  // The .com cover feeds a mature model's level, which decides whether .com lists it.
+  await updateModelNsfwLevels([modelId]);
+  await bustPublicModelResponseCache(modelId);
+  await modelsSearchIndex.queueUpdate([
+    { id: modelId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+  // The record a rollback restores covers from.
+  const rows = diffEntityChanges({
+    entityType: 'Model',
+    entityId: modelId,
+    ownerId,
+    before,
+    after,
+    actorRole: resolveActorRole({ actorUserId, ownerId, isModerator }),
+    systemFields: systemReason
+      ? { coverImageId: systemReason, sfwCoverImageId: systemReason }
+      : undefined,
+  });
+  await (tracker ?? new Tracker()).entityChanges(rows).catch(() => null);
 }

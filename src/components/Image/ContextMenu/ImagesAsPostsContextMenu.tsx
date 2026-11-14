@@ -10,7 +10,9 @@ import {
 } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { constants } from '~/server/common/constants';
-import { IconPinned, IconPinnedOff } from '@tabler/icons-react';
+import { IconLayoutGrid, IconPinned, IconPinnedOff } from '@tabler/icons-react';
+import { openVersionShowcaseEditor } from '~/components/Dialog/triggers/version-showcase-editor';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ImageContextMenuWrapper } from '~/components/Image/ContextMenu/ContextMenu';
@@ -38,6 +40,7 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
   const queryUtils = trpc.useUtils();
 
   const currentModelVersionId = filters.modelVersionId as number;
+  const showcaseEnabled = !!useFeatureFlags().modelVersionShowcase;
 
   const hiddenImageIds =
     (model
@@ -209,6 +212,20 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
                 )}
               </Stack>
             )}
+          </Menu.Item>
+        ) : null}
+        {showcaseEnabled && model && image.user?.id !== model.user.id ? (
+          <Menu.Item
+            key="feature-in-showcase"
+            leftSection={<IconLayoutGrid size={16} stroke={1.5} />}
+            onClick={() =>
+              openVersionShowcaseEditor({
+                modelVersionId: currentModelVersionId,
+                addImageId: image.id,
+              })
+            }
+          >
+            Feature in showcase
           </Menu.Item>
         ) : null}
         {hideImageItems}
