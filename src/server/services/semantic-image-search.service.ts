@@ -33,6 +33,7 @@ import {
   type CandidateSource,
   type Hydrate,
   type SearchQuery,
+  viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 
 // The search service's collection name for the image vectors.
@@ -109,11 +110,7 @@ export async function searchSemanticImages({
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
   }
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   const hiddenTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
   const viewerExcludedTagIds = [...new Set([...addons.excludedTagIds, ...hiddenTagIds])];
   const excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...viewerExcludedTagIds])];

@@ -1,9 +1,11 @@
 import { Prisma } from '@prisma/client';
 
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { PrismaClient } from '@prisma/client';
 import type { ListingKind, SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
-import { LISTING_COVER_WIDTH } from '~/server/services/blocks/listing-media-url';
+import {
+  LISTING_COVER_WIDTH,
+  listingMediaEdgeUrl,
+} from '~/server/services/blocks/listing-media-url';
 import {
   gatedListingCoverUrl,
   gatedListingIconUrl,
@@ -190,7 +192,7 @@ export function projectSubListingCard(
       ceiling
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
-    coverUrl = visible ? getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH }) : parentCover;
+    coverUrl = visible ? listingMediaEdgeUrl(row.image_url, LISTING_COVER_WIDTH) : parentCover;
   }
   return {
     cardType: 'sub-listing',

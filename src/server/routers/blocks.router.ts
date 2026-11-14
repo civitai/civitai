@@ -447,6 +447,12 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
+import {
+  MEDIA_UPLOAD_BATCH_DISABLED_ERROR,
+  MEDIA_UPLOAD_BATCH_MAX_BYTES,
+  MEDIA_UPLOAD_BATCH_MAX_ITEMS,
+  MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR,
+} from '~/shared/constants/media-upload-batch.constants';
 
 // G6 — the terminal orchestrator states (as mapped onto the block-contract
 // status by snapshotFromWorkflow). A block-workflow read-model row only ever
@@ -936,6 +942,58 @@ async function recordBlockReactionInvocation(opts: {
   } catch {
     /* best-effort: an audit failure never breaks a reaction that landed */
   }
+}
+
+type MediaUploadBatchRequestAuth = {
+  claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
+  userId: number;
+};
+
+/**
+ * The authorization ladder for the three batch-upload procedures (`startMediaUploadBatch`,
+ * `presignMediaUploadBatchItem`, `recordMediaUploadBatchItem`), in one place so a later step can
+ * never be reachable on a token an earlier one would refuse:
+ *
+ *   1. the bridge guard (validity, revocation, the backing app still approved);
+ *   2. a non-anon subject that IS the signed-in session user — the files go into that account;
+ *   3. a page token: the batch path is page-only, like `OPEN_MEDIA_UPLOAD`;
+ *   4. the App-Blocks runtime flag on that subject, which must hydrate;
+ *   5. the dedicated, fail-closed batch-upload flag on that subject.
+ *
+ * No consent scope, like `OPEN_MEDIA_UPLOAD`: the host's confirm is the viewer's consent, and the
+ * files are private to them. ⚠️ The return type is a named alias, and the guard is never spelled
+ * with an open paren in prose, for the textual-scanner reasons recorded on
+ * `authorizeBlockPostRequest`.
+ */
+async function authorizeMediaUploadBatchRequest(
+  blockToken: string,
+  sessionUserId: number
+): Promise<MediaUploadBatchRequestAuth> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'uploading requires a signed-in viewer' });
+  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
+  if (!isPageToken(claims)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'batch media upload is available to page apps only',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (subjectUser == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'uploading subject could not be resolved, please try again',
+    });
+  }
+  const { isAppBlocksBatchMediaUploadEnabled } = await import('~/server/services/app-blocks-flag');
+  if (!(await isAppBlocksBatchMediaUploadEnabled({ user: subjectUser }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: MEDIA_UPLOAD_BATCH_DISABLED_ERROR });
+  }
+  return { claims, userId };
 }
 
 /** What `authorizeBlockBridgeViewer` puts on `ctx.blockViewer`. */
@@ -6098,6 +6156,128 @@ export const blocksRouter = router({
         userId,
         uploadedByAppId: claims.appId,
       });
+    }),
+
+  /**
+   * `OPEN_MEDIA_UPLOAD_BATCH`, step 1 of 3: the viewer confirmed a batch in host chrome. Charges
+   * their UTC-day batch quota for every file and writes the audit row; returns the batch id the
+   * two steps below name. A refusal here uploads nothing. See `media-upload-batch.service.ts`.
+   *
+   * RATE LIMIT: none of the bridge buckets. The daily quota charged here (files and bytes per
+   * viewer, across all apps) is the bound, and it fails closed. The per-install catalog bucket
+   * would be the wrong one: a page app's install id is shared by every viewer.
+   */
+  startMediaUploadBatch: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        items: z
+          .array(
+            z.object({
+              kind: z.enum(['image', 'video', 'audio']),
+              sizeBytes: z.number().int().positive(),
+            })
+          )
+          .min(1)
+          .max(MEDIA_UPLOAD_BATCH_MAX_ITEMS)
+          .refine(
+            (items) =>
+              items.reduce((sum, i) => sum + i.sizeBytes, 0) <= MEDIA_UPLOAD_BATCH_MAX_BYTES,
+            { message: MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR }
+          ),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeMediaUploadBatchRequest(
+        input.blockToken,
+        ctx.user.id
+      );
+      const { startMediaUploadBatch } = await import(
+        '~/server/services/blocks/media-upload-batch.service'
+      );
+      const { batchId, expiresAt } = await startMediaUploadBatch({
+        actor: {
+          userId,
+          appBlockId: claims.appBlockId,
+          appId: claims.appId,
+          blockId: claims.blockId,
+        },
+        items: input.items,
+      });
+      return { batchId, expiresAt: expiresAt.toISOString() };
+    }),
+
+  /**
+   * `OPEN_MEDIA_UPLOAD_BATCH`, step 2 of 3: one upload URL for one attempt at one file. 🔴 Minted
+   * with the VIEWER's orchestrator token (`getOrchestratorToken`), never a system client: these
+   * are the viewer's files, uploaded and checked as theirs.
+   *
+   * RATE LIMIT: none of the bridge buckets. Bounded by the batch instead: only for an open batch of
+   * this viewer and app, and at most three URLs per declared file, counted by its position.
+   */
+  presignMediaUploadBatchItem: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        batchId: z.number().int().positive(),
+        // The file's position among the files `startMediaUploadBatch` was told about.
+        index: z
+          .number()
+          .int()
+          .min(0)
+          .max(MEDIA_UPLOAD_BATCH_MAX_ITEMS - 1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeMediaUploadBatchRequest(
+        input.blockToken,
+        ctx.user.id
+      );
+      const { presignMediaUploadBatchItem } = await import(
+        '~/server/services/blocks/media-upload-batch.service'
+      );
+      const token = await getOrchestratorToken(userId, ctx);
+      const { uploadUrl, expiresAt } = await presignMediaUploadBatchItem({
+        actor: { userId, appBlockId: claims.appBlockId },
+        batchId: input.batchId,
+        index: input.index,
+        token,
+      });
+      return { uploadUrl, expiresAt };
+    }),
+
+  /**
+   * `OPEN_MEDIA_UPLOAD_BATCH`, step 3 of 3: records one uploaded file's blob key on the batch's
+   * audit row, for the moderator view.
+   *
+   * RATE LIMIT: none of the bridge buckets. Bounded by the batch: one key per file it declared,
+   * no repeats, while it is open.
+   */
+  recordMediaUploadBatchItem: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        batchId: z.number().int().positive(),
+        blobKey: z.string().min(1).max(128),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeMediaUploadBatchRequest(
+        input.blockToken,
+        ctx.user.id
+      );
+      const { recordMediaUploadBatchItem } = await import(
+        '~/server/services/blocks/media-upload-batch.service'
+      );
+      const { expiresAt } = await recordMediaUploadBatchItem({
+        actor: { userId, appBlockId: claims.appBlockId },
+        batchId: input.batchId,
+        blobKey: input.blobKey,
+      });
+      return { expiresAt: expiresAt.toISOString() };
     }),
 
   /**

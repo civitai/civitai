@@ -127,12 +127,24 @@ import {
   UPLOAD_BYTES_NO_TOKEN_ERROR,
 } from './imageUploadBytes';
 import {
+  MEDIA_UPLOAD_BUSY_ERROR,
   MEDIA_UPLOAD_FAILED_ERROR,
   MEDIA_UPLOAD_NO_TOKEN_ERROR,
   processMediaUploadBytes,
   resolveMediaUploadRequest,
   type BlockMediaUploadInfo,
 } from './mediaUploadLogic';
+import {
+  buildMediaUploadBatchConfirmCopy,
+  buildMediaUploadBatchResults,
+  callWithCurrentToken,
+  mediaUploadBatchStartError,
+  resolveMediaUploadBatchRequest,
+  retryMediaUploadBatchRecord,
+  runWithConcurrency,
+  type MediaUploadBatchItemResult,
+} from './mediaUploadBatchLogic';
+import { MEDIA_UPLOAD_BATCH_CONCURRENCY } from '~/shared/constants/media-upload-batch.constants';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { createBlockEventRecorder } from './blockEventBeacon';
 import {
@@ -4017,6 +4029,16 @@ export function PageBlockHost({
   // The same two guards for OPEN_MEDIA_UPLOAD's `bytes` mode, with its own limits (mediaUploadLogic.ts).
   const mediaUploadWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   const mediaUploadInFlightRef = useRef<Set<string>>(new Set());
+  // OPEN_MEDIA_UPLOAD_BATCH: the requestId of the one batch this host is confirming or running, or
+  // null. One at a time per page: a second is refused `busy`, and its id gets no reply while the
+  // first is unanswered, as a reused single-upload id does.
+  const mediaUploadBatchRef = useRef<string | null>(null);
+  // The CURRENT block token, for a batch that outlives the one it started with: the host refreshes
+  // a page token before it expires, and every batch call reads this at the moment it is made.
+  const blockTokenRef = useRef(token);
+  useEffect(() => {
+    blockTokenRef.current = token;
+  }, [token]);
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -4787,6 +4809,154 @@ export function PageBlockHost({
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
   }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
+
+  // OPEN_MEDIA_UPLOAD_BATCH → MEDIA_UPLOAD_BATCH_RESULT: many files the block holds, uploaded as
+  // PRIVATE generation inputs behind ONE host-chrome confirm (`mediaUploadBatchLogic.ts`). Every
+  // item is checked as a single bytes upload is, BEFORE the confirm, and refused per item; nothing
+  // is uploaded until the viewer confirms, and a declined confirm is the bare `{ requestId }`.
+  // There is no per-minute window here: the confirm gates the batch, and the server's daily quota
+  // (charged by `blocks.startMediaUploadBatch`) bounds it. At most MEDIA_UPLOAD_BATCH_CONCURRENCY
+  // files upload at once. Review mode and a pre-handshake block get the bare reply, as
+  // OPEN_MEDIA_UPLOAD does.
+  useEffect(() => {
+    const off = onMessage<unknown>('OPEN_MEDIA_UPLOAD_BATCH', (raw) => {
+      const decision = resolveMediaUploadBatchRequest(raw);
+      if (decision.kind === 'drop') return;
+      const requestId = decision.kind === 'ok' ? decision.plan.requestId : decision.requestId;
+      // The running batch's own id gets no second reply: it would settle that batch.
+      if (mediaUploadBatchRef.current === requestId) return;
+      const reply = (payload: Record<string, unknown>) =>
+        send('MEDIA_UPLOAD_BATCH_RESULT', { requestId, ...payload });
+      if (reviewMode || readGateStatus() !== 'ready') {
+        reply({});
+        return;
+      }
+      if (decision.kind === 'refuse') {
+        reply({ error: decision.error });
+        return;
+      }
+      if (!token) {
+        reportNoToken('OPEN_MEDIA_UPLOAD_BATCH');
+        reply({ error: MEDIA_UPLOAD_NO_TOKEN_ERROR });
+        return;
+      }
+      if (mediaUploadBatchRef.current !== null) {
+        reply({ error: MEDIA_UPLOAD_BUSY_ERROR });
+        return;
+      }
+      const { plan } = decision;
+      // Nothing would upload, so there is nothing to ask the viewer about.
+      if (plan.files.length === 0) {
+        reply({ results: buildMediaUploadBatchResults(plan, new Map()) });
+        return;
+      }
+      mediaUploadBatchRef.current = requestId;
+      const release = () => {
+        if (mediaUploadBatchRef.current === requestId) mediaUploadBatchRef.current = null;
+      };
+      const readToken = () => blockTokenRef.current;
+      const run = async () => {
+        let started: { batchId: number; expiresAt: string };
+        try {
+          started = await callWithCurrentToken(readToken, (blockToken) =>
+            trpcUtils.client.blocks.startMediaUploadBatch.mutate({
+              blockToken,
+              items: plan.files.map((f) => ({ kind: f.kind, sizeBytes: f.bytes.byteLength })),
+            })
+          );
+        } catch (err) {
+          release();
+          reply({ error: mediaUploadBatchStartError(err) });
+          return;
+        }
+        const { batchId, expiresAt } = started;
+        const uploaded = new Map<number, MediaUploadBatchItemResult>();
+        try {
+          // Loaded on use: the image path reaches the workflow schema, too heavy for every page load.
+          const media = await import('./mediaUploadRun');
+          // Each file's position among the files the server was told about (`plan.files` order),
+          // which the server bounds its upload URLs by.
+          const positions = new Map(plan.files.map((f, position) => [f.index, position]));
+          await runWithConcurrency(plan.files, MEDIA_UPLOAD_BATCH_CONCURRENCY, async (file) => {
+            try {
+              const index = positions.get(file.index)!;
+              const presign = media.batchPresigner(() =>
+                callWithCurrentToken(readToken, (blockToken) =>
+                  trpcUtils.client.blocks.presignMediaUploadBatchItem.mutate({
+                    blockToken,
+                    batchId,
+                    index,
+                  })
+                )
+              );
+              const blob = new Blob([file.bytes], { type: file.contentType });
+              const item = await media.uploadBatchMediaItem(
+                file.kind,
+                blob,
+                file.contentType,
+                presign
+              );
+              // Recorded before the app is told: a file the audit row does not name is never
+              // handed over. A record that still fails after its retries is an error for that
+              // item (and the file is then missing from the audit row).
+              try {
+                await retryMediaUploadBatchRecord(() =>
+                  callWithCurrentToken(readToken, (blockToken) =>
+                    trpcUtils.client.blocks.recordMediaUploadBatchItem.mutate({
+                      blockToken,
+                      batchId,
+                      blobKey: item.blobKey,
+                    })
+                  )
+                );
+              } catch {
+                uploaded.set(file.index, { index: file.index, error: MEDIA_UPLOAD_FAILED_ERROR });
+                return;
+              }
+              uploaded.set(file.index, { index: file.index, selected: item.selected });
+            } catch (err) {
+              uploaded.set(file.index, {
+                index: file.index,
+                error: media.mediaUploadErrorMessage(err),
+              });
+            }
+          });
+        } catch {
+          // The upload module failed to load: every file not answered is a failure, below.
+        } finally {
+          release();
+        }
+        reply({ results: buildMediaUploadBatchResults(plan, uploaded), expiresAt });
+      };
+      let confirmed = false;
+      const copy = buildMediaUploadBatchConfirmCopy({ appName, files: plan.files });
+      dialogStore.trigger({
+        // Per-request id — a deduped dialog would be a request that never replies.
+        id: `block-media-upload-batch-${requestId}`,
+        // Puts up to a day's quota of files into the viewer's account: disabled briefly after it
+        // appears, like the spend confirms.
+        component: GuardedConfirmDialog,
+        props: {
+          title: copy.title,
+          message: copy.message,
+          labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+          confirmProps: { color: 'blue' },
+          // Not awaited: the dialog closes at once and the batch runs behind it.
+          onConfirm: () => {
+            confirmed = true;
+            void run();
+          },
+          onCancel: () => {
+            if (confirmed) return;
+            release();
+            reply({});
+          },
+        },
+      });
+    });
+    return off;
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, appName, trpcUtils]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //

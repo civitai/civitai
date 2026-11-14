@@ -8,16 +8,18 @@ import {
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
-  type QueryRefusal,
   type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
+  MAX_HITS_PER_USER,
   collectPage,
   searchServiceSource,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
+  auditedTextCandidates,
+  viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 import { getStorylinesInfinite } from '~/server/services/storyline.service';
 import {
@@ -30,8 +32,7 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 
-/** One creator's storylines shown on a page at most, so a prolific creator cannot fill it. */
-export const MAX_HITS_PER_USER = 3;
+export { MAX_HITS_PER_USER };
 
 type HydratedStoryline = Awaited<ReturnType<typeof getStorylinesInfinite>>['items'][number];
 
@@ -102,11 +103,7 @@ export async function searchSemanticStorylines({
   if (verdictLevel === 'refuse') return none;
   browsingLevel = verdictLevel;
 
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   // Read once: every page of one search shares the same cutoff.
   const now = new Date().toISOString();
   const filter: CandidateFilter = {
@@ -118,7 +115,6 @@ export async function searchSemanticStorylines({
   };
 
   const perUser = new Map<number, number>();
-  let returned = 0;
   let hydrated = 0;
   const hydrate: Hydrate<HydratedStoryline> = async (ids) => {
     // Qdrant only proposes: a point outlives a ban, a hold or a re-rating until the ingest
@@ -152,21 +148,14 @@ export async function searchSemanticStorylines({
     return kept;
   };
 
-  let correctedQuery: string | undefined;
-  let correctedRefusal: QueryRefusal | undefined;
+  const search = auditedTextCandidates({
+    source: candidateSource,
+    text: input.query,
+    filter,
+    audit: (correction) => refusalOf(correction, 'correction'),
+  });
   const page = await collectPage({
-    candidates: async (offset, limit) => {
-      const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
-      // The service embeds its spelling correction, not the text audited above.
-      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
-        correctedRefusal =
-          result.correctedQuery !== input.query &&
-          (await refusalOf(result.correctedQuery, 'correction'));
-      if (correctedRefusal) return [];
-      correctedQuery ??= result.correctedQuery;
-      returned += result.ids.length;
-      return result.ids;
-    },
+    candidates: search.candidates,
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
@@ -176,11 +165,11 @@ export async function searchSemanticStorylines({
   logToAxiom({
     type: 'info',
     name: 'semantic-storyline-search',
-    returned,
+    returned: search.state.returned,
     hydrated,
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedRefusal) return none;
-  return { ...page, correctedQuery };
+  if (search.state.refused) return none;
+  return { ...page, correctedQuery: search.state.correctedQuery };
 }

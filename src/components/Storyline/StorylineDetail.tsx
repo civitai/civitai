@@ -1,6 +1,5 @@
 import { Button } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
-import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { StorylineAuthorEdit } from '~/components/Storyline/StorylineAuthorEdit';
@@ -11,12 +10,15 @@ import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { StorylineMapControl } from '~/components/Storyline/StorylineMap';
 import { StorylineEntryChip } from '~/components/Storyline/StorylinePill';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useStorylinesEnabled } from '~/components/Storyline/storyline.queries';
+import { useStorylineForPost } from '~/components/Storyline/storyline.queries';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-function chapterPosition(storyline: ActiveStorylineMode, imageId: number) {
-  const chapterId = storyline.chapterIdOfImage(imageId);
+/** The chapter on screen: a text slide's by its own post, since its URL may name another chapter's image. */
+function chapterPosition(storyline: ActiveStorylineMode, imageId: number, textPostId?: number) {
+  const chapterId = textPostId
+    ? storyline.chapterIdOfPost(textPostId)
+    : storyline.chapterIdOfImage(imageId);
   const chapter = storyline.path.chapters.find((c) => c.chapterId === chapterId);
   return { chapterId, depth: chapter?.depth, post: chapter?.post };
 }
@@ -29,10 +31,13 @@ function chapterPosition(storyline: ActiveStorylineMode, imageId: number) {
 export function StorylineToolbarChip({
   imageId,
   postId,
+  textPostId,
   placement,
 }: {
   imageId: number;
   postId: number | null;
+  /** On a text slide, the text's post. */
+  textPostId?: number;
   placement: 'toolbar' | 'mobile';
 }) {
   const storyline = useStorylineMode();
@@ -42,7 +47,7 @@ export function StorylineToolbarChip({
   if (narrowStage !== (placement === 'mobile')) return null;
   if (!storyline.active)
     return <StorylineEntryPill postId={postId} compact={placement === 'mobile'} />;
-  const { chapterId, depth } = chapterPosition(storyline, imageId);
+  const { chapterId, depth } = chapterPosition(storyline, imageId, textPostId);
   const end = storyline.path.chapters[storyline.path.chapters.length - 1];
   return (
     <StorylineMapControl
@@ -54,10 +59,18 @@ export function StorylineToolbarChip({
 }
 
 /** The description of the image's chapter post, rendered as the post page does, clamped. */
-export function StorylineChapterDescription({ imageId }: { imageId: number | undefined }) {
+export function StorylineChapterDescription({
+  imageId,
+  textPostId,
+}: {
+  imageId: number | undefined;
+  textPostId?: number;
+}) {
   const storyline = useStorylineMode();
   const postId =
-    storyline.active && imageId ? chapterPosition(storyline, imageId).post?.id : undefined;
+    storyline.active && imageId
+      ? chapterPosition(storyline, imageId, textPostId).post?.id
+      : undefined;
   const { data: post } = trpc.post.get.useQuery({ id: postId ?? 0 }, { enabled: !!postId });
   if (!postId || post?.id !== postId || !post.detail) return null;
 
@@ -143,14 +156,8 @@ export function StorylineStageOverlay({
 }
 
 function StorylineEntryPill({ postId, compact }: { postId: number | null; compact: boolean }) {
-  const enabled = useStorylinesEnabled();
   const storyline = useStorylineMode();
-  const browsingLevel = useViewerBrowsingLevelDebounced();
-  const { data } = trpc.storyline.getForPosts.useQuery(
-    { postIds: postId ? [postId] : [], browsingLevel },
-    { enabled: enabled && !!postId, staleTime: 60_000 }
-  );
-  const entry = postId ? data?.[postId] : undefined;
+  const entry = useStorylineForPost(postId);
   if (!entry) return null;
 
   return (

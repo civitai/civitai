@@ -13,7 +13,6 @@ import {
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
-  type QueryRefusal,
   type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
@@ -24,6 +23,8 @@ import {
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
+  auditedTextCandidates,
+  viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
@@ -98,11 +99,7 @@ export async function searchSemanticModels3D({
     addons = addonsFor(browsingLevel);
   }
 
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   const excludedTagIds = [
     ...new Set([
       ...addons.excludedTagIds,
@@ -119,7 +116,6 @@ export async function searchSemanticModels3D({
   };
 
   const perUser = new Map<number, number>();
-  let returned = 0;
   let hydrated = 0;
   const hydrate: Hydrate<HydratedModel3D> = async (ids) => {
     // Qdrant only proposes: a point outlives a ban, a hold or a re-rated thumbnail until the
@@ -145,21 +141,14 @@ export async function searchSemanticModels3D({
     return kept;
   };
 
-  let correctedQuery: string | undefined;
-  let correctedRefusal: QueryRefusal | undefined;
+  const search = auditedTextCandidates({
+    source: candidateSource,
+    text: input.query,
+    filter,
+    audit: (correction) => refusalOf(correction, 'correction'),
+  });
   const page = await collectPage({
-    candidates: async (offset, limit) => {
-      const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
-      // The service embeds its spelling correction, not the text audited above.
-      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
-        correctedRefusal =
-          result.correctedQuery !== input.query &&
-          (await refusalOf(result.correctedQuery, 'correction'));
-      if (correctedRefusal) return [];
-      correctedQuery ??= result.correctedQuery;
-      returned += result.ids.length;
-      return result.ids;
-    },
+    candidates: search.candidates,
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
@@ -169,11 +158,11 @@ export async function searchSemanticModels3D({
   logToAxiom({
     type: 'info',
     name: 'semantic-model3d-search',
-    returned,
+    returned: search.state.returned,
     hydrated,
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedRefusal) return none;
-  return { ...page, correctedQuery };
+  if (search.state.refused) return none;
+  return { ...page, correctedQuery: search.state.correctedQuery };
 }

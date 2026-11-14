@@ -405,6 +405,44 @@ export type AppBlockPublishRequest = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppBlockUploadBatch = {
+  id: Generated<number>;
+  user_id: number;
+  /**
+   * The verified token's AppBlock id (`apb_*`), its OauthClient id and its block id.
+   */
+  app_block_id: string;
+  app_id: string;
+  block_id: string;
+  /**
+   * `AppBlock.version` when the batch started; NULL when the token's app has no AppBlock row.
+   */
+  version: string | null;
+  item_count: number;
+  /**
+   * Raw bytes the host declared for the items it was about to upload (before an image's JPEG
+   * re-encode). Declared by the browser, so an upper bound the quota counted, not a measurement.
+   */
+  total_bytes: string;
+  /**
+   * Upload URLs minted for this batch so far (a retried file takes a second one).
+   */
+  presign_count: Generated<number>;
+  /**
+   * Upload URLs minted per declared file, by position: at most three each.
+   */
+  presign_counts: Generated<number[]>;
+  /**
+   * The consumer blob keys of the files uploaded, in upload-completion order.
+   */
+  blob_keys: Generated<string[]>;
+  created_at: Generated<Timestamp>;
+  /**
+   * `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+   * consumer-blob retention). Not a deletion time.
+   */
+  expires_at: Timestamp;
+};
 export type AppCollaborator = {
   app_listing_id: string;
   user_id: number;
@@ -6654,6 +6692,7 @@ export type DB = {
   ApiKey: ApiKey;
   app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
+  app_block_upload_batches: AppBlockUploadBatch;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
