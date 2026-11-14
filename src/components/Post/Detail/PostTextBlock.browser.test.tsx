@@ -3,19 +3,20 @@ import { page } from 'vitest/browser';
 import { PostTextBlock } from '~/components/Post/Detail/PostTextBlock';
 import { renderWithProviders } from '../../../../test/component-setup';
 
-const { guard } = vi.hoisted(() => ({ guard: { safe: true, ids: [] as number[] } }));
+type GuardImage = { id: number; nsfwLevel?: number; userId?: number };
+const { guard } = vi.hoisted(() => ({ guard: { safe: true, asked: [] as GuardImage[] } }));
 
-// The guard decides; this pins what the block does with its answer, and the id it asks about.
+// The guard decides; this pins what the block does with its answer, and what it asks about.
 vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => ({
   ...(await o<object>()),
   ImageGuardContent: ({
     image,
     children,
   }: {
-    image: { id: number };
+    image: GuardImage;
     children: (s: boolean) => JSX.Element;
   }) => {
-    guard.ids.push(image.id);
+    guard.asked.push(image);
     return children(guard.safe);
   },
 }));
@@ -41,15 +42,16 @@ describe('PostTextBlock', () => {
 
   test('a blurred text leaves its words out of the page, and never asks as an image', async () => {
     guard.safe = false;
-    guard.ids.length = 0;
-    renderWithProviders(<PostTextBlock text={{ ...text, id: 8 }} postId={40} />);
+    guard.asked.length = 0;
+    renderWithProviders(<PostTextBlock text={{ ...text, id: 8 }} postId={40} userId={7} />);
     const block = page
       .getByTestId('post-text-block')
       .filter({ has: page.getByTestId('text-blurred') });
     await expect.element(block).toBeInTheDocument();
     expect(block.element().textContent).not.toContain('Meanwhile');
-    expect(guard.ids.length).toBeGreaterThan(0);
-    expect(guard.ids.every((id) => id === -8)).toBe(true);
+    expect(guard.asked.length).toBeGreaterThan(0);
+    // The text's own rating and author, so an R text is blurred for anyone who blurs R.
+    for (const asked of guard.asked) expect(asked).toEqual({ id: -8, nsfwLevel: 4, userId: 7 });
   });
 
   test("the author's unscanned text says it is pending review; a scanned one does not", async () => {

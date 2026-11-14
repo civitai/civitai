@@ -6,7 +6,7 @@ import { trpc } from '~/utils/trpc';
 
 /**
  * A post's text items for a post-scoped viewer. Only chapter posts carry text, so `post.get` is
- * asked only once the post's storyline read (usually cached by the entry chip) marks it as one.
+ * asked only once the storyline read marks the post as one.
  */
 export function usePostDetailTexts(postId: number | undefined, { enabled }: { enabled: boolean }) {
   const textOn = !!useFeatureFlags().storylineText;

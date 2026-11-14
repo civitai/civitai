@@ -15,9 +15,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 
-// Design review stories for storyline text slides. The stage and sidebar around the carousel are
-// a stand-in for ImageDetail2's chrome (which needs the app router); the carousel, the text slide,
-// the post card and the post page's image list are the real components.
+// The stage around the carousel stands in for ImageDetail2's chrome, which needs the app router.
 
 const flags = { storylines: true, storylineText: true } as unknown as FeatureAccess;
 const POST = 100;

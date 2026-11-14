@@ -4,22 +4,23 @@ import type * as TrpcModule from '~/utils/trpc';
 import { TextSlide } from '~/components/Image/DetailV2/TextSlide';
 import { renderWithProviders } from '../../../../test/component-setup';
 
+type GuardImage = { id: number; nsfwLevel?: number; userId?: number };
 const { guard, postGet } = vi.hoisted(() => ({
-  guard: { safe: true, ids: [] as number[] },
+  guard: { safe: true, asked: [] as GuardImage[] },
   postGet: { calls: [] as { id: number; enabled: boolean }[] },
 }));
 
-// The guard decides; this pins what the slide does with its answer, and the id it asks about.
+// The guard decides; this pins what the slide does with its answer, and what it asks about.
 vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => ({
   ...(await o<object>()),
   ImageGuardContent: ({
     image,
     children,
   }: {
-    image: { id: number };
+    image: GuardImage;
     children: (safe: boolean) => JSX.Element;
   }) => {
-    guard.ids.push(image.id);
+    guard.asked.push(image);
     return children(guard.safe);
   },
 }));
@@ -59,15 +60,33 @@ describe('TextSlide', () => {
 
   test('a blurred slide keeps its words out of the page, and never asks as an image', async () => {
     guard.safe = false;
-    guard.ids.length = 0;
-    renderWithProviders(<TextSlide text={{ ...stub, id: 13, content: '<p>Secret words</p>' }} />);
+    guard.asked.length = 0;
+    renderWithProviders(
+      <TextSlide text={{ ...stub, id: 13, content: '<p>Secret words</p>' }} userId={7} />
+    );
     const slide = page
       .getByTestId('text-slide')
       .filter({ has: page.getByTestId('text-blurred') })
       .last();
     await expect.element(slide).toHaveAttribute('data-text-id', '13');
     expect(slide.element().textContent).not.toContain('Secret words');
-    expect(guard.ids.length).toBeGreaterThan(0);
-    expect(guard.ids.every((id) => id === -13)).toBe(true);
+    expect(guard.asked.length).toBeGreaterThan(0);
+    // The text's own rating and author, so an R text is blurred for anyone who blurs R.
+    for (const asked of guard.asked) expect(asked).toEqual({ id: -13, nsfwLevel: 4, userId: 7 });
+  });
+
+  test("the author's unscanned text says it is pending review; a scanned one does not", async () => {
+    guard.safe = true;
+    renderWithProviders(
+      <TextSlide text={{ ...stub, id: 14, nsfwLevel: 0, content: '<p>Draft</p>' }} />
+    );
+    const pending = page.getByTestId('text-slide').filter({ hasText: 'Draft' });
+    await expect.element(pending.getByTestId('text-pending-review')).toBeVisible();
+    renderWithProviders(
+      <TextSlide text={{ ...stub, id: 15, nsfwLevel: 1, content: '<p>Final</p>' }} />
+    );
+    const scanned = page.getByTestId('text-slide').filter({ hasText: 'Final' });
+    await expect.element(scanned).toBeVisible();
+    expect(scanned.element().querySelector('[data-testid="text-pending-review"]')).toBeNull();
   });
 });

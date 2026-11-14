@@ -822,7 +822,6 @@ function ImageDetail2Content() {
                             icon={<IconBrandWechat />}
                             storageKey="discussion"
                           >
-                            {/* The post's thread until each text has its own. */}
                             {textPost && (
                               <PostComments postId={textPost.id} userId={textPost.user.id} />
                             )}
