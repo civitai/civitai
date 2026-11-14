@@ -135,6 +135,15 @@ export function runVersion(run: Run): ModelVersionInfo {
 export const runEngine = (run: Run): string => run.engine ?? runVersion(run).engine ?? 'ai-toolkit';
 export const runSupportsKohya = (run: Run): boolean => !!kohyaFamily(runVersion(run).ecosystem);
 
+/** The run on `engine`, moved to the card's first version when its pick isn't offered there (Custom
+ *  exists for some cards only under Kohya). */
+export function withEngine(run: Run, engine: string, enabledFlags?: ReadonlySet<string>): Run {
+  const options = versionOptions(runCard(run), enabledFlags, engine);
+  return options.some((v) => v.key === run.versionKey)
+    ? { ...run, engine }
+    : { ...run, engine, versionKey: options[0]!.key, customAir: undefined, customName: undefined };
+}
+
 /** The key a version is blocked under: its checkpoint's, as a submit resolves it (an edit card reuses
  *  a base's checkpoint under its own key). */
 export const versionStatusKey = (v: ModelVersionInfo): string =>

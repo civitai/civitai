@@ -153,7 +153,12 @@ export interface SubmitOptions {
   datasetRating?: DatasetRating;
   /** Told how each dataset maturity count was made, for the run's log line. */
   onMatureCount?: (count: MatureCount) => void;
+  /** Whether this user may train with Kohya (the `KOHYA_FLAG_KEY` gate). Anything but true refuses a
+   *  Kohya run or continuation before any orchestrator call. */
+  kohyaAllowed?: boolean;
 }
+
+export const KOHYA_UNAVAILABLE = 'Kohya training is not available right now.';
 
 /** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
 export function unavailableRunMessage(
@@ -700,6 +705,8 @@ export async function submitTrainingBatch(
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+  if (opts.kohyaAllowed !== true && runs.some((run) => run.engine === 'kohya'))
+    throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
   for (const run of runs) {
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
@@ -862,7 +869,14 @@ function sourceMatureCount(
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  { callbacks, traceMode = 'events', status, datasetRating, onMatureCount }: SubmitOptions
+  {
+    callbacks,
+    traceMode = 'events',
+    status,
+    datasetRating,
+    onMatureCount,
+    kohyaAllowed,
+  }: SubmitOptions
 ): Promise<{
   body: WorkflowTemplate;
   steps: number | undefined;
@@ -883,6 +897,8 @@ async function buildContinuation(
   const output = (step as { output?: { epochs?: EpochOutput[] } } | undefined)?.output;
   if (!input || (input.engine !== 'ai-toolkit' && input.engine !== 'kohya'))
     throw new Error('keep training: this engine cannot continue from a checkpoint');
+  if (input.engine === 'kohya' && kohyaAllowed !== true)
+    throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
 
   const epoch = (output?.epochs ?? []).find(
     (e) => e.epochNumber === opts.fromEpoch && epochModelKey(e.model) !== undefined
