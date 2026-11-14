@@ -18,6 +18,7 @@ import { SEMANTIC_QUERY_MAX_LENGTH } from '~/server/schema/semantic-image-search
 import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { trpc } from '~/utils/trpc';
 
 export function SemanticImageSearch() {
@@ -55,6 +56,7 @@ export function SemanticImageSearch() {
   const correctedQuery = data?.pages[0]?.correctedQuery;
 
   const searchKey = JSON.stringify(input);
+  useScrollToTopOnChange(searchKey);
   const [feedbackSentFor, setFeedbackSentFor] = useState<string>();
   const feedbackMutation = trpc.semanticImageSearch.feedback.useMutation({
     onSuccess: () => setFeedbackSentFor(searchKey),

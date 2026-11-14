@@ -113,6 +113,7 @@ import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pa
 import { reviewMysteryPack } from '~/server/services/creator-mystery-pack-approve.service';
 import { lockShopItem } from '~/server/services/creator-shop-lock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 // The shop-item shape, which already carries the creator and lister for
 // attribution. Only used by the creator storefront.
@@ -634,8 +635,7 @@ export const submitCreatorShopItem = async ({
   // Captured out of the transaction so the hash can be queued after it commits
   // — the request is a network round-trip and has no business inside a write
   // transaction, and a cosmetic that exists without a hash is invisible to
-  // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
-  // were creator submissions.
+  // review.
   let submittedCosmeticId: number | undefined;
   // The fee is charged and the listing written together; refunded only if the write fails.
   const created = await withSubmissionFee(
@@ -2563,7 +2563,7 @@ async function refundPurchasePrefix(input: {
   return {
     refundedTransactions: reversed.map((leg) => ({
       originalTransactionId: leg.transactionId,
-      refundTransactionId: `refund-${leg.transactionId}`,
+      refundTransactionId: refundExternalTransactionId(leg.transactionId),
       accountType: leg.accountType,
       amount: leg.amount,
       originalExternalTransactionId: leg.externalTransactionId,

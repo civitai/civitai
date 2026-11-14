@@ -5322,9 +5322,6 @@ export type ResourceReviewReport = {
   resourceReviewId: number;
   reportId: number;
 };
-export type RestrictedBaseModels = {
-  baseModel: string;
-};
 export type RewardsBonusEvent = {
   id: Generated<number>;
   name: string;
@@ -6947,7 +6944,6 @@ export type DB = {
   ResourceReviewHelper: ResourceReviewHelper;
   ResourceReviewReaction: ResourceReviewReaction;
   ResourceReviewReport: ResourceReviewReport;
-  RestrictedBaseModels: RestrictedBaseModels;
   RewardsBonusEvent: RewardsBonusEvent;
   Role: Role;
   RunStrategy: RunStrategy;

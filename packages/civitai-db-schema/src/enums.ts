@@ -961,6 +961,7 @@ export const JobQueueType = {
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
+  CsamArchive: 'CsamArchive',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
