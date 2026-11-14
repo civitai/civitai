@@ -87,8 +87,6 @@ export async function applySystemModelNsfwFlag({
 
   // Already mature: nothing to flip. The verdict is still recorded as the origin marker, so the
   // owner cannot undo it alone while the text it was read from stands (`assertScanRatingKept`).
-  // A model with a complete .com face is rated too: the face keeps it on .com, and a face that goes
-  // away by any path (re-check, cover, owner) leaves the rating standing.
   if (!heldLead && model.nsfw && !locksRating(source)) {
     await markScanRating(dbWrite, model.id, source);
     return 'skipped_nsfw';

@@ -115,6 +115,7 @@ describe('applyModelNsfwTextScan', () => {
     );
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toBeDefined();
+    expect(flipSql()).not.toContain('array_append');
     expect(createNotification).not.toHaveBeenCalled();
   });
 
@@ -129,6 +130,7 @@ describe('applyModelNsfwTextScan', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(model(face));
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toBeDefined();
+    expect(flipSql()).not.toContain('array_append');
     expect(createNotification).toHaveBeenCalledTimes(1);
   });
 
@@ -156,6 +158,7 @@ describe('applyModelNsfwTextScan', () => {
         outcome: { ...base.outcome, [label]: label === 'poi' ? { ...flag, names: ['A'] } : flag },
       });
       expect(flipSql()).toBeDefined();
+      expect(flipSql()).not.toContain('array_append');
       expect(createNotification).not.toHaveBeenCalled();
       expect(result).toEqual({
         deferredRatingNotice: {

@@ -151,12 +151,17 @@ export async function storedListingTextHash(modelId: number) {
   });
 }
 
-/** After a ruling lifted the intent lock: puts back the rating marker the lock replaced, whatever
- *  verdict is stored now. Runs after the caller cleared the lock's own marker. */
+/**
+ * After a ruling lifted the intent lock: puts back the rating marker the lock replaced, whatever
+ * verdict is stored now. Runs after the caller cleared the lock's own marker. The ruling decided the
+ * intent, not the rating, so the marker is stamped just after it: the unlock the ruling itself logs
+ * must not read as a moderator's ruling on the rating (`assertScanRatingKept`); a later one does.
+ */
 export const restoreReplacedRatingMarkerSql = (modelId: number) => Prisma.sql`
   UPDATE "Model"
   SET meta = meta || jsonb_build_object(
-    'systemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock',
+    'systemNsfwLock', (meta->'comFaceIntent'->'priorSystemNsfwLock')
+      || jsonb_build_object('at', now() + interval '1 second'),
     'comFaceIntent', (meta->'comFaceIntent') - 'priorSystemNsfwLock'
   )
   WHERE id = ${modelId}

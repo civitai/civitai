@@ -139,3 +139,45 @@ describe('lockForComFaceIntent', () => {
     expect((await row()).lockedProperties).toBeNull();
   });
 });
+
+describe('restoreReplacedRatingMarkerSql', () => {
+  // The approving ruling logs its own unlock in the same transaction; that row must not read as a
+  // moderator's ruling on the rating made after the marker (assertScanRatingKept).
+  it('stamps the restored marker after the ruling, so its own logged unlock does not release it', async () => {
+    const { restoreReplacedRatingMarkerSql } = await import(
+      '~/server/services/model-com-face-intent.service'
+    );
+    const raw = pgliteRaw(db);
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS "ModActivity" (
+        id serial PRIMARY KEY, activity text, "entityId" int,
+        "createdAt" timestamp(3) NOT NULL DEFAULT now()
+      );
+      DELETE FROM "ModActivity";
+    `);
+    await db.query(`INSERT INTO "Model" (id, nsfw, meta) VALUES ($1, true, $2)`, [
+      MODEL,
+      {
+        comFaceIntent: {
+          priorSystemNsfwLock: { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' },
+        },
+      },
+    ]);
+
+    await db.exec('BEGIN');
+    await raw.executeRaw(restoreReplacedRatingMarkerSql(MODEL) as never);
+    await db.query(
+      `INSERT INTO "ModActivity" (activity, "entityId") VALUES ('unlockProperty:nsfw', $1)`,
+      [MODEL]
+    );
+    await db.exec('COMMIT');
+
+    const { meta } = await row();
+    expect(meta.systemNsfwLock.source).toBe('text-scan');
+    const since = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "ModActivity" WHERE "createdAt" > $1::timestamptz`,
+      [meta.systemNsfwLock.at]
+    );
+    expect(since.rows[0].n).toBe(0);
+  });
+});

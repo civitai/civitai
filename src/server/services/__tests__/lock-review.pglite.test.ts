@@ -341,9 +341,16 @@ describe('approving a lock review', () => {
       },
     });
 
+    const ruledAt = Date.now();
     await approve();
 
-    expect((await modelMeta())[SYSTEM_NSFW_LOCK_META_KEY]).toEqual(scan);
+    // Stamped after the ruling, so the unlock it logs does not release the owner guard.
+    const restored = (await modelMeta())[SYSTEM_NSFW_LOCK_META_KEY] as {
+      source: string;
+      at: string;
+    };
+    expect(restored.source).toBe(scan.source);
+    expect(new Date(restored.at).getTime()).toBeGreaterThan(ruledAt);
   });
 
   it('puts the marker back even when the stored verdict is now for other text', async () => {
@@ -360,7 +367,7 @@ describe('approving a lock review', () => {
     await approve();
 
     const meta = await modelMeta();
-    expect(meta[SYSTEM_NSFW_LOCK_META_KEY]).toEqual(scan);
+    expect(meta[SYSTEM_NSFW_LOCK_META_KEY]).toMatchObject({ source: scan.source });
     expect(meta.comFaceIntent).toEqual({ detected: false, textHash: 'other', at: 'x' });
   });
 
