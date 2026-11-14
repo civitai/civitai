@@ -23,6 +23,10 @@ import {
 // pages into 503s: timeouts rose about threefold while the feed service's own query time stayed
 // flat, so the extra time is spent on the caller's side of the call, not in the feed's query.
 // feed_primary_fetch_duration_seconds measures that caller-side time.
+// The trade-off: image.getInfinite holds a shared heavy-image bulkhead slot (default 20 per pod)
+// for the whole call, so with the breaker dark (feed-service-degrade off) a hung feed holds each
+// slot for 5s, halving heavy-route throughput in an outage compared with 2.5s. The breaker is the
+// intended cover for that.
 export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
 const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
@@ -106,7 +110,8 @@ const fetchDuration = registerHistogram({
   name: 'feed_primary_fetch_duration_seconds',
   help: 'Caller wall-clock time of the image feed call to the feed service, by route and outcome',
   labelNames: ['route', 'outcome'] as const,
-  buckets: [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5],
+  // Past the 5s budget too, so a timeout whose timer fired late (event-loop lag) is still seen.
+  buckets: [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10],
 });
 
 const hydrateDuration = registerHistogram({
