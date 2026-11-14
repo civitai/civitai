@@ -227,9 +227,20 @@ async function markLeftForUser<T extends { cosmeticId: number; rewardDefinitionI
  */
 export async function getBoxContentsForUser(
   client: Prisma.TransactionClient,
-  { boxDefinitionId, userId, team }: { boxDefinitionId: number; userId: number; team?: string }
+  {
+    boxDefinitionId,
+    userId,
+    team,
+    catalog,
+  }: {
+    boxDefinitionId: number;
+    userId: number;
+    team?: string;
+    /** This box's `getBoxCatalog`, when the caller already read it. */
+    catalog?: BoxCatalogEntry[];
+  }
 ): Promise<BoxContentForUser[]> {
-  const forTeam = (await getBoxCatalog(client, boxDefinitionId)).flatMap(
+  const forTeam = (catalog ?? (await getBoxCatalog(client, boxDefinitionId))).flatMap(
     ({ team: cosmeticTeam, ...entry }) => (isForTeam(cosmeticTeam, team) ? [entry] : [])
   );
   return markLeftForUser(client, { boxDefinitionId, userId }, forTeam);
@@ -241,7 +252,7 @@ export async function getBoxContentsForUser(
  */
 export async function getBoxPoolForUser(
   client: Prisma.TransactionClient,
-  params: { boxDefinitionId: number; userId: number; team?: string }
+  params: Parameters<typeof getBoxContentsForUser>[1]
 ): Promise<BoxPoolEntry[]> {
   const contents = await getBoxContentsForUser(client, params);
   return contents.filter((entry) => entry.left).map(({ left: _left, ...entry }) => entry);

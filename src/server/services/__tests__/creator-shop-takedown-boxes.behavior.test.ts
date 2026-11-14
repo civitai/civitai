@@ -557,6 +557,22 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.failures).toEqual([]);
   });
 
+  // The refund notice says Buzz came back; for a granted box none was paid.
+  it('tells a granted box’s opener it was removed, not refunded', async () => {
+    const boxId = await seedBox();
+    await seedOpening(boxId, { userId: GRANTEE, sourceKey: 'mod-grant-5-102-0', purchased: false });
+
+    await takedown();
+
+    const sent = notifications.createNotification.mock.calls.map(([n]) => n);
+    expect(sent).toContainEqual(
+      expect.objectContaining({ type: 'cosmetic-shop-item-removed', userId: GRANTEE })
+    );
+    expect(sent).not.toContainEqual(
+      expect.objectContaining({ type: 'cosmetic-shop-item-taken-down', userId: GRANTEE })
+    );
+  });
+
   it('does not refund a box purchase a moderator already refunded', async () => {
     const boxId = await seedBox();
     const { boxItemId, sourceKey } = await seedOpening(boxId);
