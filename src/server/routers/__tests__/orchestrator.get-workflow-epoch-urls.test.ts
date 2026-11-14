@@ -5,8 +5,6 @@ import type * as WorkflowSteps from '~/server/services/orchestrator/workflowStep
 // 🔴 Do NOT mock `~/env/server` here — see `deprecated-rewards.gate.test.ts` for why importing
 // `orchestrator.router` relies on the canonical env mock.
 
-/** `orchestrator.getWorkflow` names a training run's weights to moderators only. */
-
 const h = vi.hoisted(() => ({ getWorkflow: vi.fn(), patchWorkflowSteps: vi.fn() }));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
@@ -154,6 +152,15 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
     const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as { steps: unknown[] };
     expect(result.steps[1]).toEqual(generationStep);
   });
+
+  it.each(['Training', 'IMAGERESOURCETRAINING'])(
+    'withholds a training step whose type comes back as %s',
+    async ($type) => {
+      h.getWorkflow.mockResolvedValue(workflow([{ ...trainingStep, $type }]));
+      const result = await caller().getWorkflow({ workflowId: 'wf-1' });
+      expect(JSON.stringify(result)).not.toMatch(/EPOCH1|SOURCE-EPOCH5/);
+    }
+  );
 
   it("keeps only a training step's model file from its metadata", async () => {
     const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as {

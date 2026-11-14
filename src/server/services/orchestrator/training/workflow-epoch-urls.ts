@@ -1,4 +1,5 @@
 import type { Workflow } from '@civitai/orchestration-client';
+import { isTrainingStepTypeIgnoringCase } from '~/server/services/blocks/steps/orchestrator-denylist';
 
 type TrainingStep = {
   $type?: string;
@@ -9,7 +10,7 @@ type TrainingStep = {
 };
 
 const isTrainingStep = (step: TrainingStep) =>
-  step.$type === 'training' || step.$type === 'imageResourceTraining';
+  typeof step.$type === 'string' && isTrainingStepTypeIgnoringCase(step.$type);
 
 // Everything that names an epoch's weights: a url, a blob id, job or name a url can be re-signed
 // from, or the run's trace. Both epoch shapes are cleared whatever the step's type.
@@ -26,7 +27,7 @@ const withoutJob = (blob: unknown) =>
  * A training step without anything naming a run's weights: each epoch's weight blob and trace, the
  * epoch a continued run starts from (`input.continueFrom`), the resources it is preparing, and any
  * metadata but its model file.
- * Epoch numbers and samples are kept.
+ * Epoch numbers and sample images are kept.
  */
 function withoutWeightHandles(step: TrainingStep): TrainingStep {
   const input = step.input as Record<string, unknown> | null | undefined;
