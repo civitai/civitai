@@ -213,6 +213,14 @@ describe('milestone rarity', () => {
     expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
   });
 
+  it('caps a share at 100% when the count has more holders than creators', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: { at: Date.now(), creators: 200, holders: { 'score:open': 260 } },
+    } as never);
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBe(100);
+  });
+
   // A job that stopped running would otherwise show the last count forever.
   it('shows no share once the count is days old', async () => {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -221,6 +229,42 @@ describe('milestone rarity', () => {
       value: { at: weekAgo, creators: 200, holders: { 'score:open': 50 } },
     } as never);
     expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+  });
+});
+
+describe('reveals', () => {
+  const seen = new Date('2026-11-01');
+  const open = definition({ key: 'score:open', track: 'score', threshold: 10, hidden: false });
+  const special = definition();
+
+  beforeEach(() => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: { at: Date.now(), creators: 200, holders: { 'score:open': 50, 'hidden:remix': 2 } },
+    } as never);
+  });
+
+  it('reveals only crossings not yet seen', async () => {
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: seen, seenAt: null, milestone: open },
+      { achievedAt: seen, seenAt: seen, milestone: definition({ key: 'b', hidden: false }) },
+    ] as never);
+
+    const { reveals } = await getCreatorJourney(1);
+    expect(reveals).toEqual([
+      expect.objectContaining({ key: 'score:open', special: false, rarity: 25, threshold: 10 }),
+    ]);
+  });
+
+  it('shows a special unlock as the earned list does, with no share', async () => {
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: seen, seenAt: null, milestone: special },
+    ] as never);
+
+    const { reveals, earned } = await getCreatorJourney(1);
+    // Exact, so a field the earned list does not carry fails here.
+    const { achievedAt: _achievedAt, ...shown } = earned[0];
+    expect(reveals).toEqual([{ ...shown, special: true, rarity: null }]);
   });
 });
 

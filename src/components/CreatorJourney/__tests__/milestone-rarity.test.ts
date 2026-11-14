@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rarityLabel } from '~/components/CreatorJourney/milestone-rarity';
+import { rarityLabel, revealTier, sortReveals } from '~/components/CreatorJourney/milestone-rarity';
 
 describe('rarityLabel', () => {
   it('keeps a decimal below 10% and whole numbers above', () => {
@@ -15,5 +15,41 @@ describe('rarityLabel', () => {
 
   it('shows nothing without a count', () => {
     expect(rarityLabel(null)).toBeNull();
+  });
+});
+
+describe('revealTier', () => {
+  const tier = (rarity: number | null, special = false) => revealTier({ rarity, special });
+
+  it('puts 10% and up in common, 1% to 10% in rare, under 1% in epic', () => {
+    expect([tier(18), tier(10), tier(9.9), tier(1), tier(0.99), tier(0)]).toEqual([
+      'common',
+      'common',
+      'rare',
+      'rare',
+      'epic',
+      'epic',
+    ]);
+  });
+
+  it('falls back to common without a count', () => {
+    expect(tier(null)).toBe('common');
+  });
+
+  it('gives a special unlock its own tier, whatever the count', () => {
+    expect(tier(null, true)).toBe('special');
+  });
+});
+
+describe('sortReveals', () => {
+  it('orders rarest first, with uncounted unlocks last', () => {
+    const reveals = [
+      { key: 'a', special: false, rarity: 14 },
+      { key: 'b', special: false, rarity: null },
+      { key: 'c', special: false, rarity: 0.5 },
+      { key: 'd', special: true, rarity: null },
+      { key: 'e', special: false, rarity: 2.8 },
+    ];
+    expect(sortReveals(reveals).map((reveal) => reveal.key)).toEqual(['d', 'c', 'e', 'a', 'b']);
   });
 });

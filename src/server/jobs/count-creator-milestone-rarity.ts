@@ -5,7 +5,7 @@ import {
 } from '~/server/services/creator-milestone-rarity.service';
 import { createJob } from './job';
 
-// After the nightly score update (23:55) and milestone grants (01:20), so it counts tonight's grants.
+// After the nightly score update and grants, so it counts tonight's grants.
 export const countCreatorMilestoneRarity = createJob(
   'count-creator-milestone-rarity',
   '40 2 * * *',

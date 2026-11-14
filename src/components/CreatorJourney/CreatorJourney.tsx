@@ -18,6 +18,7 @@ import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
 import { rarityLabel } from '~/components/CreatorJourney/milestone-rarity';
+import { MilestoneReveals } from '~/components/CreatorJourney/MilestoneReveal';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import {
   DISCORD_CLAIM_PARAM,
@@ -140,6 +141,12 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
           See the Creator Showcase <IconArrowRight size={14} className="inline" />
         </Anchor>
       </Stack>
+
+      {journey.reveals.length > 0 && (
+        <div className={scoreSectionWidth}>
+          <MilestoneReveals reveals={journey.reveals} />
+        </div>
+      )}
 
       <Card
         withBorder
