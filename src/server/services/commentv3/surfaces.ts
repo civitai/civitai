@@ -12,7 +12,7 @@ import { getModelVisibleToViewer } from '~/server/services/model-visibility.serv
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { createNotification } from '~/server/services/notification.service';
-import { postTextAnchorImage } from '~/server/notifications/comment.notifications';
+import { postTextOwnerNoticeSql } from '~/server/notifications/comment.notifications';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
@@ -252,14 +252,7 @@ async function notifyPostTextOwner(comment: StoredCommentV3, ctx: ProtectedConte
   if (comment.parentId) return;
   const [text] = await dbRead.$queryRawUnsafe<
     { postId: number; userId: number; title: string | null; anchorImageId: number | null }[]
-  >(
-    `SELECT t."postId", p."userId", p.title, a.id "anchorImageId"
-     FROM "PostText" t
-     JOIN "Post" p ON p.id = t."postId"
-     LEFT JOIN LATERAL ${postTextAnchorImage('t')} a ON true
-     WHERE t.id = $1`,
-    comment.entityId
-  );
+  >(postTextOwnerNoticeSql, comment.entityId);
   if (!text || text.userId === comment.userId) return;
   await createNotification({
     type: 'new-post-comment',

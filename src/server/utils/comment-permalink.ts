@@ -6,9 +6,8 @@ import { postTextAnchorImage, threadUrlMap } from '~/server/notifications/commen
  * What `/comments/<id>` reads: the comment's entity, plus the addresses that are not the entity id.
  * A comic chapter is addressed by its project and position, an app listing by its slug (`entityId`
  * is `app_listings.serial_id`, an integer that appears nowhere in the URL), and a storyline text by
- * its anchor image. A deleted
- * comment has no permalink: a placeholder in a section is reached through its replies. Nor, but for
- * a moderator, does one hidden for ToS.
+ * its anchor image. A deleted comment has no permalink: a placeholder in a section is reached
+ * through its replies. Nor, but for a moderator, does one hidden for ToS.
  */
 export const getCommentPermalinkRow = (commentId: number, { includeHidden = false } = {}) =>
   kyselyRead

@@ -32,6 +32,7 @@ const {
   commentDedupeKey,
   commentDedupeKeyByShape,
   commentDedupeKeyIfAddressable,
+  postTextOwnerNoticeSql,
   threadUrlMap,
 } = await import('~/server/notifications/comment.notifications');
 const { mentionNotifications } = await import('~/server/notifications/mention.notifications');
@@ -82,7 +83,10 @@ const dialect = (pg: PGlite): Dialect => {
 const SETUP = `
 ALTER TABLE "User" ADD COLUMN username text;
 UPDATE "User" SET username = 'u' || id;
-ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int, ADD COLUMN index int;
+ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "postId" int, ADD COLUMN index int,
+  ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "needsReview" text,
+  ADD COLUMN "blockedFor" text, ADD COLUMN ingestion text NOT NULL DEFAULT 'Scanned',
+  ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
 ALTER TABLE "Post" ADD COLUMN "userId" int, ADD COLUMN "modelVersionId" int, ADD COLUMN title text,
   ADD COLUMN "publishedAt" timestamp DEFAULT '2020-01-01', ADD COLUMN "nsfwLevel" int NOT NULL DEFAULT 1;
 CREATE TABLE "PostText"(id int PRIMARY KEY, "postId" int NOT NULL, index int NOT NULL,
@@ -768,6 +772,36 @@ describe('the permalink row', () => {
             );
           }
         );
+        // An image no reader may open is never the anchor: text 50 falls to image 911 after it,
+        // whichever way image 10 is withheld.
+        for (const [change, undo] of [
+          [`"tosViolation" = true`, `"tosViolation" = false`],
+          [`"needsReview" = 'poi'`, `"needsReview" = NULL`],
+          [`"blockedFor" = 'tos'`, `"blockedFor" = NULL`],
+          [`ingestion = 'Pending'`, `ingestion = 'Scanned'`],
+          [`"nsfwLevel" = 0`, `"nsfwLevel" = 1`],
+        ])
+          await temporarily(
+            `UPDATE "Image" SET ${change} WHERE id = 10`,
+            `UPDATE "Image" SET ${undo} WHERE id = 10`,
+            async () =>
+              expect(buildCommentPermalink(await getCommentPermalinkRow(510))).toMatch(
+                /^\/images\/911\?text=50&/
+              )
+          );
+      }
+    );
+  });
+
+  it("reads the owner notice's post, owner, title and anchor image for a text", async () => {
+    await temporarily(
+      `UPDATE "Post" SET title = 'Chapter one' WHERE id = 1`,
+      `UPDATE "Post" SET title = NULL WHERE id = 1`,
+      async () => {
+        expect((await db.pg.query(postTextOwnerNoticeSql, [50])).rows).toEqual([
+          { postId: 1, userId: 1, title: 'Chapter one', anchorImageId: 10 },
+        ]);
+        expect((await db.pg.query(postTextOwnerNoticeSql, [99999])).rows).toEqual([]);
       }
     );
   });

@@ -90,16 +90,27 @@ export const v3EntityJoins = (alias: string) =>
 
 /**
  * The image a text slide's URL keeps (`anchorImageIndex`, `detail-items.ts`): the last of its post's
- * images that sorts before it (`comparePostItems`), else the first after it. A one-row derived table.
+ * images that sorts before it (`comparePostItems`), else the first after it. Only an image any reader
+ * may open: rated, scanned, not in review, not taken down (`isPanelTainted`'s rule). A one-row
+ * derived table.
  */
 export const postTextAnchorImage = (text: string) => `(
           SELECT i.id FROM "Image" i
           WHERE i."postId" = ${text}."postId"
+            AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+            AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
           ORDER BY COALESCE(i.index, 0) <= ${text}.index DESC,
             CASE WHEN COALESCE(i.index, 0) <= ${text}.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
             CASE WHEN COALESCE(i.index, 0) <= ${text}.index THEN -i.id ELSE i.id END
           LIMIT 1
         )`;
+
+/** What the owner notice of a comment on text `$1` names and links to (`notifyPostTextOwner`). */
+export const postTextOwnerNoticeSql = `SELECT t."postId", p."userId", p.title, a.id "anchorImageId"
+     FROM "PostText" t
+     JOIN "Post" p ON p.id = t."postId"
+     LEFT JOIN LATERAL ${postTextAnchorImage('t')} a ON true
+     WHERE t.id = $1`;
 
 export const v3AppListingResolved = (alias: string) =>
   `(${alias}."entityType" <> 'appListing' OR al.slug IS NOT NULL)`;

@@ -471,6 +471,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN LATERAL (
       SELECT i.id FROM "Image" i
       WHERE i."postId" = ptx."postId"
+      AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+      AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
       ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
       CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
       CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -i.id ELSE i.id END
@@ -615,6 +617,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN LATERAL (
       SELECT i.id FROM "Image" i
       WHERE i."postId" = ptx."postId"
+      AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+      AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
       ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
       CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
       CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -i.id ELSE i.id END
@@ -707,6 +711,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN LATERAL (
       SELECT i.id FROM "Image" i
       WHERE i."postId" = ptx."postId"
+      AND NOT i."tosViolation" AND i."needsReview" IS NULL AND i."blockedFor" IS NULL
+      AND i.ingestion = 'Scanned' AND i."nsfwLevel" <> 0
       ORDER BY COALESCE(i.index, 0) <= ptx.index DESC,
       CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -COALESCE(i.index, 0) ELSE COALESCE(i.index, 0) END,
       CASE WHEN COALESCE(i.index, 0) <= ptx.index THEN -i.id ELSE i.id END
