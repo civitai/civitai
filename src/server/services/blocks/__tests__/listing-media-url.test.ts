@@ -6,17 +6,11 @@ import { describe, expect, it, vi } from 'vitest';
  * The CDN url every listing icon, cover and screenshot is served from, pinned as LITERAL strings
  * through the REAL `getEdgeUrl` (only the client env is stubbed).
  *
- * 🔴 WHY `optimized=true` IS PINNED: without it the image CDN serves JPEG, which has no alpha
- * channel, so a transparent PNG icon renders on a BLACK square instead of the card behind it.
- * With it the CDN serves WebP, which keeps alpha.
- *
- * 🔴 WHY `anim=false` IS PINNED: `optimized=true` alone makes the cacher emit ANIMATED WebP for an
- * animated source, so icons and covers would start playing (one 1200 px animated cover probed at
- * ~1 MB). Before `optimized` they were a still first-frame JPEG; `anim=false` keeps them a
- * still while keeping WebP's alpha.
- *
- * Every other blocks test mocks `getEdgeUrl` to a stub that drops its options, so none of them
- * can see this flag. Keys are pairwise distinct and distinct from every width constant.
+ * Pins `optimized=true` (WebP keeps alpha; JPEG flattens a transparent icon to black) and
+ * `anim=false` (no animated WebP for animated sources). Rationale: see `listingMediaEdgeUrl`.
+ * Other blocks tests mock `getEdgeUrl` and drop its options, so none can see these flags (the
+ * call-site tests in `listing-media-url.call-sites.test.ts` excepted). Keys are pairwise distinct
+ * and distinct from every width constant.
  */
 
 vi.hoisted(() => {
@@ -142,10 +136,7 @@ describe('the gated public projections use the optimized variant', () => {
   });
 });
 
-/**
- * INVARIANT GUARD, not regression coverage: the `og:image` was JPEG before this fix and must stay
- * JPEG, since link-preview scrapers are not all WebP-capable.
- */
+/** INVARIANT GUARD: the `og:image` must stay JPEG (see `listingSocialImage`). */
 describe('listingSocialImage stays JPEG', () => {
   it('builds its icon url without optimized', () => {
     const row = { contentRating: 'g', icon: img('icon-key-i9'), cover: null, screenshots: [] };
@@ -168,12 +159,10 @@ describe('listingSocialImage stays JPEG', () => {
 });
 
 /**
- * The listing-media url sites the tests above cannot reach cheaply (the moderator queue's
- * screenshots, the sub-listing card cover, the author's edit prefill) must not build a CDN url
- * of their own: a bare `getEdgeUrl` there is exactly how a site loses `optimized` and serves JPEG.
- * Every one of them goes through `listingMediaEdgeUrl`.
- *
- * TRIPWIRE ONLY: this greps the spelling `getEdgeUrl(`, so an aliased import walks past it.
+ * TRIPWIRE ONLY, not coverage: it greps the spelling `getEdgeUrl(`, so an aliased import walks
+ * past it, and it cannot see a wrong width. The URL each of these sites actually builds (the
+ * moderator review screenshots, the sub-listing card cover, the author's edit prefill) is pinned
+ * by `listing-media-url.call-sites.test.ts`.
  */
 describe('listing-media modules build CDN urls only through listing-media-url', () => {
   const SRC = resolve(__dirname, '../../../..');
