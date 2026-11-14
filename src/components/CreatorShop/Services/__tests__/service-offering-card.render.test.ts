@@ -12,6 +12,10 @@ vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: ReactNode }) => children,
 }));
+vi.mock('~/components/CardTemplates/AspectRatioImageCard', () => ({
+  AspectRatioImageCard: ({ href }: { href?: string }) =>
+    createElement('img', { 'data-cover': true, 'data-cover-href': href }),
+}));
 vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'blue' }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ user }: { user: { username: string } }) =>
@@ -53,6 +57,27 @@ describe('ServiceOfferingCard', () => {
     expect(html).toContain('No cover yet');
     expect(html).toContain('500');
     expect(html).toContain('2 slots open');
+  });
+
+  it('shows the cover, not the empty tile, when the offering has one', () => {
+    const html = render({ offering: { ...offering, coverImage: { id: 9, nsfwLevel: 1 } } });
+    expect(html).toContain('data-cover');
+    expect(html).not.toContain('No cover yet');
+  });
+
+  it('links the title, the cover and the coverless tile to the storefront when href is set', () => {
+    const href = '/user/mei/shop?service=3';
+    const coverless = render({ href });
+    expect(coverless).toContain(`aria-label="Portrait commission" href="${href}"`);
+    expect(coverless).toMatch(
+      new RegExp(`<a[^>]*href="${href.replace('?', '\\?')}"[^>]*>Portrait commission</a>`)
+    );
+    const covered = render({
+      href,
+      offering: { ...offering, coverImage: { id: 9, nsfwLevel: 1 } },
+    });
+    expect(covered).toContain(`data-cover-href="${href}"`);
+    expect(render()).not.toContain('<a');
   });
 
   it('shows the seller only when one is passed', () => {

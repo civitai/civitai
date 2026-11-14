@@ -67,7 +67,7 @@ export const ShopRow = ({
 };
 
 // Same grid and column math as ShopRow, one row, so a service card sits level with the
-// cosmetic cards. Request opens the request flow in place; the cover goes to the storefront.
+// cosmetic cards.
 export const ServicesRow = ({
   offerings,
   sellerId,

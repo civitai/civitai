@@ -72,10 +72,6 @@ function TakedownForm({ id, title }: { id: number; title: string }) {
   );
 }
 
-/**
- * The card's ⋯ menu. A visitor reports; the seller removes their own service; a moderator takes
- * it down (which asks for a reason, as the moderator app's report queue does).
- */
 export function ServiceOfferingMenu({
   offering,
   isOwner,

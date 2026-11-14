@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { ModalsProvider } from '@mantine/modals';
 import { page } from 'vitest/browser';
 import '@mantine/core/styles.css';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
@@ -43,7 +44,10 @@ describe('ServiceOfferingMenu', () => {
     await expect.element(item('Report this service')).toBeVisible();
     expect(document.body.textContent).not.toContain('Delete');
     await item('Report this service').click();
-    expect(mocks.openReportModal).toHaveBeenCalledWith(expect.objectContaining({ entityId: 42 }));
+    expect(mocks.openReportModal).toHaveBeenCalledTimes(1);
+    expect(mocks.openReportModal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: ReportEntity.ServiceOffering, entityId: 42 })
+    );
   });
 
   test('the seller deletes their own service after confirming, and cannot report it', async () => {

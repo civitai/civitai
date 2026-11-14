@@ -182,12 +182,19 @@ export function ServiceOfferingCard({
       ) : (
         <div className="relative" style={{ aspectRatio: COVER_ASPECT_RATIO }}>
           <NoCover />
+          {href && (
+            <NextLink href={href} className="absolute inset-0" aria-label={offering.title} />
+          )}
           <div className={cardStyles.header}>{header()}</div>
           <div className={cardStyles.footer}>{price}</div>
         </div>
       )}
       <div className="flex flex-1 flex-col gap-2 p-3">
-        <Text fw={700} lineClamp={2}>
+        <Text
+          fw={700}
+          lineClamp={2}
+          {...(href ? { component: NextLink, href, className: 'hover:underline' } : {})}
+        >
           {offering.title}
         </Text>
         {seller && <UserAvatar user={seller} withUsername linkToProfile size="xs" />}
