@@ -360,10 +360,11 @@ describe('mini/[id] epoch arm, cache', () => {
     '%s: no shared cache may store the response',
     async (variant) => {
       h.variant.value = variant;
-      for (const caller of [anonymous, owner, service]) {
-        const { cacheControl } = await request(caller);
-        expect(cacheControl).toBe('private, no-store');
-      }
+      for (const caller of [anonymous, stranger, grantee, owner, moderator, service])
+        for (const query of [{}, { epoch: '5' }]) {
+          const { cacheControl } = await request(caller, {}, undefined, undefined, query);
+          expect(cacheControl, JSON.stringify({ caller, query })).toBe('private, no-store');
+        }
     }
   );
 
