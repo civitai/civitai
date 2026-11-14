@@ -13,6 +13,10 @@ import type * as FliptClient from '~/server/flipt/client';
  * below are written out, not imported, so a changed bound has to change a test too.
  */
 
+// The suite setup stubs ~/server/prom/client with metrics that record nothing; the real helpers
+// register on prom-client's default registry, so the caller-side histogram can be read back.
+vi.mock('~/server/prom/client', async () => await vi.importActual('@civitai/telemetry/client'));
+
 // `read` lists every flag key evaluated, so a test can show a key is never read at all.
 const flag = vi.hoisted(() => ({ on: true, read: [] as string[] }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
