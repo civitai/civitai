@@ -8,7 +8,6 @@ export function rarityLabel(percent: number | null | undefined) {
 
 export type RevealTier = 'common' | 'rare' | 'epic' | 'special';
 
-// Justin's cutoffs (2026-11-14): common 10% or more, rare 1% to 10%, epic under 1%.
 const RARE_BELOW = 10;
 const EPIC_BELOW = 1;
 
@@ -41,10 +40,6 @@ const isBigReveal = (tier: RevealTier) => tier === 'epic' || tier === 'special';
 /** At most this many full-screen moments in one visit; any more wait in the row. */
 export const MODAL_LIMIT = 3;
 
-/**
- * Rarest first. Epic and special unlocks get a full-screen moment each, up to MODAL_LIMIT; the rest
- * share one row.
- */
 export function splitReveals<T extends { special: boolean; rarity: number | null }>(reveals: T[]) {
   const sorted = sortReveals(reveals);
   const modals = sorted.filter((reveal) => isBigReveal(revealTier(reveal))).slice(0, MODAL_LIMIT);
