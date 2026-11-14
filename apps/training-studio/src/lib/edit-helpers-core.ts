@@ -40,6 +40,9 @@ const ORCHESTRATOR_BLOB_PATH = '/v2/consumer/blobs/';
 // The generator tags every workflow with its workflow key; an image edit is this one.
 const EDIT_WORKFLOW_TAG = 'img2img:edit';
 
+// A starting image is an image blob; anything else named there (weights) is never served as one.
+const IMAGE_BLOB = /\/v2\/consumer\/blobs\/[^/?#]+\.(png|jpe?g|webp)(\?|#|$)/i;
+
 /** The starting images of an image-edit workflow: what the edit-pair picker previews from it. */
 export function editSourceAirs(workflow: {
   tags?: string[] | null;
@@ -49,7 +52,8 @@ export function editSourceAirs(workflow: {
   return ((workflow.steps ?? []) as RawImageGenStep[]).flatMap((step) =>
     step.$type === 'imageGen' && Array.isArray(step.input?.images)
       ? step.input.images.filter(
-          (i): i is string => typeof i === 'string' && i.includes(ORCHESTRATOR_BLOB_PATH)
+          (i): i is string =>
+            typeof i === 'string' && i.includes(ORCHESTRATOR_BLOB_PATH) && IMAGE_BLOB.test(i)
         )
       : []
   );

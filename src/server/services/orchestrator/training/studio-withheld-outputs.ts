@@ -2,10 +2,14 @@ import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/traini
 
 const TRAINING_STEP_TYPES = new Set(['training', 'imageResourceTraining']);
 
-type StepLike = { $type?: string; output?: unknown };
+type StepLike = { $type?: string; name?: string; status?: unknown };
 type WorkflowLike = { id?: string | null; steps?: StepLike[] | null };
 
 const isTrainingStep = (step: StepLike) => TRAINING_STEP_TYPES.has(step.$type ?? '');
+
+// Only these survive on a withheld training step: its input, output and metadata can each carry
+// the run's epoch keys and URLs.
+const withheldStep = ({ $type, name, status }: StepLike) => ({ $type, name, status });
 
 /**
  * The caller's workflows as the generic workflow reads return them, with the training-step outputs
@@ -24,7 +28,7 @@ export async function withholdTrainingOutputs<W extends WorkflowLike>(
     w.id && withheld.has(w.id)
       ? {
           ...w,
-          steps: w.steps?.map((s) => (isTrainingStep(s) ? { ...s, output: undefined } : s)),
+          steps: w.steps?.map((s) => (isTrainingStep(s) ? withheldStep(s) : s)),
         }
       : w
   );

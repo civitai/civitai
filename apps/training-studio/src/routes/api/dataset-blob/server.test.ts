@@ -36,7 +36,12 @@ const editGeneration = {
   id: 'gen-1',
   status: 'succeeded',
   tags: ['civitai', 'gen', 'img', 'img2img:edit'],
-  steps: [{ $type: 'imageGen', input: { images: [`${BLOB}start-1.png?sig=1`] } }],
+  steps: [
+    {
+      $type: 'imageGen',
+      input: { images: [`${BLOB}start-1.png?sig=1`, `${BLOB}weights-key.safetensors`] },
+    },
+  ],
 };
 
 const otherGeneration = { ...editGeneration, id: 'gen-2', tags: ['civitai', 'gen', 'img'] };
@@ -94,8 +99,8 @@ describe('GET /api/dataset-blob', () => {
       'air=urn:air:sdxl:lora:orchestrator:blob@weights-key&workflowId=wf-1',
     ],
     [
-      'a key named under an edit',
-      'air=urn:air:sdxl:lora:orchestrator:blob@weights-key&workflowId=gen-1',
+      'a non-image blob named as an edit input',
+      `air=${encodeURIComponent(`${BLOB}weights-key.safetensors`)}&workflowId=gen-1`,
     ],
     ['a run the caller cannot read', 'air=ds-1.png&workflowId=someone-else'],
     [
@@ -137,5 +142,11 @@ describe('GET /api/dataset-blob', () => {
     getWorkflow.mockResolvedValueOnce({ data: undefined, error: { status: 503 } });
     expect(await status(() => get('air=ds-1.png&workflowId=wf-1', 904))).toBe(502);
     expect(await (await get('air=ds-1.png&workflowId=wf-1', 904)).text()).toBe('bytes');
+  });
+
+  it('reads the run again after an empty answer', async () => {
+    getWorkflow.mockResolvedValueOnce({ data: { ...trainingRun, steps: [] } });
+    expect(await status(() => get('air=ds-1.png&workflowId=wf-1', 905))).toBe(404);
+    expect(await (await get('air=ds-1.png&workflowId=wf-1', 905)).text()).toBe('bytes');
   });
 });

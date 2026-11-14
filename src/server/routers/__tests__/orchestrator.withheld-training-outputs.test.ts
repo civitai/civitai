@@ -43,13 +43,16 @@ const caller = (isModerator = false) =>
   } as never);
 
 const MARK = 'epoch-marker';
-const run = (id: string) => ({
+const run = (id: string, $type = 'training') => ({
   id,
   tags: ['civitai', 'training'],
   steps: [
     {
-      $type: 'training',
-      input: { ecosystem: 'sdxl' },
+      $type,
+      name: 'train',
+      status: 'succeeded',
+      input: { ecosystem: 'sdxl', continueFrom: `urn:air:sdxl:lora:orchestrator:blob@${MARK}` },
+      metadata: { copied: { epochs: [{ model: { url: `https://x/m?${MARK}` } }] } },
       output: { epochs: [{ epochNumber: 1, model: { url: `https://x/m?${MARK}` } }] },
     },
   ],
@@ -67,14 +70,23 @@ beforeEach(() => {
 });
 
 describe('orchestrator.getWorkflow on a withheld training run', () => {
-  it('returns the run without its training outputs', async () => {
-    const wf = await caller().getWorkflow({ workflowId: 'wf-1' });
-    expect(JSON.stringify(wf)).not.toContain(MARK);
-    expect(wf).toMatchObject({
-      id: 'wf-1',
-      steps: [{ $type: 'training', input: { ecosystem: 'sdxl' } }],
-    });
-    expect(h.withheld).toHaveBeenCalledWith(7, ['wf-1']);
+  it.each(['training', 'imageResourceTraining'])(
+    'returns a %s run with nothing but its step type, name and status',
+    async ($type) => {
+      h.getWorkflow.mockResolvedValue(run('wf-1', $type));
+      const wf = await caller().getWorkflow({ workflowId: 'wf-1' });
+      expect(JSON.stringify(wf)).not.toContain(MARK);
+      expect(wf).toMatchObject({
+        id: 'wf-1',
+        steps: [{ $type, name: 'train', status: 'succeeded' }],
+      });
+      expect(h.withheld).toHaveBeenCalledWith(7, ['wf-1']);
+    }
+  );
+
+  it('fails closed when the withheld lookup fails', async () => {
+    h.withheld.mockRejectedValue(new Error('db down'));
+    await expect(caller().getWorkflow({ workflowId: 'wf-1' })).rejects.toBeTruthy();
   });
 
   it('returns everything to a moderator', async () => {
