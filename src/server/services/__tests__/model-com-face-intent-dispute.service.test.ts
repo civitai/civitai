@@ -18,6 +18,16 @@ const { processComFaceIntentDisputes } = await import(
   '~/server/services/model-com-face-intent-dispute.service'
 );
 
+const { comFaceIntentTextHash } = await import('~/server/services/model-com-face-intent.service');
+// The detection was recorded for the listing as it stands, with its trigger words.
+const recorded = {
+  comFaceIntent: {
+    detected: true,
+    textHash: comFaceIntentTextHash({ name: 'n', description: null, triggerWords: ['tw'] }),
+    at: 'x',
+  },
+};
+
 const dispute = (fields: Record<string, unknown> = {}) => ({
   id: 1,
   modelId: 7,
@@ -26,7 +36,7 @@ const dispute = (fields: Record<string, unknown> = {}) => ({
   attempts: 0,
   name: 'n',
   description: null,
-  meta: {},
+  meta: recorded,
   ...fields,
 });
 
@@ -60,6 +70,17 @@ describe('processComFaceIntentDisputes', () => {
     expect(await processComFaceIntentDisputes()).toMatchObject({ upheld: 1 });
     expect(mocks.resolve).not.toHaveBeenCalled();
     expect(appealWrites()).toEqual([['upheld', 1]]);
+  });
+
+  it('never approves when the listing changed since the detection; a moderator rules instead', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      dispute({ name: 'edited for the dispute' }),
+    ] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed' });
+
+    expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(appealWrites()).toEqual([['needs-moderator', 1]]);
   });
 
   it('hands an allowed dispute to a moderator when the approval is refused', async () => {

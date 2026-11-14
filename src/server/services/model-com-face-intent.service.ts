@@ -126,11 +126,39 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
   return locked;
 }
 
-/** Marks the stored detection overturned (a dispute or a moderator lifted its lock) and puts back
- *  the rating marker its lock replaced. Runs after the caller cleared the lock's own marker. */
-export const overturnComFaceIntentSql = (modelId: number) => Prisma.sql`
+/** The hash of the listing the model has stored now, as the intent check reads it; null when gone. */
+export async function storedListingTextHash(modelId: number) {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: {
+      name: true,
+      description: true,
+      // The same words, in the same order, as `getOwnTriggerWords`.
+      modelVersions: { select: { trainedWords: true }, orderBy: { id: 'asc' } },
+    },
+  });
+  if (!model) return null;
+  return comFaceIntentTextHash({
+    name: model.name,
+    description: model.description,
+    triggerWords: [...new Set(model.modelVersions.flatMap((version) => version.trainedWords))],
+  });
+}
+
+/**
+ * After a ruling lifted the intent lock: puts back the rating marker the lock replaced, and marks
+ * the stored detection overturned only when it was read from `ruledTextHash`, the listing the ruling
+ * was made on. A detection of other text stands, so restoring that text is refused again. Runs after
+ * the caller cleared the lock's own marker.
+ */
+export const overturnComFaceIntentSql = (
+  modelId: number,
+  ruledTextHash: string | null
+) => Prisma.sql`
   UPDATE "Model"
-  SET meta = jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text)) || CASE
+  SET meta = (CASE WHEN meta->'comFaceIntent'->>'textHash' = ${ruledTextHash}
+      THEN jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text))
+      ELSE meta END) || CASE
     WHEN jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
     THEN jsonb_build_object('systemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock')
     ELSE '{}'::jsonb END

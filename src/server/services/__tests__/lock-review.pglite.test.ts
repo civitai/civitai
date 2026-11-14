@@ -73,6 +73,9 @@ const {
   LOCK_REVIEW_UNAVAILABLE,
 } = await import('~/server/services/lock-review.service');
 const { createEntityAppealHandler } = await import('~/server/controllers/report.controller');
+const { comFaceIntentTextHash, reusableComFaceIntent } = await import(
+  '~/server/services/model-com-face-intent.service'
+);
 const actualReport = await vi.importActual<typeof ReportService>(
   '~/server/services/report.service'
 );
@@ -286,8 +289,14 @@ describe('approving a lock review', () => {
     expect(await modelMeta()).toEqual({ other: 1 });
   });
 
+  const listing = { name: 'Listing', description: '<p>Its text</p>' };
+  const listingHash = comFaceIntentTextHash({ ...listing, triggerWords: [] });
+  const storesListing = (stored: { name: string; description: string }) =>
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ ...stored, modelVersions: [] } as never);
+
   it('overturns the listing intent detection when it lifts the nsfw lock, so a .com version is allowed', async () => {
-    const intent = { detected: true, textHash: 'h', at: '2026-01-01T00:00:00.000Z' };
+    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    storesListing(listing);
     await seed({
       locked: ['nsfw'],
       meta: {
@@ -301,6 +310,25 @@ describe('approving a lock review', () => {
     const meta = await modelMeta();
     expect(meta).not.toHaveProperty(SYSTEM_NSFW_LOCK_META_KEY);
     expect(meta.comFaceIntent).toEqual({ ...intent, overturnedAt: expect.any(String) });
+  });
+
+  // Edit the listing, have the edit allowed, restore the text: the original detection must still refuse it.
+  it('leaves a detection of other text standing, so restoring that text is still refused', async () => {
+    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    storesListing({ ...listing, description: '<p>Edited for the dispute</p>' });
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta.comFaceIntent).toEqual(intent);
+    expect(reusableComFaceIntent(meta, listingHash)).toMatchObject({ detected: true });
   });
 
   it('puts back the text-scan rating marker the intent lock replaced', async () => {

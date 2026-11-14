@@ -455,6 +455,8 @@ export async function getOwnTriggerWords({
   const versions = await db.modelVersion.findMany({
     where: { modelId, model: { userId } },
     select: { trainedWords: true },
+    // A fixed order: the words feed the intent verdict's text hash.
+    orderBy: { id: 'asc' },
   });
   return [...new Set(versions.flatMap((version) => version.trainedWords))];
 }

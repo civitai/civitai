@@ -20,6 +20,7 @@ import { hasPendingMinorHashMatch } from '~/server/services/minor-hash.service';
 import {
   COM_FACE_INTENT_LOCK_SOURCE,
   overturnComFaceIntentSql,
+  storedListingTextHash,
 } from '~/server/services/model-com-face-intent.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
@@ -232,6 +233,8 @@ export async function resolveLockReviewAppeal({
   }
 
   const markerView = approve ? await holdMarkerViewExists() : false;
+  // The listing an approval rules on, so it overturns only an intent detection of that text.
+  const ruledTextHash = approve ? await storedListingTextHash(modelId) : null;
   // Outside the row lock: it reads the model's files and every moderator-flagged minor model's.
   let minorMatchPending = false;
   if (approve)
@@ -305,7 +308,7 @@ export async function resolveLockReviewAppeal({
         `;
         // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
         // intent detection stops refusing a civitai.com version for this text.
-        await tx.$executeRaw(overturnComFaceIntentSql(modelId));
+        await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
       }
     }
 

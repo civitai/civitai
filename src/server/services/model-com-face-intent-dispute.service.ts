@@ -8,9 +8,11 @@ import {
   getOwnTriggerWords,
 } from '~/server/services/model-sfw-face.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
 
 const SYSTEM_USER_ID = constants.system.user.id;
-const BATCH_SIZE = 20;
+// Each slower pass may wait up to a minute: a batch must finish well inside the run's lock.
+const BATCH_SIZE = 4;
 /** Runs without a verdict before the dispute is left to a moderator. */
 const MAX_ATTEMPTS = 3;
 
@@ -112,6 +114,17 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
     return markJudged(row, 'unavailable');
   }
 
+  // The detection was read from one text; an allow of other text must not overturn it. A listing
+  // edited since goes to a moderator, whose approval overturns only a detection of the text it sees.
+  const recorded = (row.meta as ModelMeta | null)?.comFaceIntent?.textHash;
+  if (
+    verdict.status === 'allowed' &&
+    recorded !== comFaceIntentTextHash({ ...row, triggerWords })
+  ) {
+    logSample(row, 'text-changed', verdict.promptId);
+    return markJudged(row, 'needs-moderator');
+  }
+
   if (verdict.status === 'detected') {
     logSample(row, 'upheld', verdict.promptId, verdict.reason);
     return markJudged(row, 'upheld');
@@ -153,7 +166,7 @@ async function markJudged(row: PendingDispute, outcome: ComFaceIntentDisputeOutc
 /** A prompt-tuning sample: what the face-time pass said, and what the slower pass said of it. */
 function logSample(
   row: PendingDispute,
-  outcome: 'overturned' | 'upheld',
+  outcome: 'overturned' | 'upheld' | 'text-changed',
   promptId?: number,
   reason?: string
 ) {

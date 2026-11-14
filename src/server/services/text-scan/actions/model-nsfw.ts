@@ -142,10 +142,11 @@ async function markScanRating(db: RawDb, modelId: number, source: string) {
 
 /**
  * Rates the model NSFW without locking it, so the owner can still add a .com face; `meta.systemNsfwLock`
- * is then the only record that the rating was automatic. Guarded in the WHERE, not by a caller's read:
- * a moderator lock or ruling that lands in between would otherwise be overwritten. SFW-only and nsfw cannot stand together, so SFW-only is cleared, and a lead records what was
- * replaced so a moderator can put the owner's rating back; it is decided on the row as written.
- * `heldLead`: only while the lead is still there and unapplied, so a ruling made since stands.
+ * is then the only record the rating was automatic. Guarded in the WHERE, not by a caller's read: a
+ * moderator lock or ruling landing in between would otherwise be overwritten. SFW-only is cleared,
+ * as it cannot stand with nsfw, and a lead records what it replaced so a moderator can put the
+ * owner's rating back. `heldLead`: only while the lead is still there and unapplied, so a ruling
+ * made since stands.
  */
 async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boolean) {
   const heldLeadGuard = heldLead
