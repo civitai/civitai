@@ -14,6 +14,8 @@ import {
   shouldEmitMidSessionLossBeacon,
   type MidSessionLossBeaconArgs,
   resolveCheckpointPickerRequest,
+  resolveGetWorkflowMediaRequest,
+  GET_WORKFLOW_MEDIA_MAX_REFS,
   resolveImageUploadRequest,
   resolveNavigateRequest,
   resolveResourcePickerMultiple,
@@ -2237,5 +2239,40 @@ describe('resolveNavigateRequest — launch origin survives in-app navigation', 
         { ...RUN, launchOrigin: 'store' }
       )?.href
     ).toBe('/apps/run/other-app');
+  });
+});
+
+describe('resolveGetWorkflowMediaRequest (untrusted iframe payload)', () => {
+  it('CONTROL: passes a well-formed request through', () => {
+    expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs: ['a', 'b'] })).toEqual({
+      requestId: 'r1',
+      refs: ['a', 'b'],
+    });
+  });
+
+  it.each([null, 'x', {}, { requestId: '' }, { requestId: 7, refs: ['a'] }])(
+    '🔴 drops a payload without a requestId: %j',
+    (raw) => {
+      expect(resolveGetWorkflowMediaRequest(raw)).toBeNull();
+    }
+  );
+
+  it('🔴 filters out non-string, empty and over-long refs', () => {
+    const long = 'x'.repeat(2049);
+    expect(
+      resolveGetWorkflowMediaRequest({
+        requestId: 'r1',
+        refs: ['ok', 3, '', null, { r: 1 }, long, 'x'.repeat(2048)],
+      })?.refs
+    ).toEqual(['ok', 'x'.repeat(2048)]);
+    expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs: 'ok' })?.refs).toEqual([]);
+  });
+
+  it('🔴 caps the forwarded refs at the server limit', () => {
+    const refs = Array.from({ length: GET_WORKFLOW_MEDIA_MAX_REFS + 5 }, (_, i) => `ref${i}`);
+    expect(resolveGetWorkflowMediaRequest({ requestId: 'r1', refs })?.refs).toEqual(
+      refs.slice(0, GET_WORKFLOW_MEDIA_MAX_REFS)
+    );
+    expect(GET_WORKFLOW_MEDIA_MAX_REFS).toBe(32);
   });
 });

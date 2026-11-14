@@ -8,7 +8,8 @@ const blobState = vi.fn<(blobId: string) => Promise<BlobState>>();
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async () => serving.on,
+  // Only the media brake answers `serving.on`, so reading any other flag reads as off.
+  isFlipt: async (flag: string) => flag === 'app-blocks-workflow-media-serve' && serving.on,
 }));
 const appAccess = vi.fn<(userId: number) => Promise<void>>();
 vi.mock('~/server/services/blocks/block-token-access.service', () => ({
