@@ -522,8 +522,8 @@ re-checks the same rule through `versionGeneratableFor()`. Both fields collapse 
 
 ### C — display
 
-`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector`,
-`generation.selector` and `AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
+`model.controller`, `model-version.controller`, `model.selector`, `modelVersion.selector` and
+`AutocompleteSearch/renderItems/models.tsx` render a badge or a Generate
 button — mostly correct after the change, since that is where the load CTA belongs.
 
 **`/api/v1/model-versions/mini/[id]`'s `covered` is flag-gated like everything else**

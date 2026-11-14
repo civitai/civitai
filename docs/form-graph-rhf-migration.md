@@ -96,8 +96,6 @@ The boilerplate that genuinely disappears is different, and bigger:
 - **The per-form effect soup** — the watch/setValue cascades in the six forms above
   become resolver branches, `.effect` rules, `correct` policies, and computeds. The
   `lockedProperties` self-watch becomes `dirtyFields()`.
-- Dead code found along the way: `src/libs/form/components/FieldArray.tsx` is
-  unexported with zero users.
 
 ## Recommendation
 
