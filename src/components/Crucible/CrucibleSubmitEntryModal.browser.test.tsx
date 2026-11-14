@@ -218,6 +218,13 @@ beforeEach(() => {
   mocks.user = { id: 42, muted: false };
 });
 
+// Each submit carries the entry's idempotency key (a uuid), so a retry cannot charge its fee twice.
+const entryOf = (imageId: number) => ({
+  crucibleId: 1,
+  imageId,
+  idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/),
+});
+
 describe('CrucibleSubmitEntryModal — free entries', () => {
   test('a first entry within the free ones submits without a charge', async () => {
     renderModal();
@@ -478,9 +485,7 @@ describe('CrucibleSubmitEntryModal — generator picks enter once scanned', () =
       />
     );
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
   });
 });
@@ -548,7 +553,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
       )
     );
     await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(1));
-    expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 });
+    expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77));
     expect(mocks.showErrorNotification).not.toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Processing failed' })
     );
@@ -568,9 +573,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     mocks.images = [image(77)];
     await rerender();
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
       expect(mocks.showErrorNotification).toHaveBeenCalledWith(
@@ -602,9 +605,7 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
     mocks.images = [image(77)];
     await rerender();
 
-    await vi.waitFor(() =>
-      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
-    );
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledWith(entryOf(77)));
     expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
       expect(mocks.showErrorNotification).toHaveBeenCalledWith(

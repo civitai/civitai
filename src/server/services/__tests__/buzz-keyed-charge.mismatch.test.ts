@@ -20,8 +20,8 @@ vi.mock('~/server/services/buzz.service', () => buzz);
 const { chargeByExternalId, heldChargeMatches } = await import('../buzz-keyed-charge');
 
 // Literal: the user-facing contract.
-const CHARGE_MISMATCH_MESSAGE =
-  'This request does not match the earlier attempt with the same key. Please start again.';
+const PAYMENT_KEY_REUSED_MESSAGE =
+  'This payment was already started with different details. Please start it again.';
 
 const ID = 'creator-cash-withdrawal-42-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b';
 const charge = (overrides: { amount?: number; toAccountId?: number } = {}) => ({
@@ -58,6 +58,21 @@ describe('chargeByExternalId with a reused id', () => {
     expect(ledger.charges()).toHaveLength(1);
   });
 
+  it('a held charge read back without its account type or transaction type still continues', async () => {
+    await chargeByExternalId(charge(), { reusable: true });
+    const {
+      fromAccountType: _from,
+      type: _type,
+      ...partial
+    } = (await ledger.getTransactionByExternalId(ID)) ?? {};
+    buzz.getTransactionByExternalId.mockResolvedValueOnce(partial);
+
+    const again = await chargeByExternalId(charge(), { reusable: true });
+
+    expect(again.transactionId).toBe(ledger.charges()[0].transactionId);
+    expect(ledger.charges()).toHaveLength(1);
+  });
+
   it('held before charging with another amount: refused with a 400, nothing resent', async () => {
     await chargeByExternalId(charge(), { reusable: true });
     buzz.resendBuzzTransaction.mockClear();
@@ -66,7 +81,7 @@ describe('chargeByExternalId with a reused id', () => {
       chargeByExternalId(charge({ amount: 5_000_000 }), { reusable: true })
     );
 
-    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: CHARGE_MISMATCH_MESSAGE });
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
     expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
     expect(ledger.charges()).toHaveLength(1);
   });
@@ -78,7 +93,7 @@ describe('chargeByExternalId with a reused id', () => {
 
     const error = await refusal(chargeByExternalId(charge({ amount: 7_000 }), { reusable: true }));
 
-    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: CHARGE_MISMATCH_MESSAGE });
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
     expect(ledger.charges()).toHaveLength(1);
     expect(ledger.charges()[0].amount).toBe(10_000);
   });
@@ -94,7 +109,7 @@ describe('chargeByExternalId with a reused id', () => {
     const error = await refusal(chargeByExternalId(charge({ amount: 7_000 }), { reusable: true }));
 
     expect(buzz.resendBuzzTransaction).toHaveBeenCalledTimes(1);
-    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: CHARGE_MISMATCH_MESSAGE });
+    expect(error).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
     expect(ledger.charges()).toHaveLength(1);
   });
 
@@ -125,8 +140,8 @@ describe('chargeByExternalId with a reused id', () => {
     const error = await refusal(chargeByExternalId(charge(), { reusable: true }));
 
     expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
-    // One read before charging, then the read-back and three re-reads.
-    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(5);
+    // One read before charging, then the read-back's three reads.
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(4);
     expect(ledger.charges()).toHaveLength(1);
   });
 
@@ -145,7 +160,7 @@ describe('chargeByExternalId with a reused id', () => {
         matchAmount: false,
       })
     );
-    expect(other).toMatchObject({ code: 'BAD_REQUEST', message: CHARGE_MISMATCH_MESSAGE });
+    expect(other).toMatchObject({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
     expect(ledger.charges()).toHaveLength(1);
   });
 
@@ -168,8 +183,8 @@ describe('chargeByExternalId with a reused id', () => {
     ledger.setBalance(42, 0);
 
     await expect(chargeByExternalId(charge(), { reusable: true })).rejects.toThrow(/enough funds/);
-    // One read before charging, then the re-read and three retries after the decline.
-    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(5);
+    // One read before charging, then the three reads after the decline.
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(4);
     expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
     expect(ledger.charges()).toHaveLength(0);
   });
@@ -182,17 +197,26 @@ describe('chargeByExternalId with a reused id', () => {
 
 describe('heldChargeMatches', () => {
   // Every field distinct from every other, so a check reading the wrong field cannot pass.
-  const input = {
+  const expected = {
     amount: 1_111,
     fromAccountId: 2_222,
+    fromAccountTypes: ['cashSettled'],
     toAccountId: 3_333,
-    fromAccountType: 'cashSettled',
     type: TransactionType.Withdrawal,
   };
-  const held = { ...input, fromAccountType: 'cashsettled' };
+  const leg = {
+    amount: 1_111,
+    fromAccountId: 2_222,
+    fromAccountType: 'cashSettled',
+    toAccountId: 3_333,
+    toAccountType: 'yellow',
+    type: TransactionType.Withdrawal,
+  };
+  const check = (held: unknown[], terms: object = expected, opts?: { matchAmount?: boolean }) =>
+    heldChargeMatches(held as never, terms as never, opts);
 
-  it('matches the same terms (account type compared without case)', () => {
-    expect(heldChargeMatches(held, input)).toBe(true);
+  it('matches the same terms', () => {
+    expect(check([leg])).toBe(true);
   });
 
   it.each([
@@ -202,20 +226,49 @@ describe('heldChargeMatches', () => {
     ['source account type', { fromAccountType: 'yellow' }],
     ['transaction type', { type: TransactionType.Tip }],
   ])('refuses another %s', (_name, change) => {
-    expect(heldChargeMatches({ ...held, ...change }, input)).toBe(false);
+    expect(check([{ ...leg, ...change }])).toBe(false);
   });
 
-  it('matchAmount false ignores only the amount', () => {
-    expect(heldChargeMatches({ ...held, amount: 9 }, input, { matchAmount: false })).toBe(true);
+  it('legs together must total the amount', () => {
     expect(
-      heldChargeMatches({ ...held, amount: 9, fromAccountId: 2_223 }, input, { matchAmount: false })
+      check([
+        { ...leg, amount: 600 },
+        { ...leg, amount: 511 },
+      ])
+    ).toBe(true);
+    expect(
+      check([
+        { ...leg, amount: 600 },
+        { ...leg, amount: 500 },
+      ])
     ).toBe(false);
   });
 
-  it('a field the ledger did not return is not compared; amount, payer and payee always are', () => {
-    expect(heldChargeMatches({ ...held, fromAccountType: undefined, type: undefined }, input)).toBe(
+  it('matchAmount false ignores only the amount', () => {
+    expect(check([{ ...leg, amount: 9 }], expected, { matchAmount: false })).toBe(true);
+    expect(
+      check([{ ...leg, amount: 9, fromAccountId: 2_223 }], expected, { matchAmount: false })
+    ).toBe(false);
+  });
+
+  it('account types and transaction type are compared only when both sides have them', () => {
+    // The read left them out: not a different payment.
+    expect(
+      check([{ ...leg, fromAccountType: undefined, toAccountType: undefined, type: undefined }])
+    ).toBe(true);
+    // The charge did not name them.
+    const { fromAccountTypes: _types, type: _type, ...unnamed } = expected;
+    expect(check([{ ...leg, fromAccountType: 'yellow', type: TransactionType.Tip }], unnamed)).toBe(
       true
     );
-    expect(heldChargeMatches({ ...held, amount: undefined }, input)).toBe(false);
+    // Amount, payer and payee are always compared.
+    expect(check([{ ...leg, fromAccountType: undefined, type: undefined, amount: 1_112 }])).toBe(
+      false
+    );
+  });
+
+  it('nothing held, or a leg that could not be read, never matches', () => {
+    expect(check([])).toBe(false);
+    expect(check([null])).toBe(false);
   });
 });

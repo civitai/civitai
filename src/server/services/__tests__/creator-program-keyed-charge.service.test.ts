@@ -83,8 +83,8 @@ const { bankBuzz, withdrawCash, getMonthAccount } = await import('../creator-pro
 const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
   "We couldn't confirm whether your Buzz payment went through. Trying this same action again from this page is safe. If you reloaded or left the page, check your Buzz balance and transactions first.";
 const PAYMENT_REFUNDED_MESSAGE = 'The payment for this attempt was refunded. Please try again.';
-const CHARGE_MISMATCH_MESSAGE =
-  'This request does not match the earlier attempt with the same key. Please start again.';
+const PAYMENT_KEY_REUSED_MESSAGE =
+  'This payment was already started with different details. Please start it again.';
 
 const USER = 42;
 const OTHER_USER = 77;
@@ -638,7 +638,7 @@ describe('cash withdrawal with a client key', () => {
     ledger.releaseHung();
     await first;
 
-    expect((second as Error).message).toBe(CHARGE_MISMATCH_MESSAGE);
+    expect((second as Error).message).toBe(PAYMENT_KEY_REUSED_MESSAGE);
     expect(second).toMatchObject({ code: 'BAD_REQUEST' });
     expect(ledger.charges()).toHaveLength(1);
     expect(ledger.charges()[0].amount).toBe(WITHDRAWAL);
@@ -655,7 +655,7 @@ describe('cash withdrawal with a client key', () => {
 
     const second = await outcome(withdraw(KEY, 2 * WITHDRAWAL));
 
-    expect((second as Error).message).toBe(CHARGE_MISMATCH_MESSAGE);
+    expect((second as Error).message).toBe(PAYMENT_KEY_REUSED_MESSAGE);
     expect(ledger.charges()).toHaveLength(1);
     expect(rows).toHaveLength(1);
     expect(tipalti.payToTipaltiAccount).toHaveBeenCalledTimes(1);

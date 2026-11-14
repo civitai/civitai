@@ -11,12 +11,13 @@ describe('crucible payload, against the real query', () => {
       CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
       CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
       CREATE TABLE "User" (id int PRIMARY KEY, username text);
-      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int, ingestion text);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int, ingestion text,
+        "needsReview" text, "tosViolation" boolean DEFAULT false);
       CREATE TABLE "Crucible" (id int PRIMARY KEY, name text, description text,
         status "CrucibleStatus", "contentType" "MediaType", "nsfwLevel" int, "textNsfw" boolean,
         "buzzType" text, "userId" int, "imageId" int, ingestion text, "takenDownAt" timestamp);
       INSERT INTO "User" VALUES (7, 'someone');
-      INSERT INTO "Image" VALUES (70, 6, 'Scanned'), (80, 1, 'Scanned');
+      INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES (70, 6, 'Scanned'), (80, 1, 'Scanned');
       INSERT INTO "Crucible" VALUES
         (1, 'Neon  Arena', '<p>Bright <b>duels</b></p>', 'Active', 'video', 3, true, 'green', 7,
           70, 'Scanned', NULL),

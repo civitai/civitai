@@ -2504,6 +2504,7 @@ export const BM = {
   MiniMaxH3Image: 118,
   GeminiOmni: 119,
   Fibo2: 120,
+  Fibo2Turbo: 121,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -3268,6 +3269,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     id: BM.Fibo2,
     name: 'Fibo 2.0',
     description: "Bria AI's Fibo 2.0 text-to-image and image editing model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    // Remove at launch.
+    hidden: true,
+    licenseId: 56,
+    matureRestricted: ['generation', 'models', 'images'],
+  },
+  {
+    id: BM.Fibo2Turbo,
+    name: 'Fibo 2.0 Turbo',
+    description: "Bria AI's Fibo 2.0 with Turbo distillation for few-step image editing",
     type: 'image',
     ecosystemId: ECO.Fibo2,
     // Remove at launch.

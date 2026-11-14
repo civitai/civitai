@@ -70,10 +70,11 @@ interface TrainingStudioHost {
      *  `generateUrl` (relative = same-tab, absolute = new tab). Omit to render the explanation
      *  without a link. */
     pricingUrl?: string;
-    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see. The standalone shell
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see, plus
+     *  `training-studio-kohya` when they may train with Kohya. The standalone shell
      *  evaluates them server-side in `/new`'s load; the element has no server, so the host must
      *  evaluate them and pass the enabled keys (the main app maps them in
-     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model is hidden. */
+     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model, and Kohya, is hidden. */
     enabledModelFlags?: string[];
   };
 
@@ -223,3 +224,10 @@ needs a security sign-off before the embed ships.
 
 Stage 1–2 are refactors of this app with no behavior change; stage 3 is where the main-app work
 and the CORS verification land.
+
+
+## PR previews
+
+The main-app Docker image builds the Studio element from the same commit and serves it at
+`/training-studio/element/`. When `IS_PREVIEW=true`, the embedded page loads these local assets.
+Production uses `NEXT_PUBLIC_TRAINING_STUDIO_URL`; local development uses the Studio dev server.
