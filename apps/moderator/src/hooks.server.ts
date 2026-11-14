@@ -160,9 +160,9 @@ export const init: ServerInit = async () => {
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
-  // The held-media sheet: its code exchange carries no session, and its scoped cookie stands in for
-  // the web session on the image route alone, and only when there is no valid web session. Anywhere
-  // else the cookie is ignored.
+  // The sheets' code exchanges carry no session. A batch route answers to its tier's sheet cookie
+  // alone. The held cookie also stands in for the web session on the held image route, only when
+  // there is no valid web session. Outside these routes and the exchanges, both are ignored.
   if (SHEET_EXCHANGE_PATHS.has(event.url.pathname) && event.request.method === 'POST')
     return resolve(event);
   const batchTier = batchPathTier(event.url.pathname);
