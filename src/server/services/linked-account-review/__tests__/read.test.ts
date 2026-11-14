@@ -49,6 +49,27 @@ describe('ClickHouse readers', () => {
     expect(sql).not.toMatch(/\buserId IN\b/);
   });
 
+  // A sign-in to account 42 on a device still holding account 7's session has userId 7: the
+  // reader must never read that column, so account 7 cannot appear in its output.
+  it('never reads the acting account of a sign-in', async () => {
+    let sql = '';
+    await signIns(
+      {
+        $query: async <T extends object>(q: string) => {
+          sql = q;
+          return [] as T[];
+        },
+      },
+      [42],
+      new Date()
+    );
+    const bareUserId = sql
+      .replace(/targetUserId AS userId/g, '')
+      .replace(/l\.userId AS userId/g, '')
+      .match(/(?<!target)(?<![.\w])userId\b/g);
+    expect(bareUserId).toBeNull();
+  });
+
   it('reads every user when the list spans several queries', async () => {
     const asked: number[] = [];
     const counting: ClickhousePort = {

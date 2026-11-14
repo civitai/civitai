@@ -66,16 +66,18 @@ describe.each([
       row(0, 42, '192.0.2.11', 'Registration'),
       row(42, 99, '192.0.2.12', 'Registration'), // 42 acting on account 99
       row(42, 42, '192.0.2.13', 'Login'), // 42 is both actor and target
+      row(7, 42, '192.0.2.14', 'Login'), // signed in to 42 on a device still holding 7's session
+      row(0, 42, '192.0.2.15', 'Subscribe'), // not a sign-in
       row(0, 7, '198.51.100.7', 'Login'), // another account's sign-in
       row(7, 99, '198.51.100.8', 'Login'), // another account acting on another account
     ];
-    // Runs the userActivities query against the rows above: its WHERE clause as a predicate, and
-    // only the columns it SELECTs, so a column the query reads comes back exactly as it would.
+    // Only the columns the query SELECTs come back.
     function userActivitiesTable(sql: string) {
       const match = /SELECT([\s\S]+?)FROM userActivities\s+WHERE([\s\S]+)$/.exec(sql);
       if (!match) return [];
       const columns = match[1].split(',').map((c) => c.trim());
       const where = match[2]
+        .replace(/(\w+) IN \(([^)]*)\)/g, '[$2].includes($1)')
         .replace(/!=/g, '!==')
         .replace(/(?<![!=])=(?!=)/g, '===')
         .replace(/\bAND\b/g, '&&')
@@ -91,7 +93,7 @@ describe.each([
       m.query.mockImplementation(async (sql: string) => userActivitiesTable(sql));
     });
 
-    it("returns the reported account's own sign-ins, and each row once", async () => {
+    it("returns exactly the reported account's sign-ins", async () => {
       const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
 
       expect(events.map((e) => e.ip).sort()).toEqual([
@@ -99,7 +101,19 @@ describe.each([
         '192.0.2.11',
         '192.0.2.12',
         '192.0.2.13',
+        '192.0.2.14',
       ]);
+    });
+
+    it('includes a sign-in to it whatever session the device held, without naming that account', async () => {
+      const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+      expect(events).toContainEqual({
+        ip: '192.0.2.14',
+        type: 'Login',
+        time: '2026-10-20 09:00:00',
+      });
+      expect(JSON.stringify(events)).not.toContain('7');
     });
 
     it('includes its activity on another account without naming that account', async () => {
