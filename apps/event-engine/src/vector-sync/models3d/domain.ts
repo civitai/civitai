@@ -11,7 +11,7 @@ export const MODEL3D_TOPICS = ['postgres.Model3D', 'postgres.TagsOnModel3D'];
  * names its model. The delete is soft, so it arrives as an update. A thumbnail's first rating
  * reaches the model through the nsfwLevel it writes on the Model3D row (0 to rated). A later flag
  * on the thumbnail, an owner ban or a hold changes no Model3D row: the refresh walk re-syncs every
- * model, deleting the point, and the site's hydration re-check hides it until then.
+ * model and deletes the point.
  */
 export function model3dRefFromEvent(topic: string, value: unknown): DomainRef | null {
   const event = value as {

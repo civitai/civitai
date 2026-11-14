@@ -5,8 +5,7 @@ import { semanticImageHeldText } from '~/server/services/semantic-held-content.s
 /**
  * Which 3D models the semantic search may return, over "Model3D" `m` and its owner "User" `u`.
  * The vector is the thumbnail, so it must be the owner's own and pass the same gates. The
- * event-engine's MODEL3D_ELIGIBLE_SQL is its copy, held to it by model3d-eligibility.parity.test.ts;
- * the search hydration re-applies it.
+ * event-engine's MODEL3D_ELIGIBLE_SQL is its copy, held to it by model3d-eligibility.parity.test.ts.
  */
 export const model3dSemanticEligibleText = ({ m = 'm', u = 'u' } = {}) =>
   `(${m}.status = 'Published' AND ${m}."deletedAt" IS NULL AND ${m}."nsfwLevel" NOT IN (0, ${
