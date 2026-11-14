@@ -3941,6 +3941,18 @@ export type ModActivity = {
    * Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
    */
   credential: string | null;
+  /**
+   * The review batch a media view was served from. NULL on every other row.
+   */
+  reviewBatchId: string | null;
+  /**
+   * That batch's tier: 'general' or 'held'. NULL on every other row.
+   */
+  reviewTier: string | null;
+  /**
+   * Whether that batch was declared suspect at mint. NULL on every other row.
+   */
+  declaredSuspect: boolean | null;
 };
 export type Model = {
   id: Generated<number>;

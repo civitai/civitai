@@ -1406,6 +1406,9 @@ export interface ModActivity {
   createdAt: Date;
   host: string | null;
   credential: string | null;
+  reviewBatchId: string | null;
+  reviewTier: string | null;
+  declaredSuspect: boolean | null;
 }
 
 export interface ModThreadClaim {

@@ -1741,6 +1741,12 @@ model ModActivity {
   host       String?
   /// Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
   credential String?
+  /// The review batch a media view was served from. NULL on every other row.
+  reviewBatchId String?
+  /// That batch's tier: 'general' or 'held'. NULL on every other row.
+  reviewTier String?
+  /// Whether that batch was declared suspect at mint. NULL on every other row.
+  declaredSuspect Boolean?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
