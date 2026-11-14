@@ -83,38 +83,37 @@ describe('resolveClientIp', () => {
   describe('the fallback never honours x-client-ip', () => {
     // Distinct from SOCKET_PEER and from every forwarded-for value below, so a
     // result equal to it can only have come from the header under test.
-    const CHOSEN_BY_CALLER = '192.0.2.200';
+    const X_CLIENT_IP_VALUE = '192.0.2.200';
     const FORWARDED = '198.51.100.21';
 
     it('prefers the forwarded-for chain over a caller-supplied x-client-ip', () => {
-      // The library resolver alone would return the caller's choice here; that
-      // is the precondition this case exists to defeat.
-      const headers = { 'x-client-ip': CHOSEN_BY_CALLER, 'x-forwarded-for': FORWARDED };
-      expect(requestIp.getClientIp(reqWith(headers))).toBe(CHOSEN_BY_CALLER);
+      // The library resolver alone would return the x-client-ip value here.
+      const headers = { 'x-client-ip': X_CLIENT_IP_VALUE, 'x-forwarded-for': FORWARDED };
+      expect(requestIp.getClientIp(reqWith(headers))).toBe(X_CLIENT_IP_VALUE);
       expect(resolveClientIp(reqWith(headers))).toBe(FORWARDED);
     });
 
     it('falls through to the transport peer when x-client-ip is the only address header', () => {
-      expect(resolveClientIp(reqWith({ 'x-client-ip': CHOSEN_BY_CALLER }))).toBe(SOCKET_PEER);
+      expect(resolveClientIp(reqWith({ 'x-client-ip': X_CLIENT_IP_VALUE }))).toBe(SOCKET_PEER);
     });
 
-    it('is unchanged when x-client-ip is rotated', () => {
+    it('is unchanged when x-client-ip varies', () => {
       const keyFor = (v: string) =>
         resolveClientIp(reqWith({ 'x-client-ip': v, 'x-forwarded-for': FORWARDED }));
       expect(keyFor('192.0.2.1')).toBe(keyFor('192.0.2.2'));
     });
 
-    it('POSITIVE CONTROL: rotating the forwarded-for chain does change the result', () => {
+    it('POSITIVE CONTROL: a different forwarded-for chain does change the result', () => {
       // Without this, the invariance above would also hold for a constant.
       const keyFor = (v: string) =>
-        resolveClientIp(reqWith({ 'x-client-ip': CHOSEN_BY_CALLER, 'x-forwarded-for': v }));
+        resolveClientIp(reqWith({ 'x-client-ip': X_CLIENT_IP_VALUE, 'x-forwarded-for': v }));
       expect(keyFor('198.51.100.31')).not.toBe(keyFor('198.51.100.32'));
     });
 
     it("does not mutate the caller's request", () => {
-      const req = reqWith({ 'x-client-ip': CHOSEN_BY_CALLER });
+      const req = reqWith({ 'x-client-ip': X_CLIENT_IP_VALUE });
       resolveClientIp(req);
-      expect(req.headers['x-client-ip']).toBe(CHOSEN_BY_CALLER);
+      expect(req.headers['x-client-ip']).toBe(X_CLIENT_IP_VALUE);
     });
   });
 

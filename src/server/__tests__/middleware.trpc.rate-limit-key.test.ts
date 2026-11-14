@@ -159,8 +159,8 @@ const EDGE_IP = '203.0.113.7';
 // from its README — the README lists fewer than the code reads. The one header
 // it consults that is NOT here is `cf-connecting-ip`, deliberately: that is the
 // edge-stamped header this suite holds FIXED while rotating the rest.
-// `x-client-ip` is not here either: the resolver strips it before the library
-// sees it, and `IGNORED_FALLBACK_HEADERS` below pins that.
+// `x-client-ip` is not here either: the resolver does not consult it, and
+// `IGNORED_FALLBACK_HEADERS` below pins that.
 //
 // Covered as a SET rather than one representative: a derivation that handled
 // some members and not others would otherwise pass, and which member is
@@ -246,7 +246,7 @@ describe('rateLimit bucket key — anonymous callers', () => {
   it.each(IGNORED_FALLBACK_HEADERS)('%s does not move the bucket', async (header) => {
     expect(requestIp.getClientIp(reqWith({ [header]: '198.51.100.1' }))).toBe('198.51.100.1');
     const field = await bucketFieldFor(anonCtx({ [header]: '198.51.100.1' }));
-    expect(field, `${header} chose the bucket key`).toBe(`ip:${SOCKET_PEER}`);
+    expect(field, `${header} moved the bucket`).toBe(`ip:${SOCKET_PEER}`);
   });
 });
 

@@ -125,15 +125,8 @@ export function resolveClientIp(req: NextApiRequest): string {
 }
 
 /**
- * Headers the fallback resolver must never consult.
- *
- * `request-ip` reads `x-client-ip` BEFORE `x-forwarded-for`. A reverse proxy
- * governs `x-forwarded-for` (it decides whose chain to keep and appends the
- * peer it saw), but nothing in front of the app rewrites `x-client-ip`, so on
- * any request that reaches the fallback that header is exactly what the caller
- * sent. Honouring it lets a caller pick its own bucket key and rotate away from
- * it at will. With it removed, the fallback's first choice is the forwarded-for
- * chain, which is as trustworthy as the proxy's forwarded-header policy.
+ * Headers the fallback resolver does not consult. With these removed, the
+ * fallback prefers the forwarded-for chain, then the socket peer.
  */
 const IGNORED_FALLBACK_HEADERS = ['x-client-ip'] as const;
 
