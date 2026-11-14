@@ -225,7 +225,10 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // `pollWorkflow` docblock names:
 //   - the SDK's sequential short poll is ~1 per 2 s per workflow (0.5/s) — this is ~40×
 //     that for one workflow, or ~4× a viewer running ten concurrent generations;
-//   - the long poll would be ~1 per 15 s per workflow, i.e. 30× looser again.
+//   - the long poll is ~1 per 15 s per workflow while nothing changes. It returns on
+//     CHANGE (`until=change`), so a workflow that changes every 2-3 s is read ~20-30
+//     times a minute — still 1/40 to 1/60 of this bucket for one workflow, i.e. room
+//     for ~40-60 such workflows per (install, viewer) before it bites.
 //
 //     ┌─ HOLD STATUS — THE SINGLE STATEMENT. Everything below is evidence FOR this
 //     │  paragraph; none of it restates the status. Change it HERE and nowhere else.

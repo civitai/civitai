@@ -5112,9 +5112,12 @@ export const blocksRouter = router({
    * that procedure.)
    *
    * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
-   * open until the workflow reaches a terminal status instead of answering with
-   * whatever it is right now (its `?wait=` parameter; see
-   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold).
+   * open until the workflow CHANGES — its status, or one of its steps (`?wait=` +
+   * `?until=change`) — instead of answering with whatever it is right now; see
+   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold.
+   * It used to hold until a terminal status (`until=completion`, the
+   * orchestrator's default); returning on change is what keeps the snapshot's
+   * queue position, ETA and progress current while the block waits.
    * Omitted → byte-identical to the pre-existing request.
    *
    * 🔴 A 202 IS A NORMAL OUTCOME, NOT AN ERROR. When the hold elapses first the
@@ -5151,9 +5154,12 @@ export const blocksRouter = router({
    * `screenGeneratedText` memoizes a decided CONTENT verdict for 5 minutes but
    * deliberately does NOT memoize an operational fault (scanner error, timeout,
    * label drift, per-label error), so during such a fault the same text is
-   * re-scanned once per poll. A long poll REDUCES the poll rate — ~1 per 15s
-   * instead of ~1 per 2s — so it shrinks that blast radius by the same factor
-   * rather than enlarging it. The trade it makes is the other way round: a held
+   * re-scanned once per poll. A long poll REDUCES the poll rate below the ~1 per
+   * 2s short poll while a workflow is quiet — up to ~1 per 15s — so it shrinks
+   * that blast radius rather than enlarging it. ⚠️ Since the hold returns on
+   * CHANGE, a workflow whose step emits frequent job events can be read more
+   * often than that, up to whatever the event rate is; the `:poll:` bucket is
+   * the ceiling, not the hold. The trade it makes is the other way round: a held
    * request occupies an in-flight request slot for its whole duration, so
    * concurrent in-flight polls rise even as total polls fall. That is why the
    * hold is opt-in and capped, and why the SDK only requests it from a
@@ -5245,7 +5251,10 @@ export const blocksRouter = router({
         // not fetch. `workflowId` echoes the caller's own id because the SDK's
         // inbound validator DROPS a snapshot with an empty one (see
         // `components/AppBlocks/failureSnapshot.ts`), which would hang the block to
-        // its 120s transport timeout instead of letting it re-poll.
+        // its 120s transport timeout instead of letting it re-poll. `throttled: true`
+        // is what tells the block so: without it this reply is indistinguishable from
+        // a real non-terminal snapshot, and the block's queue/ETA/progress display
+        // would blank on every shed poll. A real snapshot never carries it.
         //
         // ⚠️ STATED COST: while a viewer is over this ceiling, a workflow that has
         // ALREADY gone terminal has its settle and its fee reversal DEFERRED, because
@@ -5256,6 +5265,8 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: input.workflowId,
             status: 'processing' as const,
+            // Not an observation: a block keeps its previous snapshot's values.
+            throttled: true as const,
           },
         };
       }
@@ -5279,7 +5290,19 @@ export const blocksRouter = router({
           path: { workflowId: input.workflowId },
           // `undefined` when there is no hold, so the request is byte-identical
           // to the pre-long-poll one rather than carrying a `?wait=0`.
-          ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+          //
+          // `until: 'change'`: a held read returns as soon as the workflow or one
+          // of its steps moves (a status change, or a job event while a step is
+          // processing — which is what refreshes its progress), not only at
+          // completion, so the block's queue position / ETA / progress is fresh
+          // instead of up to a whole hold stale. A workflow that is already
+          // terminal is answered at once either way (the orchestrator skips the
+          // hold for a final status). Sent only with a hold: without `wait` it
+          // means nothing. More round trips per running workflow, bounded by the
+          // `:poll:` bucket above and the hold-slot cap.
+          ...(waitSeconds !== undefined
+            ? { query: { wait: waitSeconds, until: 'change' as const } }
+            : {}),
         });
       } finally {
         await releaseHoldSlot?.();
@@ -5567,6 +5590,8 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: input.workflowId,
             status: 'processing' as const,
+            // Not an observation: a block keeps its previous snapshot's values.
+            throttled: true as const,
           },
         };
       }
