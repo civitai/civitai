@@ -57,19 +57,70 @@ function withoutWeightHandles(step: TrainingStep): TrainingStep {
   };
 }
 
+/** Every `$ref` an input names, at any depth. */
+function refsIn(value: unknown, refs = new Set<string>(), depth = 0): Set<string> {
+  if (depth > 32 || !value || typeof value !== 'object') return refs;
+  if (Array.isArray(value)) {
+    for (const item of value) refsIn(item, refs, depth + 1);
+    return refs;
+  }
+  const fields = value as Record<string, unknown>;
+  if (typeof fields.$ref === 'string') refs.add(fields.$ref);
+  for (const child of Object.values(fields)) refsIn(child, refs, depth + 1);
+  return refs;
+}
+
+/** Whether an input runs a training step itself, as a `repeat` template does, at any depth. */
+function runsTraining(value: unknown, depth = 0): boolean {
+  if (depth > 32 || !value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some((item) => runsTraining(item, depth + 1));
+  const fields = value as Record<string, unknown>;
+  if (typeof fields.$type === 'string' && isTrainingStepTypeIgnoringCase(fields.$type)) return true;
+  return Object.values(fields).some((child) => runsTraining(child, depth + 1));
+}
+
 /**
  * A workflow as a caller may see it: a training run's weights are reached through the model and
  * training views, which withhold a deleted or taken-down model's (`withoutEpochUrls`), so this read
- * names them to moderators only.
+ * names them to moderators only. A training step loses its handles; a step that runs one (a
+ * `repeat`), or reads from such a step directly or through others, loses its output and metadata,
+ * as does a step reading a step the workflow does not name.
  */
 export function withoutTrainingWeightHandles<W extends Workflow>(
   workflow: W,
   { isModerator }: { isModerator?: boolean }
 ): W {
-  const steps = workflow?.steps as TrainingStep[] | undefined;
-  if (isModerator || !steps?.some(isTrainingStep)) return workflow;
+  const steps = workflow?.steps as (TrainingStep & { name?: unknown })[] | undefined;
+  if (isModerator || !steps?.length) return workflow;
+  const names = new Set(steps.map((step) => step.name).filter((name) => typeof name === 'string'));
+  const tainted = new Set<number>();
+  steps.forEach((step, index) => {
+    if (isTrainingStep(step) || runsTraining(step.input)) tainted.add(index);
+  });
+  if (!tainted.size) return workflow;
+  const refs = steps.map((step) => refsIn(step.input));
+  for (let changed = true; changed; ) {
+    changed = false;
+    steps.forEach((_step, index) => {
+      if (tainted.has(index)) return;
+      const reads = [...refs[index]];
+      if (
+        reads.some(
+          (ref) => !names.has(ref) || steps.some((s, j) => tainted.has(j) && s.name === ref)
+        )
+      ) {
+        tainted.add(index);
+        changed = true;
+      }
+    });
+  }
   return {
     ...workflow,
-    steps: steps.map((step) => (isTrainingStep(step) ? withoutWeightHandles(step) : step)),
+    steps: steps.map((step, index) => {
+      if (!tainted.has(index)) return step;
+      if (isTrainingStep(step)) return withoutWeightHandles(step);
+      const { output: _output, preparation: _preparation, metadata: _metadata, ...rest } = step;
+      return rest;
+    }),
   } as W;
 }

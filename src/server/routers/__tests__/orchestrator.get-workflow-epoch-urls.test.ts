@@ -185,6 +185,87 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
   });
 });
 
+describe('orchestrator.getWorkflow — steps that read a training run', () => {
+  const reader = (name: string, $type: string, from: string) => ({
+    $type,
+    name,
+    metadata: { copied: WEIGHTS },
+    input: { fields: { e: { $ref: from, path: 'output.epochs[*].model' } } },
+    output: { fields: { e: [{ url: WEIGHTS, id: 'EPOCH1' }] } },
+  });
+  const read = async (steps: unknown[], isModerator = false) => {
+    h.getWorkflow.mockReset().mockResolvedValue(workflow(steps));
+    return (await caller(isModerator).getWorkflow({ workflowId: 'wf-1' })) as {
+      steps: Record<string, unknown>[];
+    };
+  };
+
+  it.each(['merge', 'blobArchive'])(
+    'drops the output of a %s step reading a training step',
+    async ($type) => {
+      const result = await read([trainingStep, reader('m', $type, 'train')]);
+      expect(result.steps[1]).not.toHaveProperty('output');
+      expect(JSON.stringify(result)).not.toMatch(/EPOCH1/);
+    }
+  );
+
+  it('drops the output of every step in a chain from a training step', async () => {
+    const result = await read([
+      trainingStep,
+      reader('m', 'merge', 'train'),
+      reader('x', 'echo', 'm'),
+      reader('y', 'chatCompletion', 'x'),
+    ]);
+    expect(result.steps.slice(1).map((step) => 'output' in step)).toEqual([false, false, false]);
+    expect(JSON.stringify(result)).not.toMatch(/EPOCH1/);
+  });
+
+  it('drops the output of a chain listed before the step it reads', async () => {
+    const result = await read([
+      reader('y', 'echo', 'x'),
+      reader('x', 'echo', 'm'),
+      reader('m', 'merge', 'train'),
+      trainingStep,
+    ]);
+    expect(result.steps.slice(0, 3).map((step) => 'output' in step)).toEqual([false, false, false]);
+  });
+
+  it("drops a reading step's metadata too", async () => {
+    const result = await read([trainingStep, reader('m', 'merge', 'train')]);
+    expect(result.steps[1]).not.toHaveProperty('metadata');
+  });
+
+  it('drops the output of a repeat that runs a training step, and of its readers', async () => {
+    const repeat = {
+      $type: 'repeat',
+      name: 'r',
+      input: {
+        for: { $ref: 'list', path: 'output', as: 'i' },
+        template: { $type: 'training', input: {} },
+      },
+      output: { items: [{ epochs: [{ model: { url: WEIGHTS, id: 'EPOCH1' } }] }] },
+    };
+    const result = await read([repeat, reader('m', 'merge', 'r')]);
+    expect(result.steps.map((step) => 'output' in step)).toEqual([false, false]);
+    expect(JSON.stringify(result)).not.toMatch(/EPOCH1/);
+  });
+
+  it('drops the output of a step reading a step the workflow does not name', async () => {
+    const result = await read([trainingStep, reader('m', 'merge', 'elsewhere')]);
+    expect(result.steps[1]).not.toHaveProperty('output');
+  });
+
+  it('keeps a step that reads no training step', async () => {
+    const result = await read([trainingStep, generationStep, reader('m', 'merge', 'gen')]);
+    expect(result.steps[2]).toEqual(reader('m', 'merge', 'gen'));
+  });
+
+  it('shows a moderator every step as it is', async () => {
+    const steps = [trainingStep, reader('m', 'merge', 'train'), reader('x', 'echo', 'm')];
+    expect(await read(steps, true)).toEqual(workflow(steps));
+  });
+});
+
 describe('orchestrator.queryWorkflowsByTags — a training run’s weights', () => {
   beforeEach(() => {
     h.queryWorkflows.mockReset().mockImplementation(async () => ({
