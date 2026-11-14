@@ -1258,11 +1258,18 @@ describe('provider links', () => {
         moderation: false,
         downloadLinkExpiresAt: Date.parse(link.expiresAt),
       })!;
-    const refreshAt = expires(first, now);
-    expect(refreshAt).toBeGreaterThan(now);
-    const refreshed = await minted(PUBLIC_VERSION, refreshAt);
-    expect(refreshed.url).not.toBe(first.url);
-    expect(expires(refreshed, refreshAt)).toBeGreaterThan(refreshAt);
+    // Refresh at each X-Expires: every one is in the future, and a fresh link arrives before the
+    // first one expires.
+    let at = now;
+    let link = first;
+    while (link.url === first.url) {
+      const next = expires(link, at);
+      expect(next).toBeGreaterThan(at);
+      expect(next).toBeLessThan(Date.parse(first.expiresAt));
+      at = next;
+      link = await minted(PUBLIC_VERSION, at);
+    }
+    expect(expires(link, at)).toBeGreaterThan(at);
   });
 
   it('answers the mint route 503 and serves provider links when the flag is on for provider only', async () => {

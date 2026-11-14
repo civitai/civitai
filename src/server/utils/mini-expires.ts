@@ -11,8 +11,8 @@ const LINK_REFRESH_BELOW_REUSE_MS = 10 * 60 * 1000;
 
 /**
  * Mini's `X-Expires` (ms): when the orchestrator's cached copy of the response goes stale, the
- * earliest of `alreadySet`, the moderation block's hour, the re-signed epoch URL's usable-until (at most the hour) and
- * the download link's refresh point. Undefined when none applies.
+ * earliest of what the response carries that expires, and never more than an hour out for a signed
+ * URL. Undefined when nothing applies.
  */
 export function miniResponseExpiresAt({
   now,
@@ -29,18 +29,21 @@ export function miniResponseExpiresAt({
   epochUrl?: string;
   downloadLinkExpiresAt?: number;
 }): number | undefined {
+  const hour = now + MINI_MODERATION_EXPIRES_MS;
   const candidates: number[] = [];
   if (alreadySet !== undefined && !isNaN(alreadySet)) candidates.push(alreadySet);
-  if (moderation) candidates.push(now + MINI_MODERATION_EXPIRES_MS);
+  if (moderation) candidates.push(hour);
+  // A signed URL's term is capped at the hour, so the rest of the response (coverage, access, fees)
+  // is refreshed as often as the moderation block's, however long the URL is good for.
   const epochUsableUntil = epochUrl ? blobUrlUsableUntil(epochUrl) : undefined;
-  // Capped at the hour: the URL is signed for months, and its expiry alone would keep a response
-  // cached far longer than the orchestrator holds one that names no expiry.
-  if (epochUsableUntil !== undefined)
-    candidates.push(Math.min(epochUsableUntil, now + MINI_MODERATION_EXPIRES_MS));
+  if (epochUsableUntil !== undefined) candidates.push(Math.min(epochUsableUntil, hour));
   if (downloadLinkExpiresAt !== undefined)
     candidates.push(
-      downloadLinkExpiresAt -
-        Math.max(0, env.DOWNLOAD_LINK_MIN_REUSE_SECONDS * 1000 - LINK_REFRESH_BELOW_REUSE_MS)
+      Math.min(
+        downloadLinkExpiresAt -
+          Math.max(0, env.DOWNLOAD_LINK_MIN_REUSE_SECONDS * 1000 - LINK_REFRESH_BELOW_REUSE_MS),
+        hour
+      )
     );
   return candidates.length ? Math.min(...candidates) : undefined;
 }

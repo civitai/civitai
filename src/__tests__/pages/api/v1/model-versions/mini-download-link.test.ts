@@ -287,12 +287,14 @@ describe('mini/[id] downloadLink', () => {
     expect(Date.parse(headers['x-expires'])).toBe(expiresAt - (2 * HOUR - 10 * 60 * 1000));
   });
 
-  it('keeps a link out of shared caches and expires the response by it, without a moderation block', async () => {
+  it('keeps a link out of shared caches and X-Expires within the hour, without a moderation block', async () => {
     const { body, headers } = await call({ authorization: 'Bearer orch-plain-key' });
     expect(body).not.toHaveProperty('moderation');
     const { expiresAt } = body?.downloadLink as { expiresAt: string };
     expect(headers['cache-control']).toBe('private, no-store');
-    expect(Date.parse(headers['x-expires'])).toBeLessThan(Date.parse(expiresAt));
+    // At most the hour, though a fresh link's own refresh point is hours away.
+    expect(Date.parse(expiresAt) - Date.now()).toBeGreaterThan(5 * HOUR);
+    expect(Date.parse(headers['x-expires'])).toBeLessThanOrEqual(Date.now() + HOUR);
   });
 
   it("keeps the wrapper's minute when a stale ?etag sets one", async () => {

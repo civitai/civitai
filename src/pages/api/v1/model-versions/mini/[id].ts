@@ -168,8 +168,7 @@ export default MixedAuthEndpoint(async function handler(
   const credential = orchestrator
     ? { outcome: 'session' as const, effectiveUser: sessionUser }
     : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
-  // Read only where the answer depends on it: the epoch arm, a moderator's or owner's view, and a
-  // provider-link request.
+  // Read lazily, so the flag and its log stay off paths whose answer does not depend on it.
   let scopeRefused: Promise<boolean> | undefined;
   const isScopeRefused = () =>
     (scopeRefused ??=
