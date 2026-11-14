@@ -453,6 +453,8 @@ const featureFlags = createFeatureFlags({
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
+  imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
@@ -961,6 +963,8 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
+  // Storylines: text items between a chapter's images (PostText), their slides and threads.
+  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

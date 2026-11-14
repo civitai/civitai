@@ -56,6 +56,7 @@ import {
   notifyStorylineTitleModerated,
 } from '~/server/services/text-scan/actions/storyline';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { getStorylineTextStubs } from '~/server/services/post-text.service';
 import { getStorylineImageCaptions } from '~/server/services/storyline-caption.service';
 import { getLatestAppeal, resolveEntityAppeal } from '~/server/services/report.service';
 import { clearTombstoneTips } from '~/server/services/storyline-chapter-removal.service';
@@ -3684,11 +3685,14 @@ export async function getStorylinePath({
   via = [],
   viewer,
   browsingLevel,
+  withTexts = false,
 }: {
   chapterId: number;
   via?: number[];
   viewer: Viewer;
   browsingLevel: number;
+  /** The viewer has the `storylineText` flag: return the chapters' text item stubs. */
+  withTexts?: boolean;
 }) {
   const target = await dbRead.storylineChapter.findUnique({
     where: { id: chapterId },
@@ -3769,7 +3773,7 @@ export async function getStorylinePath({
 
   const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
   const captionPostIds = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
-  const [routeChapters, captions] = await Promise.all([
+  const [routeChapters, captions, texts] = await Promise.all([
     withOwnerPaid(onRoute(rows, chapters), storyline.userId, viewer).then((route) =>
       withFirstImages(gate, route)
     ),
@@ -3785,12 +3789,21 @@ export async function getStorylinePath({
         hiddenTagIds,
       });
     })(),
+    withTexts
+      ? getStorylineTextStubs({
+          postIds: captionPostIds,
+          browsingLevel,
+          maxNsfwLevel: storyline.maxNsfwLevel,
+        })
+      : [],
   ]);
   return {
     storyline,
     chapters: routeChapters,
     /** Caption text by image id. */
     captions: Object.fromEntries(captions) as Record<number, string>,
+    /** The chapters' text items, without content (`post.get` carries it). */
+    texts,
     hasEarlier: (rows[0]?.depth ?? 0) > 0,
   };
 }

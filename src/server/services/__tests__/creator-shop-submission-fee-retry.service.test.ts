@@ -406,8 +406,8 @@ describe.each(sites)('$kind submission fee across an unknown outcome', (site) =>
     expect(listedTxIds.size + ledger.refunds().length).toBe(1);
   });
 
-  // The refund after a failed write is the one Buzz call made under the lock. The transaction's
-  // deadline releases the lock; if that could pass while the refund was still being attempted, a
+  // The refund after a failed write runs under the lock (as does the refund-state check). The
+  // transaction's deadline releases the lock; if that could pass while the refund was still being attempted, a
   // same-key retry could record on money the refund then takes back. The refund's attempts must
   // all end inside the deadline, whatever the Buzz service does.
   describe('a refund the Buzz service never answers', () => {

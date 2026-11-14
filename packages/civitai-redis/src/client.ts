@@ -3512,11 +3512,6 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   SEMANTIC_SEARCH: {
     /*
-      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
-      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
-     */
-    QUERY_VECTOR: 'semantic-search:query-vector',
-    /*
       Use: one aligned block of ranked candidate ids from the search service, shared by every viewer
       whose filter and viewer class match, so a repeated search makes no Qdrant call.
       Structure: packed { ids: number[], correctedQuery?: string },

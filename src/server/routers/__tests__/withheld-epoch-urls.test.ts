@@ -162,7 +162,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // The dataset listing check: unrestricted.
   dbMock.dbRead.$queryRaw.mockResolvedValue([
-    { id: 2, nsfwLevel: 1, fullyRated: true, restricted: false },
+    { id: 2, nsfwLevel: 1, fullyRated: true, restricted: false, virusScanResult: 'Success' },
   ] as never);
 });
 

@@ -55,7 +55,8 @@ const SCHEMA = `
     id int PRIMARY KEY,
     "modelVersionId" int NOT NULL,
     type text NOT NULL,
-    metadata jsonb
+    metadata jsonb,
+    "virusScanResult" text NOT NULL DEFAULT 'Pending'
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY,
@@ -198,11 +199,11 @@ describe('trainingDataListing', () => {
     visibility: 'Public',
   });
   const modelOf = (uid: number) => ({ id: 500 + uid, type: 'Model', visibility: 'Public' });
-  const rate = (uid: number, metadata: object) =>
+  const rate = (uid: number, metadata: object, scan = 'Success') =>
     db.exec(
       `INSERT INTO "ModelFile" VALUES (${400 + uid}, ${versionOf(
         uid
-      )}, 'Training Data', '${JSON.stringify(metadata)}')`
+      )}, 'Training Data', '${JSON.stringify(metadata)}', '${scan}')`
     );
   const listedFor = async (
     uid: number,
@@ -257,6 +258,19 @@ describe('trainingDataListing', () => {
     // The owner and moderators are offered it on any host, as the download serves them.
     expect(await listedFor(PLAIN, { redCapable, viewerManages: true })).toEqual([true, true]);
   });
+
+  // The download refuses others until the scan is a Success, so a listed link would 404.
+  it.each(['Pending', 'Error', 'Danger'])(
+    'a %s scan unlists the dataset to others, not to the owner and moderators',
+    async (scan) => {
+      await rate(PLAIN, { nsfwLevel: 1 }, scan);
+      expect(await listedFor(PLAIN, { redCapable: true })).toEqual([false, true]);
+      expect(await listedFor(PLAIN, { redCapable: true, viewerManages: true })).toEqual([
+        true,
+        true,
+      ]);
+    }
+  );
 
   it('unlists every dataset when the check cannot be read', async () => {
     const broken = {

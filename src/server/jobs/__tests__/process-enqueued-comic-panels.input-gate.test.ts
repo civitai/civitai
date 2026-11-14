@@ -244,7 +244,8 @@ describe('process-enqueued-comic-panels: prompt check unavailable', () => {
   });
 
   // 🔴 Money: a 503 from the orchestrator itself may mean the workflow was queued and charged.
-  // Left Enqueued, the next run would submit it again with no externalId, a second charge.
+  // Failed, not left Enqueued: the panel's stable externalId should collapse a resubmit to the
+  // first workflow (see the idempotency test), but failing it does not rely on that.
   it.each([
     ['an orchestrator submit timeout', orchestratorTimeout],
     ['an orchestrator 5xx', orchestrator5xx],

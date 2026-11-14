@@ -95,6 +95,17 @@ describe('deletePostHandler', () => {
     expect(deletePostMock).toHaveBeenCalledWith(expect.objectContaining({ deletedById: 8 }));
   });
 
+  it("tells the delete whether the deleter is a moderator, for a refusal's wording only", async () => {
+    deletePostMock.mockResolvedValue(undefined);
+    const mod = { ...ctx(9), user: { id: 9, isModerator: true } } as unknown as ProtectedContext;
+
+    await deletePostHandler({ input: { id: 3 }, ctx: mod });
+
+    const [args] = deletePostMock.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(args.viewerIsModerator).toBe(true);
+    expect(args.isModerator).toBeUndefined();
+  });
+
   it('closes nothing when the post was not deleted', async () => {
     deletePostMock.mockResolvedValue(undefined);
 

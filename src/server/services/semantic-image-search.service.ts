@@ -6,7 +6,7 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
-import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
@@ -172,7 +172,7 @@ export async function searchSemanticImages({
     const end = semanticSearchStage().startTimer({ index: IMAGE_COLLECTION, stage });
     return work.finally(() => end());
   };
-  // "Made On-site" is judged from the image's meta, so only hydration applies it.
+  // Made On-site and Metadata only are judged from the image's meta, so only hydration applies them.
   const hydrate: Hydrate<HydratedImage> = (ids) =>
     timed(
       'hydrate',
@@ -213,7 +213,7 @@ export async function searchSemanticImages({
           {
             must: [
               { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-              { key: 'baseModels', match: { any: nsfwRestrictedBaseModels } },
+              { key: 'baseModels', match: { any: matureRestrictedBaseModels('images') } },
             ],
           },
         ]

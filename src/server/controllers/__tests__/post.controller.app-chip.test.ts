@@ -139,7 +139,7 @@ describe('the assembled payload carries the chip and nothing else new', () => {
     expect(result.publishedWithApp).toEqual(CHIP);
   });
 
-  it('adds EXACTLY one key to the payload', async () => {
+  it('adds EXACTLY the chip and the storyline text items to the payload', async () => {
     // A ledger over the whole DTO. `getPostDetail`'s own output is the baseline,
     // so this does not restate the selector's field list and cannot drift from it.
     //
@@ -154,7 +154,7 @@ describe('the assembled payload carries the chip and nothing else new', () => {
       unknown
     >;
     const added = Object.keys(result).filter((k) => !(k in selected()));
-    expect(added).toEqual(['publishedWithApp']);
+    expect(added.sort()).toEqual(['publishedWithApp', 'texts']);
   });
 });
 

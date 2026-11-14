@@ -561,6 +561,7 @@ export const CommentEntityType = {
   appListing: 'appListing',
   crucible: 'crucible',
   storyline: 'storyline',
+  postText: 'postText',
 } as const;
 
 export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
@@ -960,6 +961,7 @@ export const JobQueueType = {
   ImageStorageDelete: 'ImageStorageDelete',
   CdnAccessSync: 'CdnAccessSync',
   ImageCdnPersistRetry: 'ImageCdnPersistRetry',
+  CsamArchive: 'CsamArchive',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
