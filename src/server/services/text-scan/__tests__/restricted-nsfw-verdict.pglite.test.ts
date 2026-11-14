@@ -279,6 +279,23 @@ describe('the scan on a restricted model', () => {
     });
   });
 
+  // A marker blocks the owner (assertScanRatingKept) only where a clean read can release it.
+  it('leaves no origin marker from the xguard check, flipped or already mature', async () => {
+    await seed({});
+    expect(
+      await applySystemModelNsfwFlag({ model: scanned(), source: 'xguard-text-moderation' })
+    ).toBe('applied');
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: [] });
+    expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
+
+    await seed({ nsfw: true });
+    await applySystemModelNsfwFlag({
+      model: scanned({ nsfw: true }),
+      source: 'xguard-text-moderation',
+    });
+    expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
+  });
+
   it('rates a model listed on .com by its face, so removing the face later leaves it mature', async () => {
     await seed({});
     expect(

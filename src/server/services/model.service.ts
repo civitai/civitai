@@ -256,6 +256,7 @@ import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
   readSystemNsfwLockAt,
+  SCAN_RATING_SOURCES,
   RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
   filterModelMetaForClient,
@@ -3987,6 +3988,9 @@ async function assertScanRatingKept({
 }) {
   const ratedAt = readSystemNsfwLockAt(before.meta);
   if (!ratedAt || before.lockedProperties?.includes('nsfw')) return;
+  // Only a text check's rating, which a clean read of edited text releases.
+  const source = (before.meta as ModelMeta | null)?.systemNsfwLock?.source;
+  if (!source || !SCAN_RATING_SOURCES.includes(source)) return;
   const after = <K extends keyof typeof data>(key: K) =>
     (data[key] !== undefined ? data[key] : before[key as keyof typeof before]) as
       | (typeof data)[K]

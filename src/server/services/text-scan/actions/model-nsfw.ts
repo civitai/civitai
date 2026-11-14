@@ -18,6 +18,7 @@ import {
 import type { RatingFloorResult } from '~/server/services/text-scan/rated-entities';
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
 import {
   holdRestrictedVerdict,
   holdsRatingSql,
@@ -89,7 +90,7 @@ export async function applySystemModelNsfwFlag({
   // A model with a complete .com face is rated too: the face keeps it on .com, and a face that goes
   // away by any path (re-check, cover, owner) leaves the rating standing.
   if (!heldLead && model.nsfw) {
-    await markScanRating(dbWrite, model.id, source);
+    if (stampsRatingMarker(source)) await markScanRating(dbWrite, model.id, source);
     return 'skipped_nsfw';
   }
 
@@ -128,14 +129,23 @@ export async function applySystemModelNsfwFlag({
   return 'applied';
 }
 
-/** Drops the text scan's own origin marker; not under a lock, nor another check's marker. */
+/**
+ * Only a check with a way out of `assertScanRatingKept` (a rescan that reads the text as not mature
+ * drops its marker) leaves the marker on an unlocked rating; any other raises nsfw with no guard.
+ */
+const stampsRatingMarker = (source: string) => SCAN_RATING_SOURCES.includes(source);
+
+/**
+ * Drops the text scan's own origin marker after it reads the text as not mature: the owner's way
+ * out of `assertScanRatingKept`. Never under a lock, nor another check's marker.
+ */
 async function dropScanRatingMarker(db: RawDb, modelId: number) {
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = m.meta - 'systemNsfwLock'
     WHERE m.id = ${modelId}
       AND jsonb_typeof(m.meta) = 'object'
-      AND m.meta->'systemNsfwLock'->>'source' = 'text-scan'
+      AND m.meta->'systemNsfwLock'->>'source' = ANY(${[...SCAN_RATING_SOURCES]}::text[])
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
   `;
 }
@@ -186,9 +196,13 @@ async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boo
             || jsonb_build_array(${appliedRecord} || jsonb_build_object(
               'ruling', 'autoApply', 'by', ${SYSTEM_USER_ID}::int,
               'restriction', COALESCE(m.meta->'restrictedNsfwVerdict'->>'restriction', 'sfwOnly')))
-        ) ELSE '{}'::jsonb END || jsonb_build_object(
+        ) ELSE '{}'::jsonb END || ${
+          stampsRatingMarker(source)
+            ? Prisma.sql`jsonb_build_object(
           'systemNsfwLock', jsonb_build_object('source', ${source}::text, 'at', now())
-        )
+        )`
+            : Prisma.sql`'{}'::jsonb`
+        }
     WHERE m.id = ${modelId}
       AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
       AND NOT ${holdsRatingSql}

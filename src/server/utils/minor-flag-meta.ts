@@ -196,6 +196,10 @@ export const SERVER_OWNED_META_KEYS = [
   'comFaceIntent',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
+/** The text checks whose unlocked mature rating the owner cannot undo alone until a read of the
+ *  text as not mature drops their marker (`assertScanRatingKept`, `dropScanRatingMarker`). */
+export const SCAN_RATING_SOURCES: readonly string[] = ['text-scan'];
+
 export function systemNsfwLockMarker(source: string): { source: string; at: string } {
   return { source, at: new Date().toISOString() };
 }

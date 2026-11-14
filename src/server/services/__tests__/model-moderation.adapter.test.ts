@@ -136,14 +136,10 @@ describe('modelModerationAdapter.applyResult', () => {
     const flip = flipCall();
     expect(flip).toBeDefined();
     expect(flip?.sql).not.toContain('array_append');
-    expect(flip?.sql).toContain("'systemNsfwLock'");
-    // source, the system actor on the applied record, source again, then the model id.
-    expect(flip?.values).toEqual([
-      'xguard-text-moderation',
-      constants.system.user.id,
-      'xguard-text-moderation',
-      1,
-    ]);
+    // No origin marker: this check has no clean-read path to release the owner from it.
+    expect(flip?.sql).not.toMatch(/'systemNsfwLock',\s*jsonb_build_object\('source'/);
+    // source, the system actor on the applied record, then the model id.
+    expect(flip?.values).toEqual(['xguard-text-moderation', constants.system.user.id, 1]);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
