@@ -224,7 +224,8 @@ export async function exchangeCode(code: unknown, codeVerifier: unknown): Promis
 
 /**
  * The review session token a general-tier code adds its batch to: the session `current` names when
- * it is live, belongs to the same moderator and has room, else a new one.
+ * it is live, belongs to the same moderator, its web session still admits them, and it has room;
+ * else a new one.
  */
 export async function exchangeReviewCode(
   code: unknown,
@@ -243,6 +244,7 @@ export async function exchangeReviewCode(
     live &&
     live.userId === record.userId &&
     now - live.createdAt < REVIEW_SHEET_MAX_AGE_MS &&
+    (await sessionUser(live)) &&
     (await addReviewBatch(current!, hash, live.createdAt, now)) &&
     (await slideReviewSession(current!, live.createdAt, now))
   )

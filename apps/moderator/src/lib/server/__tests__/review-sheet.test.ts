@@ -331,7 +331,7 @@ describe('signing in to a batch', () => {
 
 // Deliberate product decision: one general sign-in lasts the day, so the review cookie itself joins
 // each new general batch minted for this moderator. Making the cookie unable to enroll a batch
-// again puts a Continue tap back on every batch, the option that was declined.
+// again puts a Continue tap back on every batch.
 describe('one general sign-in a day', () => {
   const H = (id: string) => reviewBatchHash(id);
   const open = async (family: Family, batchId: string, token: string, n = '0') => {
@@ -407,6 +407,17 @@ describe('one general sign-in a day', () => {
     const theirs = new RegExp(`${COOKIE.review}=([^;]+)`).exec(res.headers.get('set-cookie')!)![1];
     expect(theirs).not.toBe(fresh);
     expect(await batchesOf(fresh!)).toEqual([H(GENERAL_2)]);
+  });
+
+  it('after a web sign out and back in, a new code signs in fresh instead of joining the dead session', async () => {
+    const old = (await signIn('review', GENERAL))!;
+    isRevoked.mockImplementation(async (web) => (web as { jti?: string }).jti === CLAIMS.jti);
+    verifyToken.mockResolvedValue({ ...CLAIMS, jti: 'web-session-2' });
+    const fresh = await signIn('review', GENERAL_2, old);
+    expect(fresh).not.toBeNull();
+    expect(fresh).not.toBe(old);
+    expect(await open('review', GENERAL_2, fresh!)).toBe(200);
+    expect(await open('review', GENERAL, old)).toBe(401);
   });
 
   it('a batch whose minting key is revoked, or that is no longer live, is refused and not joined', async () => {
