@@ -1208,11 +1208,23 @@ describe('provider links', () => {
     }
   );
 
-  it('records one download however many times the link is fetched', async () => {
+  it('records at most one download however many times the link is fetched', async () => {
     const { url } = await minted(PRIVATE_VERSION);
     for (let i = 0; i < 3; i++) expect((await fetchLink(url)).status).toBe(302);
     expect(mockModelVersionEvent).toHaveBeenCalledTimes(1);
     expect(mockCountProviderDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it('records its first fetch once provider links are back on, not one refused while off', async () => {
+    const { url } = await minted(PRIVATE_VERSION);
+    mockIsFlipt.mockImplementation(
+      async (_flag: string, _entityId?: string, context?: Record<string, string>) =>
+        context?.mode === 'api'
+    );
+    expect((await fetchLink(url)).status).toBe(404);
+    mockIsFlipt.mockResolvedValue(true);
+    expect((await fetchLink(url)).status).toBe(302);
+    expect(mockModelVersionEvent).toHaveBeenCalledTimes(1);
   });
 
   it("does not spend a user link's fetch cap while only provider links are on", async () => {

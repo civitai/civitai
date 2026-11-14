@@ -8,8 +8,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * Mini's `downloadLink` (`?downloadLink=1`): who is handed one, and that everyone else, and every
- * case where the mint is off or fails, gets the response they get today. The mint runs for real
- * down to its store and access check, which are faked.
+ * case where the mint is off or fails, gets the response they would without it. The mint runs for
+ * real; only its store and access check are faked.
  */
 
 const h = vi.hoisted(() => ({
@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   hubSession: { value: null as unknown },
   flagModes: new Set<string>(),
   scopeGate: { value: null as string | null },
+  notUpToDate: { value: false },
   check: vi.fn(),
   findReusableLink: vi.fn(),
   createLink: vi.fn(),
@@ -32,6 +33,10 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
     async (flag: string, _entityId?: string, context?: Record<string, string>) =>
       flag === 'download-links-enabled' && h.flagModes.has(context?.mode ?? '')
   ),
+}));
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  checkNotUpToDate: async () => h.notUpToDate.value,
 }));
 vi.mock('~/server/services/download-link/generation-fetch.service', async (importOriginal) => ({
   ...(await importOriginal<typeof GenerationFetch>()),
@@ -156,12 +161,14 @@ async function call({
   authorization,
   downloadLink = '1',
   queryToken,
+  etag,
   row = {},
   file = {},
 }: {
   authorization?: string;
   downloadLink?: string;
   queryToken?: string;
+  etag?: string;
   row?: Partial<typeof baseRow>;
   file?: Record<string, unknown>;
 } = {}): Promise<Served> {
@@ -173,6 +180,7 @@ async function call({
   const query: Record<string, string> = { id: String(VERSION_ID) };
   if (downloadLink) query.downloadLink = downloadLink;
   if (queryToken) query.token = queryToken;
+  if (etag) query.etag = etag;
   const req = {
     method: 'GET',
     url: `${URL}?${new URLSearchParams(query).toString()}`,
@@ -217,6 +225,7 @@ beforeEach(() => {
   h.bearerSession.mockImplementation(async (token: string) => KEYS[token] ?? null);
   h.flagModes = new Set(['provider']);
   h.scopeGate.value = null;
+  h.notUpToDate.value = false;
   h.check.mockReset();
   h.check.mockResolvedValue({
     ok: true,
@@ -284,6 +293,14 @@ describe('mini/[id] downloadLink', () => {
     const { expiresAt } = body?.downloadLink as { expiresAt: string };
     expect(headers['cache-control']).toBe('private, no-store');
     expect(Date.parse(headers['x-expires'])).toBeLessThan(Date.parse(expiresAt));
+  });
+
+  it("keeps the wrapper's minute when a stale ?etag sets one", async () => {
+    h.notUpToDate.value = true;
+    const before = Date.now();
+    const { body, headers } = await call({ authorization: 'Bearer orch-key', etag: '0/1' });
+    expect(body).toHaveProperty('downloadLink');
+    expect(Date.parse(headers['x-expires']) - before).toBeLessThanOrEqual(61_000);
   });
 
   it.each([

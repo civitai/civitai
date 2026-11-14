@@ -80,7 +80,6 @@ const linkSecret = () => {
   const secret = env.DOWNLOAD_LINK_SECRET?.trim();
   return secret && secret.length >= MIN_SECRET_LENGTH ? secret : undefined;
 };
-/** Whether a repeat mint can return the link it made before. */
 export const linksAreReusable = () => linkSecret() !== undefined;
 
 const linkKey = (hash: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK}:${hash}` as const;
@@ -97,7 +96,7 @@ export const reuseKey = (
     onBehalfOfUserId ?? (provider ? `provider:${provider}` : 'public')
   }` as const;
 
-/** Whether a fetch past the link's cap is refused. */
+/** A provider link has no cap, so it is never over. */
 export const isOverFetchCap = (link: StoredDownloadLink, fetches: number) =>
   !link.provider && !(fetches <= link.maxFetches);
 

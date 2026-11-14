@@ -95,7 +95,7 @@ export const schema = z.object({
   // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
   // `1`: also a `downloadLink` the caller fetches the file with as a provider, for a caller on the
-  // provider allowlist (`mintProviderLink`). Anyone else is answered as if it were absent.
+  // provider allowlist. Anyone else is answered as if it were absent, not refused.
   downloadLink: z.unknown().optional(),
 });
 
@@ -170,7 +170,8 @@ export default MixedAuthEndpoint(async function handler(
   const credential = orchestrator
     ? { outcome: 'session' as const, effectiveUser: sessionUser }
     : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
-  // Read only where the answer depends on it, so the flag and its log see the epoch arm alone.
+  // Read only where the answer depends on it: the epoch arm, a moderator's or owner's view, and a
+  // provider-link request.
   let scopeRefused: Promise<boolean> | undefined;
   const isScopeRefused = () =>
     (scopeRefused ??=
@@ -818,8 +819,10 @@ export default MixedAuthEndpoint(async function handler(
   };
   logMiniModerationCaller(req, user, modelVersion, includeModeration);
   if (includeModeration || downloadLink) res.setHeader('Cache-Control', 'private, no-store');
+  const preset = res.getHeader?.('X-Expires');
   const expiresAt = miniResponseExpiresAt({
     now: Date.now(),
+    alreadySet: typeof preset === 'string' ? Date.parse(preset) : undefined,
     moderation: includeModeration,
     epochUrl: resignedEpochUrl,
     downloadLinkExpiresAt: downloadLink ? Date.parse(downloadLink.expiresAt) : undefined,

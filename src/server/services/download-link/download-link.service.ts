@@ -282,7 +282,7 @@ export async function mintDownloadLinks(
 /**
  * A link `provider` fetches one file with as itself, minted for the credential calling mini. Null
  * when provider links are off: the flag, a credential not on the provider allowlist, or no
- * `DOWNLOAD_LINK_SECRET` (every call would then mint a new link). Only a fresh mint takes budget.
+ * `DOWNLOAD_LINK_SECRET` (every call would then mint a new link).
  */
 export async function mintProviderLink(
   credential: DownloadLinkCredential,
@@ -384,8 +384,9 @@ export async function fetchDownloadLink({
     downloadLinksEnabled('provider'),
   ]);
   if (!apiEnabled && !providerEnabled) return null;
-  // A fetch refused by its mode's flag must not spend the link's cap.
-  if (!apiEnabled && !(await readLink(id))?.provider) return null;
+  // A fetch refused by its mode's flag must not count: it would spend the cap, or the first fetch.
+  if (apiEnabled !== providerEnabled && !!(await readLink(id))?.provider !== providerEnabled)
+    return null;
 
   const counted = await recordFetch(id);
   if (!counted) return null;

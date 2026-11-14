@@ -563,9 +563,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // and no link is minted.
   //
   // 🔴 BOOLEAN ONLY, no entityId, with context `mode`: `api` (the mint route and its links) or
-  // `provider` (mini's links), so a rule can turn on one without the other. Evaluated on every mint,
-  // every link fetch and every mini call that asks for a link. The key must exist in flag state
-  // (enabled: false) before this code serves traffic.
+  // `provider` (mini's links), so a rule can turn on one without the other. The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
   // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
