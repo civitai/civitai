@@ -70,7 +70,7 @@ const FLAGS = {
   homeCollectionId: 77,
   size: 10,
   pot: { steps: [{ from: START, perPerson: 100, upTo: 10, after: 50 }], cap: 10_000 },
-  lean: 'none',
+  lean: 'none' as const,
 };
 
 let db: PGlite;
