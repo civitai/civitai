@@ -4,7 +4,10 @@ import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { modelDataHeldSql } from '~/server/services/legal-hold.service';
+import {
+  csamReportListedImageIdsSql,
+  modelDataHeldSql,
+} from '~/server/services/legal-hold.service';
 import { deregisterFileLocationsBatch } from '~/utils/storage-resolver';
 import { chunk } from 'lodash-es';
 
@@ -15,6 +18,32 @@ const log = createLogger('remove-old-drafts');
 const moderatedSql = (m: Prisma.Sql) => Prisma.sql`(
   ${m}.mode::text IS NOT DISTINCT FROM 'TakenDown'
   OR (${m}.status::text = 'Deleted' AND ${m}."deletedBy" IS NOT NULL AND ${m}."deletedBy" <> ${m}."userId")
+)`;
+
+/** A model tied to any CsamReport, whatever its status, is kept: one naming its owner or a past owner,
+ *  one listing one of its versions, or one listing an image posted to one of its versions. Wider than
+ *  the legal hold, which a report stops holding a year after it is sent and archived. */
+const csamReportTiedSql = (m: Prisma.Sql) => Prisma.sql`(
+  EXISTS (
+    SELECT 1 FROM "CsamReport" cr
+    WHERE cr."userId" = ${m}."userId"
+      OR cr.details ->> 'secondaryUserId' = (${m}."userId")::text
+      OR cr."userId" IN (SELECT co."userId" FROM "ModelOwnership" co WHERE co."modelId" = ${m}.id)
+      OR cr.details ->> 'secondaryUserId' IN (
+        SELECT co."userId"::text FROM "ModelOwnership" co WHERE co."modelId" = ${m}.id
+      )
+      OR (jsonb_typeof(cr.details -> 'modelVersionIds') = 'array' AND EXISTS (
+        SELECT 1 FROM "ModelVersion" cv
+        JOIN jsonb_array_elements_text(cr.details -> 'modelVersionIds') cvi ON cvi = cv.id::text
+        WHERE cv."modelId" = ${m}.id
+      ))
+  )
+  OR EXISTS (
+    SELECT 1 FROM "ModelVersion" iv
+    JOIN "Post" ip ON ip."modelVersionId" = iv.id
+    JOIN "Image" ii ON ii."postId" = ip.id
+    WHERE iv."modelId" = ${m}.id AND (ii.id)::text IN (${csamReportListedImageIdsSql})
+  )
 )`;
 
 /**
@@ -251,6 +280,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
           WHERE m.id = ANY(${deletable})
             AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
             AND NOT ${moderatedSql(Prisma.raw('m'))}
+            AND NOT ${csamReportTiedSql(Prisma.raw('m'))}
         ),
         ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m

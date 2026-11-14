@@ -273,3 +273,59 @@ describe('remove-old-drafts and models a moderator acted on', () => {
     expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([]);
   });
 });
+
+// Any CsamReport tied to a model keeps it, whatever the report's status and whoever it names.
+describe('remove-old-drafts and models tied to a CsamReport', () => {
+  const OLD_REPORT_OWNER = 80; // named on a report sent and archived two years ago: no longer a hold
+  const OTHER_SUBJECT = 81; // whom the version and image reports name; owns no model
+  const POSTER = 82; // posted the listed image to a free owner's version
+  const OLD_REPORT_MODEL = 180;
+  const LISTED_VERSION_MODEL = 181; // a report lists one of its versions
+  const LISTED_IMAGE_MODEL = 182; // a report lists an image posted to one of its versions
+  const UNLISTED_MODEL = 183; // control: a report lists another image and another version
+  const tied = [
+    { id: OLD_REPORT_MODEL, userId: OLD_REPORT_OWNER },
+    { id: LISTED_VERSION_MODEL, userId: FREE_OWNER },
+    { id: LISTED_IMAGE_MODEL, userId: FREE_OWNER },
+    { id: UNLISTED_MODEL, userId: FREE_OWNER },
+  ];
+
+  beforeAll(async () => {
+    await db.exec(`
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (8201, ${POSTER}, ${LISTED_IMAGE_MODEL}0),
+        (8301, ${POSTER}, ${UNLISTED_MODEL}0);
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (8202, ${POSTER}, 8201), (8302, ${POSTER}, 8301),
+        (8999, ${POSTER}, NULL);
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
+        (${OLD_REPORT_OWNER}, now() - interval '2 years', now() - interval '2 years');
+      INSERT INTO "CsamReport" ("userId", details) VALUES
+        (${OTHER_SUBJECT}, '{"modelVersionIds": [${LISTED_VERSION_MODEL}0]}'),
+        (${OTHER_SUBJECT}, '{"modelVersionIds": [999999]}');
+      INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt", images) VALUES
+        (${OTHER_SUBJECT}, now() - interval '2 years', now() - interval '2 years', '[{"id": 8202}]'),
+        (${OTHER_SUBJECT}, now() - interval '2 years', now() - interval '2 years', '[{"id": 8999}]');
+    `);
+  });
+
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" (id, "userId") VALUES ${tied
+        .map((m) => `(${m.id}, ${m.userId})`)
+        .join(', ')};
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${tied
+        .map((m) => `(${m.id}0, ${m.id}, now() - interval '200 days', now() - interval '200 days')`)
+        .join(', ')};
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(tied);
+  });
+
+  it('keeps a model whose owner, version or posted image a report names, and deletes the control', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    const remaining = await remainingModels();
+    expect(remaining).toEqual(
+      expect.arrayContaining([OLD_REPORT_MODEL, LISTED_VERSION_MODEL, LISTED_IMAGE_MODEL])
+    );
+    expect(remaining).not.toContain(UNLISTED_MODEL);
+  });
+});
