@@ -1,3 +1,5 @@
+import { buildKohyaInput } from './kohya-training';
+import { kohyaFamily, type KohyaOptions, type KohyaInput } from './data/kohya';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
 // client. Env-derived concerns are parameters — the shell's server wrappers (lib/server/train.ts)
@@ -66,8 +68,7 @@ import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/data
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
 
-/** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
- *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
+/** Captions remain raw until the engine-specific submit builder applies the trigger word. */
 export interface TrainingItem {
   air: string;
   caption: string;
@@ -83,8 +84,10 @@ export interface TrainingRunInput {
   modelVariant?: string;
   /** Ecosystem version selector (e.g. qwen's `version`). */
   version?: string;
-  /** Non-default engine (Flux.2 = `flux2-dev`); when set, the run uses the imageResourceTraining shape. */
+  /** Defaults to AI Toolkit. Kohya uses `training`; Flux.2 uses `imageResourceTraining`. */
   engine?: string;
+  kohya?: KohyaOptions;
+  negativePrompt?: string;
   /** Base checkpoint AIR — required by the flux2 path. */
   model?: string;
   /** The `Custom…` base: a Civitai model AIR to train on, overriding the ecosystem's default base. */
@@ -223,7 +226,13 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
     seen.add(key);
     return true;
   });
-  const trainingData = { type: 'blobs', items };
+  const trainingData = { type: 'blobs' as const, items };
+  if (run.engine === 'kohya')
+    return {
+      $type: 'training',
+      priority: 'normal',
+      input: buildKohyaInput(run, trainingData, traceMode),
+    } as unknown as WorkflowStepTemplate;
   const optimizerType = run.optimizer.toLowerCase();
   // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
   // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0 (TE off), and an ecosystem
@@ -467,7 +476,13 @@ const POSITIVE_NUMBER_FIELDS = [
 ] as const;
 const OPTIONAL_NON_NEGATIVE_FIELDS = ['keepTokens', 'minSnrGamma', 'noiseOffset'] as const;
 const OPTIONAL_BOOLEAN_FIELDS = ['shuffleTokens', 'flipAugmentation'] as const;
-const OPTIONAL_STRING_FIELDS = ['modelVariant', 'version', 'engine', 'model'] as const;
+const OPTIONAL_STRING_FIELDS = [
+  'modelVariant',
+  'version',
+  'engine',
+  'model',
+  'negativePrompt',
+] as const;
 const AIR_FIELDS = ['customModel', 'continueFrom'] as const;
 
 /** Refuse a malformed run before it costs an orchestrator round-trip. The wire types are a cast, so
@@ -486,7 +501,7 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isNonEmptyString(run.lrScheduler))
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
-  if (!isProdigy(run.optimizer)) {
+  if (run.engine !== 'kohya' && !isProdigy(run.optimizer)) {
     // A locked TE rate is sent as 0 whatever it holds, so a stale one is no reason to refuse.
     const lrKeys = teTrainingUnsupportedReason(run.ecosystem)
       ? (['unetLr'] as const)
@@ -554,13 +569,26 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     fail(`${field}.meta.name`, 'must be a string.');
   // A sweep row or restored selection can still carry one; submitting it would bill a run that
   // trains on the official base.
-  if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
+  if (
+    run.customModel !== undefined &&
+    !ecosystemAllowsCustomBase(run.ecosystem) &&
+    !(run.engine === 'kohya' && kohyaFamily(run.ecosystem))
+  )
     fail(`${field}.customModel`, 'is not supported for this model.');
   // A restored selection or sweep row can still name a retired card's base.
   if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
     fail(`${field}.model`, 'is no longer offered for training.');
   if (isRetiredEcosystem(run.ecosystem))
     fail(`${field}.ecosystem`, 'is no longer offered for training.');
+  if (run.engine && run.engine !== 'ai-toolkit' && run.engine !== 'kohya' && !isFlux2(run.engine))
+    fail(`${field}.engine`, 'is not supported.');
+  if (run.engine === 'kohya') {
+    try {
+      buildKohyaInput(run, { type: 'blobs', items: run.items }, 'none');
+    } catch (error) {
+      fail(field, error instanceof Error ? error.message : 'Invalid Kohya settings.');
+    }
+  }
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
 }
@@ -830,9 +858,7 @@ function sourceMatureCount(
   return count;
 }
 
-/** Reconstruct the submit body for a "keep training" continuation from the source run's own training step
- *  (ai-toolkit only), plus `continueFrom` and the added epochs. Shared by the real submit and the whatif so
- *  the quoted price matches what gets charged. `steps` is the continuation's step budget (for ETA). */
+/** Quote and submit share continuation training parameters; mature-content charging fields can differ. */
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
@@ -855,15 +881,20 @@ async function buildContinuation(
     wf.steps?.find((s) => (s as { $type?: string }).$type === 'training') ?? wf.steps?.[0];
   const input = (step as { input?: Record<string, unknown> } | undefined)?.input;
   const output = (step as { output?: { epochs?: EpochOutput[] } } | undefined)?.output;
-  if (!input || input.engine !== 'ai-toolkit')
-    throw new Error('keep training: only ai-toolkit runs can continue from a checkpoint');
+  if (!input || (input.engine !== 'ai-toolkit' && input.engine !== 'kohya'))
+    throw new Error('keep training: this engine cannot continue from a checkpoint');
 
   const epoch = (output?.epochs ?? []).find(
     (e) => e.epochNumber === opts.fromEpoch && epochModelKey(e.model) !== undefined
   );
   const modelKey = epochModelKey(epoch?.model);
   if (!modelKey) throw new Error('keep training: that checkpoint has no downloadable weights yet');
-  const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
+  const ecosystem =
+    input.engine === 'kohya' && typeof input.model === 'string'
+      ? Air.parseSafe(input.model)?.ecosystem ?? ''
+      : typeof input.ecosystem === 'string'
+      ? input.ecosystem
+      : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
   // A retired card can share a live ecosystem (Hunyuan trains as `wan`), so check the base too.
@@ -885,7 +916,7 @@ async function buildContinuation(
   if (unavailable) throw new TrainingBatchValidationError(unavailable);
   const continueFrom = continueFromAir(ecosystem, modelKey);
 
-  const origEpochs = Number(input.epochs) || 10;
+  const origEpochs = Number(input.engine === 'kohya' ? input.maxTrainEpochs : input.epochs) || 10;
   const origSteps = Number(input.steps) || 0;
   // Keep the per-epoch step density of the source run for the added epochs.
   const steps = origSteps
@@ -917,36 +948,39 @@ async function buildContinuation(
 
   // Only the fields we submit (mirrors buildStep) — never the server-computed read-only ones the orch echoes
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
-  const continuedInput = {
-    engine: 'ai-toolkit',
-    ecosystem: input.ecosystem,
-    // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
-    // on the ecosystem's default base and publishes as that base.
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
-    ...(input.version ? { version: input.version } : {}),
-    // Without it the pair dataset would continue as a plain LoRA dataset.
-    ...(input.isEditTraining === true ? { isEditTraining: true } : {}),
-    ...(steps ? { steps } : {}),
-    epochs: addEpochs,
-    batchSize: input.batchSize,
-    lr: input.lr,
-    // Runs submitted before the lock still carry TE on; don't continue them with it.
-    ...(teTrainingUnsupportedReason(ecosystem)
-      ? { textEncoderLr: 0, trainTextEncoder: false }
-      : { textEncoderLr: input.textEncoderLr, trainTextEncoder: input.trainTextEncoder }),
-    lrScheduler: input.lrScheduler,
-    optimizerType: input.optimizerType,
-    networkDim: input.networkDim,
-    networkAlpha: input.networkAlpha,
-    resolution: input.resolution,
-    ...pick(input, EXTRA_PARAM_FIELDS),
-    triggerWord: input.triggerWord,
-    continueFrom,
-    ...(traceMode !== 'none' ? { trace: traceMode } : {}),
-    trainingData: input.trainingData,
-    samples: input.samples,
-  };
+  const continuedInput =
+    input.engine === 'kohya'
+      ? continueKohyaInput(input, addEpochs, steps, continueFrom, traceMode)
+      : {
+          engine: 'ai-toolkit',
+          ecosystem: input.ecosystem,
+          // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
+          // on the ecosystem's default base and publishes as that base.
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
+          ...(input.version ? { version: input.version } : {}),
+          // Without it the pair dataset would continue as a plain LoRA dataset.
+          ...(input.isEditTraining === true ? { isEditTraining: true } : {}),
+          ...(steps ? { steps } : {}),
+          epochs: addEpochs,
+          batchSize: input.batchSize,
+          lr: input.lr,
+          // Runs submitted before the lock still carry TE on; don't continue them with it.
+          ...(teTrainingUnsupportedReason(ecosystem)
+            ? { textEncoderLr: 0, trainTextEncoder: false }
+            : { textEncoderLr: input.textEncoderLr, trainTextEncoder: input.trainTextEncoder }),
+          lrScheduler: input.lrScheduler,
+          optimizerType: input.optimizerType,
+          networkDim: input.networkDim,
+          networkAlpha: input.networkAlpha,
+          resolution: input.resolution,
+          ...pick(input, EXTRA_PARAM_FIELDS),
+          triggerWord: input.triggerWord,
+          continueFrom,
+          ...(traceMode !== 'none' ? { trace: traceMode } : {}),
+          trainingData: input.trainingData,
+          samples: input.samples,
+        };
   const continuedStep = {
     $type: 'training',
     priority: 'normal',
@@ -964,8 +998,63 @@ async function buildContinuation(
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
-    triggerWord: String(input.triggerWord ?? ''),
+    triggerWord: String(input.engine === 'kohya' ? srcMeta.trigger ?? '' : input.triggerWord ?? ''),
     matureCount,
+  };
+}
+
+const KOHYA_CONTINUE_KEYS = [
+  'model',
+  'numRepeats',
+  'trainBatchSize',
+  'resolution',
+  'enableBucket',
+  'shuffleCaption',
+  'keepTokens',
+  'clipSkip',
+  'flipAugmentation',
+  'unetLR',
+  'textEncoderLR',
+  'trainTextEncoder',
+  'lrScheduler',
+  'lrSchedulerNumCycles',
+  'minSnrGamma',
+  'networkDim',
+  'networkAlpha',
+  'noiseOffset',
+  'optimizerType',
+  'seed',
+  'fp8Base',
+  'blocksToSwap',
+  'vParameterization',
+  'zeroTerminalSnr',
+  'trainingData',
+  'samples',
+  'clipLModel',
+  'textEncoderModel',
+  'vaeModel',
+] as const satisfies readonly (keyof KohyaInput)[];
+
+function continueKohyaInput(
+  input: Record<string, unknown>,
+  epochs: number,
+  steps: number | undefined,
+  continueFrom: string,
+  trace: string
+) {
+  if (epochs > 20 || (steps !== undefined && steps > TARGET_STEPS.max))
+    throw new Error(
+      'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
+    );
+  return {
+    ...Object.fromEntries(
+      KOHYA_CONTINUE_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]])
+    ),
+    engine: 'kohya',
+    maxTrainEpochs: epochs,
+    ...(steps ? { steps } : {}),
+    continueFrom,
+    trace,
   };
 }
 

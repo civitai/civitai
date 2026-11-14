@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { trainingWhatIf } from './orchestrator-core';
+import { buildKohyaInput } from './kohya-training';
 import { cardByType } from '$lib/data/trainingModels';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
@@ -32,6 +34,12 @@ const headBlob = vi.fn();
 vi.mock('@civitai/orchestration-client', () => ({
   Air: {
     isAir: () => false,
+    parseSafe: (air: string) => {
+      const match = /^urn:air:([^:]+):([^:]+):([^:]+):(.+)$/.exec(air);
+      return match
+        ? { ecosystem: match[1], type: match[2], source: match[3], id: match[4] }
+        : undefined;
+    },
     stringify: (p: Record<string, string>) =>
       `urn:air:${p.ecosystem}:${p.type}:${p.source}:${p.id}@${p.version}`,
   },
@@ -1132,6 +1140,160 @@ describe('the checkpoint a run actually trains', () => {
         status: parseServiceStatus({ blockedModels: [customAir] }),
       })
     ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+});
+
+describe('Kohya training', () => {
+  const model = 'urn:air:sdxl:checkpoint:civitai:795765@889818';
+  const run = (): TrainingRunInput => ({
+    ...baseRun(),
+    engine: 'kohya',
+    model,
+    lrScheduler: 'cosine_with_restarts',
+    negativePrompt: 'blurry',
+    items: [
+      { air: 'blob-1', caption: '1girl' },
+      { air: 'blob-2', caption: 'OHWX, portrait' },
+    ],
+    kohya: {
+      numRepeats: 20,
+      enableBucket: false,
+      lrSchedulerNumCycles: 4,
+      vParameterization: true,
+      seed: 123,
+    },
+    shuffleTokens: true,
+    keepTokens: 1,
+    noiseOffset: 0.03,
+    minSnrGamma: 0,
+  });
+
+  it('quotes and submits the same config through the new training route', async () => {
+    const config = run();
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 300 } } });
+    await trainingWhatIf(client, { ...config, imageCount: 2 });
+    const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya' } });
+    await submitTraining(client, config);
+    const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    const { trainingData: _data, samples: _samples, trace: _trace, ...quoteConfig } = quoted.input;
+    const {
+      trainingData,
+      samples: _submittedSamples,
+      trace: _submittedTrace,
+      ...submitConfig
+    } = submitted.input;
+    expect(quoted.$type).toBe('training');
+    expect(submitted.$type).toBe('training');
+    expect(submitted.input.samples.negativePrompt).toBe('blurry');
+    expect(quoteConfig).toEqual(submitConfig);
+    expect(submitConfig).toMatchObject({
+      engine: 'kohya',
+      model,
+      maxTrainEpochs: 10,
+      steps: 2000,
+      numRepeats: 20,
+      trainBatchSize: 4,
+      unetLR: 0.0005,
+      textEncoderLR: 0.00005,
+      trainTextEncoder: true,
+      shuffleCaption: true,
+      keepTokens: 1,
+      lrSchedulerNumCycles: 4,
+      vParameterization: true,
+    });
+    expect(trainingData.items.map((item: { caption: string }) => item.caption)).toEqual([
+      'ohwx, 1girl',
+      'OHWX, portrait',
+    ]);
+    for (const key of ['usesStepPricing', 'ecosystem', 'epochs', 'lr', 'batchSize', 'triggerWord'])
+      expect(submitted.input).not.toHaveProperty(key);
+    expect(config.items[0]!.caption).toBe('1girl');
+  });
+
+  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma'])(
+    'accepts an arbitrary compatible %s checkpoint',
+    async (family) => {
+      const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
+      getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+      headBlob.mockResolvedValue({ data: {}, response: { ok: true } });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom-kohya' } });
+      const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
+      await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], { checkText });
+      const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      expect(input.model).toBe(customModel);
+      if (family === 'flux1' || family === 'chroma') {
+        expect(input).toMatchObject({
+          noiseOffset: 0,
+          minSnrGamma: 0,
+          clipSkip: 1,
+          fp8Base: true,
+          blocksToSwap: 18,
+        });
+        expect(input).not.toHaveProperty('vParameterization');
+      }
+      if (family === 'chroma')
+        expect(input).toMatchObject({ textEncoderLR: 0, trainTextEncoder: false });
+    }
+  );
+
+  it.each([
+    { batchSize: 10 },
+    { epochs: 21 },
+    { networkDim: 257 },
+    { resolution: 1000 },
+    { kohya: { numRepeats: 0 } },
+    { kohya: { seed: -1 } },
+    { minSnrGamma: 2.5 },
+    { optimizer: 'Automagic' },
+    { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
+    { customModel: 'urn:air:sdxl:lora:civitai:1@2' },
+  ])('refuses invalid config before submission: %j', async (invalid) => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText })
+    ).rejects.toThrow();
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('leaves SDXL prediction mode to checkpoint metadata by default', () => {
+    const input = buildKohyaInput({ ...run(), kohya: {} }, { type: 'blobs', items: [] }, 'none');
+    expect(input).not.toHaveProperty('vParameterization');
+    expect(input).not.toHaveProperty('zeroTerminalSnr');
+  });
+
+  it('preserves Kohya config and trigger checks when training further without echoing read-only fields', async () => {
+    const input = buildKohyaInput(run(), { type: 'blobs', items: [] }, 'events');
+    getWorkflow.mockResolvedValue({
+      data: {
+        metadata: { trigger: 'ohwx' },
+        steps: [
+          {
+            $type: 'training',
+            input: { ...input, usesStepPricing: true },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 200 } } });
+    await continueTrainingWhatIf(client, opts);
+    const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-further' } });
+    const check = vi.fn(async () => undefined);
+    await continueTraining(client, opts, { checkText: check });
+    expect(check).toHaveBeenCalledWith({ triggerWord: 'ohwx' });
+    const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(submitted).toEqual(quoted);
+    expect(submitted).toMatchObject({
+      ...input,
+      maxTrainEpochs: 5,
+      steps: 1000,
+      continueFrom: 'urn:air:sdxl:lora:orchestrator:blob@blob-10',
+    });
+    expect(submitted).not.toHaveProperty('usesStepPricing');
+    expect(submitted).not.toHaveProperty('ecosystem');
   });
 });
 

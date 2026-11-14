@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.496",
+  "version": "5.1.497",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -66,6 +66,10 @@
     "release:assistant-runner:patch": "node scripts/release-app.mjs apps/assistant-runner assistant-runner-v patch",
     "release:assistant-runner:minor": "node scripts/release-app.mjs apps/assistant-runner assistant-runner-v minor",
     "release:assistant-runner:major": "node scripts/release-app.mjs apps/assistant-runner assistant-runner-v major",
+    "release:feed-go": "pnpm run release:feed-go:patch",
+    "release:feed-go:patch": "node scripts/release-app.mjs apps/feed-go feed-go-v patch",
+    "release:feed-go:minor": "node scripts/release-app.mjs apps/feed-go feed-go-v minor",
+    "release:feed-go:major": "node scripts/release-app.mjs apps/feed-go feed-go-v major",
     "yolo": "pnpm run release",
     "seed:scanner-policies": "tsx --env-file=.env scripts/seed-scanner-policies.ts",
     "build:registry-adapter": "node scripts/build-registry-adapter.mjs",

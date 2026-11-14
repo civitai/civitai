@@ -496,3 +496,26 @@ describe('GET /api/v1/models/[id] — a Public training dataset', () => {
     expect(file(res, 11).metadata).toEqual({ format: 'SafeTensor', size: 'pruned', fp: 'fp16' });
   });
 });
+
+describe('GET /api/v1/models/[id] — creator avatar', () => {
+  function withUser(user: Record<string, unknown>) {
+    mockGetModelsWithVersions.mockImplementation(async ({ input }: any) => ({
+      items: [{ ...modelItem(input.ids[0]), user: { username: 'creator', ...user } }],
+    }));
+  }
+
+  it('serves no avatar for a user with only the unrated image', async () => {
+    withUser({ image: 'unrated.png', profilePicture: null });
+    const res: any = await invoke('7');
+    expect(res.body.creator.image).toBeNull();
+  });
+
+  it('serves a rated avatar within the route level (control)', async () => {
+    withUser({
+      image: 'unrated.png',
+      profilePicture: { url: 'avatar.png', type: 'image', nsfwLevel: 4 },
+    });
+    const res: any = await invoke('7');
+    expect(res.body.creator.image).toBe('avatar.png');
+  });
+});
