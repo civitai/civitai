@@ -43,20 +43,32 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
   const title = track.title || 'Untitled song';
   const { cover, accent } = useMusicPlayerCover(image.id);
   const moreFrom = useMoreFromCreator(image, { enabled: revealed });
-  const { data: lyrics, isLoading: lyricsLoading } = trpc.image.getSongLyrics.useQuery(
-    { id: image.id },
-    { enabled: revealed }
-  );
+  const {
+    data: lyrics,
+    isLoading: lyricsLoading,
+    isError: lyricsFailed,
+  } = trpc.image.getSongLyrics.useQuery({ id: image.id }, { enabled: revealed });
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === image.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === image.id && s.playing);
 
-  const play = () =>
+  // Up next reads "Next from <name>", so the list is named by the creator alone.
+  const play = (startAtSec?: number) =>
     store().playFromList({
-      name: moreFrom.name,
+      name: image.user.username || moreFrom.name,
       tracks: [image, ...moreFrom.songs].map(songTrack),
       index: 0,
+      startAtSec,
     });
   const togglePlay = () => (isCurrent ? store().togglePlay() : play());
+  const lyricsState = !revealed
+    ? 'hidden'
+    : lyricsLoading
+    ? 'loading'
+    : lyricsFailed
+    ? 'failed'
+    : lyrics?.length
+    ? 'lyrics'
+    : 'none';
 
   return (
     <div
@@ -71,14 +83,14 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
     >
       <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px]">
         <div
-          className="relative h-[300px] w-full shrink-0 rounded-3xl @md:size-80"
+          className="relative h-[300px] w-full shrink-0 rounded-2xl @md:size-80 @md:rounded-3xl"
           style={{ boxShadow: `0 20px 60px ${accentAt(40)}` }}
         >
           <SongArt
             url={revealed ? cover?.url : undefined}
             width={320}
             iconSize={72}
-            className="size-full rounded-3xl"
+            className="size-full rounded-2xl @md:rounded-3xl"
           />
           {isCurrent && (
             <span className="absolute bottom-3.5 left-3.5 flex items-center gap-2 rounded-[18px] bg-[#141517CC] px-3 py-[7px] text-xs font-semibold">
@@ -94,7 +106,11 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
                 onClick={togglePlay}
                 className="absolute bottom-3.5 right-3.5 flex size-16 items-center justify-center rounded-full bg-white text-dark-7 shadow-[0_8px_24px_#00000066] transition-transform hover:scale-105 @md:bottom-[22px] @md:right-[22px] @md:size-[72px]"
               >
-                {playing ? <IconPlayerPauseFilled size={26} /> : <IconPlayerPlayFilled size={26} />}
+                {playing ? (
+                  <IconPlayerPauseFilled className="size-[26px] @md:size-[30px]" />
+                ) : (
+                  <IconPlayerPlayFilled className="size-[26px] @md:size-[30px]" />
+                )}
               </button>
             </Tooltip>
           )}
@@ -112,14 +128,36 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
       </div>
       <div
         data-lyrics-scroll
-        className="min-w-0 flex-1 @md:max-h-full @md:self-stretch @md:overflow-y-auto @md:py-[10%]"
+        className="min-w-0 flex-1 @md:max-h-full @md:self-stretch @md:overflow-y-auto @md:py-[10%] @md:[mask-image:linear-gradient(to_bottom,transparent,black_8%,black_92%,transparent)]"
       >
-        {!revealed || lyricsLoading ? null : lyrics?.length ? (
-          <SongLyrics songId={image.id} lines={lyrics} play={play} />
-        ) : (
-          <Instrumental playing={playing} />
-        )}
+        <div className="@md:flex @md:min-h-full @md:flex-col @md:justify-center">
+          {lyricsState === 'loading' && <LyricsPlaceholder />}
+          {lyricsState === 'failed' && (
+            <p className="m-0 text-sm text-white/70">Lyrics couldn&apos;t load.</p>
+          )}
+          {lyricsState === 'lyrics' && lyrics && (
+            <SongLyrics songId={image.id} lines={lyrics} play={play} />
+          )}
+          {lyricsState === 'none' && <Instrumental playing={playing} />}
+        </div>
       </div>
+    </div>
+  );
+}
+
+// Line widths for the loading bars, so they read as lines of text.
+const PLACEHOLDER_WIDTHS = ['72%', '88%', '64%', '80%', '56%'];
+
+function LyricsPlaceholder() {
+  return (
+    <div aria-label="Loading lyrics" role="status" className="flex flex-col gap-4">
+      {PLACEHOLDER_WIDTHS.map((width) => (
+        <span
+          key={width}
+          className="h-6 animate-pulse rounded-md bg-white/10 @md:h-[46px]"
+          style={{ width }}
+        />
+      ))}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
@@ -73,7 +74,11 @@ beforeAll(async () => {
       (205, ${OWNER}, 1, 'image', 'Scanned', NULL),
       (206, ${OWNER}, 1, 'audio', 'Scanned', NULL),
       (207, ${OWNER}, 1, 'audio', 'Scanned', 'AiNotVerified'),
-      (208, ${OWNER}, 1, 'audio', 'Scanned', NULL);
+      (208, ${OWNER}, 1, 'audio', 'Scanned', NULL),
+      (210, ${OWNER}, 1, 'audio', 'Scanned', NULL),
+      (211, ${OWNER}, 1, 'audio', 'Scanned', NULL);
+    INSERT INTO "Image" (id, "userId", "postId", type, ingestion, "nsfwLevel") VALUES
+      (209, ${OWNER}, 1, 'audio', 'Scanned', ${NsfwLevel.Blocked});
     INSERT INTO "TrackLyrics" ("imageId", text, lines) VALUES
       (201, 'x', '${JSON.stringify(TIMED)}'),
       (202, 'x', '${JSON.stringify(TIMED)}'),
@@ -81,9 +86,14 @@ beforeAll(async () => {
       (204, 'x', '${JSON.stringify(TIMED)}'),
       (205, 'x', '${JSON.stringify(TIMED)}'),
       (207, 'x', '${JSON.stringify(TIMED)}'),
-      (208, 'x', '[{"t": "soon", "text": 1}]');
+      (208, 'x', '[{"t": "soon", "text": 1}]'),
+      (209, 'x', '${JSON.stringify(TIMED)}'),
+      (210, 'x', '${JSON.stringify(TIMED)}'),
+      (211, 'x', '${JSON.stringify(TIMED)}');
     INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES
-      ('TrackLyrics', 202, 'csam', 'Pending');
+      ('TrackLyrics', 202, 'csam', 'Pending'),
+      ('TrackLyrics', 210, 'csam', 'Confirmed'),
+      ('TrackLyrics', 211, 'csam', 'Dismissed');
   `);
   const raw = pgliteRaw(db);
   const queryRaw = ((s: TemplateStringsArray, ...v: unknown[]) => raw.queryRaw(s, ...v)) as never;
@@ -120,6 +130,21 @@ describe('getSongLyrics', () => {
     expect(await read(202, owner)).toBeNull();
     expect(await read(202, moderator)).toBeNull();
     expect(await read(201, owner)).toEqual(TIMED);
+  });
+
+  it('returns nothing for a confirmed lyrics hold, and the lines once a hold was dismissed', async () => {
+    expect(await read(210)).toBeNull();
+    expect(await read(211)).toEqual(TIMED);
+  });
+
+  it('keeps a blocked song lyric-less for the owner and moderators, whom visibility lets through', async () => {
+    const owner = { user: { id: OWNER, isModerator: false }, features: { music: true } };
+    const moderator = { user: { id: VIEWER, isModerator: true }, features: { music: true } };
+    // A Blocked level and a block reason: the song shows to these viewers, its lyrics do not.
+    for (const ctx of [owner, moderator]) {
+      expect(await read(209, ctx)).toBeNull();
+      expect(await read(207, ctx)).toBeNull();
+    }
   });
 
   it('returns nothing for a song without lyrics, with lines of the wrong shape, or an unknown id', async () => {

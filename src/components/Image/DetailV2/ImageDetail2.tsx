@@ -444,10 +444,10 @@ function ImageDetail2Content() {
                   isSong && 'isolate'
                 )}
               >
-                {isSong && <SongStageBackdrop songId={image.id} />}
                 <ImageGuard2 image={image} explain={false}>
-                  {() => (
+                  {(show) => (
                     <>
+                      {isSong && show && <SongStageBackdrop songId={image.id} />}
                       {/* HEADER */}
                       <div className="flex justify-between gap-3 p-3 @md:gap-8">
                         <div className="flex shrink-0 items-center gap-1">
@@ -788,7 +788,8 @@ function ImageDetail2Content() {
                       <ImageDetailPostCard post={post} />
                       <ImageProcess imageId={image.id} />
                       <ImageRemixOfDetails imageId={image.id} />
-                      <RemixGalleryCard imageId={image.id} />
+                      {/* Its copy and its entries are for images and videos. */}
+                      {!isSong && <RemixGalleryCard imageId={image.id} />}
                       <ImageGenerationData imageId={image.id} collapsible />
                       {/* <ImageRemixesDetails imageId={image.id} /> */}
                       {/* {!hideAds && <AdUnitSide_3 />} */}

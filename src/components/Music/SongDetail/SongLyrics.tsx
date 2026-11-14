@@ -13,9 +13,16 @@ import { formatPlaybackTime } from '~/utils/audio-player';
 
 const store = useMusicPlayerStore.getState;
 
-// Pencil `bgZ7u`: synced lines at 40px, plain lyrics at 31px; 20px on a phone (`dVjl0`).
-const syncedLine = 'text-xl font-semibold leading-[1.15] @md:text-[40px]';
-const plainLine = 'text-xl font-semibold leading-[1.15] text-white/85 @md:text-[31px]';
+// Pencil `bgZ7u`: synced lines at 40px, plain lyrics at 31px; 20px bold on a phone (`dVjl0`).
+const syncedLine = 'text-xl leading-[1.15] @md:text-[40px]';
+const plainLine =
+  'text-xl font-bold leading-[1.15] text-white/80 @md:text-[31px] @md:font-semibold @md:text-white/85';
+// A named group: the detail view's own `group` wraps the stage.
+const lineTone = {
+  current: 'font-bold text-white',
+  past: 'font-bold text-white/80 @md:font-semibold @md:text-white/45 @md:group-hover/lyric:text-white/80',
+  next: 'font-bold text-white/80 @md:font-semibold @md:text-white/70 @md:group-hover/lyric:text-white',
+};
 
 /** The nearest scroll container that actually scrolls: the lyrics column, or on a phone the stage. */
 function scrollParentOf(element: HTMLElement) {
@@ -38,8 +45,8 @@ export function SongLyrics({
 }: {
   songId: number;
   lines: LyricLine[];
-  /** Starts this song in the global player. */
-  play: () => void;
+  /** Starts this song in the global player, at `startAtSec` when given. */
+  play: (startAtSec?: number) => void;
 }) {
   const rows = useMemo(() => toLyricRows(lines), [lines]);
   const synced = useMemo(() => isSyncedLyrics(lines), [lines]);
@@ -61,9 +68,10 @@ export function SongLyrics({
     parent.scrollTo({ top: parent.scrollTop + offset, behavior: 'smooth' });
   }, [current]);
 
+  // Another song is current: start this one at the line rather than seek across the switch.
   const seek = (t: number) => {
-    if (!isCurrent) play();
-    else if (!store().playing) store().resume();
+    if (!isCurrent) return play(t / 1000);
+    if (!store().playing) store().resume();
     seekMusicPlayer(t / 1000);
   };
 
@@ -74,9 +82,14 @@ export function SongLyrics({
           return (
             <span
               key={i}
-              className={clsx('text-[13px] font-medium text-white/55', synced && '@md:pl-[21px]')}
+              className={clsx(
+                'text-[10px] font-bold text-[#8c8fa3] @md:text-[13px] @md:font-medium @md:text-white/55',
+                synced && '@md:pl-[21px]'
+              )}
             >
+              <span className="@md:hidden">[</span>
               {row.label}
+              <span className="@md:hidden">]</span>
             </span>
           );
         if (!synced)
@@ -88,10 +101,10 @@ export function SongLyrics({
 
         const isActive = row.index === current;
         const tone = isActive
-          ? 'font-bold text-white'
+          ? lineTone.current
           : current >= 0 && row.index < current
-          ? 'text-white/45 group-hover:text-white/80'
-          : 'text-white/70 group-hover:text-white';
+          ? lineTone.past
+          : lineTone.next;
         const marker = (
           <span
             aria-hidden
@@ -118,7 +131,7 @@ export function SongLyrics({
             aria-current={isActive || undefined}
             title={`Play from ${formatPlaybackTime(t / 1000)}`}
             onClick={() => seek(t)}
-            className="group flex gap-4 rounded-md text-left [&_span]:transition-colors [&_span]:duration-200"
+            className="group/lyric flex gap-4 rounded-md text-left [&_span]:transition-colors [&_span]:duration-200"
           >
             {marker}
             <span className={clsx(syncedLine, tone, 'min-w-0 flex-1')}>{row.text}</span>

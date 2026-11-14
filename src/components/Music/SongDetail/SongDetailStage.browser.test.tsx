@@ -8,10 +8,13 @@ import type * as Trpc from '~/utils/trpc';
 
 const lyrics = vi.hoisted(() => ({
   lines: null as LyricLine[] | null,
+  status: 'success' as 'success' | 'loading' | 'error',
   queried: [] as { id: number; enabled?: boolean }[],
 }));
 const moreFrom = vi.hoisted(() => ({ songs: [] as unknown[] }));
 const seek = vi.hoisted(() => vi.fn());
+/** The song current in the player at each seek, so a seek that lands on the old song shows. */
+const seekedSongs = vi.hoisted(() => [] as (number | undefined)[]);
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
@@ -19,9 +22,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'image.getSongLyrics': {
       useQuery: (input: { id: number }, options?: { enabled?: boolean }) => {
         lyrics.queried.push({ id: input.id, enabled: options?.enabled });
-        return options?.enabled === false
-          ? { data: undefined, isLoading: false }
-          : { data: lyrics.lines, isLoading: false };
+        if (options?.enabled === false) return { data: undefined, isLoading: false };
+        if (lyrics.status === 'loading') return { data: undefined, isLoading: true };
+        if (lyrics.status === 'error') return { data: undefined, isLoading: false, isError: true };
+        return { data: lyrics.lines, isLoading: false, isError: false };
       },
     },
   }),
@@ -71,9 +75,13 @@ beforeEach(() => {
   player().close();
   useMusicPlayheadStore.setState({ currentTime: 0, duration: 0 });
   lyrics.lines = TIMED;
+  lyrics.status = 'success';
   lyrics.queried = [];
   moreFrom.songs = [palm];
-  seek.mockReset();
+  seekedSongs.length = 0;
+  seek.mockReset().mockImplementation(() => {
+    seekedSongs.push(useMusicPlayerStore.getState().current?.id);
+  });
 });
 
 describe('the song stage', () => {
@@ -92,7 +100,8 @@ describe('the song stage', () => {
 
     expect(player().current?.id).toBe(1);
     expect(player().playing).toBe(true);
-    expect(player().listName).toBe('More from neonwave');
+    // Up next shows "Next from neonwave"; "More from" is the card's title.
+    expect(player().listName).toBe('neonwave');
     expect(player().list.map((t) => t.id)).toEqual([2]);
   });
 
@@ -161,11 +170,12 @@ describe('synced lyrics', () => {
 
     await line('Joystick heartbeat').click();
     expect(seek).toHaveBeenCalledWith(9);
+    expect(seekedSongs).toEqual([1]);
     expect(player().playing).toBe(true);
     expect(player().current?.id).toBe(1);
   });
 
-  test('a click on a line while another song plays starts this one, then seeks', async () => {
+  test('a click on a line while another song plays starts this one at the line, never seeking the other', async () => {
     player().playTrack({
       id: 99,
       url: 'other',
@@ -177,8 +187,10 @@ describe('synced lyrics', () => {
 
     await line('Every high score').click();
     expect(player().current?.id).toBe(1);
+    expect(player().playing).toBe(true);
+    expect(player().playback?.startAtSec).toBe(5);
     expect(player().list.map((t) => t.id)).toEqual([2]);
-    expect(seek).toHaveBeenCalledWith(5);
+    expect(seekedSongs.filter((id) => id !== 1)).toEqual([]);
   });
 
   test('a line without a time renders as text: no button, no seek', async () => {
@@ -186,7 +198,7 @@ describe('synced lyrics', () => {
     await expect.element(lyricsBox().getByText('hums in blue')).toBeInTheDocument();
     await expect.element(line('hums in blue')).not.toBeInTheDocument();
     // The section label is a label, not a line.
-    await expect.element(lyricsBox().getByText('Verse 1', { exact: true })).toBeInTheDocument();
+    await expect.element(lyricsBox().getByText('[Verse 1]')).toBeInTheDocument();
     await expect.element(line('[Verse 1]')).not.toBeInTheDocument();
   });
 });
@@ -211,5 +223,20 @@ test('a song with no lyrics shows the instrumental stage', async () => {
   lyrics.lines = null;
   await render();
   await expect.element(page.getByText('No lyrics on this one.')).toBeInTheDocument();
+  await expect.element(lyricsBox()).not.toBeInTheDocument();
+});
+
+test('lyrics still loading show placeholder lines, not the instrumental card', async () => {
+  lyrics.status = 'loading';
+  await render();
+  await expect.element(page.getByRole('status', { name: 'Loading lyrics' })).toBeInTheDocument();
+  await expect.element(page.getByText('No lyrics on this one.')).not.toBeInTheDocument();
+});
+
+test('lyrics that failed to load say so, and do not claim the song is instrumental', async () => {
+  lyrics.status = 'error';
+  await render();
+  await expect.element(page.getByText("Lyrics couldn't load.")).toBeInTheDocument();
+  await expect.element(page.getByText('No lyrics on this one.')).not.toBeInTheDocument();
   await expect.element(lyricsBox()).not.toBeInTheDocument();
 });

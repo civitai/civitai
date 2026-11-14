@@ -16,38 +16,52 @@ import { ViewerBrowsingLevelScope } from '~/components/BrowsingLevel/BrowsingLev
  * for a read of a song's remixes; until then the card is More from only, and absent when the
  * creator has no other song.
  */
+const ROW_SIZE = 3;
+
+/** `items` in rows of at most `size`, as even as they split: 4 is 2 + 2, 5 is 3 + 2. */
+function evenRows<T>(items: T[], size: number) {
+  const perRow = Math.ceil(items.length / Math.ceil(items.length / size));
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += perRow) rows.push(items.slice(i, i + perRow));
+  return rows;
+}
+
 function SongMoreFromCardContent({ song }: { song: SongImage }) {
   const { songs, name } = useMoreFromCreator(song);
   const covers = useMusicPlayerCovers(songs.map((s) => s.id));
   if (!songs.length) return null;
   return (
     <CollapsibleCard title={name} icon={<IconMusic />} storageKey="song-more-from">
-      <ul className="m-0 grid list-none grid-cols-3 gap-2.5 p-0">
-        {songs.map((other) => {
-          const track = songTrack(other);
-          return (
-            <li key={other.id}>
-              <NextLink
-                href={`/images/${other.id}`}
-                className="flex flex-col items-center gap-1.5 rounded-lg p-1 text-center hover:bg-gray-1 dark:hover:bg-dark-5"
-              >
-                <SongArt
-                  url={covers.get(other.id)?.url}
-                  width={56}
-                  iconSize={24}
-                  className="size-14 rounded-[10px]"
-                />
-                <span className="w-full truncate text-xs font-semibold text-black dark:text-white">
-                  {track.title || 'Untitled song'}
-                </span>
-                <span className={clsx('text-[11px]', dimmed)}>
-                  {formatPlaybackTime(track.durationSec)}
-                </span>
-              </NextLink>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="flex flex-col gap-2.5">
+        {evenRows(songs, ROW_SIZE).map((row) => (
+          <ul key={row[0].id} className="m-0 flex list-none gap-2.5 p-0">
+            {row.map((other) => {
+              const track = songTrack(other);
+              return (
+                <li key={other.id} className="min-w-0 flex-1">
+                  <NextLink
+                    href={`/images/${other.id}`}
+                    className="flex flex-col items-center gap-1.5 rounded-lg p-1 text-center hover:bg-gray-1 dark:hover:bg-dark-5"
+                  >
+                    <SongArt
+                      url={covers.get(other.id)?.url}
+                      width={56}
+                      iconSize={24}
+                      className="size-14 rounded-[10px]"
+                    />
+                    <span className="w-full truncate text-xs font-semibold text-black dark:text-white">
+                      {track.title || 'Untitled song'}
+                    </span>
+                    <span className={clsx('text-[11px]', dimmed)}>
+                      {formatPlaybackTime(track.durationSec)}
+                    </span>
+                  </NextLink>
+                </li>
+              );
+            })}
+          </ul>
+        ))}
+      </div>
     </CollapsibleCard>
   );
 }

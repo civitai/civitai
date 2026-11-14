@@ -257,6 +257,7 @@ export const imageRouter = router({
   getSongLyrics: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) => getSongLyrics({ id: input.id, ctx })),
 
   updateAccetableMinor: protectedProcedure

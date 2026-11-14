@@ -37,7 +37,7 @@ const song = (metadata: Record<string, unknown>) => ({
   stats: {},
 });
 
-const state = vi.hoisted(() => ({ music: true, image: null as unknown }));
+const state = vi.hoisted(() => ({ music: true, show: true, image: null as unknown }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
@@ -177,7 +177,7 @@ vi.mock('~/components/Gated/Gated', () => ({
 }));
 vi.mock('~/components/ImageGuard/ImageGuard2', async (o) => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {
-    return <>{children(true)}</>;
+    return <>{children(state.show)}</>;
   }
   ImageGuard2.BlurToggle = function BlurToggle() {
     return null;
@@ -275,6 +275,7 @@ function renderDetail() {
 beforeEach(async () => {
   await page.viewport(1440, 900);
   state.music = true;
+  state.show = true;
   state.image = song({});
 });
 
@@ -288,6 +289,19 @@ describe('a song in the image detail view', () => {
     await expect.element(page.getByTestId('share-button').first()).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Save' }).first()).toBeInTheDocument();
     await expect.element(page.getByTestId('remix-menu').first()).toBeInTheDocument();
+  });
+
+  test('paints no cover backdrop while the image guard hides the song', async () => {
+    state.show = false;
+    await renderDetail();
+    await expect.element(page.getByTestId('reactions')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="song-backdrop"]')).toBeNull();
+  });
+
+  test('leaves out the image-only remix gallery card', async () => {
+    await renderDetail();
+    await expect.element(page.getByTestId('song-more-from')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="remix-gallery"]')).toBeNull();
   });
 
   test('has no Remix when the creator turned remixing off', async () => {
@@ -305,5 +319,6 @@ describe('a song in the image detail view', () => {
     expect(document.querySelector('[data-testid="song-backdrop"]')).toBeNull();
     expect(document.querySelector('[data-testid="song-up-next"]')).toBeNull();
     expect(document.querySelector('[data-testid="song-more-from"]')).toBeNull();
+    await expect.element(page.getByTestId('remix-gallery')).toBeInTheDocument();
   });
 });
