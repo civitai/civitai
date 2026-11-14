@@ -13,6 +13,7 @@ import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 /** How far back the caller's workflows are scanned; outputs of older ones are denied. */
 export const OWNED_BLOB_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export const OWNED_BLOB_PAGE_SIZE = 100;
+/** Only the newest 500 workflows in the window are scanned; outputs of older ones are denied. */
 export const MAX_OWNED_BLOB_PAGES = 5;
 const SCAN_TTL_MS = CacheTTL.xs * 5 * 1000;
 
