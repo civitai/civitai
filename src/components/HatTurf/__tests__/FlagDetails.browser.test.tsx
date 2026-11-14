@@ -66,6 +66,25 @@ describe('the flag details popover', () => {
     await expect.poll(() => text('flag-details-gap')).toBe('Blue leads by 5');
   });
 
+  test('tapping the clock chip opens the details and never the card link under it', async () => {
+    const onCard = vi.fn();
+    document.addEventListener('click', onCard);
+    await renderWithProviders(
+      <FlagRaceContext.Provider value={{ event: 'e', summary: summary(false, { Green: 2 }) }}>
+        <FlagBadge imageId={7} />
+      </FlagRaceContext.Provider>
+    );
+    const chip = await vi.waitFor(() => {
+      const el = document.querySelector('[data-testid="flag-badge-clock"]') as HTMLElement | null;
+      if (!el) throw new Error('chip not rendered');
+      return el;
+    });
+    chip.click();
+    await expect.poll(() => !!document.querySelector('[data-testid="flag-details"]')).toBe(true);
+    document.removeEventListener('click', onCard);
+    expect(onCard).not.toHaveBeenCalled();
+  });
+
   test('a closed flag names its winner and drops the gap', async () => {
     await open(summary(true, { Green: 14, Blue: 9 }, ['Green']));
     await expect.poll(() => text('flag-details-winner')).toBe('Green won 2.5k pts');

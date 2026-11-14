@@ -120,11 +120,19 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
         </Popover.Dropdown>
       </Popover>
       {(closed || clock) && (
-        <span
+        <button
+          type="button"
+          aria-label={`${label} Show details`}
+          onClick={(event) => {
+            // Inside the card's link, like the badge: a tap shows the details, not the image.
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(true);
+          }}
           className={clsx(
             classes.chip,
             classes.count,
-            'inline-flex h-[18px] items-center gap-0.5 rounded-full pl-1.5'
+            'inline-flex h-[18px] cursor-pointer items-center gap-0.5 rounded-full border-0 pl-1.5'
           )}
           style={
             !closed && clock?.phase === 'final'
@@ -151,7 +159,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
               )}
             </>
           )}
-        </span>
+        </button>
       )}
     </div>
   );
