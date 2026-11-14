@@ -26,6 +26,7 @@ import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-lo
 import { currentSerializeCtx, instrumentSerialize } from '~/server/logging/trpc-serialize-log';
 import { buildTransformer, onDevalueWriteFallback } from '~/shared/utils/trpc-union-transformer';
 import { responseWriteSerialize, responseWritesDevalue } from '~/server/trpc/response-write-format';
+import { captureFeedGoShadowResponse } from '~/server/trpc/feed-go-shadow';
 import { logToAxiom } from '~/server/logging/client';
 import { createFallbackDedup, fallbackDedupKeys } from '~/server/logging/devalue-fallback-log';
 import { clientNeedsUpdate, getClientConfigCached } from '~/server/utils/client-config';
@@ -124,11 +125,15 @@ const t = initTRPC
       // uses, so the freeze-instrumentation frame name matches what is ACTUALLY
       // written (superjson vs devalue). The wrappers are pass-through.
       const devalue = responseWritesDevalue();
-      return instrumentSerialize(() =>
+      const written = instrumentSerialize(() =>
         withSpan(`trpc:serialize:${devalue ? 'devalue' : 'superjson'}`, () =>
           responseWriteSerialize(data)
         )
       );
+      // feed-go shadow: keeps a reference to what was written for a sampled request (one integer
+      // compare when no sample is in flight). See src/server/trpc/feed-go-shadow.ts.
+      captureFeedGoShadowResponse(data, written, devalue);
+      return written;
     }),
     errorFormatter,
   });

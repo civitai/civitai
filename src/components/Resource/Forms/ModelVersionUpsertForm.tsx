@@ -68,13 +68,13 @@ import {
   constants,
   EARLY_ACCESS_CONFIG,
   isNonCommercialBaseModel,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/generation.constants';
 import {
   getBaseModelConfig,
   getEcosystemTurboSettings,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
 import {
   BASE_MODEL_ATTESTATION_STATEMENT,
@@ -912,7 +912,7 @@ export function ModelVersionUpsertForm({
 
   // Check if current base model selection violates NSFW restrictions
   const hasNsfwBaseModelViolation =
-    model?.nsfw && baseModel && nsfwRestrictedBaseModels.includes(baseModel as BaseModel);
+    model?.nsfw && baseModel && isMatureRestricted(baseModel, 'models');
 
   const canSave = !hasNsfwBaseModelViolation;
 
@@ -1111,7 +1111,7 @@ export function ModelVersionUpsertForm({
                     model does not permit NSFW content. Please select a different base model.
                   </Text>
                   <Text size="sm" mt="xs">
-                    Restricted base models: {nsfwRestrictedBaseModels.join(', ')}
+                    Restricted base models: {matureRestrictedBaseModels('models').join(', ')}
                   </Text>
                 </Alert>
               )}

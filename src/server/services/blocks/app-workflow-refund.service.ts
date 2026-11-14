@@ -30,6 +30,7 @@ import {
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 // Moderator refund of App Blocks spend, for a SUCCEEDED workflow that delivered nothing. It moves
 // money — the user's generation legs, found by id on the orchestrator's own `transactions.list` (they
@@ -203,7 +204,7 @@ async function inspectWorkflow(
     const legs: ChargeLeg[] = [];
     for (const debit of debits) {
       if (!debit.id || !BUZZ_TRANSACTION_ID.test(debit.id)) continue;
-      const refundId = `refund-${debit.id}`;
+      const refundId = refundExternalTransactionId(debit.id);
       const refund = await getTransactionByExternalId(refundId);
       if (refund) facts.userIds.add(refund.toAccountId);
       legs.push({
@@ -668,7 +669,7 @@ async function executeWorkflow(plan: RefundablePlan, actorDetails: Record<string
         { workflowId: plan.workflowId, ...actorDetails },
         { readLedgerFirst: true }
       );
-      leg.refundTransactionId = `refund-${leg.transactionId}`;
+      leg.refundTransactionId = refundExternalTransactionId(leg.transactionId);
       if (created) {
         leg.status = 'refunded';
         add(leg.buzzType, leg.amount);

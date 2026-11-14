@@ -11,6 +11,7 @@ export const CSAM_HOLD_ENTITY_TYPES = [
   'ChatMessage',
   'CommentV3',
   'UserProfile',
+  'PostText',
 ] as const;
 
 export type CsamHoldEntityType = (typeof CSAM_HOLD_ENTITY_TYPES)[number];
@@ -22,6 +23,7 @@ export const CSAM_HOLD_ENTITY_LABELS: Record<CsamHoldEntityType, string> = {
   ChatMessage: 'Chat message',
   CommentV3: 'Comment',
   UserProfile: 'Profile',
+  PostText: 'Storyline text',
 };
 
 /** What a moderator can do with a pending hold, in the order the actions are offered. */
@@ -73,6 +75,7 @@ const REMOVABLE_ENTITY_TYPES: readonly string[] = [
   'Post',
   'Model',
   'Article',
+  'PostText',
 ];
 export const canRemoveHeld = (entityType: string) => REMOVABLE_ENTITY_TYPES.includes(entityType);
 

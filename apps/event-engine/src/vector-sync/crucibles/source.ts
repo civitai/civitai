@@ -10,6 +10,7 @@ import { crucibleDocument } from './document';
  * payload and filtered per query.
  */
 export const CRUCIBLE_ELIGIBLE_SQL = `c.ingestion = 'Scanned' AND i.ingestion = 'Scanned'
+  AND i."needsReview" IS NULL AND NOT i."tosViolation"
   AND c.status <> 'Cancelled' AND c."takenDownAt" IS NULL`;
 
 export type CruciblePayload = {

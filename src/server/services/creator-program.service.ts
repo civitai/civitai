@@ -82,6 +82,7 @@ import { Prisma } from '@prisma/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
 import { userUpdateCounter } from '~/server/prom/client';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 type UserCapCacheItem = {
   id: number;
@@ -1167,13 +1168,6 @@ const REFUNDED_WITHDRAWAL_STATUSES: CashWithdrawalStatus[] = [
 ];
 
 /**
- * The one external id a withdrawal's burn is refunded under. withdrawCash's failure path refunds
- * through Buzz's refund endpoint, which records `refund-<transactionId>`; using the same id here
- * makes a second refund of the same burn a duplicate to Buzz as well.
- */
-const getWithdrawalRefundExternalId = (transactionId: string) => `refund-${transactionId}`;
-
-/**
  * Whether the burn behind a withdrawal has already been refunded: a refund this path recorded on
  * the row (it always stores metadata.refundTransactionId, under either key it has used), or one on
  * the Buzz ledger under `refund-<transactionId>`, which is how withdrawCash's failure path refunds.
@@ -1185,7 +1179,7 @@ async function isWithdrawalBurnRefunded(
   metadata: CashWithdrawalMetadataSchema
 ) {
   if (metadata.refundTransactionId) return true;
-  return !!(await getTransactionByExternalId(getWithdrawalRefundExternalId(transactionId)));
+  return !!(await getTransactionByExternalId(refundExternalTransactionId(transactionId)));
 }
 
 // A claim older than this belongs to a caller that died mid-refund. Taking it over is safe because
@@ -1256,7 +1250,9 @@ export const updateCashWithdrawal = async ({
             fromAccountId: 0, // central bank
             amount: withdrawal.amount - (fees ?? 0),
             description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
-            externalTransactionId: getWithdrawalRefundExternalId(transactionId),
+            // The id Buzz's refund endpoint records, which withdrawCash's failure path uses: a
+            // second refund of the same burn is a duplicate to Buzz as well.
+            externalTransactionId: refundExternalTransactionId(transactionId),
           });
 
           metadata.refundTransactionId = transaction.transactionId;

@@ -71,7 +71,7 @@ export const setTurfOwnerOffSchema = z.object({ event: eventName, off: z.boolean
 export const removeTurfStickerSchema = z.object({ id: z.coerce.bigint().positive() });
 
 /** Hats a feed card draws per image: what the feed reads, and what a turf push carries. */
-export const TURF_FEED_STICKERS = 5;
+export const TURF_FEED_STICKERS = 10;
 
 export const turfStickersForImagesSchema = z.object({
   event: eventName,
