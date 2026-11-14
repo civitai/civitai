@@ -39,9 +39,13 @@ import {
   FEATURED_MODEL_COLLECTION_ID,
   MODELS_SEARCH_INDEX,
   normalizeMergePermissions,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
+} from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
@@ -1456,17 +1460,13 @@ export const getModelsRaw = async ({
             modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
           }
 
-          // Filter out NSFW versions for license-restricted base models
-          // Models with nsfwLevel > R cannot use base models with restricted licenses
-          if (nsfwRestrictedBaseModels.length > 0) {
-            modelVersions = modelVersions.filter(
-              (mv) =>
-                !(
-                  (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
-                  nsfwRestrictedBaseModels.includes(mv.baseModel)
-                )
-            );
-          }
+          modelVersions = modelVersions.filter(
+            (mv) =>
+              !(
+                (mv.nsfwLevel & nsfwBrowsingLevelsFlag) !== 0 &&
+                isMatureRestricted(mv.baseModel, 'models')
+              )
+          );
 
           if (hidePrivateModels || publicVersionsOnly) {
             modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
@@ -4130,14 +4130,14 @@ export const upsertModel = async (
   if (data.nsfw && 'modelVersions' in input && input.modelVersions) {
     const modelVersions = input.modelVersions as Array<{ baseModel: string }>;
     const hasRestrictedBaseModel = modelVersions.some((version) =>
-      nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+      isMatureRestricted(version.baseModel, 'models')
     );
 
     if (hasRestrictedBaseModel) {
       throw throwBadRequestError(
-        `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
-          ', '
-        )}`
+        `NSFW models cannot use base models with license restrictions. Restricted base models: ${matureRestrictedBaseModels(
+          'models'
+        ).join(', ')}`
       );
     }
   }
@@ -5054,14 +5054,14 @@ export const publishModelById = async ({
       // Validate NSFW + restricted base model combination
       if (model.nsfw) {
         const hasRestrictedBaseModel = model.modelVersions.some((version) =>
-          nsfwRestrictedBaseModels.includes(version.baseModel as BaseModel)
+          isMatureRestricted(version.baseModel, 'models')
         );
 
         if (hasRestrictedBaseModel) {
           throw throwBadRequestError(
-            `NSFW models cannot use base models with license restrictions. Restricted base models: ${nsfwRestrictedBaseModels.join(
-              ', '
-            )}`
+            `NSFW models cannot use base models with license restrictions. Restricted base models: ${matureRestrictedBaseModels(
+              'models'
+            ).join(', ')}`
           );
         }
       }

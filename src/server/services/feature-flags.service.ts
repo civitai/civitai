@@ -453,6 +453,8 @@ const featureFlags = createFeatureFlags({
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
+  imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },

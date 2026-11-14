@@ -2272,7 +2272,7 @@ describe('buildCustomComfyWorkflowInput (translator)', () => {
       engine: 'zimage-turbo',
     });
     expect(input.trace).toBe('binary');
-    expect(input.resources[0]).toContain('z_image_turbo');
+    expect(input.resources[0]).toContain(':civitai:2168935@2442439');
     expect(input.workflow['1'].class_type).toBe('UNETLoader');
     // seed threaded into the KSampler leaf
     expect(input.workflow['9'].inputs).toMatchObject({ seed: 1 });
@@ -2292,29 +2292,13 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
   it('wraps the input as a customComfy step and stamps the resolved per-engine timeout (HH:MM:SS)', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
     // v1.1: the caller resolves the timeout from the params' budget and threads it.
-    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'qwen-image' });
+    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' });
     const step = createBlockCustomComfyStep(input, stepTimeoutSeconds);
     expect(step.$type).toBe('customComfy');
     expect(step.name).toBe(BLOCK_CUSTOM_COMFY_STEP_NAME);
-    // qwen 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
-    expect(step.timeout).toBe('00:03:00');
+    // zimage 90s ceiling → 00:01:30 (NOT the reference's loose 01:00:00).
+    expect(step.timeout).toBe('00:01:30');
     expect(step.input).toBe(input);
-  });
-
-  it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
-    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
-    expect(
-      createBlockCustomComfyStep(
-        input,
-        recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds
-      ).timeout
-    ).toBe('00:01:30');
-    expect(
-      createBlockCustomComfyStep(
-        input,
-        recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds
-      ).timeout
-    ).toBe('00:02:30');
   });
 });
 

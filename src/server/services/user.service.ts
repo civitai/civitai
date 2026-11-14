@@ -349,7 +349,7 @@ export async function getUsersWithSearch({
     .map(({ deletedAt, profilePicture, image, ...user }) => ({
       ...user,
       avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
       meta: null,
     }))
     .slice(0, limit);
