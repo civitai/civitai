@@ -187,8 +187,10 @@ const CANCELED = {
 };
 
 /** The `query` argument of the Nth `getWorkflow` call (undefined if none). */
-function queryArg(n = 0): { wait?: number } | undefined {
-  return (mockGetWorkflow.mock.calls[n]?.[0] as { query?: { wait?: number } } | undefined)?.query;
+function queryArg(n = 0): { wait?: number; until?: string } | undefined {
+  return (
+    mockGetWorkflow.mock.calls[n]?.[0] as { query?: { wait?: number; until?: string } } | undefined
+  )?.query;
 }
 
 function validClaims() {
@@ -286,7 +288,10 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
     expect(result.snapshot.status).toBe('processing');
   });
 
-  it('forwards waitSeconds to the orchestrator as ?wait=<seconds>', async () => {
+  // A held read asks to return on ANY change (`until=change`), not only on completion, so a
+  // block sees queue position and progress move while it waits. The no-hold cases above and
+  // below carry no query at all, `until` included.
+  it('forwards waitSeconds to the orchestrator as ?wait=<seconds>&until=change', async () => {
     mockGetWorkflow.mockResolvedValue(SUCCEEDED);
 
     const result = await caller().pollWorkflow({
@@ -295,7 +300,7 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
       waitSeconds: 9,
     });
 
-    expect(queryArg()).toEqual({ wait: 9 });
+    expect(queryArg()).toEqual({ wait: 9, until: 'change' });
     expect(result.snapshot.status).toBe('succeeded');
   });
 
@@ -308,7 +313,7 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
       waitSeconds: 60,
     });
 
-    expect(queryArg()).toEqual({ wait: MAX_BLOCK_POLL_WAIT_SECONDS });
+    expect(queryArg()).toEqual({ wait: MAX_BLOCK_POLL_WAIT_SECONDS, until: 'change' });
   });
 
   it('drops waitSeconds: 0 back to a plain read', async () => {
@@ -326,9 +331,9 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
   // The wire schema never refuses a waitSeconds: a refused poll reaches the block as a failed
   // generation. Every number goes to the resolver; anything else is no hold.
   it.each([
-    [2.5, { wait: 2 }],
-    [90, { wait: MAX_BLOCK_POLL_WAIT_SECONDS }],
-    [99_999, { wait: MAX_BLOCK_POLL_WAIT_SECONDS }],
+    [2.5, { wait: 2, until: 'change' }],
+    [90, { wait: MAX_BLOCK_POLL_WAIT_SECONDS, until: 'change' }],
+    [99_999, { wait: MAX_BLOCK_POLL_WAIT_SECONDS, until: 'change' }],
     [-3, undefined],
     [null, undefined],
     ['7', undefined],
@@ -357,7 +362,7 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
       expect(mockAcquireHoldSlot.mock.calls).toEqual([
         ['bki_01JQ8XG7YV2K4M6P8R0T2W4Y6C', 42, MAX_BLOCK_POLL_CONCURRENT_HOLDS],
       ]);
-      expect(queryArg()).toEqual({ wait: 9 });
+      expect(queryArg()).toEqual({ wait: 9, until: 'change' });
     });
 
     it('OVER THE CAP: answers the poll without a hold instead of refusing it', async () => {
@@ -459,8 +464,8 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
     expect(first.snapshot.cost).toEqual({ total: 11 });
     expect(second.snapshot.cost).toEqual({ total: 22 });
     expect(second.snapshot.status).toBe('succeeded');
-    expect(queryArg(0)).toEqual({ wait: 5 });
-    expect(queryArg(1)).toEqual({ wait: 5 });
+    expect(queryArg(0)).toEqual({ wait: 5, until: 'change' });
+    expect(queryArg(1)).toEqual({ wait: 5, until: 'change' });
   });
 
   it('TERMINAL FAILURE under a hold is returned as a snapshot, not thrown', async () => {
@@ -509,5 +514,96 @@ describe('blocks.pollWorkflow — long poll wiring', () => {
     expect(mockCancelWorkflow).toHaveBeenCalled();
     expect(queryArg()).toBeUndefined();
     expect(result.snapshot.status).toBe('canceled');
+  });
+});
+
+describe('blocks.pollWorkflow — queue position, ETA and progress reach the block', () => {
+  // The procedure's return type also covers the rate-limited placeholder, which has no `eta`.
+  const etaOf = (snapshot: object) => (snapshot as { eta?: unknown }).eta;
+
+  // Pairwise-distinct values: 5 ahead, two different timestamps, and a rate that is neither
+  // 0 nor 1, so a stub that returned a constant or swapped start/complete cannot pass.
+  const QUEUED = {
+    id: 'wf_queued',
+    status: 'scheduled',
+    cost: { total: 55 },
+    tags: TAGS,
+    steps: [
+      {
+        $type: 'imageGen',
+        name: 'gen',
+        status: 'scheduled',
+        queuePosition: {
+          support: 'available',
+          precedingJobs: 5,
+          estimatedStartAt: '2026-11-14T09:30:05Z',
+          estimatedCompleteAt: '2026-11-14T09:31:40Z',
+        },
+      },
+    ],
+  };
+  const GENERATING = {
+    id: 'wf_generating',
+    status: 'processing',
+    cost: { total: 66 },
+    tags: TAGS,
+    steps: [
+      {
+        $type: 'videoGen',
+        name: 'clip',
+        status: 'processing',
+        startedAt: '2026-11-14T09:32:17Z',
+        estimatedProgressRate: 0.37,
+      },
+    ],
+  };
+
+  it('a held poll of a queued workflow carries the queue ETA', async () => {
+    mockGetWorkflow.mockResolvedValue(QUEUED);
+
+    const result = await caller().pollWorkflow({
+      blockToken: 'tok',
+      workflowId: 'wf_queued',
+      waitSeconds: 10,
+    });
+
+    expect(queryArg()).toEqual({ wait: 10, until: 'change' });
+    expect(etaOf(result.snapshot)).toEqual({
+      stepName: 'gen',
+      queuedAhead: 5,
+      startsAt: '2026-11-14T09:30:05Z',
+      completesAt: '2026-11-14T09:31:40Z',
+      progress: null,
+      support: 'available',
+    });
+  });
+
+  it('a plain poll of a generating workflow carries its progress, and asks for no hold', async () => {
+    mockGetWorkflow.mockResolvedValue(GENERATING);
+
+    const result = await caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_generating' });
+
+    expect(queryArg()).toBeUndefined();
+    expect(etaOf(result.snapshot)).toEqual({
+      stepName: 'clip',
+      queuedAhead: null,
+      startsAt: null,
+      completesAt: null,
+      progress: 0.37,
+      support: null,
+    });
+  });
+
+  it('a terminal workflow carries no ETA', async () => {
+    mockGetWorkflow.mockResolvedValue(SUCCEEDED);
+
+    const result = await caller().pollWorkflow({
+      blockToken: 'tok',
+      workflowId: 'wf_succeeded',
+      waitSeconds: 4,
+    });
+
+    expect(result.snapshot.status).toBe('succeeded');
+    expect(etaOf(result.snapshot) ?? null).toBeNull();
   });
 });

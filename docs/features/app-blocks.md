@@ -961,6 +961,28 @@ is the model's own format (`glb`, `fbx`, …) and `variant` the output field it 
 (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
 `QUERY_APP_WORKFLOWS` items.
 
+**Queue position, ETA and progress.** A non-terminal snapshot carries
+`eta: { stepName, queuedAhead, startsAt, completesAt, progress, support }` for the step
+the viewer is waiting on: the first step the orchestrator reports as queued, else the
+first processing step. While queued, `queuedAhead` is the number of jobs ahead,
+`startsAt` / `completesAt` are the orchestrator's estimates (ISO-8601) and `support` is
+`available`, `unavailable` (no worker can take it right now) or `unsupported`; `progress`
+is null. While running those four are null and `progress` is 0..1. Each `steps[]` entry
+(`kind:'workflow'`) carries the same per step as `queue`, `progress`, `startedAt` and
+`completedAt`. `progress` is reported only for image and video generation steps
+(`textToImage`, `imageGen`, `videoGen`); other types, training among them, report a
+fraction that restarts at each phase, so they get none. A field with nothing to report
+is omitted, and a terminal snapshot has no `eta`; read absent as null. All of it is an
+estimate. A held poll (`waitSeconds`) returns as soon as the workflow or one of its steps
+changes, not only when it finishes, so the block re-polls to keep these current.
+
+**Throttled polls.** A poll the host could not serve — the poll rate limit refused it, or
+the host's request failed without an answer — is answered with
+`{ workflowId, status: 'processing', throttled: true }`: a poll the host could not serve;
+keep the previous snapshot's values (its `eta`, progress, images). The same placeholder
+answers a cancel the rate limit refused; the cancel was not issued. A real snapshot never
+carries `throttled`.
+
 ## Publish / review / deploy lifecycle (no trust on push)
 
 The build + deploy of new iframe code is gated entirely on **moderator

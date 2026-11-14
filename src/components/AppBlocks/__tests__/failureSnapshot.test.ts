@@ -56,9 +56,11 @@ describe('pollFailureSnapshot', () => {
     ['CLIENT_CLOSED_REQUEST', withCode('CLIENT_CLOSED_REQUEST')],
   ])('keeps the block polling on %s', (_label, err) => {
     expect(isPollUnanswered(err)).toBe(true);
+    // `throttled`: a poll the host could not serve — the block keeps its previous values.
     expect(pollFailureSnapshot(err, 'wf_kept')).toStrictEqual({
       workflowId: 'wf_kept',
       status: 'processing',
+      throttled: true,
     });
   });
 
