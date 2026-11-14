@@ -24,6 +24,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/dbpool"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
@@ -110,8 +111,14 @@ func run(log *slog.Logger) error {
 		Config: feed.Config{
 			CreatorPromotions:       cfg.CreatorPromotion,
 			LazyPostImages:          cfg.LazyPostImages,
+			ImageIndexFeed:          cfg.ImageIndexFeed,
 			VisibleDecorationEvents: cfg.DecorationEvents,
 		},
+	}
+	// Without FEED_SERVICE_URL the Node app answers from Postgres (feedPrimaryAvailable() false: local
+	// development only); with the index flag mirrored on, those requests fall back here instead.
+	if cfg.FeedServiceURL != "" {
+		deps.Feed = &feedsvc.Client{BaseURL: cfg.FeedServiceURL, HTTP: &http.Client{Timeout: feedsvc.Timeout}}
 	}
 	srv := &server.Server{
 		Resolver:       resolver,

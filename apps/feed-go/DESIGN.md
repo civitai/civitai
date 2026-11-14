@@ -22,8 +22,13 @@ last sections list what is **not** at parity and what a deployment needs.
 
 Router `src/server/routers/image.router.ts` (`heavyProcedure`, input `getInfiniteImagesSchema`) →
 handler `getImagesAsPostsInfiniteHandler` (`src/server/controllers/image.controller.ts`) → read path
-`getAllImages` (`src/server/services/image.service.ts`). With the image-index feed flag off, which is
-the production state, every page is the Postgres path:
+`getAllImages` / `getAllImagesIndex` (`src/server/services/image.service.ts`), picked by the
+`image-index-feed` flag (`fetchFn`). **That flag is on in production**, so production pages come from
+`getAllImagesIndex`: the image feed service (`FEED_SERVICE_URL`, `serveImagesFromFeedService` →
+`serveFromFeed`) picks and orders a page of image ids for a query built by
+`mapSearchInputToFeedQuery`, and the Postgres query of step 3 below, run with `ids` and without the
+model scope, paging or period (`feedHydrateQuery`), supplies the rows. Its cursor is the feed's own
+keyset, sent to clients as `feed:<a>:<b>`. With the flag off, every page is the Postgres path:
 
 1. **Middleware** clamps the input's browsing level to the domain cap before the schema default
    applies (`applyDomainFeature`): signed out → PG; signed in where NSFW is not viewable (SFW host,
@@ -44,7 +49,12 @@ the production state, every page is the Postgres path:
      (Postgres); Model3D link visibility;
    - drops, for anyone but a moderator, images of unpublished / scheduled posts that are not the
      viewer's own.
-4. **Posts.** Creators' reviews of the model, per-post fields, a per-sort ordering, wire trims.
+4. **Posts.** With `gallery-lazy-post-images` on (production), each post the page holds fewer images
+   of than its row count (`getPostImageCounts`) is fetched again whole, by `postIds` in the requested
+   sort, in batches of at most 25 posts / 200 rows (`packPostCompletions`), and the missing images are
+   appended. Then: creators' reviews of the model, per-post fields, a per-sort ordering, wire trims;
+   with lazy post images on, each post carries its first 6 images (after the Newest index sort) and
+   `imageCount`, the whole post's count (`buildPostImagesWire`).
 5. **Encoding.** superjson (devalue only for web bundles on pools that opt in, never for a cacheable
    response). Signed-out responses carry `public, max-age=60, s-maxage=60, stale-while-revalidate=30`.
 
@@ -61,11 +71,12 @@ Supported today:
 
 | Area | Supported | Falls back |
 |---|---|---|
-| Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`; numeric cursors | `hidden`, user / username / collection / post / tags / tools / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts, compound or date cursors |
+| Input | model / version / Model3D / global feed; sorts Most Reactions, Most Comments, Most Collected, Newest, Oldest; period filters; `types`, `generation`, `withMeta`, `fromPlatform`, `disablePoi`, `disableMinor`, `hideChallenges`, `excludedTagIds`, `excludedUserIds`; cursors: on the feed-service path `feed:<a>:<b>`, `offset\|entry`, a number (an offset there); on the Postgres path a positive integer | `hidden`, user / username / collection / post / tags / tools / techniques / reactions / followed / baseModels / pending / scheduled / jumpTo / hub inputs, `include` beyond the default, Random / Recently Added sorts; cursors Node answers with a 400 (`feed-cursor:unparsed`, `feed-offset>20000`, `input-cursor` on the Postgres path) |
 | Viewer | signed out; `civ-token` cookie sessions | API keys / OAuth bearer tokens, two session cookies at once, a session user not in the shared cache, verified crawlers |
 | Gallery gates | settings from cache, held level, taken-down models | a settings key Node would rebuild; pinned posts on page 1; sponsored posts while creator promotions are on |
+| Pages | the feed-service path (flag on) and the Postgres path (flag off); the lazy post completion on both | a failed or non-200 feed call (`feed-unavailable`, `feed-status`); a hydrate that filters out every id (`feed-hydrate-empty`) |
 | Hydration | every cache hit; Postgres miss paths for basic user data, cosmetics, profile pictures, thumbnails | misses on user cosmetics, image frames, event decorations, tag ids, metric hashes |
-| Flags | see §8 | lazy per-post images on |
+| Flags | see §8 | the index path without `FEED_SERVICE_URL` (`index-feed-unconfigured`) |
 
 Layout:
 
@@ -75,7 +86,9 @@ internal/trpc        tRPC v11 query/response envelopes
 internal/superjson   the superjson writer the client decodes
 internal/auth        session JWS verification, revocation registry, cached session user
 internal/browsing    level flags, domain cap, browsing-settings addons, host color, region rules
-internal/feed        input parsing, the SQL, page loop, post grouping and ordering, gallery gates
+internal/feed        input parsing, the SQL, page sources, page loop, post completion, grouping and
+                     ordering, gallery gates
+internal/feedsvc     the image feed service: query mapper, cursor codec, HTTP client
 internal/hydrate     read-only cache readers (msgpack) and miss paths
 internal/shadow      the comparator
 internal/server      HTTP handlers, metrics
@@ -113,6 +126,15 @@ internal/fallback    the fallback error and its reasons
   fragments, which different SQL text never reproduces. Go keeps its own key space
   (`feed-go:getAllImages:v1:<sha256>`), but adds its keys to the **same** `tag:images-model…` sets,
   so the existing invalidation on image upload / update clears both services' entries at once.
+- **The image feed service** (`FEED_SERVICE_URL`, the same variable and value the Node pools carry):
+  `GET <base>/v1/feed?<query>` with a 5s timeout and `x-request-source: primary`, the query built
+  exactly as `mapSearchInputToFeedQuery(input, 'primary', 'website')` builds it (`internal/feedsvc`,
+  tests pin the literal query strings). A mapper refusal Node answers with an empty page is answered
+  with an empty page here too; one Node answers with a 400 falls back. The feed's ids are hydrated
+  with this service's own SQL (`ids` filter, no model join, `AllTime`, statement timeout as an error)
+  and put back in the feed's order. Not ported: `hydrateWithReadRescue` (an empty hydrate
+  is retried on another replica this service does not reach — it falls back instead), and the
+  `feed-service-degrade` breaker and last-good page (every failed call falls back).
 - **ClickHouse:** not yet. Metric counts come from the watcher-fed Redis hashes; a missing hash (Node
   would populate it from ClickHouse) is a fallback. Porting that read is listed in §9.
 
@@ -247,8 +269,10 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 
 | Flag | Node effect | Here |
 |---|---|---|
-| `image-index-feed` | search-index path instead of Postgres | only the Postgres path is ported; the index path must stay off for the routed cohort |
-| `gallery-lazy-post-images` | first 6 images per post + `imageCount`, extra completion fetches | `FEED_GO_LAZY_POST_IMAGES`; on → fall back |
+| `image-index-feed` | feed-service pages (`getAllImagesIndex`) instead of the Postgres query; on in production | `FEED_GO_IMAGE_INDEX_FEED` (default on) + `FEED_SERVICE_URL`; both paths ported; on without a URL → fall back |
+| `gallery-lazy-post-images` | post completion, then first 6 images per post + `imageCount`; on in production (enabled, 0% rollout: the no-match default is on) | `FEED_GO_LAZY_POST_IMAGES` (default on); ported on both page paths |
+| `feed-service-degrade` | circuit breaker + last-good page when the feed fails | not mirrored: every failed feed call falls back here |
+| `datapacket-read` | which replica the pages and the post counts read | not mirrored: this service reads its one replica (§3) |
 | `creator-promotions` | sponsored post on page 1 | `FEED_GO_CREATOR_PROMOTIONS`; on → page-1 model galleries fall back |
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
@@ -263,7 +287,8 @@ will show.
 **Fallbacks (correct, not served):**
 - every input shape in the right-hand column of the §2 table;
 - pinned posts (page 1 of a gallery with pins) and sponsored posts;
-- lazy per-post images (`gallery-lazy-post-images` on);
+- feed-service failures and non-200 answers, a hydrate that empties a page, and the cursors Node
+  answers with a 400 (§3);
 - cache misses on user cosmetics, image frames, event decorations, tag ids (their lookups filter
   withheld creator cosmetics, read the primary, or join the tag cache — not ported), metric hashes
   (ClickHouse populate not ported), session users (auth hub fetch not ported), gallery settings
@@ -288,6 +313,11 @@ on Node).
   is unspecified on both sides);
 - `feedRequestCapture` (sampled ClickHouse logging of feed requests) is not ported — a side effect,
   not part of the answer.
+- the feed service answers milliseconds after it answered Node: on a busy gallery the page can move
+  between the two calls (`membership` / `order` diffs on Newest first pages).
+- a model gallery with a `modelId` and no `modelVersionId` on the feed-service path is an empty page,
+  as in Node (the mapper cannot express it); so are `generation`, `remixOfId`, `requiringMeta`,
+  browsing level 0 and more than 100 excluded tags.
 
 ## 10. Measurement plan — CPU per call, Go vs Node, same traffic
 
@@ -326,7 +356,8 @@ measurement that identified this one), read over the same window for
 - note what Go does **not** pay yet: cache write-back, ClickHouse populates, auth-hub fetches — all
   rare misses that Node pays and Go falls back on. The fallback rate bounds how much this can matter;
 - add the extra Redis and Postgres reads Go makes in shadow mode to the cost side when the sample
-  rate is raised (shadowing doubles the read work for sampled requests).
+  rate is raised (shadowing doubles the read work for sampled requests, and on the feed-service path
+  each sample is one more feed-service call per page and per completion batch).
 
 The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity,
 with Go's side read as an upper bound (it includes the shadow decode and compare, above).
@@ -348,9 +379,11 @@ None of this is in this PR.
   `REDIS_SYS_SENTINEL_NAME`, the same values the Node pools carry, §3), the auth issuer + JWKS URI,
   `CIVITAI_MODERATION_USER_ID` (§4), `TRPC_ORIGINS` + `NEXTAUTH_URL` (the origin allow-list, serving), the
   `SERVER_DOMAIN_*` hosts, `REGION_RESTRICTION_CONFIG`, `IMAGE_QUERY_CACHING`, the flag mirrors, and
-  `FEED_GO_FALLBACK_URL` (the in-cluster Node service) once serving.
+  `FEED_SERVICE_URL` (the same value as the Node pools) with `FEED_GO_IMAGE_INDEX_FEED` /
+  `FEED_GO_LAZY_POST_IMAGES` at the flags' values, and `FEED_GO_FALLBACK_URL` (the in-cluster Node
+  service) once serving.
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
-  Redis Sentinels), the JWKS endpoint,
+  Redis Sentinels), the JWKS endpoint, the image feed service,
   and (serving) the Node service.
 - **Monitoring:** a scrape of `:9090/metrics`; a dashboard of §10's queries and the shadow results.
 - **Flags:** the Node-side shadow sample percentage, and later the client transport flag. Created OFF.
