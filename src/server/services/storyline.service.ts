@@ -943,6 +943,8 @@ export async function createStoryline({
   try {
     created = await dbWrite.$transaction(async (tx) => {
       if (sparkImageId && !postId) {
+        // Relies on READ COMMITTED: the lookup's snapshot is taken after the lock, so a waiter sees
+        // the row the holder committed.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STORYLINE_SPARK_START_LOCK_CLASS}::int, hashtext(${userId}::text || ':' || ${sparkImageId}::text)::int)`;
         const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
         if (unwritten) {
