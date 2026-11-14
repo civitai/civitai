@@ -670,6 +670,25 @@ describe('cash withdrawal with a client key', () => {
     expect(rows).toHaveLength(0);
   });
 
+  it('a retry declined for funds while its burn is held but not yet readable continues: no 400, one row', async () => {
+    // The first burn spends the whole balance, then its answer and its resend's are lost.
+    ledger.setBalance(USER, WITHDRAWAL);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    const first = await outcome(withdraw(KEY));
+    expect((first as Error).message).toBe(PAYMENT_OUTCOME_UNKNOWN_MESSAGE);
+    ledger.clearFaults();
+    // The retry's lookup before charging misses the burn: the ledger read lags its write.
+    buzz.getTransactionByExternalId.mockResolvedValueOnce(null);
+
+    await withdraw(KEY);
+
+    expect(ledger.charges()).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].transactionId).toBe(ledger.charges()[0].transactionId);
+    expect(tipalti.payToTipaltiAccount).toHaveBeenCalledTimes(1);
+  });
+
   it('a retry whose burn already left the ready cash is not refused by the ready check', async () => {
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');

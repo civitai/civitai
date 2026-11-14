@@ -149,6 +149,31 @@ describe('chargeByExternalId with a reused id', () => {
     expect(ledger.charges()).toHaveLength(1);
   });
 
+  it('a retry declined for funds while its earlier charge is held but not yet readable continues from it', async () => {
+    // The earlier attempt's charge committed and spent the whole balance; its answer was lost.
+    ledger.setBalance(42, 10_000);
+    await chargeByExternalId(charge(), { reusable: true });
+    expect(ledger.balanceOf(42)).toBe(0);
+    buzz.getTransactionByExternalId
+      .mockResolvedValueOnce(null) // the lookup before charging lags the write
+      .mockResolvedValueOnce(null); // so does the first re-read after the decline
+
+    const { transactionId } = await chargeByExternalId(charge(), { reusable: true });
+
+    expect(transactionId).toBe(ledger.charges()[0].transactionId);
+    expect(ledger.charges()).toHaveLength(1);
+  });
+
+  it('a decline with nothing held under the id is still a decline, after the bounded re-reads', async () => {
+    ledger.setBalance(42, 0);
+
+    await expect(chargeByExternalId(charge(), { reusable: true })).rejects.toThrow(/enough funds/);
+    // One read before charging, then the re-read and three retries after the decline.
+    expect(buzz.getTransactionByExternalId).toHaveBeenCalledTimes(5);
+    expect(buzz.resendBuzzTransaction).not.toHaveBeenCalled();
+    expect(ledger.charges()).toHaveLength(0);
+  });
+
   it('without reuse, no lookup at all', async () => {
     await chargeByExternalId(charge(), { reusable: false });
     expect(buzz.getTransactionByExternalId).not.toHaveBeenCalled();
