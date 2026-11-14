@@ -78,7 +78,7 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
 	cap := browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))
 
-	req := feed.Request{Input: in, Cap: cap}
+	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned}
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 	}

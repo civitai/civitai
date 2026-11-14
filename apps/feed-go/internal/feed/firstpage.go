@@ -42,10 +42,15 @@ type firstPageArgs struct {
 	resources  ImageResourceReader
 	promotions PromotionStore
 	audience   PromotionAudience
-	// viewer is nil when signed out.
+	// viewer is nil when signed out (and for a banned session: see bannedSession).
 	viewer *Viewer
+	// bannedSession: a banned user's session, which Node still evaluates the flag for.
+	bannedSession bool
 	// q is the page's getAllImages query; the extra fetches drop its model scope and paging.
-	q              ImagesQuery
+	q ImagesQuery
+	// filtersAt is ResolveAddonFilters for this request at a browsing level. The pinned fetch runs at
+	// the page's level and keeps q's filters; the sponsored fetch runs at its own level and takes these.
+	filtersAt      func(level int) AddonFilters
 	modelID        int
 	modelVersionID int
 	// pinnedIDs is the version's pinned post ids (gallery settings).
@@ -99,7 +104,7 @@ func loadFirstPage(ctx context.Context, a firstPageArgs) (*firstPage, error) {
 	if a.modelID == 0 || a.modelVersionID == 0 {
 		return out, nil
 	}
-	on, known := a.audience.For(a.viewer)
+	on, known := a.audience.For(a.viewer, a.bannedSession)
 	if known && !on {
 		// getSponsoredGalleryPost returns before it reads anything.
 		return out, nil
@@ -125,6 +130,10 @@ func loadFirstPage(ctx context.Context, a firstPageArgs) (*firstPage, error) {
 	}
 	q := extraQuery(a.q, []int{pick.PostID}, postImageLimit)
 	q.BrowsingLevel = level
+	// getAllImages({...input, browsingLevel: sponsoredLevel}) resolves the addons at that level, which
+	// can hold R/X where the page's does not.
+	f := a.filtersAt(level)
+	q.ExcludedTagIDs, q.DisablePoi, q.DisableMinor = f.ExcludedTagIDs, f.DisablePoi, f.DisableMinor
 	images, err := a.fetch(ctx, q)
 	if err != nil {
 		return nil, err

@@ -30,7 +30,8 @@ const (
 	// off, rollout true for the `testers` OR `moderators` segment). Both segments match
 	// `isModerator = "true"` or a listed user id. A signed-out viewer has no isModerator/userId in its
 	// Flipt context, so it matches neither: off. A moderator: on. Any other signed-in viewer may be on
-	// a user-id list this service does not hold: unknown.
+	// a user-id list this service does not hold: unknown. So is a banned session: Node evaluates the
+	// flag with its user (moderator or listed) although the procedures see no user.
 	PromotionsModsTesters
 	// PromotionsEveryone (`everyone`): on for every viewer.
 	PromotionsEveryone
@@ -50,14 +51,18 @@ func ParsePromotionAudience(v string) PromotionAudience {
 	return PromotionsUnknown
 }
 
-// For reports the flag's value for a viewer (signed out = nil), and whether it is known.
-func (a PromotionAudience) For(v *Viewer) (on, known bool) {
+// For reports the flag's value for a viewer (signed out = nil), and whether it is known. banned is a
+// banned user's session, for which v is nil.
+func (a PromotionAudience) For(v *Viewer, banned bool) (on, known bool) {
 	switch a {
 	case PromotionsOff:
 		return false, true
 	case PromotionsEveryone:
 		return true, true
 	case PromotionsModsTesters:
+		if banned {
+			return false, false
+		}
 		if v == nil || v.ID == 0 {
 			return false, true
 		}

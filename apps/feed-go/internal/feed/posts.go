@@ -89,8 +89,43 @@ type Request struct {
 	Input *Input
 	// Viewer is nil when signed out.
 	Viewer *Viewer
+	// BannedSession is a session whose user is banned. Viewer is then nil (the procedures see no
+	// user), but Node still evaluates feature flags with that session's user.
+	BannedSession bool
 	// Cap is the domain cap (browsing.DomainCap); 0 = uncapped.
 	Cap int
+}
+
+// AddonFilters is what enforceBlockedBrowsingTags (the addon half; tag filters are a fallback
+// shape) and applyHideChallengesExclusion leave on a getAllImages input.
+type AddonFilters struct {
+	ExcludedTagIDs []int
+	DisablePoi     bool
+	DisableMinor   bool
+}
+
+// ResolveAddonFilters is those two steps for one getAllImages call at browsingLevel: Node runs them
+// on a copy of the input for every call, so each call resolves the addons at its own level.
+func ResolveAddonFilters(in *Input, addons []browsing.Addon, browsingLevel int, isModerator bool) AddonFilters {
+	level := browsing.OnlySelectable(orInt(browsingLevel, browsing.PublicLevels))
+	if level == 0 {
+		level = browsing.PublicLevels
+	}
+	resolved := browsing.ResolveAddons(addons, level, isModerator, "")
+	// In the order Node's input holds them: as sent, then (when any) the addons' tags unioned in by a
+	// Set, then the challenge tag unioned in. The feed-service query sends this list as is.
+	excluded := append([]int(nil), in.ExcludedTagIDs...)
+	if len(resolved.ExcludedTagIDs) > 0 {
+		excluded = unionInts(excluded, resolved.ExcludedTagIDs)
+	}
+	if in.HideChallenges {
+		excluded = unionInts(excluded, []int{challengeTagID})
+	}
+	return AddonFilters{
+		ExcludedTagIDs: excluded,
+		DisablePoi:     in.DisablePoi || resolved.DisablePoi,
+		DisableMinor:   in.DisableMinor || resolved.DisableMinor,
+	}
 }
 
 // Result is the procedure's value: `{nextCursor, items}`.
@@ -198,24 +233,14 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	}
 	pinned := settings.PinnedFor(in.ModelVersionID)
 
-	// enforceBlockedBrowsingTags (the addon half; tag filters are a fallback shape) and
-	// applyHideChallengesExclusion, as getAllImages applies them to every fetch.
-	level := browsing.OnlySelectable(orInt(browsingLevel, browsing.PublicLevels))
-	if level == 0 {
-		level = browsing.PublicLevels
-	}
-	resolved := browsing.ResolveAddons(d.Addons.Addons(ctx), level, viewer.IsModerator, "")
-	// In the order Node's input holds them: as sent, then (when any) the addons' tags unioned in by a
-	// Set, then the challenge tag unioned in. The feed-service query sends this list as is.
-	excluded := append([]int(nil), in.ExcludedTagIDs...)
-	if len(resolved.ExcludedTagIDs) > 0 {
-		excluded = unionInts(excluded, resolved.ExcludedTagIDs)
-	}
-	if in.HideChallenges {
-		excluded = unionInts(excluded, []int{challengeTagID})
-	}
-	disablePoi := in.DisablePoi || resolved.DisablePoi
-	disableMinor := in.DisableMinor || resolved.DisableMinor
+	// getAllImages resolves its addon exclusions at each call's own browsing level, so the page and
+	// the sponsored fetch (which runs at the sponsored level) each get their own.
+	addons := d.Addons.Addons(ctx)
+	filtersAt := func(lvl int) AddonFilters { return ResolveAddonFilters(in, addons, lvl, viewer.IsModerator) }
+	pageFilters := filtersAt(browsingLevel)
+	excluded := pageFilters.ExcludedTagIDs
+	disablePoi := pageFilters.DisablePoi
+	disableMinor := pageFilters.DisableMinor
 
 	q := ImagesQuery{
 		Limit:          int(math.Ceil(float64(in.Limit) * 2)), // overscan, so posts can be merged
@@ -302,6 +327,8 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 			audience:       d.Config.CreatorPromotions,
 			viewer:         req.Viewer,
 			q:              q,
+			filtersAt:      filtersAt,
+			bannedSession:  req.BannedSession,
 			modelID:        in.ModelID,
 			modelVersionID: in.ModelVersionID,
 			pinnedIDs:      pinned,

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
@@ -98,22 +99,33 @@ func TestLoadFirstPagePinned(t *testing.T) {
 func TestLoadFirstPageSponsored(t *testing.T) {
 	images := map[int][]Image{40: {pimg(403, 40), pimg(402, 40), pimg(401, 40)}}
 	preCap := 1 | 4 | 8
+	// filtersAt answers per level, with values the page query (ExcludedTagIDs [5], no disables) cannot
+	// hold, so a sponsored query that kept the page's filters is visible.
+	var filterLevels []int
+	filtersAt := func(level int) AddonFilters {
+		filterLevels = append(filterLevels, level)
+		return AddonFilters{ExcludedTagIDs: []int{100 + level}, DisableMinor: level&4 != 0}
+	}
 	args := func(f *recordingFetch, s *fakePromotions, a PromotionAudience, v *Viewer) firstPageArgs {
 		return firstPageArgs{fetch: f.fetch, resources: fakeResources{}, promotions: s, audience: a, viewer: v,
-			q: pageQuery(), modelID: 7, modelVersionID: 9, browsingLevel: 1, preCap: &preCap, now: firstPageNow}
+			q: pageQuery(), filtersAt: filtersAt, modelID: 7, modelVersionID: 9, browsingLevel: 1, preCap: &preCap, now: firstPageNow}
 	}
 	mod := &Viewer{ID: 3, IsModerator: true}
 
-	// On for this viewer: the approved images, fetched at (preCap & serving) = PG|R, 20 rows.
+	// On for this viewer: the approved images, fetched at (preCap & serving) = PG|R, 20 rows, with the
+	// addon filters resolved at PG|R (getAllImages resolves them per call), not the page's PG ones.
 	f := &recordingFetch{byPost: images}
 	fp, err := loadFirstPage(context.Background(), args(f, liveRun(), PromotionsModsTesters, mod))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := ImagesQuery{Limit: 20, Sort: SortNewest, Period: "Week", BrowsingLevel: 5,
-		ExcludedTagIDs: []int{5}, ViewerID: 3, PostIDs: []int{40}}
+		ExcludedTagIDs: []int{105}, DisableMinor: true, ViewerID: 3, PostIDs: []int{40}}
 	if len(f.queries) != 1 || !reflect.DeepEqual(f.queries[0], want) {
 		t.Fatalf("queries = %+v, want [%+v]", f.queries, want)
+	}
+	if !reflect.DeepEqual(filterLevels, []int{5}) {
+		t.Fatalf("filters resolved at %v, want [5] (the sponsored level)", filterLevels)
 	}
 	// 403 was added after the host accepted: never shown. The fetched order is kept.
 	if got := imageIDs(fp.sponsored); !reflect.DeepEqual(got, []int{402, 401}) || fp.sponsoredPostID() != 40 {
@@ -126,6 +138,14 @@ func TestLoadFirstPageSponsored(t *testing.T) {
 	fp, err = loadFirstPage(context.Background(), args(f, s, PromotionsModsTesters, nil))
 	if err != nil || len(fp.sponsored) != 0 || len(s.since) != 0 || len(f.queries) != 0 {
 		t.Fatalf("signed out: %v %v, %d lookups, %d fetches", fp, err, len(s.since), len(f.queries))
+	}
+
+	// A banned session (no viewer, but Node evaluates the flag with its user): unknown, so a post that
+	// would be shown falls back instead of being left out.
+	a := args(&recordingFetch{byPost: images}, liveRun(), PromotionsModsTesters, nil)
+	a.bannedSession = true
+	if _, err = loadFirstPage(context.Background(), a); fallback.Reason(err) != "sponsored-post" {
+		t.Fatalf("banned session with a post to show: err %v", err)
 	}
 
 	// Unknown for this viewer and a post would be shown: fall back.
@@ -152,7 +172,7 @@ func TestLoadFirstPageSponsored(t *testing.T) {
 
 	// The sponsored post is one of the version's pinned posts: not shown as sponsored.
 	f = &recordingFetch{byPost: images}
-	a := args(f, liveRun(), PromotionsEveryone, nil)
+	a = args(f, liveRun(), PromotionsEveryone, nil)
 	a.pinnedIDs = []int{40}
 	fp, err = loadFirstPage(context.Background(), a)
 	if err != nil || len(fp.sponsored) != 0 || len(f.queries) != 1 {
@@ -298,5 +318,26 @@ func TestMergedPostIDs(t *testing.T) {
 	got := mergedPostIDs(map[int][]Image{30: nil, 5: nil}, map[int][]Image{10: nil, 2: nil})
 	if !reflect.DeepEqual(got, []int{2, 5, 10, 30}) {
 		t.Fatalf("merged = %v, want ascending [2 5 10 30]", got)
+	}
+}
+
+func TestResolveAddonFiltersPerLevel(t *testing.T) {
+	// The default addons: POI and the people tags from PG up, minors and the child tags from R up. A
+	// page at PG and a sponsored fetch at PG|R must therefore differ.
+	in := &Input{ExcludedTagIDs: []int{5}}
+	people := []int{5161, 5162, 5188, 5249, 130818, 130820, 133182, 130401, 110980}
+	child := []int{5351, 306619, 154326, 161829, 163032}
+	pg := ResolveAddonFilters(in, browsing.DefaultAddons, 1, false)
+	if want := (AddonFilters{ExcludedTagIDs: append([]int{5}, people...), DisablePoi: true}); !reflect.DeepEqual(pg, want) {
+		t.Fatalf("PG = %+v, want %+v", pg, want)
+	}
+	pgR := ResolveAddonFilters(in, browsing.DefaultAddons, 1|4, false)
+	if want := (AddonFilters{ExcludedTagIDs: append(append([]int{5}, people...), child...), DisablePoi: true, DisableMinor: true}); !reflect.DeepEqual(pgR, want) {
+		t.Fatalf("PG|R = %+v, want %+v", pgR, want)
+	}
+	// Moderators bypass the addons; the as-sent filters and the challenge tag stay.
+	in = &Input{ExcludedTagIDs: []int{5}, DisablePoi: true, HideChallenges: true}
+	if got, want := ResolveAddonFilters(in, browsing.DefaultAddons, 1|4, true), (AddonFilters{ExcludedTagIDs: []int{5, challengeTagID}, DisablePoi: true}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("moderator = %+v, want %+v", got, want)
 	}
 }

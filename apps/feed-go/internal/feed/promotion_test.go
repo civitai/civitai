@@ -141,24 +141,29 @@ func TestPromotionAudience(t *testing.T) {
 	cases := []struct {
 		env    string
 		viewer *Viewer
+		banned bool
 		want   res
 	}{
-		{"false", nil, res{false, true}},
-		{"false", mod, res{false, true}},
-		{"", user, res{false, false}}, // unset: the fail-safe
-		{"true", mod, res{false, false}},
-		{"yes-please", nil, res{false, false}},
-		{"mods-testers", nil, res{false, true}},
-		{"mods-testers", mod, res{true, true}},
-		{"mods-testers", user, res{false, false}}, // may be on a tester list
-		{"MODS-TESTERS", mod, res{true, true}},
-		{"everyone", nil, res{true, true}},
-		{"everyone", user, res{true, true}},
+		{"false", nil, false, res{false, true}},
+		{"false", mod, false, res{false, true}},
+		{"", user, false, res{false, false}}, // unset: the fail-safe
+		{"true", mod, false, res{false, false}},
+		{"yes-please", nil, false, res{false, false}},
+		{"mods-testers", nil, false, res{false, true}},
+		{"mods-testers", mod, false, res{true, true}},
+		{"mods-testers", user, false, res{false, false}}, // may be on a tester list
+		{"MODS-TESTERS", mod, false, res{true, true}},
+		{"everyone", nil, false, res{true, true}},
+		{"everyone", user, false, res{true, true}},
+		// A banned session: no viewer, but Node evaluates the flag with its (maybe moderator) user.
+		{"mods-testers", nil, true, res{false, false}},
+		{"false", nil, true, res{false, true}},
+		{"everyone", nil, true, res{true, true}},
 	}
 	for _, c := range cases {
-		on, known := ParsePromotionAudience(c.env).For(c.viewer)
+		on, known := ParsePromotionAudience(c.env).For(c.viewer, c.banned)
 		if (res{on, known}) != c.want {
-			t.Errorf("%q / %+v: on=%v known=%v, want %+v", c.env, c.viewer, on, known, c.want)
+			t.Errorf("%q / %+v / banned=%v: on=%v known=%v, want %+v", c.env, c.viewer, c.banned, on, known, c.want)
 		}
 	}
 }

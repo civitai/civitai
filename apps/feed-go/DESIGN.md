@@ -90,7 +90,9 @@ order and always on the Postgres path whatever `image-index-feed` says:
   resolved within the last 7 days, parsed as `parseGalleryPromotionData` does, live by
   `isPromotionLive`, made for this version; served at the accept-frozen level held to the model's
   platform lock today (else the host's gallery level); fetched at `(preCap ?? level) & serving`
-  (20 rows) unless it is a pinned post, and only the host-approved images kept. It goes after the
+  (20 rows) unless it is a pinned post, with the browsing-settings addons resolved at that level
+  (getAllImages resolves them per call, so they can differ from the page's), and only the
+  host-approved images kept. It goes after the
   pinned posts, or second (`sponsoredSlotIndex`), with no review and no per-post index sort, and its
   post is kept off the page.
 
@@ -189,7 +191,8 @@ the authenticated viewer or for nobody.
   is never a session, as in `refuseModerationAccountSession`: refused by the token's `sub` before any
   lookup, and again by the resolved user's id or username. Signed out.
 - A banned user is served as signed out, but the response stays private (not edge-cacheable), as in
-  `createContext`.
+  `createContext`. Feature flags are the exception: Node evaluates them with the banned session's
+  user, so the `creator-promotions` mirror treats that session as its own case (§8).
 - Only a response computed with **no** session user gets the public cache headers. Every per-viewer
   clause binds the verified id; signed out binds `NULL`, which makes each carve-out false.
 - API keys / OAuth tokens fall back: they carry scopes and change the moderator rule (`moderatorView`).
@@ -303,7 +306,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | `gallery-lazy-post-images` | post completion, then first 6 images per post + `imageCount`; on in production (enabled, 0% rollout: the no-match default is on) | `FEED_GO_LAZY_POST_IMAGES` (default on); ported on both page paths |
 | `feed-service-degrade` | circuit breaker + last-good page when the feed fails | not mirrored: every failed feed call falls back here |
 | `datapacket-read` | which replica the pages and the post counts read | not mirrored: this service reads its one replica (§3) |
-| `creator-promotions` | sponsored post on page 1 of a model-version gallery | `FEED_GO_CREATOR_PROMOTIONS` names the flag's audience: `false` (off for everyone), `mods-testers` (the flag's rule as of 2026-11-14: off signed out, on for moderators, unknown for other signed-in users, who may be on the segments' user-id lists), `everyone`, or `true` / unset (fail-safe: unknown for everyone). Where the value is known the sponsored post is ported; where it is unknown, a page that would carry one falls back (`sponsored-post`) and a page that would not is served (the flag cannot change it) |
+| `creator-promotions` | sponsored post on page 1 of a model-version gallery | `FEED_GO_CREATOR_PROMOTIONS` names the flag's audience: `false` (off for everyone), `mods-testers` (the flag's rule as of 2026-11-14: off signed out, on for moderators, unknown for other signed-in users, who may be on the segments' user-id lists, and for a banned user's session, which Node still evaluates the flag for), `everyone`, or `true` / unset (fail-safe: unknown for everyone). Where the value is known the sponsored post is ported; where it is unknown, a page that would carry one falls back (`sponsored-post`) and a page that would not is served (the flag cannot change it) |
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
 | event decoration flags | which event hats are visible to which viewer | `FEED_GO_DECORATION_EVENTS`: the events visible to **every** viewer; tester-only previews are a parity gap |
