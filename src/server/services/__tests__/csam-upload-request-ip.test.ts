@@ -52,40 +52,72 @@ describe.each([
   });
 
   // Sign-ins are written with the signed-in account in targetUserId, and userId is usually 0.
+  // A row whose userId differs from targetUserId is one account acting on another.
   describe('sign-in IPs', () => {
+    const row = (userId: number, targetUserId: number, ip: string, type: string) => ({
+      userId,
+      targetUserId,
+      ip,
+      type,
+      time: '2026-10-20 09:00:00',
+    });
     const activities = [
-      { userId: 0, targetUserId: 42, ip: '192.0.2.10', type: 'Login', time: '2026-10-20 09:00:00' },
-      {
-        userId: 0,
-        targetUserId: 42,
-        ip: '192.0.2.11',
-        type: 'Registration',
-        time: '2026-10-01 09:00:00',
-      },
-      {
-        userId: 0,
-        targetUserId: 7,
-        ip: '198.51.100.7',
-        type: 'Login',
-        time: '2026-10-20 09:30:00',
-      },
+      row(0, 42, '192.0.2.10', 'Login'),
+      row(0, 42, '192.0.2.11', 'Registration'),
+      row(42, 99, '192.0.2.12', 'Registration'), // 42 acting on account 99
+      row(42, 42, '192.0.2.13', 'Login'), // 42 is both actor and target
+      row(0, 7, '198.51.100.7', 'Login'), // another account's sign-in
+      row(7, 99, '198.51.100.8', 'Login'), // another account acting on another account
     ];
-    // Evaluates the `<column> = <id>` filter of the userActivities query against the rows above.
+    // Runs the userActivities query against the rows above: its WHERE clause as a predicate, and
+    // only the columns it SELECTs, so a column the query reads comes back exactly as it would.
     function userActivitiesTable(sql: string) {
-      const match = /FROM userActivities\s+WHERE (\w+) = (\d+)/.exec(sql);
+      const match = /SELECT([\s\S]+?)FROM userActivities\s+WHERE([\s\S]+)$/.exec(sql);
       if (!match) return [];
-      const [, column, id] = match;
+      const columns = match[1].split(',').map((c) => c.trim());
+      const where = match[2]
+        .replace(/!=/g, '!==')
+        .replace(/(?<![!=])=(?!=)/g, '===')
+        .replace(/\bAND\b/g, '&&')
+        .replace(/\bOR\b/g, '||')
+        .replace(/\b(userId|targetUserId|type)\b/g, 'r.$1');
+      const keep = new Function('r', `return ${where};`) as (r: object) => boolean;
       return activities
-        .filter((row) => row[column as 'userId' | 'targetUserId'] === Number(id))
-        .map(({ ip, type, time }) => ({ ip, type, time }));
+        .filter(keep)
+        .map((r) => Object.fromEntries(columns.map((c) => [c, (r as Record<string, unknown>)[c]])));
     }
 
-    it("returns the reported account's sign-ins and no other account's", async () => {
+    beforeEach(() => {
       m.query.mockImplementation(async (sql: string) => userActivitiesTable(sql));
+    });
 
+    it("returns the reported account's own sign-ins, and each row once", async () => {
       const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
 
-      expect(events.map((e) => e.ip)).toEqual(['192.0.2.10', '192.0.2.11']);
+      expect(events.map((e) => e.ip).sort()).toEqual([
+        '192.0.2.10',
+        '192.0.2.11',
+        '192.0.2.12',
+        '192.0.2.13',
+      ]);
+    });
+
+    it('includes its activity on another account without naming that account', async () => {
+      const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+      expect(events).toContainEqual({
+        ip: '192.0.2.12',
+        type: 'Registration',
+        time: '2026-10-20 09:00:00',
+      });
+      expect(JSON.stringify(events)).not.toContain('99');
+    });
+
+    it("never returns another account's activity (control)", async () => {
+      const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+      expect(events.map((e) => e.ip)).not.toContain('198.51.100.7');
+      expect(events.map((e) => e.ip)).not.toContain('198.51.100.8');
     });
   });
 });
