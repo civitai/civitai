@@ -3947,13 +3947,14 @@ export async function leavePrivateWithHeldVerdict(
 }
 
 export const SCAN_RATING_KEPT_MESSAGE =
-  'This model was rated mature from its civitai.red title and description. While they stay the same, it stays marked mature, and a civitai.com version is what lists it on civitai.com. Edit them and save to have them checked again.';
+  "This model was rated mature from its civitai.red title and description, so it stays marked mature, and a civitai.com version is what lists it on civitai.com. To change that, edit the title and description and save them first; once they're checked and pass, you can change the rating.";
 
 /**
  * The text scan's mature rating carries no lock, so the owner can add a .com face; without this the
- * owner could undo the rating alone (untick mature, or remove the face that listed the model), and
- * with the text unchanged nothing would rescan it. A save that edits the text is exempt: it is
- * rescanned.
+ * owner could undo the rating alone (untick mature, or remove the face that listed the model). An
+ * edit to the text is no exemption, as a rescan may never follow it (it dedups on the scanned text):
+ * the scan's marker goes only when a rescan reads the text as not mature, and with it this guard.
+ * Judged on the face as it will be stored, so it runs after `normalizeSfwFaceInput`.
  */
 async function assertScanRatingKept({
   modelId,
@@ -3991,10 +3992,6 @@ async function assertScanRatingKept({
       | (typeof data)[K]
       | undefined;
   if (after('minor') || after('poi') || after('sfwOnly')) return;
-  const textChanged =
-    (data.name !== undefined && data.name !== before.name) ||
-    (data.description !== undefined && data.description !== before.description);
-  if (textChanged) return;
 
   const hasFace = (face: { sfwName?: string | null; sfwCoverImageId?: number | null }) =>
     face.sfwName != null && face.sfwCoverImageId != null;
@@ -4093,10 +4090,10 @@ export const upsertModel = async (
 
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
-  if (beforeUpdate && id && !isModerator)
-    await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
+  if (beforeUpdate && id && !isModerator)
+    await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
   const sfwFaceChanged =
     (data.sfwName !== undefined && data.sfwName !== (beforeUpdate?.sfwName ?? null)) ||

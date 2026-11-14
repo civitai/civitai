@@ -1239,16 +1239,39 @@ describe('upsertModel — content flags the row ends up with', () => {
         ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
       });
 
-      it('lets it through with edited text, which is rescanned', async () => {
+      // A rescan dedups on the scanned text, so an edit alone may bring no fresh verdict.
+      it('still refuses when the same save edits the text', async () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
-        await upsert({
-          id: MODEL_ID,
-          userId: OWNER_ID,
-          nsfw: false,
-          minor: false,
-          sfwOnly: false,
-          description: 'A rewritten description',
-        });
+        await expect(
+          upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            minor: false,
+            sfwOnly: false,
+            description: 'A description ',
+          })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+      });
+
+      it('judges the face as stored: an empty .com title is no face', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            minor: false,
+            sfwOnly: false,
+            sfwName: '<p></p>',
+            sfwCoverImageId: 4,
+          })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+      });
+
+      it('lets it through once a clean rescan has dropped the marker', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: {} });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
         expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
       });
 
