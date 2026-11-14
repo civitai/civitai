@@ -36,8 +36,8 @@ export type Model3DPayload = {
   /** The set bits of Model3D.nsfwLevel (never 0 here: unrated models are not indexed). */
   nsfwLevel: number[];
   /**
-   * The set bits of the thumbnail's own level (the site's `model3dThumbnailLevelText`), which the
-   * models3d gate also requires: the vector is the thumbnail, rated apart from the model.
+   * The set bits of the thumbnail's own level; the models3d gate requires it because the vector is
+   * the thumbnail, rated apart from the model.
    */
   thumbnailNsfwLevel: number[];
   /** generationParams.enableAnimation, the feed's "animated" filter. */

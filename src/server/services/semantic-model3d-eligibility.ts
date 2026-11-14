@@ -7,13 +7,6 @@ import { semanticImageHeldText } from '~/server/services/semantic-held-content.s
  * The vector is the thumbnail, so it must be the owner's own and pass the same gates. The
  * event-engine's MODEL3D_ELIGIBLE_SQL is its copy, held to it by model3d-eligibility.parity.test.ts.
  */
-/**
- * The level of 3D model `m`'s thumbnail `ti`, which the models3d search gate requires apart from
- * the model's: the vector is the thumbnail. The event-engine's MODEL3D_THUMBNAIL_LEVEL_SQL is its
- * copy, pinned by the same parity test.
- */
-export const model3dThumbnailLevelText = ({ ti = 'ti' } = {}) => `${ti}."nsfwLevel"`;
-
 export const model3dSemanticEligibleText = ({ m = 'm', u = 'u' } = {}) =>
   `(${m}.status = 'Published' AND ${m}."deletedAt" IS NULL AND ${m}."nsfwLevel" NOT IN (0, ${
     NsfwLevel.Blocked
@@ -27,3 +20,10 @@ export const model3dSemanticEligibleText = ({ m = 'm', u = 'u' } = {}) =>
     AND ti."blockedFor" IS NULL AND ti."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked})
     AND ti."userId" = ${m}."userId" AND NOT ti.minor AND NOT ti.poi
     AND NOT ${semanticImageHeldText('ti')}))`;
+
+/**
+ * The level of 3D model `m`'s thumbnail `ti`, which the models3d search gate requires apart from
+ * the model's: the vector is the thumbnail. The event-engine's MODEL3D_THUMBNAIL_LEVEL_SQL is its
+ * copy, pinned by the same parity test.
+ */
+export const model3dThumbnailLevelText = ({ ti = 'ti' } = {}) => `${ti}."nsfwLevel"`;
