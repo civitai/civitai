@@ -1,5 +1,5 @@
 import type { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getPostDetail } from '~/server/services/post.service';
 import { pendingCsamHoldTextIds } from '~/server/services/post-text-hold';
@@ -35,7 +35,8 @@ export async function assertPostTextVisible(
   ctx: Pick<Context, 'user' | 'features' | 'req'>
 ) {
   if (!ctx.features?.storylineText) throw throwNotFoundError('Text not found');
-  const text = await dbRead.postText.findUnique({
+  // The row and its hold from one source, the primary: a confirm moves both in one transaction.
+  const text = await dbWrite.postText.findUnique({
     where: { id: textId },
     select: { postId: true, refused: true, csamHeld: true, nsfwLevel: true },
   });

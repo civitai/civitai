@@ -40,9 +40,10 @@ const ctx = (user: unknown, over: Record<string, unknown> = {}) =>
 type Row = { refused: boolean; csamHeld: boolean; nsfwLevel: number };
 const scanned: Row = { refused: false, csamHeld: false, nsfwLevel: NsfwLevel.PG };
 const givenText = (row: Row | null) => {
-  dbMock.dbRead.postText.findUnique.mockResolvedValue(
-    row ? ({ postId: POST, ...row } as never) : (null as never)
-  );
+  for (const client of [dbMock.dbRead, dbMock.dbWrite])
+    client.postText.findUnique.mockResolvedValue(
+      row ? ({ postId: POST, ...row } as never) : (null as never)
+    );
   dbMock.dbRead.postText.findMany.mockResolvedValue(
     row ? ([{ id: TEXT, index: 0, content: '<p>t</p>', ...row }] as never) : []
   );
@@ -121,10 +122,23 @@ describe("a storyline text's thread is readable exactly where post.get serves th
 
   it('reads a Pending csam hold from the primary, so one just written is not missed on a lagging replica', async () => {
     givenText(scanned);
-    // The replica has not seen the hold yet; the primary has.
     dbMock.dbRead.textScanHold.findMany.mockResolvedValue([] as never);
     dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
     expect(await threadReadable(ctx(member))).toBe(false);
+  });
+
+  it('stays held right after a moderator confirms the hold, while the replica still shows it pending', async () => {
+    // A confirm ends the Pending hold and sets csamHeld in one primary transaction.
+    givenText(scanned);
+    dbMock.dbRead.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
+    dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.postText.findUnique.mockResolvedValue({
+      postId: POST,
+      ...scanned,
+      csamHeld: true,
+    } as never);
+    for (const user of [member, author, moderator])
+      expect(await threadReadable(ctx(user))).toBe(false);
   });
 
   it('an unscanned text is readable by its author and moderators only', async () => {
