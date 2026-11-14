@@ -1,30 +1,14 @@
-import chalk from 'chalk';
+import { styleText } from 'node:util';
 import { env } from '~/env/server';
 
-type ChalkColor =
-  | 'black'
-  | 'red'
-  | 'green'
-  | 'yellow'
-  | 'blue'
-  | 'magenta'
-  | 'cyan'
-  | 'white'
-  | 'blackBright'
-  | 'redBright'
-  | 'greenBright'
-  | 'yellowBright'
-  | 'blueBright'
-  | 'magentaBright'
-  | 'cyanBright'
-  | 'whiteBright';
+type LogColor = Parameters<typeof styleText>[0];
 
-export function createLogger(name: string, color: ChalkColor = 'green') {
+export function createLogger(name: string, color: LogColor = 'green') {
   const shouldLog = env.LOGGING.includes(name);
   if (!shouldLog) return () => {}; //eslint-disable-line
 
   return (...args: any[]) => {
     //eslint-disable-line
-    console.log(chalk[color](name), ...args);
+    console.log(styleText(color, name), ...args);
   };
 }
