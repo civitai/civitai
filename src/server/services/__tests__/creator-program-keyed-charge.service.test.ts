@@ -83,6 +83,8 @@ const { bankBuzz, withdrawCash, getMonthAccount } = await import('../creator-pro
 const PAYMENT_OUTCOME_UNKNOWN_MESSAGE =
   "We couldn't confirm whether your Buzz payment went through. Trying this same action again from this page is safe. If you reloaded or left the page, check your Buzz balance and transactions first.";
 const PAYMENT_REFUNDED_MESSAGE = 'The payment for this attempt was refunded. Please try again.';
+const CHARGE_MISMATCH_MESSAGE =
+  'This request does not match the earlier attempt with the same key. Please start again.';
 
 const USER = 42;
 const OTHER_USER = 77;
@@ -608,6 +610,50 @@ describe('cash withdrawal with a client key', () => {
     expect((error as Error).message).toBe(PAYMENT_REFUNDED_MESSAGE);
     expect(rows).toHaveLength(0);
     expect(tipalti.payToTipaltiAccount).not.toHaveBeenCalled();
+  });
+
+  it('one key, a second amount after the first burn landed: refused, no row, no payment for it', async () => {
+    // R1's burn commits, its answer is lost, and its resend is still in flight.
+    ledger.queueFault('lose-response');
+    ledger.queueFault('hang');
+    const first = outcome(withdraw(KEY, WITHDRAWAL));
+    await untilHung();
+
+    // R2 reuses the key for a much larger amount and reaches the record step first.
+    const second = await outcome(withdraw(KEY, 50_000_000));
+    ledger.releaseHung();
+    await first;
+
+    expect((second as Error).message).toBe(CHARGE_MISMATCH_MESSAGE);
+    expect(second).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(ledger.charges()).toHaveLength(1);
+    expect(ledger.charges()[0].amount).toBe(WITHDRAWAL);
+    // Only R1's row and R1's payment, at R1's amount.
+    expect(rows.map((r) => r.amount)).toEqual([WITHDRAWAL - ACH_FEE]);
+    expect(tipalti.payToTipaltiAccount).toHaveBeenCalledTimes(1);
+    expect(tipalti.payToTipaltiAccount.mock.calls[0][0]).toMatchObject({
+      amount: (WITHDRAWAL - ACH_FEE) / 100,
+    });
+  });
+
+  it('one key, a second amount after the first withdrawal finished: refused, nothing more', async () => {
+    await withdraw(KEY, WITHDRAWAL);
+
+    const second = await outcome(withdraw(KEY, 2 * WITHDRAWAL));
+
+    expect((second as Error).message).toBe(CHARGE_MISMATCH_MESSAGE);
+    expect(ledger.charges()).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+    expect(tipalti.payToTipaltiAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a new burn for more than the cash ready, before burning', async () => {
+    const error = await outcome(withdraw(KEY, 100_001));
+
+    expect(error).toMatchObject({ code: 'BAD_REQUEST' });
+    expect((error as Error).message).toBe('This amount is more than your cash ready to withdraw.');
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(0);
   });
 
   it('a different key is a different withdrawal', async () => {

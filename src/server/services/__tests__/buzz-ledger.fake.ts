@@ -28,6 +28,8 @@ type Write = {
   amount: number;
   fromAccountId: number;
   toAccountId?: number;
+  fromAccountType?: string;
+  type?: number;
 };
 
 export const timeoutError = () =>
@@ -193,7 +195,13 @@ export function createFakeBuzzLedger() {
       if (lookupError) throw lookupError;
       const t = held.get(externalId);
       return t
-        ? { amount: t.amount, fromAccountId: t.fromAccountId, toAccountId: t.toAccountId }
+        ? {
+            amount: t.amount,
+            fromAccountId: t.fromAccountId,
+            toAccountId: t.toAccountId,
+            fromAccountType: t.fromAccountType,
+            type: t.type,
+          }
         : null;
     },
     /**
