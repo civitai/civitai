@@ -3,12 +3,9 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * `<Reactions entityType="image">` draws the Buzz tip badge from `metrics.tippedAmountCount`, and
- * reads a missing one as 0. Image cards built `metrics` by hand, and the post page, model
- * showcase, review carousel and image viewer left the tip out: an image with 90 Buzz in tips
- * showed 0 there while its reaction counts were right. So every image reaction bar takes its
- * counts from `imageStatsToReactionMetrics`, inline or as the `initial` of the `<Metrics>` whose
- * render prop it reads.
+ * `<Reactions entityType="image">` reads a missing `metrics.tippedAmountCount` as a 0 Buzz tip, so
+ * every image reaction bar takes its counts from `imageStatsToReactionMetrics`, inline or as the
+ * `initial` of the `<Metrics>` whose render prop it reads.
  *
  * It reads source text: it proves the helper is named at each site, not that it is given the
  * right image's stats.

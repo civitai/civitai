@@ -14,9 +14,8 @@ export type ImageReactionStats = Partial<
 >;
 
 /**
- * An image's `stats` as the counts `<Reactions>` and `<Metrics initial>` draw. Every image card
- * builds them here: a card that listed the fields by hand and left out `tippedAmountCount` drew a
- * 0 Buzz tip badge on an image with tips, while its reaction counts stayed right.
+ * An image's `stats` as the counts `<Reactions>` and `<Metrics initial>` draw, the Buzz tip total
+ * included.
  */
 export function imageStatsToReactionMetrics(
   stats: ImageReactionStats | null | undefined
