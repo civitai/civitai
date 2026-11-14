@@ -41,7 +41,7 @@ export const STORY_LEVEL_SQL = `(SELECT CASE WHEN lv.l = 0 OR lv.f = 0 THEN lv.l
   FROM (SELECT COALESCE(NULLIF(NULLIF(rp."nsfwLevel", 0), ${BLOCKED}), st."maxNsfwLevel") AS l,
     COALESCE(st."moderatorNsfwLevel", st."nsfwLevel") AS f) lv)`;
 
-/** The site's STORYLINE_MINOR_CEILING (NsfwLevel.PG13). */
+/** The site's STORYLINE_MINOR_CEILING (NsfwLevel.PG13); storyline-eligibility.parity.test.ts fails if they drift. */
 const MINOR_CEILING = 2;
 
 /**
