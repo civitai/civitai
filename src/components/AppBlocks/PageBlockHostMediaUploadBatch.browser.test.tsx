@@ -541,7 +541,8 @@ describe('PageBlockHost OPEN_MEDIA_UPLOAD_BATCH — recording an uploaded file',
     );
     postFromBlock('OPEN_MEDIA_UPLOAD_BATCH', batch('rq_rec_403', wavs(1)));
     await confirm();
-    await oneReply(replies, 'rq_rec_403');
+    const reply = await oneReply(replies, 'rq_rec_403');
+    expect(reply.results).toEqual([{ index: 0, error: 'media upload failed — please try again' }]);
     expect(h.record).toHaveBeenCalledTimes(1);
   });
 

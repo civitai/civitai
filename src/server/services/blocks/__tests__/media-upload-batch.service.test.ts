@@ -262,7 +262,7 @@ describe('presignMediaUploadBatchItem', () => {
         now: NOW,
       })
     ).rejects.toThrow('upstream 503');
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    // That the attempt is handed back is measured against real SQL in the pglite suite.
   });
 
   it('before the audit table exists: the not-available refusal', async () => {
@@ -289,14 +289,8 @@ describe('recordMediaUploadBatchItem', () => {
     await expect(
       recordMediaUploadBatchItem({ actor: ACTOR, batchId: 91, blobKey: KEY, now: NOW })
     ).resolves.toEqual({ expiresAt });
-    expect(dbMock.dbWrite.$queryRaw.mock.calls[0].slice(1)).toEqual([
-      KEY,
-      91,
-      USER,
-      'apb_alpha',
-      new Date(NOW.getTime() - 6 * 60 * 60 * 1000),
-      KEY,
-    ]);
+    // Which viewer, app and window the UPDATE matches is measured against real SQL in the pglite
+    // suite.
   });
 
   it.each(['../etc/passwd', 'a/b/c/d/e/f/g/h', 'short', ''])(
