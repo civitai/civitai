@@ -7,6 +7,7 @@ import { Embedder } from '../embedder';
 import { serveMetrics } from '../metrics';
 import { connectorBlock } from '../sync';
 import { DomainSyncQueue } from './queue';
+import { startRefreshers } from './refresh';
 import type { Domain, DomainRef } from './sync';
 
 /** The domain rows one message touches. */
@@ -78,6 +79,8 @@ export async function runSyncConsumer(opts: {
     );
   await checkGates();
   const gate = setInterval(() => void checkGates(), 60_000);
+
+  const refreshers = startRefreshers(domains, queue, pg);
 
   let stopping = false;
   const timer = setInterval(() => {
@@ -157,6 +160,7 @@ export async function runSyncConsumer(opts: {
     logger.info({ signal }, `${log}: shutting down`);
     clearInterval(timer);
     clearInterval(gate);
+    for (const r of refreshers) clearInterval(r);
     try {
       consumer.pause(topics.map((topic) => ({ topic })));
       await queue.flush();

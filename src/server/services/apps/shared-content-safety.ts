@@ -4,6 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
 import { getBlocklistData, throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 
 /**
  * BLOCKING content-safety belt for App Blocks SHARED storage writes (hardened
@@ -206,7 +207,17 @@ export async function assertSharedTextSafe(
       isModerator,
     });
   } catch (e) {
-    // Any throw is an `audit` block, a failed read inside the audit included, so never `unchecked`.
+    // The audit could not run (its retry-able 503: the external classifier unavailable, or the
+    // audit's own reads failing). That is our outage, not a verdict on the text, so it is refused
+    // exactly like the list-read outage above: category 'link' (no Report row, no content-block
+    // alert), `unchecked` (recorded as moderation_unavailable) and escalated (the write budget
+    // refunds it). PROMPT_CHECK_FAIL_CLOSED=off restores the previous handling: an `audit` block.
+    if (isPromptCheckUnavailable(e)) {
+      throw escalateToServerFault(
+        new SharedContentBlockedError('link', retryMessage, { unchecked: true })
+      );
+    }
+    // Any other throw is an `audit` block.
     const message = e instanceof Error ? e.message : 'Content was flagged';
     throw new SharedContentBlockedError('audit', message);
   }

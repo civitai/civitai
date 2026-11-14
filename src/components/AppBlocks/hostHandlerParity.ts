@@ -375,6 +375,17 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The app asks the host to offer the viewer a higher daily Buzz limit for it, after a refusal
+  // at that limit. The host sends DAILY_LIMIT_RAISE_ACK { opened } first, then this reply.
+  REQUEST_DAILY_LIMIT_RAISE: {
+    request: true,
+    reply: 'DAILY_LIMIT_RAISE_RESULT',
+    replyKeys: ['raised'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed

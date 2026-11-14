@@ -5,6 +5,7 @@ import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
+import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 
@@ -29,5 +30,7 @@ const baseSearchClient: InstantSearchProps['searchClient'] = {
 // `MeiliSearchCommunicationError`. This client backs the header quick-search
 // dropdown (and other autocomplete surfaces), so it fails quietly — no banner.
 export const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
-  createResilientSearchClient(withSemanticArticleSearch(withSemanticImageSearch(baseSearchClient)))
+  createResilientSearchClient(
+    withSemanticComicSearch(withSemanticArticleSearch(withSemanticImageSearch(baseSearchClient)))
+  )
 );

@@ -1,8 +1,6 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -23,8 +21,10 @@ import {
   auditPostImageMeta,
   getTagsFromPrompt,
   includesInappropriate,
+  includesMinorAge,
   includesPoi,
 } from '~/utils/metadata/audit';
+import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
 import { getComputedTags, getConditionalTagsForReview } from '~/server/utils/tag-rules';
 import { getTagRules } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
@@ -64,6 +64,11 @@ import {
   ingestionKeptAfterVerdict,
 } from '~/server/common/image-visibility';
 import { judgeRatingFloorSql } from '~/server/common/judge-rating';
+import {
+  nsfwAxesScanSet,
+  writeWithNsfwAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -74,7 +79,7 @@ import {
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
-import { withRetries } from '~/utils/errorHandling';
+import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import {
   FEEDBACK_CAPTURE_OWNER_ID,
   isFeedbackCaptureOwner,
@@ -191,23 +196,6 @@ export async function sendIngestionSignal({
 
 // Blocked-content detection
 // --------------------------------------------------
-async function getIsImageBlocked(hash: bigint) {
-  if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
-
-  const client = clickhouse;
-  // $query has no retry of its own, and the observed failure is a dropped socket.
-  const rows = await withRetries(
-    () => client.$query<{ count: number }>`
-      SELECT cast(count() as int) as count
-      FROM blocked_images
-      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-    `,
-    2,
-    250
-  );
-
-  return (rows?.[0]?.count ?? 0) > 0;
-}
 
 export async function logPerceptualHashMatch({
   imageId,
@@ -559,6 +547,7 @@ export async function resolveScanOutcome({
   workflowId,
   prompt,
   negativePrompt,
+  axes,
   log = LEGACY_SCAN_LOG,
 }: {
   image: ScanImage;
@@ -567,21 +556,29 @@ export async function resolveScanOutcome({
   workflowId: string;
   prompt?: string;
   negativePrompt?: string;
+  /** Rating axes, written with the verdict while `image-axis-shadow-write` is on. */
+  axes?: RatingAxes;
   log?: ScanLog;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
+  const axesSet = await nsfwAxesScanSet({ imageId: image.id, axes, workflowId });
+  const axesTarget = { imageId: image.id, workflowId };
 
   if (blocked) {
-    await dbWrite.$executeRaw`
+    await writeWithNsfwAxes(
+      (axesTerm) => dbWrite.$executeRaw`
       UPDATE "Image"
       SET
         "updatedAt" = ${updatedAt},
         "pHash" = COALESCE(${pHash ?? null}, "pHash"),
         "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
           workflowId
-        )}::jsonb)
+        )}::jsonb)${axesTerm}
       WHERE id = ${image.id}
-    `;
+    `,
+      axesSet,
+      axesTarget
+    );
     return {
       ingestion: ImageIngestionStatus.Blocked,
       blockedFor: blocked.reason,
@@ -706,7 +703,8 @@ export async function resolveScanOutcome({
   const scanLevel = toUpdate.nsfwLevel as number;
   // The rule's keys, merged over the stored row so no other key is replaced.
   const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
-  await dbWrite.$executeRaw`
+  await writeWithNsfwAxes(
+    (axesTerm) => dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
@@ -723,9 +721,12 @@ export async function resolveScanOutcome({
         ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END,
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
-      )}::jsonb)
+      )}::jsonb)${axesTerm}
     WHERE id = ${image.id}
-  `;
+  `,
+    axesSet,
+    axesTarget
+  );
 
   // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
   // after the write above, so a rating that landed after this scan loaded the image still holds; the
@@ -944,7 +945,17 @@ async function auditScanResults(args: {
   let blockedFor: string | undefined;
   if (nsfw && prompt) {
     // The post editor's own verdict, so the scan never blocks what the editor let through.
-    const auditResult = auditPostImageMeta({ prompt }, nsfw);
+    let auditResult = auditPostImageMeta({ prompt }, nsfw);
+    const ageHit = auditResult.success ? undefined : includesMinorAge(normalizeText(prompt));
+    if (ageHit?.found && ageHit.age != null) {
+      const decision = await decideAgeRegexHit({
+        surface: 'post-scan',
+        age: ageHit.age,
+        prompt,
+        source: 'other',
+      });
+      if (!decision.block) auditResult = auditPostImageMeta({ prompt: decision.withoutAge }, nsfw);
+    }
     if (!auditResult.success)
       blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
     else if (auditResult.softBlockedFor?.length)

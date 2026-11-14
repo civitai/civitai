@@ -273,15 +273,21 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
     //   `ModActivity.credential`: `20261231180000_mod_activity_credential`
+    //   `ModActivity.reviewBatchId` / `.reviewTier` / `.declaredSuspect`: `20271114200000_mod_activity_review_batch`
     //   `app_listings.issue_tracker_url`: `20270103120000_app_listing_issue_tracker` — drop this
     //     entry once it is applied in every writable environment, together with the probe and
     //     fallback in `app-listing-issue-tracker.service.ts` (see its RETIREMENT note).
     //   `Feedback.appSourceCommit` / `.appSourceDirty`: `20270104120000_feedback_app_source_commit`
     //     — no-type, raw SQL in `app-feedback.service.ts`, which degrades while it is unapplied.
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
+    //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
+    //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
       'ModActivity.credential',
+      'ModActivity.reviewBatchId',
+      'ModActivity.reviewTier',
+      'ModActivity.declaredSuspect',
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
       'app_blocks.fork_of_app_block_id',
@@ -324,7 +330,11 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ResourceReview.releasedAt',
       'Feedback.appSourceCommit',
       'Feedback.appSourceDirty',
+      'ServiceOffering.declaredNsfwLevel',
+      'ServiceOffering.scanWorkflowId',
+      'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
+      'Image.nsfwAxes',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

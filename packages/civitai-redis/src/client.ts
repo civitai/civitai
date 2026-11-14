@@ -2227,6 +2227,12 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  FLIPT: {
+    // `system:flipt:snapshot:<FLIPT_ENVIRONMENT>` — the last Flipt evaluation snapshot a process
+    // fetched live (JSON), and `…:meta` beside it ({ savedAt, etag }). A process that cannot reach
+    // Flipt at startup evaluates from it. Written by @civitai/flipt's createKvSnapshotStore.
+    SNAPSHOT: 'system:flipt:snapshot',
+  },
   DOWNLOAD_LINK: {
     // `dl:link:<sha256(id)>` — hash of one download link (credential, user, version, file, expiresAt,
     // fetches). The raw id is never stored.
@@ -2248,6 +2254,17 @@ export const REDIS_SYS_KEYS = {
     HELD_SHEET_CODE: 'app:held-sheet:code',
     // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
     HELD_SHEET_SESSION: 'app:held-sheet:session',
+    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON. Written by the
+    // main app's mint, read by the moderator app's sign-in and batch routes.
+    REVIEW_BATCH: 'app:review-batch',
+    // `app:review-batch-key:<keyId>` — set of the live batch hashes one moderator API key minted.
+    REVIEW_BATCH_KEY: 'app:review-batch-key',
+    // `app:review-batch-idem:<keyId>:<sha256(idempotencyKey)>` — the hash of the batch that key last
+    // minted under that idempotency key, so a repeat revokes it; `…-lock:…` holds a mint in flight.
+    REVIEW_BATCH_IDEM: 'app:review-batch-idem',
+    REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
+    // `app:review-sheet:session:<sha256(token)>` — one general-tier review sheet session.
+    REVIEW_SHEET_SESSION: 'app:review-sheet:session',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
@@ -2456,6 +2473,20 @@ export const REDIS_SYS_KEYS = {
      */
     SOURCE_REPO_LOCK: 'system:blocks:source-repo-lock',
     /**
+     * APP HIBERNATE — one record per hibernation attempt, keyed
+     * `system:blocks:hibernation-attempt:${attemptId}`. JSON: the user, the app and the upload key
+     * civitai built. Written `SET NX` by `begin` (TTL `ATTEMPT_TTL_SECONDS`) and read by `commit`, so a commit can only land the objects its own `begin` named
+     * (`app-hibernation.service.ts`).
+     */
+    HIBERNATION_ATTEMPT: 'system:blocks:hibernation-attempt',
+    /**
+     * APP HIBERNATE — one-time wake tickets, keyed `system:blocks:hibernation-wake-ticket:${sha256
+     * of the ticket}` (the ticket itself is never stored). JSON: the user, the app and the archive
+     * sha256 it releases secrets for. Written by `mintWakeTicket` on a wake the user started (TTL
+     * `WAKE_TTL_SECONDS`) and consumed with GETDEL by the secrets restore, so it redeems once.
+     */
+    HIBERNATION_WAKE_TICKET: 'system:blocks:hibernation-wake-ticket',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -2560,6 +2591,13 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
+    // A spend was refused at the viewer's own per-app daily limit in the last few minutes:
+    // `system:blocks:consent-limit-refused:${userId}:${appBlockId}` = the limit it was refused at.
+    // What lets the host open the raise dialog for an app's request; nothing an app declares can set it.
+    CONSENT_LIMIT_REFUSED: 'system:blocks:consent-limit-refused',
+    // Per-user fixed-window rate limit on `blocks.getMyAppDailyLimit`, the host's read behind the
+    // raise dialog: `system:blocks:daily-limit-read-rate:${userId}`.
+    DAILY_LIMIT_READ_RATE: 'system:blocks:daily-limit-read-rate',
     /** App Blocks `kind:'training'` run generation per (viewer, app, body); see block-training-quote.service. */
     TRAINING_RUNS: 'system:blocks:training-runs',
     /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
@@ -3499,10 +3537,12 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   SEMANTIC_SEARCH: {
     /*
-      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
-      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
+      Use: one aligned block of ranked candidate ids from the search service, shared by every viewer
+      whose filter and viewer class match, so a repeated search makes no Qdrant call.
+      Structure: packed { ids: number[], correctedQuery?: string },
+      key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
      */
-    QUERY_VECTOR: 'semantic-search:query-vector',
+    CANDIDATES: 'semantic-search:candidates',
   },
 } as const;
 

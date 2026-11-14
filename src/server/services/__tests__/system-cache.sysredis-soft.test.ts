@@ -45,6 +45,8 @@ const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
 // this file declared were byte-identical to them.
 const mockGet = redisMock.sysRedis.get;
 const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
+// getBrowsingSettingAddons is a hot (every-render) read, so it opts into the read breaker.
+const mockWithSysReadBreaker = redisMock.withSysReadBreaker;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
@@ -61,10 +63,11 @@ async function loadSystemCache() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
+  mockWithSysReadBreaker.mockImplementation((p) => p);
 });
 
 describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
-  it('happy path: returns the parsed cached value through withSysReadDeadline, no fail-open', async () => {
+  it('happy path: returns the parsed cached value through withSysReadBreaker, no fail-open', async () => {
     const { getBrowsingSettingAddons } = await loadSystemCache();
     const addons = [{ type: 'setting', nsfwLevels: [1], excludedFromDefaultBrowsingLevel: false }];
     mockGet.mockResolvedValue(JSON.stringify(addons));
@@ -72,7 +75,7 @@ describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
     const result = await getBrowsingSettingAddons();
 
     expect(result).toEqual(addons);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysReadBreaker).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
 
@@ -92,12 +95,12 @@ describe('getBrowsingSettingAddons — sysRedis soft-dependency', () => {
   it('SLOW/half-open: get NEVER settles + deadline REJECTS → fails open (fail-on-revert)', async () => {
     const { getBrowsingSettingAddons } = await loadSystemCache();
     mockGet.mockReturnValue(new Promise(() => undefined));
-    mockWithSysReadDeadline.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
+    mockWithSysReadBreaker.mockRejectedValue(new Error('sysRedis read timed out after 2000ms'));
 
     const result = await getBrowsingSettingAddons();
 
     expect(result).toStrictEqual(DEFAULT_BROWSING_SETTINGS_ADDONS);
-    expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
+    expect(mockWithSysReadBreaker).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('read-degraded');
   });

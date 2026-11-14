@@ -471,6 +471,8 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             label="From"
             name="start"
             placeholder="Start date"
+            clearable
+            clearButtonProps={{ 'aria-label': 'Clear start date' }}
             value={startDate}
             onChange={(date) => {
               onSetDate('start', date);
@@ -482,6 +484,8 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
             label="To"
             name="end"
             placeholder="End date"
+            clearable
+            clearButtonProps={{ 'aria-label': 'Clear end date' }}
             value={endDate}
             onChange={(date) => {
               onSetDate('end', date);

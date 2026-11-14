@@ -25,7 +25,7 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { deriveMuteColumns, groupRenamedNote, scopeMemberPrivacy } from '~/shared/utils/chat';
 import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
 import {
   throwOnBlockedLinkDomain,
@@ -71,6 +71,7 @@ import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type ChatAuditEventRow = {
   createdAt: string;
@@ -344,7 +345,7 @@ export const updateChatHandler = async ({
     await createMessage({
       chatId: existing.id,
       contentType: ChatMessageType.Markdown,
-      content: name ? `Group renamed to "${name}"` : 'Group name removed',
+      content: groupRenamedNote(name),
       userId: -1,
     });
 
@@ -666,7 +667,8 @@ export const modifyUserHandler = async ({
       // written, and letting an unreachable signals service throw reported the
       // action as failed after it had actually succeeded.
       await withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          timeoutMs: 10_000,
           method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all

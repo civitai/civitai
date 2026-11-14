@@ -69,12 +69,15 @@ function edgeUrl(base: string, key: string, params: string, ext: string) {
   return `${base}/${key}/${params}/${name}${ext}`;
 }
 
+/** The image variant every image embed is made from. */
+const imageEdgeUrl = (base: string, key: string) => edgeUrl(base, key, EMBED_IMAGE_PARAMS, '.jpeg');
+
 /** One builder per media type; a type without one is skipped, not failed. */
 const builders: Partial<Record<ImageRow['type'], (row: ImageRow, opts: BuildOptions) => Built>> = {
   image: (row, { imageLocation }) => ({
     input: {
       id: String(row.id),
-      imageUrl: edgeUrl(imageLocation, row.url, EMBED_IMAGE_PARAMS, '.jpeg'),
+      imageUrl: imageEdgeUrl(imageLocation, row.url),
     },
   }),
   video: (row, { imageLocation, embedVideo }) => {
@@ -104,6 +107,15 @@ export function buildEmbedInput(
   if (/^[a-z]+:/i.test(row.url)) return { skip: 'external-url' };
   const build = builders[row.type];
   return build ? build(row, opts) : { skip: 'unsupported-type' };
+}
+
+/**
+ * The edge URL an image stored as `key` is embedded from, the same variant the image sync sends;
+ * null for an absolute URL, which is not on our CDN.
+ */
+export function imageEmbedUrl(key: string, imageLocation = config.vectorSync.imageLocation) {
+  if (/^[a-z]+:/i.test(key)) return null;
+  return imageEdgeUrl(imageLocation, key);
 }
 
 /** Step names are how results map back to images. */

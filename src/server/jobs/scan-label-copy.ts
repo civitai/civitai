@@ -1,4 +1,6 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -79,7 +81,7 @@ export async function scanLabelCopyStoreFromEnv(): Promise<ScanLabelCopyStore | 
     source: s3,
     sourceBucket,
     target: instrumentB2Client(
-      new S3Client({
+      newS3Client({
         credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
         region: config.region,
         endpoint: config.endpoint,

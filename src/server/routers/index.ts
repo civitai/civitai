@@ -16,6 +16,8 @@ const routers = {
   appCollaborators: () =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter),
   appStorage: () => import('~/server/routers/app-storage.router').then((m) => m.appStorageRouter),
+  appHibernation: () =>
+    import('~/server/routers/app-hibernation.router').then((m) => m.appHibernationRouter),
   blockImageUpload: () =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter),
   blockImagePicker: () =>
@@ -70,6 +72,12 @@ const routers = {
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
   semanticArticleSearch: () =>
     import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
+  semanticComicSearch: () =>
+    import('./semantic-comic-search.router').then((m) => m.semanticComicSearchRouter),
+  semanticModel3DSearch: () =>
+    import('./semantic-model3d-search.router').then((m) => m.semanticModel3DSearchRouter),
+  semanticStorylineSearch: () =>
+    import('./semantic-storyline-search.router').then((m) => m.semanticStorylineSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),

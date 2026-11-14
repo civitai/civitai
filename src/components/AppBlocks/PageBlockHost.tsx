@@ -9,6 +9,7 @@ import { failureSnapshot, pollFailureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { AppStorageNearLimitNotice } from './AppStorageNearLimitNotice';
 import { AppBuzzCapNotice } from './AppBuzzCapNotice';
+import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   APP_STORAGE_BASE_SCOPE,
@@ -2474,6 +2475,7 @@ export function PageBlockHost({
   const refreshBuzzCapNotice = useCallback(() => {
     if (showBuzzCapNotice) buzzCapUtils.user.getAppBuzzCap.invalidate().catch(() => undefined);
   }, [showBuzzCapNotice, buzzCapUtils]);
+  const dailyLimitRaise = useDailyLimitRaiseBridge({ appBlockId, appName, disabled: reviewMode });
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
@@ -2586,6 +2588,7 @@ export function PageBlockHost({
         });
         if (!reviewMode) reportAppSubmitResult(appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        dailyLimitRaise.onRelayedSnapshot(snapshot);
       } catch (err) {
         if (!reviewMode) reportAppSubmitError(appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
@@ -2607,7 +2610,26 @@ export function PageBlockHost({
     appBlockId,
     countAppSubmit,
     refreshBuzzCapNotice,
+    dailyLimitRaise,
   ]);
+
+  // REQUEST_DAILY_LIMIT_RAISE → DAILY_LIMIT_RAISE_ACK, then DAILY_LIMIT_RAISE_RESULT. The app asks
+  // the host to offer the viewer a higher daily limit for it; see `useDailyLimitRaiseBridge` for
+  // when the dialog may open. The app learns only two booleans.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'REQUEST_DAILY_LIMIT_RAISE',
+      (raw) => {
+        const requestId = raw?.requestId;
+        if (typeof requestId !== 'string' || requestId.length === 0) return;
+        void dailyLimitRaise.onRaiseRequest({
+          ack: (opened) => send('DAILY_LIMIT_RAISE_ACK', { requestId, opened }),
+          result: (raised) => send('DAILY_LIMIT_RAISE_RESULT', { requestId, raised }),
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, dailyLimitRaise]);
 
   // ESTIMATE_WORKFLOW → blocks.estimateWorkflow → ESTIMATE_RESULT.
   useEffect(() => {
@@ -5656,18 +5678,20 @@ export function PageBlockHost({
       dailyLimit: ConfirmedStepQuotePreview['dailyLimit']
     ) => {
       const copy = buildConfirmedStepDailyLimitCopy({ appName, total, dailyLimit });
-      dialogStore.trigger({
-        id: `block-confirmed-step-limit-${requestId}`,
-        component: AlertDialog,
-        props: {
-          type: 'info',
-          title: copy.title,
-          size: 'md',
-          children: ({ handleClose }: { handleClose: () => void }) => (
-            <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
-          ),
-        },
-      });
+      dailyLimitRaise.onConfirmedStepRefusal(() =>
+        dialogStore.trigger({
+          id: `block-confirmed-step-limit-${requestId}`,
+          component: AlertDialog,
+          props: {
+            type: 'info',
+            title: copy.title,
+            size: 'md',
+            children: ({ handleClose }: { handleClose: () => void }) => (
+              <ConfirmedStepDailyLimitBody copy={copy} onClose={handleClose} />
+            ),
+          },
+        })
+      );
     };
     const showUnconfirmedNotice = (requestId: string) => {
       dialogStore.trigger({
@@ -5819,6 +5843,7 @@ export function PageBlockHost({
     reviewMode,
     appBlockId,
     refreshBuzzCapNotice,
+    dailyLimitRaise,
   ]);
 
   // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────

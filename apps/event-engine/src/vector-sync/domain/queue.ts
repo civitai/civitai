@@ -94,6 +94,7 @@ export class SyncLane<P extends DomainPayload> {
       const stats = await syncIds(this.domain.getDocs, ids, {
         ...this.deps,
         embedder: embed && embedder ? timeEmbeds(this.domain.name, embedder) : null,
+        embedInput: this.domain.embedInput,
       });
       recordFlush(this.domain.name, stats);
       logger.info({ ids: ids.length, ms: Date.now() - started, ...stats }, `${this.log}: flushed`);

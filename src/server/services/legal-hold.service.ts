@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
@@ -115,16 +116,7 @@ function holdLegsSql(id: Prisma.Sql) {
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
-/** Every image id listed on any CsamReport, whatever its state, as text. */
-export const csamReportListedImageIdsSql = Prisma.sql`
-  SELECT listed.id FROM (
-    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
-    FROM "CsamReport" lr
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
-    ) le
-  ) listed
-  WHERE listed.id IS NOT NULL`;
+export const csamReportListedImageIdsSql = Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL);
 
 /**
  * Each state that keeps the capture row aliased `image`. `evidenceHold` is the record a kept delete
@@ -457,6 +449,28 @@ async function readAccountHolds(
     for (const legsHeld of held.values()) legsHeld.push('hold-marker');
   }
   return [...held].map(([userId, legsHeld]) => ({ userId, legs: legsHeld, markerView }));
+}
+
+/**
+ * Whether each of `userIds` is under a legal hold, in ONE batched lookup (`readAccountHolds`).
+ * Never throws: a lookup that fails, or that leaves a user out, answers `true` (held) for every user
+ * it could not clear, so a caller deleting on `false` deletes nothing it cannot prove is clear.
+ */
+export async function areAccountsUnderLegalHold(userIds: number[]): Promise<Map<number, boolean>> {
+  const answer = new Map(userIds.map((id) => [id, true]));
+  if (userIds.length === 0) return answer;
+  try {
+    for (const hold of await readAccountHolds(userIds))
+      if (answer.has(hold.userId)) answer.set(hold.userId, hold.legs.length > 0);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+  }
+  return answer;
 }
 
 export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHoldLeg[]> {

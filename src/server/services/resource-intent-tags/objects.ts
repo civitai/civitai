@@ -1,10 +1,7 @@
+import { newS3Client } from '~/utils/s3-client-factory';
 import { createHash } from 'crypto';
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 
 import { env } from '~/env/server';
 import { instrumentB2Client } from '~/server/prom/b2-put.metrics';
@@ -48,7 +45,7 @@ function tagIndexS3ClientFromEnv(): S3Client {
   const missing = TAG_INDEX_STORE_ENV.filter((name) => !env[name]);
   if (missing.length) throw new Error(`${missing.join(', ')} not set`);
   return instrumentB2Client(
-    new S3Client({
+    newS3Client({
       credentials: {
         accessKeyId: env.RESOURCE_INTENT_TAG_INDEX_B2_ACCESS_KEY as string,
         secretAccessKey: env.RESOURCE_INTENT_TAG_INDEX_B2_SECRET_KEY as string,

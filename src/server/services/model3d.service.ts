@@ -25,6 +25,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
+  nsfwBrowsingLevelsFlag,
+  onlySelectableLevels,
   parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -65,6 +67,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
   getPolyGenPostBlock,
@@ -103,19 +106,23 @@ const model3dFileSelect = {
   createdAt: true,
 } satisfies Prisma.Model3DFileSelect;
 
+// Every image a 3D model read returns: never its generation data, which no 3D model surface shows
+// and which an image's owner may have hidden.
+const model3dImageSelect = { ...imageSelect, meta: false } satisfies Prisma.ImageSelect;
+
 const model3dDetailSelect = {
   id: true,
   name: true,
   description: true,
   userId: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: imageSelect },
+  thumbnailImage: { select: model3dImageSelect },
   licenseId: true,
   license: true,
   licenseDetails: true,
   workflowId: true,
   sourceImageId: true,
-  sourceImage: { select: imageSelect },
+  sourceImage: { select: model3dImageSelect },
   generationParams: true,
   status: true,
   nsfw: true,
@@ -161,7 +168,7 @@ const model3dListSelect = {
   publishedAt: true,
   createdAt: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: imageSelect },
+  thumbnailImage: { select: model3dImageSelect },
   user: { select: userWithCosmeticsSelect },
   metric: true,
   // Tags drive client-side `useApplyHiddenPreferences` filtering on the feed.
@@ -361,8 +368,18 @@ export const ensureModel3DFromWorkflow = async ({
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
-    const sourceImageId =
-      typeof meta.sourceImageId === 'number' ? (meta.sourceImageId as number) : undefined;
+    // Workflow metadata is user-patchable: keep the source image only if it is the caller's own.
+    const claimedSourceImageId =
+      Number.isInteger(meta.sourceImageId) && (meta.sourceImageId as number) > 0
+        ? (meta.sourceImageId as number)
+        : undefined;
+    const sourceImage = claimedSourceImageId
+      ? await dbRead.image.findUnique({
+          where: { id: claimedSourceImageId },
+          select: { userId: true },
+        })
+      : null;
+    const sourceImageId = sourceImage?.userId === user.id ? claimedSourceImageId : undefined;
 
     await handlePolyGenWorkflowResult({
       workflowId: input.workflowId,
@@ -391,6 +408,52 @@ export const ensureModel3DFromWorkflow = async ({
   }
   return created;
 };
+
+/**
+ * Feed rows in the card's shape: tags flattened for `useApplyHiddenPreferences`, and the viewer's
+ * own recommend (thumbs-up) per row so the card renders it toggled.
+ */
+async function withUserReviews(
+  rows: Prisma.Model3DGetPayload<{ select: typeof model3dListSelect }>[],
+  user?: SessionUser | null
+) {
+  const rowIds = rows.map((r) => r.id);
+  const userReviews =
+    user && rowIds.length
+      ? await dbRead.model3DReview.findMany({
+          where: { userId: user.id, model3dId: { in: rowIds } },
+          select: { id: true, model3dId: true, recommended: true },
+        })
+      : [];
+  const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
+  return rows.map(({ tags, ...rest }) => {
+    const review = reviewByModel.get(rest.id);
+    return {
+      ...rest,
+      tags: tags.map((t) => t.tagId),
+      userReview: review ? { id: review.id, recommended: review.recommended } : null,
+    };
+  });
+}
+
+/**
+ * The feed cards of the given 3D models, unordered, with no visibility rule of its own: the caller
+ * decides which ids may be shown.
+ */
+export async function getModel3DFeedItemsByIds({
+  ids,
+  user,
+}: {
+  ids: number[];
+  user?: SessionUser | null;
+}) {
+  if (!ids.length) return [];
+  const rows = await dbRead.model3D.findMany({
+    where: { id: { in: ids } },
+    select: model3dListSelect,
+  });
+  return withUserReviews(rows, user);
+}
 
 export type Model3DGetInfinite = AsyncReturnType<typeof getModel3DsInfinite>;
 export const getModel3DsInfinite = async ({
@@ -584,31 +647,7 @@ export const getModel3DsInfinite = async ({
       nextCursor = nextItem?.id;
     }
 
-    // The signed-in user's own recommend (thumbs-up) per row, so the card can
-    // render the gold thumbs-up in its toggled state. One indexed lookup keyed
-    // on (userId, model3dId) rather than a per-row correlated sub-select.
-    const rowIds = rows.map((r) => r.id);
-    const userReviews =
-      user && rowIds.length
-        ? await dbRead.model3DReview.findMany({
-            where: { userId: user.id, model3dId: { in: rowIds } },
-            select: { id: true, model3dId: true, recommended: true },
-          })
-        : [];
-    const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
-
-    // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
-    // `useApplyHiddenPreferences` hook can apply tag-based filtering with
-    // the same shape it uses for the `'models'` branch.
-    const items = rows.map(({ tags, ...rest }) => {
-      const review = reviewByModel.get(rest.id);
-      return {
-        ...rest,
-        tags: tags.map((t) => t.tagId),
-        userReview: review ? { id: review.id, recommended: review.recommended } : null,
-      };
-    });
-
+    const items = await withUserReviews(rows, user);
     return { items, nextCursor };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -749,8 +788,8 @@ export const upsertModel3D = async ({
   // can't quietly publish a draft.
   if (!isModerator) delete (data as Record<string, unknown>).status;
 
-  // Strip locked props on update for non-mods.
-  let lockedProperties: string[] | undefined = data.lockedProperties;
+  // Only moderators set locks, on create as well as update.
+  let lockedProperties: string[] | undefined = isModerator ? data.lockedProperties : undefined;
   let existing: { id: number; userId: number; lockedProperties: string[] } | null = null;
   if (id) {
     existing = await dbWrite.model3D.findUnique({
@@ -762,11 +801,52 @@ export const upsertModel3D = async ({
 
     if (!isModerator) {
       const locked = new Set(existing.lockedProperties ?? []);
+      // A moderator's rating was judged on the current thumbnail, so it pins that too.
+      if (locked.has('nsfwLevel') && data.thumbnailImageId !== undefined) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message:
+            "A moderator has rated this model, so its thumbnail can't be changed. Contact support if you need to change it.",
+        });
+      }
       for (const key of locked) delete (data as Record<string, unknown>)[key];
       // Non-mods can't change lockedProperties either.
       lockedProperties = undefined;
     }
   }
+
+  // Moderators included: the thumbnail must be one of the model owner's images.
+  let thumbnailNsfwLevel: number | undefined;
+  if (data.thumbnailImageId != null) {
+    const ownerId = existing?.userId ?? user.id;
+    const image = await dbWrite.image.findUnique({
+      where: { id: data.thumbnailImageId },
+      select: { userId: true, nsfwLevel: true, postId: true },
+    });
+    // Unposted only: the thumbnail rating fast paths (updateModel3DNsfwLevelForThumbnailImage,
+    // apps/moderator image-nsfw-level) skip posted images.
+    if (!image || image.userId !== ownerId || image.postId != null)
+      throw throwBadRequestError('Invalid thumbnail image.');
+    thumbnailNsfwLevel = image.nsfwLevel;
+  } else if (data.thumbnailImageId === null) {
+    thumbnailNsfwLevel = 0;
+  }
+  // Rate from the new thumbnail in the same write, as updateModel3DNsfwLevels would, so a
+  // published model is never served at the previous thumbnail's level while the job is queued.
+  const ratingLocked = (lockedProperties ?? existing?.lockedProperties ?? []).includes('nsfwLevel');
+  const nsfwLevel = ratingLocked ? undefined : thumbnailNsfwLevel;
+
+  // nsfwLevel is derived from the thumbnail; the image-scan path only re-derives when the image changes.
+  const queueNsfwRecomputeOnThumbnailChange = async (
+    model3dId: number,
+    tx: Prisma.TransactionClient
+  ) => {
+    if (data.thumbnailImageId === undefined) return;
+    await enqueueJobs(
+      [{ entityId: model3dId, entityType: EntityType.Model3D, type: JobQueueType.UpdateNsfwLevel }],
+      tx
+    );
+  };
 
   const writeData: Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput = {
     ...data,
@@ -774,13 +854,18 @@ export const upsertModel3D = async ({
     generationParams: (generationParams as Prisma.InputJsonValue) ?? undefined,
     meta: (meta as Prisma.InputJsonValue) ?? undefined,
     lockedProperties,
+    ...(nsfwLevel !== undefined && { nsfwLevel }),
   } as Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput;
+
+  const guardRatingLock = !isModerator && data.thumbnailImageId !== undefined;
 
   try {
     if (id) {
       const updated = await dbWrite.$transaction(async (tx) => {
         const row = await tx.model3D.update({
-          where: { id },
+          // A moderator may lock the rating after the lock read above; refuse rather than
+          // swap the thumbnail under a locked rating.
+          where: guardRatingLock ? { id, NOT: { lockedProperties: { has: 'nsfwLevel' } } } : { id },
           data: writeData,
           select: model3dDetailSelect,
         });
@@ -795,6 +880,7 @@ export const upsertModel3D = async ({
           }
         }
 
+        await queueNsfwRecomputeOnThumbnailChange(row.id, tx);
         return row;
       });
       return updated;
@@ -814,12 +900,23 @@ export const upsertModel3D = async ({
         });
       }
 
+      await queueNsfwRecomputeOnThumbnailChange(row.id, tx);
       return row;
     });
 
     return created;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (
+      guardRatingLock &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2025'
+    ) {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'This model changed while you were saving. Reload it and try again.',
+      });
+    }
     throw throwDbError(error);
   }
 };
@@ -943,16 +1040,17 @@ export const deleteModel3D = async ({
 // ---------------------------------------------------------------------------
 
 /**
- * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. When
- * `lock` is true we also append `'nsfwLevel'` to `lockedProperties` so the
- * batch recompute (`updateModel3DNsfwLevels`) skips this row going forward.
+ * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. Like a moderator's
+ * image rating (`nsfwLevelLocked`), it always locks: `'nsfwLevel'` is added to
+ * `lockedProperties`, so neither the batch recompute (`updateModel3DNsfwLevels`) nor the
+ * owner (who then can't change the thumbnail) can move it. The `lock` input is ignored.
  *
  * Denormalized `Model3DMetric.nsfwLevel` is updated in lockstep.
  */
 export const setModel3DNsfwLevel = async ({
   id,
   nsfwLevel,
-  lock,
+  thumbnailImageId,
   user,
 }: SetModel3DNsfwLevelInput & { user: SessionUser }) => {
   if (!user.isModerator) throw throwAuthorizationError();
@@ -963,14 +1061,13 @@ export const setModel3DNsfwLevel = async ({
   });
   if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
 
-  const nextLocked = lock
-    ? Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']))
-    : existing.lockedProperties;
+  const nextLocked = Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']));
 
   try {
     const updated = await dbWrite.$transaction(async (tx) => {
+      // The lock pins this rating to the current thumbnail, so it must be the one judged.
       const row = await tx.model3D.update({
-        where: { id },
+        where: { id, AND: [{ thumbnailImageId }] },
         data: { nsfwLevel, lockedProperties: nextLocked },
         select: model3dDetailSelect,
       });
@@ -988,6 +1085,12 @@ export const setModel3DNsfwLevel = async ({
     return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'The thumbnail changed since you opened this model. Reload it and rate again.',
+      });
+    }
     throw throwDbError(error);
   }
 };
@@ -1484,13 +1587,36 @@ export const upsertModel3DFromWorkflow = async ({
 // Related Posts ("Makes & Uses") + Review summary
 // ---------------------------------------------------------------------------
 
+/** Every post level (a combination of image levels, Blocked included) sharing a level with `level`. */
+const postLevelsWithin = (level: number) =>
+  Array.from({ length: 2 * NsfwLevel.Blocked - 1 }, (_, i) => i + 1).filter(
+    (v) => (v & level) !== 0
+  );
+
+/** Images a post card may fall back to when an earlier one is a restricted model's. */
+const COVER_CANDIDATES = 3;
+
+/** Of these images, the mature ones of a restricted model, which the image feeds never show. */
+async function restrictedMatureImageIds(ids: number[]) {
+  if (!ids.length) return new Set<number>();
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id IN (${Prisma.join(ids)})
+      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0 AND i."modelRestricted"
+  `;
+  return new Set(rows.map((row) => row.id));
+}
+
 export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
 export const getModel3DRelatedPosts = async ({
   input,
   user,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
+  /** The viewer's resolved, capped level (`relatedPostsBrowsingLevel`); unset reads PG only. */
+  browsingLevel?: number;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
@@ -1506,13 +1632,36 @@ export const getModel3DRelatedPosts = async ({
 
     // Visibility:
     //  - Moderators see everything.
-    //  - Everyone else sees published+public posts AND their own posts
+    //  - Everyone else sees published+public posts rated within their level AND their own posts
     //    (any state, so a user who just created a draft post linked to this
     //    model3d sees it on the page immediately, before they hit Publish).
+    // A post's level is its images' combined level: it is listed when it shares a level with the
+    // viewer's, as the post feed does, and an unrated post (0) never is; nor is one with no cover
+    // the viewer may see. Blocked is never a level a viewer browses at.
+    const level = onlySelectableLevels(browsingLevel);
+    // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
+    // their level, out of review and never blocked. A mature image of a restricted model is
+    // dropped below: that column is not in the Prisma schema.
+    const coverGate: Prisma.ImageWhereInput = {
+      ingestion: 'Scanned',
+      nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
+      needsReview: null,
+      blockedFor: null,
+      acceptableMinor: false,
+      poi: false,
+      minor: false,
+    };
     const publishedClause: Prisma.PostWhereInput = {
       publishedAt: { lte: new Date() },
       availability: { not: 'Private' },
+      nsfwLevel: { in: postLevelsWithin(level) },
+      images: { some: coverGate },
     };
+    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
+      ? undefined
+      : viewerId
+      ? { OR: [{ userId: viewerId }, coverGate] }
+      : coverGate;
     const visibility: Prisma.PostWhereInput = isModerator
       ? {}
       : viewerId
@@ -1538,12 +1687,23 @@ export const getModel3DRelatedPosts = async ({
         nsfwLevel: true,
         user: { select: userWithCosmeticsSelect },
         images: {
-          take: 1,
+          where: coverWhere,
+          take: COVER_CANDIDATES,
           orderBy: { index: 'asc' },
-          select: imageSelect,
+          select: model3dImageSelect,
         },
       },
     });
+    const restricted = isModerator
+      ? new Set<number>()
+      : await restrictedMatureImageIds(
+          items.flatMap((post) =>
+            post.images.filter((image) => image.userId !== viewerId).map((image) => image.id)
+          )
+        );
+    for (const post of items) {
+      post.images = post.images.filter((image) => !restricted.has(image.id)).slice(0, 1);
+    }
 
     let nextCursor: number | undefined;
     if (items.length > take) {

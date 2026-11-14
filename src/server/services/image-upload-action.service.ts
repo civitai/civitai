@@ -12,11 +12,18 @@ const UPLOAD_LOOKBACK_HOURS = 24;
 const UPLOAD_SKEW_HOURS = 1;
 
 /**
- * Records that the requesting user was handed image upload key `key`, with the request's IP.
+ * Records that `userId`, the requesting user, was handed image upload key `key`, with the
+ * request's IP. `userId` is the one the route authenticated, so the row names the issuee even when
+ * the tracker's own session lookup fails (which would log user 0, a row no ownership check reads).
  * Fire-and-forget: a tracking failure never fails the upload.
  */
-export function trackImageUpload(req: NextApiRequest, res: NextApiResponse, key: string) {
-  new Tracker(req, res).imageUploadRequest(key).catch((e) =>
+export function trackImageUpload(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  key: string,
+  userId: number
+) {
+  new Tracker(req, res).imageUploadRequest(key, userId).catch((e) =>
     logToAxiom({
       type: 'error',
       name: 'image-upload-action',
