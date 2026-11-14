@@ -10592,6 +10592,10 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   // the per-engine display estimate) is validated/bounded; an invalid param
   // throws a ZodError → BAD_REQUEST, exactly as submit fails closed.
   const params = recipe.paramSchema.parse(body.params);
+  // The submit's own currency call, for its refusal only: a disallowed
+  // `params.accountType` is a BAD_REQUEST on this estimate too. There is no whatIf
+  // here, so the order itself is not used.
+  resolveBlockCurrenciesForAccount(resolveBlockMaturity(claims).isGreen, params.accountType);
   return {
     snapshot: {
       // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
@@ -14504,7 +14508,13 @@ async function previewQuoteGrantFor(
       : null,
     exceedsDailyLimit: limit?.exceeds ?? false,
   };
-  if (kind === 'step') return { ...shared, stepType: String(quote.stepType) };
+  if (kind === 'step') {
+    return {
+      ...shared,
+      stepType: String(quote.stepType),
+      fundingOrder: confirmedStepFundingOrder(claims, quote.accountType),
+    };
+  }
   return {
     ...shared,
     imageCount: quote.imageCount as number,
@@ -15181,6 +15191,21 @@ async function hashConfirmedStepBodyOrRefuse(body: PassThroughStepBody): Promise
 }
 
 /**
+ * The order a confirmed step's pools are tried in, for the consent dialog — the
+ * submit's own `orderBlockCurrencyTypes` over the stored pick — or `null` when the
+ * quote names no pick (the dialog then shows nothing new, as before picks existed).
+ * Also `null` for a pick the token no longer allows: the submit refuses that one.
+ */
+function confirmedStepFundingOrder(claims: BlockClaims, accountType: unknown) {
+  if (accountType !== 'blue' && accountType !== 'green' && accountType !== 'yellow') return null;
+  const { ordered, disallowed } = orderBlockCurrencyTypes(
+    resolveBlockMaturity(claims).isGreen,
+    accountType
+  );
+  return disallowed ? null : ordered;
+}
+
+/**
  * The estimate's half: store a confirmable quote, or `null` (and the estimate reply is
  * unchanged). Granted only for a FIXED price strictly above the per-call budget and at
  * most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, to a token the shared gate admits, with
@@ -15223,6 +15248,8 @@ async function grantConfirmedStepQuote(opts: {
     total: price,
     bodyHash: await hashConfirmedStepBodyOrRefuse(body),
     stepType: body.$type,
+    // Shown by the consent dialog ("paid from … first"); absent with no pick.
+    ...(body.accountType ? { accountType: body.accountType } : {}),
   });
   return {
     quoteId: record.quoteId,

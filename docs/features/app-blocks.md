@@ -730,8 +730,11 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   mature app blue and yellow), so a pick never widens the maturity policy. An
   out-of-set pick is a BAD_REQUEST on the estimate and the submit alike; absent →
   Auto, blue first (see `resolveBlockCurrenciesForAccount`). The estimate prices
-  the same order the submit drains. A confirmed step quote is bound to its pool:
-  submitting it with a different `accountType` is refused as a changed body.
+  the same order the submit drains (the `customComfy` recipe estimate has no
+  price quote but refuses a disallowed pick the same way). A confirmed step quote
+  is bound to its pool: submitting it with a different `accountType` is refused
+  as a changed body, and its consent dialog names the order ("Paid from Yellow
+  Buzz first, then Blue."); with no pick the dialog has no pool line.
   A pick does **not** guarantee an unrestricted output: when the picked pool
   cannot cover the job the fallback pays, and a fallback to blue can still leave a
   mature output restricted.
