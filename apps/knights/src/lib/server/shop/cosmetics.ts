@@ -60,5 +60,7 @@ export function frameFit(data: unknown): FrameFit | null {
   }
   const offset = value?.offset;
   if (typeof offset !== 'string' || !LEGACY_OFFSET.test(offset)) return null;
-  return Math.abs(parseFloat(offset)) <= MAX_FRAME_OFFSET ? { kind: 'offset', value: offset } : null;
+  return Math.abs(parseFloat(offset)) <= MAX_FRAME_OFFSET
+    ? { kind: 'offset', value: offset }
+    : null;
 }

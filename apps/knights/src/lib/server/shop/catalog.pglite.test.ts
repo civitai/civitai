@@ -121,7 +121,13 @@ describe("the shop view of a cosmetic's preview data", () => {
 
   it("passes a frame's offsets or legacy offset, and none when they are incomplete, malformed or out of range", async () => {
     const byId = new Map((await cards()).map((card) => [card.id, card]));
-    expect(byId.get(13)?.frameFit).toEqual({ kind: 'offsets', top: -10, left: -13, right: -14, bottom: -16 });
+    expect(byId.get(13)?.frameFit).toEqual({
+      kind: 'offsets',
+      top: -10,
+      left: -13,
+      right: -14,
+      bottom: -16,
+    });
     expect(byId.get(15)?.frameFit).toEqual({ kind: 'offset', value: '10%' });
     expect(byId.get(16)?.frameFit).toBeNull();
     expect(byId.get(17)?.frameFit).toBeNull();

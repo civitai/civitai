@@ -180,7 +180,9 @@ export function groupCosmetics<T extends { cosmeticType: string | null; uses: nu
   });
   return groups
     .filter((group) => group.cards.length > 0)
-    .map((group) => (group.key === 'Sticker' ? { ...group, note: stickerNote(group.cards) } : group));
+    .map((group) =>
+      group.key === 'Sticker' ? { ...group, note: stickerNote(group.cards) } : group
+    );
 }
 
 function stickerNote(cards: { uses: number | null }[]) {
@@ -247,7 +249,10 @@ export function cardAction(
 ): CardAction {
   switch (card.state) {
     case 'rank':
-      return { kind: 'locked', label: card.minRank ? `Unlocks at ${card.minRank}` : 'Locked for your rank' };
+      return {
+        kind: 'locked',
+        label: card.minRank ? `Unlocks at ${card.minRank}` : 'Locked for your rank',
+      };
     case 'owned':
       return { kind: 'owned', label: 'Owned' };
     case 'member':

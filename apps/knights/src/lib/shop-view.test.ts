@@ -198,7 +198,11 @@ describe('buyClick', () => {
 });
 
 describe('groupCosmetics', () => {
-  const card = (id: number, cosmeticType: string | null, uses: number | null = null) => ({ id, cosmeticType, uses });
+  const card = (id: number, cosmeticType: string | null, uses: number | null = null) => ({
+    id,
+    cosmeticType,
+    uses,
+  });
 
   it('groups cosmetics by type in shop order, keeps each group in catalog order, and drops empty groups', () => {
     const groups = groupCosmetics([
@@ -226,8 +230,12 @@ describe('groupCosmetics', () => {
   });
 
   it("notes the stickers' uses when every sticker sells the same number, and stays general otherwise", () => {
-    expect(groupCosmetics([card(1, 'Sticker', 100), card(2, 'Sticker', 100)])[0].note).toBe('100 uses each');
-    expect(groupCosmetics([card(1, 'Sticker', 100), card(2, 'Sticker', 5)])[0].note).toBe('Buy again for more uses');
+    expect(groupCosmetics([card(1, 'Sticker', 100), card(2, 'Sticker', 100)])[0].note).toBe(
+      '100 uses each'
+    );
+    expect(groupCosmetics([card(1, 'Sticker', 100), card(2, 'Sticker', 5)])[0].note).toBe(
+      'Buy again for more uses'
+    );
     expect(groupCosmetics([card(1, 'Badge')])[0].note).toBe('Yours forever');
     expect(groupCosmetics([card(1, 'NamePlate')])[0].note).toBe('Colors your name across Civitai');
   });
@@ -255,7 +263,13 @@ describe('frameStyle', () => {
   });
 
   it('matches the avatar box exactly without offsets', () => {
-    expect(frameStyle(null)).toEqual({ top: '0%', left: '0%', width: '100%', height: '100%', transform: 'none' });
+    expect(frameStyle(null)).toEqual({
+      top: '0%',
+      left: '0%',
+      width: '100%',
+      height: '100%',
+      transform: 'none',
+    });
   });
 });
 
@@ -274,7 +288,11 @@ describe('tileName', () => {
 });
 
 describe('cardAction', () => {
-  const card = (state: string, price = 1000, minRank: string | null = null) => ({ state, price, minRank });
+  const card = (state: string, price = 1000, minRank: string | null = null) => ({
+    state,
+    price,
+    minRank,
+  });
   const purse = (convertible: number, held = false) => ({ convertible, held });
 
   it('offers Buy when the purse covers the price, and the shortfall when it does not', () => {
@@ -287,11 +305,23 @@ describe('cardAction', () => {
   });
 
   it('names the rank that unlocks a gated item, and says owned, member, gone and closed', () => {
-    expect(cardAction(card('rank', 1000, 'Templar'), purse(5000))).toEqual({ kind: 'locked', label: 'Unlocks at Templar' });
+    expect(cardAction(card('rank', 1000, 'Templar'), purse(5000))).toEqual({
+      kind: 'locked',
+      label: 'Unlocks at Templar',
+    });
     expect(cardAction(card('owned'), purse(5000))).toEqual({ kind: 'owned', label: 'Owned' });
-    expect(cardAction(card('member'), purse(5000))).toEqual({ kind: 'member', label: 'You are a member' });
-    expect(cardAction(card('sold-out'), purse(5000))).toEqual({ kind: 'gone', label: 'Gone for today' });
-    expect(cardAction(card('closed'), purse(5000))).toEqual({ kind: 'closed', label: 'Not available now' });
+    expect(cardAction(card('member'), purse(5000))).toEqual({
+      kind: 'member',
+      label: 'You are a member',
+    });
+    expect(cardAction(card('sold-out'), purse(5000))).toEqual({
+      kind: 'gone',
+      label: 'Gone for today',
+    });
+    expect(cardAction(card('closed'), purse(5000))).toEqual({
+      kind: 'closed',
+      label: 'Not available now',
+    });
   });
 });
 
