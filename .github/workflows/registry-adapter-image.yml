@@ -84,6 +84,7 @@ jobs:
           set -euo pipefail
           config=$(docker image inspect registry-adapter:ci --format '{{json .Config}}')
           echo "$config" | jq '{User, ExposedPorts, Cmd, WorkingDir}'
+          docker image ls registry-adapter:ci --format 'size: {{.Size}}'
           [ "$(echo "$config" | jq -r .User)" = "1001:1001" ]
           [ "$(echo "$config" | jq -c '.ExposedPorts | keys')" = '["7130/tcp","7131/tcp"]' ]
           [ "$(echo "$config" | jq -c .Cmd)" = '["node","dist/registry-adapter.js"]' ]
@@ -94,8 +95,10 @@ jobs:
       # requires first. Exiting for any other reason, or not exiting, fails this step.
       - name: Command starts the bundle
         run: |
+          # The step shell runs with -e; a failing command substitution must not end it here.
           set -uo pipefail
-          out=$(timeout 60 docker run --rm registry-adapter:ci 2>&1); rc=$?
+          rc=0
+          out=$(timeout 60 docker run --rm registry-adapter:ci 2>&1) || rc=$?
           echo "$out" | tail -20
           echo "exit: $rc"
           [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || exit 1
