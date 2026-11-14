@@ -7,16 +7,23 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 // The SQL runs on an in-memory Postgres with only the columns it reads.
 
-const { refresh, fetch, queueModelsReindex, collectionsQueueUpdate } = vi.hoisted(() => ({
-  refresh: vi.fn(async (_ids: number[]) => undefined),
-  fetch: vi.fn(),
-  queueModelsReindex: vi.fn(async (ids: number[], opts: { dryRun: boolean }) => ({
-    dryRun: opts.dryRun,
-    modelCount: ids.length,
-  })),
-  collectionsQueueUpdate: vi.fn(async (_items: { id: number; action: string }[]) => undefined),
-}));
+const { refresh, fetch, queueModelsReindex, collectionsQueueUpdate, getDocuments, storedDocs } =
+  vi.hoisted(() => ({
+    // The collections search index as stored: each document's cover and item images.
+    storedDocs: new Map<number, { image?: { id: number }; images?: { id: number }[] }>(),
+    getDocuments: vi.fn(),
+    refresh: vi.fn(async (_ids: number[]) => undefined),
+    fetch: vi.fn(),
+    queueModelsReindex: vi.fn(async (ids: number[], opts: { dryRun: boolean }) => ({
+      dryRun: opts.dryRun,
+      modelCount: ids.length,
+    })),
+    collectionsQueueUpdate: vi.fn(async (_items: { id: number; action: string }[]) => undefined),
+  }));
 vi.mock('~/server/redis/caches', () => ({ tagIdsForImagesCache: { refresh, fetch } }));
+vi.mock('~/server/meilisearch/client', () => ({
+  searchClient: { index: () => ({ getDocuments }) },
+}));
 vi.mock('~/server/search-index/collections.search-index', () => ({
   collectionsSearchIndex: { queueUpdate: collectionsQueueUpdate },
 }));
@@ -37,42 +44,17 @@ beforeAll(async () => {
       "imageId" int NOT NULL, "tagId" int NOT NULL, source "TagSource" NOT NULL,
       disabled boolean NOT NULL DEFAULT false
     );
-    -- Columns past the ids are the ones the collection indexer's item-cover SQL reads.
-    CREATE TABLE "Image" (
-      id int PRIMARY KEY, "postId" int, "userId" int NOT NULL DEFAULT 7, index int NOT NULL DEFAULT 0,
-      ingestion text NOT NULL DEFAULT 'Scanned', "needsReview" text, "blockedFor" text,
-      "nsfwLevel" int NOT NULL DEFAULT 1, "modelRestricted" boolean NOT NULL DEFAULT false
-    );
-    CREATE TABLE "Post" (
-      id int PRIMARY KEY, "modelVersionId" int, "userId" int,
-      "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
-      availability text NOT NULL DEFAULT 'Public'
-    );
-    CREATE TABLE "ModelVersion" (
-      id int PRIMARY KEY, "modelId" int NOT NULL, index int NOT NULL DEFAULT 0,
-      status text NOT NULL DEFAULT 'Published', availability text NOT NULL DEFAULT 'Public',
-      "publishedAt" timestamp
-    );
-    CREATE TABLE "Model" (
-      id int PRIMARY KEY, "userId" int, status text NOT NULL DEFAULT 'Published',
-      "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public', mode text
-    );
+    CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "modelVersionId" int, "userId" int);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
+    CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int);
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
-    CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, "bannerId" int, cover text,
-      status text NOT NULL DEFAULT 'Published',
-      "publishedAt" timestamp NOT NULL DEFAULT now() - interval '1 day',
-      availability text NOT NULL DEFAULT 'Public', ingestion text NOT NULL DEFAULT 'Scanned'
-    );
-    CREATE TABLE "Model3D" (
-      id int PRIMARY KEY, "thumbnailImageId" int, status text NOT NULL DEFAULT 'Published',
-      "deletedAt" timestamp, availability text NOT NULL DEFAULT 'Public'
-    );
+    CREATE TABLE "Article" (id int PRIMARY KEY, "coverId" int, "bannerId" int);
+    CREATE TABLE "Model3D" (id int PRIMARY KEY, "thumbnailImageId" int);
     CREATE TABLE "Collection" (id int PRIMARY KEY, "imageId" int, "userId" int);
     CREATE INDEX "Collection_imageId_idx" ON "Collection" ("imageId");
     CREATE TABLE "CollectionItem" (
-      id serial PRIMARY KEY, "collectionId" int NOT NULL, status text NOT NULL DEFAULT 'ACCEPTED',
-      "addedById" int NOT NULL DEFAULT 7, "imageId" int, "postId" int,
+      id serial PRIMARY KEY, "collectionId" int NOT NULL, "imageId" int, "postId" int,
       "modelId" int, "articleId" int, "model3dId" int
     );
   `);
@@ -91,6 +73,26 @@ beforeEach(async () => {
     return (await db.query(sql.text, sql.values as unknown[])).rows;
   }) as never;
   dbMock.dbRead.$queryRaw.mockImplementation(run);
+  // Documents as last built: each shows the selected image that reached it, except 82, which
+  // reaches image 2 only through its owner's avatar and shows an unrelated image.
+  storedDocs.clear();
+  storedDocs.set(70, { image: { id: 1 } });
+  for (const [id, image] of [
+    [72, 3],
+    [73, 2],
+    [75, 1],
+    [77, 2],
+    [78, 3],
+    [80, 1],
+    [82, 500],
+  ])
+    storedDocs.set(id, { images: [{ id: image }] });
+  getDocuments.mockImplementation(async ({ filter }: { filter: string }) => {
+    const ids = (filter.match(/\d+/g) ?? []).map(Number);
+    return {
+      results: ids.filter((id) => storedDocs.has(id)).map((id) => ({ id, ...storedDocs.get(id) })),
+    };
+  });
   dbMock.dbWrite.$queryRaw.mockImplementation(run);
   // The fixed lookup: a refreshed entry holds the child tag, read past the per-process L1 only.
   fetch.mockImplementation(async (ids: number[], opts?: { bypassLocal?: boolean }) =>
@@ -111,11 +113,9 @@ beforeEach(async () => {
       (12, ${OTHER}, 'Rekognition', false), (12, 9001, 'WD14', false),
       (13, ${CHILD}, 'WD14', false),
       (14, ${CHILD}, 'Rekognition', false), (14, 9001, 'WD14', true);
-    INSERT INTO "Image" (id, "postId", index) VALUES (1, 100, 0), (2, 200, 0), (3, NULL, 0), (10, 300, 0), (20, 200, 1), (31, 99, 0);
-    -- Model 50's first showcase image is 31, on its earlier version 999: a collection holding model
-    -- 50 shows 31, not the selected image 1.
-    INSERT INTO "Post" (id, "modelVersionId", "userId") VALUES (99, 999, 7), (100, 1000, 7), (200, NULL, 7), (300, 3000, 8);
-    INSERT INTO "ModelVersion" (id, "modelId", index) VALUES (999, 50, 0), (1000, 50, 1), (3000, 60, 0);
+    INSERT INTO "Image" (id, "postId") VALUES (1, 100), (2, 200), (3, NULL), (10, 300), (20, 200);
+    INSERT INTO "Post" (id, "modelVersionId", "userId") VALUES (100, 1000, 7), (200, NULL, 7), (300, 3000, 8);
+    INSERT INTO "ModelVersion" (id, "modelId") VALUES (1000, 50), (3000, 60);
     INSERT INTO "Model" (id, "userId") VALUES (50, 7), (60, 8);
     INSERT INTO "User" (id, "profilePictureId") VALUES (7, 2), (8, 10);
     INSERT INTO "Article" (id, "coverId", "bannerId") VALUES (500, 2, NULL), (501, NULL, 3), (502, 10, NULL);
@@ -244,13 +244,37 @@ describe('child-label reindex: reindex', () => {
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
     expect(refresh).not.toHaveBeenCalled();
     expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: false, chunkSize: 500 });
-    // Only collections whose search document shows a selected image: 70 cover (1); 72 item image
-    // (3); 73 item post 200, whose first image is 2; 77 article cover (2); 78 article banner (3);
-    // 80 3D thumbnail (1).
-    // Not 75: model 50 shows its first image, 31. Not 82: an avatar carries no tags into the
-    // document. Not 71/74/76/79/81/83: only image 10 or model 60, which are not selected.
-    expect(queuedCollections()).toEqual([70, 72, 73, 77, 78, 80]);
-    expect(result).toMatchObject({ images: 3, collections: 6, collectionsQueued: 6 });
+    // Collections whose stored document shows a selected image: 70 cover (1); 72 item image (3);
+    // 73 item post (200: image 2); 75 item model 50 (1); 77 article cover (2); 78 article banner
+    // (3); 80 3D thumbnail (1). Not 82: it reaches image 2 only through its owner's avatar, and
+    // its document shows none of them. Not 71/74/76/79/81/83: only image 10 or model 60.
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80]);
+    expect(result).toMatchObject({
+      images: 3,
+      collections: 7,
+      collectionsUnread: 0,
+      collectionsQueued: 7,
+    });
+  });
+
+  it("queues a collection whose stored document still shows the image, whatever today's rows pick", async () => {
+    // Model 50's document was built when its first image was 1; only the document says so.
+    storedDocs.set(75, { images: [{ id: 999 }, { id: 1 }] });
+    await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toContain(75);
+  });
+
+  it('skips a collection whose stored document no longer shows the image', async () => {
+    storedDocs.set(75, { images: [{ id: 31 }] });
+    await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).not.toContain(75);
+  });
+
+  it('queues every candidate it cannot read the documents of', async () => {
+    getDocuments.mockRejectedValue(new Error('meili down'));
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80, 82]);
+    expect(result).toMatchObject({ collections: 8, collectionsUnread: 8 });
   });
 
   it('resumes above `after` and stops at maxChunks', async () => {
@@ -261,7 +285,7 @@ describe('child-label reindex: reindex', () => {
       after: 1,
       maxChunks: 1,
     });
-    // Image 2 only: 73 item post 200, 77 article cover.
+    // Image 2 only: 73 item post 200, 77 article cover. Not 82, reached by the avatar.
     expect(queuedCollections()).toEqual([73, 77]);
     expect(result).toMatchObject({ images: 1, lastImageId: 2 });
   });
@@ -310,7 +334,7 @@ describe('child-label reindex: reindex', () => {
     expect(result).toMatchObject({
       probe: 3,
       probeVerified: 0,
-      collections: 6,
+      collections: 7,
       collectionsQueued: 0,
     });
     expect(result).not.toHaveProperty('aborted');
@@ -321,7 +345,7 @@ describe('child-label reindex: reindex', () => {
   it('looks up models and collections a chunk of images at a time', async () => {
     await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 2 });
     const modelLookups = dbMock.dbRead.$queryRaw.mock.calls.filter(([sql]) =>
-      (sql as unknown as Prisma.Sql).text?.includes('mv."modelId" AS id')
+      (sql as unknown as Prisma.Sql).text?.includes('"ModelVersion"')
     );
     expect(modelLookups.map(([sql]) => (sql as unknown as Prisma.Sql).values[0])).toEqual([
       [1, 2],
@@ -345,7 +369,7 @@ describe('child-label reindex: reindex', () => {
     const result = await runChildLabelReindex({ step: 'reindex', dryRun: true, chunkSize: 500 });
     expect(collectionsQueueUpdate).not.toHaveBeenCalled();
     expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 500 });
-    expect(result).toMatchObject({ collections: 6, collectionsQueued: 0 });
+    expect(result).toMatchObject({ collections: 7, collectionsQueued: 0 });
   });
 });
 

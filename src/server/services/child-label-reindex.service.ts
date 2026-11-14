@@ -1,11 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { childBrowsingTagIds } from '@civitai/shared';
 import { dbRead } from '~/server/db/client';
+import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
+import { searchClient } from '~/server/meilisearch/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import {
-  COLLECTION_INDEX_ITEM_COVERS,
-  collectionItemCoversSql,
-} from '~/server/services/collection-cover-visibility';
 import {
   enqueueCollectionRebuild,
   getCollectionIdsForImages,
@@ -49,43 +47,6 @@ export const modelIdsForImagesSql = (imageIds: number[]) => Prisma.sql`
 const ids = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ id: number }[]>(sql)).map((r) => r.id);
 
-// Every route an image reaches a collection by, so a superset of the documents that show it.
-const CANDIDATE_CAP = 1_000_000;
-// Collections per item-cover read, as the collections index reads them.
-const COVER_READ_BATCH = 1000;
-
-/**
- * The collections whose search document shows one of these images, and so carries its tag ids:
- * the collection's own cover, or one of the item images the index picks for a coverless
- * collection (`collectionItemCoversSql`, the index's own query). A collection that only reaches
- * the image another way, such as through a model whose first image is a different one, shows
- * nothing of it.
- */
-async function collectionIdsShowingImages(imageIds: number[]) {
-  const wanted = new Set(imageIds);
-  const covers = await ids(
-    Prisma.sql`SELECT id FROM "Collection" WHERE "imageId" = ANY(${imageIds}::int[])`
-  );
-  const candidates = await getCollectionIdsForImages({
-    imageIds,
-    source: SOURCE,
-    cap: CANDIDATE_CAP,
-    db: dbRead,
-  });
-  const shown = new Set(covers);
-  for (const batch of chunkIds(candidates.collectionIds, COVER_READ_BATCH)) {
-    const rows = await dbRead.$queryRaw<{ id: number; image: number | null }[]>(
-      collectionItemCoversSql({
-        collectionIds: batch,
-        itemsPerCollection: COLLECTION_INDEX_ITEM_COVERS,
-        imageSql: Prisma.sql`i.id image`,
-      })
-    );
-    for (const row of rows) if (row.image !== null && wanted.has(row.image)) shown.add(row.id);
-  }
-  return { collectionIds: [...shown], truncated: candidates.truncated };
-}
-
 /**
  * The selected images, ascending: child-labelled by Rekognition and also tagged by WD14. Read in
  * pages of `chunkSize` from a cursor that advances, stopping once `limit` are selected.
@@ -106,18 +67,68 @@ async function selectImageIds(after: number, chunkSize: number, limit?: number) 
   return limit === undefined ? selected : selected.slice(0, limit);
 }
 
-/** The models and collections whose search documents can show these images, a chunk at a time. */
+// Far above any chunk's candidates, so none is dropped.
+const CANDIDATE_CAP = 1_000_000;
+const DOCUMENT_READ_BATCH = 1000;
+
+type StoredCollectionDocument = {
+  id: number;
+  image?: { id: number } | null;
+  images?: { id: number }[] | null;
+};
+
+/**
+ * Of the collections any route reaches these images by, the ones whose stored search document
+ * shows one of them. The stored document, not today's rows, decides: a document built when its
+ * collection showed one of these images still does, until it is rebuilt. A batch whose documents
+ * cannot be read is queued whole.
+ */
+async function collectionIdsShowingImages(imageIds: number[]) {
+  const wanted = new Set(imageIds);
+  const candidates = await getCollectionIdsForImages({
+    imageIds,
+    source: SOURCE,
+    cap: CANDIDATE_CAP,
+    db: dbRead,
+  });
+  const shown: number[] = [];
+  let unread = 0;
+  for (const batch of chunkIds(candidates.collectionIds, DOCUMENT_READ_BATCH)) {
+    try {
+      if (!searchClient) throw new Error('search client not configured');
+      const { results } = await searchClient
+        .index(COLLECTIONS_SEARCH_INDEX)
+        .getDocuments<StoredCollectionDocument>({
+          filter: `id IN [${batch.join(',')}]`,
+          fields: ['id', 'image', 'images'],
+          limit: batch.length,
+        });
+      for (const doc of results) {
+        const docImageIds = [doc.image?.id, ...(doc.images ?? []).map((image) => image.id)];
+        if (docImageIds.some((id) => id !== undefined && wanted.has(id))) shown.push(doc.id);
+      }
+    } catch {
+      shown.push(...batch);
+      unread += batch.length;
+    }
+  }
+  return { collectionIds: shown, truncated: candidates.truncated, unread };
+}
+
+/** The models and collections whose search documents show these images, a chunk at a time. */
 async function documentIdsForImages(imageIds: number[], chunkSize: number) {
   const modelIds = new Set<number>();
   const collectionIds = new Set<number>();
   let truncated = false;
+  let unread = 0;
   for (const chunk of chunkIds(imageIds, chunkSize)) {
     for (const id of await ids(modelIdsForImagesSql(chunk))) modelIds.add(id);
     const collections = await collectionIdsShowingImages(chunk);
     for (const id of collections.collectionIds) collectionIds.add(id);
     truncated ||= collections.truncated;
+    unread += collections.unread;
   }
-  return { modelIds: [...modelIds], collectionIds: [...collectionIds], truncated };
+  return { modelIds: [...modelIds], collectionIds: [...collectionIds], truncated, unread };
 }
 
 const holdsChildTag = (entry?: { tags: number[] }) =>
@@ -210,7 +221,10 @@ export async function runChildLabelReindex({
       aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
     };
 
-  const { modelIds, collectionIds, truncated } = await documentIdsForImages(imageIds, chunkSize);
+  const { modelIds, collectionIds, truncated, unread } = await documentIdsForImages(
+    imageIds,
+    chunkSize
+  );
   const models = await queueModelsReindex(modelIds, { dryRun, chunkSize });
   const collectionsQueued = dryRun
     ? 0
@@ -226,6 +240,8 @@ export async function runChildLabelReindex({
     models,
     collections: collectionIds.length,
     collectionsTruncated: truncated,
+    // Candidates queued without reading their document, because it could not be read.
+    collectionsUnread: unread,
     collectionsQueued,
   };
 }
