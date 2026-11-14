@@ -350,6 +350,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
   // version declares (that would fail open). See `storage-hooks.ts`.
   APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
+  // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
+  // in `block-media-serving.ts` for what happens when Flipt is unreachable.
+  APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
   TEXT_SCAN = 'text-scan',
@@ -641,6 +644,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   // five-minute tick, so the cache saves nothing measurable and the staleness is
   // all cost at the moment someone is trying to turn it off.
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
+  // The App Block media brake: a flip must reach the next media fetch.
+  FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.

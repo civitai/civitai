@@ -428,6 +428,18 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Stored workflow media refs → viewer-bound media URLs, judged per viewer
+  // server-side. Advertised as `workflowMedia:v1` in BLOCK_INIT by the page host
+  // only, so the SDK never sends it to a host that would leave it hanging.
+  GET_WORKFLOW_MEDIA: {
+    request: true,
+    reply: 'WORKFLOW_MEDIA_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'not advertised in the model slot; workflow media is a page-app surface today',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Per-account (blue/green/yellow) balance read backing the SDK
   // `useBuzzBalance()` hook + the account-picker (Phase 3 host wiring). Host-
   // mediated via the block-token-authed `blocks.getMyBuzzBalance` MUTATION.

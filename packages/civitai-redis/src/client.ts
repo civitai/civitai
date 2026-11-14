@@ -3212,6 +3212,10 @@ const REDIS_KEYS_UNPREFIXED = {
     PROVIDER_DOWNLOAD_TOKENS: 'packed:caches:provider-download-tokens',
     // `<prefix>:<userId>` — the account's standing ({ muted, banned, exists }). See account-standing.service.ts.
     ACCOUNT_STANDING: 'packed:caches:account-standing',
+    // `<prefix>:<blobId>` — an App Block media blob's scan verdict. See blobRatings.ts `readBlobState`.
+    BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
+    // `<prefix>:<blobId>` — set for 5 s after a failed or timed-out verdict read.
+    BLOCK_MEDIA_BLOB_STATE_BACKOFF: 'packed:caches:block-media-blob-state-backoff',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',

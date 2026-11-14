@@ -227,6 +227,8 @@ export type AppBlockEndpoint =
   // grid rendering blanks for every viewer) would vanish into the volume of
   // catalog searches. Same bucket, different question when it fails.
   | 'gated_images'
+  // REST twin of `GET_WORKFLOW_MEDIA`: stored media refs → viewer-bound media URLs. No orchestrator call.
+  | 'workflow_media'
   | 'generation_resources'
   // Own label: a static in-memory read must not sit in generation_resources' (replica) p95.
   | 'generation_samplers'
@@ -759,6 +761,7 @@ type Bundle = {
   spendCapRejectionsTotal: Counter<string>;
   confirmedQuoteOverchargeTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
+  mediaVerdictTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
   consentRevocationRefusalsTotal: Counter<string>;
@@ -1133,6 +1136,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_succeeded_without_media_total',
     'App Blocks workflows that SUCCEEDED (and so were charged) with at least one bridge-submitted MEDIA step that succeeded but produced no media of its own, whatever its sibling steps delivered (text from a text step does not cancel it). Media steps: native image/video $types, registered steps whose moderation posture produces media, and pass-through steps that returned nothing at all. Text-posture, training, suppressOutput and non-bridge steps are never media steps, so a text-only workflow is never counted. ALERT ON reason="absent": the location the step\'s extractor reads held no blobs at all (the #8132 defect shape, a bridge bug). reason="unavailable": blobs were there but all pending, withheld or blocked by the orchestrator (not a bridge bug; expected non-zero). With several empty steps, absent wins. step_type = the empty media step\'s orchestrator $type when native or registered, `passthrough` for a pass-through $type, `mixed` when several. Counted once per workflow, when the terminal poll first records `succeeded` in block_workflows. A LOWER bound: not counted when the workflow has no block_workflows row, when another writer recorded `succeeded` first, or when it was never polled to terminal through pollWorkflow (tab closed, or the app reconciles through queryAppWorkflows/useAppWorkflows).',
     ['step_type', 'reason']
+  );
+
+  const mediaVerdictTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_verdict_total',
+    'App Block workflow media decisions, one per item judged for a viewer: at the media route (each fetch) and in GET_WORKFLOW_MEDIA (each ref). verdict = served | pending | hidden. reason = the hidden reason (blocked, above_level, unknown_rating, unrated, owner_only, private, paused, unrecognised_url, invalid), or none. Its own denominator: the share hidden is hidden / sum over verdicts.',
+    ['surface', 'verdict', 'reason']
   );
 
   // ── REST approved-status GATE verdicts ───────────────────────────────────────
@@ -1583,6 +1593,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     spendCapRejectionsTotal,
     confirmedQuoteOverchargeTotal,
     succeededWithoutMediaTotal,
+    mediaVerdictTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
     consentRevocationRefusalsTotal,
@@ -1851,6 +1862,19 @@ export function recordSucceededWithoutMedia(
     succeededWithoutMediaTotal.inc({ step_type: stepType, reason });
   } catch {
     /* instrument-only — never let a metrics error touch the poll */
+  }
+}
+
+/** Fail-soft emit of one App Block media decision (see the counter). */
+export function recordBlockMediaVerdict(
+  surface: 'route' | 'workflow_media',
+  verdict: 'served' | 'pending' | 'hidden',
+  reason = 'none'
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaVerdictTotal.inc({ surface, verdict, reason });
+  } catch {
+    /* instrument-only */
   }
 }
 

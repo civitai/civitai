@@ -65,7 +65,7 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  *      app published, or the grid renders for developers only.
  *   3. `resolveViewerBrowsingLevel` — 🔴 THE MATURITY CLAMP, AND IT IS NOT
  *      RE-DERIVED HERE. It reads the token's server-minted `maxBrowsingLevel`
- *      claim (the platform-computed viewer+domain ceiling), clamps it to
+ *      (domain) and `viewerBrowsingLevel` claims, intersects them, clamps to
  *      selectable levels and FAILS CLOSED to the public (PG) floor. No request
  *      field reaches it on either transport — there is no maturity knob on the
  *      bridge input or the REST query string — so a block cannot widen its own
@@ -103,7 +103,7 @@ export async function resolveGatedImagesForBlockClaims(input: {
    * the bridge, `withBlockScope` on REST. This function verifies nothing and must
    * never be handed unverified claims.
    */
-  claims: Pick<BlockTokenClaims, 'sub' | 'appId' | 'maxBrowsingLevel'>;
+  claims: Pick<BlockTokenClaims, 'sub' | 'appId' | 'maxBrowsingLevel' | 'viewerBrowsingLevel'>;
   imageIds: number[];
 }): Promise<{ images: BlockGatedImage[] }> {
   const userId = parseSubjectUserId(input.claims.sub);
@@ -126,9 +126,7 @@ export async function resolveGatedImagesForBlockClaims(input: {
     '~/server/services/blocks/block-gated-images.service'
   );
 
-  // The AUTHORITATIVE per-viewer ceiling for a block surface is the token's
-  // maxBrowsingLevel claim (platform-computed at mint), failed closed to PG.
-  const browsingLevel = resolveViewerBrowsingLevel(input.claims.maxBrowsingLevel);
+  const browsingLevel = resolveViewerBrowsingLevel(input.claims);
 
   // Scope the read to THIS app's published images (claims.appId) + bind the
   // blocked-users/tags clamp to the viewer (userId).

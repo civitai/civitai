@@ -8,6 +8,10 @@ const { isFliptMock, isRevokedMock, sessionMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
+const { viewerLevelMock } = vi.hoisted(() => ({ viewerLevelMock: vi.fn(() => 3) }));
+vi.mock('~/server/services/blocks/viewer-browsing-level', () => ({
+  viewerEffectiveBrowsingLevel: viewerLevelMock,
+}));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: isRevokedMock },
 }));
@@ -23,6 +27,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { withBlockScope, type BlockScopedNextApiRequest } from '../block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { FORCED_SFW_CEILING } from '~/server/services/blocks/dev-scoped-mint.service';
 
 const USER_ID = 42;
 const CLIENT_ID = 'app_hub';
@@ -114,6 +119,14 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
       blockId: BLOCK_ID,
       blockInstanceId: `page_${APP_BLOCK_ID}`,
     });
+    // 🔴 The viewer level is the viewer's own, intersected with this request's ceiling.
+    expect(claims?.viewerBrowsingLevel).toBe(3);
+    expect(viewerLevelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionUser: expect.objectContaining({ id: USER_ID }),
+        maxBrowsingLevel: claims?.maxBrowsingLevel,
+      })
+    );
     // consent-exempt scopes ride along; the ungranted buzz scope is withheld
     expect([...(claims?.scopes ?? [])].sort()).toEqual(['apps:storage:read', SCOPE]);
     expect(dbMock.dbRead.appBlock.findFirst.mock.calls[0][0].where).toEqual({
@@ -168,6 +181,9 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
       blockId: 'my-app',
       blockInstanceId: 'page_ephemeral-my-app',
       dev: true,
+      // 🔴 A dev tunnel reads at the forced-SFW ceiling; without the viewer claim it reads PG.
+      maxBrowsingLevel: FORCED_SFW_CEILING,
+      viewerBrowsingLevel: FORCED_SFW_CEILING,
     });
     expect([...(claims?.scopes ?? [])].sort()).toEqual(['collections:read:self', SCOPE]);
     expect(tunnelMock).toHaveBeenCalledWith(USER_ID, 'my-app');
@@ -220,6 +236,7 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
       blockInstanceId: `page_${APP_BLOCK_ID}`,
       dev: true,
       buzzBudget: 75,
+      viewerBrowsingLevel: FORCED_SFW_CEILING,
     });
     expect([...(claims?.scopes ?? [])].sort()).toEqual(['ai:write:budgeted', SCOPE]);
     expect(dbMock.dbRead.appBlock.findFirst.mock.calls[1][0].where).toEqual({

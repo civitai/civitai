@@ -1,5 +1,4 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
@@ -8,6 +7,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { imageMetaCache } from '~/server/redis/caches';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { promptDerivationHolds } from '~/utils/prompt-similarity';
+import { openToken, sealToken } from '~/server/utils/sealed-token';
 import { MAX_SOURCE_IMAGES } from '~/server/utils/source-image-ids';
 
 export { MAX_SOURCE_IMAGES, storedSourceImageIds } from '~/server/utils/source-image-ids';
@@ -64,9 +64,6 @@ const MAX_TOKEN_AGE_SECONDS = 60 * 60 * 24 * 30;
  * generate-then-post flow that runs seconds apart is exactly where that bites.
  */
 const MAX_CLOCK_SKEW_SECONDS = 300;
-
-const IV_BYTES = 12;
-const AUTH_TAG_BYTES = 16;
 
 /**
  * What a token is entitled to be spent on.
@@ -136,28 +133,8 @@ function extractImageUuid(url: string): string | undefined {
   return withoutQuery.split('/').find((segment) => UUID_SEGMENT.test(segment));
 }
 
-/**
- * Catches an absent or placeholder secret, not weak ones — `NEXTAUTH_SECRET` is
- * `z.string()` with no `.min()`, so nothing upstream enforces a length. This is a
- * floor against the empty case, not a certificate of strength.
- */
-const MIN_SECRET_LENGTH = 8;
-
-/**
- * Its own key, derived rather than using `NEXTAUTH_SECRET` raw, so a token can
- * never be confused with anything else keyed by the same secret. Bumping
- * `VERSION` rotates it.
- */
-function provenanceKey(): Buffer | null {
-  // The secret is a key-derivation input now, not just a signing input: with an
-  // empty one the key is sha256(':remix-provenance:v1'), a constant anyone can
-  // compute from this file. Fail closed rather than mint forgeable tokens.
-  const secret = env.NEXTAUTH_SECRET;
-  if (!secret || secret.length < MIN_SECRET_LENGTH) return null;
-  return createHash('sha256').update(`${secret}:remix-provenance:v${VERSION}`).digest();
-}
-
-const TOKEN_PREFIX = `p${VERSION}`;
+/** Bumping `VERSION` rotates the key domain and the token prefix. */
+const SEAL = { domain: `remix-provenance:v${VERSION}`, prefix: `p${VERSION}` };
 
 /**
  * Maps input image URLs to the `Image` rows they came from.
@@ -214,22 +191,7 @@ export function signProvenance({
     ...(kind !== 'job' ? { k: kind } : {}),
   };
 
-  const key = provenanceKey();
-  if (!key) return undefined;
-
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(payload), 'utf8'),
-    cipher.final(),
-  ]);
-
-  return [
-    TOKEN_PREFIX,
-    iv.toString('base64url'),
-    ciphertext.toString('base64url'),
-    cipher.getAuthTag().toString('base64url'),
-  ].join('.');
+  return sealToken(payload, SEAL);
 }
 
 /**
@@ -248,52 +210,26 @@ export function verifyProvenance(
    */
   expect: ProvenanceKind = 'job'
 ): number[] | null {
-  if (typeof token !== 'string') return null;
+  const payload = openToken(token, SEAL) as ProvenancePayload | null;
+  if (!payload || typeof payload !== 'object') return null;
 
-  const [prefix, iv, ciphertext, tag] = token.split('.');
-  if (prefix !== TOKEN_PREFIX || !iv || !ciphertext || !tag) return null;
+  if (payload.v !== VERSION || payload.u !== userId) return null;
+  // The audience check. A `mint` token presented on the upload path, or a
+  // `job` token fed back in as a submit input, is refused here — the first is
+  // the free-submission bypass this field exists for, the second is what would
+  // let a token renew its own 30-day expiry by riding one submit to the next.
+  if ((payload.k ?? 'job') !== expect) return null;
+  if (!Array.isArray(payload.s)) return null;
 
-  const ivBytes = Buffer.from(iv, 'base64url');
-  const tagBytes = Buffer.from(tag, 'base64url');
-  // 🔴 Node accepts GCM tags of 4, 8, 12–16 bytes and verifies against only what
-  // it is given, so a caller who truncates the tag downgrades a 128-bit forgery
-  // to a 32-bit one. Measured: a valid token with its tag cut to 4 bytes
-  // decrypts and verifies. Full length or nothing.
-  if (ivBytes.length !== IV_BYTES || tagBytes.length !== AUTH_TAG_BYTES) return null;
-
-  const key = provenanceKey();
-  if (!key) return null;
-
-  try {
-    const decipher = createDecipheriv('aes-256-gcm', key, ivBytes);
-    decipher.setAuthTag(tagBytes);
-    // Throws on any tampering — caught below and read as "no signal".
-    const decrypted = Buffer.concat([
-      decipher.update(Buffer.from(ciphertext, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8');
-
-    const payload = JSON.parse(decrypted) as ProvenancePayload;
-    if (payload.v !== VERSION || payload.u !== userId) return null;
-    // The audience check. A `mint` token presented on the upload path, or a
-    // `job` token fed back in as a submit input, is refused here — the first is
-    // the free-submission bypass this field exists for, the second is what would
-    // let a token renew its own 30-day expiry by riding one submit to the next.
-    if ((payload.k ?? 'job') !== expect) return null;
-    if (!Array.isArray(payload.s)) return null;
-
-    // A token is a bearer credential for its user: it says a job of theirs used
-    // these sources, and nothing ties it to a particular file. Expiry is what
-    // stops one generation from being reusable against that source forever.
-    const age = Math.floor(Date.now() / 1000) - payload.t;
-    if (!Number.isFinite(age) || age < -MAX_CLOCK_SKEW_SECONDS || age > MAX_TOKEN_AGE_SECONDS)
-      return null;
-
-    const ids = payload.s.filter((id) => Number.isInteger(id) && id > 0);
-    return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
-  } catch {
+  // A token is a bearer credential for its user: it says a job of theirs used
+  // these sources, and nothing ties it to a particular file. Expiry is what
+  // stops one generation from being reusable against that source forever.
+  const age = Math.floor(Date.now() / 1000) - payload.t;
+  if (!Number.isFinite(age) || age < -MAX_CLOCK_SKEW_SECONDS || age > MAX_TOKEN_AGE_SECONDS)
     return null;
-  }
+
+  const ids = payload.s.filter((id) => Number.isInteger(id) && id > 0);
+  return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
 }
 
 /**

@@ -162,6 +162,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: 'A bounded by-id image read that forces no-store, so the origin absorbs every call; pre-existing.',
   },
+  getWorkflowMedia: {
+    buckets: ['catalog'],
+    why: 'A bounded ref batch (32) that seals one media ticket per ref with no orchestrator call; the orchestrator HEAD happens later, per fetch, at the media route. Same bucket as getImagesByIds, its sibling read.',
+  },
   getMyBuzzAccounts: {
     buckets: ['catalog'],
     why: 'Charged in buzzReadOptions, the options it hands authorizeBlockBridgeViewer; the bucket is pre-existing.',
