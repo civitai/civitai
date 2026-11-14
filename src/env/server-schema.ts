@@ -497,9 +497,8 @@ export const serverSchema = z
     // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
     // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
-    // Review sheet batches (`POST /api/mod/review-batches`). Both lists are private; while either is
-    // unset every batch is routed to the held tier.
-    REVIEW_SHEET_SUSPECT_TERMS: z.string().optional(),
+    // Review sheet batches (`POST /api/mod/review-batches`). The list is private; while it is unset
+    // every batch is routed to the held tier.
     REVIEW_SHEET_BLOCKEDFOR_PATTERNS: z.string().optional(),
     // The moderator app origin a batch link names; production's when unset.
     REVIEW_SHEET_ORIGIN: z.string().url().optional(),
