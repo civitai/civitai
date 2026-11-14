@@ -3952,7 +3952,8 @@ export const SCAN_RATING_KEPT_MESSAGE =
 
 /**
  * The text scan's mature rating carries no lock, so the owner can add a .com face; without this the
- * owner could undo the rating alone (untick mature, or remove the face that listed the model). An
+ * owner could undo the rating alone (untick mature, face or not, or remove the face that listed a
+ * model already not mature). An
  * edit to the text is no exemption, as a rescan may never follow it (it dedups on the scanned text):
  * the scan's marker goes only when a rescan reads the text as not mature, and with it this guard.
  * Judged on the face as it will be stored, so it runs after `normalizeSfwFaceInput`.
@@ -4005,9 +4006,10 @@ async function assertScanRatingKept({
     sfwName: after('sfwName'),
     sfwCoverImageId: after('sfwCoverImageId'),
   });
-  if (after('nsfw') || faceAfter) return;
-  // Only a save that moves it there; one already there (an older row) is not this save's doing.
-  if (!before.nsfw && !hasFace(before)) return;
+  // A face changes how a mature model shows on civitai.com, not whether it is mature.
+  if (after('nsfw')) return;
+  // A row already not mature (an older one): only removing the face that listed it.
+  if (!before.nsfw && (faceAfter || !hasFace(before))) return;
   if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
   throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
 }
@@ -7398,8 +7400,8 @@ export const privateModelFromTraining = async ({
   if (!model) return null;
 
   const isOwner = model.userId === user.id || user.isModerator;
-  // The text scan's rating carries no lock, but this flow keeps it as main kept the scan's locked
-  // rating: the owner's nsfw value is dropped, as for a locked setting.
+  // The text scan's rating carries no lock, but this flow keeps it: the owner's nsfw value is
+  // dropped, as for a locked setting.
   const scanRatingSource = (model.meta as ModelMeta | null)?.systemNsfwLock?.source;
   const keepsScanRating = !!scanRatingSource && SCAN_RATING_SOURCES.includes(scanRatingSource);
   if (!isOwner) return null;

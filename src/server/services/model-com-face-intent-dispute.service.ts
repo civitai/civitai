@@ -53,9 +53,8 @@ type PendingDispute = {
  * Re-judges owners' disputes of a listing intent lock with the slower pass (thinking on). A clear
  * allow approves the lock review as the system, which lifts the lock, overturns the stored verdict
  * and tells the owner. Anything else stays pending in the moderators' lock review queue, marked so
- * the job does not judge it again. Each verdict of the slower pass (overturned, upheld, or allowed on
- * text changed since) is logged beside the first verdict and both prompt ids, as a sample for tuning
- * the prompt; runs with no verdict and disputes handed over before a verdict are not samples.
+ * the job does not judge it again. Each verdict of the slower pass is logged beside the first, as a
+ * sample for tuning the prompt.
  */
 export async function processComFaceIntentDisputes() {
   const rows = await dbWrite.$queryRaw<PendingDispute[]>`

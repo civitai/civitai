@@ -93,6 +93,8 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/utils/cache-helpers', () => ({
   bustFetchThroughCache: vi.fn(),
   fetchThroughCache: vi.fn(),
+  // A face change busts the resource-data cache of the model's versions.
+  createCachedArray: vi.fn(() => ({ bust: vi.fn(), fetch: vi.fn(async () => []) })),
 }));
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
@@ -1219,6 +1221,39 @@ describe('upsertModel — content flags the row ends up with', () => {
           upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
         ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
         expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses unticking mature while the model keeps a .com face', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: [],
+          meta: { systemNsfwLock: scanLock },
+          ...({ sfwName: 'Safe', sfwCoverImageId: 4 } as object),
+        });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      // A face that is added or changed goes to the listing check first, covered elsewhere.
+      it('lets the owner remove the .com face while mature stays ticked', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: [],
+          meta: { systemNsfwLock: scanLock },
+          ...({ sfwName: 'Safe', sfwCoverImageId: 4 } as object),
+        });
+        await upsert({
+          id: MODEL_ID,
+          userId: OWNER_ID,
+          nsfw: true,
+          sfwName: null,
+          sfwCoverImageId: null,
+        });
+        expect(updateData()).toEqual(
+          expect.objectContaining({ sfwName: null, sfwCoverImageId: null })
+        );
       });
 
       it('refuses removing the face that kept a scan-rated model off mature', async () => {

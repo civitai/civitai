@@ -292,8 +292,10 @@ describe('approving a lock review', () => {
 
   const listing = { name: 'Listing', description: '<p>Its text</p>' };
   const listingHash = comFaceIntentTextHash({ ...listing, triggerWords: [] });
-  const storesListing = (stored: { name: string; description: string }) =>
-    dbMock.dbWrite.model.findUnique.mockResolvedValue({ ...stored, modelVersions: [] } as never);
+  const storesListing = (stored: { name: string; description: string }) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ ...stored, userId: OWNER } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+  };
 
   it('overturns the listing intent detection when it lifts the nsfw lock, so a .com version is allowed', async () => {
     const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };

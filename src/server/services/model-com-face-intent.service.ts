@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { ComFaceIntentRecord, ModelMeta } from '~/server/schema/model.schema';
@@ -133,22 +133,35 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
   return locked;
 }
 
+export async function getOwnTriggerWords({
+  modelId,
+  userId,
+  db = dbRead,
+}: {
+  modelId: number;
+  userId: number;
+  db?: Pick<typeof dbRead, 'modelVersion'>;
+}) {
+  const versions = await db.modelVersion.findMany({
+    where: { modelId, model: { userId } },
+    select: { trainedWords: true },
+    // A fixed order: the words feed the intent verdict's text hash.
+    orderBy: { id: 'asc' },
+  });
+  return [...new Set(versions.flatMap((version) => version.trainedWords))];
+}
+
 /** The hash of the listing the model has stored now, as the intent check reads it; null when gone. */
 export async function storedListingTextHash(modelId: number) {
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
-    select: {
-      name: true,
-      description: true,
-      // The same words, in the same order, as `getOwnTriggerWords`.
-      modelVersions: { select: { trainedWords: true }, orderBy: { id: 'asc' } },
-    },
+    select: { name: true, description: true, userId: true },
   });
   if (!model) return null;
   return comFaceIntentTextHash({
     name: model.name,
     description: model.description,
-    triggerWords: [...new Set(model.modelVersions.flatMap((version) => version.trainedWords))],
+    triggerWords: await getOwnTriggerWords({ modelId, userId: model.userId, db: dbWrite }),
   });
 }
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as LockReview from '~/server/services/lock-review.service';
 
 const mocks = vi.hoisted(() => ({
   verdict: vi.fn(),
@@ -10,9 +11,9 @@ vi.mock('~/server/services/model-sfw-face.service', () => ({
   checkComFaceIntentVerdict: mocks.verdict,
   getOwnTriggerWords: vi.fn(async () => ['tw']),
 }));
-vi.mock('~/server/services/lock-review.service', () => ({
+vi.mock('~/server/services/lock-review.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LockReview>()),
   resolveLockReviewAppeal: mocks.resolve,
-  LOCK_REVIEW_LATER_VERDICT: 'later verdict',
 }));
 
 const { processComFaceIntentDisputes } = await import(
@@ -140,7 +141,8 @@ describe('processComFaceIntentDisputes', () => {
   it('marks it later-verdict when the approval finds a verdict that landed during the re-check', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
     mocks.verdict.mockResolvedValue({ status: 'allowed' });
-    mocks.resolve.mockRejectedValue(new Error('later verdict'));
+    const { LOCK_REVIEW_LATER_VERDICT } = await import('~/server/services/lock-review.service');
+    mocks.resolve.mockRejectedValue(new Error(LOCK_REVIEW_LATER_VERDICT));
 
     expect(await processComFaceIntentDisputes()).toMatchObject({ 'later-verdict': 1 });
     expect(appealWrites()).toEqual([['later-verdict', 1]]);

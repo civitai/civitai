@@ -16,11 +16,14 @@ import {
   type ComFaceIntentListing,
   comFaceIntentFields,
   comFaceIntentTextHash,
+  getOwnTriggerWords,
   lockForComFaceIntent,
   readComFaceIntentModel,
   recordComFaceIntent,
   reusableComFaceIntent,
 } from '~/server/services/model-com-face-intent.service';
+
+export { getOwnTriggerWords };
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { previewComFaceIntent, previewTextScanNsfw } from '~/server/services/text-scan/preview';
 import type { TextScanField } from '~/server/services/text-scan/types';
@@ -441,22 +444,4 @@ function parseDraft(content: string | undefined) {
   } catch {
     return null;
   }
-}
-
-export async function getOwnTriggerWords({
-  modelId,
-  userId,
-  db = dbRead,
-}: {
-  modelId: number;
-  userId: number;
-  db?: Pick<typeof dbRead, 'modelVersion'>;
-}) {
-  const versions = await db.modelVersion.findMany({
-    where: { modelId, model: { userId } },
-    select: { trainedWords: true },
-    // A fixed order: the words feed the intent verdict's text hash.
-    orderBy: { id: 'asc' },
-  });
-  return [...new Set(versions.flatMap((version) => version.trainedWords))];
 }
