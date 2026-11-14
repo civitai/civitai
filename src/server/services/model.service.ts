@@ -138,8 +138,9 @@ import {
 } from '~/server/selectors/model.selector';
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { readModelsWithVersionsStats } from '~/server/services/hot-reads-11.reads';
+import { readSimpleModelWithOwner } from '~/server/services/hot-reads-12.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
-import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { holdRestrictedVerdict } from '~/server/services/text-scan/actions/hold-restricted-verdict';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
@@ -271,6 +272,11 @@ import {
   withStoredPublishKeys,
 } from '~/server/utils/minor-flag-meta';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
+import {
+  comFaceIntentMetaAfterModeratorUnlock,
+  comFaceIntentTextHash,
+  getOwnTriggerWords,
+} from '~/server/services/model-com-face-intent.service';
 import {
   buildGetAllModelImages,
   filterImagesForViewer,
@@ -2073,11 +2079,13 @@ export const getModelsWithImagesAndModelVersions = async ({
           disableMinor: rawInput.disableMinor,
           viewer: user,
         });
-        const filteredImages = excludedTagIds
-          ? versionImages.filter(
-              (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
-            )
-          : versionImages;
+        // The owner is exempt from the whole set, as in getModelsRaw's tag clause.
+        const filteredImages =
+          excludedTagIds && model.user.id !== user?.id
+            ? versionImages.filter(
+                (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
+              )
+            : versionImages;
 
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
@@ -3956,8 +3964,24 @@ function withoutPoiFlagLocks(
   );
 }
 
-function liftsSfwOnlyLock(stored: string[] | null | undefined, next: string[] | undefined) {
-  return next !== undefined && (stored ?? []).includes('sfwOnly') && !next.includes('sfwOnly');
+function liftsLock(lock: string, stored: string[] | null | undefined, next: string[] | undefined) {
+  return next !== undefined && (stored ?? []).includes(lock) && !next.includes(lock);
+}
+
+/** Hashes the listing the save leaves, not the stored one: an unlock save may also edit the text. */
+async function intentMetaAfterModeratorUnlock(
+  tx: Prisma.TransactionClient,
+  modelId: number,
+  locked: NonNullable<LockedModelRow>,
+  data: { name?: string; description?: string | null; lockedProperties?: string[] }
+) {
+  if (!liftsLock('nsfw', locked.lockedProperties, data.lockedProperties)) return {};
+  const textHash = comFaceIntentTextHash({
+    name: data.name ?? locked.name,
+    description: data.description !== undefined ? data.description : locked.description,
+    triggerWords: await getOwnTriggerWords({ modelId, userId: locked.userId, db: tx }),
+  });
+  return comFaceIntentMetaAfterModeratorUnlock(locked.meta, textHash, new Date().toISOString());
 }
 
 function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
@@ -4552,6 +4576,11 @@ export const upsertModel = async (
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
           mergedMeta = rest;
         }
+        if (isModerator && locked)
+          mergedMeta = {
+            ...mergedMeta,
+            ...(await intentMetaAfterModeratorUnlock(tx, id, locked, data)),
+          };
         if (locked?.minor && flags && !flags.minor && mergedMeta.minorFlagSnapshot)
           mergedMeta = {
             ...mergedMeta,
@@ -4725,7 +4754,7 @@ export const upsertModel = async (
           await heldVerdict.dropLiftedBy(tx, updated.id, { flagged: true });
         else if (isModerator && (locked?.minor || locked?.poi) && !updated.minor && !updated.poi)
           await heldVerdict.holdLeadAfterFlagLift(tx, updated.id, 'moderator');
-        if (isModerator && liftsSfwOnlyLock(locked?.lockedProperties, data.lockedProperties))
+        if (isModerator && liftsLock('sfwOnly', locked?.lockedProperties, data.lockedProperties))
           await heldVerdict.holdLeadAfterSfwOnlyLift(tx, updated.id);
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&
@@ -5902,22 +5931,13 @@ export async function toggleLockComments({ id, locked }: { id: number; locked: b
 
 export const getSimpleModelWithVersions = async ({
   id,
-  ctx,
 }: GetByIdInput & {
+  // Unused: the read never depended on the viewer (`getModel` ignores its `user`).
   ctx?: Context;
 }) => {
-  const model = await getModel({
-    id,
-    user: ctx?.user,
-    select: {
-      id: true,
-      name: true,
-      createdAt: true,
-      locked: true,
-      status: true,
-      user: { select: userWithCosmeticsSelect },
-    },
-  });
+  // `getModel`'s read with this select (`findModel`), behind `kysely-hot-reads-12`: one Kysely
+  // statement where Prisma issues one for the model and one per relation of its owner.
+  const model = await readSimpleModelWithOwner(id);
   if (!model) throw throwNotFoundError();
   return model;
 };
@@ -7612,6 +7632,9 @@ export const privateModelFromTraining = async ({
         }
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
+        const intentMeta = user.isModerator
+          ? await intentMetaAfterModeratorUnlock(tx, id, locked, data)
+          : {};
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
         const restoreCannotPromote =
           locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
@@ -7661,6 +7684,7 @@ export const privateModelFromTraining = async ({
                   ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
                   : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
+                ...intentMeta,
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
                 ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),

@@ -2,17 +2,14 @@
 // edits as ready pairs, generating an after image, and suggesting an instruction. Like
 // orchestrator-core, each takes an already-built client, so the shell's routes and the web
 // component share them. Generation and suggestion are charged to the caller's token.
-import {
-  getWorkflow,
-  submitWorkflow,
-  type WorkflowStepTemplate,
-} from '@civitai/orchestration-client';
+import { submitWorkflow, type WorkflowStepTemplate } from '@civitai/orchestration-client';
 import { CIVITAI_TAG } from '$lib/data/trainingRows';
 import {
   describeSubmitError,
   isUsableBlob,
   MAX_GENERATION_ITEMS,
   queryRecentWorkflows,
+  readWorkflow,
   resolveCurrencies,
   TERMINAL_STATUSES,
   WHATIF_CURRENCIES,
@@ -129,7 +126,7 @@ async function submit(
 }
 
 async function readStep(client: OrchestratorClient, workflowId: string) {
-  const { data, error } = await getWorkflow({ client, path: { workflowId } });
+  const { data, error } = await readWorkflow(client, workflowId);
   if (!data) throw new Error(`poll failed: ${error?.detail ?? 'no data returned'}`);
   const step = data.steps?.[0] as { status?: string; output?: unknown } | undefined;
   return { done: TERMINAL_STATUSES.has(data.status), step };

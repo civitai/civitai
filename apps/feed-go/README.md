@@ -17,6 +17,7 @@ scripts touch it; its CI is `.github/workflows/feed-go.yml`.
 | `FEED_GO_INTERNAL_ADDR` (`:9090`) | `GET /healthz` | liveness / readiness |
 | | `GET /metrics` | Prometheus (`feed_go_*`, Go runtime, process CPU) |
 | | `POST /internal/shadow/image.getImagesAsPostsInfinite` | shadow comparison (DESIGN.md §7) |
+| | `GET /debug/pprof/…` | `net/http/pprof`, only with `FEED_GO_PPROF=true` (default off; DESIGN.md §10.2) |
 
 ## Run locally
 

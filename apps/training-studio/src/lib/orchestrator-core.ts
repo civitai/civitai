@@ -27,6 +27,7 @@ import {
   type TrainingDetail,
   type TrainingRow,
 } from '$lib/data/trainingRows';
+import { withoutCallbacks } from '$lib/workflow-redaction';
 import type { Media } from '$lib/data/trainingModels';
 
 export type OrchestratorClient = ReturnType<typeof createCivitaiClient>;
@@ -171,7 +172,13 @@ export async function queryRecentWorkflows(
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
-  return data.items ?? [];
+  return (data.items ?? []).map(withoutCallbacks);
+}
+
+/** Every single-workflow read goes through here, so no caller holds a workflow's `callbacks`. */
+export async function readWorkflow(client: OrchestratorClient, workflowId: string) {
+  const result = await getWorkflow({ client, path: { workflowId } });
+  return { ...result, data: result.data && withoutCallbacks(result.data) };
 }
 
 /** Workflow statuses that end a run — a poll stops on any of them. */
@@ -430,7 +437,7 @@ export async function getTrainingWorkflow(
   client: OrchestratorClient,
   workflowId: string
 ): Promise<TrainingDetail | null> {
-  const { data, error } = await getWorkflow({ client, path: { workflowId } });
+  const { data, error } = await readWorkflow(client, workflowId);
   if (!data) {
     if (error?.status === 404) return null;
     throw new Error(`getWorkflow failed: ${error?.detail ?? 'no data returned'}`);
@@ -473,7 +480,7 @@ export async function createEpochArchive(
   workflowId: string,
   kind: ArchiveKind
 ): Promise<EpochArchive[]> {
-  const { data: wf, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  const { data: wf, error: getError } = await readWorkflow(client, workflowId);
   if (!wf) {
     if (getError?.status === 404) throw new RunNotFoundError('archive: run not found');
     throw new Error(`archive: getWorkflow failed (${getError?.detail ?? 'no data returned'})`);

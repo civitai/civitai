@@ -28,6 +28,10 @@ const route = vi.hoisted(() => ({
   ),
 }));
 vi.mock('~/server/services/text-scan/route', () => route);
+const textModeration = vi.hoisted(() => ({
+  submitTextModeration: vi.fn(async () => ({ id: 'wf-xguard' })),
+}));
+vi.mock('~/server/services/text-moderation.service', () => textModeration);
 
 dbMock.dbWrite.$executeRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['executeRaw']>
@@ -46,11 +50,11 @@ const { serviceOfferingShowableWhere, shopRatingFilter, serviceOfferingReviewSta
 );
 const { serviceOfferingModerationAdapter, scanServiceOffering, requeueBlockedServiceOffering } =
   await import('~/server/services/service-offering-moderation.adapter');
-const { reconcileAction, serviceOfferingIngestionReconcile } = await import(
-  '~/server/jobs/service-offering-ingestion-reconcile'
-);
+const { reconcileAction, serviceOfferingIngestionReconcile, serviceOfferingReconcileCandidates } =
+  await import('~/server/jobs/service-offering-ingestion-reconcile');
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 const { decideCsamHold } = await import('~/server/services/text-scan/csam-hold-decision');
+const { csamHoldBars } = await import('~/server/services/text-scan/csam-hold-bars');
 
 const MIGRATIONS = [
   '20261016150000_text_scan_hold',
@@ -77,7 +81,8 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
     CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL, blocked boolean,
       "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb, "nsfwLevel" int,
-      status text NOT NULL DEFAULT 'Succeeded', PRIMARY KEY ("entityType", "entityId"));
+      status text NOT NULL DEFAULT 'Succeeded', "retryCount" int NOT NULL DEFAULT 0,
+      "updatedAt" timestamp(3) NOT NULL DEFAULT now(), PRIMARY KEY ("entityType", "entityId"));
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
 });
@@ -571,15 +576,23 @@ describe('the moderation adapter', () => {
         triggeredLabels,
         result: { version: 1, ...(textHash === null ? {} : { textHash }) },
       } as never);
-    const reconcile = async (readAt?: Date) => {
+    // One candidate row, as the candidate query returns it.
+    const candidate = (readAt: Date, check: Row = {}) =>
+      dbMock.dbRead.$queryRaw.mockResolvedValueOnce([
+        {
+          id: OFFERING,
+          updatedAt: readAt,
+          status: 'Succeeded',
+          blocked: false,
+          moderationUpdatedAt: new Date(),
+          retryCount: 0,
+          ...check,
+        },
+      ] as never);
+    const reconcile = async (readAt?: Date, check?: Row) => {
       const old = new Date(Date.now() - 60 * 60_000);
       row.updatedAt = old;
-      dbMock.dbRead.serviceOffering.findMany.mockResolvedValueOnce([
-        { id: OFFERING, updatedAt: readAt ?? old },
-      ] as never);
-      dbMock.dbRead.entityModeration.findMany.mockResolvedValueOnce([
-        { entityId: OFFERING, status: 'Succeeded', blocked: false, updatedAt: new Date() },
-      ] as never);
+      candidate(readAt ?? old, check);
       return serviceOfferingIngestionReconcile.run({}).result;
     };
     beforeEach(() => {
@@ -617,12 +630,7 @@ describe('the moderation adapter', () => {
     it('resubmits, rather than blocks, an offering edited since the reconcile job read it', async () => {
       const old = new Date(Date.now() - 60 * 60_000);
       row.updatedAt = old;
-      dbMock.dbRead.serviceOffering.findMany.mockResolvedValueOnce([
-        { id: OFFERING, updatedAt: new Date(old.getTime() - 60_000) },
-      ] as never);
-      dbMock.dbRead.entityModeration.findMany.mockResolvedValueOnce([
-        { entityId: OFFERING, status: 'Succeeded', blocked: true, updatedAt: new Date() },
-      ] as never);
+      candidate(new Date(old.getTime() - 60_000), { blocked: true });
       await serviceOfferingIngestionReconcile.run({}).result;
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
       expect(report.createReport).not.toHaveBeenCalled();
@@ -636,16 +644,31 @@ describe('the moderation adapter', () => {
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Scanned);
     });
 
-    it('takes up only offerings still unchecked, not removed, and quiet past the grace window', async () => {
-      verdict([]);
-      const before = Date.now();
-      await reconcile();
-      const { where } = dbMock.dbRead.serviceOffering.findMany.mock.calls.at(-1)![0] as {
-        where: { ingestion: { in: string[] }; status: unknown; updatedAt: { lt: Date } };
-      };
-      expect(where.ingestion.in.sort()).toEqual(['Error', 'Pending']);
-      expect(where.status).toEqual({ not: 'Removed' });
-      expect(where.updatedAt.lt.getTime()).toBeLessThanOrEqual(before - 10 * 60_000 + 1000);
+    it('resubmits a check that spent its retries, with a fresh retry budget', async () => {
+      await reconcile(undefined, {
+        status: 'Failed',
+        retryCount: 9,
+        moderationUpdatedAt: new Date(Date.now() - 2 * 24 * 60 * 60_000),
+      });
+      expect(route.submitTextModerationOrScan).toHaveBeenCalledTimes(1);
+      const [{ xguard }] = route.submitTextModerationOrScan.mock.calls[0] as unknown as [
+        { xguard: () => Promise<unknown> }
+      ];
+      await xguard();
+      expect(textModeration.submitTextModeration).toHaveBeenCalledWith(
+        expect.objectContaining({ rearmRetries: true, forceRescan: true })
+      );
+    });
+
+    it("keeps the retry cron's resubmits inside the retry budget", async () => {
+      await serviceOfferingModerationAdapter.submit({ entityId: OFFERING, content: 'Portraits' });
+      const [{ xguard }] = route.submitTextModerationOrScan.mock.calls[0] as unknown as [
+        { xguard: () => Promise<unknown> }
+      ];
+      await xguard();
+      expect(textModeration.submitTextModeration).toHaveBeenCalledWith(
+        expect.objectContaining({ rearmRetries: false })
+      );
     });
 
     it('leaves an offering edited since the reconcile job read it unshown', async () => {
@@ -932,18 +955,141 @@ describe('a seller edit to a blocked offering', () => {
   });
 });
 
+describe('the requeue and csamHoldBars', () => {
+  const ID = 9;
+  type Hold = {
+    status: 'Pending' | 'Confirmed' | 'Dismissed';
+    textHash?: string;
+    decision?: string;
+  };
+  type Verdict = { labels: string[]; status?: string };
+  // [case, holds, stored verdict, the requeue keeps it Blocked where csamHoldBars does not]
+  const FIXTURES: [string, Hold[], Verdict | null, boolean][] = [
+    ['no hold and no verdict', [], null, false],
+    ['a pending hold', [{ status: 'Pending', decision: 'pending' }], null, false],
+    ['a csam verdict with no hold yet', [], { labels: ['csam'] }, false],
+    [
+      'a csam verdict a moderator dismissed',
+      [{ status: 'Dismissed', decision: 'dismiss' }],
+      { labels: ['csam'] },
+      false,
+    ],
+    [
+      'a csam verdict whose hold was superseded',
+      [{ status: 'Dismissed', decision: 'superseded' }],
+      { labels: ['csam'] },
+      false,
+    ],
+    [
+      'a csam verdict dismissed for other text',
+      [{ status: 'Dismissed', textHash: 'h2', decision: 'dismiss' }],
+      { labels: ['csam'] },
+      false,
+    ],
+    [
+      'a clean verdict over a dismissed hold',
+      [{ status: 'Dismissed', decision: 'dismiss' }],
+      { labels: [] },
+      false,
+    ],
+    [
+      'a hold pending on earlier text beside a dismissed one',
+      [
+        { status: 'Pending', textHash: 'h0', decision: 'pending' },
+        { status: 'Dismissed', decision: 'dismiss' },
+      ],
+      { labels: ['csam'] },
+      false,
+    ],
+    [
+      'a csam label on a check that did not finish',
+      [],
+      { labels: ['csam'], status: 'Failed' },
+      false,
+    ],
+    [
+      'a confirmed hold beside a csam verdict',
+      [{ status: 'Confirmed' }],
+      { labels: ['csam'] },
+      false,
+    ],
+    // Only the csam queue lets out an offering it removed; a later check of new text cannot.
+    ['a confirmed hold and no verdict', [{ status: 'Confirmed' }], null, true],
+    ['a confirmed hold and a clean verdict', [{ status: 'Confirmed' }], { labels: [] }, true],
+    [
+      'a hold confirmed on earlier text beside a dismissed csam verdict',
+      [
+        { status: 'Confirmed', textHash: 'h0' },
+        { status: 'Dismissed', decision: 'dismiss' },
+      ],
+      { labels: ['csam'] },
+      true,
+    ],
+  ];
+
+  it.each(FIXTURES)('agree on %s', async (_, holds, verdict, requeueStricter) => {
+    await q(
+      `INSERT INTO "ServiceOffering" (id, "sellerId", title, description, price, "deliveryDays", ingestion, "updatedAt")
+       VALUES ($1, 1, 'Portraits', 'desc', 500, 3, 'Blocked', now())`,
+      [ID]
+    );
+    for (const hold of holds)
+      await q(
+        `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, meta, "updatedAt")
+         VALUES ('ServiceOffering', $1, 'csam', $2, 't', 'r', $3::"TextScanHoldStatus", $4::jsonb, now())`,
+        [
+          ID,
+          hold.textHash ?? 'h',
+          hold.status,
+          JSON.stringify({ decision: hold.decision ?? 'remove' }),
+        ]
+      );
+    if (verdict)
+      await q(
+        `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, status)
+         VALUES ('ServiceOffering', $1, $2, '{"version": 1, "textHash": "h"}', $3)`,
+        [ID, verdict.labels, verdict.status ?? 'Succeeded']
+      );
+
+    await requeueBlockedServiceOffering(ID);
+    const keptBlocked =
+      (
+        await q<{ ingestion: string }>(
+          `SELECT ingestion::text FROM "ServiceOffering" WHERE id = $1`,
+          [ID]
+        )
+      )[0].ingestion === 'Blocked';
+    // Callers hand csamHoldBars only a finished check's verdict.
+    const check =
+      verdict && (verdict.status ?? 'Succeeded') === 'Succeeded'
+        ? { triggeredLabels: verdict.labels, result: { textHash: 'h' } }
+        : null;
+    const bars = csamHoldBars(
+      check,
+      holds.map((h) => ({
+        status: h.status,
+        textHash: h.textHash ?? 'h',
+        meta: { decision: h.decision ?? 'remove' },
+      }))
+    );
+    if (requeueStricter) expect({ keptBlocked, bars }).toEqual({ keptBlocked: true, bars: false });
+    else expect(keptBlocked).toBe(bars);
+  });
+});
+
 describe('the reconcile job', () => {
   const now = new Date('2027-01-06T12:00:00Z');
   const pendingBefore = new Date('2027-01-06T11:30:00Z');
   const edited = new Date('2027-01-06T11:00:00Z');
-  const opts = { offeringUpdatedAt: edited, pendingBefore };
+  const exhaustedBefore = new Date('2027-01-05T12:00:00Z');
+  const opts = { offeringUpdatedAt: edited, pendingBefore, exhaustedBefore };
 
   it('submits an offering that was never submitted, which is how existing ones start', () => {
     expect(reconcileAction(null, opts)).toBe('submit');
   });
 
   it('applies a result that never reached the offering', () => {
-    const done = { status: 'Succeeded' as const, updatedAt: now };
+    const done = { status: 'Succeeded' as const, updatedAt: now, retryCount: 0 };
     expect(reconcileAction({ ...done, blocked: false }, opts)).toBe('settle');
     expect(reconcileAction({ ...done, blocked: true }, opts)).toBe('block');
   });
@@ -953,20 +1099,102 @@ describe('the reconcile job', () => {
       status: 'Succeeded' as const,
       blocked: false,
       updatedAt: new Date('2027-01-06T10:00:00Z'),
+      retryCount: 0,
     };
     expect(reconcileAction(stale, opts)).toBe('submit');
   });
 
   it('waits on a recent submit and resubmits a lost one', () => {
-    expect(reconcileAction({ status: 'Pending', blocked: null, updatedAt: now }, opts)).toBe(
-      'leave'
-    );
+    expect(
+      reconcileAction({ status: 'Pending', blocked: null, updatedAt: now, retryCount: 0 }, opts)
+    ).toBe('leave');
     expect(
       reconcileAction(
-        { status: 'Pending', blocked: null, updatedAt: new Date('2027-01-06T11:00:00Z') },
+        {
+          status: 'Pending',
+          blocked: null,
+          updatedAt: new Date('2027-01-06T11:00:00Z'),
+          retryCount: 0,
+        },
         opts
       )
     ).toBe('submit');
+  });
+
+  it.each(['Failed', 'Expired', 'Canceled'] as const)(
+    'leaves a %s check to the retry cron, and resubmits it a day after its retries ran out',
+    (status) => {
+      const failed = { status, blocked: null, retryCount: 9, updatedAt: now };
+      expect(reconcileAction({ ...failed, retryCount: 3 }, opts)).toBe('leave');
+      expect(reconcileAction(failed, opts)).toBe('leave');
+      expect(
+        reconcileAction({ ...failed, updatedAt: new Date('2027-01-05T11:00:00Z') }, opts)
+      ).toBe('resubmit-exhausted');
+    }
+  );
+});
+
+describe('the reconcile job candidates', () => {
+  const stuckBefore = new Date('2027-01-06T11:50:00Z');
+  const pendingBefore = new Date('2027-01-06T11:30:00Z');
+  const exhaustedBefore = new Date('2027-01-05T12:00:00Z');
+  const quiet = '2027-01-06T09:00:00Z';
+  const recent = '2027-01-06T11:55:00Z';
+  const longAgo = '2027-01-04T12:00:00Z';
+  // [id, offering ingestion, offering status, offering updatedAt, check row or null, taken up]
+  type Check = { status: string; retryCount?: number; updatedAt: string };
+  const FIXTURES: [number, string, string, string, Check | null, boolean][] = [
+    [1, 'Pending', 'Active', quiet, null, true],
+    [2, 'Error', 'Active', quiet, { status: 'Succeeded', updatedAt: quiet }, true],
+    [3, 'Pending', 'Active', quiet, { status: 'Pending', updatedAt: quiet }, true],
+    [4, 'Pending', 'Active', quiet, { status: 'Pending', updatedAt: recent }, false],
+    [5, 'Error', 'Active', quiet, { status: 'Failed', retryCount: 3, updatedAt: longAgo }, false],
+    [6, 'Error', 'Active', quiet, { status: 'Failed', retryCount: 9, updatedAt: quiet }, false],
+    [7, 'Error', 'Active', quiet, { status: 'Failed', retryCount: 9, updatedAt: longAgo }, true],
+    [8, 'Error', 'Active', quiet, { status: 'Expired', retryCount: 9, updatedAt: longAgo }, true],
+    [9, 'Error', 'Active', quiet, { status: 'Canceled', retryCount: 9, updatedAt: longAgo }, true],
+    [10, 'Scanned', 'Active', quiet, null, false],
+    [11, 'Pending', 'Removed', quiet, null, false],
+    [12, 'Pending', 'Active', recent, null, false],
+  ];
+
+  beforeEach(async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation(((
+      ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
+    ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
+    for (const [id, ingestion, status, updatedAt, check] of FIXTURES) {
+      await q(
+        `INSERT INTO "ServiceOffering" (id, "sellerId", title, description, price, "deliveryDays", ingestion, status, "updatedAt")
+         VALUES ($1, 1, 'Portraits', 'desc', 500, 3, $2::"ServiceOfferingIngestionStatus", $3::"ServiceOfferingStatus", $4)`,
+        [id, ingestion, status, updatedAt]
+      );
+      if (check)
+        await q(
+          `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "retryCount", "updatedAt")
+           VALUES ('ServiceOffering', $1, $2, $3, $4)`,
+          [id, check.status, check.retryCount ?? 0, check.updatedAt]
+        );
+    }
+  });
+
+  it('takes up exactly the unchecked, unremoved, quiet offerings the job would act on', async () => {
+    const taken = await serviceOfferingReconcileCandidates({
+      stuckBefore,
+      pendingBefore,
+      exhaustedBefore,
+    });
+    expect(taken.map((c) => c.id).sort((a, b) => a - b)).toEqual(
+      FIXTURES.filter((f) => f[5]).map((f) => f[0])
+    );
+    // A row the job would only leave alone must not take a place in the batch.
+    for (const c of taken)
+      expect(
+        reconcileAction(c.moderation, {
+          offeringUpdatedAt: c.updatedAt,
+          pendingBefore,
+          exhaustedBefore,
+        })
+      ).not.toBe('leave');
   });
 });
 
