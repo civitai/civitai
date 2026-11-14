@@ -51,7 +51,7 @@ export function countQueryRuleRead(type: string, source: string, reg: Registry =
     (reg.getSingleMetric(RULE_READS) as Counter<string> | undefined) ??
     new client.Counter({
       name: RULE_READS,
-      help: 'Semantic search query rule reads by rule type and source (db, cache or fallback)',
+      help: 'Semantic search query rule reads by rule type and source (db, cache, stale or fallback)',
       labelNames: ['type', 'source'],
       registers: [reg],
     });
@@ -90,6 +90,25 @@ export function setQueryRuleFallback(type: string, on: boolean, reg: Registry = 
       registers: [reg],
     });
   gauge.set({ type }, on ? 1 : 0);
+}
+
+const RULE_INERT = 'semantic_search_query_rule_inert_terms';
+
+/** Rule terms dropped because matching would strip them to nothing. */
+export function setQueryRuleInertTerms(
+  type: string,
+  count: number,
+  reg: Registry = client.register
+) {
+  const gauge =
+    (reg.getSingleMetric(RULE_INERT) as Gauge<string> | undefined) ??
+    new client.Gauge({
+      name: RULE_INERT,
+      help: 'Semantic search query rule terms ignored because matching strips them to nothing',
+      labelNames: ['type'],
+      registers: [reg],
+    });
+  gauge.set({ type }, count);
 }
 
 const CACHE_NAME = 'semantic_search_candidate_cache_total';

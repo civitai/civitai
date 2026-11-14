@@ -90,6 +90,16 @@ describe('createQueryRuleReader', () => {
       .getSingleMetric('semantic_search_query_rule_fallback')
       ?.get();
     expect(flag?.values.find((v) => v.labels.type === POI_TYPE)?.value).toBe(1);
+
+    h.readBlocklistWithSource.mockResolvedValue({
+      dto: { type: POI_TYPE, data: [POI] },
+      source: 'db',
+    });
+    await reader.read(POI_TYPE);
+    const recovered = await promClient.register
+      .getSingleMetric('semantic_search_query_rule_fallback')
+      ?.get();
+    expect(recovered?.values.find((v) => v.labels.type === POI_TYPE)?.value).toBe(0);
   });
 
   it('serves a warm pod its last good copy during an outage, ahead of the file, past 5 minutes', async () => {
@@ -187,6 +197,13 @@ describe('semanticQueryRefusal with query rules', () => {
     );
     expect(await refusal("photo of zq-vox o'poi", false)).toBe('poi');
     expect(await refusal('a zq.min(r) portrait', false)).toBe('minor-safe');
+  });
+
+  it('ignores a POI term that matching strips to nothing, instead of refusing everything', async () => {
+    setQueryRuleReaderForTests(stubReader({ [POI_TYPE]: ['日本語', '  ', POI] }));
+    expect(await refusal('cat, dog', false)).toBe(false);
+    expect(await refusal('日本語の写真', false)).toBe(false);
+    expect(await refusal(`photo of ${POI}`, false)).toBe('poi');
   });
 
   it('fails closed when the rules cannot be read', async () => {

@@ -3,6 +3,7 @@ import { BlocklistType } from '~/server/common/enums';
 import {
   countQueryRuleRead,
   setQueryRuleFallback,
+  setQueryRuleInertTerms,
   setQueryRuleStaleAge,
 } from '~/server/metrics/semantic-search.metrics';
 import {
@@ -87,7 +88,7 @@ const matchers = new Map<QueryRuleType, { key: string; check: ReturnType<typeof 
 // The type's preprocessor strips the query (POI drops most punctuation), so it strips the term too,
 // or a hyphenated or apostrophised name could never match.
 function prepareTerm(type: QueryRuleType, term: string) {
-  const stripped = MATCH_OPTIONS[type]?.preprocessor?.(term) ?? term;
+  const stripped = (MATCH_OPTIONS[type]?.preprocessor?.(term) ?? term).trim();
   return stripped.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 }
 
@@ -95,10 +96,12 @@ function matcherFor(type: QueryRuleType, terms: string[]) {
   const key = terms.join('\n');
   const known = matchers.get(type);
   if (known?.key === key) return known.check;
-  const check = checkable(
-    terms.map((term) => prepareTerm(type, term)),
-    MATCH_OPTIONS[type]
-  );
+  // A term the preprocessor empties (one written wholly in a non-Latin script, for POI) would
+  // compile to an empty pattern that matches nearly every query, so it is dropped and counted.
+  const prepared = terms.map((term) => prepareTerm(type, term));
+  const usable = prepared.filter((term) => term.length > 0);
+  setQueryRuleInertTerms(type, prepared.length - usable.length);
+  const check = checkable(usable, MATCH_OPTIONS[type]);
   matchers.set(type, { key, check });
   return check;
 }
