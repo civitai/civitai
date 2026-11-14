@@ -100,6 +100,24 @@ describe('applyModelNsfwTextScan', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
+  // Without it the owner could untick mature, or remove the face, and nothing would rescan it.
+  it.each([
+    ['already nsfw', { nsfw: true, nsfwLevel: 60 }],
+    [
+      'a complete .com face',
+      { sfwName: 'Safe title', sfwCoverImageId: 5, nsfwLevel: NsfwLevel.PG },
+    ],
+  ])('records the verdict as the origin marker on a model left as it was (%s)', async (_, over) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(model(over));
+    await applyModelNsfwTextScan(args(true));
+    const marks = dbMock.dbWrite.$executeRaw.mock.calls
+      .map((c: unknown[]) => (c[0] as readonly string[]).join('?'))
+      .filter((sql: string) => sql.includes("'systemNsfwLock'"));
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).not.toContain('SET nsfw');
+    expect(marks[0]).toContain('NOT (');
+  });
+
   it('is silent on redelivery: the model is already nsfw', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(model({ nsfw: true, nsfwLevel: 60 }));
     await applyModelNsfwTextScan(args(true));

@@ -36,7 +36,7 @@ export const FORCED_LEVEL_MESSAGE =
 // Moderator actions that lock or unlock a model's nsfw flag. Any logged after the system marker makes
 // the lock that stands now the moderator's: an unlock means a later lock (a dispute resolution logs
 // none) is not the one the system set.
-const MODERATOR_NSFW_LOCK_ACTIVITIES = [
+export const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'lockProperty:nsfw',
   'unlockProperty:nsfw',
   'setSfwOnly',
@@ -52,15 +52,10 @@ const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'revertPoiAutoHash',
 ];
 
-export async function hasSystemNsfwLock(
-  modelId: number,
-  m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown }
-) {
-  if (!m.nsfw || !m.lockedProperties?.includes('nsfw')) return false;
-  const at = readSystemNsfwLockAt(m.meta);
-  if (!at) return false;
-  // Primary: a moderator's lock that has not reached the replica would read as the system's.
-  const moderatorLock = await dbWrite.modActivity.findFirst({
+/** Whether a moderator ruled on the model's nsfw flag after `at`; the primary, as a fresh ruling
+ *  may not have reached the replica. */
+export async function moderatorRuledNsfwSince(modelId: number, at: Date) {
+  const ruling = await dbWrite.modActivity.findFirst({
     where: {
       entityType: 'model',
       entityId: modelId,
@@ -69,7 +64,18 @@ export async function hasSystemNsfwLock(
     },
     select: { id: true },
   });
-  return !moderatorLock;
+  return !!ruling;
+}
+
+export async function hasSystemNsfwLock(
+  modelId: number,
+  m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown }
+) {
+  if (!m.nsfw || !m.lockedProperties?.includes('nsfw')) return false;
+  const at = readSystemNsfwLockAt(m.meta);
+  if (!at) return false;
+  // Primary: a moderator's lock that has not reached the replica would read as the system's.
+  return !(await moderatorRuledNsfwSince(modelId, at));
 }
 
 // Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.

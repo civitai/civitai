@@ -115,6 +115,7 @@ vi.mock('~/server/services/text-scan/actions/hold-restricted-verdict', async (im
 import {
   MINOR_LOCKED_PROPERTIES,
   privateModelFromTraining,
+  SCAN_RATING_KEPT_MESSAGE,
   upsertModel,
 } from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
@@ -1209,6 +1210,60 @@ describe('upsertModel — content flags the row ends up with', () => {
         expect.objectContaining({ ownerFlagOverride: expect.anything() })
       );
       expect(updateData().meta).not.toHaveProperty('restrictedNsfwVerdict');
+    });
+
+    describe('the owner cannot undo the scan rating alone', () => {
+      it('refuses unticking mature while the title and description are unchanged', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses removing the face that kept a scan-rated model off mature', async () => {
+        mockStored({
+          nsfw: false,
+          lockedProperties: [],
+          meta: { systemNsfwLock: scanLock },
+          ...({ sfwName: 'Safe', sfwCoverImageId: 4 } as object),
+        });
+        await expect(
+          upsert({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfw: false,
+            sfwName: null,
+            sfwCoverImageId: null,
+          })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+      });
+
+      it('lets it through with edited text, which is rescanned', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await upsert({
+          id: MODEL_ID,
+          userId: OWNER_ID,
+          nsfw: false,
+          minor: false,
+          sfwOnly: false,
+          description: 'A rewritten description',
+        });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
+      it('lets it through once a moderator has ruled on the rating', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        mockDbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
+
+      it("leaves the owner's own rating, with no scan marker, theirs to change", async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: null });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
+      });
     });
 
     it('keeps a lead already waiting', async () => {

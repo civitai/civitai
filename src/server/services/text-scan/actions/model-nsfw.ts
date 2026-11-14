@@ -83,9 +83,13 @@ export async function applySystemModelNsfwFlag({
     if (held) return 'held_restricted';
   }
 
-  // Not locked, so a repeat verdict or the owner's own rating would be re-stamped as the system's.
-  if (!heldLead && model.nsfw) return 'skipped_nsfw';
-  if (!heldLead && hasCompleteSfwFace(model)) return 'skipped_com_face';
+  // Already mature, or listed on .com by its face: nothing to flip. The verdict is still recorded
+  // as the origin marker, so the owner cannot undo it alone (unticking mature, or removing the face)
+  // while the text it was read from stands (`assertScanRatingKept`).
+  if (!heldLead && (model.nsfw || hasCompleteSfwFace(model))) {
+    await markScanRating(dbWrite, model.id, source);
+    return model.nsfw ? 'skipped_nsfw' : 'skipped_com_face';
+  }
 
   const flipped = await flipRow(dbWrite, model.id, source, heldLead);
   if (!flipped)
@@ -120,6 +124,20 @@ export async function applySystemModelNsfwFlag({
     .catch(() => null);
 
   return 'applied';
+}
+
+/** Stamps the origin marker on a model the scan rated mature but left as it was; an earlier
+ *  marker keeps its time. Not on a locked rating, which is a moderator's. */
+async function markScanRating(db: RawDb, modelId: number, source: string) {
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
+      'systemNsfwLock', jsonb_build_object('source', ${source}::text, 'at', now())
+    )
+    WHERE m.id = ${modelId}
+      AND NOT (${asJsonbObjectSql('m.meta')} ? 'systemNsfwLock')
+      AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))
+  `;
 }
 
 /**

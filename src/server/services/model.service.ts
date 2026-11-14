@@ -255,6 +255,7 @@ import {
 import {
   pickModerationOwnedMeta,
   pickServerOwnedMeta,
+  readSystemNsfwLockAt,
   RESTORE_CANNOT_PROMOTE_KEY,
   type SERVER_OWNED_META_KEYS,
   filterModelMetaForClient,
@@ -264,6 +265,7 @@ import {
   withPrivateCannotPromote,
   withStoredPublishKeys,
 } from '~/server/utils/minor-flag-meta';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
 import {
   buildGetAllModelImages,
   filterImagesForViewer,
@@ -3944,6 +3946,71 @@ export async function leavePrivateWithHeldVerdict(
   if (applied) await finishHeldVerdictApply(modelId);
 }
 
+export const SCAN_RATING_KEPT_MESSAGE =
+  'This model was rated mature from its civitai.red title and description. While they stay the same, it stays marked mature, and a civitai.com version is what lists it on civitai.com. Edit them and save to have them checked again.';
+
+/**
+ * The text scan's mature rating carries no lock, so the owner can add a .com face; this keeps the
+ * owner from undoing it alone. Refused: a save that leaves a scan-rated model neither mature nor
+ * with a .com face (unticking mature, or removing the face from a model the scan skipped for it)
+ * while its title and description are unchanged, so nothing would rescan it. A save that edits
+ * them is rescanned, and one that flags a minor, a real person or SFW-only hands the verdict to a
+ * moderator as a lead (`applyRaisedRestrictions`). A moderator's nsfw ruling since the rating ends it.
+ */
+async function assertScanRatingKept({
+  modelId,
+  before,
+  data,
+}: {
+  modelId: number;
+  before: {
+    nsfw: boolean;
+    name: string;
+    description: string | null;
+    sfwName: string | null;
+    sfwCoverImageId: number | null;
+    lockedProperties: string[] | null;
+    meta: unknown;
+    minor: boolean;
+    poi: boolean;
+    sfwOnly: boolean;
+  };
+  data: {
+    nsfw?: boolean;
+    name?: string;
+    description?: string | null;
+    sfwName?: string | null;
+    sfwCoverImageId?: number | null;
+    minor?: boolean;
+    poi?: boolean;
+    sfwOnly?: boolean;
+  };
+}) {
+  const ratedAt = readSystemNsfwLockAt(before.meta);
+  if (!ratedAt || before.lockedProperties?.includes('nsfw')) return;
+  const after = <K extends keyof typeof data>(key: K) =>
+    (data[key] !== undefined ? data[key] : before[key as keyof typeof before]) as
+      | (typeof data)[K]
+      | undefined;
+  if (after('minor') || after('poi') || after('sfwOnly')) return;
+  const textChanged =
+    (data.name !== undefined && data.name !== before.name) ||
+    (data.description !== undefined && data.description !== before.description);
+  if (textChanged) return;
+
+  const hasFace = (face: { sfwName?: string | null; sfwCoverImageId?: number | null }) =>
+    face.sfwName != null && face.sfwCoverImageId != null;
+  const faceAfter = hasFace({
+    sfwName: after('sfwName'),
+    sfwCoverImageId: after('sfwCoverImageId'),
+  });
+  if (after('nsfw') || faceAfter) return;
+  // Only a save that moves it there; one already there (an older row) is not this save's doing.
+  if (!before.nsfw && !hasFace(before)) return;
+  if (await moderatorRuledNsfwSince(modelId, ratedAt)) return;
+  throw throwBadRequestError(SCAN_RATING_KEPT_MESSAGE);
+}
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -4028,6 +4095,8 @@ export const upsertModel = async (
 
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
+  if (beforeUpdate && id && !isModerator)
+    await assertScanRatingKept({ modelId: id, before: beforeUpdate, data });
   normalizeMergePermissions(data, beforeUpdate?.allowDerivatives);
   normalizeSfwFaceInput(data);
   // `?? null`: on a create there is no stored row, and a null from the form is not a change.
