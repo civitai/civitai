@@ -326,6 +326,9 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ResourceReview.releasedAt',
       'Feedback.appSourceCommit',
       'Feedback.appSourceDirty',
+      'ServiceOffering.declaredNsfwLevel',
+      'ServiceOffering.scanWorkflowId',
+      'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
       'Image.nsfwAxes',
     ]);

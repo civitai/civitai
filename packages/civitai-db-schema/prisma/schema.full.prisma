@@ -2295,6 +2295,7 @@ model Image {
   appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -11041,6 +11042,13 @@ enum ServiceOfferingStatus {
   Removed
 }
 
+enum ServiceOfferingIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 /// What the seller shows before the buyer accepts. `None` skips the preview: the
 /// buyer accepts the delivery on trust.
 enum ServicePreviewKind {
@@ -11139,11 +11147,24 @@ model ServiceOffering {
   title             String
   description       String
   coverImageId      Int?
+  coverImage        Image?                @relation("ServiceOfferingCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+  /// seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+  /// `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+  /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+  /// copies it here.
+  declaredNsfwLevel Int?
+  /// Where the title and description are in their content check.
+  ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  /// The check submitted for the current text. Cleared when the text changes, so a result for
+  /// earlier text is not applied to it.
+  scanWorkflowId    String?
+  scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -11166,6 +11187,7 @@ model ServiceOffering {
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+  @@index([coverImageId])
 }
 
 model ServiceOfferingReport {

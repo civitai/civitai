@@ -11,7 +11,7 @@ import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const TEXT_MODERATION_RETRY_DELAY_MINUTES = 60; // 1 hour for terminal failures
-const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
+export const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
 const TEXT_MODERATION_RETRY_LIMIT = 9;
 const FETCH_LIMIT = 500; // max rows pulled per job tick
 const SUBMIT_CONCURRENCY = 5; // parallel orchestrator submissions
