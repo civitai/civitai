@@ -2052,6 +2052,26 @@ async function releaseEntryLock(crucibleId: number, userId: number, token: strin
   }
 }
 
+/** Refuses an entry the entrant cannot pay for, naming how short they are. */
+async function assertCanPayCrucibleEntryFee(
+  userId: number,
+  entryBuzzType: ReturnType<typeof getCrucibleEntryBuzzType>,
+  entryFee: number
+) {
+  const userAccount = await getUserBuzzAccount({
+    accountId: userId,
+    accountTypes: [entryBuzzType],
+  });
+  const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
+
+  if (totalBalance < entryFee) {
+    const shortage = entryFee - totalBalance;
+    return throwInsufficientFundsError(
+      `You need ${entryFee.toLocaleString()} ${entryBuzzType} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} (${shortage.toLocaleString()} short).`
+    );
+  }
+}
+
 /**
  * Submit an entry to a crucible
  */
@@ -2282,20 +2302,8 @@ export const submitEntry = async ({
     if (crucible.entryFee > 0 && !isFreeEntry) {
       // Refunds reverse this transaction, so an entry is always returned in the currency it paid.
       const entryBuzzType = getCrucibleEntryBuzzType(isGreen);
-      const assertCanPayFee = async () => {
-        const userAccount = await getUserBuzzAccount({
-          accountId: userId,
-          accountTypes: [entryBuzzType],
-        });
-        const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
-
-        if (totalBalance < crucible.entryFee) {
-          const shortage = crucible.entryFee - totalBalance;
-          return throwInsufficientFundsError(
-            `You need ${crucible.entryFee.toLocaleString()} ${entryBuzzType} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} (${shortage.toLocaleString()} short).`
-          );
-        }
-      };
+      const assertCanPayFee = () =>
+        assertCanPayCrucibleEntryFee(userId, entryBuzzType, crucible.entryFee);
       const chargeFee = (prefix: string) =>
         createMultiAccountBuzzTransaction({
           fromAccountId: userId,
