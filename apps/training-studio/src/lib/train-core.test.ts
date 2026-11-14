@@ -12,6 +12,7 @@ import {
   continueTraining,
   continueTrainingWhatIf,
   countDatasetMature,
+  KOHYA_UNAVAILABLE,
   MatureAckRequiredError,
   submitTraining,
   submitTrainingBatch,
@@ -1219,7 +1220,10 @@ describe('Kohya training', () => {
       headBlob.mockResolvedValue({ data: {}, response: { ok: true } });
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom-kohya' } });
       const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
-      await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], { checkText });
+      await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], {
+        checkText,
+        kohyaAllowed: true,
+      });
       const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
       expect(input.model).toBe(customModel);
       if (family === 'flux1' || family === 'chroma') {
@@ -1251,7 +1255,7 @@ describe('Kohya training', () => {
   ])('refuses invalid config before submission: %j', async (invalid) => {
     const calls = submitWorkflow.mock.calls.length;
     await expect(
-      submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText })
+      submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText, kohyaAllowed: true })
     ).rejects.toThrow();
     expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
@@ -1278,11 +1282,11 @@ describe('Kohya training', () => {
     });
     const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
     submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 200 } } });
-    await continueTrainingWhatIf(client, opts);
+    await continueTrainingWhatIf(client, opts, { kohyaAllowed: true });
     const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-further' } });
     const check = vi.fn(async () => undefined);
-    await continueTraining(client, opts, { checkText: check });
+    await continueTraining(client, opts, { checkText: check, kohyaAllowed: true });
     expect(check).toHaveBeenCalledWith({ triggerWord: 'ohwx' });
     const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
     expect(submitted).toEqual(quoted);
@@ -1294,6 +1298,28 @@ describe('Kohya training', () => {
     });
     expect(submitted).not.toHaveProperty('usesStepPricing');
     expect(submitted).not.toHaveProperty('ecosystem');
+  });
+
+  it('refuses a Kohya run, or a continuation or its quote, without the gate', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: buildKohyaInput(run(), { type: 'blobs', items: [] }, 'none'),
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(submitTrainingBatch(client, [run()], { checkText })).rejects.toThrow(
+      KOHYA_UNAVAILABLE
+    );
+    await expect(continueTrainingWhatIf(client, opts)).rejects.toThrow(KOHYA_UNAVAILABLE);
+    await expect(continueTraining(client, opts, { checkText })).rejects.toThrow(KOHYA_UNAVAILABLE);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });
 
