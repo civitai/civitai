@@ -1,11 +1,25 @@
+import { createRevocationMarkerCache } from './revocation-marker-cache';
 import { createSessionRegistry, type SessionRegistryRedis } from './session-registry';
 import { SESSION_REGISTRY_KEYS } from './session-registry-keys';
 import type { SessionClaims } from './types';
 
 // The `isRevoked` every app hands to its verifier (the main app, the hub, and each spoke through
 // createSpokeGuard): the same registry read everywhere, so a sign-out, ban or force-logout written anywhere
-// ends the session everywhere. Reads fail OPEN, and are bounded by a deadline, so a slow or unavailable store
-// never blocks a request or signs anyone out.
+// ends the session everywhere. Reads are bounded by a deadline, so a slow or unavailable store never blocks a
+// request.
+//
+// When the read fails (an error, the deadline, or the caller's breaker refusing it) the verdict comes from
+// the revocation markers this check has already read (revocation-marker-cache.ts): a revocation seen here
+// still denies, and a session with no known marker is allowed (signing everyone out during a store outage is
+// not the policy). `markerCache: false` (each app maps its SESSION_REVOCATION_CACHE=off|0|false to it) turns
+// the record off and restores the plain fail-open.
+
+/**
+ * The record's size bound, least recently used evicted first. There is no time-based expiry: a held marker
+ * only ever revokes tokens signed before it (or the one token or family it names), so keeping it longer cannot
+ * deny a session the store would allow, and a process restart empties the record.
+ */
+export const REVOCATION_MARKER_CACHE_MAX_ENTRIES = 20_000;
 
 /**
  * The deadline when REDIS_SYS_READ_TIMEOUT_MS is unset: the same default as the main app's system-Redis read
@@ -26,15 +40,26 @@ export function revocationReadTimeoutMs(): number {
 }
 
 /**
- * Why a check failed open: the read deadline passed (`timeout`), the caller's `bound` refused the read
+ * Why a revocation read failed: the read deadline passed (`timeout`), the caller's `bound` refused the read
  * without waiting because its breaker is open (`breaker-open`), or anything else (`error`).
  */
 export type RevocationFailureReason = 'timeout' | 'breaker-open' | 'error';
 export type RevocationOutcome = 'hit' | RevocationFailureReason;
+/**
+ * The verdict given when the read failed: `deny_cached` = a revocation marker this check had already read
+ * applied; `allow_unknown` = none applied (or the record is off), so the session was allowed.
+ */
+export type RevocationDegradedVerdict = 'deny_cached' | 'allow_unknown';
 
 export interface RevocationCheckConfig {
   /** The shared session store (`getSysRedis()`). A getter, so building the check never connects. */
   redis: () => SessionRegistryRedis;
+  /**
+   * Keep a record of the revocation markers read, and answer from it when a read fails (default true). Read
+   * once when the check is built. `false` records nothing and every failed read allows, as before the record.
+   * Apps map SESSION_REVOCATION_CACHE=off|0|false to `false`.
+   */
+  markerCache?: boolean;
   /**
    * Read deadline in ms, or a getter read on every check. Defaults to `revocationReadTimeoutMs()`
    * (REDIS_SYS_READ_TIMEOUT_MS, else 1000). `<= 0` turns the deadline off.
@@ -46,8 +71,16 @@ export interface RevocationCheckConfig {
    * rejects with that carries `reason: 'timeout'` or `reason: 'breaker-open'` is reported with that reason.
    */
   bound?: (read: Promise<boolean>, timeoutMs: number) => Promise<boolean>;
-  /** Called when a read fails or times out and the check fails open. */
-  onError?: (err: unknown, reason: RevocationFailureReason, claims: SessionClaims) => void;
+  /**
+   * Called when a read fails or times out, with the verdict the check then gave from the markers it had
+   * already read.
+   */
+  onError?: (
+    err: unknown,
+    reason: RevocationFailureReason,
+    claims: SessionClaims,
+    verdict: RevocationDegradedVerdict
+  ) => void;
   /** Called after every check with its outcome and wall time in seconds. Observability only. */
   onOutcome?: (outcome: RevocationOutcome, seconds: number) => void;
 }
@@ -86,7 +119,22 @@ const quietly = (fn: () => void) => {
 export function createRevocationCheck(
   config: RevocationCheckConfig
 ): (claims: SessionClaims) => Promise<boolean> {
+  const cacheOn = config.markerCache ?? true;
+  const markers = createRevocationMarkerCache({ maxEntries: REVOCATION_MARKER_CACHE_MAX_ENTRIES });
+  // The same predicate over the markers seen so far. Its reads are in memory and never touch the store.
+  const seenRegistry = createSessionRegistry({
+    redis: markers.reader(),
+    keys: SESSION_REGISTRY_KEYS,
+  });
   let registry: ReturnType<typeof createSessionRegistry> | undefined;
+  const registryOf = () => {
+    if (registry) return registry;
+    const store = config.redis();
+    return (registry = createSessionRegistry({
+      redis: cacheOn ? markers.observe(store) : store,
+      keys: SESSION_REGISTRY_KEYS,
+    }));
+  };
   const timeoutOf = (): number => {
     const t = config.timeoutMs;
     if (typeof t === 'function') return t();
@@ -98,15 +146,18 @@ export function createRevocationCheck(
     const started = performance.now();
     const seconds = () => (performance.now() - started) / 1000;
     try {
-      registry ??= createSessionRegistry({ redis: config.redis(), keys: SESSION_REGISTRY_KEYS });
-      const revoked = await bound(registry.isRevoked(claims), timeoutOf());
+      const revoked = await bound(registryOf().isRevoked(claims), timeoutOf());
       quietly(() => config.onOutcome?.('hit', seconds()));
       return revoked;
     } catch (err) {
       const reason = reasonOf(err);
       quietly(() => config.onOutcome?.(reason, seconds()));
-      quietly(() => config.onError?.(err, reason, claims));
-      return false;
+      // Whatever ended the read (error, deadline, open breaker), the verdict comes from the markers seen.
+      // The record's reads are in-memory lookups and cannot fail.
+      const revoked = cacheOn ? await seenRegistry.isRevoked(claims) : false;
+      const verdict: RevocationDegradedVerdict = revoked ? 'deny_cached' : 'allow_unknown';
+      quietly(() => config.onError?.(err, reason, claims, verdict));
+      return revoked;
     }
   };
 }

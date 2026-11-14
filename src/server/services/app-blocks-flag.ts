@@ -1604,3 +1604,25 @@ export async function isAppLimitsUpgradePromptEnabled(opts: {
     return false;
   }
 }
+
+/**
+ * APP HIBERNATE ("Sleeping" apps): the sandbox service archives an idle or LRU app into the
+ * archive store instead of deleting it, and the owner can list, wake or delete it
+ * (`src/server/services/app-hibernation/`). Off, every hibernation endpoint and procedure refuses,
+ * so nothing is archived and nothing is listed; account deletion still removes what exists.
+ *
+ * Evaluated per user (the internal routes look the user up from the request's `userId`), so a
+ * segment rollout reaches the sandbox service's calls and the user's own procedures alike. No
+ * user, an absent flag and an unreachable Flipt all evaluate `false`.
+ */
+export const APP_HIBERNATE_FLAG = 'app-hibernate';
+
+export async function isAppHibernateEnabled(opts: { user?: SessionUser | null }): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (await isFlipt(APP_HIBERNATE_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}

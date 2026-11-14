@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { serverSchema } from '~/env/server-schema';
 
-// The three fail-closed behaviours are ON unless their switch says off.
+// The fail-closed behaviours are ON unless their switch says off.
 const SWITCHES = [
   'PROMPT_CHECK_FAIL_CLOSED',
   'BLOCKS_ENFORCE_GENERATION_STATUS',
+  'PRESET_ENFORCE_GENERATION_STATUS',
   'TRAINING_STATUS_FAIL_CLOSED',
 ] as const;
 

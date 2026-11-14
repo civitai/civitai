@@ -14,6 +14,7 @@ import {
 import {
   enforceBlockedBrowsingTags,
   enforceBlockedBrowsingTagsForModels,
+  getShowcaseImageFilter,
 } from '~/server/services/blocked-browsing-tags.service';
 
 vi.mock('~/server/services/system-cache', async () => {
@@ -330,5 +331,26 @@ describe('enforceBlockedBrowsingTagsForModels', () => {
     await enforceBlockedBrowsingTagsForModels(input, { id: 1 }, { ignoreBrowsingAddons: true });
     expect(input.disableMinor).toBe(true);
     expect(input.excludedTagIds).toEqual([42]);
+  });
+});
+
+describe('getShowcaseImageFilter', () => {
+  const people = 5188;
+
+  it('hides an image whose tags were never read while any tag is excluded', async () => {
+    const shows = await getShowcaseImageFilter({ browsingLevel: publicBrowsingLevelsFlag });
+    expect(shows({ userId: 2, tags: undefined })).toBe(false);
+    expect(shows({ userId: 2, tags: null })).toBe(false);
+    expect(shows({ userId: 2, tags: [] })).toBe(true);
+    expect(shows({ userId: 2, tags: [people] })).toBe(false);
+  });
+
+  it("passes the viewer's own image whatever its tags", async () => {
+    const shows = await getShowcaseImageFilter({
+      browsingLevel: allBrowsingLevelsFlag,
+      viewer: { id: 2 },
+    });
+    expect(shows({ userId: 2, tags: undefined, minor: true })).toBe(true);
+    expect(shows({ userId: 3, tags: [], minor: true })).toBe(false);
   });
 });

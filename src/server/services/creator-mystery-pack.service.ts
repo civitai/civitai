@@ -24,8 +24,11 @@ import {
   creatorCosmeticTypes,
 } from '~/server/schema/creator-shop.schema';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import {
+  assertQuotedFee,
+  withSubmissionFee,
+  getCreatorShopFees,
+} from '~/server/services/creator-shop-fees.service';
 import { buildRightsAffirmation } from '~/server/services/creator-shop-pack.service';
 import { appendItemHistory, REJECTED_IS_FINAL } from '~/server/services/creator-shop.data';
 import {
@@ -38,7 +41,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   assertClientImageUrlsUsable,
@@ -282,6 +284,7 @@ export async function submitMysteryPack({
   steepness,
   tiers,
   price,
+  idempotencyKey,
 }: SubmitMysteryPackInput & {
   userId: number;
   countryCode: string | null;
@@ -307,20 +310,18 @@ export async function submitMysteryPack({
 
   const submissionFee = (await getCreatorShopFees()).mysteryPack;
   assertQuotedFee(quotedFee, submissionFee);
-  const feeTx = await createBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountType: buzzType as BuzzSpendType,
-    toAccountId: 0,
-    amount: submissionFee,
-    type: TransactionType.Purchase,
-    description: `Creator Shop mystery pack submission fee - ${name}`,
-    externalTransactionId: `creator-shop-mystery-pack-submit-${userId}-${Date.now()}`,
-  });
-  const feeTxId = feeTx.transactionId;
-  if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
-
-  try {
-    return await dbWrite.$transaction(async (tx) => {
+  // The fee is charged and the pack written together; refunded only if the write fails.
+  return withSubmissionFee(
+    {
+      kind: 'mysteryPack',
+      userId,
+      buzzType: buzzType as BuzzSpendType,
+      amount: submissionFee,
+      description: `Creator Shop mystery pack submission fee - ${name}`,
+      refundDescription: 'Creator Shop mystery pack submission failed',
+      idempotencyKey,
+    },
+    async (tx, feeTxId) => {
       await lockCreator(tx, userId);
       await assertUnderLiveLimit(tx, userId);
 
@@ -351,11 +352,8 @@ export async function submitMysteryPack({
         INSERT INTO "BoxRevision" ("boxDefinitionId", "baseVersion", proposal, "submittedById")
         VALUES (${box.id}, ${box.version}, ${JSON.stringify(proposal)}::jsonb, ${userId})`;
       return { boxId: box.id, shopItemId: listing.id };
-    });
-  } catch (error) {
-    await refundTransaction(feeTxId, 'Creator Shop mystery pack submission failed');
-    throw error;
-  }
+    }
+  );
 }
 
 /** Someone else's box reads as not found. */

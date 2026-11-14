@@ -13,8 +13,9 @@ import {
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
-import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import {
   auditPromptEnriched,
   isBlankAuditInput,
@@ -71,10 +72,6 @@ const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
-
-// The 503 when the prompt check itself could not run (see auditPromptServer).
-const PROMPT_CHECK_UNAVAILABLE_MESSAGE =
-  'The prompt check is temporarily unavailable. Please try again in a moment.';
 
 // Shown for a regex refusal that names neither a trigger nor a reason (see classifyPromptServer).
 const UNSPECIFIED_REGEX_REFUSAL = 'Prompt failed the content audit';
@@ -599,7 +596,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       userId,
       message: (e as Error)?.message,
     }).catch(() => undefined);
-    throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE, e);
+    throw new PromptCheckUnavailableError(e);
   }
 
   // The classifier fails open on an external-moderation error and leaves reporting it to us.
@@ -628,7 +625,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       userId,
       message: verdict.externalError.message,
     }).catch(() => undefined);
-    throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE);
+    throw new PromptCheckUnavailableError();
   }
 
   if (verdict.outcome === 'pass') return;
