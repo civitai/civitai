@@ -27,6 +27,20 @@ const holder = vi.hoisted(() => ({
   before: null as null | { marker: string; sql: string },
   /** Holder advisory locks taken. */
   locks: 0,
+  /** Each pool read the job made: on the replica or not, with the team and catalog it passed. */
+  poolReads: [] as { onReplica: boolean; team: string | undefined; catalog: unknown }[],
+}));
+
+// Read only: a test fails if the job places a holder in a team.
+const teams = vi.hoisted(() => ({
+  readEventHolderTeam: vi.fn(),
+  getEventBuyerTeam: vi.fn(async () => {
+    throw new Error('the over-pool job placed a buyer in a team');
+  }),
+}));
+vi.mock('~/server/events/event-shop-item', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...teams,
 }));
 
 const buzz = vi.hoisted(() => ({
@@ -45,9 +59,13 @@ vi.mock('~/server/services/notification.service', () => notifications);
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxService>()),
   getBoxCatalog: async () => [],
-  getBoxPoolForUser: async (client: unknown, p: { boxDefinitionId: number; userId: number }) => {
+  getBoxPoolForUser: async (
+    client: unknown,
+    p: { boxDefinitionId: number; userId: number; team?: string; catalog?: unknown }
+  ) => {
     const key = `${p.boxDefinitionId}:${p.userId}`;
     const onReplica = client === (await import('~/server/db/client')).dbRead;
+    holder.poolReads.push({ onReplica, team: p.team, catalog: p.catalog });
     if (onReplica && holder.replicaDown) throw new Error('replica down');
     const size = (onReplica ? holder.replicaPool.get(key) : undefined) ?? holder.pool.get(key) ?? 0;
     return Array.from({ length: size }, () => ({}));
@@ -247,6 +265,9 @@ beforeEach(async () => {
   holder.replicaDown = false;
   holder.before = null;
   holder.locks = 0;
+  holder.poolReads = [];
+  teams.readEventHolderTeam.mockReset();
+  teams.getEventBuyerTeam.mockClear();
   for (const fn of [
     ...Object.values(buzz),
     ...Object.values(revoke),
@@ -445,6 +466,28 @@ describe('refundBoxPurchase', () => {
     expect(await heldCount()).toBe(1);
     expect((await purchaseOf('p1')).refunded).toBe(false);
   });
+
+  it('takes nothing back from a partly refunded pack whose shares it could not pay', async () => {
+    await buy('p1', {
+      meta: { pack: { size: 2, guaranteedTierIds: [1] }, packOverPoolRefunds: { 9: { at: 'x' } } },
+    });
+    await hold('p1#pack-02');
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'a', accountId: BUYER, amount: 500, accountType: 'yellow' },
+      { transactionId: 'b', accountId: BUYER, amount: 500, accountType: 'green' },
+    ]);
+
+    const outcome = await refundBoxPurchase({
+      buzzTransactionId: 'p1',
+      userId: BUYER,
+      reason: 'moderator',
+      actorId: MOD,
+    });
+
+    expect(outcome).toMatchObject({ status: 'failed', error: expect.stringContaining('by hand') });
+    expect(await heldCount()).toBe(1);
+    expect((await purchaseOf('p1')).refunded).toBe(false);
+  });
 });
 
 describe('refundOverPoolBoxes', () => {
@@ -498,6 +541,66 @@ describe('refundOverPoolBoxes', () => {
     const result = await refundOverPoolBoxes();
 
     expect(result).toMatchObject({ refunded: 1, failed: [] });
+  });
+
+  it("reads an event box's pool for the holder's team, placing no one", async () => {
+    await q(`UPDATE "ItemDefinition" SET params = '{"event":"Ev"}' WHERE id = $1`, [boxId]);
+    await buy('p1');
+    await hold('p1');
+    teams.readEventHolderTeam.mockResolvedValue('Pink');
+
+    await refundOverPoolBoxes();
+
+    expect(teams.readEventHolderTeam).toHaveBeenCalledWith('Ev', BUYER);
+    expect(teams.getEventBuyerTeam).not.toHaveBeenCalled();
+    // The replica read gets the run's catalog; the locked read reads its own.
+    expect(holder.poolReads).toEqual([
+      { onReplica: true, team: 'Pink', catalog: [] },
+      { onReplica: false, team: 'Pink', catalog: undefined },
+    ]);
+  });
+
+  it('refunds nothing for a box opened after the job chose it', async () => {
+    await buy('p1');
+    await hold('p1');
+    // The holder opens it between the job's choice and its claim.
+    holder.before = {
+      marker: 'SELECT id FROM "Item"',
+      sql: `DELETE FROM "Item" WHERE "sourceKey" = 'p1'`,
+    };
+    const opened = await open('p1');
+
+    const result = await refundOverPoolBoxes();
+
+    expect(result).toMatchObject({ refunded: 0, failed: [] });
+    expect((await purchaseOf('p1')).refunded).toBe(false);
+    expect(
+      await q(`SELECT "rewardStatus" FROM "BoxOpening" WHERE "boxItemId" = $1`, [opened])
+    ).toEqual([{ rewardStatus: 'granted' }]);
+    expect(revoke.revokeCosmeticsFromUsers).not.toHaveBeenCalled();
+  });
+
+  it('leaves a pack box held when its share could not be paid back', async () => {
+    await buy('p1', { meta: { pack: { size: 2, guaranteedTierIds: [1] } } });
+    await hold('p1#pack-01');
+    await hold('p1#pack-02');
+    holder.pool.set(`${boxId}:${BUYER}`, 1);
+    // A charge split across accounts has no one account to pay a share back into.
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'a', accountId: BUYER, amount: 500, accountType: 'yellow' },
+      { transactionId: 'b', accountId: BUYER, amount: 500, accountType: 'green' },
+    ]);
+
+    const result = await refundOverPoolBoxes();
+
+    expect(result.failed).toEqual([
+      expect.objectContaining({
+        userId: BUYER,
+        error: expect.stringContaining('refund it by hand'),
+      }),
+    ]);
+    expect(await heldCount()).toBe(2);
+    expect((await purchaseOf('p1')).meta).not.toHaveProperty('packOverPoolRefunds');
   });
 
   it('refunds the purchased box when a newer granted box sits on top of it', async () => {

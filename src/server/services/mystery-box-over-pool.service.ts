@@ -5,7 +5,7 @@ import {
   parsePackBoxSourceKey,
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getEventBuyerTeam, isEventShopItemData } from '~/server/events/event-shop-item';
+import { isEventShopItemData, readEventHolderTeam } from '~/server/events/event-shop-item';
 import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
@@ -15,6 +15,7 @@ import { continueBoxTakedowns } from '~/server/services/mystery-box-takedown.ser
 import {
   BOX_REFUND_DESCRIPTIONS,
   listOwedBoxPurchaseRefunds,
+  packChargeAccountType,
   refundBoxPurchase,
   refundPackBoxShare,
 } from '~/server/services/mystery-box-refund.service';
@@ -26,6 +27,22 @@ const log = (level: 'info' | 'error', message: string, data: Record<string, unkn
   logToAxiom({ level, name: 'mystery-box-over-pool', message, data }).catch(() => undefined);
 
 type Holding = { boxDefinitionId: number; userId: number; held: number; params: unknown };
+
+/** Reads one run shares: each box's catalog, and each event holder's team. */
+type ScanReads = {
+  catalogs: Map<number, BoxCatalogEntry[]>;
+  teams: Map<string, Promise<string | undefined>>;
+};
+
+function holderTeam(reads: ScanReads, event: string, userId: number) {
+  const key = `${event}:${userId}`;
+  let team = reads.teams.get(key);
+  if (!team) {
+    team = readEventHolderTeam(event, userId);
+    reads.teams.set(key, team);
+  }
+  return team;
+}
 
 /**
  * Unlocked, on the replica, so a holder with nothing over the pool costs no lock and no write
@@ -50,13 +67,14 @@ async function withinPoolOnReplica(
   }
 }
 
-async function overPoolBoxes(holding: Holding, catalogs: Map<number, BoxCatalogEntry[]>) {
+async function overPoolBoxes(holding: Holding, reads: ScanReads) {
   const { boxDefinitionId, userId, params } = holding;
-  // Read before the transaction: the team lookup isn't on its connection.
+  // Read before the transaction: the team lookup isn't on its connection. Read only: this job
+  // places no one in a team.
   const team = isEventShopItemData(params)
-    ? await getEventBuyerTeam(params.event, userId)
+    ? await holderTeam(reads, params.event, userId)
     : undefined;
-  if (await withinPoolOnReplica(holding, team, catalogs)) return [];
+  if (await withinPoolOnReplica(holding, team, reads.catalogs)) return [];
   return dbWrite.$transaction(async (tx) => {
     await lockItemHolder(tx, userId);
     const pool = await getBoxPoolForUser(tx, { boxDefinitionId, userId, team });
@@ -80,6 +98,8 @@ async function overPoolBoxes(holding: Holding, catalogs: Map<number, BoxCatalogE
 async function claimPackBox(item: { id: bigint; sourceKey: string }, userId: number) {
   const packBox = parsePackBoxSourceKey(item.sourceKey);
   if (!packBox) return null;
+  // Throws, leaving the box held, when the share couldn't be paid back.
+  await packChargeAccountType(packBox.transactionId);
   return dbWrite.$transaction(async (tx) => {
     await lockItemHolder(tx, userId);
     const deleted = await tx.$executeRaw`
@@ -218,7 +238,7 @@ export async function refundOverPoolBoxes({
   let after = await readScanCursor();
   let done = false;
   // A catalog read late in the run only defers an excess or sends it to the locked read.
-  const catalogs = new Map<number, BoxCatalogEntry[]>();
+  const reads: ScanReads = { catalogs: new Map(), teams: new Map() };
   while (!done && Date.now() < deadline) {
     // Holder first: the keyset is then a range on the (holderType, holderId, itemDefinitionId)
     // index. The replica's counts only filter; the locked read recounts.
@@ -238,7 +258,7 @@ export async function refundOverPoolBoxes({
       holdingsChecked++;
       let boxes: { id: bigint; sourceKey: string }[];
       try {
-        boxes = await overPoolBoxes(holding, catalogs);
+        boxes = await overPoolBoxes(holding, reads);
       } catch (error) {
         failed.push({ userId: holding.userId, error: errorMessage(error) });
         continue;
@@ -255,6 +275,7 @@ export async function refundOverPoolBoxes({
             userId: holding.userId,
             reason: 'over-pool',
             actorId: -1,
+            heldBoxId: box.id,
           });
           if (outcome.status === 'failed') throw new Error(outcome.error);
           if (outcome.status !== 'refunded') continue;

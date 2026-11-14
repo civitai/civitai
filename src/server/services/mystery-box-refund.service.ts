@@ -62,10 +62,23 @@ const ofPurchase = (column: string, purchase: BoxPurchase) => {
  * boxes, and every opening's reward marked refunded (the reward itself is revoked in `finish`). Under
  * the holder lock, flipped only while unflipped, as the takedown's claim does, so whichever runs first
  * owns the refund; and before any ledger read, so a creator payout landing meanwhile reverses itself.
- * Null when another refund already owns it.
+ * `taken` when another refund already owns it; `gone` when `heldBoxId` is given and no longer held.
  */
-async function claim(tx: Tx, purchase: BoxPurchase, reason: BoxRefundReason, actorId: number) {
+async function claim(
+  tx: Tx,
+  purchase: BoxPurchase,
+  reason: BoxRefundReason,
+  actorId: number,
+  heldBoxId?: bigint
+): Promise<{ meta: Prisma.JsonValue } | 'taken' | 'gone'> {
   await lockItemHolder(tx, purchase.userId);
+  // Opens take the holder lock too, so a box still held here is still unopened when it's deleted.
+  if (heldBoxId !== undefined) {
+    const [held] = await tx.$queryRaw<{ id: bigint }[]>`
+      SELECT id FROM "Item"
+      WHERE id = ${heldBoxId} AND "holderType" = 'user' AND "holderId" = ${purchase.userId}`;
+    if (!held) return 'gone';
+  }
   const flipped = await tx.$queryRaw<{ meta: Prisma.JsonValue }[]>`
     UPDATE "UserCosmeticShopPurchases" p
     SET refunded = true,
@@ -75,7 +88,7 @@ async function claim(tx: Tx, purchase: BoxPurchase, reason: BoxRefundReason, act
     WHERE p."buzzTransactionId" = ${purchase.buzzTransactionId} AND p."userId" = ${purchase.userId}
       AND NOT p.refunded
     RETURNING p.meta`;
-  if (!flipped.length) return null;
+  if (!flipped.length) return 'taken';
   const meta = flipped[0].meta;
   const claimed = { ...purchase, meta };
   await tx.$executeRaw`
@@ -87,7 +100,7 @@ async function claim(tx: Tx, purchase: BoxPurchase, reason: BoxRefundReason, act
     WHERE ${ofPurchase('"boxSourceKey"', claimed)}
       AND "boxDefinitionId" = ${purchase.boxDefinitionId} AND "userId" = ${purchase.userId}
       AND "rewardStatus" = ${BOX_OPENING_REWARD_STATUS.granted}`;
-  return meta;
+  return { meta };
 }
 
 /**
@@ -200,11 +213,14 @@ export async function refundBoxPurchase({
   userId,
   reason,
   actorId,
+  heldBoxId,
 }: {
   buzzTransactionId: string;
   userId: number;
   reason: BoxRefundReason;
   actorId: number;
+  /** Refund only while this box is still held: an over-pool refund never takes an opened box. */
+  heldBoxId?: bigint;
 }): Promise<BoxRefundOutcome> {
   const purchase = await readBoxPurchase(buzzTransactionId, userId);
   if (!purchase) return { status: 'skipped', reason: 'not a mystery box purchase' };
@@ -216,16 +232,21 @@ export async function refundBoxPurchase({
     if (!purchase.refunded) {
       // Refused before anything is taken back: a ledger this can't reverse would leave the buyer
       // with neither the box nor the Buzz.
-      if (purchase.unitAmount > 0 && !partlyRefundedPack(purchase.meta)) {
-        const ledger = await readPurchaseLedger(purchase);
-        if (ledger.error !== undefined) {
-          await stampRefused(buzzTransactionId, ledger.error);
-          return { status: 'failed', error: ledger.error };
+      if (purchase.unitAmount > 0) {
+        const error = partlyRefundedPack(purchase.meta)
+          ? await packChargeAccountType(buzzTransactionId).then(() => undefined, errorMessage)
+          : (await readPurchaseLedger(purchase)).error;
+        if (error !== undefined) {
+          await stampRefused(buzzTransactionId, error);
+          return { status: 'failed', error };
         }
       }
-      const meta = await dbWrite.$transaction((tx) => claim(tx, purchase, reason, actorId));
-      if (meta === null) return { status: 'skipped', reason: 'already refunded' };
-      purchase.meta = meta;
+      const claimed = await dbWrite.$transaction((tx) =>
+        claim(tx, purchase, reason, actorId, heldBoxId)
+      );
+      if (claimed === 'taken') return { status: 'skipped', reason: 'already refunded' };
+      if (claimed === 'gone') return { status: 'skipped', reason: 'box no longer held' };
+      purchase.meta = claimed.meta;
     }
     const outcome = await finish(purchase, reason);
     if (outcome.status === 'failed') await markOwed(buzzTransactionId, outcome.error);
@@ -305,6 +326,22 @@ export function packBoxShareOf(owed: PackBoxShare) {
 }
 
 /**
+ * The one account a pack's charge came from, where its boxes' shares are paid back. Throws for a
+ * charge split across accounts, which has no single place to return a share to: read before taking
+ * a pack box back, so nothing is taken without a share that can be paid.
+ */
+export async function packChargeAccountType(buzzTransactionId: string) {
+  const accountTypes = new Set(
+    (await getMultiAccountTransactionsByPrefix(buzzTransactionId)).map((leg) => leg.accountType)
+  );
+  if (accountTypes.size !== 1)
+    throw new Error(
+      `Pack charge ${buzzTransactionId} has ${accountTypes.size} account types; refund it by hand`
+    );
+  return [...accountTypes][0];
+}
+
+/**
  * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
  * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
  * which is read as paid, and a box is paid its share once whichever refund reaches it. It doesn't
@@ -314,17 +351,7 @@ export async function refundPackBoxShare(owed: PackBoxShare, description: string
   const amount = packBoxShareOf(owed);
   if (amount === null) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
   if (amount <= 0) return 0;
-  const accountTypes = new Set(
-    (await getMultiAccountTransactionsByPrefix(owed.buzzTransactionId)).map(
-      (leg) => leg.accountType
-    )
-  );
-  // A pack is paid from one account; a split charge has no single place to return a share to.
-  if (accountTypes.size !== 1)
-    throw new Error(
-      `Pack charge ${owed.buzzTransactionId} has ${accountTypes.size} account types; refund it by hand`
-    );
-  const [toAccountType] = [...accountTypes];
+  const toAccountType = await packChargeAccountType(owed.buzzTransactionId);
   // A duplicate is the share already paid, never retried.
   const pay = () =>
     createBuzzTransaction({
