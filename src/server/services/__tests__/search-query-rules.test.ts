@@ -22,6 +22,7 @@ import {
 import {
   dryRunSemanticQuery,
   queryVerdictLevel,
+  recordRefusal,
   semanticQueryRefusal,
 } from '~/server/services/semantic-query-guard';
 import {
@@ -121,8 +122,8 @@ describe('semanticQueryRefusal with query rules', () => {
   it('narrows a non-moderator on a minor addition and refuses a moderator', async () => {
     const nonMod = await refusal(`a ${MINOR} portrait`, false);
     const mod = await refusal(`a ${MINOR} portrait`, true);
-    expect(nonMod).toBe('minor');
-    expect(mod).toBe('minor');
+    expect(nonMod).toBe('minor-safe');
+    expect(mod).toBe('minor-safe');
     expect(queryVerdictLevel(nonMod, allBrowsingLevelsFlag, false)).toBe(
       allBrowsingLevelsFlag & sfwBrowsingLevelsFlag
     );
@@ -135,6 +136,24 @@ describe('semanticQueryRefusal with query rules', () => {
   });
 });
 
+describe('recordRefusal', () => {
+  beforeEach(() => {
+    setQueryRuleReaderForTests(stubReader({ [MINOR_TYPE]: [MINOR] }));
+  });
+
+  it('fires no help event for a minor-addition match, and still fires one for the minor list', async () => {
+    const track = { action: vi.fn(async () => undefined) };
+    const verdict = await refusal(`a ${MINOR} portrait`, false);
+    recordRefusal(track, verdict, `a ${MINOR} portrait`, 'test_index');
+    expect(track.action).not.toHaveBeenCalled();
+
+    recordRefusal(track, 'minor', 'q', 'test_index');
+    expect(track.action).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CSAM_Help_Triggered' })
+    );
+  });
+});
+
 describe('dryRunSemanticQuery', () => {
   beforeEach(() =>
     setQueryRuleReaderForTests(stubReader({ [POI_TYPE]: [POI], [MINOR_TYPE]: [MINOR] }))
@@ -144,7 +163,7 @@ describe('dryRunSemanticQuery', () => {
     const result = await dryRunSemanticQuery(`${POI} and ${MINOR}`);
     expect(result).toEqual({
       nonModerator: { verdict: 'poi', result: 'refuse' },
-      moderator: { verdict: 'minor', result: 'refuse' },
+      moderator: { verdict: 'minor-safe', result: 'refuse' },
     });
     expect(JSON.stringify(result)).not.toContain(POI);
     expect(JSON.stringify(result)).not.toContain(MINOR);
@@ -152,7 +171,7 @@ describe('dryRunSemanticQuery', () => {
 
   it('reports a narrowed non-moderator and an allowed query', async () => {
     expect((await dryRunSemanticQuery(`a ${MINOR}`)).nonModerator).toEqual({
-      verdict: 'minor',
+      verdict: 'minor-safe',
       result: 'narrow',
     });
     expect(await dryRunSemanticQuery('a red bicycle')).toEqual({

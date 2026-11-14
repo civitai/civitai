@@ -21,7 +21,14 @@ import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metad
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 
 export type QueryTracker = Pick<Tracker, 'action'>;
-export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'blocked' | 'error' | false;
+export type QueryRefusal =
+  | 'minor'
+  | 'minor-safe'
+  | 'poi'
+  | 'poi-minor'
+  | 'blocked'
+  | 'error'
+  | false;
 
 /**
  * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
@@ -98,11 +105,11 @@ export async function semanticQueryRefusal(
     // Mirrors the search boxes, which a request can skip: raw text, since the benign phrases do not
     // carve out this list, and moderators exempt.
     if (!isModerator && getBlockedNsfwWords(query).length) return 'blocked';
-    // Moderator-edited additions to the audit lists. Mods are exempt from the POI additions; a
-    // minor addition narrows a non-mod and refuses a mod, as `queryVerdictLevel` does for 'minor'.
+    // Moderator-edited additions to the audit lists. Mods are exempt from the POI additions. A
+    // minor addition is its own verdict, so the help event and its counts stay the minor list's.
     if (!isModerator && (await matchesQueryRule(audited, BlocklistType.SemanticSearchPoiRefuse)))
       return 'poi';
-    if (await matchesQueryRule(audited, BlocklistType.SemanticSearchMinorSafe)) return 'minor';
+    if (await matchesQueryRule(audited, BlocklistType.SemanticSearchMinorSafe)) return 'minor-safe';
     return false;
   } catch {
     return 'error';
@@ -119,7 +126,7 @@ export function queryVerdictLevel(
   isModerator?: boolean
 ): number | 'refuse' {
   if (!refusal) return level;
-  if (refusal === 'minor' && !isModerator)
+  if ((refusal === 'minor' || refusal === 'minor-safe') && !isModerator)
     return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
   return 'refuse';
 }
