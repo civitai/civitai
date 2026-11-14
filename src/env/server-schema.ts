@@ -493,6 +493,7 @@ export const serverSchema = z
     DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: commaDelimitedStringArray().default([]),
     // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
     // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
@@ -504,7 +505,8 @@ export const serverSchema = z
       .int()
       .positive()
       .default(6 * 60 * 60),
-    // Mints (reused ones included) per minute.
+    // Mints per minute: on /api/v1/download-links reused ones included, for mini's provider links
+    // fresh ones only.
     DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
     DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,

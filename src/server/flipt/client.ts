@@ -558,11 +558,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // state (enabled: false) before this code serves traffic.
   SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
-  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
-  // or unreachable: every link answers 404 and no link is minted.
+  // Download links (`/api/download/l/<id>`, the mint at `/api/v1/download-links`, and the provider
+  // links mini hands out on `?downloadLink=1`). Off, unknown or unreachable: every link answers 404
+  // and no link is minted.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
-  // must exist in flag state (enabled: false) before this code serves traffic.
+  // 🔴 BOOLEAN ONLY, no entityId, with context `mode`: `api` (the mint route and its links) or
+  // `provider` (mini's links), so a rule can turn on one without the other. The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
   // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
