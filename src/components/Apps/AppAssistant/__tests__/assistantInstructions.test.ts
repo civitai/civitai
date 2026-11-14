@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { assistantRules, assistantSystemPrompt, checkKindOf } from '@civitai/app-assistant';
+import {
+  assistantRules,
+  assistantSystemPrompt,
+  checkKindOf,
+  SCAFFOLD_TEMPLATE,
+} from '@civitai/app-assistant';
 import {
   APP_ASSISTANT_RULES,
   APP_ASSISTANT_SUBAGENT_RULES,
@@ -72,7 +77,7 @@ describe('buildAssistantInstructions', () => {
     });
     // The whole sentence: a reworded scaffold step must be re-read here.
     expect(text).toContain(
-      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.'
+      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId> --template page-elements. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.'
     );
   });
 
@@ -154,7 +159,7 @@ describe('buildAssistantSystemPrompt', () => {
         'App Assistant rules (these come after the rules above and win where they differ):',
         '- You are already inside a configured sandbox. When a page you fetch (for example the agent-onboarding prompt) tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps. Your setup guide is https://developer.civitai.com/agent-setup/in-sandbox.md.',
         '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. It is your plan, not a question: go straight on to building it. Ask the user only when their request is ambiguous or needs a decision from them.',
-        '- Run the tests and the typecheck with the project’s own scripts, as its AGENTS.md (Local development) or package.json scripts name them: cd <blockId> && npm test, cd <blockId> && npm run typecheck. Run each on its own and unpiped, never through | tail, | grep or | head: the exit code must be the check’s own. Do not run a script the project does not define; if it has no test or typecheck script, tell the user.',
+        '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
         '- Put throwaway probes and scripts in <blockId>/scratch/, never in src/.',
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
@@ -284,19 +289,39 @@ describe('buildAssistantSystemPromptWithSubagents', () => {
 // The checks rule names commands; report_ready's gate counts only the commands it recognises
 // (checkKindOf). A rule naming a command the gate does not count leaves report_ready refused however
 // often the assistant runs it, so every command the rule names must be one the gate counts.
+// An invariant guard: the rule and the gate agree today; this fails if either moves alone.
 describe('the checks rule names commands the report_ready gate counts', () => {
   const commands = (rules: string) => {
     const line = rules.split('\n').find((l) => l.includes('the exit code must be the check’s own'));
     expect(line).toBeDefined();
-    return [...line!.matchAll(/cd <blockId> && [^,.;]+/g)].map((m) => m[0].trim());
+    return [...line!.matchAll(/cd <blockId> && [^,.;()]+/g)].map((m) => m[0].trim());
   };
 
   it.each(['browser', 'remote'] as const)('%s, without run_checks', (runner) => {
     const named = commands(assistantRules(runner));
-    expect(named).toEqual(['cd <blockId> && npm test', 'cd <blockId> && npm run typecheck']);
+    expect(named).toEqual(['cd <blockId> && npm test', 'cd <blockId> && npx tsc --noEmit']);
     expect(named.map((c) => checkKindOf(c.replace('<blockId>', 'my-app')))).toEqual([
       'tests',
       'typecheck',
     ]);
+  });
+});
+
+// The checks rule and report_ready's gate assume the scaffold defines a test and a typecheck script,
+// which page-elements does and page-vite and static do not. The scaffold step passes it explicitly,
+// so a change to the CLI's default template cannot change what is scaffolded.
+describe('the scaffold step pins the page-elements template', () => {
+  it('names --template page-elements in the app create command', () => {
+    const text = buildAssistantInstructions({
+      sandbox: running,
+      apps: ['my-app'],
+      canPreview: true,
+      previewHost: null,
+    });
+    const scaffold = text.match(/npx -y @civitai\/cli@latest app create [^.]*\./g);
+    expect(scaffold).toEqual([
+      'npx -y @civitai/cli@latest app create <blockId> --template page-elements.',
+    ]);
+    expect(SCAFFOLD_TEMPLATE).toBe('page-elements');
   });
 });

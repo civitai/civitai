@@ -48,6 +48,13 @@ export const DEV_SERVER_PORT = 5173;
  */
 export const DEV_SERVER_COMMAND = `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port ${DEV_SERVER_PORT}`;
 
+/**
+ * The one CLI template the assistant scaffolds, passed explicitly rather than left to the CLI's
+ * default. CHECKS_RULE and report_ready's gate both assume its test and typecheck scripts; the
+ * page-vite and static templates define no test script.
+ */
+export const SCAFFOLD_TEMPLATE = 'page-elements';
+
 /** Where a reply runs: `browser` (the page) or `remote` (the server runner, which has fewer tools). */
 export type AssistantRunner = 'browser' | 'remote';
 
@@ -63,13 +70,12 @@ const SETUP_RULE: Record<AssistantRunner, string> = {
 };
 
 /**
- * The unpiped-checks rule, for a sandbox without `run_checks`. The scaffolds differ (page-vite and
- * static define no test script, and only the TypeScript ones a typecheck), so it points at the
- * project's own scripts, as package.json defines them and the AGENTS.md block `civitai agent-setup`
- * renders lists them, rather than fixed commands.
+ * The unpiped-checks rule, for a sandbox without `run_checks`. It names fixed commands because the
+ * assistant scaffolds only the page-elements template (SCAFFOLD_TEMPLATE), which defines both a test
+ * and a typecheck script, and both commands are ones report_ready's gate counts (checkKindOf).
  */
 const CHECKS_RULE =
-  '- Run the tests and the typecheck with the project’s own scripts, as its AGENTS.md (Local development) or package.json scripts name them: cd <blockId> && npm test, cd <blockId> && npm run typecheck. Run each on its own and unpiped, never through | tail, | grep or | head: the exit code must be the check’s own. Do not run a script the project does not define; if it has no test or typecheck script, tell the user.';
+  '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.';
 
 /**
  * The rules for the newer sandbox tools, each only when the sandbox lists its tool: these are sent
@@ -299,7 +305,7 @@ export function buildAssistantInstructions({
       } When the user asks for a different, new app, call create_app; the open one is paused and kept. A chat changes only an app it made or chose with use_open_app (other changes are refused): choose the open app only when the user clearly asks to change it, and when unsure, ask "Make a new app, or replace ${
         sandbox.app
       }?" first.${yourApps}`,
-      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.',
+      `Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId> --template ${SCAFFOLD_TEMPLATE}. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.`,
       `Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && ${DEV_SERVER_COMMAND}. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port ${DEV_SERVER_PORT} in any command you give it.`
     );
     if (!canPreview) {
