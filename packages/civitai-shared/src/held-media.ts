@@ -10,14 +10,40 @@ import { NsfwLevel } from './browsing-levels';
 /** The owner `deleteUser` hands kept content to; the main app's `PLACEHOLDER_OWNER_ID`. */
 const PLACEHOLDER_OWNER_ID = -1;
 
+/** An alias (`i`) or an aliased column (`m."userId"`), checked because the SQL splices it as written. */
+export function sqlRef(ref: string): string {
+  if (!/^[a-z_][a-z0-9_]*(\."[a-z_][a-z0-9_]*")?$/i.test(ref))
+    throw new Error(`Bad SQL reference: ${ref}`);
+  return ref;
+}
+
+/**
+ * Whether the user `column` (an int SQL expression) is named on any CsamReport (subject or secondary
+ * user) or has an active evidence hold. Names the "EvidenceHeldUser" view, so a database without it
+ * fails the statement, which refuses.
+ */
+export function heldUserSql(column: string): string {
+  const user = sqlRef(column);
+  return `(
+      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
+      OR EXISTS (
+        SELECT 1 FROM "CsamReport" hs
+        -- CASE, not AND: Postgres may cast before it tests the pattern, and one bad row would fail
+        -- every request.
+        WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+                   THEN (hs.details ->> 'secondaryUserId')::bigint END = ${user}
+      )
+      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
+    )`;
+}
+
 /**
  * Whether the "Image" row aliased `image` may be served: it is flagged for CSAM itself, or its owner
- * is named on any CsamReport (subject or secondary user) or has an active evidence hold. The one
- * definition both routes run, as plain SQL so each app wraps it in its own builder.
+ * is held (`heldUserSql`). The one definition both routes run, as plain SQL so each app wraps it in
+ * its own builder.
  *
  * The owner legs skip an AiNotVerified block, which the owner lifts by verifying, and never count the
- * placeholder owner, whose content a report naming it would otherwise open. Names the
- * "EvidenceHeldUser" view, so a database without it fails the statement, which refuses.
+ * placeholder owner, whose content a report naming it would otherwise open.
  */
 export function heldImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
@@ -26,17 +52,7 @@ export function heldImageSql(image: string): string {
     ${image}."needsReview" = 'csam'
     OR ${image}."blockedFor" = 'CSAM'
     OR (${owner} <> ${PLACEHOLDER_OWNER_ID}
-      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND (
-      EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${owner})
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        -- CASE, not AND: Postgres may cast before it tests the pattern, and one bad row would fail
-        -- every request.
-        WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                   THEN (hs.details ->> 'secondaryUserId')::bigint END = ${owner}
-      )
-      OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${owner})
-    ))
+      AND ${image}."blockedFor" IS DISTINCT FROM 'AiNotVerified' AND ${heldUserSql(owner)})
   )`;
 }
 
@@ -91,6 +107,16 @@ export function unreadableImageSql(image: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   return `(${image}."ingestion"::text NOT IN ('Scanned', 'Blocked'))`;
 }
+
+/** Every image id listed on any CsamReport, whatever its state, as text. */
+export const CSAM_REPORT_LISTED_IMAGE_IDS_SQL = `SELECT listed.id FROM (
+    SELECT CASE jsonb_typeof(le) WHEN 'object' THEN le ->> 'id' ELSE le #>> '{}' END AS id
+    FROM "CsamReport" lr
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(lr.images) = 'array' THEN lr.images ELSE '[]'::jsonb END
+    ) le
+  ) listed
+  WHERE listed.id IS NOT NULL`;
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 /** Containers every current browser plays. The codec inside is the browser's call: one it cannot
