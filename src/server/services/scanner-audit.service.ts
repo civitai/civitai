@@ -17,6 +17,7 @@ import type {
   Workflow,
   XGuardModerationStep,
 } from '@civitai/orchestration-client';
+import { imageAuditContentHash } from '@civitai/shared/review-batch';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { ImageScanningResult } from '~/server/services/image-scanning-result.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -526,7 +527,7 @@ export async function recordImageScan({
   await insertRows({
     workflowId,
     scanner: 'image_ingestion',
-    contentHash: computeContentHash(`image:${imageId}`),
+    contentHash: imageAuditContentHash(imageId),
     entityType: 'image',
     entityId: String(imageId),
     modelVersion: '1',
@@ -614,7 +615,7 @@ export async function recordImageScanningResult({
   await insertRows({
     workflowId,
     scanner: 'image_ingestion',
-    contentHash: computeContentHash(`image:${imageId}`),
+    contentHash: imageAuditContentHash(imageId),
     entityType: 'image',
     entityId: String(imageId),
     modelVersion: IMAGE_SCANNING_AUDIT_VERSION,

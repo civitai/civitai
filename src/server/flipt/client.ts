@@ -9,6 +9,8 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Kill switch for minting review sheet batches; off answers 503.
+  REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with

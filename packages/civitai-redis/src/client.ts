@@ -2254,6 +2254,17 @@ export const REDIS_SYS_KEYS = {
     HELD_SHEET_CODE: 'app:held-sheet:code',
     // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
     HELD_SHEET_SESSION: 'app:held-sheet:session',
+    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON, 24 h. Written by the
+    // main app's mint, read by the moderator app's sign-in and batch routes.
+    REVIEW_BATCH: 'app:review-batch',
+    // `app:review-batch-key:<keyId>` — set of the live batch hashes one moderator API key minted.
+    REVIEW_BATCH_KEY: 'app:review-batch-key',
+    // `app:review-batch-idem:<keyId>:<sha256(idempotencyKey)>` — the hash of the batch that key last
+    // minted under that idempotency key, so a repeat revokes it; `…-lock:…` holds a mint in flight.
+    REVIEW_BATCH_IDEM: 'app:review-batch-idem',
+    REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
+    // `app:review-sheet:session:<sha256(token)>` — one general-tier review sheet session.
+    REVIEW_SHEET_SESSION: 'app:review-sheet:session',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
