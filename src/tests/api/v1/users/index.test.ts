@@ -298,3 +298,54 @@ describe('/api/v1/users system-request token', () => {
     expect(await includeSentFor({ token: 'the-old-secret' })).toEqual([]);
   });
 });
+
+describe('/api/v1/users avatar', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPublicApiContext2.mockResolvedValue({ user: { getAll: mockGetAll } });
+  });
+
+  async function avatarFor(avatarNsfw: unknown) {
+    mockGetAll.mockResolvedValue([{ id: 1, username: 'a', avatarUrl: 'avatar.png', avatarNsfw }]);
+    const { req, res } = createMocks({ query: { query: 'a' } });
+    await handler(req, res);
+    return res._getJSONData().items[0].avatarUrl;
+  }
+
+  it('serves no avatar when it is unrated', async () => {
+    expect(await avatarFor(0)).toBeNull();
+  });
+
+  it('serves no avatar above PG', async () => {
+    expect(await avatarFor(2)).toBeNull();
+  });
+
+  it('serves a PG avatar (control)', async () => {
+    expect(await avatarFor(1)).toBe('avatar.png');
+  });
+
+  describe('getUsers rows (deprecated avatarNsfw beside the numeric level)', () => {
+    async function rowAvatar(avatarNsfwLevel: number) {
+      mockGetAll.mockResolvedValue([
+        { id: 1, username: 'a', avatarUrl: 'avatar.png', avatarNsfw: 'None', avatarNsfwLevel },
+      ]);
+      const { req, res } = createMocks({ query: { query: 'a' } });
+      await handler(req, res);
+      return res._getJSONData().items[0];
+    }
+
+    it('serves a PG avatar, and keeps the numeric level off the response', async () => {
+      const user = await rowAvatar(1);
+      expect(user.avatarUrl).toBe('avatar.png');
+      expect(user).not.toHaveProperty('avatarNsfwLevel');
+    });
+
+    it('serves no unrated avatar', async () => {
+      expect((await rowAvatar(0)).avatarUrl).toBeNull();
+    });
+
+    it('serves no avatar above PG', async () => {
+      expect((await rowAvatar(4)).avatarUrl).toBeNull();
+    });
+  });
+});

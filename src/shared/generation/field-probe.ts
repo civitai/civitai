@@ -1,11 +1,9 @@
 import type { GenerationCtx } from '~/shared/generation/context';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { ECOSYSTEM_FEATURE_FLAGS } from '~/shared/form-graph/generation/ecosystem-gates';
 
 /**
  * The entitlement a probe answers under: the NARROWEST one, so a limit it reports is a
- * limit every caller can rely on. Free tier, no gate rules, and no flags but the ones that
- * unhide an ecosystem.
+ * limit every caller can rely on. Free tier, no flags, no gate rules.
  *
  * Exported because three callers probe (`images-limit`, `workflow-capability`,
  * `workflow-media`) and each had a byte-identical private copy. One drifting copy makes
@@ -15,9 +13,7 @@ import { ECOSYSTEM_FEATURE_FLAGS } from '~/shared/form-graph/generation/ecosyste
 export const PROBE_CTX: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
   user: { isMember: false, tier: 'free' },
-  // Only the flags that unhide a whole ecosystem: whether a user may reach one is the
-  // submission's question, not the probe's, just as gate rules are left out below.
-  flags: Object.fromEntries(Object.values(ECOSYSTEM_FEATURE_FLAGS).map((flag) => [flag, true])),
+  flags: {},
   selfHostedDisabledEcosystems: [],
   selfHostedMode: 'enabled',
   gateRules: [],
@@ -64,14 +60,53 @@ export function probeFieldMeta(
   pin: { workflow: string; ecosystem: string },
   ext: GenerationCtx
 ): unknown {
+  const probe = probeField(field, pin, ext);
+  return probe.kind === 'present' ? probe.meta : undefined;
+}
+
+/**
+ * The three answers a pinned probe can give. `probeFieldMeta` folds the first two into one
+ * `undefined`, which is right for its callers (each fails closed either way) and wrong for a
+ * caller that must tell "this route has no such field" apart from "the probe could not answer":
+ * the sampler catalog reports the first as a family with no sampler control, and must never
+ * report the second that way.
+ */
+export type FieldProbe =
+  /** The hub re-routed the pin, or threw. Nothing is known about the field. */
+  | { kind: 'undetermined' }
+  /** The pin survived and the field is not active on that route. */
+  | { kind: 'absent' }
+  /** The pin survived and the field is active. `value` is its resolved value on a fresh store. */
+  | { kind: 'present'; value: unknown; meta: unknown };
+
+/**
+ * `probeFieldMeta` with the absent/undetermined distinction kept — the SAME guard, in one
+ * place (see the note on `probeFieldMeta` for why it is this shape). The pin may also carry a
+ * `model`, to probe one version of a model-locked ecosystem; that version must survive too, or
+ * the answer describes whichever version the hub swapped in.
+ */
+export function probeField(
+  field: string,
+  pin: { workflow: string; ecosystem: string; model?: { id: number } },
+  ext: GenerationCtx
+): FieldProbe {
   try {
     const store = generationHub.createStore({ ext, defaults: pin } as never);
-    const state = store.getState() as { workflow?: string; ecosystem?: string };
-    if (state.workflow !== pin.workflow) return undefined;
-    if (state.ecosystem !== undefined && state.ecosystem !== pin.ecosystem) return undefined;
-    return store.getField(field)?.meta;
+    const state = store.getState() as {
+      workflow?: string;
+      ecosystem?: string;
+      model?: { id?: number };
+    };
+    if (state.workflow !== pin.workflow) return { kind: 'undetermined' };
+    if (state.ecosystem !== undefined && state.ecosystem !== pin.ecosystem) {
+      return { kind: 'undetermined' };
+    }
+    if (pin.model && state.model?.id !== pin.model.id) return { kind: 'undetermined' };
+    const snapshot = store.getField(field);
+    if (snapshot == null) return { kind: 'absent' };
+    return { kind: 'present', value: snapshot.value, meta: snapshot.meta };
   } catch {
-    return undefined;
+    return { kind: 'undetermined' };
   }
 }
 

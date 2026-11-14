@@ -72,6 +72,8 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
     crucibleAwarded: (crucibleId: number) => `${root}:crucible-awarded:${crucibleId}` as const,
     // the bucket the referee last settled up to
     cut: `${root}:cut` as const,
+    // ms the referee last settled removals to; unlike cut, it advances through the finalize window
+    removeCut: `${root}:remove-cut` as const,
     // UTC day -> JSON { team: points per UTC hour (24) }, plus `cut`: when the hours were settled to
     teamHours: `${root}:team-hours` as const,
   } as const;

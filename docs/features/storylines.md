@@ -81,6 +81,12 @@ section).
   storyline", which adds it to one of the creator's own: as chapter 1 of an empty one, else after
   the end of its main path. A chapter 1 rated above an empty storyline's maximum content level
   raises the maximum to fit it.
+- **Starting from someone's image.** "Start a story from this image", in an image's menu where its
+  remix gallery is open, starts an empty storyline credited to that image. The chapter 1 page shows
+  the image and, when it can be remixed, a "Remix this image" button; the result comes in through
+  Import from Generator. Starting again from the same image, while that storyline still has no
+  chapter 1 and is not taken down, opens it with the newly chosen title and terms instead of making a
+  second one.
 - **Finding your own.** The "My storylines" filter on /storylines lists the storylines you started,
   empty ones included.
 - **Followed from the start.** A creator follows their storyline from the moment they start it, and a
@@ -141,8 +147,7 @@ section).
 
 ## Not in the first version
 
-An in-app tool for making the next section, and a way for authors to write image captions (the
-server side is built).
+An in-app tool for making the next section.
 
 ## Trying it locally
 

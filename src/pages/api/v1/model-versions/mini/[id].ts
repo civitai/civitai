@@ -54,6 +54,12 @@ import {
 } from '~/server/utils/mini-moderation-state';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isEvictable } from '~/shared/constants/model-version-flags.constants';
@@ -63,7 +69,13 @@ import {
   credentialKind,
   evaluateMiniEpochCaller,
   getMiniEpochGateMode,
+  hasVersionGrant,
 } from '~/server/utils/mini-epoch-caller';
+import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
+const MINI_SCOPES = { anyOfScopes: [TokenScope.ModelsRead, TokenScope.AIServicesRead] };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -74,11 +86,15 @@ export const schema = z.object({
   // → the existing 400 path fires. (The `if (!id)` guard below still covers a
   // legitimately absent id.)
   id: z.coerce.number().int().gt(0).lte(2147483647),
-  epoch: z.number().optional(),
+  // Read only for a caller who may pick the epoch (see `epochSchema`); everyone else is answered as
+  // if it were absent, so a malformed value refuses nobody else.
+  epoch: z.unknown().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
   // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
 });
+
+const epochSchema = z.coerce.number().int();
 
 type VersionRow = {
   id: number;
@@ -121,6 +137,8 @@ type VersionRow = {
   userFlags: number;
   ownerDeletedAt: Date | null;
   ownerBannedAt: Date | null;
+  nsfwLevel: number;
+  sfwName: string | null;
   modelDeletedAt: Date | null;
 };
 type FileRow = {
@@ -140,8 +158,26 @@ type FileRow = {
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
+  // The orchestrator's service token carries no user and keeps its own path.
+  const orchestrator = matchesOrchestratorServiceToken(req);
+  const credential = orchestrator
+    ? { outcome: 'session' as const, effectiveUser: sessionUser }
+    : downloadCredentialGate(req, sessionUser, MINI_SCOPES);
+  // Read only where the answer depends on it, so the flag and its log see the epoch arm alone.
+  let scopeRefused: Promise<boolean> | undefined;
+  const isScopeRefused = () =>
+    (scopeRefused ??=
+      credential.outcome === 'refused'
+        ? scopeRefusalMode(req, MINI_ROUTE, MINI_SCOPES).then((mode) => mode === 'enforce')
+        : Promise.resolve(false));
+  // A credential the scope gate refuses carries no moderator rights here either.
+  const user =
+    credential.effectiveUser?.isModerator && (await isScopeRefused())
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
+
   const results = schema.safeParse(req.query);
   if (!results.success)
     return res.status(400).json({ error: z.prettifyError(results.error) ?? 'Invalid id' });
@@ -149,6 +185,7 @@ export default MixedAuthEndpoint(async function handler(
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const where = [Prisma.sql`mv.id = ${id}`];
+  // An owner's own credential sees its own version row even when the scope gate refuses it.
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
@@ -176,6 +213,8 @@ export default MixedAuthEndpoint(async function handler(
       m.availability as "modelAvailability",
       m.poi,
       m."deletedAt" AS "modelDeletedAt",
+      mv."nsfwLevel",
+      m."sfwName",
       pa."endsAt" AS "earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -254,6 +293,26 @@ export default MixedAuthEndpoint(async function handler(
   if (!modelVersion || !canViewPoiModel(modelVersion.poi, modelVersion.modelUserId, user))
     return res.status(404).json({ error: 'Model not found' });
 
+  // Above SFW, unrated, or with a civitai.com name, the answer depends on the caller's region, which
+  // the shared cache does not key on.
+  const withinSfw =
+    !!modelVersion.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, modelVersion.nsfwLevel);
+  if (!withinSfw || modelVersion.sfwName != null)
+    res.setHeader('Cache-Control', 'private, no-store');
+  // A restricted region is served the levels /api/v1/model-versions/[id] serves it (unrated fails
+  // closed), with the civitai.com name. The orchestrator, on its verified service token, is exempt:
+  // it is not a viewer in a region.
+  const servedLevel = orchestrator ? allBrowsingLevelsFlag : apiBrowsingLevel(req);
+  if (
+    servedLevel !== allBrowsingLevelsFlag &&
+    !Flags.intersects(modelVersion.nsfwLevel, servedLevel)
+  )
+    return res.status(404).json({ error: 'Model not found' });
+  const modelName = resolveModelFace(
+    { name: modelVersion.modelName, sfwName: modelVersion.sfwName },
+    showsSfwFace(servedLevel)
+  ).name;
+
   const files = await dbWrite.$queryRaw<FileRow[]>`
     SELECT 
       mf.id, 
@@ -301,12 +360,14 @@ export default MixedAuthEndpoint(async function handler(
   // url shape applies, and only then apply the gate to the download-route path.
   const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
   const isMod = !!user?.isModerator;
+  // A credential the scope gate refuses sees only what anyone may.
+  const viewerManages = (isOwner || isMod) && !(await isScopeRefused());
   const listed = await trainingDataListing(dbRead, [{ id, files }], {
     redCapable: isRedCapableHost(req.headers.host),
-    viewerManages: isOwner || isMod,
+    viewerManages,
   });
   const visibleFiles = files.filter(
-    (f) => (isOwner || isMod || f.visibility === ModelFileVisibility.Public) && listed(f)
+    (f) => (viewerManages || f.visibility === ModelFileVisibility.Public) && listed(f)
   );
 
   // The download route merges the requesting user's `filePreferences` into
@@ -327,17 +388,42 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
+  // Owner, moderator, grantee or the service token, with a credential that passes the scope gate.
+  // The scope is checked last, so the refusal log counts only callers it would change.
+  let entitledToVersion: Promise<boolean> | undefined;
+  const isEntitled = () =>
+    (entitledToVersion ??= (async () =>
+      orchestrator ||
+      ((isOwner || isMod || (!!user?.id && (await hasVersionGrant(user.id, modelVersion.id)))) &&
+        !(await isScopeRefused())))());
+
+  // A file id the caller may not see is answered as one that does not exist, decided before the
+  // file is looked up so the answer cannot tell the two apart.
+  if (modelFileId && !visibleFiles.some((f) => f.id === modelFileId)) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (!(await isEntitled()))
+      return res
+        .status(404)
+        .json({ error: `Model file ${modelFileId} not found in version ${id}` });
+  }
+
   // `getPrimaryFile` over the unfiltered files with default preferences, deliberately — see both
   // notes above; this only decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
+  // The primary file the caller may not see is logged as its own reason, so the gate's measurement
+  // counts it separately.
+  const hiddenPrimary = !modelFileId && (!requestedFile || !visibleFiles.includes(requestedFile));
+
   const useEpochUrl =
     modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
 
   // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
   // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
+  // Only the owner, a moderator or the service token picks the epoch; anyone else gets the latest.
+  let maySelectEpoch = false;
   // Decided before the epoch is read, so a refused caller gets the same answer whatever the
   // version's training results hold.
   if (useEpochUrl) {
@@ -351,17 +437,31 @@ export default MixedAuthEndpoint(async function handler(
         modelVersionId: modelVersion.id,
         ownerId: modelVersion.modelUserId,
         mode,
+        scopeRefused: await isScopeRefused(),
+        pick: modelFileId ? 'by-id' : hiddenPrimary ? 'hidden-primary' : 'primary',
       });
       // Answered as an unknown id. The no-store above stays, so a shared cache cannot hand this
       // 404 to a caller who would be served.
       if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
       mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
+      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(caller.callerClass);
     } else {
       mayResign =
-        matchesOrchestratorServiceToken(req) ||
-        user?.id === modelVersion.modelUserId ||
-        !!user?.isModerator;
+        orchestrator ||
+        ((user?.id === modelVersion.modelUserId || !!user?.isModerator) &&
+          !(await isScopeRefused()));
+      maySelectEpoch = mayResign;
     }
+  }
+
+  let requestedEpoch: number | undefined;
+  if (maySelectEpoch && results.data.epoch !== undefined) {
+    const parsed = epochSchema.safeParse(results.data.epoch);
+    if (!parsed.success)
+      return res.status(400).json({ error: z.prettifyError(parsed.error) ?? 'Invalid epoch' });
+    requestedEpoch = parsed.data;
+    // The body now follows the query string for this caller alone.
+    res.setHeader('Cache-Control', 'private, no-store');
   }
 
   const targetFile = useEpochUrl
@@ -390,10 +490,10 @@ export default MixedAuthEndpoint(async function handler(
     const epoch =
       trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
-          return e.epoch_number === results.data.epoch;
+          return e.epoch_number === requestedEpoch;
         }
 
-        return e.epochNumber === results.data.epoch;
+        return e.epochNumber === requestedEpoch;
       }) ??
       // Non-mutating last-element read. `epochs?.pop()` would MUTATE the
       // metadata object this handler was handed, and it is the only reader here
@@ -675,7 +775,7 @@ export default MixedAuthEndpoint(async function handler(
     air,
     defaultFileId: getGenerationFile(files)?.id ?? null,
     versionName: modelVersion.versionName,
-    modelName: modelVersion.modelName,
+    modelName,
     userId: modelVersion.modelUserId,
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,

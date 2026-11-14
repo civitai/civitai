@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { withSysReadDeadline } from '../sys-read-deadline';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { envMock } from '~/__tests__/mocks';
+import { withSysReadBreaker, withSysReadDeadline } from '../sys-read-deadline';
 
 // withSysReadDeadline is the fail-open wall-clock guard for per-request sysRedis reads
 // (the sys client has no socketTimeout, so a silent half-open would otherwise park a
@@ -8,8 +9,7 @@ import { withSysReadDeadline } from '../sys-read-deadline';
 // explicitly so the test doesn't depend on env.
 
 const never = () => new Promise<never>(() => {}); // never settles
-const resolveAfter = <T>(ms: number, v: T) =>
-  new Promise<T>((r) => setTimeout(() => r(v), ms));
+const resolveAfter = <T>(ms: number, v: T) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 const rejectAfter = (ms: number, e: Error) =>
   new Promise<never>((_, rej) => setTimeout(() => rej(e), ms));
 
@@ -45,5 +45,63 @@ describe('withSysReadDeadline', () => {
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
+  });
+});
+
+// The opt-in read breaker (withSysReadBreaker, sys-read-breaker.ts), driven through the env the way
+// production turns it on. These import nothing from the breaker module, so they also run against code that
+// has no breaker.
+describe('withSysReadBreaker (env)', () => {
+  const THRESHOLD = 3; // not the default 5
+  const breakerOn = () =>
+    envMock.set({
+      REDIS_SYS_READ_BREAKER_ENABLED: true,
+      REDIS_SYS_READ_BREAKER_THRESHOLD: THRESHOLD,
+      REDIS_SYS_READ_BREAKER_COOLDOWN_MS: 60_000,
+    });
+  const trip = async () => {
+    for (let i = 0; i < THRESHOLD; i++) {
+      await expect(withSysReadBreaker(never(), 5)).rejects.toThrow(/timed out/);
+    }
+  };
+  afterEach(() => {
+    globalThis.__civitaiSysReadBreaker?.reset();
+    envMock.reset();
+  });
+
+  it('off by default: repeated timeouts never stop an opted-in read waiting for its answer', async () => {
+    for (let i = 0; i < THRESHOLD * 3; i++) {
+      await expect(withSysReadBreaker(never(), 5)).rejects.toThrow(/timed out/);
+    }
+    await expect(withSysReadBreaker(resolveAfter(5, 'reached'), 1000)).resolves.toBe('reached');
+  });
+
+  it('enabled: once tripped, a hung opted-in read fails open at once instead of waiting its deadline', async () => {
+    breakerOn();
+    await trip();
+    const started = Date.now();
+    // A 3s deadline on a command that never answers; only the tripped breaker returns this fast.
+    const err = await withSysReadBreaker(never(), 3000).catch((e: unknown) => e);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(err).toMatchObject({ reason: 'breaker-open' });
+  }, 10_000);
+
+  it('enabled: withSysReadDeadline never consults the tripped breaker and its timeouts never trip it', async () => {
+    breakerOn();
+    for (let i = 0; i < THRESHOLD * 2; i++) {
+      await expect(withSysReadDeadline(never(), 5)).rejects.toThrow(/timed out/);
+    }
+    // Plain-deadline timeouts did not trip it: an opted-in read still gets its answer.
+    await expect(withSysReadBreaker(resolveAfter(5, 'read'), 1000)).resolves.toBe('read');
+
+    await trip();
+    await expect(withSysReadBreaker(resolveAfter(5, 'x'), 1000)).rejects.toMatchObject({
+      reason: 'breaker-open',
+    });
+    // …while a plain read is still answered, and a hung one still waits out its own deadline.
+    await expect(withSysReadDeadline(resolveAfter(5, 'plain'), 1000)).resolves.toBe('plain');
+    const started = Date.now();
+    await expect(withSysReadDeadline(never(), 60)).rejects.toThrow(/timed out after 60ms/);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
   });
 });

@@ -56,10 +56,12 @@ import {
   assertUnlockReleasesOutput,
   formatGenerationResponse2,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { GenerationStatusRefusedError } from '~/server/services/generation/generation-kill-switch';
 import {
   getPresetModelConfig,
   pickAspectRatioSize,
   PRESET_MODEL_CONFIG,
+  assertPresetGenerationAllowed,
   submitPresetImageGen,
   whatIfPresetImageGen,
   type PresetModelConfig,
@@ -310,7 +312,9 @@ function normalizeCandidateNsfwLevel(value: unknown): number | undefined {
 }
 
 /** Detect orchestrator/generator offline errors and return a user-friendly message. */
-function getOrchestratorErrorMessage(error: unknown): string {
+export function getOrchestratorErrorMessage(error: unknown): string {
+  // The generation kill switch's refusal is the operator's own message: shown as written.
+  if (error instanceof GenerationStatusRefusedError) return error.message;
   const msg = error instanceof Error ? error.message : String(error);
   const lower = msg.toLowerCase();
 
@@ -2199,6 +2203,8 @@ export const comicsRouter = router({
     )
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
+      // The enhancement is a paid step toward a panel the kill switch would refuse: refuse it first.
+      await assertPresetGenerationAllowed(ctx.user! as SessionUser);
       // Get all user's ready references for prompt context
       const allUserRefs = await dbRead.comicReference.findMany({
         where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
@@ -4570,6 +4576,8 @@ export const comicsRouter = router({
     .input(planChapterPanelsSchema)
     .use(isProjectOwner)
     .mutation(async ({ ctx, input }) => {
+      // The plan is a paid step toward panels the kill switch would refuse: refuse it first.
+      await assertPresetGenerationAllowed(ctx.user! as SessionUser);
       let token: string;
       try {
         token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -4613,6 +4621,9 @@ export const comicsRouter = router({
         isModerator: ctx.user?.isModerator,
         surface: 'comic',
       });
+      // Every panel here is submitted now or queued for the job, so the kill switch refuses the
+      // whole create up front rather than leaving a chapter of panels that fail later.
+      await assertPresetGenerationAllowed(ctx.user! as SessionUser);
       // Check how many queue slots the user has available upfront.
       // Panels that fit will be submitted immediately; the rest get enqueued
       // for the background job to process when slots free up.

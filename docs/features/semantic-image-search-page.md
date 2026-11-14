@@ -7,12 +7,12 @@ test surface for now, shown only to those with the `imageSearch` feature flag.
 
 ## Access
 
-- One flag, `imageSearch`, gates all of image search: this page, /search/images and the Images
+- `imageSearch` gates image search on the search pages: this page, /search/images and the Images
   entry, "more like this", and both procedures. Its Flipt key is `semantic-image-search`; until that
   flag exists it falls back to moderators only. Once it exists, Flipt overrides the static list in
   both directions, so keep moderators in its rule.
 - The page's `getServerSideProps` and both procedures (`semanticImageSearch.search`, `.feedback`)
-  check that flag. Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
+  check that flag; `.search` also accepts `feedSearch` (below). Search is open to signed-out visitors (rate-limited per IP at 20 a minute,
   60 for signed-in users); feedback requires a signed-in user.
 - Env: `SEARCH_SERVICE_URL`, `SEARCH_SERVICE_TOKEN`, pointing at the search service, a read-only
   layer over Qdrant that runs in the cluster outside this repository (ask an infra owner for access).
@@ -72,8 +72,32 @@ shape, and every other index passes through to Meilisearch.
 - An empty query shows a prompt instead of results, and a request refined by a filter the index
   cannot apply yet (aspect ratio, tools, techniques) returns nothing. The sidebar offers browsing
   level, posted date, users, tags and base model.
-- `imageSearch` gates these surfaces too: without it the Images entry is not offered and
-  /search/images redirects to /search/models.
+- `imageSearch` gates these surfaces too: without it, and without `feedSearch`, the Images entry
+  is not offered and /search/images redirects to /search/models. With `feedSearch` on,
+  /search/images redirects to /images instead (below).
+
+## Search v3: searching the images feed
+
+`feedSearch` (Flipt key `search-v3-feed`) switches a viewer from the search pages to searching the
+feed they are on. It works on its own, without `imageSearch`, so rolling it out in Flipt moves
+people from the old search to the new one; off is the old search. Flipt keys every signed-out
+visitor as one entity, so a percentage rollout splits signed-in users only.
+
+With it on:
+
+- On /images the header bar filters the feed on Enter or blur (`?query=`), answered by
+  `semanticImageSearch.search`. The feed's filters the index can apply carry into the search; the
+  rest are greyed under "Not available while searching". Sort is locked to Best match, unless
+  `imageSearchNewestSort` (Flipt key `image-search-newest-sort`, dark) is on: then the sort menu
+  also offers Newest matches, the best matches by date (`?searchSort=newest`), sent as `sort: 'newest'`.
+- /search/images redirects to /images with its query, user, base model and tags.
+- A refused query (illegal, profane on green, real people with POI off, blocked words) is never
+  searched, typed or arriving by link; the feed shows the search page's warning instead.
+- A failed search falls back to the plain feed with a retry banner.
+
+Code: `src/components/Image/Infinite/` (`image-feed-search.ts`, `useImageFeedSearch.ts`,
+`ImageFeedSearchSummary.tsx`), `src/components/AutocompleteSearch/useFeedSearchSync.ts` and
+`src/components/Search/search-refusal.ts`.
 
 ## Feedback and logging
 

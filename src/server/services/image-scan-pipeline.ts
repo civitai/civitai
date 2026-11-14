@@ -1,7 +1,6 @@
 import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
+import { isMinorRestrictedLevel } from '@civitai/shared/minor-content-gate';
 import { dbWrite } from '~/server/db/client';
-import { clickhouse } from '~/server/clickhouse/client';
-import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import {
   ImageIngestionStatus,
@@ -56,7 +55,18 @@ import {
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  ingestionAfterScanErrorSql,
+  ingestionAfterVerdictSql,
+  ingestionKeptAfterVerdict,
+} from '~/server/common/image-visibility';
+import { judgeRatingFloorSql } from '~/server/common/judge-rating';
+import {
+  nsfwAxesScanSet,
+  writeWithNsfwAxes,
+  type RatingAxes,
+} from '~/server/services/image-nsfw-axes';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -67,7 +77,7 @@ import {
 import { evaluateRules } from '~/server/utils/mod-rules';
 import { createNotification } from '~/server/services/notification.service';
 import { decreaseDate } from '~/utils/date-helpers';
-import { withRetries } from '~/utils/errorHandling';
+import { getIsImageBlocked } from '~/server/services/blocked-image-hash';
 import {
   FEEDBACK_CAPTURE_OWNER_ID,
   isFeedbackCaptureOwner,
@@ -184,23 +194,6 @@ export async function sendIngestionSignal({
 
 // Blocked-content detection
 // --------------------------------------------------
-async function getIsImageBlocked(hash: bigint) {
-  if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
-
-  const client = clickhouse;
-  // $query has no retry of its own, and the observed failure is a dropped socket.
-  const rows = await withRetries(
-    () => client.$query<{ count: number }>`
-      SELECT cast(count() as int) as count
-      FROM blocked_images
-      WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
-    `,
-    2,
-    250
-  );
-
-  return (rows?.[0]?.count ?? 0) > 0;
-}
 
 export async function logPerceptualHashMatch({
   imageId,
@@ -305,7 +298,7 @@ export async function markImageScanError({
   >`
     UPDATE "Image"
     SET
-      "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+      "ingestion" = ${ingestionAfterScanErrorSql()},
       "scanJobs" = jsonb_set(
         jsonb_set(
           jsonb_set(
@@ -552,6 +545,7 @@ export async function resolveScanOutcome({
   workflowId,
   prompt,
   negativePrompt,
+  axes,
   log = LEGACY_SCAN_LOG,
 }: {
   image: ScanImage;
@@ -560,21 +554,29 @@ export async function resolveScanOutcome({
   workflowId: string;
   prompt?: string;
   negativePrompt?: string;
+  /** Rating axes, written with the verdict while `image-axis-shadow-write` is on. */
+  axes?: RatingAxes;
   log?: ScanLog;
 }): Promise<ScanOutcome> {
   const updatedAt = new Date();
+  const axesSet = await nsfwAxesScanSet({ imageId: image.id, axes, workflowId });
+  const axesTarget = { imageId: image.id, workflowId };
 
   if (blocked) {
-    await dbWrite.$executeRaw`
+    await writeWithNsfwAxes(
+      (axesTerm) => dbWrite.$executeRaw`
       UPDATE "Image"
       SET
         "updatedAt" = ${updatedAt},
         "pHash" = COALESCE(${pHash ?? null}, "pHash"),
         "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
           workflowId
-        )}::jsonb)
+        )}::jsonb)${axesTerm}
       WHERE id = ${image.id}
-    `;
+    `,
+      axesSet,
+      axesTarget
+    );
     return {
       ingestion: ImageIngestionStatus.Blocked,
       blockedFor: blocked.reason,
@@ -582,11 +584,17 @@ export async function resolveScanOutcome({
     };
   }
 
+  // A collection judge's floor, read before the audit so its checks run at the level the image
+  // will be written at, not only the level its tags carry.
+  const [floorRow] = await dbWrite.$queryRaw<{ judgeFloor: number }[]>`
+    SELECT ${judgeRatingFloorSql()} AS "judgeFloor" FROM "Image" WHERE id = ${image.id}
+  `;
   const audit = await auditScanResults({
     imageId: image.id,
     userId: image.userId,
     prompt,
     negativePrompt,
+    floorLevel: typeof floorRow?.judgeFloor === 'number' ? floorRow.judgeFloor : 0,
   });
   let reviewKey = audit.reviewKey ?? null;
 
@@ -690,31 +698,115 @@ export async function resolveScanOutcome({
     }
   }
 
-  await dbWrite.$executeRaw`
+  const scanLevel = toUpdate.nsfwLevel as number;
+  // The rule's keys, merged over the stored row so no other key is replaced.
+  const metadataJson = metadataUpdate ? JSON.stringify(metadataUpdate) : null;
+  await writeWithNsfwAxes(
+    (axesTerm) => dbWrite.$executeRaw`
     UPDATE "Image"
     SET
       "updatedAt" = ${toUpdate.updatedAt},
       "pHash" = ${pHash ?? null},
-      "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+      "ingestion" = ${ingestionAfterVerdictSql(toUpdate.ingestion as string)},
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
-      "nsfwLevel" = ${toUpdate.nsfwLevel as number},
+      "nsfwLevel" = ${scanLevel},
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-      "metadata" = COALESCE(${
-        metadataUpdate ? JSON.stringify(metadataUpdate) : null
-      }::jsonb, "metadata"),
+      "metadata" = CASE WHEN ${metadataJson}::jsonb IS NULL THEN "metadata"
+        ELSE COALESCE("metadata", '{}'::jsonb) || ${metadataJson}::jsonb END,
       "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
         workflowId
-      )}::jsonb)
+      )}::jsonb)${axesTerm}
     WHERE id = ${image.id}
-  `;
+  `,
+    axesSet,
+    axesTarget
+  );
+
+  // A collection judge's rating is a floor under an unlocked, unblocked level. Read from the row
+  // after the write above, so a rating that landed after this scan loaded the image still holds; the
+  // judge write takes the greater level too, so either order ends at the higher of the two. A floor
+  // above the level the audit ran at sends the image back for a rescan, so its checks run there.
+  let nsfwLevel = scanLevel;
+  // What the guarded assignment above left. A row loaded as NotFound is read back, because a
+  // rescan request may have moved it before the write and the Scanned effects must then run.
+  // shortcut: a row that turned NotFound after the load is still reported Scanned.
+  let ingestion = ingestionKeptAfterVerdict(
+    image.ingestion,
+    toUpdate.ingestion as ImageIngestionStatus
+  );
+  if (ingestion === ImageIngestionStatus.NotFound) {
+    const [row] = await dbWrite.$queryRaw<{ ingestion?: ImageIngestionStatus }[]>`
+      SELECT "ingestion" FROM "Image" WHERE id = ${image.id}
+    `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
+    ingestion = row?.ingestion ?? ingestion;
+  }
+  if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
+    const floor = judgeRatingFloorSql();
+    const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
+    try {
+      const [raised] = await dbWrite.$queryRaw<
+        { nsfwLevel: number; ingestion: ImageIngestionStatus }[]
+      >`
+        UPDATE "Image" SET
+          -- A rescan keeps the level until its checks have run at the floor; it applies it then.
+          "nsfwLevel" = CASE WHEN ${rescan} THEN "nsfwLevel" ELSE ${floor} END,
+          ingestion = CASE WHEN ${rescan} THEN ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+            ELSE ingestion END,
+          "needsReview" = CASE
+            WHEN "needsReview" IN ('csam', 'appeal') THEN "needsReview"
+            WHEN ("scanJobs"->'hasMinor')::boolean AND ${floor} > 1 AND ${floor} < ${NsfwLevel.Blocked}
+            THEN 'minor'
+            ELSE "needsReview"
+          END
+        WHERE id = ${image.id}
+          AND NOT "nsfwLevelLocked"
+          AND ingestion NOT IN (
+            ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
+            ${ImageIngestionStatus.NotFound}::"ImageIngestionStatus"
+          )
+          AND "blockedFor" IS NULL
+          AND "nsfwLevel" != ${NsfwLevel.Blocked}
+          AND ${floor} > "nsfwLevel"
+        RETURNING "nsfwLevel", ingestion
+      `;
+      if (typeof raised?.nsfwLevel === 'number') {
+        nsfwLevel = raised.nsfwLevel;
+        ingestion = raised.ingestion;
+      }
+    } catch (error) {
+      // The verdict above has landed; a failure here must not turn it into a scan error. Where the
+      // floor sits above the level the checks ran at, the image is still sent back for a rescan (a
+      // queue row alone is pruned for a Scanned image; the Rescan state queues it).
+      logToAxiom({
+        type: 'error',
+        name: 'scan-judge-floor',
+        imageId: image.id,
+        message: (error as Error).message,
+      }).catch(() => null);
+      await dbWrite.$executeRaw`
+        UPDATE "Image" SET ingestion = ${ImageIngestionStatus.Rescan}::"ImageIngestionStatus"
+        WHERE id = ${image.id}
+          AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+          AND NOT "nsfwLevelLocked"
+          AND "blockedFor" IS NULL
+          AND "needsReview" IS NULL
+          AND ${rescan}
+      `.catch(() => null);
+      await dbWrite.$executeRaw`
+        INSERT INTO "JobQueue" (type, "entityType", "entityId")
+        VALUES ('ImageScan'::"JobQueueType", 'Image'::"EntityType", ${image.id})
+        ON CONFLICT DO NOTHING
+      `.catch(() => null);
+    }
+  }
 
   return {
-    ingestion: toUpdate.ingestion as ImageIngestionStatus,
-    nsfwLevel: toUpdate.nsfwLevel as number,
+    ingestion,
+    nsfwLevel,
     blockedFor: (toUpdate.blockedFor as string) ?? null,
     reviewKey,
     audit,
@@ -755,11 +847,16 @@ async function withPromptKeywordTags(tags: AuditTag[], prompt?: string): Promise
   ];
 }
 
+/** Log event for an unrated scan that would take the newer minor review routing. */
+export const UNRATED_MINOR_REVIEW_EVENT = 'unrated-minor-review-candidate';
+
 async function auditScanResults(args: {
   imageId: number;
   userId: number;
   prompt?: string;
   negativePrompt?: string;
+  /** A collection judge's level: every check below runs at no less than it. */
+  floorLevel?: number;
 }) {
   // Moderator-managed benign phrases (proper nouns / technical terms that coincidentally
   // contain a detection token) are blanked up front so every downstream check — minor,
@@ -779,7 +876,7 @@ async function auditScanResults(args: {
   // Prompt keywords no longer rate the image, but every check below still reads them, so no image
   // is checked less than when they did.
   const tags = await withPromptKeywordTags(imageTags, args.prompt);
-  const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0]);
+  const nsfwLevel = Math.max(...[...tags.map((x) => x.nsfwLevel), 0], args.floorLevel ?? 0);
   const nsfw = nsfwLevel > sfwBrowsingLevelsFlag;
   const minorTags = tags.filter((tag) => tagsNeedingReview.includes(tag.name.toLowerCase()));
   const poiTags = tags.filter((tag) => poiWords.includes(tag.name.toLowerCase()));
@@ -790,10 +887,16 @@ async function auditScanResults(args: {
   const adultTags = tags.filter((tag) => tag.name === 'adult');
   const cartoonTags = tags.filter((tag) => styleTags.includes(tag.name));
 
+  // An unrated scan keeps its earlier minor review routing for now: the minor content rule's
+  // unrated arm does not reach this queue yet.
+  const minorRestrictedScan = nsfwLevel !== 0 && isMinorRestrictedLevel(nsfwLevel);
+
   const tagReview = reviewTags.length > 0;
   let poiReview = poiTags.length > 0;
   let minorReview =
-    minorTags.length > 0 && adultTags.length === 0 && (cartoonTags.length === 0 || nsfw);
+    minorTags.length > 0 &&
+    adultTags.length === 0 &&
+    (cartoonTags.length === 0 || minorRestrictedScan);
   let newUserReview = false;
 
   const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
@@ -805,7 +908,23 @@ async function auditScanResults(args: {
   // nsfw — a sfw image with a poi/minor resource is still flagged (below) but
   // not queued for moderator review.
   if (associatedEntities.poi && nsfw) poiReview = true;
-  if (associatedEntities.minor && nsfw) minorReview = true;
+  if (associatedEntities.minor && minorRestrictedScan) minorReview = true;
+
+  // Log, without routing, when an unrated scan would take the newer minor review routing.
+  if (nsfwLevel === 0 && !minorReview && !poiReview) {
+    const arms = [
+      ...(associatedEntities.minor ? ['resource'] : []),
+      ...(minorTags.length > 0 && adultTags.length === 0 ? ['tag'] : []),
+    ];
+    for (const arm of arms)
+      logToAxiom({
+        name: UNRATED_MINOR_REVIEW_EVENT,
+        type: 'info',
+        imageId: args.imageId,
+        arm,
+        at: new Date().toISOString(),
+      }).catch(() => null);
+  }
 
   // The capture account is no one's new account: its captures get only the content keys.
   if (!minorReview && !poiReview && !tagReview && nsfw && !isFeedbackCaptureOwner(args.userId)) {
@@ -845,6 +964,8 @@ async function auditScanResults(args: {
   return {
     tags,
     nsfwLevel: ratingLevel,
+    /** The level the checks above ran at. */
+    checkedLevel: nsfwLevel,
     nsfw,
     minorTags,
     poiTags,
@@ -938,8 +1059,8 @@ async function evaluateImageModRules(
     blockedFor?: string;
     needsReview?: string | null;
   } = {
+    // Only the rule's keys: the write merges them over the stored row.
     metadata: {
-      ...((image.metadata ?? {}) as Record<string, any>),
       ruleId: appliedRule.id,
       ruleReason: appliedRule.reason,
     },

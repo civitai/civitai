@@ -18,7 +18,6 @@ vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: h.bear
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => h.hubSession.value),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
@@ -48,6 +47,7 @@ const baseRow = {
   publishedAt: new Date('2024-01-01T00:00:00Z'),
   modelId: 77,
   modelName: 'Test Model',
+  nsfwLevel: 1,
   baseModel: 'SD 1.5',
   status: 'Published',
   modelStatus: 'Published',
@@ -223,6 +223,8 @@ describe('mini/[id] moderation block: who gets it', () => {
     ['a key the session layer does not know', 'Bearer not-a-key'],
     ['a moderator by an OAuth token', 'Bearer mod-oauth'],
     ['a moderator by an OAuth subject on a User-type key', 'Bearer mod-oauth-user-type'],
+    // Moderator rights through a bearer credential need a full-scope personal key.
+    ['a moderator by a narrow-scope personal key', 'Bearer mod-narrow-key'],
   ])('gives %s no block and no X-Expires', async (_, authorization) => {
     const { status, body, headers } = await call(authorization);
     expect(status).toBe(200);
@@ -234,7 +236,7 @@ describe('mini/[id] moderation block: who gets it', () => {
 
 describe('mini/[id] moderation block: moderator credentials', () => {
   it.each([
-    ['a narrow-scope personal key', 'Bearer mod-narrow-key'],
+    ['a full-scope personal key', 'Bearer mod-key'],
     ['a browser session', undefined],
   ])('gives a moderator by %s the block, private and unstored', async (_, authorization) => {
     if (!authorization) h.hubSession.value = { user: KEYS['mod-key'].user };
@@ -255,9 +257,16 @@ describe('mini/[id] moderation block: moderator credentials', () => {
   });
 
   it('reads a moderator who is also the placeholder owner as a moderator, and still refuses', async () => {
-    KEYS['owner-mod-key'] = sessionFor(OWNER_ID, true, { tokenScope: TokenScope.ModelsRead });
+    KEYS['owner-mod-key'] = sessionFor(OWNER_ID, true, { tokenScope: TokenScope.Full });
     const { body } = await call('Bearer owner-mod-key', { modelDeletedAt: new Date() });
     expect(body?.moderation).toMatchObject({ deleted: true });
+    expect(body?.canGenerate).toBe(false);
+  });
+
+  it('reads that moderator by a narrow-scope key as the owner: no block, and still refuses', async () => {
+    KEYS['owner-mod-key'] = sessionFor(OWNER_ID, true, { tokenScope: TokenScope.ModelsRead });
+    const { body } = await call('Bearer owner-mod-key', { modelDeletedAt: new Date() });
+    expect(body).not.toHaveProperty('moderation');
     expect(body?.canGenerate).toBe(false);
   });
 

@@ -222,6 +222,32 @@ describe('GET /api/v1/articles (list)', () => {
   });
 });
 
+describe('GET /api/v1/articles (list) author avatar', () => {
+  async function authorOf(profilePicture: { url: string; nsfwLevel: number } | null) {
+    mockGetArticles.mockResolvedValue({
+      items: [{ id: 1, user: { id: 3, username: 'a', image: 'unrated.png', profilePicture } }],
+      nextCursor: undefined,
+    });
+    const { req, res } = createMocks({});
+    await listHandler(req, res);
+    return res._getJSONData().items[0].user;
+  }
+
+  it('never serves the unrated image', async () => {
+    expect((await authorOf(null)).image).toBeNull();
+  });
+
+  it('drops a profile picture above the served level', async () => {
+    expect((await authorOf({ url: 'avatar.png', nsfwLevel: 2 })).profilePicture).toBeNull();
+  });
+
+  it('serves a PG profile picture (control)', async () => {
+    expect((await authorOf({ url: 'avatar.png', nsfwLevel: 1 })).profilePicture).toMatchObject({
+      url: 'avatar.png',
+    });
+  });
+});
+
 describe('GET /api/v1/articles/[id] (detail)', () => {
   it('strips moderatorNsfwLevel and evaluates as anonymous (NEVER passes session userId/isModerator)', async () => {
     mockGetArticleById.mockResolvedValue({
@@ -244,6 +270,31 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
     expect(args).toEqual({ id: 3 });
     expect(args.userId).toBeUndefined();
     expect(args.isModerator).toBeUndefined();
+  });
+
+  it('keeps contentImages to the documented id, url and ingestion', async () => {
+    mockGetArticleById.mockResolvedValue({
+      id: 3,
+      title: 't',
+      nsfwLevel: NsfwLevel.PG,
+      contentImages: [
+        {
+          id: 5,
+          url: 'u',
+          ingestion: 'Scanned',
+          nsfwLevel: 16,
+          userId: 7,
+          hash: 'h',
+          width: 1,
+          height: 1,
+        },
+      ],
+    });
+    const { req, res } = createMocks({ query: { id: '3' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData().contentImages).toEqual([{ id: 5, url: 'u', ingestion: 'Scanned' }]);
   });
 
   it('SECURITY: a private/unpublished article (service throws NOT_FOUND) 404s for an anonymous caller', async () => {

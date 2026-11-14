@@ -27,7 +27,6 @@ const WEBHOOK_ROUTES = [
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
-  'mark-poi-images-search',
   'mod-rules',
   'mute-user-pending-review',
   'new-order/manage-queue',
@@ -190,7 +189,7 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
     'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'download/[...key]': FULL_CREDENTIAL,
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
-  'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'download/training/[modelVersionId]': FULL_CREDENTIAL,
   'download/vault/[vaultItemId]':
     'moderators may download a vault copy of a file that failed its scan; the caller’s own vault only',
   'search/[...path]':
@@ -205,6 +204,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
   'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
   'v1/me': 'reports the flag',
+  'v1/model-files/[id]/tensor-metadata':
+    'moderator rights from a bearer credential follow the download credential gate',
   'v1/model-versions/[id]': 'moderators also see unpublished versions',
   'v1/model-versions/[id]/gifts/[giftId]': 'owner-or-moderator gift revoke',
   'v1/model-versions/[id]/gifts/[giftId]/claims': 'owner-or-moderator gift claimer list',
@@ -522,6 +523,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/preview',
   'apps/assistant/run-grant',
   'apps/assistant/runner-viewer-token',
+  // App Assistant's save of the caller's own app to its source repo.
+  'apps/assistant/source-save',
   'apps/assistant/token',
   // The /apps/dev page's Retry: a freshly signed dev-tunnel entry URL.
   'apps/dev/entry-url',
@@ -532,6 +535,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'blocks/submit-version',
   // Raw key download, moderators only.
   'download/[...key]',
+  // A training run's epoch file, owner or moderator only.
+  'download/training/[modelVersionId]',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',

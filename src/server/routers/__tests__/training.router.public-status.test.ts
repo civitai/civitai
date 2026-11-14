@@ -13,9 +13,15 @@ const { mockGetTrainingServiceStatus } = vi.hoisted(() => ({
   mockGetTrainingServiceStatus: vi.fn(),
 }));
 
+// The router reads the status through `getTrainingServiceStatusState` (it needs `known` for the
+// edge cache); both are driven from the one mock.
 vi.mock('~/server/services/training.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TrainingService>()),
   getTrainingServiceStatus: mockGetTrainingServiceStatus,
+  getTrainingServiceStatusState: async () => ({
+    status: await mockGetTrainingServiceStatus(),
+    known: true,
+  }),
 }));
 // An anonymous caller does not get imageTraining (availability: ['user']).
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({

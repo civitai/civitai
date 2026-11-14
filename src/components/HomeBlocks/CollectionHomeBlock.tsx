@@ -33,6 +33,8 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
+import { FlagRaceContext, type FlagRow } from '~/components/HatTurf/FlagRace/FlagRaceContext';
+import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
@@ -72,12 +74,28 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     { trpc: { context: { skipBatch: true } } }
   );
 
-  const rows = metadata.collection?.rows ?? 2;
-
   const currentUser = useCurrentUser();
 
   const { collection } = homeBlock ?? {};
 
+  const features = useFeatureFlags();
+  const flagEvent = features.flagRace ? metadata.collection?.flagRace : undefined;
+  // A Flag Race row is one row: the flags that don't fit wait for another visit (they're shuffled).
+  const rows = flagEvent ? 1 : metadata.collection?.rows ?? 2;
+  const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
+    { event: flagEvent ?? '' },
+    {
+      enabled: !!flagEvent,
+      refetchInterval: 30_000,
+      staleTime: 15_000,
+      // Unbatched, so the edge caches it: every viewer gets the same answer.
+      trpc: { context: { skipBatch: true } },
+    }
+  );
+  const flagRow = useMemo(
+    () => (flagEvent && flagSummary ? { event: flagEvent, summary: flagSummary } : null),
+    [flagEvent, flagSummary]
+  );
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
     return shuffle([...collection.items]);
@@ -250,7 +268,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
         {MetaDataTop}
       </Box>
       {isLoading || loadingPreferences ? (
-        <div className={classes.grid}>
+        <div
+          className={clsx(classes.grid, {
+            [classes.gridRow]: !!flagEvent,
+            [classes.gridFlag]: !!flagEvent,
+          })}
+        >
           {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
           {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
             <AspectRatio ratio={7 / 9} key={index} className="m-2">
@@ -259,31 +282,38 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           ))}
         </div>
       ) : (
-        <div className={classes.grid}>
-          <RemixFlyoutLayoutProvider layout="side">
-            <ImagesProvider
-              hideReactionCount={collection?.mode === CollectionMode.Contest}
-              hideHatTurf={collectionHidesHatTurf(collection)}
-              images={type === 'image' ? (items as any) : undefined}
-            >
-              <ReactionSettingsProvider
-                settings={{
-                  hideReactionCount: collection?.mode === CollectionMode.Contest,
-                  hideReactions: collection && contestCollectionReactionsHidden(collection),
-                }}
+        <div
+          className={clsx(classes.grid, {
+            [classes.gridRow]: !!flagEvent,
+            [classes.gridFlag]: !!flagEvent,
+          })}
+        >
+          <FlagRowProviders row={flagRow}>
+            <RemixFlyoutLayoutProvider layout="side">
+              <ImagesProvider
+                hideReactionCount={collection?.mode === CollectionMode.Contest}
+                hideHatTurf={collectionHidesHatTurf(collection)}
+                images={type === 'image' ? (items as any) : undefined}
               >
-                {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-                {items.map((item) => (
-                  <div key={item.id} className="p-2">
-                    {type === 'model' && <ModelCard data={item as any} forceInView />}
-                    {type === 'image' && <ImageCard data={item as any} />}
-                    {type === 'post' && <PostCard data={item as any} />}
-                    {type === 'article' && <ArticleCard data={item as any} />}
-                  </div>
-                ))}
-              </ReactionSettingsProvider>
-            </ImagesProvider>
-          </RemixFlyoutLayoutProvider>
+                <ReactionSettingsProvider
+                  settings={{
+                    hideReactionCount: collection?.mode === CollectionMode.Contest,
+                    hideReactions: collection && contestCollectionReactionsHidden(collection),
+                  }}
+                >
+                  {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+                  {items.map((item) => (
+                    <div key={item.id} className="p-2">
+                      {type === 'model' && <ModelCard data={item as any} forceInView />}
+                      {type === 'image' && <ImageCard data={item as any} />}
+                      {type === 'post' && <PostCard data={item as any} />}
+                      {type === 'article' && <ArticleCard data={item as any} />}
+                    </div>
+                  ))}
+                </ReactionSettingsProvider>
+              </ImagesProvider>
+            </RemixFlyoutLayoutProvider>
+          </FlagRowProviders>
         </div>
       )}
 
@@ -306,3 +336,15 @@ type Props = {
   showAds?: boolean;
   blockIndex: number;
 };
+
+/** Around a Flag Race row only: its flags, and the viewer's Hat Turf team and stock for adding hats. */
+function FlagRowProviders({ row, children }: { row: FlagRow | null; children: React.ReactNode }) {
+  if (!row) return <>{children}</>;
+  return (
+    <FlagRaceContext.Provider value={row}>
+      <TurfSummaryProvider imageIds={[]} gate={{ event: row.event }}>
+        {children}
+      </TurfSummaryProvider>
+    </FlagRaceContext.Provider>
+  );
+}

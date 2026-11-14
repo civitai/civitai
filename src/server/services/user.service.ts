@@ -80,7 +80,7 @@ import {
   readUserCosmeticsViaPrisma,
 } from '~/server/services/hot-reads-8.reads';
 
-import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { preventReplicationLag, preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { isTransientMeiliError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
@@ -96,6 +96,7 @@ import type { DetailsCanceledBid } from '~/server/notifications/auction.notifica
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
   cosmeticCache,
+  dataForModelsCache,
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
@@ -124,10 +125,10 @@ import {
   bountiesSearchIndex,
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
 } from '~/server/search-index';
+import { queueOwnedContentUpdate } from '~/server/search-index/user-content-reindex';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -348,7 +349,7 @@ export async function getUsersWithSearch({
     .map(({ deletedAt, profilePicture, image, ...user }) => ({
       ...user,
       avatarUrl: profilePicture?.url ?? image,
-      avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+      avatarNsfw: profilePicture?.nsfwLevel ?? 0,
       meta: null,
     }))
     .slice(0, limit);
@@ -430,9 +431,9 @@ export const getUsers = async ({
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
-  return result.map(({ avatarNsfwLevel, ...user }) => ({
+  return result.map((user) => ({
     ...user,
-    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(avatarNsfwLevel),
+    avatarNsfw: getNsfwLevelDeprecatedReverseMapping(user.avatarNsfwLevel),
   }));
 };
 
@@ -598,6 +599,12 @@ export async function forceUpdateUserIdentity({
   if (name !== undefined) data.name = name;
   if (Object.keys(data).length === 0) return { updated: false };
 
+  const previousUsername =
+    username !== undefined
+      ? (await dbWrite.user.findUnique({ where: { id: userId }, select: { username: true } }))
+          ?.username
+      : undefined;
+
   let user;
   try {
     user = await dbWrite.user.update({
@@ -644,6 +651,8 @@ export async function forceUpdateUserIdentity({
         })
       );
   }
+  // Not awaited: it reads every owned id, and it never throws.
+  if (username !== undefined && username !== previousUsername) void queueOwnedContentUpdate(userId);
 
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
   await invalidateSession(userId, 'moderation');
@@ -689,12 +698,15 @@ export const updateUserById = async ({
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
-  if (typeof data.username === 'string' && data.username !== previousUsername)
-    queueScamScan({ entityType: 'User', entityId: id });
+  const renamed = typeof data.username === 'string' && data.username !== previousUsername;
+  if (renamed) queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
   }
+
+  // Not awaited: it reads every owned id, and it never throws.
+  if (renamed) void queueOwnedContentUpdate(id);
 
   if (
     data.showNsfw !== undefined ||
@@ -1154,6 +1166,55 @@ export const getUserList = async ({ username, type, limit, page }: GetUserListSc
   }
 };
 
+type DeletedVersionRow = { id: number };
+
+/** Busts the caches of the versions `deleteUser` deleted. Chunked: an account can have thousands. */
+async function dropDeletedVersionCaches(versionIds: number[]) {
+  // Imported here: a static import joins user.service to the model-version import cycle.
+  const { bustMvCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(versionIds, DELETED_MODEL_CACHE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', ids);
+    // No owner: the orchestrator's copy is dropped for every caller, not one user.
+    await bustMvCache(ids);
+  }
+}
+
+async function dropDeletedModelCaches(userId: number) {
+  const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
+  await dropDeletedModelIdCaches(models.map((m) => m.id));
+}
+
+/** The caches and search entries of models already set to Deleted. */
+export async function dropDeletedModelIdCaches(modelIds: number[]) {
+  const { bustPublicModelResponseCache } = await import('~/server/services/model-version.service');
+  for (const ids of chunkIds(modelIds, DELETED_MODEL_CACHE_CHUNK)) {
+    await preventReplicationLagBatch('model', ids);
+    await dataForModelsCache.refresh(ids);
+    await bustPublicModelResponseCache(ids);
+    await modelsSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+    );
+  }
+}
+const DELETED_MODEL_CACHE_CHUNK = 500;
+
+/** `deleteUser`'s sleeping-app step; imported lazily so the account path loads no S3 client. */
+async function deleteSleepingAppsOfDeletedAccount(userId: number) {
+  const [{ deleteSleepingAppsForAccount }, { hibernationRepo }, { isMissingTableError }, s3] =
+    await Promise.all([
+      import('~/server/services/app-hibernation/app-hibernation.service'),
+      import('~/server/services/app-hibernation/hibernation.repo'),
+      import('~/server/services/blocks/app-access.service'),
+      import('~/utils/app-archive-s3'),
+    ]);
+  const config = s3.archiveStoreConfig();
+  return deleteSleepingAppsForAccount(userId, {
+    repo: hibernationRepo,
+    store: config ? s3.createArchiveStore(config) : null,
+    isMissingTable: isMissingTableError,
+  });
+}
+
 export const deleteUser = async ({
   id,
   username,
@@ -1230,11 +1291,27 @@ export const deleteUser = async ({
       // The rest of the scrub is in `guardedAccountScrubSql`; meta is here because it carries the
       // account's own data, which the guarded statement cannot take as a parameter.
       dbWrite.user.update({ where: { id: user.id }, data: { meta } }),
+      // Last, so it can be taken off the result below. The status `deleteModelById` writes on the
+      // versions of a model it deletes; the version rows and their files stay.
+      ...(removeModels
+        ? [
+            dbWrite.$queryRaw<DeletedVersionRow[]>`
+              UPDATE "ModelVersion" mv
+              SET status = 'Deleted'::"ModelStatus", "updatedAt" = now()
+              FROM "Model" m
+              WHERE m.id = mv."modelId"
+                AND m."userId" = ${user.id}
+                AND mv.status IN ('Published'::"ModelStatus", 'Scheduled'::"ModelStatus")
+              RETURNING mv.id
+            `,
+          ]
+        : []),
     ])
     .catch((e) => {
       if (isLegalHoldAbort(e)) throw new LegalHoldError();
       throw e;
     });
+  const deletedVersions = removeModels ? (result.pop() as DeletedVersionRow[]) : [];
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
   void syncOwnerEventHats(user.id);
@@ -1273,10 +1350,19 @@ export const deleteUser = async ({
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  // A ban never reaches here, so a banned user's sleeping apps are kept.
+  await runStep('delete-sleeping-apps', () => deleteSleepingAppsOfDeletedAccount(user.id));
   await runStep('refresh-profile-picture', () => refreshProfilePicturesForUsers([user.id]));
   await runStep('close-pending-restrictions', () =>
     closeGenerationRestrictionsOfDeletedAccount(user.id)
   );
+
+  if (removeModels) {
+    await runStep('deleted-version-caches', () =>
+      dropDeletedVersionCaches(deletedVersions.map((v) => v.id))
+    );
+    await runStep('deleted-model-caches', () => dropDeletedModelCaches(user.id));
+  }
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -2046,7 +2132,6 @@ export const removeAllContent = async ({
   if (keptModelIds.length)
     await runStep('kept-model-caches', () => dropHiddenModelCaches(keptModelIds, id));
   else await runStep('content-counts', () => userContentOverviewCache.refresh(id));
-  await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
   await unindex('index-collections', collectionsSearchIndex, collections);
@@ -2423,12 +2508,38 @@ const leaderboardRankInsert = ({
   leaderboardFilter,
   userFilter,
   onConflict = Prisma.empty,
+  carriedBoardIds = [],
 }: {
   leaderboardFilter: Prisma.Sql;
   userFilter: Prisma.Sql;
   onConflict?: Prisma.Sql;
-}) => Prisma.sql`
-  WITH user_positions AS (
+  /**
+   * Boards not populated for today: read their latest day in the last week so their badges carry
+   * over. Older than that they drop out, so a long-dead board can't bring back stale ranks.
+   */
+  carriedBoardIds?: string[];
+}) => {
+  // Bound only when a board is carried: the plain rebuild binds nothing, which
+  // leaderboard-rank-showcase.test.ts relies on to catch a board list hiding in a parameter.
+  const carried = carriedBoardIds.length;
+  // One index-backed max per carried board, not per row: a board can miss more than one night.
+  const carriedDays = carried
+    ? Prisma.sql`carried_day AS (
+        SELECT c.id, (
+          SELECT max(r.date) FROM "LeaderboardResult" r
+          WHERE r."leaderboardId" = c.id AND r.date < current_date AND r.date >= current_date - 7
+        ) AS day
+        FROM unnest(${carriedBoardIds}::text[]) AS c(id)
+      ),`
+    : Prisma.empty;
+  const dayFilter = carried
+    ? Prisma.sql`(
+        (lr.date = current_date AND lr."leaderboardId" <> ALL(${carriedBoardIds}::text[]))
+        OR (lr."leaderboardId", lr.date) IN (SELECT id, day FROM carried_day)
+      )`
+    : Prisma.sql`lr.date = current_date`;
+  return Prisma.sql`
+  WITH ${carriedDays} user_positions AS (
     SELECT
       lr."userId",
       lr."leaderboardId",
@@ -2448,7 +2559,7 @@ const leaderboardRankInsert = ({
     FROM "User" u
     JOIN "LeaderboardResult" lr ON lr."userId" = u.id
     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
-    WHERE lr.date = current_date
+    WHERE ${dayFilter}
       AND lr.position <= 100
       ${leaderboardFilter}
       ${userFilter}
@@ -2478,11 +2589,17 @@ const leaderboardRankInsert = ({
   FROM lowest_position
   ${onConflict};
 `;
+};
 
 export const updateLeaderboardRank = async ({
   leaderboardIds,
+  carriedBoardIds,
+  builtMarkerKey,
 }: {
   leaderboardIds?: string | string[];
+  carriedBoardIds?: string[];
+  /** KeyValue key set to Postgres `current_date` in the same transaction as the rebuild. */
+  builtMarkerKey?: string;
 } = {}) => {
   if (leaderboardIds && !Array.isArray(leaderboardIds)) leaderboardIds = [leaderboardIds];
 
@@ -2494,7 +2611,17 @@ export const updateLeaderboardRank = async ({
     // Truncate the table - much faster than DELETE and we're rebuilding anyway
     dbWrite.$executeRaw`TRUNCATE TABLE "UserRank";`,
     // Only insert users with top 100 ranks (position <= 100)
-    dbWrite.$executeRaw(leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty })),
+    dbWrite.$executeRaw(
+      leaderboardRankInsert({ leaderboardFilter, userFilter: Prisma.empty, carriedBoardIds })
+    ),
+    // current_date is fixed at transaction start, so the marker names the day the insert read.
+    ...(builtMarkerKey
+      ? [
+          dbWrite.$executeRaw`
+            INSERT INTO "KeyValue" (key, value) VALUES (${builtMarkerKey}, to_jsonb(current_date::text))
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        ]
+      : []),
   ]);
 };
 
@@ -2903,6 +3030,20 @@ export const toggleBan = async ({
             name: 'ban-user-revoke-block-instances',
             message: (error as Error).message,
             error,
+          })
+        ),
+
+      // Take away their git access to App Blocks SOURCE repos (`civitai-apps-src/<slug>`): the
+      // collaborator rows of every repo they own or hold a seat on. Credential hand-outs already
+      // refuse a banned account; this removes the rows a token they already hold would use.
+      // Isolated like every other leg: it must never fail the ban.
+      import('~/server/services/blocks/app-source-repo.service')
+        .then(({ revokeSourceRepoAccessForUser }) => revokeSourceRepoAccessForUser(id))
+        .catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-revoke-source-repos',
+            message: (error as Error).message,
           })
         ),
 

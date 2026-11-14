@@ -684,12 +684,12 @@ describe('getCrucibles — browsing level', () => {
     expect(levels.image.nsfwLevel.in).toEqual(levels.nsfwLevel.in);
   });
 
-  it('lists only crucibles whose text and cover passed their scans, level or not', async () => {
+  it('lists only crucibles whose text and cover passed their scans, the cover out of review and not a ToS violation, level or not', async () => {
     for (const browsingLevel of [undefined, 1]) {
       const where = await whereFor({ browsingLevel });
       expect(where.AND[0].AND[0]).toEqual({
         ingestion: CrucibleIngestionStatus.Scanned,
-        image: { ingestion: ImageIngestionStatus.Scanned },
+        image: { ingestion: ImageIngestionStatus.Scanned, needsReview: null, tosViolation: false },
       });
     }
   });

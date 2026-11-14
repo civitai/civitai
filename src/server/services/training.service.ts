@@ -9,11 +9,11 @@ import type {
 } from '@civitai/orchestration-client';
 import type { WorkflowStatus } from '@civitai/orchestration-client';
 import {
-  getConsumerBlobUploadUrl,
   getWorkflow as clientGetWorkflow,
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { env } from '~/env/server';
 import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
@@ -33,7 +33,11 @@ import type {
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
+import {
+  isCivitaiMediaUrl,
+  isTrustedOrchestratorUrl,
+} from '~/server/services/orchestrator/trusted-blob-url';
 import {
   deriveTrainingWorkflowState,
   offsetEpochNumbers,
@@ -48,7 +52,6 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
-import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   getB2S3Client,
@@ -221,10 +224,30 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   return response.data?.jobs?.[0]?.result;
 };
 
-export async function getTrainingServiceStatus() {
-  // Fail open: symmetric with the three getGenerationStatus fixes in this
-  // PR. A sysRedis outage shouldn't crash the training status endpoint or
-  // training submission. Falls back to the schema's '{}' default.
+/** Shown when the training status cannot be read and this process has never read it. */
+export const TRAINING_STATUS_UNKNOWN_MESSAGE =
+  'Training is temporarily unavailable. Please try again in a few minutes.';
+
+// Last status this process read. No age bound: a pod cut off from sysRedis keeps serving it, so a
+// pause or un-pause saved meanwhile is not seen until reads succeed.
+let lastKnownTrainingStatus: TrainingServiceStatus | undefined;
+
+/** For tests: forget the last-known training status. */
+export function __resetTrainingStatusLastKnownForTests() {
+  lastKnownTrainingStatus = undefined;
+}
+
+/**
+ * The training status, with whether it is KNOWN (mirrors `getGenerationStatusState`). `known` is
+ * false only for the fail-closed fallback: the read failed, this process has never read the status,
+ * and TRAINING_STATUS_FAIL_CLOSED is on. The public status endpoints must not edge-cache that
+ * fallback, or it is served to everyone for the TTL after the pod recovers. A last-known value, a
+ * live read, and the switch-off "available" default (the previous behaviour) are all `known`.
+ */
+export async function getTrainingServiceStatusState(): Promise<{
+  status: TrainingServiceStatus;
+  known: boolean;
+}> {
   // Note on Buffer-vs-string asymmetry (see PR #2697): sysRedis.hGet is typed
   // `string | null` but the HA/Sentinel client returns a Buffer for
   // BLOB_STRING replies. `JSON.parse` accepts a Buffer in Node ≥18 (we run
@@ -241,13 +264,39 @@ export async function getTrainingServiceStatus() {
       sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)
     );
   } catch (err) {
-    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
-    raw = undefined;
+    if (!env.TRAINING_STATUS_FAIL_CLOSED) {
+      logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err, {
+        served: 'defaults',
+      });
+      return {
+        status: trainingServiceStatusSchema.parse({}) as TrainingServiceStatus,
+        known: true,
+      };
+    }
+    // `served` uses getGenerationStatus's vocabulary (`last-known-good` | `fail-closed`).
+    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err, {
+      served: lastKnownTrainingStatus ? 'last-known-good' : 'fail-closed',
+    });
+    if (lastKnownTrainingStatus) return { status: lastKnownTrainingStatus, known: true };
+    return {
+      status: trainingServiceStatusSchema.parse({
+        available: false,
+        message: TRAINING_STATUS_UNKNOWN_MESSAGE,
+      }) as TrainingServiceStatus,
+      known: false,
+    };
   }
   const result = trainingServiceStatusSchema.safeParse(JSON.parse(raw ?? '{}'));
-  if (!result.success) return trainingServiceStatusSchema.parse({});
+  const status = (
+    result.success ? result.data : trainingServiceStatusSchema.parse({})
+  ) as TrainingServiceStatus;
+  lastKnownTrainingStatus = status;
+  return { status, known: true };
+}
 
-  return result.data as TrainingServiceStatus;
+/** The training status; see getTrainingServiceStatusState (this drops `known`). */
+export async function getTrainingServiceStatus(): Promise<TrainingServiceStatus> {
+  return (await getTrainingServiceStatusState()).status;
 }
 
 export async function setTrainingServiceStatus(input: {
@@ -640,9 +689,12 @@ export async function updateTrainingWorkflowRecords(
 // Auto-label v2 (orchestrator workflows)
 //
 // These three functions replace the legacy zip → S3 → legacy job API pipeline.
-// Everything runs through the v2 consumer endpoints with the system token — the
-// work is billed to the system account so users pay nothing for tag/caption
-// runs, and the workflow isn't visible under the user's own token.
+// The upload URL is minted with the user's own orchestrator token, like every
+// consumer upload, so the upload is attributed to and processed for the user.
+// The workflow submit and poll run on the system token: the work is billed to the
+// system account so users pay nothing for tag/caption runs, and the workflow isn't
+// visible under the user's own token. The submit therefore accepts only
+// orchestrator-hosted media (assertCivitaiMediaUrls), as Training Studio's does.
 // =============================================================================
 
 type AutoLabelWorkflowMetadata = {
@@ -722,22 +774,10 @@ export function assertSafeMediaUrls(urls: string[]) {
 }
 
 // For submits on the system orchestrator token: only media on Civitai's orchestrator, where uploads
-// land. The raw string is forwarded, so it must already be canonical (which also refuses the
-// backslash and control bytes WHATWG rewrites); the host judged here is then the host any parser
-// sees. `@` is refused anywhere: a parser splitting the authority on the last `@` would read the
-// host from the query. Both host comparisons include the port.
+// land. The rule itself is `isCivitaiMediaUrl`, shared with the other system-token steps.
 export function assertCivitaiMediaUrls(urls: string[]) {
-  const publicHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
   for (const raw of urls) {
-    const parsed = URL.canParse(raw) ? new URL(raw) : null;
-    const ok =
-      parsed &&
-      parsed.href === raw &&
-      !parsed.hash &&
-      !raw.includes('@') &&
-      (isTrustedOrchestratorUrl(raw) ||
-        (parsed.protocol === 'https:' && parsed.host === publicHost));
-    if (!ok)
+    if (!isCivitaiMediaUrl(raw))
       throw throwBadRequestError(
         'Auto-label only accepts media uploaded to Civitai. Upload the file, then try again.'
       );
@@ -784,8 +824,8 @@ export function toOrchestratorError(error: unknown): never {
       // is exactly what surfaced ~11×/2h on training.submitAutoLabelWorkflow: a
       // transient orchestrator brownout mis-counted against our 500 SLO AND
       // non-retryable to the client. `toOrchestratorError` is only reached on a
-      // `!data` result from an orchestrator round-trip (getConsumerBlobUploadUrl /
-      // clientSubmitWorkflow / clientGetWorkflow), so a local/logic bug thrown
+      // `!data` result from an orchestrator round-trip (clientSubmitWorkflow /
+      // clientGetWorkflow), so a local/logic bug thrown
       // BEFORE the call never reaches here — only real upstream failures do.
       if (status === undefined || status >= 500)
         throw throwServiceUnavailableError(messages ?? null, error);
@@ -795,16 +835,22 @@ export function toOrchestratorError(error: unknown): never {
   }
 }
 
+/**
+ * The upload is the user's own media, so the URL is minted with their orchestrator token.
+ * `getUserToken` resolves the requesting user's token; it runs only once ownership is checked.
+ */
 export async function getAutoLabelUploadUrl({
   userId,
   modelId,
-}: GetAutoLabelUploadUrlInput & { userId: number }) {
+  getUserToken,
+}: GetAutoLabelUploadUrlInput & {
+  userId: number;
+  getUserToken: () => Promise<string>;
+}) {
   await assertModelOwnership(modelId, userId);
-  const { data, error } = await getConsumerBlobUploadUrl({
-    client: internalOrchestratorClient,
-  });
-  if (!data) toOrchestratorError(error);
-  return { uploadUrl: data.uploadUrl, expiresAt: data.expiresAt };
+  const token = await getUserToken();
+  const { uploadUrl, expiresAt } = await getConsumerBlobUploadUrlService({ token });
+  return { uploadUrl, expiresAt };
 }
 
 export async function submitAutoLabelWorkflow({
@@ -816,6 +862,8 @@ export async function submitAutoLabelWorkflow({
 }: SubmitAutoLabelWorkflowInput & { userId: number }) {
   await assertModelOwnership(modelId, userId);
   assertSafeMediaUrls(images.map((i) => i.mediaUrl));
+  // Submitted on the system token, so only orchestrator-hosted media, as Training Studio's submit.
+  assertCivitaiMediaUrls(images.map((i) => i.mediaUrl));
 
   const steps: WorkflowStepTemplate[] = images.map((img, index) => {
     const stepMetadata: AutoLabelStepMetadata = { filename: img.filename };

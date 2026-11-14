@@ -7,11 +7,15 @@ const query = vi.hoisted(() =>
     json: async () => [],
   }))
 );
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query } }));
+// The shared client is absent: every referee query must go through the long-query client.
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: undefined,
+  clickhouseLongQueries: { query },
+}));
 
 const { queryReferee, REFEREE_CLICKHOUSE_BUDGET_S, refereeWindow, runEventPointsReferee } =
   await import('~/server/events/points/referee');
-const { LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
+const { eventSeasonKeys, LIVE_BUCKET_MS } = await import('~/server/events/points/keys');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -94,19 +98,52 @@ describe('referee ClickHouse queries', () => {
 describe('runEventPointsReferee', () => {
   it('logs a stale cut before a settle query that fails', async () => {
     const now = new Date('2026-11-05T12:07:00.000Z');
-    redisMock.sysRedis.hGetAll.mockResolvedValue({});
-    redisMock.sysRedis.get.mockResolvedValue(
-      String((now.getTime() - 5 * 60 * 60 * 1000) / LIVE_BUCKET_MS)
-    );
-    query.mockClear();
-    query.mockRejectedValueOnce(new Error('Timeout exceeded'));
-    loggingMock.logToAxiom.mockClear();
-    await expect(runEventPointsReferee(EVENT, 'live', now)).rejects.toThrow('Timeout exceeded');
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'error', name: 'event-points-cut-stale', event: 'e' })
-    );
+    stored({ cut: now.getTime() - 5 * 60 * 60 * 1000 });
+    expect(await staleAlerts(EVENT, now)).toHaveLength(1);
+  });
+
+  // After the season ends only removals settle, so only removeCut shows a stuck settle.
+  const FINALIZING = {
+    ...EVENT,
+    scoring: { ...EVENT.scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 },
+  };
+  const END = FINALIZING.endDate.getTime();
+  const HOUR = 60 * 60 * 1000;
+
+  it('logs a settle stuck inside the finalize window, after the season has ended', async () => {
+    stored({ cut: END, removeCut: END + HOUR });
+    expect(await staleAlerts(FINALIZING, new Date(END + 5 * HOUR + 10 * 60_000))).toEqual([
+      expect.objectContaining({ season: 'live', cutAgeMinutes: 240 }),
+    ]);
+  });
+
+  it('stays quiet once the finalize window has been settled', async () => {
+    stored({ cut: END, removeCut: END + 24 * HOUR });
+    expect(await staleAlerts(FINALIZING, new Date(END + 30 * HOUR))).toEqual([]);
   });
 });
+
+// What resetLiveBase leaves in redis: the cut as a bucket number, the removal cut as ms.
+function stored({ cut, removeCut }: { cut: number; removeCut?: number }) {
+  redisMock.sysRedis.get.mockImplementation((async (key: string) => {
+    const keys = eventSeasonKeys('e', 'live');
+    if (key === keys.removeCut) return removeCut == null ? null : String(removeCut);
+    if (key === keys.cut) return String(Math.ceil(cut / LIVE_BUCKET_MS));
+    return null;
+  }) as never);
+}
+
+// The failing query ends the run right after the alert, so only the alert is under test.
+async function staleAlerts(event: typeof EVENT, now: Date) {
+  redisMock.sysRedis.hGetAll.mockResolvedValue({});
+  query.mockClear();
+  query.mockRejectedValueOnce(new Error('Timeout exceeded'));
+  loggingMock.logToAxiom.mockClear();
+  await expect(runEventPointsReferee(event, 'live', now)).rejects.toThrow('Timeout exceeded');
+  return loggingMock.logToAxiom.mock.calls
+    .map(([entry]) => entry as Record<string, unknown>)
+    .filter((entry) => entry.name === 'event-points-cut-stale');
+}
 
 // The WHERE of every scan of the ledger table, one per branch.
 function ledgerScans(sql: string) {

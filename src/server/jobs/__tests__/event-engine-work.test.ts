@@ -4,6 +4,7 @@ vi.mock('~/server/events', () => ({ eventEngine: {} }));
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: vi.fn() }));
 
 const { eventEngineLeaderboardUpdate } = await import('~/server/jobs/event-engine-work');
+const { LONG_QUERY_REQUEST_TIMEOUT_MS } = await import('~/server/clickhouse/client');
 const { REFEREE_CLICKHOUSE_BUDGET_S, SETTLE_LOCK_S } = await import(
   '~/server/events/points/referee'
 );
@@ -26,5 +27,11 @@ describe('event-engine-leaderboard-update job', () => {
     expect(REFEREE_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(30 * 60);
     expect(SETTLE_LOCK_S - REFEREE_CLICKHOUSE_BUDGET_S).toBeGreaterThanOrEqual(5 * 60);
     expect(SETTLE_LOCK_S).toBeLessThan(60 * 60);
+  });
+
+  // The referee's ClickHouse client must not drop a settle query on its own: the query's server cap
+  // and its abort, both inside the lock, are what stop it.
+  it("gives the referee's ClickHouse client an idle timeout past the whole lock", () => {
+    expect(LONG_QUERY_REQUEST_TIMEOUT_MS).toBeGreaterThan(SETTLE_LOCK_S * 1000);
   });
 });

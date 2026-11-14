@@ -1,11 +1,12 @@
 /**
- * The gRPC binding of the source protocol (spec/registry.md @ 2709083, "Bindings" → "gRPC"):
- * `service Source { rpc Subscribe(SubscribeRequest) returns (stream Event); }`, with the spec's
- * messages verbatim ({@link SOURCE_PROTO}). The subscription itself is the shared core
- * (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
+ * The gRPC binding of the registry protocol (the registry spec, "Bindings" → "gRPC"):
+ * `package registry.v1; service Registry { rpc Subscribe(SubscribeRequest) returns (stream Event); }`,
+ * with the spec's messages verbatim ({@link REGISTRY_PROTO}). The subscription itself is the shared
+ * core (`subscription.ts`), as for HTTP; this file maps the request in and events and errors out.
  *
- *   - The spec's proto block declares no `package`, so the method is `/Source/Subscribe`, the
- *     path a stub generated from that block calls.
+ *   - The method is `/registry.v1.Registry/Subscribe` ({@link SUBSCRIBE_PATH}), the path the spec
+ *     names and a stub generated from its proto block calls. The earlier spec's
+ *     `/Source/Subscribe` is not served (UNIMPLEMENTED).
  *   - `Entity.body` is the body's JSON text as UTF-8 bytes, the text the HTTP binding sends for
  *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
  *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
@@ -27,7 +28,7 @@
  * experimental connection injector and everything else to `node:http`, for nothing an ingress
  * needs: it routes by port anyway, and gRPC needs an h2c backend where SSE needs HTTP/1.1.
  *
- * The messages are parsed from the inline {@link SOURCE_PROTO} text with `protobufjs` at
+ * The messages are parsed from the inline {@link REGISTRY_PROTO} text with `protobufjs` at
  * startup, so the bundle (`scripts/build-registry-adapter.mjs`) loads no `.proto` file at
  * runtime; `@grpc/grpc-js` and `protobufjs` stay external, like every root dependency.
  */
@@ -53,10 +54,12 @@ import {
 } from '~/server/registry-adapter/subscription';
 
 /** The spec's proto block, unchanged but for the `syntax` line it needs to parse. */
-export const SOURCE_PROTO = `
+export const REGISTRY_PROTO = `
 syntax = "proto3";
 
-service Source {
+package registry.v1;
+
+service Registry {
   rpc Subscribe(SubscribeRequest) returns (stream Event);
 }
 
@@ -112,7 +115,7 @@ message ErrorInfo {
 }
 `;
 
-export const SUBSCRIBE_PATH = '/Source/Subscribe';
+export const SUBSCRIBE_PATH = '/registry.v1.Registry/Subscribe';
 const ERROR_INFO_TYPE_URL = 'type.googleapis.com/google.rpc.ErrorInfo';
 export const GRPC_KEEPALIVE_MS = 15_000;
 const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
@@ -120,7 +123,6 @@ const GRPC_KEEPALIVE_TIMEOUT_MS = 10_000;
 /** The spec's Errors table. */
 export const GRPC_STATUS: Record<ErrorCode, grpc.status> = {
   bad_request: grpc.status.INVALID_ARGUMENT,
-  unknown_schema: grpc.status.NOT_FOUND,
   cursor_expired: grpc.status.OUT_OF_RANGE,
   slow_consumer: grpc.status.RESOURCE_EXHAUSTED,
   unavailable: grpc.status.UNAVAILABLE,
@@ -135,12 +137,12 @@ function loadTypes() {
     if (!json?.nested) throw new Error(`registry-adapter: protobufjs has no ${file}`);
     root.addJSON(json.nested);
   }
-  protobuf.parse(SOURCE_PROTO, root, { keepCase: true });
+  protobuf.parse(REGISTRY_PROTO, root, { keepCase: true });
   protobuf.parse(ERROR_DETAILS_PROTO, root, { keepCase: true });
   root.resolveAll();
   return {
-    request: root.lookupType('SubscribeRequest'),
-    event: root.lookupType('Event'),
+    request: root.lookupType('registry.v1.SubscribeRequest'),
+    event: root.lookupType('registry.v1.Event'),
     status: root.lookupType('google.rpc.Status'),
     errorInfo: root.lookupType('google.rpc.ErrorInfo'),
   };
@@ -242,7 +244,8 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
 
 export type WireRequest = { schema: string; cursor: string; urns: string[]; filter: string };
 
-export const SOURCE_SERVICE: grpc.ServiceDefinition = {
+/** `registry.v1.Registry`, the spec's service. */
+export const REGISTRY_SERVICE: grpc.ServiceDefinition = {
   Subscribe: {
     path: SUBSCRIBE_PATH,
     requestStream: false,
@@ -401,7 +404,7 @@ export function createGrpcServer(
     'grpc.keepalive_time_ms': GRPC_KEEPALIVE_MS,
     'grpc.keepalive_timeout_ms': GRPC_KEEPALIVE_TIMEOUT_MS,
   });
-  server.addService(SOURCE_SERVICE, {
+  server.addService(REGISTRY_SERVICE, {
     Subscribe: (call: Call) => {
       const sink = openCall(call, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       const run = async () => {

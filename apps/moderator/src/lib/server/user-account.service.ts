@@ -355,17 +355,51 @@ export async function commentParents(
   return new Map(rows.map((r) => [r.id, { type: r.entityType, id: r.entityId }]));
 }
 
-/** Every comment the user wrote, on any surface. Tombstones keep their `userId`, so are excluded. */
-export async function getComments(userId: number, limit = 50): Promise<Capped<UserComment>> {
-  return dbRead
+/** `at` is `createdAt::text`, which keeps CommentV3's microseconds; a JS Date would round them to
+ *  milliseconds and the boundary would skip the rows sharing that millisecond. */
+export const isCommentCursorAt = (at: string) =>
+  /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?[+-]\d{2}(:\d{2})?$/.test(at);
+
+/** Every comment the user wrote, on any surface, a page at a time. Tombstones keep their `userId`, so
+ *  are excluded. */
+export async function getComments(
+  userId: number,
+  limit = 50,
+  before?: ModActivityCursor
+): Promise<Capped<UserComment> & { next: ModActivityCursor | null }> {
+  const rows = await dbRead
     .selectFrom('CommentV3')
     .select(['id', 'createdAt', 'content', 'tosViolation', 'entityType', 'entityId'])
+    .select(sql<string>`"createdAt"::text`.as('cursorAt'))
     .where('userId', '=', userId)
     .where('deletedAt', 'is', null)
+    .$if(!!before, (qb) =>
+      qb.where(sql<boolean>`("createdAt", "id") < (${before!.at}::timestamptz, ${before!.id})`)
+    )
     .orderBy('createdAt', 'desc')
+    .orderBy('id', 'desc')
     .limit(limit + 1)
-    .execute()
-    .then((rows) => capped(rows, limit));
+    .execute();
+  const { items, nextCursor } = takePage(
+    rows,
+    limit,
+    (r): ModActivityCursor => ({ at: r.cursorAt, id: r.id })
+  );
+  return {
+    items: items.map(({ cursorAt: _, ...r }) => r),
+    truncated: !!nextCursor,
+    next: nextCursor ?? null,
+  };
+}
+
+export async function countComments(userId: number): Promise<number> {
+  const row = await dbRead
+    .selectFrom('CommentV3')
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .where('userId', '=', userId)
+    .where('deletedAt', 'is', null)
+    .executeTakeFirstOrThrow();
+  return Number(row.n);
 }
 
 // REACTIONS GIVEN, grouped by the creator whose images were reacted to (Retool's ReactionsGrouped).

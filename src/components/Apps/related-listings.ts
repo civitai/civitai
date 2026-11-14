@@ -7,24 +7,30 @@
  * `appListingDetailView` / `recentAppsRail`).
  *
  * Selection policy, in order:
- *   1. SELF IS ALWAYS EXCLUDED — from both input lists, by listing id. A
+ *   0. A CREATOR GROUP LEADS when the page knows its developer: "More by <developer>",
+ *      from `listAvailable({ userId })`, so it holds exactly the developer's apps this
+ *      viewer could find in the store. It has its own one-row cap
+ *      ({@link CREATOR_RAIL_LIMIT}) that does not count against `limit`, so a developer
+ *      with many apps cannot crowd the category and popular groups off the rail.
+ *   1. SELF IS ALWAYS EXCLUDED — from every input list, by listing id. A
  *      "related" rail that links back to the page you are on is the single most
  *      obvious bug here, so it is enforced once, centrally.
- *   2. SAME CATEGORY FIRST, in the order the server returned (the caller asks
+ *   2. SAME CATEGORY next, in the order the server returned (the caller asks
  *      `appListings.listAvailable` for `{ category, sort: 'popular' }`, so that
  *      order is already "most popular in this category").
  *   3. TOP UP WITH POPULAR when the category is thin — several categories hold
  *      only one or two approved listings today, and a rail that renders a single
  *      card reads as broken. Top-ups skip anything already picked.
- *   4. CAP at `limit` (default `RELATED_LISTINGS_LIMIT`) across both groups.
+ *   4. CAP at `limit` (default `RELATED_LISTINGS_LIMIT`) across the category and
+ *      popular groups. No app appears in two groups.
  *
- * 🔴 THE TWO GROUPS ARE KEPT APART, each under its own heading. The top-up is
+ * 🔴 THE GROUPS ARE KEPT APART, each under its own heading. The top-up is
  * popular apps from ANY category, so rendering it under "More in <category>" put
  * other categories' apps under a heading that names this one. The same-category
  * group keeps that heading; the top-up renders under {@link POPULAR_RAIL_HEADING}.
  *
- * NO new tRPC procedure and NO server schema change: both inputs come from the
- * EXISTING `appListings.listAvailable` (category filter + sort), which the store
+ * NO new tRPC procedure: every input comes from the EXISTING
+ * `appListings.listAvailable` (category / developer filter + sort), which the store
  * grid already uses.
  */
 
@@ -34,13 +40,45 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 /** Rail cap — one row at the store's widest breakpoint, no "load more". */
 export const RELATED_LISTINGS_LIMIT = 6;
 
+/** Creator-group cap — one row at the widest rail breakpoint. Separate from `limit`. */
+export const CREATOR_RAIL_LIMIT = 3;
+
+/** Heading of the creator group. Falls back to "this developer" when the name is unknown. */
+export function creatorRailHeading(username: string | null | undefined): string {
+  return username ? `More by ${username}` : 'More by this developer';
+}
+
+/**
+ * The apps the creator group will render: the developer's apps minus self, capped. One rule,
+ * used by {@link relatedRailSections} and {@link needsPopularTopUp}, so the top-up decision
+ * counts exactly what the creator group takes.
+ */
+export function creatorRailPicks(
+  selfId: string,
+  creator: ListingCard[] | undefined,
+  limit = CREATOR_RAIL_LIMIT
+): ListingCard[] {
+  const out: ListingCard[] = [];
+  const seen = new Set<string>([selfId]);
+  for (const item of creator ?? []) {
+    if (out.length >= limit) break;
+    if (!item || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
 /** Heading of the top-up group: popular apps from any category. */
 export const POPULAR_RAIL_HEADING = 'Popular apps';
 
 /** One headed group of the rail. */
 export type RelatedRailSection = {
-  /** `category` = same-category apps; `popular` = the any-category top-up. */
-  key: 'category' | 'popular';
+  /**
+   * `creator` = the developer's other apps; `category` = same-category apps; `popular` = the
+   * any-category top-up.
+   */
+  key: 'creator' | 'category' | 'popular';
   heading: string;
   items: ListingCard[];
 };
@@ -62,6 +100,11 @@ export function relatedRailSections(opts: {
   sameCategory?: ListingCard[];
   /** `listAvailable({ sort: 'popular' })` items, used only to top up. */
   popular?: ListingCard[];
+  /** `listAvailable({ userId })` items — the developer's apps. Empty when the page has no
+   *  creator (the query is not fired). */
+  creator?: ListingCard[];
+  /** The developer's name, for the creator group's heading. */
+  creatorName?: string | null;
   limit?: number;
 }): RelatedRailSection[] {
   const limit = opts.limit ?? RELATED_LISTINGS_LIMIT;
@@ -69,6 +112,17 @@ export function relatedRailSections(opts: {
 
   let picked = 0;
   const seen = new Set<string>([opts.selfId]);
+
+  const sections: RelatedRailSection[] = [];
+  const creator = creatorRailPicks(opts.selfId, opts.creator);
+  for (const item of creator) seen.add(item.id);
+  if (creator.length > 0) {
+    sections.push({
+      key: 'creator',
+      heading: creatorRailHeading(opts.creatorName),
+      items: creator,
+    });
+  }
 
   // One helper for both groups so the self-exclusion, the de-dup and the shared cap can't
   // be applied to one list and forgotten on the other.
@@ -84,7 +138,6 @@ export function relatedRailSections(opts: {
     return out;
   };
 
-  const sections: RelatedRailSection[] = [];
   const sameCategory = opts.category ? take(opts.sameCategory) : [];
   if (sameCategory.length > 0) {
     sections.push({
@@ -112,6 +165,8 @@ export function relatedRailSections(opts: {
 export function needsPopularTopUp(opts: {
   selfId: string;
   sameCategory?: ListingCard[];
+  /** The developer's apps: those the creator group takes are not left for the category. */
+  creator?: ListingCard[];
   /** True while the category query is still in flight — don't fire the top-up
    *  on an as-yet-empty list, or it fires on EVERY page for one render. */
   categoryLoading?: boolean;
@@ -119,7 +174,10 @@ export function needsPopularTopUp(opts: {
 }): boolean {
   const limit = opts.limit ?? RELATED_LISTINGS_LIMIT;
   if (opts.categoryLoading) return false;
-  const usable = (opts.sameCategory ?? []).filter((c) => c && c.id !== opts.selfId).length;
+  const taken = new Set(creatorRailPicks(opts.selfId, opts.creator).map((c) => c.id));
+  const usable = (opts.sameCategory ?? []).filter(
+    (c) => c && c.id !== opts.selfId && !taken.has(c.id)
+  ).length;
   return usable < limit;
 }
 
@@ -146,9 +204,14 @@ export function isRelatedRailLoading(opts: {
   /** True when the popular top-up query is enabled. */
   wantTopUp: boolean;
   popularPending: boolean;
+  /** True when the creator query is enabled (the page knows its developer). */
+  wantCreator?: boolean;
+  creatorPending?: boolean;
 }): boolean {
   return (
-    (opts.hasCategoryFilter && opts.categoryPending) || (opts.wantTopUp && opts.popularPending)
+    (opts.hasCategoryFilter && opts.categoryPending) ||
+    (opts.wantTopUp && opts.popularPending) ||
+    (!!opts.wantCreator && !!opts.creatorPending)
   );
 }
 

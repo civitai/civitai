@@ -93,7 +93,7 @@ describe('exportPostgres', () => {
   it('writes every row across pages, and the manifest counts what was written', async () => {
     const { files, writer } = memoryWriter();
     const { client, statements, released } = fakeClient({
-      rowsFor: (t) => (t === 'Comment' ? comments : []),
+      rowsFor: (t) => (t === 'CommentV3' ? comments : []),
     });
     const result = await exportPostgres({
       userId: SUBJECT,
@@ -102,8 +102,8 @@ describe('exportPostgres', () => {
       onNote: () => undefined,
       onError: () => undefined,
     });
-    const entry = result.files.find((f) => f.file === 'data/postgres/Comment.csv');
-    const csv = files.get('data/postgres/Comment.csv') ?? '';
+    const entry = result.files.find((f) => f.file === 'data/postgres/CommentV3.csv');
+    const csv = files.get('data/postgres/CommentV3.csv') ?? '';
     const dataLines = csv.split('\r\n').filter(Boolean).length - 1;
     expect(dataLines).toBe(comments.length);
     expect(entry?.rows).toBe(comments.length);
@@ -124,8 +124,8 @@ describe('exportPostgres', () => {
     const { client, statements } = fakeClient({
       rowsFor: () => [],
       catalog: [
-        { table: 'Comment', column: null, est: '90000000' },
-        { table: 'Comment', column: 'id', est: '90000000' },
+        { table: 'CommentV3', column: null, est: '90000000' },
+        { table: 'CommentV3', column: 'id', est: '90000000' },
         { table: 'Article', column: null, est: '90000000' },
         { table: 'Article', column: 'userId', est: '90000000' },
       ],
@@ -139,9 +139,9 @@ describe('exportPostgres', () => {
     });
     const status = (t: string) =>
       result.files.find((f) => f.file === `data/postgres/${t}.csv`)?.status;
-    expect(status('Comment')).toBe('not-included');
+    expect(status('CommentV3')).toBe('not-included');
     expect(status('Article')).toBe('complete');
-    expect(statements.some((q) => /CURSOR FOR SELECT .*? FROM "Comment" WHERE/s.test(q))).toBe(
+    expect(statements.some((q) => /CURSOR FOR SELECT .*? FROM "CommentV3" WHERE/s.test(q))).toBe(
       false
     );
   });
@@ -165,7 +165,7 @@ describe('exportPostgres', () => {
     const { files, writer } = memoryWriter();
     const errors: string[] = [];
     const { client } = fakeClient({
-      rowsFor: (t) => (t === 'Comment' ? comments.slice(0, 2) : []),
+      rowsFor: (t) => (t === 'CommentV3' ? comments.slice(0, 2) : []),
       failOn: new Set(['Article']),
     });
     const result = await exportPostgres({
@@ -179,14 +179,14 @@ describe('exportPostgres', () => {
       'unavailable'
     );
     expect(errors).toEqual(['Article']);
-    expect(files.has('data/postgres/Comment.csv')).toBe(true);
+    expect(files.has('data/postgres/CommentV3.csv')).toBe(true);
   });
 
   it('fails the whole attempt when a table fails after its file started', async () => {
     const { writer } = memoryWriter();
     const { client } = fakeClient({
-      rowsFor: (t) => (t === 'Comment' ? comments : []),
-      failMidStream: 'Comment',
+      rowsFor: (t) => (t === 'CommentV3' ? comments : []),
+      failMidStream: 'CommentV3',
     });
     await expect(
       exportPostgres({

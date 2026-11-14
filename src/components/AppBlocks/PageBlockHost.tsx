@@ -199,6 +199,7 @@ import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
+import { hostRefusal, navigateDiagnostic } from './appFeedbackDiagnostics';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -1404,7 +1405,7 @@ export function PageBlockHost({
     enabled: !reviewMode,
   });
 
-  const { send, onMessage, nack, reportNoToken } = usePostMessage({
+  const { send, onMessage, nack, reportNoToken, recentFailures, noteHostEvent } = usePostMessage({
     iframeRef,
     expectedOrigin,
     opaqueOrigin,
@@ -2285,12 +2286,18 @@ export function PageBlockHost({
       // stake on that coupling enough to make it structural instead: a future
       // mount that forgets `reviewMode` would otherwise let UNREVIEWED code move a
       // moderator's tab anywhere on the site.
-      if (reviewMode) return;
+      if (reviewMode) {
+        noteHostEvent(hostRefusal('NAVIGATE', 'review_mode', Date.now()));
+        return;
+      }
       // FIFTH status-gated handler (the four money/permission gates are the
       // others) — it reads the same render-body mirror for the same reason. No
       // NACK: NAVIGATE is fire-and-forget with no requestId, so a drop is
       // incapable of hanging the block.
-      if (readGateStatus() !== 'ready') return; // pre-handshake blocks can't drive nav
+      if (readGateStatus() !== 'ready') {
+        noteHostEvent(hostRefusal('NAVIGATE', 'not_ready', Date.now())); // pre-handshake blocks can't drive nav
+        return;
+      }
       // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — the total record is
       // what makes a NEW surface a compile error rather than a silent inheritance of the
       // public base.
@@ -2342,6 +2349,7 @@ export function PageBlockHost({
         // the block's own path (see `resolveNavigateRequest`).
         launchOrigin,
       });
+      noteHostEvent(navigateDiagnostic(raw, req, Date.now()));
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
       // SYNCHRONOUS CALL BELOW IS LOAD-BEARING. Three facts, all MEASURED in
@@ -2389,7 +2397,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface, launchOrigin, noteHostEvent]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
@@ -5987,6 +5995,8 @@ export function PageBlockHost({
         hostSurface={surface}
         canOpenPage={canOpenPage}
         launchOrigin={launchOrigin}
+        getRecentFailures={recentFailures}
+        appRoute={subPath ? `/${subPath}` : '/'}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
           incident that motivated it, is in `resolveHostConsentNotice`

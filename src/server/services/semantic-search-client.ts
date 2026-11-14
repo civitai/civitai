@@ -131,6 +131,8 @@ export type CandidateSource = (args: {
   filter: CandidateFilter;
   offset: number;
   limit: number;
+  // newest: the service orders its best matches by date and pages within them. Text queries only.
+  sort?: 'relevance' | 'newest';
 }) => Promise<{ ids: number[]; correctedQuery?: string }>;
 
 async function searchServiceRequest<T>(path: string, body: unknown, notFound: string): Promise<T> {
@@ -163,7 +165,7 @@ export function searchServiceSource(
   collection: SearchCollection,
   { notFoundMessage = 'Not found' }: { notFoundMessage?: string } = {}
 ): CandidateSource {
-  return async ({ query, filter, offset, limit }) => {
+  return async ({ query, filter, offset, limit, sort }) => {
     const qdrantFilter = buildQdrantFilter(collection, filter);
     if ('similarTo' in query) {
       // The source is always its own best match.
@@ -191,7 +193,15 @@ export function searchServiceSource(
       hits: { id: number | string }[];
     }>(
       '/v1/search',
-      { collection, query: query.text, filter: qdrantFilter, offset, limit },
+      {
+        collection,
+        query: query.text,
+        filter: qdrantFilter,
+        offset,
+        limit,
+        // Only when asked: a relevance search sends the request it always has.
+        ...(sort === 'newest' ? { sort } : {}),
+      },
       notFoundMessage
     );
     return {
@@ -222,6 +232,7 @@ export async function collectPage<T extends { id: number }>({
   excluded?: Set<number>;
 }) {
   const items: T[] = [];
+  const kept = new Set<number>();
   let position = offset;
   let exhausted = false;
 
@@ -244,7 +255,10 @@ export async function collectPage<T extends { id: number }>({
       if (items.length >= limit) break;
       consumed++;
       const item = byId.get(id);
-      if (item && !excluded.has(id)) items.push(item);
+      // Ties in the ranking reorder between requests, so a later round can repeat an earlier id.
+      if (!item || excluded.has(id) || kept.has(id)) continue;
+      kept.add(id);
+      items.push(item);
     }
     position += consumed;
     if (ids.length < batchSize && consumed === ids.length) {
@@ -258,12 +272,16 @@ export async function collectPage<T extends { id: number }>({
 }
 
 /** Tag names, as search URLs and pickers carry them, to ids; a name that does not exist is dropped. */
-export async function resolveTagIds(names: string[]) {
-  const tags = await dbRead.tag.findMany({
+/** Tag names (case-insensitively) to the tags they name; a name that does not exist is absent. */
+export async function resolveTags(names: string[]) {
+  return dbRead.tag.findMany({
     where: { name: { in: names.map((name) => name.toLowerCase()) } },
-    select: { id: true },
+    select: { id: true, name: true },
   });
-  return tags.map((x) => x.id);
+}
+
+export async function resolveTagIds(names: string[]) {
+  return (await resolveTags(names)).map((x) => x.id);
 }
 
 /** Usernames to user ids; a name that does not exist is dropped. */

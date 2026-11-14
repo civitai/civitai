@@ -11,7 +11,6 @@ export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
 export { createAuthVerifier } from './verify';
 export type { AuthVerifier, AuthVerifierConfig } from './verify';
-export { decodeLegacySessionCookie } from './legacy-cookie'; // read legacy next-auth civitai-token (no next-auth dep)
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.
 export { createSessionClient } from './session-client'; // token→user + invalidate/refresh
@@ -55,8 +54,17 @@ export {
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
-export { createRevocationCheck } from './revocation-check';
-export type { RevocationCheckConfig } from './revocation-check';
+export {
+  createRevocationCheck,
+  DEFAULT_REVOCATION_READ_TIMEOUT_MS,
+  revocationReadTimeoutMs,
+} from './revocation-check';
+export type {
+  RevocationCheckConfig,
+  RevocationDegradedVerdict,
+  RevocationFailureReason,
+  RevocationOutcome,
+} from './revocation-check';
 export {
   buildAuthorizeRedirect,
   completeFirstPartyCallback,

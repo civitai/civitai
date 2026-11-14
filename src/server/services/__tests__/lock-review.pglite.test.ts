@@ -76,6 +76,10 @@ const { createEntityAppealHandler } = await import('~/server/controllers/report.
 const actualReport = await vi.importActual<typeof ReportService>(
   '~/server/services/report.service'
 );
+const { moderationActionEmail: actualEmail } = await vi.importActual<typeof Email>(
+  '~/server/email/templates'
+);
+const { reportNotifications } = await import('~/server/notifications/report.notifications');
 
 const MODEL = 71;
 const OWNER = 82;
@@ -269,7 +273,7 @@ describe('approving a lock review', () => {
     expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
     expect(mocks.settleResolvedAppeals).toHaveBeenCalledWith(
       [expect.objectContaining({ id: 1, userId: OWNER, status: 'Approved' })],
-      { status: AppealStatus.Approved }
+      { status: AppealStatus.Approved, lockReview: { unlocked: ['nsfw'] } }
     );
     expect(loggedActivities()).toEqual(['approveLockReview', 'unlockProperty:nsfw']);
   });
@@ -465,32 +469,13 @@ describe('rejecting a lock review', () => {
     expect(loggedActivities()).toEqual(['rejectLockReview']);
   });
 
-  it('tells the owner in the standard rejection words, never naming a hold', async () => {
+  it('tells the owner without naming a hold', async () => {
     await seed({ locked: ['nsfw'], held: true });
     await expect(approve()).rejects.toThrow(LOCK_REVIEW_HELD);
     await reject();
-    const [claimed, options] = mocks.settleResolvedAppeals.mock.calls[0];
 
-    dbMock.dbRead.user.findMany.mockResolvedValue([
-      { id: OWNER, email: 'owner@example.test', username: 'owner' },
-    ] as never);
-    await actualReport.settleResolvedAppeals(claimed, options);
-
-    expect(mocks.createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: OWNER,
-        type: 'entity-appeal-resolved',
-        details: {
-          entityType: EntityType.Model,
-          entityId: MODEL,
-          status: AppealStatus.Rejected,
-          resolvedMessage: undefined,
-        },
-      })
-    );
-    expect(mocks.sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'appeal-rejected' })
-    );
+    const told = await ownerNotice();
+    expect(told.message).toBe(DECLINED);
     expect(
       JSON.stringify([mocks.createNotification.mock.calls, mocks.sendEmail.mock.calls])
     ).not.toMatch(/hold/i);
@@ -541,6 +526,119 @@ describe('rejecting a lock review', () => {
     } as never);
 
     expect((await getLockReviewState({ modelId: MODEL, userId: OWNER }))?.reopensAt).toBeNull();
+  });
+});
+
+const APPROVED = 'Your request to review the locked settings on your model was approved.';
+const DECLINED =
+  'Your request to review the locked settings on your model was declined, so those settings stay locked.';
+
+/** What the owner reads of the ruling: the in-app notice and the email, rendered as sent. */
+async function ownerNotice() {
+  const [claimed, options] = mocks.settleResolvedAppeals.mock.calls[0];
+  dbMock.dbRead.user.findMany.mockResolvedValue([
+    { id: OWNER, email: 'owner@example.test', username: 'owner' },
+  ] as never);
+  await actualReport.settleResolvedAppeals(claimed, options);
+
+  expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+  const [notification] = mocks.createNotification.mock.calls[0];
+  const rendered = reportNotifications['entity-appeal-resolved'].prepareMessage(
+    notification as never
+  );
+  const [email] = mocks.sendEmail.mock.calls[0];
+  return {
+    notification: notification as { type: string; key: string },
+    message: rendered?.message,
+    url: rendered?.url,
+    email: actualEmail.getHtml(email as never),
+  };
+}
+
+describe('telling the owner of a lock review ruling', () => {
+  it('names the settings an approval unlocked, never the reason or notes', async () => {
+    await seed({ locked: ['nsfw', 'tags', 'category'], asked: ['tags', 'nsfw'] });
+    await resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: true,
+      userId: MODERATOR,
+      resolvedReason: 'lock-not-needed',
+      internalNotes: 'mod-only note',
+    });
+
+    const told = await ownerNotice();
+    const copy = `${APPROVED} You can now change: Is intended to produce mature themes, Tags.`;
+    expect(told.message).toBe(copy);
+    expect(told.email).toContain(copy);
+    expect(told.url).toBe(`/models/${MODEL}`);
+    expect(told.notification).toMatchObject({
+      type: 'entity-appeal-resolved',
+      key: expect.stringMatching(new RegExp(String.raw`^entity-appeal-resolved:Model:${MODEL}:1:`)),
+    });
+    expect(JSON.stringify([told.message, told.email])).not.toMatch(
+      /lock[- ]not[- ]needed|mod-only/i
+    );
+  });
+
+  it('ends at "approved" when nothing it asked about was still locked', async () => {
+    await seed({ locked: ['tags'], asked: ['nsfw'] });
+    await approve();
+
+    const told = await ownerNotice();
+    expect(told.message).toBe(APPROVED);
+    expect(told.email).toContain(APPROVED);
+    expect(told.email).not.toContain('You can now change');
+  });
+
+  // The Moderation Lead's call: one line for every rejection reason, so no reason reads as a verdict.
+  it('declines in one line whatever the reason, never the reason or notes', async () => {
+    await seed({ locked: ['nsfw'] });
+    await resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: false,
+      userId: MODERATOR,
+      resolvedReason: 'lock-stands',
+      internalNotes: 'mod-only note',
+    });
+
+    const told = await ownerNotice();
+    expect(told.message).toBe(DECLINED);
+    expect(told.email).toContain(DECLINED);
+    expect(JSON.stringify([told.message, told.email])).not.toMatch(/lock[- ]stands|mod-only/i);
+  });
+});
+
+describe('telling the owner of a flag appeal ruling', () => {
+  it('keeps the appeal wording, which only a lock review replaces', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: OWNER, email: 'owner@example.test', username: 'owner' },
+    ] as never);
+    await actualReport.settleResolvedAppeals(
+      [
+        {
+          id: 2,
+          entityId: MODEL,
+          entityType: EntityType.Model,
+          resolvedAt: new Date(),
+          buzzTransactionId: null,
+          status: AppealStatus.Rejected,
+          userId: OWNER,
+          createdAt: new Date(),
+        },
+      ],
+      { status: AppealStatus.Rejected }
+    );
+
+    const [notification] = mocks.createNotification.mock.calls[0];
+    expect(
+      reportNotifications['entity-appeal-resolved'].prepareMessage(notification as never)?.message
+    ).toBe('Your appeal regarding your Model has been rejected.');
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'appeal-rejected', intro: undefined })
+    );
   });
 });
 

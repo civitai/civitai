@@ -16,14 +16,15 @@ Transpile (raw TS): Next `transpilePackages: ['@civitai/flipt']`, Vite `ssr.noEx
 
 ## Env
 
-| Var | Req | Notes |
-|---|---|---|
-| `FLIPT_URL` | **yes** | Flipt server |
-| `FLIPT_FETCHER_SECRET` | **yes** | client token |
-| `FLIPT_ENVIRONMENT` | no | Flipt environment; defaults to `civitai-app` |
-| `FLIPT_DEPLOYMENT_ID` | no | carried on `config`, for apps that put it in evaluation context |
-| `FLIPT_EVAL_CACHE_TTL_MS` | no | default `10000`; `0` disables the eval cache |
-| `FLIPT_LOCAL_OVERRIDES` | no | dev only — ignored when `NODE_ENV=production` |
+| Var                         | Req     | Notes                                                                                                                                                                                                                    |
+| --------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FLIPT_URL`                 | **yes** | Flipt server                                                                                                                                                                                                             |
+| `FLIPT_FETCHER_SECRET`      | **yes** | client token                                                                                                                                                                                                             |
+| `FLIPT_ENVIRONMENT`         | no      | Flipt environment; defaults to `civitai-app`                                                                                                                                                                             |
+| `FLIPT_DEPLOYMENT_ID`       | no      | carried on `config`, for apps that put it in evaluation context                                                                                                                                                          |
+| `FLIPT_EVAL_CACHE_TTL_MS`   | no      | default `10000`; `0` disables the eval cache                                                                                                                                                                             |
+| `FLIPT_LOCAL_OVERRIDES`     | no      | dev only — ignored when `NODE_ENV=production`                                                                                                                                                                            |
+| `FLIPT_SNAPSHOT_MAX_AGE_MS` | no      | default `0`: the last-known snapshot is OFF, nothing read or written. Set it (e.g. `86400000`, 24h) to turn it on; it is then the oldest stored snapshot a process that cannot reach Flipt at startup will evaluate from |
 
 Env is read lazily: importing this package touches nothing, `createFliptClient()` reads only the
 optional tuning vars, and `FLIPT_URL`/`FLIPT_FETCHER_SECRET` are resolved on the **first evaluation**
@@ -47,17 +48,37 @@ if (await flipt.isEnabled('feed-post-filter', String(userId))) { … }
 const mode = await flipt.getVariant('some-variant-flag', String(userId));
 ```
 
-| Method | Overrides honored | Notes |
-|---|---|---|
-| `isEnabled` | yes | the default boolean read |
-| `getBoolean` | **no** | when the call site must see real Flipt state, not a dev `.env` |
-| `getVariant` | yes | `null` when unmatched |
-| `isEnabledSync` | yes | `null` if the client hasn't initialized — caller falls back |
-| `ensureInitialized` | — | warm it at boot so `isEnabledSync` can answer |
+| Method              | Overrides honored | Notes                                                          |
+| ------------------- | ----------------- | -------------------------------------------------------------- |
+| `isEnabled`         | yes               | the default boolean read                                       |
+| `getBoolean`        | **no**            | when the call site must see real Flipt state, not a dev `.env` |
+| `getVariant`        | yes               | `null` when unmatched                                          |
+| `isEnabledSync`     | yes               | `null` if the client hasn't initialized — caller falls back    |
+| `ensureInitialized` | —                 | warm it at boot so `isEnabledSync` can answer                  |
 
 **Flag keys stay in the app.** This package deliberately ships no flag enum: flags are owned by the
 app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
-`src/server/flipt/client.ts`). Two apps sharing a flag share the *string*, not an import.
+`src/server/flipt/client.ts`). Two apps sharing a flag share the _string_, not an import.
+
+## When Flipt is unreachable
+
+- **Init is bounded and retried in the background.** Every snapshot fetch has a 4s timeout and init
+  a 5s one. Only a process's FIRST attempt is waited on; after a failure, retries (one per 30s
+  cooldown) run in the background and requests answer straight away. A client that arrives after
+  the timeout is closed, so its poller does not leak.
+- **Last-known snapshot (optional, dark by default).** Set `FLIPT_SNAPSHOT_MAX_AGE_MS`, pass
+  `snapshotStore` (or call `setSnapshotStore`), and a process
+  that cannot reach Flipt at startup evaluates from the newest stored snapshot no older than
+  `FLIPT_SNAPSHOT_MAX_AGE_MS`, logging that it did, instead of answering `false` for every flag.
+  It switches to live state as soon as a background retry succeeds. Until then, each failed retry
+  reloads the store and switches to a newer snapshot if one was saved. `FLIPT_SNAPSHOT_MAX_AGE_MS`
+  limits only the first seed: a snapshot in use is never dropped for age, so an outage longer than
+  the limit does not turn every seeded process's flags off at once.
+  Processes with live state keep
+  the store current; `createKvSnapshotStore` builds one over any key-value store with TTLs and holds
+  the write rate near one per 10 minutes across all of them. The monolith's is
+  `src/server/flipt/snapshot-store.ts` (sysRedis).
+- A running process keeps evaluating its last fetched state when polls fail.
 
 ## Gotchas
 
@@ -70,10 +91,11 @@ app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
 - 🔴 **Before changing either cache knob, read `getCacheStats()` — a hit rate alone cannot tell you
   which knob to turn.** The two failure modes look identical from a hit rate and have opposite
   remedies:
+
   - misses dominated by `expiredMisses` → **TTL-bound**: the key was cached and its TTL lapsed, so a
     longer `FLIPT_EVAL_CACHE_TTL_MS` converts those misses into hits.
   - `rotations` climbing → **capacity-bound**: inserts are overflowing `evalCacheMaxEntries`, so
-    entries are evicted *before* they can expire. A longer TTL then recovers **nothing** — it is an
+    entries are evicted _before_ they can expire. A longer TTL then recovers **nothing** — it is an
     inert change that reads as a fix. Raise the ceiling instead.
 
   Note the cache key is `(flag, entityId, context)`, so a per-user `entityId` multiplies the key
@@ -81,6 +103,7 @@ app that gates on them (the monolith's list is `FLIPT_FEATURE_FLAGS` in
   monolith exports these as `civitai_app_flipt_eval_cache_*` (see
   `src/server/metrics/flipt-eval-cache.metrics.ts`); `misses - expiredMisses` is an upper bound on
   cold traffic, not a measurement of it.
+
 - **`buildFliptContext` returns a frozen object, and the client relies on that.** For a frozen
   context the context part of the eval-cache key is built once and reused for every flag evaluated
   with that same object; any other context builds it per call. Extend a built context by spreading it.

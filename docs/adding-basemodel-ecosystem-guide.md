@@ -45,7 +45,7 @@ The basemodel.constants.ts file uses an ecosystem-based architecture with these 
    - Always `support: 'partial'`
 
 6. **Licenses** (`LicenseRecord`): Legal terms for model usage
-   - Has: `id`, `name`, `url`, `notice`, `poweredBy`, `disableMature`
+   - Has: `id`, `name`, `url`, `notice`, `poweredBy`
 
 ---
 
@@ -87,7 +87,7 @@ New Model Request
 4. **What is the license?**
    - Open source? What license? (Apache 2.0, CreativeML, etc.)
    - Commercial restrictions?
-   - NSFW restrictions? (`disableMature: true`)
+   - Mature-content restrictions in the terms of use? Set `matureRestricted` on the base model record (see `docs/nsfw-license-restrictions.md`)
    - License URL/documentation?
    - Any required notices or powered-by text?
 
@@ -181,7 +181,6 @@ export const BM = {
   url: 'https://...',
   notice: 'Optional legal notice text',
   poweredBy: 'Optional powered by text',
-  disableMature: true, // If NSFW content is restricted
 },
 ```
 

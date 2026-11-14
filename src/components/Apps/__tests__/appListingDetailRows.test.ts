@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { getListingBadge } from '~/components/Apps/appListingCardView';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
-import { LISTING_FACET_LABELS } from '~/components/Apps/listingKindLabels';
+import {
+  LISTING_FACET_LABELS,
+  LISTING_REVIEWS_ANCHOR_ID,
+} from '~/components/Apps/listingKindLabels';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -380,6 +383,23 @@ describe('buildListingDetailRows — the reviews row', () => {
       { formatDate: fmt }
     );
     expect(rows.find((r) => r.key === 'reviews')?.value).toBe('No reviews yet');
+  });
+
+  it('reviews present but no percentage (below the threshold) → the counts, never the ladder', () => {
+    // Below LISTING_RECOMMEND_PCT_MIN_REVIEWS the server sends `recommendPct: null` with
+    // reviews present. Before, one positive review read "Positive (1)" here.
+    const rows = buildListingDetailRows(
+      detail({
+        recommend: { recommendedCount: 2, notRecommendedCount: 1, recommendPct: null },
+        reviewCount: 3,
+      }),
+      { formatDate: fmt }
+    );
+    const reviews = rows.find((r) => r.key === 'reviews');
+    expect(reviews?.value).toBe('3 reviews · 2 recommend');
+    expect(reviews?.color).toBeUndefined();
+    // There ARE reviews to jump to, so the row links to them.
+    expect(reviews?.anchorId).toBe(LISTING_REVIEWS_ANCHOR_ID);
   });
 
   it("a low rating carries the ladder's own colour, not a hardcoded green", () => {

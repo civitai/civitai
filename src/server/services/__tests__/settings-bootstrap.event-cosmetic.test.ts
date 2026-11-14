@@ -43,7 +43,6 @@ vi.mock('~/server/auth/bearer-token', () => ({
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => hub.result),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 

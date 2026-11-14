@@ -1,3 +1,4 @@
+import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as ModeModule from '~/server/services/text-scan/mode';
@@ -42,7 +43,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -91,6 +91,8 @@ vi.mock('~/server/services/subscriptions.service', () => ({
 }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
+  bustUserSettings: vi.fn(),
+  patchUserSettings: vi.fn(),
   deleteBasicDataForUser: vi.fn(),
   getCosmeticsForUsers: vi.fn(),
   getProfilePicturesForUsers: vi.fn(),
@@ -165,12 +167,17 @@ import { MODERATION_FLOW_META_KEYS } from '~/server/utils/minor-flag-meta';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
-import { upsertModel } from '~/server/services/model.service';
+import {
+  copyGallerySettingsToAllModelsByUser,
+  heldGalleryLevel,
+  upsertModel,
+} from '~/server/services/model.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { recordedOwnership } from './model-ownership-db';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -1514,5 +1521,83 @@ describe("a moderator's untick of a text-scan POI flag", () => {
     mockStored(scanFlagged([]));
     await formLift({ poi: true, sfwOnly: true });
     expect(updateData().lockedProperties).toEqual(['nsfw', 'sfwOnly']);
+  });
+});
+
+// RESTRICT sites of the minor content rule in its ceiling form: the gallery level a flagged model
+// is written and served at. Expected values are the levels as they stood before the gates shared
+// the rule (PG and PG-13, flag 3).
+describe('flagged model gallery level', () => {
+  const SFW = 3;
+  const FLAGS = [
+    ['minor', { minor: true }, SFW],
+    ['SFW-only', { sfwOnly: true }, SFW],
+    ['minor and SFW-only', { minor: true, sfwOnly: true }, SFW],
+  ] as const;
+
+  it.each(FLAGS)('a new %s model is written at safe for work', async (_, flags, level) => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, ...flags });
+    expect((createData().gallerySettings as { level: number }).level).toBe(level);
+  });
+
+  it.each(FLAGS)('a save flagging the model %s writes safe for work', async (_, flags, level) => {
+    mockStored();
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, ...flags });
+    expect((updateData().gallerySettings as { level: number }).level).toBe(level);
+  });
+
+  it.each([
+    [{ minor: true, sfwOnly: false }, undefined, SFW],
+    [{ minor: true, sfwOnly: false }, 0, SFW],
+    [{ minor: true, sfwOnly: false }, 1, 1],
+    [{ minor: true, sfwOnly: false }, 31, SFW],
+    [{ minor: true, sfwOnly: false }, 28, SFW],
+    [{ minor: false, sfwOnly: true }, 2, 2],
+    [{ minor: false, sfwOnly: true }, 28, SFW],
+  ])('a %o model with stored level %s serves %i', (model, stored, served) => {
+    expect(heldGalleryLevel(stored, model)).toBe(served);
+  });
+
+  it('copying gallery settings to every model keeps each flagged model at safe for work', async () => {
+    const pg = new PGlite();
+    await pg.exec(`CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, minor boolean NOT NULL,
+      "sfwOnly" boolean NOT NULL, "gallerySettings" jsonb)`);
+    const rows = [
+      [1, false, false],
+      [2, true, false],
+      [3, false, true],
+      [4, true, true],
+    ] as const;
+    for (const [id, minor, sfwOnly] of rows)
+      await pg.query(
+        `INSERT INTO "Model" VALUES ($1, ${OWNER_ID}, $2, $3, '{"level": 31}'::jsonb)`,
+        [id, minor, sfwOnly]
+      );
+    const raw = pgliteRaw(pg);
+    mockDbWrite.user.findUnique.mockResolvedValue({ settings: {} } as never);
+    mockDbWrite.model.findMany.mockResolvedValue([] as never);
+    mockDbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+
+    try {
+      await copyGallerySettingsToAllModelsByUser({
+        settings: { level: 28, users: [], tags: [] },
+        userId: OWNER_ID,
+      });
+
+      const { rows: levels } = await pg.query<{ id: number; level: number }>(
+        `SELECT id, ("gallerySettings"->>'level')::int AS level FROM "Model" ORDER BY id`
+      );
+      expect(levels).toEqual([
+        { id: 1, level: 28 },
+        { id: 2, level: SFW },
+        { id: 3, level: SFW },
+        { id: 4, level: SFW },
+      ]);
+    } finally {
+      mockDbWrite.$executeRaw.mockReset();
+      mockDbWrite.user.findUnique.mockReset();
+      mockDbWrite.model.findMany.mockReset();
+      await pg.close();
+    }
   });
 });

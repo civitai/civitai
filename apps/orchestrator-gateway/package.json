@@ -1,6 +1,6 @@
 {
   "name": "@civitai/orchestrator-gateway",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@civitai/auth": "workspace:*",
-    "@civitai/orchestration-client": "0.2.0",
+    "@civitai/orchestration-client": "0.2.4",
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/redis": "workspace:*",

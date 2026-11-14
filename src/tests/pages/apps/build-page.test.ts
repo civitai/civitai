@@ -9,13 +9,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * changed row.
  */
 
-const { captured, devTunnelEnabled, runnerConfigured, serverEnv, setHeader } = vi.hoisted(() => ({
-  serverEnv: { APP_ASSISTANT_SANDBOX_URL: undefined as string | undefined },
-  captured: { fn: null as null | ((c: unknown) => Promise<unknown>) },
-  devTunnelEnabled: vi.fn(async () => true),
-  runnerConfigured: vi.fn(() => true),
-  setHeader: vi.fn(),
-}));
+const { captured, devTunnelEnabled, hibernateEnabled, runnerConfigured, serverEnv, setHeader } =
+  vi.hoisted(() => ({
+    serverEnv: { APP_ASSISTANT_SANDBOX_URL: undefined as string | undefined },
+    captured: { fn: null as null | ((c: unknown) => Promise<unknown>) },
+    devTunnelEnabled: vi.fn(async () => true),
+    hibernateEnabled: vi.fn(async (_opts: { user?: { id: number } | null }) => false),
+    runnerConfigured: vi.fn(() => true),
+    setHeader: vi.fn(),
+  }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: (opts: { resolver: (c: unknown) => Promise<unknown> }) => {
@@ -25,6 +27,7 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksDevTunnelEnabled: devTunnelEnabled,
+  isAppHibernateEnabled: hibernateEnabled,
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantWorkspace', () => ({
   AppAssistantWorkspace: () => null,
@@ -56,6 +59,7 @@ const ASSISTANT_PROPS = {
     sandboxUrl: null,
     subagents: false,
     remoteRunner: false,
+    hibernate: false,
   },
 };
 
@@ -66,6 +70,7 @@ async function resolve(features: Record<string, boolean>, user: User | null) {
 beforeEach(() => {
   setHeader.mockClear();
   devTunnelEnabled.mockResolvedValue(true);
+  hibernateEnabled.mockResolvedValue(false);
   runnerConfigured.mockReturnValue(true);
   serverEnv.APP_ASSISTANT_SANDBOX_URL = undefined;
 });
@@ -155,6 +160,13 @@ describe('/apps/build — the assistant view’s props', () => {
     expect(await resolve(ASSISTANT, MEMBER)).toMatchObject({ props: { remoteRunner: false } });
     runnerConfigured.mockReturnValue(false);
     expect(await resolve(remote, MEMBER)).toMatchObject({ props: { remoteRunner: false } });
+  });
+
+  it('shows sleeping apps only with the app-hibernate flag, judged for the viewer', async () => {
+    expect(await resolve(ASSISTANT, MEMBER)).toMatchObject({ props: { hibernate: false } });
+    hibernateEnabled.mockImplementation(async ({ user }) => user?.id === MEMBER.id);
+    expect(await resolve(ASSISTANT, MEMBER)).toMatchObject({ props: { hibernate: true } });
+    expect(await resolve(ASSISTANT, MODERATOR)).toMatchObject({ props: { hibernate: false } });
   });
 
   it('passes the sandbox service URL from the server env, read at request time', async () => {

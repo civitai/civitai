@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
@@ -32,6 +32,9 @@
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
   import { JUNK_TAGS } from '$lib/autolabel-exclude';
+  import type { TrainingRunPayload } from '$lib/backend';
+  import { newSubmitKey } from '$lib/submit-key';
+  import { watchReadiness, type ReadinessView } from './uploadReadiness';
 
   let {
     prices,
@@ -114,6 +117,121 @@
       : images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
   );
 
+  // The blobs the submit sends (buildTrainingRuns / pairItems), keyed order-free.
+  const datasetBlobIds = $derived(
+    trainsPairs
+      ? pairItems(pairs).map((i) => i.air)
+      : images.filter((i) => i.status === 'uploaded' && !!i.blobId).map((i) => i.blobId!)
+  );
+  const datasetKey = $derived([...datasetBlobIds].sort().join('\n'));
+  // The server's count under the v2 rating, for the dataset it was made for. Until it answers, or when
+  // the rating is off for this user, Review counts from the upload rating as before.
+  let ratedMature = $state<{ key: string; count: number } | null>(null);
+  const RATING_POLLS = 6;
+  const RATING_POLL_MS = 5000;
+  $effect(() => {
+    // After the readiness wait, so Review never reads every file for both at once.
+    if (step !== 3 || !readinessSettled) return;
+    const be = backend();
+    if (!be.datasetRating) return;
+    const ids = datasetBlobIds;
+    const key = datasetKey;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = async (poll: number) => {
+      try {
+        const res = await be.datasetRating!(ids);
+        if (stopped || !res.enabled) return;
+        ratedMature = { key, count: res.matureCount };
+        if (res.unrated > 0 && poll < RATING_POLLS)
+          timer = setTimeout(() => void ask(poll + 1), RATING_POLL_MS);
+      } catch {
+        // the upload rating's count stands
+      }
+    };
+    void ask(1);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  });
+  const reviewMatureCount = $derived(
+    ratedMature?.key === datasetKey ? ratedMature.count : matureCount
+  );
+
+  // Review holds Start until the orchestrator would take every dataset file, for the dataset it was made for.
+  let readiness = $state<{ key: string; view: ReadinessView } | null>(null);
+  // "Check again" bumps this to start a fresh wait.
+  let readinessRound = $state(0);
+  const readinessSupported = !!backend().datasetReadiness && !!backend().datasetReadyToTrain;
+  $effect(() => {
+    if (step !== 3 || !readinessSupported) return;
+    const be = backend();
+    // Keyed on the dataset, not the array: a re-derived array of the same files must not restart the wait.
+    const key = datasetKey;
+    void readinessRound;
+    const stop = watchReadiness(
+      untrack(() => datasetBlobIds),
+      {
+        probe: (blobIds) => be.datasetReadiness!(blobIds),
+        check: (run) => be.datasetReadyToTrain!(run),
+        buildRun: () => untrack(readinessRun),
+        onView: (view) => (readiness = { key, view }),
+      }
+    );
+    return () => {
+      stop();
+      readiness = null;
+    };
+  });
+  // Until the wait reports for this dataset, Start is held.
+  const readinessView = $derived<ReadinessView>(
+    readiness?.key === datasetKey
+      ? readiness.view
+      : readinessSupported
+        ? { kind: 'checking', ready: 0, total: datasetBlobIds.length }
+        : { kind: 'off' }
+  );
+  const readinessSettled = $derived(
+    readinessView.kind === 'ready' || readinessView.kind === 'off'
+  );
+  // An edit pair goes as a whole, so Remove counts the pairs it takes out.
+  const readinessUnusableCount = $derived.by(() => {
+    if (readinessView.kind !== 'unusable') return undefined;
+    const gone = new Set(readinessView.blobIds);
+    if (!trainsPairs) return gone.size;
+    return pairs.filter((p) => gone.has(p.before.blobId ?? '') || gone.has(p.after?.blobId ?? ''))
+      .length;
+  });
+
+  /** The first run as the submit would send it, for the readiness whatif. */
+  function readinessRun(): TrainingRunPayload | undefined {
+    const run = selection?.runs[0];
+    const params = run && runParams[runParamsKey(run)];
+    if (!selection || !run || !params) return undefined;
+    const edit = trainsPairs ? { items: pairItems(pairs), pairs: readyPairs.length } : undefined;
+    return buildTrainingRuns(
+      selection,
+      images,
+      runTrigger,
+      reviewName,
+      [{ run, params }],
+      samplePrompts,
+      ['yellow', 'blue'],
+      labelMode,
+      edit
+    )[0];
+  }
+
+  function removeDatasetFiles(blobIds: string[]) {
+    const gone = new Set(blobIds);
+    if (trainsPairs)
+      pairs = pairs.filter(
+        (p) => !gone.has(p.before.blobId ?? '') && !gone.has(p.after?.blobId ?? '')
+      );
+    else images = images.filter((i) => !gone.has(i.blobId ?? ''));
+  }
+
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
     if (!selection) return [];
@@ -189,6 +307,10 @@
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
   // to watch it live — a single run opens its detail, a sweep goes to the list. Errors propagate to
   // ReviewStep, which shows them on the Start button.
+  // One key per batch, kept across a failed Start so a retry finds the runs a lost response hid
+  // instead of charging them again; replaced once a Start lands. Run i's key is this plus its index.
+  let submitKey = newSubmitKey();
+
   async function start(
     launched: LaunchedRun[],
     prompts: SamplePrompt[],
@@ -211,12 +333,15 @@
       labelMode,
       edit
     );
-    const { workflowIds: ids, failure } = await backend().submitTraining(
-      stampMature(runs, matureAck, reviewedMature)
-    );
+    const keyed = stampMature(runs, matureAck, reviewedMature).map((run, i) => ({
+      ...run,
+      submitKey: `${submitKey}${i.toString(16).padStart(4, '0')}`,
+    }));
+    const { workflowIds: ids, failure } = await backend().submitTraining(keyed);
+    submitKey = newSubmitKey();
     if (failure)
       submitNotice.set(
-        `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
+        `Started ${ids.length} of ${runs.length} runs. The rest may not have started (${failure}); check your runs list before starting them again.`
       );
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
@@ -331,7 +456,11 @@
       bind:acknowledgedAdvanced
       imageCount={trainableCount}
       {trainsPairs}
-      {matureCount}
+      matureCount={reviewMatureCount}
+      readiness={readinessView}
+      {readinessUnusableCount}
+      onCheckReadinessAgain={() => readinessRound++}
+      onRemoveFiles={removeDatasetFiles}
       onStart={start}
       onBack={() => (step = 2)}
       onShowMature={() => {

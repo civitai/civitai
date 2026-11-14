@@ -4,6 +4,8 @@ import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { HatTurfStandings } from '~/components/HatTurf/HatTurfStandings';
+import { FlagBadge } from '~/components/HatTurf/FlagRace/FlagBadge';
+import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
 import { useTurfFeed, useTurfSummary } from '~/components/HatTurf/TurfSummaryProvider';
 import {
   FALLBACK_COLOR,
@@ -48,8 +50,11 @@ const figureLabel = (figure: BadgeFigure) => {
 
 /** Corner badge for an image's standings. In the `badge-popover` arm, tapping it opens every team's count. */
 export function HatTurfBadge({ imageId, className }: { imageId: number; className?: string }) {
+  // A flag on the home flag row shows its flag badge to everyone, joined or not.
+  const isFlag = !!useFlag(imageId);
   // Cards render by the hundred: unless the viewer joined Hat Turf, none of the badge's hooks should run.
   const joined = !!useTurfFeed()?.joined;
+  if (isFlag) return <FlagBadge imageId={imageId} className={className} />;
   return joined ? <HatTurfBadgeContent imageId={imageId} className={className} /> : null;
 }
 

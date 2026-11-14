@@ -44,7 +44,6 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/auction.service', () => ({
@@ -471,6 +470,33 @@ describe('privateModelFromTraining — moderation-owned meta', () => {
     expect(meta.textModeration).toEqual(STORED_MODERATION_META.textModeration);
     expect(meta.declinedReason).toBe('by mod');
     expect(meta).not.toHaveProperty('takenDownAt');
+  });
+});
+
+describe('privateModelFromTraining — the returned model', () => {
+  // The write keeps the stored moderation records; the row handed back to the caller must not carry them.
+  it.each([
+    ['an owner', owner],
+    ['a moderator', moderator],
+  ])('leaves moderator-only meta out of the response to %s', async (_, user) => {
+    mockStored({
+      meta: { ...STORED_MODERATION_META, profanityMatches: ['x'], systemNsfwLock: { source: 's' } },
+    });
+
+    const result = (await privateFromTraining({ user, meta: { commentsLocked: true } })) as {
+      meta: object;
+    };
+
+    expect(writtenMeta()).toHaveProperty('minorFlagSnapshot');
+    for (const key of [
+      'minorFlagSnapshot',
+      'textScanFlags',
+      'textModeration',
+      'profanityMatches',
+      'systemNsfwLock',
+    ])
+      expect(result.meta).not.toHaveProperty(key);
+    expect(result.meta).toHaveProperty('commentsLocked', true);
   });
 });
 

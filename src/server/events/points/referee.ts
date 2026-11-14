@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { TURF_CLAIM_KEY } from '~/server/events/turf/turf-map';
 import type { EventScoring } from '~/server/events/base.event';
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouseLongQueries as clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -30,6 +30,11 @@ import { sysRedis } from '~/server/redis/client';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { logToAxiom } from '~/server/logging/client';
+import { freezeEventAwards } from '~/server/events/scoring/award-results';
+import {
+  clientAbortAfter,
+  LONG_QUERY_PROGRESS_SETTINGS,
+} from '~/server/events/points/clickhouse-limits';
 import { loadTeamAwards } from '~/server/events/scoring/team-awards';
 import type { TeamAward } from '~/server/events/base.event';
 
@@ -47,18 +52,8 @@ export const REFEREE_CLICKHOUSE_BUDGET_S = 35 * 60;
 // The settle job's lock, shared with the self-heal so the two never settle at once. Keep it under the
 // hourly cron, or a run is skipped while the last still holds it.
 export const SETTLE_LOCK_S = 45 * 60;
-// The client's 300 s request_timeout is a socket idle timer; progress headers keep bytes flowing so
-// a query the budget still allows is not dropped by the client while the server runs on.
-export const REFEREE_PROGRESS_SETTINGS = {
-  send_progress_in_http_headers: 1,
-  http_headers_progress_interval_ms: '60000',
-} as const;
 // One missed hourly settle is normal lag; two means settles are failing.
 export const STALE_CUT_ALERT_MS = 2 * 60 * 60 * 1000;
-
-// Past the server's cap the client gives up too: max_execution_time is checked between blocks, so a
-// query can overrun it, and progress headers keep the idle timer from ever firing.
-const CLIENT_GRACE_S = 30;
 
 // Named in a failure's message, so the job's log can be joined to system.query_log on the node that ran it.
 const refereeQueryId = (event: RefereeEvent, step: 'users' | 'settle') =>
@@ -76,7 +71,7 @@ async function withQueryId<T>(queryId: string, run: () => Promise<T>) {
 function queryLimit(deadline: number) {
   const seconds = Math.floor((deadline - Date.now()) / 1000);
   if (seconds < 1) throw new Error('Referee ClickHouse budget spent');
-  return { seconds, signal: AbortSignal.timeout((seconds + CLIENT_GRACE_S) * 1000) };
+  return { seconds, signal: clientAbortAfter(seconds) };
 }
 
 export type RefereeEvent = {
@@ -86,6 +81,8 @@ export type RefereeEvent = {
   teams: readonly string[];
   previewFrom?: Date;
   scoring: EventScoring;
+  // Finds an entrant's team when an award result is frozen.
+  join?: { claimKey: string; design: string };
 };
 
 export type RefereeRow = {
@@ -243,7 +240,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
       abort_signal: limit.signal,
       clickhouse_settings: {
         max_execution_time: limit.seconds,
-        ...REFEREE_PROGRESS_SETTINGS,
+        ...LONG_QUERY_PROGRESS_SETTINGS,
       },
       query_params: params,
     })
@@ -299,7 +296,7 @@ export async function queryReferee(
       // than fail on memory, and allow it the time.
       clickhouse_settings: {
         max_execution_time: limit.seconds,
-        ...REFEREE_PROGRESS_SETTINGS,
+        ...LONG_QUERY_PROGRESS_SETTINGS,
         max_bytes_before_external_group_by: '8000000000',
         max_bytes_before_external_sort: '8000000000',
       },
@@ -439,7 +436,7 @@ export async function resetLiveBase(
   redis: RefereeRedis,
   event: { name: string },
   season: EventPointSeason,
-  cut: Date,
+  { cut, removeCut }: Pick<Window, 'cut' | 'removeCut'>,
   totals: ReturnType<typeof refereeTotals>
 ) {
   const keys = eventSeasonKeys(event.name, season);
@@ -473,21 +470,28 @@ export async function resetLiveBase(
     else multi.del(keys.base(scope));
   }
   multi.set(keys.cut, String(newCutBucket));
+  multi.set(keys.removeCut, String(removeCut.getTime()));
   await multi.exec();
   return changed;
 }
 
-// Measured against the cut this run should reach, not the clock, so a season past its end never
-// trips it.
+// Measured against the removal cut a run should reach, not the clock, so a fully settled season never
+// trips it. The cut stops at the season's end, so it could not see a stuck finalize window.
 export async function alertOnStaleCut(
   redis: Pick<RefereeRedis, 'get'>,
   event: { name: string },
   season: EventPointSeason,
-  cut: Date
+  removeCut: Date
 ) {
-  const stored = Number((await redis.get(eventSeasonKeys(event.name, season).cut)) ?? 0);
+  const keys = eventSeasonKeys(event.name, season);
+  const [cutBucket, settledTo] = await Promise.all([
+    redis.get(keys.cut),
+    redis.get(keys.removeCut),
+  ]);
+  // Bases written before removeCut existed: their cut is where removals were settled to.
+  const stored = Number(settledTo ?? 0) || Number(cutBucket ?? 0) * LIVE_BUCKET_MS;
   if (!stored) return;
-  const lagMs = cut.getTime() - stored * LIVE_BUCKET_MS;
+  const lagMs = removeCut.getTime() - stored;
   if (lagMs <= STALE_CUT_ALERT_MS) return;
   logToAxiom({
     type: 'error',
@@ -495,7 +499,7 @@ export async function alertOnStaleCut(
     event: event.name,
     season,
     cutAgeMinutes: Math.round(lagMs / 60_000),
-    storedCut: new Date(stored * LIVE_BUCKET_MS).toISOString(),
+    storedCut: new Date(stored).toISOString(),
   }).catch(() => undefined);
 }
 
@@ -510,16 +514,19 @@ export async function runEventPointsReferee(
 ) {
   const window = refereeWindow(event, season, now);
   if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
-  await alertOnStaleCut(sysRedis, event, season, window.cut);
+  await alertOnStaleCut(sysRedis, event, season, window.removeCut);
   const rows = await queryReferee(event, window, deadline);
+  // Before the snapshot: if an award source can't be read, the settle stops here and the last good
+  // base stands, rather than publishing totals that are missing awards.
+  await freezeEventAwards(event, now);
+  // A preview's cut never passes the start, so no award reaches its base.
+  const awards = await loadTeamAwards(event, window.cut);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
   const totals = refereeTotals([...final, ...rows]);
-  // A preview's cut never passes the start, so no award reaches its base.
-  const awards = await loadTeamAwards(event, window.cut);
   for (const { team, points } of awards)
     totals.team.set(team, (totals.team.get(team) ?? 0) + points);
-  const changed = await resetLiveBase(sysRedis, event, season, window.cut, totals);
+  const changed = await resetLiveBase(sysRedis, event, season, window, totals);
   // This runs in a job: its corrections go out before it returns, not on a later window, except the
   // team totals while another server holds their push lease: this server retries those on its own
   // timer a window later, so it relies on the job running in a long-lived app process. A season's

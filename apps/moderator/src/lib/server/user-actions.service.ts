@@ -36,6 +36,7 @@ import {
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { writeMayHaveLanded } from '@civitai/buzz';
 import { getBuzz } from './buzz';
 import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
@@ -452,6 +453,9 @@ export async function voteOnImageTags(
 const countOf = (body: Record<string, unknown>, keys: string[]) =>
   keys.reduce((sum, k) => sum + (typeof body[k] === 'number' ? (body[k] as number) : 0), 0);
 
+// The main app's bulk comment and review endpoints reject more than 500 ids in one call.
+const MOD_ENDPOINT_ID_BATCH = 500;
+
 // BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments), by CommentV3 id.
 export async function bulkCommentAction(input: {
   action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos';
@@ -468,15 +472,40 @@ export async function bulkCommentAction(input: {
   } as const;
   const [path, label] = ENDPOINTS[input.action];
 
-  const result = await callModEndpoint(path, { commentIds: input.commentIds }, label);
-  if (!result.ok) return result;
+  // The panel posts ticks from pages no longer on screen, and the ModActivity row below names `userId`
+  // as their author, so another author's comment refuses. A missing id is a comment deleted since; the
+  // endpoint's short count reports it.
+  const foreign = await dbRead
+    .selectFrom('CommentV3')
+    .select('id')
+    .where('id', 'in', input.commentIds)
+    .where('userId', '!=', input.userId)
+    .limit(1)
+    .execute();
+  if (foreign.length)
+    return { ok: false, error: 'The selection includes another account’s comment. Reload.' };
 
-  // `bulkDelete` answers `{ deleted }`; the ToS pair answer `{ comments: { count, failed? } }`.
-  const section = result.body.comments;
-  const tos = section && typeof section === 'object' ? (section as Record<string, unknown>) : {};
-  const affected =
-    input.action === 'bulkDelete' ? countOf(result.body, ['deleted']) : countOf(tos, ['count']);
-  const failed = input.action === 'restoreFromTos' ? countOf(tos, ['failed']) : 0;
+  let affected = 0;
+  let failed = 0;
+  for (let i = 0; i < input.commentIds.length; i += MOD_ENDPOINT_ID_BATCH) {
+    const commentIds = input.commentIds.slice(i, i + MOD_ENDPOINT_ID_BATCH);
+    const result = await callModEndpoint(path, { commentIds }, label);
+    if (!result.ok) {
+      if (!affected) return result;
+      await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
+      const hidden = failed ? ` ${failed} more could not be restored and stay hidden.` : '';
+      return {
+        ok: false,
+        error: `${affected} of ${input.commentIds.length} went through,${hidden} then: ${result.error} Reload.`,
+      };
+    }
+    // `bulkDelete` answers `{ deleted }`; the ToS pair answer `{ comments: { count, failed? } }`.
+    const section = result.body.comments;
+    const tos = section && typeof section === 'object' ? (section as Record<string, unknown>) : {};
+    affected +=
+      input.action === 'bulkDelete' ? countOf(result.body, ['deleted']) : countOf(tos, ['count']);
+    failed += input.action === 'restoreFromTos' ? countOf(tos, ['failed']) : 0;
+  }
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0 && failed === 0)
@@ -500,8 +529,6 @@ export async function bulkCommentAction(input: {
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
-// The main app's review endpoints reject more than 500 ids in one call.
-const REVIEW_BATCH = 500;
 
 export async function bulkReviewAction(input: {
   action: 'delete' | 'setExclude';
@@ -513,9 +540,9 @@ export async function bulkReviewAction(input: {
   if (!input.reviewIds.length) return { ok: false, error: 'Select at least one review.' };
 
   let affected = 0;
-  for (let i = 0; i < input.reviewIds.length; i += REVIEW_BATCH) {
+  for (let i = 0; i < input.reviewIds.length; i += MOD_ENDPOINT_ID_BATCH) {
     const body: Record<string, unknown> = {
-      reviewIds: input.reviewIds.slice(i, i + REVIEW_BATCH),
+      reviewIds: input.reviewIds.slice(i, i + MOD_ENDPOINT_ID_BATCH),
     };
     if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
 
@@ -924,6 +951,12 @@ export type BuzzColor = (typeof BUZZ_TYPES)[number];
 /** Account 0 is Civitai's own — the counterparty for every moderator grant or deduction. */
 const CIVITAI_ACCOUNT_ID = 0;
 
+/** The shape `newBuzzSubmissionId` mints: hex only, so the ledger key needs no URL encoding. */
+const BUZZ_SUBMISSION_ID = /^[0-9a-f]{16,64}$/;
+export const moderatorBuzzExternalId = (submissionId: string) => `moderator-buzz-${submissionId}`;
+/** Bounded and retried once: a moderator is waiting on this, and it decides whether to write. */
+const BUZZ_LOOKUP_OPTIONS = { timeoutMs: 3_000, retries: 1 };
+
 export async function sendBuzz(input: {
   userId: number;
   amount: number;
@@ -935,13 +968,42 @@ export async function sendBuzz(input: {
   entityType?: string;
   entityId?: number;
   moderatorId: number;
+  /** One per form, minted by the panel (`newBuzzSubmissionId`); a resubmit of the form reuses it. */
+  submissionId: string;
 }): Promise<ActionResult> {
   if (!Number.isInteger(input.amount) || input.amount <= 0)
     return { ok: false, error: 'Amount must be a positive whole number.' };
+  if (!BUZZ_SUBMISSION_ID.test(input.submissionId))
+    return { ok: false, error: 'This form is stale. Reload the page and try again.' };
+
+  // The ledger key for THIS form submission, so the transaction can be found again after a lost
+  // response, and a resubmit of the same form is recognised instead of filed a second time. Whether
+  // the buzz service itself rejects a repeated id is not something this code relies on: the lookup
+  // below is what stops the second write.
+  const externalTransactionId = moderatorBuzzExternalId(input.submissionId);
+  const buzz = getBuzz();
+
+  let existing: Awaited<ReturnType<typeof buzz.getTransactionByExternalId>>;
+  try {
+    existing = await buzz.getTransactionByExternalId(externalTransactionId, BUZZ_LOOKUP_OPTIONS);
+  } catch (e) {
+    console.error('[user-actions] buzz lookup failed', e);
+    // Fail closed: without the lookup there is no telling a fresh form from a resubmitted one.
+    return {
+      ok: false,
+      error: 'The Buzz service is not answering, so nothing was filed. Try again in a minute.',
+    };
+  }
+  if (existing)
+    return {
+      ok: false,
+      error: `This form was already filed (${existing.amount.toLocaleString()} Buzz). Reload the panel to file another.`,
+    };
 
   const toUser = input.action === 'send';
   try {
-    await getBuzz().createTransaction({
+    await buzz.createTransaction({
+      externalTransactionId,
       fromAccountId: toUser ? CIVITAI_ACCOUNT_ID : input.userId,
       toAccountId: toUser ? input.userId : CIVITAI_ACCOUNT_ID,
       fromAccountType: toUser ? 'yellow' : input.buzzType,
@@ -962,7 +1024,30 @@ export async function sendBuzz(input: {
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
-    return { ok: false, error: 'Buzz transaction failed.' };
+    // A write that may have reached the service may still commit after we look: a lookup that
+    // finds nothing then means "not yet", not "never". That is every failure but a connection
+    // that never opened and a refusal the service answered, including the runtime's own transport
+    // timeout (a TypeError), which is how a hung write ends when the client sets no deadline.
+    const mayHaveLanded = writeMayHaveLanded(e);
+    // A timeout or a 5xx does not say the write did not happen, so ask the ledger before telling a
+    // moderator it failed: "failed" invites a resubmit, and a resubmit of a write that landed is a
+    // second grant (or deduction).
+    let landed: boolean | undefined;
+    try {
+      landed = !!(await buzz.getTransactionByExternalId(
+        externalTransactionId,
+        BUZZ_LOOKUP_OPTIONS
+      ));
+    } catch (lookupError) {
+      console.error('[user-actions] buzz lookup after a failed write failed', lookupError);
+    }
+    if (landed === undefined || (!landed && mayHaveLanded))
+      return {
+        ok: false,
+        error:
+          "Buzz did not confirm the transaction, and it may still have gone through. Check the user's transaction history before submitting again; this form will not file it twice.",
+      };
+    if (!landed) return { ok: false, error: 'Buzz transaction failed. Nothing was filed.' };
   }
 
   await logAction(
