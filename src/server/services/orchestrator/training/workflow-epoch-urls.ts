@@ -66,7 +66,9 @@ function refsIn(value: unknown, refs = new Set<string>(), depth = 0): Set<string
     return refs;
   }
   const fields = value as Record<string, unknown>;
-  if (typeof fields.$ref === 'string') refs.add(fields.$ref);
+  // Any casing of the key: whether the orchestrator folds it is not this repo's to know.
+  for (const [key, ref] of Object.entries(fields))
+    if (key.toLowerCase() === '$ref' && typeof ref === 'string') refs.add(ref);
   for (const child of Object.values(fields)) refsIn(child, refs, depth + 1);
   return refs;
 }
@@ -99,8 +101,8 @@ function runsTraining(value: unknown, depth = 0): boolean {
  * A workflow as a caller may see it: a training run's weights are reached through the model and
  * training views, which withhold a deleted or taken-down model's (`withoutEpochUrls`), so this read
  * names them to moderators only. A training step loses its handles; a step that runs one (a
- * `repeat`), or reads from such a step directly or through others, loses its output and metadata,
- * as does a step reading a step the workflow does not name.
+ * `repeat`) or is one of its runs, or reads from such a step directly or through others, loses its
+ * input, output and metadata, as does a step reading a step the workflow does not name.
  */
 export function withoutTrainingWeightHandles<W extends Workflow>(
   workflow: W,
@@ -125,10 +127,16 @@ export function withoutTrainingWeightHandles<W extends Workflow>(
     steps.forEach((_step, index) => {
       if (tainted.has(index)) return;
       const reads = [...refs[index]];
+      const name = steps[index].name;
       if (
         reads.some(
           (ref) => !names.has(ref) || steps.some((s, j) => tainted.has(j) && s.name === ref)
-        )
+        ) ||
+        // A repeat's runs come back as their own steps, named `<repeat>.<n>`.
+        (typeof name === 'string' &&
+          steps.some(
+            (s, j) => tainted.has(j) && typeof s.name === 'string' && name.startsWith(`${s.name}.`)
+          ))
       ) {
         tainted.add(index);
         changed = true;
@@ -140,7 +148,13 @@ export function withoutTrainingWeightHandles<W extends Workflow>(
     steps: steps.map((step, index) => {
       if (!tainted.has(index)) return step;
       if (isTrainingStep(step)) return withoutWeightHandles(step);
-      const { output: _output, preparation: _preparation, metadata: _metadata, ...rest } = step;
+      const {
+        output: _output,
+        preparation: _preparation,
+        metadata: _metadata,
+        input: _input,
+        ...rest
+      } = step;
       return rest;
     }),
   } as W;

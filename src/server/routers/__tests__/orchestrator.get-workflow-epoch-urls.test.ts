@@ -303,6 +303,28 @@ describe('orchestrator.getWorkflow — steps that read a training run', () => {
     expect(await read(steps, true)).toEqual(workflow(steps));
   });
 
+  it("drops a tainted repeat's runs, which come back as steps of their own", async () => {
+    const repeat = {
+      $type: 'repeat',
+      name: 'r',
+      input: {
+        for: { $ref: '$arguments', path: 'items', as: 'item' },
+        template: { $type: 'echo', input: { v: { $ref: 'train', path: 'output.epochs' } } },
+      },
+    };
+    const run = { $type: 'echo', name: 'r.0', input: { v: WEIGHTS }, output: { v: WEIGHTS } };
+    const result = await read([trainingStep, repeat, run]);
+    expect(result.steps[2]).toEqual({ $type: 'echo', name: 'r.0' });
+    expect(JSON.stringify(result)).not.toMatch(/EPOCH1/);
+  });
+
+  it('reads a reference whatever the casing of its key', async () => {
+    const step = { ...reader('m', 'merge', 'x'), input: { e: { $REF: 'train', path: 'output' } } };
+    const result = await read([trainingStep, step]);
+    expect(result.steps[1]).not.toHaveProperty('output');
+    expect(result.steps[1]).not.toHaveProperty('input');
+  });
+
   it('keeps a step that reads no training step', async () => {
     const result = await read([trainingStep, generationStep, reader('m', 'merge', 'gen')]);
     expect(result.steps[2]).toEqual(reader('m', 'merge', 'gen'));
