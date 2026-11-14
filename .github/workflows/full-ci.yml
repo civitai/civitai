@@ -96,16 +96,23 @@ jobs:
           set -euo pipefail
           # Does a pull_request Lint run on this head commit already run the unit shards? See the
           # header. Polled because the `opened` run can be created a few seconds after this job
-          # starts; an API error counts as "not found", which falls back to dispatching.
+          # starts; an API error counts as "not found", which falls back to dispatching. Polling
+          # stops early once a run on this commit has decided its `unit` job and skipped it (the
+          # plain `Unit tests` name): the label was added after that run, which is the case this
+          # dispatch exists for, so waiting out the remaining polls would only delay it.
           covered=""
           for attempt in 1 2 3 4 5 6 7; do
+            decided=false
             for id in $(gh api "repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=20" \
                 --jq '.workflow_runs[].id' || true); do
-              n=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
-                --jq '[.jobs[] | select((.name | test("^Unit tests \\([0-9]+\\)$")) and .conclusion != "cancelled")] | length' \
-                || echo 0)
-              if [ "${n:-0}" -gt 0 ]; then covered=$id; break 2; fi
+              counts=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+                --jq '"\([.jobs[] | select((.name | test("^Unit tests \\([0-9]+\\)$")) and .conclusion != "cancelled")] | length) \([.jobs[] | select(.name == "Unit tests" and .conclusion == "skipped")] | length)"' \
+                || echo "0 0")
+              read -r expanded skipped <<< "$counts"
+              if [ "${expanded:-0}" -gt 0 ]; then covered=$id; break 2; fi
+              if [ "${skipped:-0}" -gt 0 ]; then decided=true; fi
             done
+            if [ "$decided" = true ]; then break; fi
             if [ "$attempt" -lt 7 ]; then sleep 15; fi
           done
           if [ -n "$covered" ]; then
