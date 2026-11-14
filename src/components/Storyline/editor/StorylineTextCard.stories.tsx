@@ -67,14 +67,22 @@ const storylineMocks = {
   'storyline.getPendingForPost': { storylineId: 1, parentChapter: null },
 };
 
-function Frame({ children, mocks = {} }: { children: ReactNode; mocks?: Record<string, unknown> }) {
+function Frame({
+  children,
+  mocks = {},
+  editPost = post,
+}: {
+  children: ReactNode;
+  mocks?: Record<string, unknown>;
+  editPost?: PostDetailEditable;
+}) {
   return (
     <StoryTRPCProvider mocks={{ ...storylineMocks, ...mocks }}>
       <FixedSessionProvider user={{ id: 1, username: 'author' }}>
         <FeatureFlagsProvider flags={flags}>
           <BrowserSettingsProvider>
             <MediaUploadSettingsProvider settings={{ maxItems: 20 }}>
-              <PostEditProvider post={post}>
+              <PostEditProvider post={editPost}>
                 <div className="w-[min(800px,calc(100vw-48px))]">{children}</div>
               </PostEditProvider>
             </MediaUploadSettingsProvider>
@@ -122,6 +130,13 @@ export const Held = () => (
 
 export const ReorderView = () => (
   <Frame>
+    <PostReorderImages />
+  </Frame>
+);
+
+// Rearrange before text items, for comparing the image tiles.
+export const ImagesOnlyReorder = () => (
+  <Frame editPost={{ ...post, texts: [] }}>
     <PostReorderImages />
   </Frame>
 );

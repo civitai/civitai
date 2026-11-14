@@ -120,9 +120,11 @@ function SortableText({ text, sortableId }: { text: PostEditTextDetail; sortable
       {...listeners}
       {...attributes}
     >
-      <div className="line-clamp-6 text-sm">
+      <div className="h-full overflow-hidden text-sm">
         {text.content ? <RenderHtml html={text.content} /> : <em>Empty text</em>}
       </div>
+      {/* Fades a long text out at the tile's foot instead of cutting a line in half. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-gray-0 dark:from-dark-6" />
     </div>
   );
 }

@@ -30,6 +30,7 @@ export function PostImageCards() {
   const items = mergeEditorItems(images, texts);
   const addSlots = canAddText && !showPreview;
   let imageNumber = 0;
+  let textNumber = 0;
 
   return (
     <>
@@ -58,7 +59,10 @@ export function PostImageCards() {
           if (item.type === 'text')
             return (
               <React.Fragment key={`text-${item.text.id}`}>
-                <div data-text-id={item.text.id}>
+                <div data-text-id={item.text.id} className="flex flex-col gap-1">
+                  <Text size="sm" fw={600} c="dimmed">
+                    Text {++textNumber} / {STORYLINE_TEXT_MAX_PER_POST}
+                  </Text>
                   <StorylineTextCard text={item.text} />
                 </div>
                 {slot}
