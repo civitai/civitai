@@ -9,8 +9,6 @@ import {
   scannerHeldIds,
 } from '../review-batch';
 
-// Placeholder patterns: the real list is private and never in the repo.
-
 // Wire contract: ClickHouse already holds scan rows under these hashes. Changing the function
 // orphans every stored row, and each image then reads as unscanned.
 describe('imageAuditContentHash', () => {
@@ -37,6 +35,7 @@ describe('scannerHeldIds', () => {
   });
 });
 
+// Placeholder patterns: the real list is private and never in the repo.
 const PATTERNS = parseBlockedForPatterns(
   '# header comment\n# signal\n^sig.*$\n# known-non-minor\n^benign$\n^bene.*$\n'
 )!;
