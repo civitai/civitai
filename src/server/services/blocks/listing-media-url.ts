@@ -33,14 +33,11 @@ export const LISTING_SCREENSHOT_WIDTH = 1200;
  * 🔴 `optimized: true` IS LOAD-BEARING. Without it the image CDN serves JPEG, which has no alpha
  * channel, so every transparent pixel of an uploaded PNG icon is flattened to BLACK and the icon
  * renders on a black square instead of the card behind it. With it the CDN serves WebP, which
- * keeps alpha. Client `EdgeImage` (`resolveEdgeUrl`) also requests `optimized` for every sized
- * image.
+ * keeps alpha.
  *
  * 🔴 `anim: false` IS LOAD-BEARING TOO. With `optimized` alone the CDN serves ANIMATED WebP for an
- * animated source, so a listing icon or cover would play (one 1200 px animated cover probed at
- * ~1 MB, against ~16 KB as one frame). `getEdgeUrl` emits `anim=false`, and the CDN then serves a
- * single-frame WebP that still keeps alpha: the still first frame these surfaces showed as JPEG,
- * without the black square.
+ * animated source, so a listing icon or cover would play. `getEdgeUrl` emits `anim=false`, and the
+ * CDN then serves a single-frame WebP that still keeps alpha.
  *
  * The listing's social image (`listingSocialImage`) deliberately does NOT use this: link-preview
  * scrapers are not all WebP-capable, so the `og:image` stays JPEG.

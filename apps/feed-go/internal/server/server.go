@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
@@ -44,6 +45,49 @@ type Server struct {
 	// Origin (else Referer) host is not on it is handed to Fallback: the app's isAcceptableOrigin then
 	// answers it (401 in production), and this service never serves one the app would refuse.
 	AllowedOrigins map[string]bool
+
+	// shadowStarts counts shadow samples admitted to the queue; a phase whose start and end readings
+	// differ overlapped another sample (phase CPU is then not attributed).
+	shadowStarts atomic.Uint64
+	// computeFn replaces compute in the shadow path (tests only; nil in production).
+	computeFn func(context.Context, *http.Request) (*computed, error)
+}
+
+// phaseClock is the start of one shadow phase.
+type phaseClock struct {
+	wall   time.Time
+	cpu    time.Duration
+	cpuOK  bool
+	starts uint64
+	solo   bool
+}
+
+// startPhase begins a shadow phase. The caller holds a queue slot, so a queue length of 1 means this
+// is the only sample in flight.
+func (s *Server) startPhase() phaseClock {
+	p := phaseClock{starts: s.shadowStarts.Load()}
+	p.solo = len(s.ShadowQueue) == 1
+	p.cpu, p.cpuOK = processCPU()
+	p.wall = time.Now()
+	return p
+}
+
+// endPhase records a phase's wall time always, and the process CPU delta over it only when the phase
+// was solo throughout: no other sample in flight at its start, none admitted before its end. Process
+// CPU is then this sample's own (plus background runtime/GC work and any scrape, DESIGN.md §10).
+func (s *Server) endPhase(p phaseClock, phase, outcome string) {
+	wall := time.Since(p.wall).Seconds()
+	s.Metrics.ShadowPhase.WithLabelValues(phase, outcome).Observe(wall)
+	if !p.solo || !p.cpuOK {
+		return
+	}
+	cpu, ok := processCPU()
+	if !ok || s.shadowStarts.Load() != p.starts || len(s.ShadowQueue) != 1 {
+		return
+	}
+	s.Metrics.ShadowPhaseCPU.WithLabelValues(phase, outcome).Add((cpu - p.cpu).Seconds())
+	s.Metrics.ShadowPhaseSolo.WithLabelValues(phase, outcome).Inc()
+	s.Metrics.ShadowPhaseSoloWall.WithLabelValues(phase, outcome).Add(wall)
 }
 
 // computed is one answer.
@@ -78,7 +122,7 @@ func (s *Server) compute(ctx context.Context, r *http.Request) (*computed, error
 	restricted := browsing.IsRegionRestricted(s.RegionRules, countryOf(r), r.Header.Get("cf-region-code"), time.Now())
 	cap := browsing.DomainCap(authorized, browsing.CanViewNsfw(color, restricted, isModerator))
 
-	req := feed.Request{Input: in, Cap: cap}
+	req := feed.Request{Input: in, Cap: cap, BannedSession: user != nil && user.Banned}
 	if authorized {
 		req.Viewer = &feed.Viewer{ID: user.ID, IsModerator: isModerator}
 	}
@@ -181,19 +225,24 @@ func (s *Server) ShadowHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	s.shadowStarts.Add(1)
+	decode := s.startPhase()
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxShadowBody))
 	if err != nil {
+		s.endPhase(decode, "decode", "bad_request")
 		<-s.ShadowQueue
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var req ShadowRequest
 	if err := json.Unmarshal(body, &req); err != nil || len(req.Node) == 0 {
+		s.endPhase(decode, "decode", "bad_request")
 		<-s.ShadowQueue
 		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	s.endPhase(decode, "decode", "ok")
 	w.WriteHeader(http.StatusAccepted)
 	go func() {
 		defer func() { <-s.ShadowQueue }()
@@ -225,29 +274,40 @@ func (s *Server) compare(ctx context.Context, req ShadowRequest) {
 		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
 		return
 	}
+	computeFn := s.compute
+	if s.computeFn != nil {
+		computeFn = s.computeFn
+	}
 	start := time.Now()
-	c, err := s.compute(ctx, r)
+	phase := s.startPhase()
+	c, err := computeFn(ctx, r)
 	if err != nil {
 		if reason := fallback.Reason(err); reason != "" {
+			s.endPhase(phase, "compute", "fallback")
 			s.Metrics.Requests.WithLabelValues("shadow", "fallback").Inc()
 			s.Metrics.Fallbacks.WithLabelValues("shadow", reason).Inc()
 			s.Metrics.ShadowResults.WithLabelValues("unsupported").Inc()
 			s.Metrics.Duration.WithLabelValues("shadow", "fallback").Observe(time.Since(start).Seconds())
 			return
 		}
+		s.endPhase(phase, "compute", "error")
 		s.Metrics.Requests.WithLabelValues("shadow", "error").Inc()
 		s.Metrics.ShadowResults.WithLabelValues("go_error").Inc()
 		s.Log.Warn("shadow compute failed", "err", err)
 		return
 	}
+	s.endPhase(phase, "compute", "served")
 	s.Metrics.Requests.WithLabelValues("shadow", "served").Inc()
 	s.Metrics.Duration.WithLabelValues("shadow", "served").Observe(time.Since(start).Seconds())
+	phase = s.startPhase()
 	report, err := shadow.Compare(c.payload, req.Node)
 	if err != nil {
+		s.endPhase(phase, "compare", "bad_request")
 		s.Metrics.ShadowResults.WithLabelValues("bad_request").Inc()
 		return
 	}
 	result := shadow.Classify(report, c.payload, req.Node)
+	s.endPhase(phase, "compare", "ok")
 	s.Metrics.ShadowResults.WithLabelValues(result).Inc()
 	for _, d := range report.Diffs {
 		s.Metrics.ShadowDiffs.WithLabelValues(d.Category, d.Kind).Inc()

@@ -109,7 +109,7 @@ func run(log *slog.Logger) error {
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   &feed.AddonSource{Sys: sys},
 		Config: feed.Config{
-			CreatorPromotions:       cfg.CreatorPromotion,
+			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
 			ImageIndexFeed:          cfg.ImageIndexFeed,
 			VisibleDecorationEvents: cfg.DecorationEvents,
@@ -150,12 +150,12 @@ func run(log *slog.Logger) error {
 		srv.Fallback = proxy
 	}
 
-	public := http.NewServeMux()
-	public.Handle("/api/trpc/"+server.Procedure, srv)
-	internal := http.NewServeMux()
-	internal.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	internal.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	internal.HandleFunc("/internal/shadow/"+server.Procedure, srv.ShadowHandler)
+	public := server.PublicMux(srv)
+	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
+	internal := server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), cfg.Pprof)
+	if cfg.Pprof {
+		log.Info("pprof enabled on the internal listener", "addr", cfg.InternalAddr, "path", "/debug/pprof/")
+	}
 
 	servers := []*http.Server{
 		{Addr: cfg.InternalAddr, Handler: internal, ReadHeaderTimeout: 5 * time.Second},

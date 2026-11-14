@@ -1223,8 +1223,8 @@ export async function isAppBlocksAppReactionsEnabled(opts: {
  * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
  * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, already proven to be the session user.
  *
- * 🔴 SHIPS OFF. The flag does not exist in Flipt when this merges; it is created separately, base
- * `enabled: false`.
+ * 🔴 SHIPS OFF. The flag is created separately in Flipt, base `enabled: false`; until it exists,
+ * `isFlipt` turns the failed evaluation into `false`, so batches stay off.
  */
 export const APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG = 'app-blocks-batch-media-upload';
 

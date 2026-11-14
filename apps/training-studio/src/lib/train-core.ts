@@ -9,7 +9,6 @@ import {
   Air,
   deleteWorkflow,
   getResource,
-  getWorkflow,
   headBlob,
   submitWorkflow,
   updateWorkflow,
@@ -29,6 +28,7 @@ import {
   isTrainingDataNotReady,
   isFlux2,
   queryRecentWorkflows,
+  readWorkflow,
   resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
@@ -884,10 +884,7 @@ async function buildContinuation(
   matureCount: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
-  const { data: wf, error: getError } = await getWorkflow({
-    client,
-    path: { workflowId: opts.workflowId },
-  });
+  const { data: wf, error: getError } = await readWorkflow(client, opts.workflowId);
   if (!wf)
     throw new Error(`keep training: source run not found (${describeSubmitError(getError)})`);
 
@@ -1121,7 +1118,7 @@ export async function renameTraining(
   workflowId: string,
   name: string
 ): Promise<void> {
-  const { data: current, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  const { data: current, error: getError } = await readWorkflow(client, workflowId);
   if (!current) throw new Error(`rename: workflow not found (${describeSubmitError(getError)})`);
 
   const trimmed = name.trim();
@@ -1152,11 +1149,7 @@ export async function deleteTraining(
   client: OrchestratorClient,
   workflowId: string
 ): Promise<void> {
-  const {
-    data: current,
-    error: getError,
-    response,
-  } = await getWorkflow({ client, path: { workflowId } });
+  const { data: current, error: getError, response } = await readWorkflow(client, workflowId);
   // Already gone (another tab, a double click) is the outcome the caller asked for.
   if (response?.status === 404) return;
   if (!current) throw new Error(`delete: workflow not found (${describeSubmitError(getError)})`);

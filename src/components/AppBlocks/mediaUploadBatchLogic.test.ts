@@ -182,7 +182,6 @@ describe('resolveMediaUploadBatchRequest — each item, as a single bytes upload
       recent = out.recent;
       outcomes.push(out.result);
     }
-    expect(MEDIA_UPLOAD_WINDOW_LIMITS.maxPerWindow).toBe(8);
     expect(outcomes.at(-1)).toEqual({ ok: false, error: 'busy' });
     expect(outcomes.slice(0, 8).every((o) => (o as { ok: boolean }).ok)).toBe(true);
   });

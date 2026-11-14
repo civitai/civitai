@@ -160,7 +160,7 @@ func TestBuildPostAndSort(t *testing.T) {
 	// Post 10: fetched images 3 (index 1) then 2 (index 0). Newest sorts the images by index,
 	// but the post-level fields come from image 3 (the first as fetched).
 	p := buildPost(10, []Image{img(3, 10, 1, 4, 77, 5, t0), img(2, 10, 0, 1, 77, 1, t0)}, SortNewest,
-		map[int]Review{77: {Rating: 5, ID: 9}}, false)
+		map[int]Review{77: {Rating: 5, ID: 9}}, false, false)
 	ids := []int64{}
 	imgs, _ := p.wire.Get("images")
 	for _, w := range imgs.([]any) {
@@ -183,9 +183,9 @@ func TestBuildPostAndSort(t *testing.T) {
 
 	// MostReactions: stable on ties, so equal totals keep ascending postId order.
 	posts := []post{
-		buildPost(1, []Image{img(11, 1, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false),
-		buildPost(2, []Image{img(12, 2, 0, 1, 1, 9, t0)}, SortMostReactions, nil, false),
-		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false),
+		buildPost(1, []Image{img(11, 1, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
+		buildPost(2, []Image{img(12, 2, 0, 1, 1, 9, t0)}, SortMostReactions, nil, false, false),
+		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
 	}
 	sortPosts(posts, SortMostReactions)
 	order := []int64{}
@@ -300,4 +300,37 @@ func hasNil(args []any) bool {
 		}
 	}
 	return false
+}
+
+// getAllImagesUncaptured sets `eventDecoration: eventDecorations?.[i.id] ?? null`: the visible hat,
+// else null (never undefined, so no ["undefined"] annotation).
+func TestBuildImagesEventDecoration(t *testing.T) {
+	now := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	rows := []RawImage{
+		{ID: 1, UserID: 5, PostID: 1, PublishedAt: &past},
+		{ID: 2, UserID: 5, PostID: 1, PublishedAt: &past},
+	}
+	hat := superjson.Object{{Key: "id", Val: int64(501)}, {Key: "equippedToId", Val: int64(1)}}
+	got := BuildImages(rows, &Hydrated{Decorations: map[int]superjson.Object{1: hat}}, Viewer{}, now)
+	if len(got) != 2 {
+		t.Fatalf("want 2 images, got %d", len(got))
+	}
+	want := map[int]string{
+		1: `{"json":{"id":501,"equippedToId":1}}`,
+		2: `{"json":null}`,
+	}
+	for _, img := range got {
+		v, ok := img.Wire.Get("eventDecoration")
+		if !ok {
+			t.Fatalf("image %d has no eventDecoration key", img.ID)
+		}
+		out, err := superjson.Serialize(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(out) != want[img.ID] {
+			t.Errorf("image %d: got %s, want %s", img.ID, out, want[img.ID])
+		}
+	}
 }

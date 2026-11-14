@@ -21,10 +21,10 @@ import {
  *      VIEWER's orchestrator token, so every file is the viewer's own upload. Only for a
  *      batch of this viewer and app, while it is open, and at most three times per declared
  *      file, counted by the file's position (`presign_counts`).
- *   3b. Recording is idempotent: a key already in the row is success again, so a retried record
- *      whose first answer was lost is not refused.
  *   3. `recordMediaUploadBatchItem` — one per uploaded file: appends its blob key to the row, at
  *      most one key per file.
+ *   3b. Recording is idempotent: a key already in the row is success again, so a retried record
+ *      whose first answer was lost is not refused.
  *
  * The quota is charged in full by `startMediaUploadBatch`, before any URL exists, and the presign
  * in step 2 is bounded per file the batch declared, so a batch cannot upload more files than it

@@ -1,11 +1,13 @@
 package hydrate
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -105,6 +107,53 @@ func TestParseMetricHashAndStats(t *testing.T) {
 	}
 }
 
+// getImageMetricsObject gives every image whose hash exists an entry, so toImageV2Stats reports a
+// `notFound` marker as zero counts with statsUnknown FALSE (shapeImageMetrics(id, undefined) on the
+// direct read; shapeCachedMetricHash on the image-metrics-swr read). Before this, the marker was left
+// out of the result and served statsUnknown true.
+func TestMetricsFromHashesNotFoundIsKnownZero(t *testing.T) {
+	ids := []int{11, 12, 13}
+	got, err := MetricsFromHashes(ids, []map[string]string{
+		{"notFound": "1", "_populatedAt": "1700000000"},
+		{"Like": "7", "_populatedAt": "1700000000"},
+		{"notFound": "1", "Heart": "2"}, // the watcher incremented a marker hash: counts win
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want an entry per id, got %v", got)
+	}
+	cases := []struct {
+		id   int
+		want string
+	}{
+		{11, `{"json":{"likeCountAllTime":0,"laughCountAllTime":0,"heartCountAllTime":0,"cryCountAllTime":0,` +
+			`"commentCountAllTime":0,"collectedCountAllTime":0,"tippedAmountCountAllTime":0,"dislikeCountAllTime":0,` +
+			`"viewCountAllTime":0,"statsUnknown":false}}`},
+		{12, `{"json":{"likeCountAllTime":7,"laughCountAllTime":0,"heartCountAllTime":0,"cryCountAllTime":0,` +
+			`"commentCountAllTime":0,"collectedCountAllTime":0,"tippedAmountCountAllTime":0,"dislikeCountAllTime":0,` +
+			`"viewCountAllTime":0,"statsUnknown":false}}`},
+		{13, `{"json":{"likeCountAllTime":0,"laughCountAllTime":0,"heartCountAllTime":2,"cryCountAllTime":0,` +
+			`"commentCountAllTime":0,"collectedCountAllTime":0,"tippedAmountCountAllTime":0,"dislikeCountAllTime":0,` +
+			`"viewCountAllTime":0,"statsUnknown":false}}`},
+	}
+	for _, c := range cases {
+		m, ok := got[c.id]
+		out, _ := superjson.Serialize(Stats(m, ok))
+		if string(out) != c.want {
+			t.Errorf("id %d:\ngot  %s\nwant %s", c.id, out, c.want)
+		}
+	}
+}
+
+func TestMetricsFromHashesEmptyHashFallsBack(t *testing.T) {
+	_, err := MetricsFromHashes([]int{1, 2}, []map[string]string{{"Like": "1"}, {}})
+	if r := fallback.Reason(err); r != "metrics-miss" {
+		t.Fatalf("reason = %q (%v), want metrics-miss", r, err)
+	}
+}
+
 func TestWireSortsKeysAndWidensInts(t *testing.T) {
 	got, err := superjson.Serialize(Wire(map[string]any{"b": int32(2), "a": []any{int8(1), "x"}}))
 	if err != nil {
@@ -123,5 +172,63 @@ func TestUniqueAndMissing(t *testing.T) {
 	miss := Missing([]int{1, 2, 3}, map[int]Entry{2: {}})
 	if len(miss) != 2 || miss[0] != 1 || miss[1] != 3 {
 		t.Fatalf("Missing = %v", miss)
+	}
+}
+
+// decorationsForEvents (src/server/services/cosmetic.service.ts): a worn hat whose event is visible
+// is sent as {id, name, type, source, data, equippedToId, equippedToType}, without the wearer's
+// userId; a hat of another event, a notFound marker and a record whose data.event is not a string
+// are left out. The cached record is the event-decoration cache's lookupFn shape.
+func TestVisibleEventDecorationsMirrorsDecorationsForEvents(t *testing.T) {
+	hat := func(event any, equippedTo int64) map[string]any {
+		return map[string]any{
+			"id": int64(501), "name": "Party Hat (Pink)", "type": "ContentDecoration", "source": "Trophy",
+			"data": map[string]any{
+				"type": "hat", "event": event, "url": "hat.png", "team": "Pink",
+				"fit": map[string]any{"tilt": -12.5, "offset": []any{int8(2), int8(-3)}},
+			},
+			"equippedToId": equippedTo, "equippedToType": "Image", "userId": int64(77),
+		}
+	}
+	got, err := VisibleEventDecorations([]int{11, 12, 13, 14, 15}, map[int]Entry{
+		11: {Value: hat("birthday2026", 11)},
+		12: {Value: hat("another-event", 12)},
+		13: {NotFound: true, Value: map[string]any{"notFound": true}},
+		14: {Value: hat(int64(1), 14)},
+		15: {Value: map[string]any{"id": int64(9), "data": nil}},
+	}, map[string]bool{"birthday2026": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want only image 11, got %v", got)
+	}
+	out, _ := superjson.Serialize(got[11])
+	want := `{"json":{"id":501,"name":"Party Hat (Pink)","type":"ContentDecoration","source":"Trophy",` +
+		`"data":{"event":"birthday2026","fit":{"offset":[2,-3],"tilt":-12.5},"team":"Pink","type":"hat","url":"hat.png"},` +
+		`"equippedToId":11,"equippedToType":"Image"}}`
+	if string(out) != want {
+		t.Fatalf("got  %s\nwant %s", out, want)
+	}
+}
+
+func TestVisibleEventDecorationsMissFallsBack(t *testing.T) {
+	_, err := VisibleEventDecorations([]int{1, 2}, map[int]Entry{1: {NotFound: true}}, map[string]bool{"birthday2026": true})
+	if r := fallback.Reason(err); r != "event-decoration-miss" {
+		t.Fatalf("reason = %q (%v), want event-decoration-miss", r, err)
+	}
+}
+
+// No visible event: an empty answer with no cache read (decorationsForEvents returns before its
+// fetch). The reader here has no Redis, so any read would come back as a miss and fall back.
+func TestEventDecorationsNoVisibleEventReadsNothing(t *testing.T) {
+	s := &Sources{Packed: &PackedReader{}}
+	got, err := s.EventDecorations(context.Background(), []int{1, 2}, map[string]bool{})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v; want empty, nil", got, err)
+	}
+	_, err = s.EventDecorations(context.Background(), []int{1, 2}, map[string]bool{"birthday2026": true})
+	if r := fallback.Reason(err); r != "event-decoration-miss" {
+		t.Fatalf("with a visible event the cache is read: reason = %q, want event-decoration-miss", r)
 	}
 }

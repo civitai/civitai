@@ -34,6 +34,10 @@ export function flagHatChoices(available: number) {
 
 const FINAL_HOUR_MS = 60 * 60 * 1000;
 
+/** When a flag day's final hour starts: an hour before it closes. */
+export const finalHourAt = (closesAt: Date | string | number) =>
+  new Date(new Date(closesAt).getTime() - FINAL_HOUR_MS);
+
 /**
  * Cut, but not yet paid: the freeze runs at the first hourly settle after the cut. A summary cached
  * before `frozen` existed has no field and reads as paid, as it did then.
@@ -47,16 +51,7 @@ export const flagCounting = (summary: { closed: boolean; frozen?: boolean }) =>
  */
 export function flagClock(nowMs: number, closesAt: Date | string, closed: boolean) {
   if (closed) return { phase: 'closed' as const, secondsLeft: 0 };
-  const finalAt = new Date(closesAt).getTime() - FINAL_HOUR_MS;
+  const finalAt = finalHourAt(closesAt).getTime();
   if (nowMs >= finalAt) return { phase: 'final' as const, secondsLeft: 0 };
   return { phase: 'counting' as const, secondsLeft: Math.ceil((finalAt - nowMs) / 1000) };
-}
-
-/** 2:14:05, or 14:05 under an hour. */
-export function formatClock(seconds: number) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const mmss = `${String(m).padStart(h ? 2 : 1, '0')}:${String(s).padStart(2, '0')}`;
-  return h ? `${h}:${mmss}` : mmss;
 }
