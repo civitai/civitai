@@ -3,7 +3,11 @@ import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type { GuardStatus } from '~/server/services/semantic-guard-status';
-import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
+import type {
+  CandidateFilter,
+  CandidateSource,
+  GuardRead,
+} from '~/server/services/semantic-search-client';
 
 const h = vi.hoisted(() => ({ auditFlag: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -247,19 +251,37 @@ describe('withCandidateCache and the query guard', () => {
     expect(calls()).toBe(2);
   });
 
-  it('does not cache a block from a replica that reported no full guard result', async () => {
-    h.auditFlag = true;
+  const withOutcome = (outcome: string) => {
     let calls = 0;
     const source: CandidateSource = async ({ offset, limit }) => {
       calls++;
       return {
         ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
-        guard: { outcome: 'unknown', rules: [], mode: '', version: null },
+        guard: { outcome, rules: [], mode: 'enforce', version: 'v1' } as GuardRead,
       };
     };
-    await run(withCandidateCache('images', source, 'user', status('shadow:v1')));
-    await run(withCandidateCache('images', source, 'user', status('shadow:v1')));
-    expect(calls).toBe(2);
+    return { source, calls: () => calls };
+  };
+
+  it.each(['unknown', 'unavailable', 'mismatch', 'error', 'a-value-added-later'])(
+    "does not cache a block whose guard reached no verdict ('%s')",
+    async (outcome) => {
+      h.auditFlag = true;
+      const { source, calls } = withOutcome(outcome);
+      await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+      const again = await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+      expect(again.cacheHit).toBe(false);
+      expect(calls()).toBe(2);
+    }
+  );
+
+  it.each(['pass', 'flag'])("caches a block the guard judged ('%s')", async (outcome) => {
+    h.auditFlag = true;
+    const { source, calls } = withOutcome(outcome);
+    await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+    const again = await run(withCandidateCache('images', source, 'user', status('enforce:v1')));
+    expect(again.cacheHit).toBe(true);
+    expect(calls()).toBe(1);
   });
 
   it('caches a block no guard judged, such as a search by image', async () => {

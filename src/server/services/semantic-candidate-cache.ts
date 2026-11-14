@@ -15,6 +15,7 @@ import {
 import {
   buildQdrantFilter,
   type CandidateSource,
+  type GuardOutcome,
   type GuardRead,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
@@ -34,6 +35,20 @@ type CandidateKey = `${typeof REDIS_KEYS.SEMANTIC_SEARCH.CANDIDATES}:${string}`;
 const readBlock = (key: CandidateKey) =>
   clusterCacheGuard.readOr('semantic candidates get', () => redis.packed.get<Block>(key), null);
 
+// Outcomes where the guard reached a verdict. Anything else, including a value added later, is cached
+// by no one: a block served while the guard was down would outlive its recovery by the cache TTL.
+const VERDICT_OUTCOMES: ReadonlySet<GuardOutcome> = new Set(['pass', 'flag']);
+
+/**
+ * The key's mode comes from the pod's memoised status read, which can lag the replica that answered.
+ * A block is cached only under the mode and version that judged it, or when no guard ran on the text.
+ */
+function judgedUnder(blockGuard: GuardRead | undefined, key: string | undefined) {
+  if (key === undefined || blockGuard?.outcome === 'none') return true;
+  if (!blockGuard || !VERDICT_OUTCOMES.has(blockGuard.outcome)) return false;
+  return `${blockGuard.mode}:${blockGuard.version ?? 'none'}` === key;
+}
+
 /**
  * The key is everything the service answers from (the query and the Qdrant filter, which carries the
  * viewer's clamped level gate) plus the viewer class, so a block is never shared across mods and
@@ -44,16 +59,6 @@ const readBlock = (key: CandidateKey) =>
  * With the audit flag on, the key also carries the guard's mode and version, so an enforce flip or a
  * new artifact stops serving blocks the old guard judged. An unreadable status skips Redis.
  */
-/**
- * The key's mode comes from the pod's memoised status read, which can lag the replica that answered.
- * A block is cached only under the mode and version that judged it, or when no guard judged the text.
- */
-function judgedUnder(blockGuard: GuardRead | undefined, key: string | undefined) {
-  if (key === undefined || !blockGuard || blockGuard.outcome === 'none') return true;
-  if (blockGuard.outcome === 'unknown') return false;
-  return `${blockGuard.mode}:${blockGuard.version ?? 'none'}` === key;
-}
-
 export function withCandidateCache(
   collection: SearchCollection,
   source: CandidateSource,
