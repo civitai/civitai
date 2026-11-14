@@ -509,10 +509,12 @@ describe('projectAppWorkflow — pass-through step', () => {
     expect(projected.images).toEqual([
       { url: BLOB_URL, width: 64, height: 48, nsfwLevel: NsfwLevel.PG13 },
     ]);
-    // `AppWorkflow` is the queue contract — images, cost, status and nothing else.
+    // `AppWorkflow` is the queue contract — images (and the same outputs, per
+    // output), cost, status and nothing else.
     expect(Object.keys(projected).sort()).toEqual(
-      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+      ['cost', 'createdAt', 'images', 'outputs', 'status', 'workflowId'].sort()
     );
+    expect(projected.outputs).toStrictEqual([{ url: BLOB_URL, nsfwLevel: 'pg13' }]);
   });
 
   it('drops an unavailable pass-through blob rather than handing over a dead link', () => {

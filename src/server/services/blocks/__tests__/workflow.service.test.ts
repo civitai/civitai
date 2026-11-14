@@ -816,8 +816,9 @@ describe('projectAppWorkflow', () => {
     });
     const projected = projectAppWorkflow(wf as never, TEST_OUTPUT_CEILING);
     expect(Object.keys(projected).sort()).toEqual(
-      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+      ['cost', 'createdAt', 'images', 'outputs', 'status', 'workflowId'].sort()
     );
+    expect(projected.outputs).toStrictEqual([{ url: 'https://cdn/x.png' }]);
     expect(JSON.stringify(projected)).not.toContain('secret prompt');
     expect(JSON.stringify(projected)).not.toContain('transactions');
   });

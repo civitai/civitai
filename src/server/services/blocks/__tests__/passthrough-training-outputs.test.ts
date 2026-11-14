@@ -324,8 +324,9 @@ describe('trainedEpochs on AppWorkflow rows', () => {
       workflow('imageBackgroundRemoval', trainingOutput()),
       TEST_OUTPUT_CEILING
     );
+    // `outputs` is the per-output list every row with an available output carries.
     expect(Object.keys(projected).sort()).toEqual(
-      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+      ['cost', 'createdAt', 'images', 'outputs', 'status', 'workflowId'].sort()
     );
   });
 });
