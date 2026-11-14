@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest } from 'next';
+import requestIp from 'request-ip';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 /**
@@ -158,6 +159,8 @@ const EDGE_IP = '203.0.113.7';
 // from its README — the README lists fewer than the code reads. The one header
 // it consults that is NOT here is `cf-connecting-ip`, deliberately: that is the
 // edge-stamped header this suite holds FIXED while rotating the rest.
+// `x-client-ip` is not here either: the resolver does not consult it, and
+// `IGNORED_FALLBACK_HEADERS` below pins that.
 //
 // Covered as a SET rather than one representative: a derivation that handled
 // some members and not others would otherwise pass, and which member is
@@ -166,7 +169,6 @@ const EDGE_IP = '203.0.113.7';
 // below fails if a listed header is not actually read, so this list cannot
 // silently drift into claiming coverage it does not have.
 const NON_EDGE_ADDRESS_HEADERS = [
-  'x-client-ip',
   'x-forwarded-for',
   'x-real-ip',
   'true-client-ip',
@@ -234,6 +236,17 @@ describe('rateLimit bucket key — anonymous callers', () => {
       field,
       `${header} is listed as a consulted address header but did not move the bucket off the socket peer`
     ).toBe('ip:198.51.100.1');
+  });
+
+  // Headers the library WOULD read but the resolver must not. Same fixture as
+  // the consulted case above, so the only difference between a pass there and
+  // a pass here is whether the header moved the bucket.
+  const IGNORED_FALLBACK_HEADERS = ['x-client-ip'] as const;
+
+  it.each(IGNORED_FALLBACK_HEADERS)('%s does not move the bucket', async (header) => {
+    expect(requestIp.getClientIp(reqWith({ [header]: '198.51.100.1' }))).toBe('198.51.100.1');
+    const field = await bucketFieldFor(anonCtx({ [header]: '198.51.100.1' }));
+    expect(field, `${header} moved the bucket`).toBe(`ip:${SOCKET_PEER}`);
   });
 });
 
