@@ -4,6 +4,7 @@ import { configureChat } from '@civitai/components-chat/core';
 import { buildApp, loggerOptions } from './app';
 import { CivitaiCovers, runnerCoverEstimator } from './app-assistant/cover';
 import { CivitaiAppActivity } from './app-assistant/app-activity';
+import { CivitaiSleepingApps } from './app-assistant/sleeping-apps';
 import { CivitaiSourceSaves } from './app-assistant/source-save';
 import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
@@ -123,6 +124,13 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // App hibernate: the user's sleeping apps and the seed to wake one, which civitai reads and mints
+  // as a run's user, by its grant (nothing while the `app-hibernate` flag is off for them).
+  const sleepingApps = new CivitaiSleepingApps({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
@@ -136,6 +144,7 @@ if (civitai) {
         appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
         appActivity: (runId, signal) => appActivity.forRun(() => grants.forRun(runId), signal),
         sourceSaves: (runId) => sourceSaves.forRun(() => grants.forRun(runId)),
+        sleepingApps: (runId, signal) => sleepingApps.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;

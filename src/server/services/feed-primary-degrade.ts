@@ -48,7 +48,6 @@ type LastGoodCache = Map<string, { answer: FeedAnswer; storedAt: number }>;
 type BreakerState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 type DegradeState = {
   enabled: () => boolean;
-  widenTimeout: () => boolean;
   breaker: {
     state: BreakerState;
     // Unix ms of each call (and of each failed one) while CLOSED, oldest first, pruned to the window.
@@ -70,9 +69,6 @@ declare global {
 function state(): DegradeState {
   return (globalThis.__civitaiFeedDegradeState ??= {
     enabled: createCachedFlagGate(readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_SERVICE_DEGRADE)),
-    widenTimeout: createCachedFlagGate(
-      readFliptSwitch(() => FLIPT_FEATURE_FLAGS.FEED_SERVICE_TIMEOUT_WIDEN)
-    ),
     breaker: { state: 'CLOSED', calls: [], failures: [], cooldownUntil: 0, trialStartedAt: 0 },
     lastGood: { website: new Map(), rest: new Map() },
   });
@@ -90,8 +86,6 @@ const lastGoodCounter = registerCounterWithLabels({
 });
 
 export const feedDegradeEnabled = () => state().enabled();
-/** The off-switch for the feed call's shorter budget (see FEED_PRIMARY_TIMEOUT_MS). */
-export const feedTimeoutWidened = () => state().widenTimeout();
 
 function transition(next: BreakerState, now: number) {
   const b = state().breaker;

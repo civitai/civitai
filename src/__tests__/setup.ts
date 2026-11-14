@@ -53,6 +53,7 @@ vi.mock('~/server/redis/client', async () => ({
   redis: redisMock.redis,
   sysRedis: redisMock.sysRedis,
   withSysReadDeadline: redisMock.withSysReadDeadline,
+  withSysReadBreaker: redisMock.withSysReadBreaker,
 }));
 
 // The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs
@@ -266,7 +267,6 @@ vi.mock('~/server/prom/client', () => ({
   serviceDealUnconfirmedHoldsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
   restrictedImageReconcileLastSuccessGauge: promMetricStub(),
-  restrictedBaseModelDivergenceGauge: promMetricStub(),
   restrictedImageOverhiddenGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),

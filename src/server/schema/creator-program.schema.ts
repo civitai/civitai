@@ -11,11 +11,17 @@ export type BankBuzzInput = z.infer<typeof bankBuzzSchema>;
 export const bankBuzzSchema = z.object({
   amount: z.number().min(MIN_BANK_AMOUNT),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzBankTypes).default('yellow')),
+  // Minted by the client once per deposit and resent on its retries: the deposit's ledger id
+  // derives from it, so a retry after an unanswered deposit cannot bank again. Optional for
+  // clients from before keys, which get a new id per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type WithdrawCashInput = z.infer<typeof withdrawCashSchema>;
 export const withdrawCashSchema = z.object({
   amount: z.number().min(MIN_WITHDRAWAL_AMOUNT),
+  // As for a deposit: one key per withdrawal, so a retry cannot burn the cash twice.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type CashWithdrawalMetadataSchema = z.infer<typeof cashWithdrawalMetadataSchema>;

@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -186,7 +186,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry" | "CsamArchive";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -269,6 +269,8 @@ export type StorylineWhoCanContinue = "Anyone" | "Collaborators";
 export type StorylineFollowScope = "Canon" | "Endorsed" | "Everything";
 
 export type ServiceOfferingStatus = "Draft" | "Active" | "Paused" | "Removed";
+
+export type ServiceOfferingIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
 
 export type ServicePreviewKind = "Image" | "Video" | "SampleOutputs" | "None";
 
@@ -794,6 +796,28 @@ export interface CustomerSubscription {
   createdAt: Date;
   endedAt: Date | null;
   updatedAt: Date | null;
+}
+
+export interface CustomerSubscriptionHistory {
+  id: number;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: JsonValue;
+  cancelAtPeriodEnd: boolean;
+  cancelAt: Date | null;
+  canceledAt: Date | null;
+  startedAt: Date;
+  currentPeriodStart: Date;
+  currentPeriodEnd: Date;
+  endedAt: Date | null;
+  closedAt: Date | null;
+  closedReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface MembershipGift {
@@ -1649,6 +1673,7 @@ export interface Post {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   images?: Image[];
+  texts?: PostText[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
   helper?: PostHelper | null;
@@ -1766,6 +1791,7 @@ export interface Image {
   appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
+  serviceOfferingCovers?: ServiceOffering[];
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
@@ -5176,10 +5202,6 @@ export interface ReportAutomated {
   createdAt: Date;
 }
 
-export interface RestrictedBaseModels {
-  baseModel: string;
-}
-
 export interface Challenge {
   id: number;
   startsAt: Date;
@@ -6792,6 +6814,20 @@ export interface ImageCaption {
   updatedAt: Date;
 }
 
+export interface PostText {
+  id: number;
+  postId: number;
+  post?: Post;
+  userId: number;
+  index: number;
+  content: string;
+  nsfwLevel: number;
+  refused: boolean;
+  csamHeld: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface StorylineCollaborator {
   storylineId: number;
   storyline?: Storyline;
@@ -6860,10 +6896,15 @@ export interface ServiceOffering {
   title: string;
   description: string;
   coverImageId: number | null;
+  coverImage?: Image | null;
   price: number;
   acceptsBlue: boolean;
   previewKind: ServicePreviewKind;
   maxNsfwLevel: number;
+  declaredNsfwLevel: number | null;
+  ingestion: ServiceOfferingIngestionStatus;
+  scanWorkflowId: string | null;
+  scannedAt: Date | null;
   deliveryDays: number;
   revisionsIncluded: number;
   maxOpenDeals: number | null;

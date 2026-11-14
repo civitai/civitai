@@ -17,6 +17,7 @@ import {
   type QueryRefusal,
   type QueryStage,
   type QueryTracker,
+  isNonModClampOn,
 } from '~/server/services/semantic-query-guard';
 import {
   collectPage,
@@ -74,7 +75,11 @@ export async function searchSemanticComics({
     nextCursor: undefined,
     correctedQuery: undefined,
   };
-  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
   const [hidden, addonData] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),

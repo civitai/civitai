@@ -7,7 +7,7 @@ name: Full CI on label
 # ESLint-only gate is lifted, so every push after the label is added runs the full suite in the
 # PR run. What they cannot do without help is react to the label being ADDED, which is a
 # `labeled` event. This file does that, by dispatching them on the PR branch, along with
-# moderator-boot.yml, which has the same draft gate.
+# moderator-boot.yml and feed-go.yml, which have the same draft gate.
 #
 # ── WHY A DISPATCHER, AND NOT `labeled` IN lint.yml / apps.yml ────────────────────────────────
 #
@@ -42,6 +42,24 @@ name: Full CI on label
 #
 # Not for fork PRs: their branch is not in this repo, so there is nothing here to dispatch on,
 # and their token cannot dispatch anyway. The `if` skips them.
+#
+# ── NO DISPATCH WHEN THE PR'S OWN RUN ALREADY HAS THE SHARDS ─────────────────────────────────
+#
+# A PR opened WITH the label (`gh pr create --label full-ci`) gets `opened` and `labeled` at
+# once. The `opened` Lint run already reads the label and starts the four `Unit tests` shards,
+# so dispatching here too ran the whole suite twice on the same commit, which was most of what
+# this job dispatched (measurement: docs/testing/reading-ci-results.md, "CI cost measurements").
+#
+# So before dispatching, this job looks for a pull_request Lint run on the PR's head commit with
+# a `Unit tests (<n>)` job that was not cancelled (scripts/ci/full-ci-unit-shards.mjs, which
+# scripts/__tests__/full-ci-label.test.ts runs against job lists). The `(<n>)` suffix is the
+# test: GitHub expands the matrix only for a job whose `if` passed, and a skipped `unit` job is
+# listed as plain `Unit tests`.
+# If it finds one, the PR run is the full run, in the checks list, and nothing is dispatched;
+# the summary links it. Otherwise (label added to an existing PR, the PR run not created yet
+# after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
+# On a skip, apps.yml and moderator-boot.yml are not dispatched either: their PR runs follow
+# their `paths:` filters, exactly as on every later push with the label on.
 
 on:
   pull_request:
@@ -63,6 +81,14 @@ jobs:
       contents: read
     timeout-minutes: 5
     steps:
+      # Only the classifier the step below runs. No credentials are persisted: this job's token
+      # can dispatch workflows.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci/full-ci-unit-shards.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       # The branch name reaches the shell through env, never interpolated into the script: a
       # branch name is attacker-chosen text, and `${{ }}` in `run:` is pasted in before the
       # shell parses it.
@@ -70,20 +96,54 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # Does a pull_request Lint run on this head commit already run the unit shards? See the
+          # header. Polled because the `opened` run can be created a few seconds after this job
+          # starts; an API error counts as "not found", which falls back to dispatching. Polling
+          # stops early once a run on this commit has decided its `unit` job and skipped it (the
+          # plain `Unit tests` name): the label was added after that run, which is the case this
+          # dispatch exists for, so waiting out the remaining polls would only delay it.
+          covered=""
+          for attempt in 1 2 3 4 5 6 7; do
+            decided=false
+            for id in $(gh api "repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=20" \
+                --jq '.workflow_runs[].id' || true); do
+              counts=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
+                | node scripts/ci/full-ci-unit-shards.mjs || echo "0 0")
+              read -r expanded skipped <<< "$counts"
+              if [ "${expanded:-0}" -gt 0 ]; then covered=$id; break 2; fi
+              if [ "${skipped:-0}" -gt 0 ]; then decided=true; fi
+            done
+            if [ "$decided" = true ]; then break; fi
+            if [ "$attempt" -lt 7 ]; then sleep 15; fi
+          done
+          if [ -n "$covered" ]; then
+            url="https://github.com/$REPO/actions/runs/$covered"
+            echo "The PR's own Lint run on $HEAD_SHA already runs the unit shards: $url. Nothing dispatched."
+            {
+              echo "### Full CI already running in the PR's own checks"
+              echo "The pull_request Lint run on \`$HEAD_SHA\` runs every suite, unit shards included: $url"
+              echo "App suites and Moderator boot smoke follow their \`paths:\` filters, as on every push with the label on."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           gh workflow run lint.yml -R "$REPO" --ref "$HEAD_REF" -f only=all
           gh workflow run apps.yml -R "$REPO" --ref "$HEAD_REF"
           # moderator-boot.yml arrived in #7673: a branch cut before it has no such workflow, and the
           # dispatch answers 422. That must not fail the job after lint and apps were dispatched.
           gh workflow run moderator-boot.yml -R "$REPO" --ref "$HEAD_REF" \
             || echo "moderator-boot.yml not on this branch; rebase to get it"
+          # feed-go.yml has the same draft gate; a branch cut before it has no such workflow (422).
+          gh workflow run feed-go.yml -R "$REPO" --ref "$HEAD_REF" \
+            || echo "feed-go.yml not on this branch; rebase to get it"
           # Link the runs from this job's summary: it is the only place on the PR that reaches
           # them (see the header). A dispatch's run appears a few seconds after the call returns.
           sleep 10
           echo "### Full CI dispatched on \`$HEAD_REF\`" >> "$GITHUB_STEP_SUMMARY"
-          for wf in lint.yml apps.yml moderator-boot.yml; do
+          for wf in lint.yml apps.yml moderator-boot.yml feed-go.yml; do
             url=$(gh run list -R "$REPO" --workflow "$wf" --branch "$HEAD_REF" --event workflow_dispatch \
               --limit 1 --json url -q '.[0].url' || true)
             echo "$wf: ${url:-not found yet, see the Actions tab}"
