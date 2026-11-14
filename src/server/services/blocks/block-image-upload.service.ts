@@ -127,6 +127,28 @@ export const BLOCK_PUBLISHED_APP_ID_META_KEY =
 export const BLOCK_UPLOADED_APP_ID_META_KEY =
   'blockUploadedAppId' as const satisfies BlockProvenanceMetadataKey;
 
+/**
+ * Provenance marker for a workflow output an app kept as a PRIVATE generation source
+ * (`PERSIST_GENERATION_SOURCE`), stamped by {@link persistBlockGenerationSourceImage}.
+ *
+ * 🔴 DELIBERATELY NOT {@link BLOCK_PUBLISHED_APP_ID_META_KEY} AND NOT IN
+ * {@link BLOCK_POSTABLE_APP_ID_META_KEYS}. The published key is what puts a row on the app's
+ * CROSS-USER shared grid (`getBlockGatedImagesByIds`), and the postable set is what lets the app
+ * post it; a private source must reach neither. The only reader is the owner-bound idempotency
+ * lookup in `block-generation-source.service.ts`. `block-image-provenance-readers.test.ts` pins
+ * that set.
+ */
+export const BLOCK_GENERATION_SOURCE_APP_ID_META_KEY =
+  'blockGenerationSourceAppId' as const satisfies BlockProvenanceMetadataKey;
+
+/**
+ * Which output a private generation source was made from, as `<workflowId>#<imageIndex>`: the
+ * idempotency key for a repeat `PERSIST_GENERATION_SOURCE`. Not server-owned on its own, so it is
+ * only ever read together with {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} (which is) and the
+ * row's owner: a row that matches all three was written by the writer below for that viewer.
+ */
+export const BLOCK_GENERATION_SOURCE_REF_META_KEY = 'blockGenerationSourceRef' as const;
+
 /** The provenance keys a post-from-app `published` source accepts. Never the gated read's set. */
 export const BLOCK_POSTABLE_APP_ID_META_KEYS = [
   BLOCK_PUBLISHED_APP_ID_META_KEY,
@@ -383,6 +405,97 @@ export async function persistBlockWorkflowOutputImage(opts: {
     // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned Image row.
   });
   return { imageId: image.id };
+}
+
+/**
+ * App Blocks `PERSIST_GENERATION_SOURCE` — the PRIVATE sibling of
+ * {@link persistBlockWorkflowOutputImage}: the same server-side fetch → store → `createImage`
+ * (DEFAULT ingestion, so a REAL scan; no post), but stamped
+ * {@link BLOCK_GENERATION_SOURCE_APP_ID_META_KEY} instead of the published key, so the row is
+ * never on the app's shared grid and is not postable. The caller resolves `imageUrl` from the
+ * ownership-verified workflow; the iframe never supplies it.
+ *
+ * The bytes are fitted inside the workflow source-image bounds (`DIM_MAX`, downscaled only, aspect
+ * kept), and the returned width and height are measured from the stored bytes, because the caller
+ * hands them to the app as the source's dimension hints, which `blockSourceImageSchema` bounds to
+ * `DIM_MIN`..`DIM_MAX`. An output with a side below `DIM_MIN` is refused.
+ */
+export async function persistBlockGenerationSourceImage(opts: {
+  imageUrl: string;
+  width: number | null;
+  height: number | null;
+  userId: number;
+  /** OauthClient id of the app (the token's appId) — provenance marker. */
+  appId: string;
+  /** {@link BLOCK_GENERATION_SOURCE_REF_META_KEY}. */
+  ref: string;
+}): Promise<{ imageId: number; url: string; width: number; height: number }> {
+  const { imageUrl, width, height, userId, appId, ref } = opts;
+  let measured: { width: number; height: number } | undefined;
+  const staged = await stageGenerationOutputImage({
+    imageUrl,
+    width,
+    height,
+    source: 'block-generation-source',
+    transform: async (bytes) => {
+      const fitted = await fitGenerationSourceBounds(bytes);
+      measured = fitted.size;
+      return fitted.bytes;
+    },
+  });
+  if (!measured) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
+  }
+
+  const metadata = { ...staged.metadata, [BLOCK_GENERATION_SOURCE_REF_META_KEY]: ref };
+  const { createImage } = await import('~/server/services/image.service');
+  const image = await createImage({
+    url: staged.url,
+    type: 'image',
+    mimeType: staged.mimeType,
+    hash: staged.hash,
+    width: measured.width,
+    height: measured.height,
+    metadata,
+    blockProvenance: { key: BLOCK_GENERATION_SOURCE_APP_ID_META_KEY, appId },
+    userId,
+    // NO postId, NO modelVersionId, NO skipIngestion → a bare, real-scanned, private Image row.
+  });
+  return { imageId: image.id, url: staged.url, width: measured.width, height: measured.height };
+}
+
+/**
+ * The bytes unchanged when both sides are within `DIM_MAX`, otherwise downscaled to fit inside it
+ * (aspect kept), with the size of what is returned. Refuses a side below `DIM_MIN`.
+ */
+export async function fitGenerationSourceBounds(
+  bytes: Buffer
+): Promise<{ bytes: Buffer; size: { width: number; height: number } }> {
+  const { default: sharp } = await import('sharp');
+  const { DIM_MAX, DIM_MIN } = await import('~/server/schema/blocks/workflow.schema');
+  const { width, height } = await sharp(bytes).metadata();
+  if (!width || !height) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
+  }
+  let out = bytes;
+  let size = { width, height };
+  if (width > DIM_MAX || height > DIM_MAX) {
+    out = await sharp(bytes)
+      .resize({ width: DIM_MAX, height: DIM_MAX, fit: 'inside', withoutEnlargement: true })
+      .toBuffer();
+    const resized = await sharp(out).metadata();
+    if (!resized.width || !resized.height) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: 'generation output has no dimensions' });
+    }
+    size = { width: resized.width, height: resized.height };
+  }
+  if (size.width < DIM_MIN || size.height < DIM_MIN) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `generation output is too small to use as a source (under ${DIM_MIN}px)`,
+    });
+  }
+  return { bytes: out, size };
 }
 
 /**

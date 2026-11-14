@@ -161,7 +161,7 @@ async function imageRow(id: number) {
   return rows[0];
 }
 
-const scan = (id: number, over: string = `ingestion = 'Scanned', "nsfwLevel" = 1`) =>
+const scan = (id: number, over = `ingestion = 'Scanned', "nsfwLevel" = 1`) =>
   holder.db.query(`UPDATE "Image" SET ${over} WHERE id = $1`, [id]);
 
 /** The gate's answer for `url`, as the App Blocks submit entry would see it. */
@@ -565,5 +565,71 @@ describe('generationSourceUrl', () => {
     expect(() => generationSourceUrl('44444444-4444-4444-8444-444444444444')).toThrow(
       'image delivery url is not a valid generation source'
     );
+  });
+});
+
+describe('🔴 gate seam on the textToImage path (flag on): the persisted url as a `sourceImages` entry', () => {
+  /**
+   * What `createBlockTextToImageStep` gates: the REAL `buildTextToImageInput` output for a
+   * page body carrying the source, its urls as `generationInputUrlsIn` reads them, through the
+   * real gate on the `appBlocks` entry — the composition `assertGraphInputsUsable` performs
+   * (module-private, so composed here from the same exported parts). That the router hands the
+   * graph exactly that entry, and answers a pending refusal with `source-scan-pending`, is pinned
+   * in `blocks.router.workflow.test.ts`.
+   */
+  async function textToImageGate(source: { url: string; width: number; height: number }) {
+    const { buildTextToImageInput } = await import('~/server/services/blocks/workflow.service');
+    const { generationInputUrlsIn } = await import('~/server/services/generation-input-urls');
+    const input = buildTextToImageInput(
+      {
+        kind: 'textToImage',
+        modelId: 7,
+        modelVersionId: 99,
+        params: { prompt: 'a cat', quantity: 1 },
+        sourceImages: [source],
+      } as never,
+      {
+        baseModel: 'SDXL 1.0',
+        modelType: 'Checkpoint',
+        checkpointVersionId: 99,
+        checkpointBaseModel: 'SDXL 1.0',
+        additionalResourceTypes: new Map(),
+      }
+    );
+    const urls = generationInputUrlsIn(input);
+    try {
+      await assertGenerationInputsUsable({
+        urls,
+        userId: VIEWER,
+        entry: 'appBlocks',
+        isApiCaller: false,
+      });
+      return { urls, verdict: 'accepted' };
+    } catch (e) {
+      return { urls, verdict: `refused: ${(e as Error).message}` };
+    }
+  }
+
+  it('pending before the scan, accepted after it', async () => {
+    let createdId = 0;
+    const base = createImage.getMockImplementation()!;
+    createImage.mockImplementation(async (args) => {
+      const created = await base(args);
+      createdId = created.id;
+      return created;
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    const out = await settle(persist());
+    vi.useRealTimers();
+    expect(out.ready).toBe(false);
+
+    const source = { url: out.url, width: out.width, height: out.height };
+    const pending = await textToImageGate(source);
+    // Positive control: the source url is one of the urls the graph input carries.
+    expect(pending.urls).toContain(out.url);
+    expect(pending.verdict).toBe(`refused: ${APP_SOURCE_PENDING_MESSAGE}`);
+
+    await scan(createdId);
+    expect((await textToImageGate(source)).verdict).toBe('accepted');
   });
 });

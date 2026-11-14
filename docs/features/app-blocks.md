@@ -804,6 +804,37 @@ scan and may be used as a source, the viewer's own uploads included.
   generation inputs; upload the image instead. Free text in a chat step's messages and tool
   schemas is not an image input.
 
+### Private generation sources (`PERSIST_GENERATION_SOURCE`)
+
+An app can keep one of its own finished generation outputs as a private, scanned source and
+feed it back into a later workflow (img2img, a reference image), the page host only.
+Request `PERSIST_GENERATION_SOURCE { requestId, workflowId, imageIndex }`; the answer is
+`GENERATION_SOURCE_PERSISTED { requestId, result?: { url, width, height, imageId, ready },
+error? }`, on every path. The server half is `blocks.persistGenerationSource`.
+
+- **No confirm, nothing shared.** No host dialog opens. The image is stored for the viewer
+  with no post and is stamped `blockGenerationSourceAppId`, which the app's shared grid
+  (`getImagesByIds`), the post-from-app `published` source and the "Published with" credit
+  do not accept. Use `PUBLISH_GENERATION_OUTPUTS` to put an output on the shared grid.
+- **Same gates as publishing.** The app needs `ai:write:budgeted`, the signed-in viewer must
+  be the token's subject, and the workflow must be the app's own (its `block_workflows` row
+  and app tag) and finished. `imageIndex` indexes the same output list
+  `queryAppWorkflows` returns; an index out of range, or an output that is not available,
+  is refused.
+- **Scanned.** The output is re-stored on Civitai (downscaled to fit 2048 px if larger; an
+  output under 64 px is refused) and goes through the normal image scan. The server waits
+  up to about 30 seconds for it. `ready: true` means a generation will accept `url` now;
+  `ready: false` means the scan has not finished yet: call again with the same
+  `workflowId` and `imageIndex`, which returns the same image without storing another, or
+  submit later (a submit before the scan finishes is refused with `'source-scan-pending'`).
+  An output the scan blocks, or holds for review, is answered with an error.
+- **`url`, `width`, `height`** are in the shape a workflow's source image takes
+  (`image.civitai.com`, 64..2048 px).
+- **Limits.** 60 per hour per viewer. The model slot host answers with an error. Review
+  mode and a block that is not ready are answered with an error.
+- Not available on App Assistant dev-tunnel previews yet: they have no `block_workflows`
+  row, which this bridge requires.
+
 ### Inline ComfyUI graphs (`kind: 'customComfy'`, `mode: 'inline'`)
 
 Some nodes are refused in an inline graph, by the estimate and the submit alike, with a

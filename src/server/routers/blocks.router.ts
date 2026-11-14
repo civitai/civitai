@@ -6159,6 +6159,69 @@ export const blocksRouter = router({
     }),
 
   /**
+   * `PERSIST_GENERATION_SOURCE { workflowId, imageIndex }`: keep ONE of the app's own finished
+   * workflow outputs as a PRIVATE, scanned generation source and return it in the
+   * `{ url, width, height }` shape a workflow's source image takes, plus `imageId` and `ready`.
+   * See `block-generation-source.service.ts`.
+   *
+   * No host dialog, because nothing is shared: the row is the viewer's, has no post, and carries
+   * `blockGenerationSourceAppId`, which no shared-grid, post or attribution read accepts. Gated
+   * exactly as `publishGenerationOutputs` (`ai:write:budgeted`, subject = session user, the
+   * runtime flag); ownership is `resolveOwnedWorkflowOutputs` (row + app tag + finished workflow).
+   *
+   * RATE LIMIT: the per-user 60/h `rateLimit` below, as `persistAppUploadImage`. NOT the
+   * per-install publish bucket: a page app's install id is shared by every viewer. The same
+   * moderator and dev/test/preview exemptions apply as noted there; a repeat call for an output
+   * already kept returns that row and writes nothing.
+   *
+   * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  persistGenerationSource: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many generation sources saved — slow down.',
+      })
+    )
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        workflowId: z.string().min(1).max(64),
+        imageIndex: z.number().int().nonnegative(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'saving a generation source requires an authenticated viewer',
+        });
+      }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
+      await assertAppBlocksEnabledForTokenUser(userId);
+      const { persistBlockGenerationSource } = await import(
+        '~/server/services/blocks/block-generation-source.service'
+      );
+      return persistBlockGenerationSource({
+        userId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        workflowId: input.workflowId,
+        imageIndex: input.imageIndex,
+        // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
+        getWorkflow: async (workflowId) =>
+          getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
+      });
+    }),
+
+  /**
    * `OPEN_MEDIA_UPLOAD_BATCH`, step 1 of 3: the viewer confirmed a batch in host chrome. Charges
    * their UTC-day batch quota for every file and writes the audit row; returns the batch id the
    * two steps below name. A refusal here uploads nothing. See `media-upload-batch.service.ts`.
