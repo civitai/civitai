@@ -10,7 +10,8 @@ name: Registry adapter image
 # load check against the full install) and the same load check again in the runtime stage,
 # against the production node_modules the image ships.
 #
-# The paths are what the image packaging reads: the Dockerfile, the two scripts, the manifests
+# The paths are what the image packaging reads: the Dockerfile, scripts/ (the build, load-check
+# and runtime-deps scripts, and the postinstall's generators), tsconfig.json, the manifests
 # and lockfile both installs resolve, the patches, the workspace packages the bundle carries, and
 # the adapter's own source and env module. A change elsewhere in `src/` that breaks the bundle
 # is caught by lint.yml's `Registry adapter bundle loads its externals` step, which builds it on
@@ -26,8 +27,8 @@ on:
       - 'apps/registry-adapter/**'
       - 'src/server/registry-adapter/**'
       - 'src/env/**'
-      - 'scripts/build-registry-adapter.mjs'
-      - 'scripts/registry-adapter-load-check.mjs'
+      - 'scripts/**'
+      - 'tsconfig.json'
       - 'packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -41,8 +42,8 @@ on:
       - 'apps/registry-adapter/**'
       - 'src/server/registry-adapter/**'
       - 'src/env/**'
-      - 'scripts/build-registry-adapter.mjs'
-      - 'scripts/registry-adapter-load-check.mjs'
+      - 'scripts/**'
+      - 'tsconfig.json'
       - 'packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'

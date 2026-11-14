@@ -12,7 +12,8 @@
 #
 # What ships: dist/registry-adapter.js (the esbuild bundle from `pnpm run build:registry-adapter`,
 # which bundles first-party code and the workspace packages and keeps every root npm dependency
-# external) and the root package's PRODUCTION node_modules, with the generated Prisma client.
+# external), and the part of the root package's PRODUCTION node_modules that the bundle's
+# externals reach, with the generated Prisma client (scripts/registry-adapter-runtime-deps.mjs).
 #
 # Runtime needs the web server's REAL env (src/env/server.ts validates the whole server schema at
 # startup), plus the REGISTRY_ADAPTER_* variables documented in main.ts. Nothing is baked in.
@@ -77,6 +78,13 @@ RUN set -eu; \
     test "$(basename "$(dirname "$dir")")" = "$(cat /tmp/generated-prisma/client-dir)"; \
     cp -R /tmp/generated-prisma/.prisma "$dir/.prisma"; \
     rm -rf /tmp/generated-prisma
+# Only what the bundle can load: the externals named in the build's manifest and their
+# dependencies, in pnpm's layout, into /runtime/node_modules. The full production tree carries the
+# whole web app; this keeps the image to what the adapter uses. Fails if a link in the copy points
+# outside it (see the script).
+RUN --mount=type=bind,from=build,source=/app/scripts/registry-adapter-runtime-deps.mjs,target=/tmp/registry-adapter-runtime-deps.mjs \
+    --mount=type=bind,from=build,source=/app/dist/registry-adapter.externals.json,target=/tmp/registry-adapter.externals.json \
+    node /tmp/registry-adapter-runtime-deps.mjs /tmp/registry-adapter.externals.json /runtime
 
 ##### runtime ######################################################################################
 # The root Dockerfile's `runtime-musl` base: bare Alpine, same tag and digest.
@@ -87,9 +95,9 @@ WORKDIR /app
 # root-owned: the process only reads them.
 RUN addgroup -S -g 1001 nodejs && adduser -S -u 1001 -G nodejs nodeapp
 
-COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=prod-deps /runtime/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/dist/registry-adapter.js /app/dist/registry-adapter.js.map /app/dist/registry-adapter.externals.json ./dist/
 
 # Load check, second run: every external the bundle loads must load from THIS /app, which is
 # byte-for-byte what ships. The build stage's run cannot see a package only the full install
@@ -98,6 +106,19 @@ COPY --from=build /app/dist ./dist
 # gate. The script is bind-mounted from the build stage, so it is in no layer of the image.
 RUN --mount=type=bind,from=build,source=/app/scripts/registry-adapter-load-check.mjs,target=/tmp/registry-adapter-load-check.mjs \
     node /tmp/registry-adapter-load-check.mjs /app/dist/registry-adapter.externals.json
+
+# Prisma's query engine, loaded. `require('@prisma/client')` above does not load it (the client
+# opens it on first connect), and the boot smoke in CI stops at env validation, so a wrong engine
+# target or a missing libssl would otherwise pass every gate here and fail at the first query.
+# Fails if no engine is found under the generated client, or if one does not load.
+RUN set -eu; \
+    find /app/node_modules/.pnpm -path '*/node_modules/.prisma/client/libquery_engine*.node' > /tmp/engines; \
+    test -s /tmp/engines; \
+    while read -r f; do \
+      node -e 'require(process.argv[1])' "$f"; \
+      echo "loaded $f"; \
+    done < /tmp/engines; \
+    rm -f /tmp/engines
 
 USER 1001:1001
 # 7130: HTTP/SSE (REGISTRY_ADAPTER_PORT), 7131: gRPC (REGISTRY_ADAPTER_GRPC_PORT); main.ts defaults.
