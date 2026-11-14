@@ -190,7 +190,8 @@ export async function checkComFaceIntentVerdict({
 
 /**
  * The owner's verdict on this listing text: the stored one while the text is unchanged, else a fresh
- * check, stored. A detection of the model's own stored listing on a mature model locks its nsfw
+ * check, stored only when it read the model's stored listing (a draft is judged, never stored, so it
+ * cannot replace a ruled verdict). A detection of the model's own stored listing on a mature model locks its nsfw
  * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
  * first made while the model was not mature, unless a moderator has ruled on its rating since.
  * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
@@ -207,6 +208,13 @@ async function resolveComFaceIntent({
   const model = found && found.userId === userId ? found : null;
   const textHash = comFaceIntentTextHash(listing);
   const stored = model ? reusableComFaceIntent(model.meta, textHash) : null;
+  const storedHash = model
+    ? comFaceIntentTextHash({
+        name: model.name,
+        description: model.description,
+        triggerWords: listing.triggerWords,
+      })
+    : null;
 
   let verdict: ComFaceIntentVerdict;
   if (stored)
@@ -215,7 +223,7 @@ async function resolveComFaceIntent({
       : { status: 'allowed' };
   else {
     verdict = await checkComFaceIntentVerdict(listing);
-    if (!model || verdict.status === 'unavailable') return verdict;
+    if (!model || verdict.status === 'unavailable' || storedHash !== textHash) return verdict;
     await recordComFaceIntent(model.id, {
       detected: verdict.status === 'detected',
       textHash,
@@ -232,11 +240,6 @@ async function resolveComFaceIntent({
   if (intentLocked) return { ...verdict, disputable: true };
 
   // Locked only for the text the model lists now, never for an unsaved edit or a draft.
-  const storedHash = comFaceIntentTextHash({
-    name: model.name,
-    description: model.description,
-    triggerWords: listing.triggerWords,
-  });
   if (storedHash !== textHash || !model.nsfw) return verdict;
   // A stored detection a moderator has ruled past (an unlock from the model form) is not re-applied.
   const recordedAt = stored && meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;

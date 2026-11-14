@@ -3,19 +3,35 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
+import type * as TextScanPreview from '~/server/services/text-scan/preview';
 
 /** The listing intent lock's own SQL against PGlite: which rows it may lock. Ids are invented. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+const { mockPreviewComFaceIntent } = vi.hoisted(() => ({ mockPreviewComFaceIntent: vi.fn() }));
+
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLag>()),
   preventReplicationLag: vi.fn(async () => undefined),
 }));
+// The package's ESM build can't be loaded by `importOriginal` here; every suite fakes it whole.
+vi.mock('@civitai/orchestration-client', () => ({
+  createCivitaiClient: vi.fn(() => ({})),
+  submitWorkflow: vi.fn(),
+}));
+vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPreview>()),
+  previewComFaceIntent: mockPreviewComFaceIntent,
+}));
 
-const { lockForComFaceIntent, recordComFaceIntent } = await import(
-  '~/server/services/model-com-face-intent.service'
-);
+const {
+  comFaceIntentTextHash,
+  lockForComFaceIntent,
+  overturnComFaceIntentSql,
+  recordComFaceIntent,
+} = await import('~/server/services/model-com-face-intent.service');
+const { assertComFaceAllowed } = await import('~/server/services/model-sfw-face.service');
 
 const MODEL = 5;
 let db: PGlite;
@@ -31,7 +47,10 @@ beforeAll(async () => {
       poi boolean NOT NULL DEFAULT false,
       minor boolean NOT NULL DEFAULT false,
       "sfwOnly" boolean NOT NULL DEFAULT false,
-      meta jsonb
+      meta jsonb,
+      "userId" int NOT NULL DEFAULT 1,
+      name text NOT NULL DEFAULT 'Model',
+      description text
     );
   `);
   const raw = pgliteRaw(db);
@@ -42,6 +61,11 @@ beforeAll(async () => {
   dbMock.dbWrite.$transaction.mockImplementation(((fn: (t: typeof tx) => unknown) =>
     fn(tx)) as never);
   dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  // The model the face check reads, from this table.
+  dbMock.dbWrite.model.findUnique.mockImplementation(
+    (async () =>
+      (await db.query(`SELECT * FROM "Model" WHERE id = $1`, [MODEL])).rows[0] ?? null) as never
+  );
 });
 afterAll(() => db.close());
 
@@ -179,5 +203,74 @@ describe('restoreReplacedRatingMarkerSql', () => {
       [meta.systemNsfwLock.at]
     );
     expect(since.rows[0].n).toBe(0);
+  });
+});
+
+describe('the face check after a moderator lifted the intent lock', () => {
+  const OWNER = 1;
+  const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
+  const storedHash = comFaceIntentTextHash(stored);
+  const detects = (detected: boolean) => ({ status: 'ok', output: { detected, reason: 'r' } });
+  const faceCheck = (listing: typeof stored) =>
+    assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
+
+  // The stored listing was detected and locked, then a moderator's approval lifted the lock and
+  // overturned the detection, as `resolveLockReviewAppeal` does.
+  async function lockedThenApproved() {
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, NULL, true, '{}', $2)`,
+      [MODEL, stored.description]
+    );
+    await recordComFaceIntent(MODEL, { detected: true, textHash: storedHash });
+    expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(true);
+    await db.query(
+      `UPDATE "Model" SET "lockedProperties" = '{}', meta = meta - 'systemNsfwLock' WHERE id = $1`,
+      [MODEL]
+    );
+    await dbMock.dbWrite.$executeRaw(overturnComFaceIntentSql(MODEL, storedHash));
+    activities.length = 0;
+  }
+
+  beforeEach(() => {
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue(detects(true));
+  });
+
+  it('does not re-lock the stored listing after a draft of other text was checked', async () => {
+    await lockedThenApproved();
+
+    // The draft is judged and refused, but its verdict is not stored over the ruled one.
+    await expect(faceCheck({ ...stored, description: 'unsaved draft' })).rejects.toThrow();
+    await faceCheck(stored);
+
+    const after = await row();
+    expect(after.lockedProperties).toEqual([]);
+    expect(after.meta.comFaceIntent).toMatchObject({ textHash: storedHash });
+    expect(after.meta.comFaceIntent.overturnedAt).toBeTruthy();
+    expect(activities).toHaveLength(0);
+  });
+
+  it('locks again once the owner saves new text the check detects', async () => {
+    await lockedThenApproved();
+    const saved = { ...stored, description: 'new saved listing' };
+    await db.query(`UPDATE "Model" SET description = $2 WHERE id = $1`, [MODEL, saved.description]);
+
+    await expect(faceCheck(saved)).rejects.toThrow();
+
+    const after = await row();
+    expect(after.lockedProperties).toEqual(['nsfw']);
+    expect(after.meta.comFaceIntent).toMatchObject({
+      detected: true,
+      textHash: comFaceIntentTextHash(saved),
+    });
+  });
+
+  it('keeps an overturned verdict when a fresh one for the same text lands after the ruling', async () => {
+    await lockedThenApproved();
+
+    await recordComFaceIntent(MODEL, { detected: true, textHash: storedHash });
+
+    expect((await row()).meta.comFaceIntent.overturnedAt).toBeTruthy();
+    expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(false);
   });
 });

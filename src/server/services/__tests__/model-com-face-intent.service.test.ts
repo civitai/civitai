@@ -143,13 +143,14 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
     expect(mockLock).toHaveBeenCalledWith(7, hash);
   });
 
-  it('stores but never locks on a detection of an unsaved edit', async () => {
+  // The stored verdict is the stored listing's: a draft's would replace one a moderator ruled on.
+  it('neither stores nor locks on a detection of an unsaved edit', async () => {
     mockRead.mockResolvedValue(model());
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     await expect(
       assertComFaceAllowed({ ...stored, name: 'New unsaved title', modelId: 7, userId: 1 })
     ).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
-    expect(mockRecord).toHaveBeenCalled();
+    expect(mockRecord).not.toHaveBeenCalled();
     expect(mockLock).not.toHaveBeenCalled();
   });
 

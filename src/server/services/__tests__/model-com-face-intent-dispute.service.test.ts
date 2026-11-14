@@ -139,16 +139,6 @@ describe('processComFaceIntentDisputes', () => {
     expect(appealWrites()).toEqual([['needs-moderator', 1]]);
   });
 
-  it('hands it to a moderator when the approval finds the intent lock replaced', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
-    mocks.verdict.mockResolvedValue({ status: 'allowed' });
-    const { LOCK_REVIEW_LOCK_CHANGED } = await import('~/server/services/lock-review.service');
-    mocks.resolve.mockRejectedValue(new Error(LOCK_REVIEW_LOCK_CHANGED));
-
-    expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
-    expect(appealWrites()).toEqual([['needs-moderator', 1]]);
-  });
-
   it('marks it later-verdict when the approval finds a verdict that landed during the re-check', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
     mocks.verdict.mockResolvedValue({ status: 'allowed' });

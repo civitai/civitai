@@ -64,8 +64,8 @@ export async function readComFaceIntentModel(modelId: number) {
   });
 }
 
-/** Stores a fresh verdict for the listing text it read. Best effort: a failed write only costs a
- *  re-judgement next time. */
+/** Stores a fresh verdict for the listing text it read, never over a ruling's overturn of that same
+ *  text. Best effort: a failed write only costs a re-judgement next time. */
 export async function recordComFaceIntent(
   modelId: number,
   record: Omit<ComFaceIntentRecord, 'at'>
@@ -82,6 +82,8 @@ export async function recordComFaceIntent(
       'laterVerdict', meta->'comFaceIntent'->'laterVerdict'
     )))
     WHERE id = ${modelId}
+      AND NOT COALESCE(meta->'comFaceIntent'->>'textHash' = ${record.textHash}
+        AND meta->'comFaceIntent' ? 'overturnedAt', FALSE)
   `.catch((error: Error) =>
     logToAxiom({
       type: 'error',
