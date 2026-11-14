@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, useState } from 'react';
 import { useMoreFromCreator } from '~/components/Music/SongDetail/useMoreFromCreator';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
 import type { SongImage } from '~/components/MusicPlayer/PostSong';
-import { songTrack } from '~/components/MusicPlayer/PostSong';
+import { playSongWithCreatorList, songTrack } from '~/components/MusicPlayer/PostSong';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 
 type SongComments = {
@@ -40,12 +40,7 @@ export function SongCommentsProvider({
           if (!player.playing) player.resume();
           return;
         }
-        player.playFromList({
-          name: song.user.username || moreFrom.name,
-          tracks: [song, ...moreFrom.songs].map(songTrack),
-          index: 0,
-          startAtSec: sec,
-        });
+        playSongWithCreatorList(song, { name: moreFrom.name, songs: moreFrom.songs }, sec);
       },
     }),
     [song, moreFrom.name, moreFrom.songs]

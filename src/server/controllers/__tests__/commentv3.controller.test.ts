@@ -178,7 +178,7 @@ describe('getTimed: a song’s timed comments for the player', () => {
       {
         id: 1,
         timestampSec: 4,
-        content: '<p>so <b>good</b></p>',
+        content: '<p>so <b>good</b> &amp; &quot;loud&quot;</p>',
         user: { id: 7, username: 'a', image: null },
       },
       {
@@ -190,7 +190,8 @@ describe('getTimed: a song’s timed comments for the player', () => {
     ]);
     pictures.mockResolvedValueOnce({ 7: { id: 70 } });
     const [first, second] = await timed();
-    expect(first).toMatchObject({ id: 1, timestampSec: 4, text: 'so good' });
+    // Stored comments are HTML: the label shows their entities as the characters they stand for.
+    expect(first).toMatchObject({ id: 1, timestampSec: 4, text: 'so good & "loud"' });
     expect(first.user).toMatchObject({ id: 7, profilePicture: { id: 70 } });
     expect(second.text).toHaveLength(140);
     expect(second.text.endsWith('…')).toBe(true);

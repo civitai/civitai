@@ -12,7 +12,7 @@ import {
   songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
 import type { SongImage } from '~/components/MusicPlayer/PostSong';
-import { songTrack } from '~/components/MusicPlayer/PostSong';
+import { playSongWithCreatorList, songTrack } from '~/components/MusicPlayer/PostSong';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
@@ -57,14 +57,7 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === image.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === image.id && s.playing);
 
-  // Up next reads "Next from <name>", so the list is named by the creator alone.
-  const play = (startAtSec?: number) =>
-    store().playFromList({
-      name: image.user.username || moreFrom.name,
-      tracks: [image, ...moreFrom.songs].map(songTrack),
-      index: 0,
-      startAtSec,
-    });
+  const play = (startAtSec?: number) => playSongWithCreatorList(image, moreFrom, startAtSec);
   const togglePlay = () => (isCurrent ? store().togglePlay() : play());
   const lyricsState = !revealed
     ? 'hidden'

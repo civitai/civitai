@@ -1,3 +1,4 @@
+import { decode } from 'he';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { commentTrackTypes } from '~/server/clickhouse/tracker';
 import type { CommentEntityType } from '~/shared/utils/prisma/enums';
@@ -177,7 +178,7 @@ export async function getTimedCommentsHandler({
     ? await getProfilePicturesForUsers([...new Set(comments.map((c) => c.user.id))])
     : {};
   return comments.map(({ content, ...comment }) => {
-    const text = removeTags(content);
+    const text = decode(removeTags(content));
     return {
       ...comment,
       text:

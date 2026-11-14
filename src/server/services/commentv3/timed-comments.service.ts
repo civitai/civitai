@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import type { CommentV3Db } from '~/server/services/commentv3/read.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { storedSongDurationSec } from '~/shared/utils/song-play';
 
 /** What a timed comment stores in `CommentV3.metadata`; built here, never taken from the client. */
 export type TimedCommentMetadata = { timestampSec: number };
@@ -13,9 +14,5 @@ export async function getCommentSong(db: CommentV3Db, imageId: number) {
   );
   const song = rows[0];
   if (!song || song.type !== MediaType.audio) return null;
-  const { duration } = song;
-  return {
-    durationSec:
-      typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? duration : null,
-  };
+  return { durationSec: storedSongDurationSec(song.duration) };
 }

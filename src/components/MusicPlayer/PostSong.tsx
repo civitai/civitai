@@ -37,6 +37,19 @@ export function songTrack(image: SongImage): MusicTrack {
 
 const store = useMusicPlayerStore.getState;
 
+/**
+ * Starts `song`, from `startAtSec` when given, with the creator's other songs as Up next. Up next
+ * reads "Next from <name>", so the list is named by the creator alone.
+ */
+export function playSongWithCreatorList(song: SongImage, moreFrom: SongList, startAtSec?: number) {
+  store().playFromList({
+    name: song.user.username || moreFrom.name,
+    tracks: [song, ...moreFrom.songs].map(songTrack),
+    index: 0,
+    startAtSec,
+  });
+}
+
 /** Play now, with the songs after it in `list` as Up next. */
 function playNow(song: SongImage, list: SongList) {
   const index = list.songs.findIndex((s) => s.id === song.id);
