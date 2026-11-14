@@ -466,7 +466,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       type,
       time
     FROM userActivities
-    WHERE userId = ${report.userId} AND (type = 'Registration' OR type = 'Login')
+    WHERE targetUserId = ${report.userId} AND (type = 'Registration' OR type = 'Login')
   `);
 
   switch (report.type) {

@@ -50,6 +50,44 @@ describe.each([
     expect(m.uploadEvents).not.toHaveBeenCalled();
     expect(events).toEqual([login]);
   });
+
+  // Sign-ins are written with the signed-in account in targetUserId, and userId is usually 0.
+  describe('sign-in IPs', () => {
+    const activities = [
+      { userId: 0, targetUserId: 42, ip: '192.0.2.10', type: 'Login', time: '2026-10-20 09:00:00' },
+      {
+        userId: 0,
+        targetUserId: 42,
+        ip: '192.0.2.11',
+        type: 'Registration',
+        time: '2026-10-01 09:00:00',
+      },
+      {
+        userId: 0,
+        targetUserId: 7,
+        ip: '198.51.100.7',
+        type: 'Login',
+        time: '2026-10-20 09:30:00',
+      },
+    ];
+    // Evaluates the `<column> = <id>` filter of the userActivities query against the rows above.
+    function userActivitiesTable(sql: string) {
+      const match = /FROM userActivities\s+WHERE (\w+) = (\d+)/.exec(sql);
+      if (!match) return [];
+      const [, column, id] = match;
+      return activities
+        .filter((row) => row[column as 'userId' | 'targetUserId'] === Number(id))
+        .map(({ ip, type, time }) => ({ ip, type, time }));
+    }
+
+    it("returns the reported account's sign-ins and no other account's", async () => {
+      m.query.mockImplementation(async (sql: string) => userActivitiesTable(sql));
+
+      const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+      expect(events.map((e) => e.ip)).toEqual(['192.0.2.10', '192.0.2.11']);
+    });
+  });
 });
 
 describe('getCsamReportsPaged', () => {
