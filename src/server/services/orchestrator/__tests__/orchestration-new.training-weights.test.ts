@@ -9,9 +9,6 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof WorkflowsMod>()),
   getWorkflow: mockGetWorkflow,
 }));
-// Only the token-threading tests reach the audit (they enter through
-// `generateFromGraph`); it is a redis/DB/external-moderation read this fixture
-// cannot satisfy, and its verdict is irrelevant to what those tests pin.
 vi.mock('~/server/services/orchestrator/promptAuditing', async (importOriginal) => ({
   ...(await importOriginal<typeof PromptAuditingMod>()),
   auditPromptServer: vi.fn(async () => undefined),
@@ -47,7 +44,10 @@ vi.mock('~/server/services/image.service', () => ({
 
 import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
 import type * as PromptAuditingMod from '~/server/services/orchestrator/promptAuditing';
-import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import {
+  formatGenerationResponse2,
+  getWorkflowStatusUpdate,
+} from '~/server/services/orchestrator/orchestration-new.service';
 
 const MARKER = 'PLANTED-EPOCH-HANDLE';
 const planted = { url: `https://example.invalid/${MARKER}.safetensors`, id: MARKER };
@@ -79,6 +79,15 @@ const workflow = () =>
     ],
   } as never);
 
+const workflowWithPreparation = () => {
+  const base = workflow() as unknown as { steps: Record<string, unknown>[] };
+  // A continued run waits on its source epoch, a supplied LoRA blob the summary keeps.
+  base.steps[0].preparation = [
+    { resource: `urn:air:flux1:lora:orchestrator:blob@${MARKER}`, sizeBytes: 1, lane: 'normal' },
+  ];
+  return base as never;
+};
+
 describe('formatGenerationResponse2 — a training run’s weights', () => {
   beforeEach(() => mockGetHighestTierSubscription.mockResolvedValue(null));
 
@@ -90,5 +99,27 @@ describe('formatGenerationResponse2 — a training run’s weights', () => {
   it('formats them for a moderator', async () => {
     const formatted = await formatGenerationResponse2([workflow()], { id: 1, isModerator: true });
     expect(JSON.stringify(formatted)).toContain(MARKER);
+  });
+});
+
+describe('getWorkflowStatusUpdate — a training run’s weights', () => {
+  beforeEach(() => mockGetWorkflow.mockReset().mockResolvedValue(workflowWithPreparation()));
+
+  it('names none of them to a non-moderator', async () => {
+    const update = await getWorkflowStatusUpdate({
+      token: 't',
+      workflowId: 'wf-1',
+      isModerator: false,
+    });
+    expect(JSON.stringify(update)).not.toContain(MARKER);
+  });
+
+  it('names them to a moderator', async () => {
+    const update = await getWorkflowStatusUpdate({
+      token: 't',
+      workflowId: 'wf-1',
+      isModerator: true,
+    });
+    expect(JSON.stringify(update)).toContain(MARKER);
   });
 });

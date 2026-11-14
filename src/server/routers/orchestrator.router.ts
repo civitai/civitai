@@ -856,7 +856,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
     .query(({ ctx, input }) =>
-      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+      getWorkflowStatusUpdate({
+        token: ctx.token,
+        workflowId: input.workflowId,
+        isModerator: ctx.user.isModerator,
+      })
     ),
 
   // ── Generic iterative image editor endpoints ──

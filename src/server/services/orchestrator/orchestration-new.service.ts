@@ -3725,11 +3725,14 @@ export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUp
 export async function getWorkflowStatusUpdate({
   token,
   workflowId,
+  isModerator,
 }: {
   token: string;
   workflowId: string;
+  isModerator?: boolean;
 }) {
-  const result = await getWorkflow({ token, path: { workflowId } });
+  const fetched = await getWorkflow({ token, path: { workflowId } });
+  const result = fetched && withoutTrainingWeightHandles(fetched, { isModerator });
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;
