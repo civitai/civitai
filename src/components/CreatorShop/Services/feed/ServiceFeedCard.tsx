@@ -7,6 +7,8 @@ export function ServiceFeedCard({ offering }: { offering: ServiceFeedOffering })
     <ServiceOfferingCard
       offering={offering}
       seller={offering.seller}
+      sellerId={offering.seller.id}
+      sellerUsername={offering.seller.username ?? ''}
       slotsOpen={offering.slotsOpen}
       href={serviceStorefrontHref(offering.seller.username ?? '', offering.id)}
     />

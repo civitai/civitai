@@ -1,6 +1,7 @@
 import { Button, Paper, Text } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
 import type { ComponentProps, ReactNode } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import cardStyles from '~/components/CardTemplates/AspectRatioCard.module.scss';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
@@ -8,7 +9,10 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
 import { serviceTermsLine } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
+import { ServiceOfferingMenu } from '~/components/CreatorShop/Services/ServiceOfferingMenu';
+import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { ServiceSlotsBadge } from '~/components/CreatorShop/Services/ServiceSlotsBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -99,41 +103,57 @@ function BlurCaption({ level }: { level: number }) {
 export function ServiceOfferingCard({
   offering,
   seller,
+  sellerId,
+  sellerUsername,
   slotsOpen,
   href,
-  footer,
+  canRequest = true,
+  extra,
 }: {
   offering: Pick<
     ServiceOffering,
-    'title' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
+    'id' | 'title' | 'description' | 'price' | 'deliveryDays' | 'revisionsIncluded' | 'maxNsfwLevel'
   > & { coverImage?: ServiceCoverImage | null };
   /** The /services feed shows whose offering this is; a seller's own shop and profile do not. */
   seller?: ServiceCardSeller;
+  sellerId: number;
+  sellerUsername: string;
   slotsOpen?: number | null;
-  /** Where the cover and the View button go. */
+  /** Where the cover goes: the offering on its seller's storefront. Unset on the storefront itself. */
   href?: string;
-  /** Replaces the View button, for a place whose actions are not "View" (Request, Manage). */
-  footer?: ReactNode;
+  /** False on a shop that is not published: a buyer's request would answer "Shop not found". */
+  canRequest?: boolean;
+  /** Under the primary action; the storefront puts the owner's open-request shortcut here. */
+  extra?: ReactNode;
 }) {
   const domain = useDomainColor();
   const cover = offering.coverImage;
 
   const currentUser = useCurrentUser();
+  const isOwner = !!currentUser && currentUser.id === sellerId;
+  const full = slotsOpen === 0;
   const header = (hideRating = false) => (
     <div className="flex w-full items-start justify-between gap-2">
-      {!hideRating && <ServiceRatingBadge rating={offering.maxNsfwLevel} />}
-      <div className="ml-auto rounded-sm bg-black/60 backdrop-blur-sm">
-        <ServiceSlotsBadge slotsOpen={slotsOpen ?? null} />
-      </div>
+      <div>{!hideRating && <ServiceRatingBadge rating={offering.maxNsfwLevel} />}</div>
+      <ServiceOfferingMenu
+        offering={offering}
+        isOwner={isOwner}
+        isModerator={!!currentUser?.isModerator}
+      />
     </div>
   );
   const price = (
-    <div className="rounded-full bg-black/60 backdrop-blur-sm">
-      <CurrencyBadge
-        currency={Currency.BUZZ}
-        type={domain === 'green' ? 'green' : 'yellow'}
-        unitAmount={offering.price}
-      />
+    <div className="flex w-full items-end justify-between gap-2">
+      <div className="rounded-full bg-black/60 backdrop-blur-sm">
+        <CurrencyBadge
+          currency={Currency.BUZZ}
+          type={domain === 'green' ? 'green' : 'yellow'}
+          unitAmount={offering.price}
+        />
+      </div>
+      <div className="rounded-sm bg-black/60 backdrop-blur-sm">
+        <ServiceSlotsBadge slotsOpen={slotsOpen ?? null} />
+      </div>
     </div>
   );
 
@@ -174,13 +194,36 @@ export function ServiceOfferingCard({
         <Text size="sm" c="dimmed">
           {serviceTermsLine(offering)}
         </Text>
-        <div className="mt-auto pt-1">
-          {footer ??
-            (href && (
-              <Button component={NextLink} href={href} size="xs" fullWidth>
-                View
-              </Button>
-            ))}
+        <div className="mt-auto flex flex-col gap-2 pt-1">
+          {isOwner ? (
+            <Button
+              component={NextLink}
+              href={`/user/${sellerUsername}/shop/manage?tab=services`}
+              variant="default"
+              fullWidth
+            >
+              Manage
+            </Button>
+          ) : (
+            canRequest && (
+              <LoginRedirect reason="perform-action">
+                <Button
+                  color="yellow"
+                  fullWidth
+                  disabled={full}
+                  onClick={() =>
+                    dialogStore.trigger({
+                      component: ServiceRequestModal,
+                      props: { offering, sellerUsername },
+                    })
+                  }
+                >
+                  Request
+                </Button>
+              </LoginRedirect>
+            )
+          )}
+          {extra}
         </div>
       </div>
     </Paper>

@@ -16,7 +16,6 @@ import {
 } from '@mantine/core';
 import { Menu } from '~/components/MantineOverlays';
 import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
-import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -25,6 +24,7 @@ import {
   useMutateMyServices,
   useQueryMyServices,
 } from '~/components/CreatorShop/Services/creator-service.util';
+import { confirmRemoveService } from '~/components/CreatorShop/Services/service-remove-confirm';
 import { PublishServiceModal } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
@@ -202,15 +202,8 @@ function OfferingRow({
   const isActive = offering.status === ServiceOfferingStatus.Active;
 
   const confirmRemove = () =>
-    openConfirmModal({
-      title: 'Remove service',
-      children: (
-        <Text size="sm">
-          &quot;{offering.title}&quot; leaves your shop for good. Open deals are not affected.
-        </Text>
-      ),
-      labels: { confirm: 'Remove', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
+    confirmRemoveService({
+      title: offering.title,
       onConfirm: () => remove.mutate({ id: offering.id }),
     });
 

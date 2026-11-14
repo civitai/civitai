@@ -6,7 +6,10 @@ import { useQueryWishlistedShopItems } from '~/components/CosmeticShop/cosmetic-
 import { useQueryCreatorShop } from '~/components/CreatorShop/creator-shop.util';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { storefrontSectionId, storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
+import {
+  serviceStorefrontHref,
+  storefrontSectionKeys,
+} from '~/components/CreatorShop/section-meta';
 import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -64,16 +67,18 @@ export const ShopRow = ({
 };
 
 // Same grid and column math as ShopRow, one row, so a service card sits level with the
-// cosmetic cards. The button goes to the storefront Services section, where Request lives.
+// cosmetic cards. Request opens the request flow in place; the cover goes to the storefront.
 export const ServicesRow = ({
   offerings,
-  href,
+  sellerId,
+  sellerUsername,
 }: {
   offerings: (ComponentProps<typeof ServiceOfferingCard>['offering'] & {
     id: number;
     slotsOpen?: number | null;
   })[];
-  href: string;
+  sellerId: number;
+  sellerUsername: string;
 }) => {
   const [columns, setColumns] = useState(1);
   const gridRef = useResizeObserver<HTMLDivElement>((entry) => {
@@ -91,7 +96,13 @@ export const ServicesRow = ({
     >
       {offerings.slice(0, columns).map((offering) => (
         <div key={offering.id} style={{ margin: 8 }}>
-          <ServiceOfferingCard offering={offering} slotsOpen={offering.slotsOpen} href={href} />
+          <ServiceOfferingCard
+            offering={offering}
+            sellerId={sellerId}
+            sellerUsername={sellerUsername}
+            slotsOpen={offering.slotsOpen}
+            href={serviceStorefrontHref(sellerUsername, offering.id)}
+          />
         </div>
       ))}
     </div>
@@ -159,7 +170,8 @@ export const ShopSection = ({ user }: ProfileSectionProps) => {
               {showServices && (
                 <ServicesRow
                   offerings={offerings}
-                  href={`/user/${user.username}/shop#${storefrontSectionId('services')}`}
+                  sellerId={user.id}
+                  sellerUsername={user.username ?? ''}
                 />
               )}
             </Stack>

@@ -20,6 +20,12 @@ vi.mock(
     useInViewDynamic: () => [() => undefined, true],
   })
 );
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: () => null,
+}));
+vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
+  LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
   useQueryCreatorShop: () => ({ shop: state.shop, isLoading: false }),
@@ -66,15 +72,14 @@ describe('ShopSection services', () => {
     state.offerings = [];
   });
 
-  test('a services-only shop with an Active service shows the section, linking to the storefront services', async () => {
+  test('a services-only shop with an Active service shows the section with a Request button', async () => {
     state.offerings = [offering];
     const text = await renderSection();
     expect(text).toContain('Custom portrait');
     expect(text).toContain('1,500');
     expect(text).toContain('Delivered in ~5 days');
     expect(document.querySelectorAll('[data-testid="card"]')).toHaveLength(0);
-    const button = document.querySelector('a[href="/user/mira/shop#shop-services"]');
-    expect(button?.textContent).toBe('View');
+    expect(text).toContain('Request');
   });
 
   test('cosmetics still show alongside services', async () => {

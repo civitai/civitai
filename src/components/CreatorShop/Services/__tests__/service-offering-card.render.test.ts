@@ -1,9 +1,17 @@
 import { createElement } from 'react';
+import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+const viewer = vi.hoisted(() => ({ current: null as null | { id: number } }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: () => null,
+}));
+vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
+  LoginRedirect: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'blue' }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ user }: { user: { username: string } }) =>
@@ -16,6 +24,8 @@ const ServiceOfferingCardModule = await import(
 const { ServiceOfferingCard } = ServiceOfferingCardModule;
 
 const offering = {
+  id: 3,
+  description: 'One portrait.',
   title: 'Portrait commission',
   price: 500,
   deliveryDays: 5,
@@ -28,7 +38,12 @@ const render = (props: Record<string, unknown> = {}) =>
     createElement(
       MantineProvider,
       null,
-      createElement(ServiceOfferingCard, { offering, ...props } as never)
+      createElement(ServiceOfferingCard, {
+        offering,
+        sellerId: 1,
+        sellerUsername: 'mei',
+        ...props,
+      } as never)
     )
   );
 
@@ -40,20 +55,23 @@ describe('ServiceOfferingCard', () => {
     expect(html).toContain('2 slots open');
   });
 
-  it('links View to the given href, and shows the seller only when one is passed', () => {
-    const withSeller = render({
-      href: '/user/mei/shop#service-7',
-      seller: { id: 1, username: 'mei' },
-    });
-    expect(withSeller).toContain('href="/user/mei/shop#service-7"');
-    expect(withSeller).toContain('data-seller');
-    expect(render({ href: '/x' })).not.toContain('data-seller');
+  it('shows the seller only when one is passed', () => {
+    expect(render({ seller: { id: 1, username: 'mei' } })).toContain('data-seller');
+    expect(render()).not.toContain('data-seller');
   });
 
-  it('lets a caller replace the View button with its own actions', () => {
-    const html = render({ href: '/x', footer: createElement('button', null, 'Request') });
-    expect(html).toContain('Request');
-    expect(html).not.toContain('>View<');
+  it('offers a visitor Request, disabled when fully booked, and not at all when requests are closed', () => {
+    expect(render()).toContain('Request');
+    expect(render({ slotsOpen: 0 })).toMatch(/<button[^>]*disabled[^>]*>.*Request/s);
+    expect(render({ canRequest: false })).not.toContain('Request');
+  });
+
+  it('offers the seller Manage on their own card instead of Request', () => {
+    viewer.current = { id: 7 };
+    const html = render({ sellerId: 7, sellerUsername: 'mei' });
+    viewer.current = null;
+    expect(html).toContain('href="/user/mei/shop/manage?tab=services"');
+    expect(html).not.toContain('Request');
   });
 });
 

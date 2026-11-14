@@ -1,15 +1,11 @@
-import { Button, Group, Stack } from '@mantine/core';
+import { Button, Stack } from '@mantine/core';
 import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
 import { openDealsOnOffering } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
-import { ServiceRequestModal } from '~/components/CreatorShop/Services/deals/ServiceRequestModal';
 import { ServiceOfferingCard } from '~/components/CreatorShop/Services/ServiceOfferingCard';
-import { ReportServiceButton } from '~/components/CreatorShop/Services/ReportServiceButton';
 import { sectionIcons, storefrontSectionId } from '~/components/CreatorShop/section-meta';
 import { ServiceCardAnchor } from '~/components/CreatorShop/Storefront/ServiceCardAnchor';
 import { SectionHeader } from '~/components/CreatorShop/Storefront/SectionHeader';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
@@ -50,7 +46,6 @@ export function ServicesSection({
       />
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
         {offerings.map((offering) => {
-          const full = offering.slotsOpen === 0;
           const openDeal = isOwner
             ? openDealsOnOffering(openDeals, offering.id, allOpenDealsLoaded)
             : undefined;
@@ -58,51 +53,21 @@ export function ServicesSection({
             <ServiceCardAnchor key={offering.id} offeringId={offering.id}>
               <ServiceOfferingCard
                 offering={offering}
+                sellerId={ownerUserId}
+                sellerUsername={username}
                 slotsOpen={offering.slotsOpen}
-                footer={
-                  <Group justify="flex-end">
-                    {isOwner && (
-                      <Group gap={4}>
-                        <Button component={NextLink} href={manageHref} size="xs" variant="default">
-                          Manage
-                        </Button>
-                        {openDeal && (
-                          <Button
-                            component={NextLink}
-                            href={
-                              openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref
-                            }
-                            size="xs"
-                            color="yellow"
-                          >
-                            {openDeal.label}
-                          </Button>
-                        )}
-                      </Group>
-                    )}
-                    {!isOwner && (
-                      <Group gap={4}>
-                        <ReportServiceButton offeringId={offering.id} />
-                        {shopPublished && (
-                          <LoginRedirect reason="perform-action">
-                            <Button
-                              color="yellow"
-                              size="xs"
-                              disabled={full}
-                              onClick={() =>
-                                dialogStore.trigger({
-                                  component: ServiceRequestModal,
-                                  props: { offering, sellerUsername: username },
-                                })
-                              }
-                            >
-                              Request
-                            </Button>
-                          </LoginRedirect>
-                        )}
-                      </Group>
-                    )}
-                  </Group>
+                canRequest={shopPublished}
+                extra={
+                  openDeal && (
+                    <Button
+                      component={NextLink}
+                      href={openDeal.dealId ? `/services/deals/${openDeal.dealId}` : manageHref}
+                      color="yellow"
+                      fullWidth
+                    >
+                      {openDeal.label}
+                    </Button>
+                  )
                 }
               />
             </ServiceCardAnchor>
