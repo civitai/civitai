@@ -395,6 +395,9 @@ func buildImage(r RawImage, hy *Hydrated, viewer Viewer) Image {
 		{Key: "user", Val: user},
 		{Key: "stats", Val: stats},
 		{Key: "reactions", Val: reactions},
+		// `tagsByImageId?.get(i.id)`: only built for include 'tags' (withTags, a fallback shape here),
+		// so always undefined. Node's wire carries it as `null` + ["undefined"]; the comparator
+		// decodes both the same (internal/shadow applyUndefined).
 		{Key: "tags", Val: superjson.Undefined{}},
 		{Key: "tagIds", Val: orUndefined(tagIDs, hasTagIDs)},
 		{Key: "cosmetic", Val: frame},

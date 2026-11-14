@@ -109,7 +109,7 @@ func run(log *slog.Logger) error {
 		Gallery:  &feed.GalleryStore{Cache: cache, Prefix: cfg.CacheKeyPrefix, DB: pool},
 		Addons:   &feed.AddonSource{Sys: sys},
 		Config: feed.Config{
-			CreatorPromotions:       cfg.CreatorPromotion,
+			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
 			ImageIndexFeed:          cfg.ImageIndexFeed,
 			VisibleDecorationEvents: cfg.DecorationEvents,

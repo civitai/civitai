@@ -1,6 +1,6 @@
 {
   "name": "@civitai/feed-go",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "private": true,
   "description": "Version source for the feed-go Go service (apps/feed-go). Read only by scripts/release-app.mjs, which bumps it and cuts the feed-go-vX.Y.Z tag the tag-webhook builds. Not a pnpm workspace member (excluded in pnpm-workspace.yaml): the Go module has no Node dependencies."
 }

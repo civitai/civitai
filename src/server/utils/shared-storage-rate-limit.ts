@@ -273,13 +273,11 @@ export const SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
  */
 export const DOC_STORE_SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
   keyspace: 'docs-shared-write:v1',
-  // One token back a minute.
   burst: { capacity: 30, refillIntervalMs: 60 * 1000 },
-  // Refills continuously, one every 4.8 min.
   daily: { capacity: 300, refillIntervalMs: DAY_MS / 300 },
   // The legacy bucket, unchanged: it bounds moderation spent on writes that do NOT land, and an
   // app caching its own results has no reason to be refused more often. The larger burst does
-  // raise the daily ceiling on rejection charges (see the DEBT note above) from 67 to 87.
+  // raise the daily ceiling on rejection charges (see the DEBT note above).
   rejections: SHARED_WRITE_BUDGET.rejections,
 };
 

@@ -160,7 +160,7 @@ func TestBuildPostAndSort(t *testing.T) {
 	// Post 10: fetched images 3 (index 1) then 2 (index 0). Newest sorts the images by index,
 	// but the post-level fields come from image 3 (the first as fetched).
 	p := buildPost(10, []Image{img(3, 10, 1, 4, 77, 5, t0), img(2, 10, 0, 1, 77, 1, t0)}, SortNewest,
-		map[int]Review{77: {Rating: 5, ID: 9}}, false)
+		map[int]Review{77: {Rating: 5, ID: 9}}, false, false)
 	ids := []int64{}
 	imgs, _ := p.wire.Get("images")
 	for _, w := range imgs.([]any) {
@@ -183,9 +183,9 @@ func TestBuildPostAndSort(t *testing.T) {
 
 	// MostReactions: stable on ties, so equal totals keep ascending postId order.
 	posts := []post{
-		buildPost(1, []Image{img(11, 1, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false),
-		buildPost(2, []Image{img(12, 2, 0, 1, 1, 9, t0)}, SortMostReactions, nil, false),
-		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false),
+		buildPost(1, []Image{img(11, 1, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
+		buildPost(2, []Image{img(12, 2, 0, 1, 1, 9, t0)}, SortMostReactions, nil, false, false),
+		buildPost(3, []Image{img(13, 3, 0, 1, 1, 2, t0)}, SortMostReactions, nil, false, false),
 	}
 	sortPosts(posts, SortMostReactions)
 	order := []int64{}

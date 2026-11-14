@@ -199,6 +199,10 @@ export const createCrucibleInputBaseSchema = z.object({
       message: 'Unsupported maximum clip length',
     })
     .nullish(),
+  // Minted by the client once per creation and resent on its retries: the setup fee's and the
+  // seed's ledger ids derive from it, so a retry after an unanswered request charges each once.
+  // Optional for clients from before keys, which get new ids per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 type CrucibleSettings = {
