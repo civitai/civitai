@@ -31,7 +31,11 @@
  * One difference: this source fails closed on a rating it does not know ({@link audienceAdmits}).
  *
  * The registry is treated as a mature-capable surface, so the user's own settings are what narrow
- * a stream.
+ * a stream, except in a region the site restricts to SFW content. The site sends such a request
+ * to its SFW domain, where `canViewNsfw` is off and no host is mature-capable; this source has no
+ * other domain, so it applies that domain's rule to the request instead: no mature rating,
+ * whatever the user's settings ({@link audienceForUser}, `request-origin.ts`). Anonymous is
+ * already that narrow.
  */
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 import type { MatureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
@@ -60,13 +64,23 @@ export const ANONYMOUS_AUDIENCE: Audience = audienceOf(
   matureRatingsAllowed(true, getServerBrowsingLevel({ canViewNsfw: true, user: null }))
 );
 
-/** The audience of a signed-in user, from their saved browsing settings. */
-export function audienceForUser(user: {
-  showNsfw?: boolean | null;
-  browsingLevel?: number | null;
-}): Audience {
+/**
+ * The audience of a signed-in user, from their saved browsing settings. From a region the site
+ * restricts to SFW content (`regionRestricted`), the SFW domain's rule: no mature rating.
+ */
+export function audienceForUser(
+  user: {
+    showNsfw?: boolean | null;
+    browsingLevel?: number | null;
+  },
+  { regionRestricted = false }: { regionRestricted?: boolean } = {}
+): Audience {
+  const matureCapable = !regionRestricted;
   return audienceOf(
-    matureRatingsAllowed(true, getServerBrowsingLevel({ canViewNsfw: true, user }))
+    matureRatingsAllowed(
+      matureCapable,
+      getServerBrowsingLevel({ canViewNsfw: matureCapable, user })
+    )
   );
 }
 

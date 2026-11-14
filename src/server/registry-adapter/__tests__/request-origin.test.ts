@@ -24,13 +24,13 @@ afterEach(() => {
 
 describe('🔴 regionRestricted is the site’s region-restriction rule', () => {
   it.each([
-    ['a configured country', { 'cf-ipcountry': 'ZZ' }, true],
-    ['a configured US state', { 'cf-ipcountry': 'US', 'cf-region-code': 'NY' }, true],
-    ['another country', { 'cf-ipcountry': 'DE' }, false],
-    ['another US state', { 'cf-ipcountry': 'US', 'cf-region-code': 'CA' }, false],
+    ['a configured country', true, { 'cf-ipcountry': 'ZZ' }],
+    ['a configured US state', true, { 'cf-ipcountry': 'US', 'cf-region-code': 'NY' }],
+    ['another country', false, { 'cf-ipcountry': 'DE' }],
+    ['another US state', false, { 'cf-ipcountry': 'US', 'cf-region-code': 'CA' }],
     // As on the site: a request whose region cannot be told is not restricted.
-    ['no region headers', {}, false],
-  ])('%s: restricted = %s', async (_name, headers, restricted) => {
+    ['no region headers', false, {}],
+  ])('%s: restricted = %s', async (_name, restricted, headers) => {
     const { regionRestricted } = await load('ZZ:2026-01-01,US:NY:2026-01-01');
     expect(regionRestricted({ headers }, NOW)).toBe(restricted);
   });
