@@ -5681,17 +5681,11 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
     return (mockSubmitWorkflow.mock.calls[callIdx][0] as { body: Record<string, unknown> }).body;
   }
 
-  // NOTE: the orchestrator currency VALUES (the BuzzClientAccount-mapped
-  // strings) can't be asserted here — the global test setup mocks
-  // `@civitai/orchestration-client` with a stub `BuzzClientAccount` lacking BLUE/GREEN/YELLOW
-  // (see src/__tests__/setup.ts), so `BuzzTypes.toOrchestratorType` yields
-  // nulls under vitest. The exact SFW→blue/green, mature→blue/yellow,
-  // blue-first ordering is asserted on the pure `BuzzSpendType` strings in
-  // src/server/utils/__tests__/buzz-helpers.test.ts. Here we assert the
-  // ROUTER-level behavior that depends on the derivation: the currency array
-  // is now the 2-element PARITY set (was a 1-element ['yellow'] hardcode), it's
-  // applied at EVERY submit site, and the recorded spend buzzType matches the
-  // domain currency (pure string, unaffected by the client mock).
+  // NOTE: these assert the SHAPE (a 2-element set at every submit site). The global
+  // `@civitai/orchestration-client` mock now carries the real BuzzClientAccount values,
+  // so the exact ORDER is asserted with literal arrays in the
+  // "accountType on kind:'step' bodies" block at the end of this file; the pure
+  // `BuzzSpendType` ordering is in src/server/utils/__tests__/buzz-helpers.test.ts.
   describe('estimateWorkflow currencies (whatIf)', () => {
     it('derives a 2-element parity currency set (was 1-element yellow-only)', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims({ maxBrowsingLevel: SFW_CEILING }));
@@ -5775,12 +5769,9 @@ describe('blocks workflow — buzz-type parity + spend-attribution currency', ()
   });
 
   // ---- viewer-picked accountType (money page blocks) ----------------------
-  // The exact reordered orchestrator currency VALUES can't be asserted here
-  // (the global @civitai/orchestration-client mock nulls out BuzzClientAccount, so
-  // toOrchestratorType yields non-comparable values — the ORDERING is asserted
-  // on the pure BuzzSpendType strings in buzz-helpers.test.ts). Here we pin the
-  // ROUTER-level behavior: an ALLOWED / ABSENT pick submits normally, and a
-  // DISALLOWED pick is REJECTED before any orchestrator spend.
+  // Here: an ALLOWED / ABSENT pick submits normally, and a DISALLOWED pick is
+  // REJECTED before any orchestrator spend. The exact reordered `currencies` are
+  // asserted with literal arrays at the end of this file.
   describe('honors body.accountType (preferred-first, domain-clamped)', () => {
     it('absent accountType → submits normally (Auto, both submit sites fire)', async () => {
       mockVerifyBlockToken.mockResolvedValue(
@@ -13216,5 +13207,180 @@ describe('blocks.estimateWorkflowBatch', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * `accountType` — the Buzz pool tried FIRST — on both `kind:'step'` arms, and the
+ * textToImage ESTIMATE honouring it. Asserted on the `currencies` the orchestrator
+ * receives, as LITERAL arrays (the global client mock carries the real
+ * `BuzzClientAccount` values — see src/__tests__/setup.ts).
+ *
+ * Every pick case expects an order the no-pick default CANNOT produce
+ * (`['yellow','blue']` vs Auto `['blue','yellow']`), so a path that drops the pick
+ * — hardcodes `undefined`, or quotes with its own Auto list — fails here.
+ */
+describe("accountType on kind:'step' bodies and the textToImage estimate", () => {
+  const MATURE = { domain: 'red', maxBrowsingLevel: ALL_CEILING };
+  const SFW = { domain: 'green', maxBrowsingLevel: SFW_CEILING };
+  const PICKS = [
+    { name: 'a mature app, yellow pick', rating: MATURE, pick: 'yellow', want: ['yellow', 'blue'] },
+    { name: 'an SFW app, green pick', rating: SFW, pick: 'green', want: ['green', 'blue'] },
+    { name: 'an SFW app, no pick', rating: SFW, pick: undefined, want: ['blue', 'green'] },
+    { name: 'a mature app, no pick', rating: MATURE, pick: undefined, want: ['blue', 'yellow'] },
+  ] as const;
+  const DISALLOWED = "buzz account 'yellow' is not spendable for this app's content rating";
+
+  const isWhatIf = (c: unknown[]) =>
+    (c[0] as { query?: { whatif?: boolean } } | undefined)?.query?.whatif === true;
+  const currenciesOf = (whatif: boolean) =>
+    mockSubmitWorkflow.mock.calls
+      .filter((c) => isWhatIf(c) === whatif)
+      .map((c) => (c[0] as { body: { currencies?: unknown } }).body.currencies);
+
+  function pageClaims(over: Record<string, unknown> = {}) {
+    return validClaims({
+      ctx: { entityType: 'none', slotId: 'page' },
+      appBlockId: 'apb_test',
+      buzzBudget: 50,
+      ...over,
+    });
+  }
+  function quoting(cost: number) {
+    mockSubmitWorkflow.mockImplementation(
+      async (opts: {
+        query?: { whatif?: boolean };
+        body: { steps?: Array<{ $type: string; name: string }> };
+      }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [], cost: { total: cost } }
+          : {
+              id: 'wf_real',
+              status: 'processing',
+              steps: (opts.body.steps ?? []).map((s) => ({
+                $type: s.$type,
+                name: s.name,
+                output: {},
+              })),
+              cost: { total: cost },
+            }
+    );
+  }
+  const withPick = (b: Record<string, unknown>, pick: string | undefined) =>
+    pick === undefined ? b : { ...b, accountType: pick };
+
+  const ARMS = [
+    {
+      arm: 'registered step',
+      body: () => ({
+        kind: 'step' as const,
+        step: 'convert-image',
+        params: {
+          image: 'https://image.civitai.com/source.png',
+          output: { format: 'webp', quality: 90 },
+        },
+      }),
+    },
+    {
+      arm: 'pass-through step',
+      body: () => ({
+        kind: 'step' as const,
+        $type: 'imageBackgroundRemoval',
+        input: { prompt: 'a cat', params: { seed: 1234 } },
+        maxBuzz: 20,
+      }),
+    },
+  ] as const;
+
+  const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+
+  describe.each(ARMS)('$arm', ({ body }) => {
+    it.each(PICKS)('ESTIMATE — $name quotes with $want', async ({ rating, pick, want }) => {
+      mockVerifyBlockToken.mockResolvedValue(pageClaims(rating));
+      happyUser();
+      quoting(4);
+      await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: withPick(body(), pick) as never,
+      });
+      expect(currenciesOf(true)).toEqual([want]);
+      expect(currenciesOf(false)).toEqual([]);
+    });
+
+    it.each(PICKS)(
+      'SUBMIT — $name sends $want on the quote AND the real submit',
+      async ({ rating, pick, want }) => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaims(rating));
+        happyUser();
+        quoting(4);
+        const result = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: withPick(body(), pick) as never,
+        });
+        expect(result.snapshot.workflowId).toBe('wf_real');
+        expect(currenciesOf(true)).toEqual([want]);
+        expect(currenciesOf(false)).toEqual([want]);
+      }
+    );
+
+    it.each(['estimateWorkflow', 'submitWorkflow'] as const)(
+      '%s — a yellow pick on an SFW app is BAD_REQUEST before any orchestrator call',
+      async (procedure) => {
+        mockVerifyBlockToken.mockResolvedValue(pageClaims(SFW));
+        happyUser();
+        quoting(4);
+        await expect(
+          caller()[procedure]({ blockToken: 'tok', body: withPick(body(), 'yellow') as never })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: DISALLOWED });
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  // 🔴 THE ESTIMATE FIX. The textToImage estimate used `resolveBlockCurrencies(isGreen)`
+  // and ignored the pick, so it priced Auto order while the submit drained the pick
+  // first. Red before the fix: the estimate sent `['blue','yellow']`.
+  describe('textToImage — the estimate prices the order the submit drains', () => {
+    it('a mature app, yellow pick: estimate and submit both send [yellow, blue]', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000, ...MATURE }));
+      happyVersionLookup();
+      happyUser();
+      quoting(10);
+      await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: validBody({ accountType: 'yellow' }),
+      });
+      const estimated = currenciesOf(true);
+      expect(estimated).toEqual([['yellow', 'blue']]);
+
+      mockSubmitWorkflow.mockClear();
+      quoting(10);
+      await caller().submitWorkflow({
+        blockToken: 'tok',
+        body: validBody({ accountType: 'yellow' }),
+      });
+      expect(currenciesOf(true)).toEqual(estimated);
+      expect(currenciesOf(false)).toEqual(estimated);
+    });
+
+    it('a yellow pick on an SFW app is refused by the ESTIMATE too, with no orchestrator call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ ...SFW }));
+      happyVersionLookup();
+      happyUser();
+      quoting(10);
+      await expect(
+        caller().estimateWorkflow({ blockToken: 'tok', body: validBody({ accountType: 'yellow' }) })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: DISALLOWED });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('no pick: the estimate keeps the Auto order', async () => {
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ ...MATURE }));
+      happyVersionLookup();
+      happyUser();
+      quoting(10);
+      await caller().estimateWorkflow({ blockToken: 'tok', body: validBody() });
+      expect(currenciesOf(true)).toEqual([['blue', 'yellow']]);
+    });
   });
 });

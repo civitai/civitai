@@ -1452,3 +1452,58 @@ describe('account Limits section: the Apps Buzz row is what the per-user cap enf
     expect(row?.used).toBe(PRICE);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('accountType — a confirmed quote is bound to the pool it was priced with', () => {
+  const currenciesOf = (whatif: boolean) =>
+    h.submitWorkflow.mock.calls
+      .map((c) => c[0] as { body: { currencies?: unknown }; query?: { whatif?: boolean } })
+      .filter((a) => (a.query?.whatif === true) === whatif)
+      .map((a) => a.body.currencies);
+  async function confirmedQuoteFor(b: Record<string, unknown>) {
+    const { snapshot } = await estimate(b);
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    return quoteId;
+  }
+
+  // The fixture token is SFW (`maxBrowsingLevel: 1`): blue and green are allowed.
+  it('runs with the SAME pool, which goes first on the estimate, the re-quote and the submit', async () => {
+    const quoteId = await confirmedQuoteFor(body({ accountType: 'green' }));
+    const r = await submit(body({ accountType: 'green', quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+    // Estimate whatif, then the submit's re-quote: both priced green-first.
+    expect(currenciesOf(true)).toEqual([
+      ['green', 'blue'],
+      ['green', 'blue'],
+    ]);
+    expect(currenciesOf(false)).toEqual([['green', 'blue']]);
+  });
+
+  it.each([
+    ['a different pool', { accountType: 'green' }, { accountType: 'blue' }],
+    ['a pool added after the quote', {}, { accountType: 'green' }],
+    ['the pool dropped after the quote', { accountType: 'green' }, {}],
+  ] as const)('refuses %s as a changed body, charging nothing', async (_l, quoted, submitted) => {
+    const quoteId = await confirmedQuoteFor(body(quoted));
+    await expect(submit(body({ ...submitted, quoteId }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'the step body differs from the one that was quoted — estimate again',
+    });
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  it('a disallowed pool is refused BEFORE the quote is consumed, so the quote still runs', async () => {
+    const quoteId = await confirmedQuoteFor(body());
+    await expect(submit(body({ accountType: 'yellow', quoteId }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "buzz account 'yellow' is not spendable for this app's content rating",
+    });
+    expect(realSubmits()).toHaveLength(0);
+    // Not spent: the original body still submits against it.
+    const r = await submit(body({ quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+  });
+});
