@@ -153,4 +153,20 @@ describe('record: one key per declared file, no repeats', () => {
     });
     await expect(record(other, KEY_A)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
+
+  it.each([
+    ['another app', { userId: USER, appBlockId: 'apb_beta' }, NOW],
+    ['a batch past its 6 h open window', ACTOR, new Date('2026-11-11T16:00:01.000Z')],
+  ])('is refused for %s, recording nothing', async (_label, actor, now) => {
+    // The batch has room, so only the app or window condition can refuse it.
+    const id = await batch(2);
+    await expect(
+      recordMediaUploadBatchItem({ actor, batchId: id, blobKey: KEY_A, now })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'this batch cannot record more files' });
+    const { rows } = await db.query<{ blob_keys: string[] }>(
+      'SELECT blob_keys FROM app_block_upload_batches WHERE id = $1',
+      [id]
+    );
+    expect(rows[0].blob_keys).toEqual([]);
+  });
 });
