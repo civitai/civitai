@@ -12,7 +12,7 @@ type ClassifierStatus = 'ok' | 'failed' | 'skipped' | 'fell-back-to-regex';
 
 const MAX_AGE_SPANS = 10;
 
-/** Where `span` occurs as a whole token run in `text`, as the audit's word boundaries see it. */
+/** Where `span` occurs in `text` with no letter or digit on either side. */
 function indexOfWhole(text: string, span: string) {
   const isWordChar = (c: string | undefined) => !!c && /[a-zA-Z0-9]/.test(c);
   for (let at = text.indexOf(span); at >= 0; at = text.indexOf(span, at + 1)) {
