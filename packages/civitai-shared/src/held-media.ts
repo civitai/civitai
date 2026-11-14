@@ -26,13 +26,16 @@ export function heldUserSql(column: string): string {
   const user = sqlRef(column);
   return `(
       EXISTS (SELECT 1 FROM "CsamReport" hr WHERE hr."userId" = ${user})
-      OR EXISTS (
-        SELECT 1 FROM "CsamReport" hs
-        -- CASE, not AND: Postgres may cast before it tests the pattern, and one bad row would fail
-        -- every request.
-        WHERE CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
-                   THEN (hs.details ->> 'secondaryUserId')::bigint END = ${user}
-      )
+      -- Uncorrelated, so Postgres reads the reports once per statement rather than once per row.
+      -- CASE as well as the filter: Postgres may cast before it tests the pattern, and one bad
+      -- row would fail every request. The filter keeps NULLs out of the list; COALESCE covers a
+      -- NULL user.
+      OR COALESCE(${user} IN (
+        SELECT CASE WHEN hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+                    THEN (hs.details ->> 'secondaryUserId')::bigint END
+        FROM "CsamReport" hs
+        WHERE hs.details ->> 'secondaryUserId' ~ '^[0-9]{1,18}$'
+      ), false)
       OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" he WHERE he."userId" = ${user})
     )`;
 }
