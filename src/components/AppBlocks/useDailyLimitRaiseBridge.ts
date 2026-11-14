@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { openDailyLimitRaise } from '~/components/AppBlocks/openDailyLimitRaise';
 import { isDailyLimitRefusal } from '~/components/AppBlocks/runConfirmedStepGate';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 /** A refusal this host relayed counts as recent for an app's own raise request this long. */
@@ -12,7 +13,7 @@ export const RELAYED_REFUSAL_WINDOW_MS = 5 * 60_000;
  * - `onRelayedSnapshot`: a submit this host relayed was refused at the viewer's limit, so offer
  *   the raise dialog (it opens only when the server has a limit to raise).
  * - `onConfirmedStepRefusal`: the confirmed-step preview or submit hit the limit; offer the raise,
- *   or run `fallback` (today's explanation with a link) when there is nothing to raise.
+ *   or run `fallback` (the explanation with a link) when there is nothing to raise.
  * - `onRaiseRequest`: the app asked (`REQUEST_DAILY_LIMIT_RAISE`). The dialog opens only after a
  *   refusal this host relayed in the last few minutes, or one the server recorded; the app's
  *   word alone never opens it. `ack(opened)` is sent as soon as that is known, then
@@ -23,7 +24,9 @@ export function useDailyLimitRaiseBridge(opts: {
   appName?: string | null;
   disabled?: boolean;
 }) {
-  const { appBlockId, appName, disabled } = opts;
+  const { appBlockId, appName } = opts;
+  const flagOn = useOptionalFeatureFlags()?.appDailyLimitRaise === true;
+  const disabled = opts.disabled || !flagOn;
   const utils = trpc.useUtils();
   const lastRelayedRefusalAt = useRef<number | null>(null);
   // A refusal at the old limit must not let the app reopen the dialog after the viewer raised it.

@@ -17,13 +17,18 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   readLimit: vi.fn(),
   currentUser: { value: { id: 42 } as { id: number } | null },
+  raiseFlagOn: true,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser.value }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
-  useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({
+    appBlocks: false,
+    appBlocksPages: false,
+    appDailyLimitRaise: mocks.raiseFlagOn,
+  }),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -203,6 +208,7 @@ describe('IframeHost in-app daily-limit raise', () => {
   beforeEach(() => {
     mocks.submit.mockReset();
     mocks.readLimit.mockReset();
+    mocks.raiseFlagOn = true;
     useDialogStore.getState().closeAll();
     resetDailyLimitRaiseSuppression();
   });

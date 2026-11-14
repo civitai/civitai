@@ -171,6 +171,24 @@ describe('blocks.getMyAppDailyLimit', () => {
     expect(m.readLimit).not.toHaveBeenCalled();
   });
 
+  it('the 30th read in a minute still reads', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(30 as never);
+    redisMock.sysRedis.ttl.mockResolvedValue(40 as never);
+    expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).not.toBeNull();
+    expect(m.readLimit).toHaveBeenCalled();
+    expect(redisMock.sysRedis.expire).not.toHaveBeenCalled();
+  });
+
+  it('a rate window that lost its expiry gets one again, so it cannot lock the viewer out for good', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(5 as never);
+    redisMock.sysRedis.ttl.mockResolvedValue(-1 as never);
+    await caller().getMyAppDailyLimit({ appBlockId: APP });
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
+      `system:blocks:daily-limit-read-rate:${USER}`,
+      60
+    );
+  });
+
   it('a Redis error on the rate limit fails closed', async () => {
     redisMock.sysRedis.incrBy.mockRejectedValue(new Error('down') as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toBeNull();

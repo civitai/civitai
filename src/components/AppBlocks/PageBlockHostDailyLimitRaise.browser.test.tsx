@@ -9,6 +9,7 @@ import {
   resetDailyLimitRaiseSuppression,
 } from '~/components/AppBlocks/openDailyLimitRaise';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 
 /**
  * The in-app raise of the viewer's per-app daily Buzz limit, on the PAGE host: a relayed submit
@@ -20,7 +21,19 @@ import type * as TrpcMod from '~/utils/trpc';
 const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   readLimit: vi.fn(),
+  raiseFlagOn: true,
 }));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
+  const real = await importOriginal<typeof FeatureFlagsMod>();
+  return {
+    ...real,
+    useOptionalFeatureFlags: () => ({
+      ...(real.useOptionalFeatureFlags() ?? {}),
+      appDailyLimitRaise: mocks.raiseFlagOn,
+    }),
+  };
+});
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
@@ -204,6 +217,7 @@ describe('PageBlockHost in-app daily-limit raise', () => {
   beforeEach(() => {
     mocks.submit.mockReset();
     mocks.readLimit.mockReset();
+    mocks.raiseFlagOn = true;
     useDialogStore.getState().closeAll();
     resetDailyLimitRaiseSuppression();
   });
@@ -249,7 +263,22 @@ describe('PageBlockHost in-app daily-limit raise', () => {
     const replies = await mount();
     await submit(replies, 'rq_none');
     await vi.waitFor(() => expect(mocks.readLimit).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 100));
+    // The app's own request reads after the refusal's read has settled, so its ack is the end state.
+    const ack = await raiseRequest(replies, 'rq_none_ask');
+    expect(ack.opened).toBe(false);
+    expect(mocks.readLimit).toHaveBeenCalledTimes(2);
+    expect(openRaiseDialogs()).toHaveLength(0);
+  });
+
+  test('flag off: a refused submit reads nothing and opens nothing, and the request says opened:false', async () => {
+    mocks.raiseFlagOn = false;
+    mocks.submit.mockResolvedValue({ snapshot: REFUSED });
+    mocks.readLimit.mockResolvedValue(LIMIT);
+    const replies = await mount();
+    await submit(replies, 'rq_off');
+    const ack = await raiseRequest(replies, 'rq_off_ask');
+    expect(ack.opened).toBe(false);
+    expect(mocks.readLimit).not.toHaveBeenCalled();
     expect(openRaiseDialogs()).toHaveLength(0);
   });
 

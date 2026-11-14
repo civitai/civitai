@@ -2581,8 +2581,8 @@ export const REDIS_SYS_KEYS = {
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
     // A spend was refused at the viewer's own per-app daily limit in the last few minutes:
-    // `system:blocks:consent-limit-refused:${userId}:${appBlockId}` = '1', 5 min TTL. What lets the
-    // host open the raise dialog for an app's request; nothing an app declares can set it.
+    // `system:blocks:consent-limit-refused:${userId}:${appBlockId}` = the limit it was refused at.
+    // What lets the host open the raise dialog for an app's request; nothing an app declares can set it.
     CONSENT_LIMIT_REFUSED: 'system:blocks:consent-limit-refused',
     // Per-user fixed-window rate limit on `blocks.getMyAppDailyLimit`, the host's read behind the
     // raise dialog: `system:blocks:daily-limit-read-rate:${userId}`.

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
+import { CONFIRM_ARM_DELAY_MS } from '~/components/AppBlocks/GuardedConfirmDialog';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as DialogStoreMod from '~/components/Dialog/dialogStore';
 
@@ -121,7 +122,7 @@ describe('DailyLimitRaiseDialog', () => {
     mocks.isTopMost = false;
     mount();
     // Past the arm delay, so only the dialog above it can be what keeps it disabled.
-    await new Promise((r) => setTimeout(r, 1300));
+    await new Promise((r) => setTimeout(r, CONFIRM_ARM_DELAY_MS + 300));
     await expect.element(confirm()).toBeDisabled();
   });
 
@@ -129,9 +130,11 @@ describe('DailyLimitRaiseDialog', () => {
     mount();
     await userEvent.clear(input());
     await userEvent.type(input(), '1000');
-    // Past the arm delay, so only the value can be what keeps it disabled.
-    await new Promise((r) => setTimeout(r, 1300));
+    await new Promise((r) => setTimeout(r, CONFIRM_ARM_DELAY_MS + 300));
     await expect.element(confirm()).toBeDisabled();
+    // Positive control: the delay has passed, so a higher value arms it at once.
+    await userEvent.type(input(), '1');
+    await expect.element(confirm(), { timeout: 200 }).toBeEnabled();
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
