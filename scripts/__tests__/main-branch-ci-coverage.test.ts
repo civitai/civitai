@@ -291,11 +291,9 @@ describe('CI coverage for commits on main', () => {
     }
   });
 
-  // On `main` these QUEUE instead of cancelling. `main` takes a push every few minutes on a busy
-  // day, faster than these runs take, so cancel-in-progress left most push runs `cancelled`
-  // with no verdict (lint: 1,185 of 1,549, 2026-10-30..11-13); replaying the same pushes with
-  // queueing used about the same runner time and finished 873 lint runs instead of 364. PR runs
-  // still cancel their PR's stale run. A literal `true` here brings the no-verdict bursts back.
+  // On `main` these QUEUE instead of cancelling. `main` takes pushes faster than these runs take,
+  // so cancel-in-progress left most push runs `cancelled` with no verdict. PR runs still cancel
+  // their PR's stale run. A literal `true` here brings the no-verdict bursts back.
   it.each(['lint.yml', 'apps.yml', 'moderator-boot.yml'])(
     '%s queues push runs on main and cancels only non-push runs',
     (file) => {

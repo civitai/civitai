@@ -231,12 +231,11 @@ permissions:
 # Why queue, not cancel, on `main`. Until 2026-10 a push grouped by `github.sha`,
 # so every commit on `main` kept its own full run (10+ jobs) alive and dozens of
 # `main` runs queued behind PRs on a plan with a fixed concurrent-job limit. That
-# was fixed by cancelling instead, but `main` takes a push every few minutes on a
-# busy day, faster than a ~17-minute run, so a cancelled run was mostly a run
-# that never reached a verdict: 1,185 of 1,549 push runs (76%) ended `cancelled`
-# over 2026-10-30..11-13. Replaying those push times with queueing gives about
-# the same runner time (~248h of run wall vs ~241h) and 873 completed verdicts
-# instead of 364. The newest finished run checks a tree that contains every older
+# was fixed by cancelling instead, but `main` takes pushes faster than a run
+# takes, so cancel-in-progress left most push runs `cancelled` with no verdict.
+# Queueing costs about the same runner time and finishes far more of them (the
+# replay behind this: docs/testing/reading-ci-results.md, "CI cost
+# measurements"). The newest finished run checks a tree that contains every older
 # commit; a commit whose run was replaced while waiting shows as `cancelled`. To pin a
 # break to one of them, push a branch at that commit and dispatch this workflow
 # on it (`only` narrows it to one suite).

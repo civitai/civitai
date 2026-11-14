@@ -112,9 +112,8 @@ permissions:
   contents: read
 
 # One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run. On `main` the
-# group queues instead (read lint.yml's `concurrency` comment): the running push run finishes and
-# only the newest waiting push runs after it. Replayed over 2026-10-30..11-13 this gives about the
-# same runner time (~205h vs ~191h of run wall) and 978 completed `main` verdicts instead of 503. A `ready_for_review` run shares the PR's group, so
+# group queues instead, for the reason in lint.yml's `concurrency` comment: the running push run
+# finishes and only the newest waiting push runs after it. A `ready_for_review` run shares the PR's group, so
 # it cancels a still-running draft run, which is what we want. Dispatches get their own
 # `dispatch-` groups so one on `main` cannot cancel the push run.
 concurrency:

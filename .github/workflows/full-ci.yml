@@ -47,16 +47,14 @@ name: Full CI on label
 #
 # A PR opened WITH the label (`gh pr create --label full-ci`) gets `opened` and `labeled` at
 # once. The `opened` Lint run already reads the label and starts the four `Unit tests` shards,
-# so dispatching here too ran the whole suite twice on the same commit. Measured over one day
-# (2026-11-12): 102 of the 122 dispatches this job made (84%) were on a head commit whose
-# pull_request Lint run had started the shards, a median 28 s earlier: ~9,100 job-minutes
-# (~150 job-hours) of duplicate suites in a day, on a plan whose concurrent-job limit is
-# saturated.
+# so dispatching here too ran the whole suite twice on the same commit, which was most of what
+# this job dispatched (measurement: docs/testing/reading-ci-results.md, "CI cost measurements").
 #
 # So before dispatching, this job looks for a pull_request Lint run on the PR's head commit with
-# a `Unit tests (<n>)` job that was not cancelled. The `(<n>)` suffix is the test: GitHub expands
-# the matrix only for a job whose `if` passed, and a skipped `unit` job is listed as plain
-# `Unit tests` (checked over 700+ jobs: every skipped one has no suffix, every run one has one).
+# a `Unit tests (<n>)` job that was not cancelled (scripts/ci/full-ci-unit-shards.mjs, which
+# scripts/__tests__/full-ci-label.test.ts runs against job lists). The `(<n>)` suffix is the
+# test: GitHub expands the matrix only for a job whose `if` passed, and a skipped `unit` job is
+# listed as plain `Unit tests`.
 # If it finds one, the PR run is the full run, in the checks list, and nothing is dispatched;
 # the summary links it. Otherwise (label added to an existing PR, the PR run not created yet
 # after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
@@ -83,6 +81,14 @@ jobs:
       contents: read
     timeout-minutes: 5
     steps:
+      # Only the classifier the step below runs. No credentials are persisted: this job's token
+      # can dispatch workflows.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci/full-ci-unit-shards.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       # The branch name reaches the shell through env, never interpolated into the script: a
       # branch name is attacker-chosen text, and `${{ }}` in `run:` is pasted in before the
       # shell parses it.
@@ -106,8 +112,7 @@ jobs:
             for id in $(gh api "repos/$REPO/actions/workflows/lint.yml/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=20" \
                 --jq '.workflow_runs[].id' || true); do
               counts=$(gh api "repos/$REPO/actions/runs/$id/jobs?per_page=100" \
-                --jq '"\([.jobs[] | select((.name | test("^Unit tests \\([0-9]+\\)$")) and .conclusion != "cancelled")] | length) \([.jobs[] | select(.name == "Unit tests" and .conclusion == "skipped")] | length)"' \
-                || echo "0 0")
+                | node scripts/ci/full-ci-unit-shards.mjs || echo "0 0")
               read -r expanded skipped <<< "$counts"
               if [ "${expanded:-0}" -gt 0 ]; then covered=$id; break 2; fi
               if [ "${skipped:-0}" -gt 0 ]; then decided=true; fi
