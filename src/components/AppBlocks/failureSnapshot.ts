@@ -51,6 +51,7 @@ export function isPollUnanswered(err: unknown): boolean {
  * server's own poll rate limit returns, and the block polls again.
  */
 export function pollFailureSnapshot(err: unknown, workflowId: string): BlockWorkflowSnapshot {
-  if (isPollUnanswered(err)) return { workflowId, status: 'processing' };
+  // `throttled`: not an observation, so the block keeps its previous snapshot's values.
+  if (isPollUnanswered(err)) return { workflowId, status: 'processing', throttled: true };
   return failureSnapshot(err);
 }

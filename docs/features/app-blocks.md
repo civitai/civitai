@@ -976,6 +976,13 @@ is omitted, and a terminal snapshot has no `eta`; read absent as null. All of it
 estimate. A held poll (`waitSeconds`) returns as soon as the workflow or one of its steps
 changes, not only when it finishes, so the block re-polls to keep these current.
 
+**Throttled polls.** A poll the host could not serve — the poll rate limit refused it, or
+the host's request failed without an answer — is answered with
+`{ workflowId, status: 'processing', throttled: true }`: a poll the host could not serve;
+keep the previous snapshot's values (its `eta`, progress, images). The same placeholder
+answers a cancel the rate limit refused; the cancel was not issued. A real snapshot never
+carries `throttled`.
+
 ## Publish / review / deploy lifecycle (no trust on push)
 
 The build + deploy of new iframe code is gated entirely on **moderator

@@ -1557,6 +1557,15 @@ export type BlockWorkflowSnapshot = {
    * processing. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
    */
   eta?: BlockWorkflowEta | null;
+  /**
+   * `true` on a poll the host could not serve; keep the previous snapshot's values.
+   * The rest of such a reply is a placeholder (`status: 'processing'`, the caller's
+   * own `workflowId`, nothing else), not a reading of the workflow. Set by the
+   * shed `pollWorkflow` and `cancelWorkflow` replies (rate limit) and by the hosts'
+   * `pollFailureSnapshot` for a poll that threw without an answer. A real snapshot
+   * never carries it. 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk`.
+   */
+  throttled?: true;
 };
 
 export type BlockWorkflowEta = {

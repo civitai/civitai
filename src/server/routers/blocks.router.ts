@@ -5251,7 +5251,10 @@ export const blocksRouter = router({
         // not fetch. `workflowId` echoes the caller's own id because the SDK's
         // inbound validator DROPS a snapshot with an empty one (see
         // `components/AppBlocks/failureSnapshot.ts`), which would hang the block to
-        // its 120s transport timeout instead of letting it re-poll.
+        // its 120s transport timeout instead of letting it re-poll. `throttled: true`
+        // is what tells the block so: without it this reply is indistinguishable from
+        // a real non-terminal snapshot, and the block's queue/ETA/progress display
+        // would blank on every shed poll. A real snapshot never carries it.
         //
         // ⚠️ STATED COST: while a viewer is over this ceiling, a workflow that has
         // ALREADY gone terminal has its settle and its fee reversal DEFERRED, because
@@ -5262,6 +5265,8 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: input.workflowId,
             status: 'processing' as const,
+            // Not an observation: a block keeps its previous snapshot's values.
+            throttled: true as const,
           },
         };
       }
@@ -5585,6 +5590,8 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: input.workflowId,
             status: 'processing' as const,
+            // Not an observation: a block keeps its previous snapshot's values.
+            throttled: true as const,
           },
         };
       }
