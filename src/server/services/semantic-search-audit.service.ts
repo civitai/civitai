@@ -55,7 +55,7 @@ export type SemanticAuditEntry = {
 export type SemanticAuditRow = {
   time: string;
   requestId: string;
-  index: string;
+  searchIndex: string;
   userId: number;
   viewerClass: 'mod' | 'user' | 'anon';
   browsingLevel: number;
@@ -89,7 +89,7 @@ export function buildSemanticAuditRow(
   return {
     time: formatClickhouseDateTime64(at),
     requestId,
-    index: entry.index,
+    searchIndex: entry.index,
     userId: Number.isInteger(userId) && userId! > 0 ? Math.min(userId!, 4_294_967_295) : 0,
     viewerClass: !entry.viewer ? 'anon' : entry.viewer.isModerator ? 'mod' : 'user',
     browsingLevel: Math.min(Math.max(entry.browsingLevel | 0, 0), 65_535),

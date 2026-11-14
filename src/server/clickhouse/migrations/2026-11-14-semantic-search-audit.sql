@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS default.semanticSearchAudit
   time DateTime64(3),
   requestId String,
   -- images | models | articles | ...
-  index LowCardinality(String),
+  searchIndex LowCardinality(String),
   -- viewer; 0 = anonymous
   userId UInt32,
   -- mod | user | anon
@@ -26,6 +26,6 @@ CREATE TABLE IF NOT EXISTS default.semanticSearchAudit
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMMDD(time)
-ORDER BY (index, time)
+ORDER BY (searchIndex, time)
 TTL toDateTime(time) + INTERVAL 30 DAY
 SETTINGS ttl_only_drop_parts = 1;
