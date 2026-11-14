@@ -6432,6 +6432,49 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
     });
 
+    // The submit already refuses a disallowed recipe pick; the estimate priced it.
+    // Kills: an estimate that never resolves the currencies (red before this change).
+    it('a yellow pick on an SFW app is BAD_REQUEST on the estimate, like the submit', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        ccPageClaims({ domain: 'green', maxBrowsingLevel: SFW_CEILING })
+      );
+      happyUser();
+      await expect(
+        caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: ccBody({
+            params: {
+              prompt: 'a sunset over mountains',
+              engine: 'zimage-turbo',
+              accountType: 'yellow',
+            },
+          }),
+        })
+      ).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: "buzz account 'yellow' is not spendable for this app's content rating",
+      });
+    });
+
+    // An invariant guard: an allowed pick still gets the display estimate.
+    it('an allowed pick (yellow on a mature app) still estimates', async () => {
+      mockVerifyBlockToken.mockResolvedValue(
+        ccPageClaims({ domain: 'red', maxBrowsingLevel: ALL_CEILING })
+      );
+      happyUser();
+      const result = await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: ccBody({
+          params: {
+            prompt: 'a sunset over mountains',
+            engine: 'zimage-turbo',
+            accountType: 'yellow',
+          },
+        }),
+      });
+      expect(result.snapshot).toMatchObject({ status: 'pending', cost: { total: 20 } });
+    });
+
     it('REJECTS a model token (customComfy is page-only)', async () => {
       mockVerifyBlockToken.mockResolvedValue(validClaims()); // model token (ctx.modelId)
       happyUser();

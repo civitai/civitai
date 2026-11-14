@@ -1495,6 +1495,35 @@ describe('accountType — a confirmed quote is bound to the pool it was priced w
     expect(h.reserveAppSpend).not.toHaveBeenCalled();
   });
 
+  // The record the consent dialog reads. Kills: a grant that drops the pick (the
+  // dialog could then never say which pool pays first).
+  it('the stored quote record carries the pick, and the preview its order', async () => {
+    const { snapshot } = await estimate(body({ accountType: 'green' }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    const record = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`) as string);
+    expect(record.accountType).toBe('green');
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
+    // SFW token: green first, then blue — not the default blue-first order.
+    expect((preview as { fundingOrder?: unknown }).fundingOrder).toEqual(['green', 'blue']);
+  });
+
+  it('with no pick the record has no accountType and the preview no order', async () => {
+    const { snapshot } = await estimate(body());
+    const quoteId = snapshot.stepQuote!.quoteId;
+    const record = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`) as string);
+    expect('accountType' in record).toBe(false);
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
+    expect((preview as { fundingOrder?: unknown }).fundingOrder).toBeNull();
+  });
+
   it('a disallowed pool is refused BEFORE the quote is consumed, so the quote still runs', async () => {
     const quoteId = await confirmedQuoteFor(body());
     await expect(submit(body({ accountType: 'yellow', quoteId }))).rejects.toMatchObject({
