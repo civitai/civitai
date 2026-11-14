@@ -9,6 +9,7 @@ import type {
 } from '@civitai/orchestration-client';
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { randomUUID } from 'crypto';
+import { withoutCallbacks } from '~/server/services/orchestrator/workflow-redaction';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -278,6 +279,7 @@ export async function createImageIngestionRequest({
 
   return {
     data,
+    // The request as sent, callbacks included: it must never reach a client unredacted.
     body,
     error,
     status: response?.status,
@@ -700,7 +702,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       );
   }
 
-  return data;
+  return withoutCallbacks(data);
 }
 
 /**
@@ -954,5 +956,5 @@ export async function createModelFileScanRequest({
     data: { scanRequestedAt: new Date() },
   });
 
-  return data;
+  return withoutCallbacks(data);
 }
