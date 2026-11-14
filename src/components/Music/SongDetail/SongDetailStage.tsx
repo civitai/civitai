@@ -75,9 +75,9 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
       data-testid="song-detail-stage"
       className="flex size-full flex-col gap-6 overflow-y-auto px-4 pb-6 pt-1 text-white @md:flex-row @md:items-center @md:justify-center @md:gap-10 @md:overflow-hidden @md:px-16 @md:py-10 @lg:gap-16"
       style={
-        (accent
-          ? { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }
-          : undefined) as CSSProperties
+        accent
+          ? ({ '--music-accent': accent.accent, '--music-accent-2': accent.accent2 } as CSSProperties)
+          : undefined
       }
     >
       <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px] @lg:w-[400px]">
