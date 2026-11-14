@@ -51,7 +51,12 @@ describe('orchestrator workflow service — callback configuration is not handed
   });
 
   it('queryWorkflows', async () => {
-    const { items } = await queryWorkflows({ token: 't', take: 10, hideMatureContent: false });
+    const { items } = await queryWorkflows({
+      token: 't',
+      take: 10,
+      tags: [],
+      hideMatureContent: false,
+    });
     expect(items).toHaveLength(2);
     items.forEach(expectNoCallbacks);
   });
