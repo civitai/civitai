@@ -376,6 +376,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-audio-training',
   },
+  // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
+  trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -454,11 +456,15 @@ const featureFlags = createFeatureFlags({
   // Dark: Flipt is its only switch. Flipt keys signed-out visitors as one entity, so a percentage
   // rollout splits signed-in users only.
   feedSearch: { availability: [], fliptKey: 'search-v3-feed' },
+  // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
+  imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
   // semantic search instead of Meilisearch. Dark: Flipt is its only switch, and off is the rollback.
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
+  // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
+  semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -882,6 +888,9 @@ const featureFlags = createFeatureFlags({
   // everyone, mods included, until the Flipt flag turns it on — the client twin of the server's
   // fail-closed `isAppLimitsUpgradePromptEnabled`, so the two agree while the flag is absent.
   appLimitsUpgradePrompt: { availability: [], fliptKey: 'app-limits-upgrade-prompt' },
+  // The in-app raise of a viewer's own per-app daily Buzz limit. `[]`: dark for everyone until
+  // the Flipt flag turns it on; the server twin `isAppDailyLimitRaiseEnabled` gates the procedures.
+  appDailyLimitRaise: { availability: [], fliptKey: 'app-daily-limit-raise' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -967,6 +976,8 @@ const featureFlags = createFeatureFlags({
   //
   // Local dev: `FEATURE_FLAG_STORYLINES=public` in `.env`, which bypasses Flipt entirely.
   storylines: { availability: ['mod', 'granted'], fliptKey: 'storylines' },
+  // Storylines: text items between a chapter's images (PostText), their slides and threads.
+  storylineText: { availability: ['mod', 'granted'], fliptKey: 'storyline-text' },
   // The header Buzz spend pop (rolling counter + "-N" pop-out) in place of the Buzz update toast,
   // with the phone header change it needs (support pill and Civitai Link move into the account
   // menu). Off = the toast and the old header. `['mod', 'granted']` is the Flipt-down fallback.

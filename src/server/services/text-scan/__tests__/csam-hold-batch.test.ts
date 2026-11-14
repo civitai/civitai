@@ -17,6 +17,9 @@ vi.mock('~/server/services/model.service', () => ({ unpublishModelById: vi.fn() 
 vi.mock('~/server/services/post.service', () => ({ unpublishPostAsModerator: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
 vi.mock('~/server/services/text-scan/actions/csam-hold', () => ({ lockCsamHold: vi.fn() }));
+vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
+  requeueBlockedServiceOffering: vi.fn(),
+}));
 
 const {
   CSAM_HOLD_BATCH_MAX,

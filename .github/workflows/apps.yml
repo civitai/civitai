@@ -112,14 +112,14 @@ on:
 permissions:
   contents: read
 
-# One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run, and a newer
-# commit on `main` cancels the older one's run (the newest run checks a tree containing every
-# older commit, so `main` keeps a verdict). A `ready_for_review` run shares the PR's group, so
+# One group per ref, as in lint.yml: a new push to a PR cancels its in-flight run. On `main` the
+# group queues instead, for the reason in lint.yml's `concurrency` comment: the running push run
+# finishes and only the newest waiting push runs after it. A `ready_for_review` run shares the PR's group, so
 # it cancels a still-running draft run, which is what we want. Dispatches get their own
 # `dispatch-` groups so one on `main` cannot cancel the push run.
 concurrency:
   group: apps-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   apps:

@@ -1265,6 +1265,7 @@ export const purchaseCosmeticShopItem = async ({
   packsEnabled,
   expectedVersion,
   mysteryBoxEnabled,
+  creatorMysteryPacksEnabled,
   countryCode,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
@@ -1273,6 +1274,7 @@ export const purchaseCosmeticShopItem = async ({
   stickersEnabled?: boolean;
   packsEnabled?: boolean;
   mysteryBoxEnabled?: boolean;
+  creatorMysteryPacksEnabled?: boolean;
   /** The buyer's country (`getRegion`), for the mystery box region block. */
   countryCode?: string | null;
 }) => {
@@ -1327,6 +1329,7 @@ export const purchaseCosmeticShopItem = async ({
       payWith,
       buzzType,
       mysteryBoxEnabled,
+      creatorMysteryPacksEnabled,
       countryCode,
     });
 

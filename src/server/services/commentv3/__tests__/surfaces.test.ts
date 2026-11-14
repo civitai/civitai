@@ -87,6 +87,38 @@ describe('visibility', () => {
   });
 });
 
+describe('a post', () => {
+  const visible = commentSurface('post').assertVisible!;
+  const stranger = { user: { id: 3, isModerator: false } } as never;
+  const anon = { user: undefined } as never;
+
+  it("is not found for a stranger when the post detail rule doesn't show it them", async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-13T00:00:00Z'), toFake: ['Date'] });
+    try {
+      dbMock.dbRead.post.findFirst.mockResolvedValue(null as never);
+      // The post detail rule, for each viewer: published and rated, theirs, or a collection they judge.
+      const { getPostDetailVisibility } = await import('~/server/services/post-detail-visibility');
+      for (const [ctx, user] of [
+        [stranger, { id: 3, isModerator: false }],
+        [anon, undefined],
+      ] as const) {
+        dbMock.dbRead.post.findFirst.mockClear();
+        await expect(visible(7, ctx)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(dbMock.dbRead.post.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 7, ...getPostDetailVisibility(user) } })
+        );
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is readable when the rule finds the post (control)', async () => {
+    dbMock.dbRead.post.findFirst.mockResolvedValue({ id: 7 } as never);
+    await expect(visible(7, stranger)).resolves.toBeUndefined();
+  });
+});
+
 describe('a comic chapter', () => {
   const stranger = { user: { id: 2, isModerator: false } } as never;
   const owner = { user: { id: 5, isModerator: false } } as never;

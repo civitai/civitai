@@ -94,6 +94,10 @@ type UserModActivity = {
     | 'undoMembershipCancel'
     // A moderator re-read a member's Stripe subscription into CustomerSubscription (membership-resync.service).
     | 'resyncMembership'
+    // A moderator re-read a user's Tipalti payee into UserPaymentConfiguration (tipalti-payee-resync.service).
+    | 'tipaltiResync:enable'
+    | 'tipaltiResync:disable'
+    | 'tipaltiResync:status'
     // A moderator released a built personal-data export to the account owner (personal-data-export.service).
     | 'releasePersonalDataExport'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was

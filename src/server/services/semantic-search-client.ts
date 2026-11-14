@@ -2,6 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 
+/** One creator's hits shown on a page at most, so a prolific creator cannot fill it. */
+export const MAX_HITS_PER_USER = 3;
+
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
 // Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
@@ -82,6 +85,9 @@ function gateConditions(collection: SearchCollection, gate: ViewerGate | undefin
   const levels = { any: gate.nsfwLevels };
   const must: QdrantCondition[] = [{ key: 'nsfwLevel', match: levels }];
   const must_not: QdrantCondition[] = [];
+  // A 3D model is embedded from its thumbnail, rated apart from the model. A point without the
+  // field matches nothing, so one written before it existed is never served.
+  if (collection === 'models3d') must.push({ key: 'thumbnailNsfwLevel', match: levels });
 
   if (gate.kind === 'challenge') {
     if (!gate.domainBuzzType) refuse(collection, 'no domain currency');

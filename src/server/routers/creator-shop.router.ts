@@ -63,12 +63,17 @@ import {
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { refundShopPurchases } from '~/server/services/creator-shop-withdrawn-refund.service';
+import { takedownMysteryBox } from '~/server/services/mystery-box-takedown.service';
 import {
   lowerMysteryPackPrice,
   reviseMysteryPack,
   submitMysteryPack,
   withdrawMysteryPackRevision,
 } from '~/server/services/creator-mystery-pack.service';
+import {
+  getMyMysteryPacks,
+  getMysteryPackCandidates,
+} from '~/server/services/creator-mystery-pack-read.service';
 import { getMysteryPackReview } from '~/server/services/creator-mystery-pack-review.service';
 import { getRegion } from '~/server/utils/region-blocking';
 import { servicesCountForPublish } from '~/server/services/creator-service.service';
@@ -184,6 +189,22 @@ export const creatorShopRouter = router({
     .mutation(({ input, ctx }) => {
       assertMysteryPacksEnabled(ctx.features);
       return withdrawMysteryPackRevision({ ...input, userId: ctx.user.id });
+    }),
+  getMysteryPackCandidates: creatorShopProcedure.query(({ ctx }) => {
+    assertMysteryPacksEnabled(ctx.features);
+    return getMysteryPackCandidates({
+      creatorId: ctx.user.id,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  getMyMysteryPacks: creatorShopProcedure
+    .input(z.object({ userId: z.number().int().positive().optional() }))
+    .query(({ input, ctx }) => {
+      assertMysteryPacksEnabled(ctx.features);
+      return getMyMysteryPacks({
+        ownerId: input.userId ?? ctx.user.id,
+        viewer: { id: ctx.user.id, isModerator: ctx.user.isModerator },
+      });
     }),
   lowerMysteryPackPrice: guardedProcedure
     .input(lowerMysteryPackPriceSchema)
@@ -366,6 +387,9 @@ export const creatorShopRouter = router({
   takedownItem: moderatorProcedure
     .input(takedownCosmeticShopItemSchema)
     .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
+  takedownMysteryBox: moderatorProcedure
+    .input(takedownCosmeticShopItemSchema)
+    .mutation(({ input, ctx }) => takedownMysteryBox({ ...input, moderatorId: ctx.user.id })),
   // Not flag-gated, like takedowns: refunding a sale can't wait on the rollout.
   refundPurchases: moderatorProcedure
     .input(refundShopPurchasesSchema)

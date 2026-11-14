@@ -56,6 +56,14 @@ const unpaidAwardMigration = readFileSync(
   ),
   'utf8'
 );
+// deletePost asks it whether the post holds held text.
+const postTextMigration = readFileSync(
+  path.join(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+  ),
+  'utf8'
+);
 const TOPIC_ENTITY_TABLES = {
   image: 'Image',
   post: 'Post',
@@ -153,13 +161,18 @@ beforeAll(async () => {
   `);
   await db.exec(heldCopiesSchemaSql());
   await db.exec(heldStorylineCopiesSchemaSql());
+  await db.exec(`CREATE TABLE "TextScanHold" (
+    id serial PRIMARY KEY, "entityType" text, "entityId" int, label text, status text,
+    "createdAt" timestamp(3) NOT NULL DEFAULT now()
+  )`);
+  await db.exec(postTextMigration);
 });
 afterAll(() => db.close());
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
-    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "Post", "Image", "CsamReport",
+    TRUNCATE "CommentTopic", "CommentV3", "ResourceReview", "Model", "PostText", "Post", "Image", "CsamReport",
       "EvidenceHold", "BountyEntry", "Bounty", "Article",
       "HeldResourceReview", "BountyBenefactor", "ModActivity", "BountyUnpaidAward";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
@@ -620,6 +633,22 @@ describe("a held author's comments go with their parent", () => {
     expect(await commentIds()).toEqual([1, 2]);
   });
 
+  it('refuses a post holding held text, for a moderator too, and keeps both', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (10, ${OWNER});
+      INSERT INTO "PostText" ("postId", "userId", "index", content, "csamHeld", "updatedAt")
+      VALUES (10, ${OWNER}, 0, 'x', true, now());
+    `);
+
+    await expect(deletePost({ id: 10, isModerator: true })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: expect.stringMatching(/held for review/),
+    });
+
+    expect(await rows(`SELECT id FROM "Post"`)).toEqual([{ id: 10 }]);
+    expect(await rows(`SELECT "postId" AS id FROM "PostText"`)).toEqual([{ id: 10 }]);
+  });
+
   // The shop-artwork check reads these off the deleted row: missing, a blocked image reads as a
   // plain owner delete and its object is kept.
   it('returns the block markers of the image it deletes', async () => {
@@ -649,6 +678,8 @@ describe('a member cannot act on a comment hidden for ToS', () => {
     vi.mocked(dbMock.dbWrite.$queryRawUnsafe).mockImplementation(
       (async (sql: string, ...params: unknown[]) => (await db.query(sql, params)).rows) as never
     );
+    // Post 11 is published and rated, so its thread is readable.
+    vi.mocked(dbMock.dbRead.post.findFirst).mockResolvedValue({ id: 11 } as never);
   });
 
   const track = new Proxy({}, { get: () => async () => undefined });
