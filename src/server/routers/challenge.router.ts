@@ -103,18 +103,19 @@ export const challengeRouter = router({
       const query = input.query?.trim();
       if (query) {
         // A text query gets the semantic search's audit: refused, or narrowed to the safe levels.
+        const effective = getEffectiveBrowsingLevel({
+          isGreen: ctx.features.isGreen,
+          isLoggedIn: !!ctx.user,
+          requested: input.browsingLevel,
+        });
         const level = await challengeTextQueryLevel({
           query,
-          level: getEffectiveBrowsingLevel({
-            isGreen: ctx.features.isGreen,
-            isLoggedIn: !!ctx.user,
-            requested: input.browsingLevel,
-          }),
+          level: effective,
           user: ctx.user,
           track: ctx.track,
         });
         if (level === 'refuse') return { items: [], nextCursor: undefined };
-        browsingLevel = level;
+        if (level !== effective) browsingLevel = level;
       }
       return getInfiniteChallenges({
         ...input,

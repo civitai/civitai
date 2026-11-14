@@ -64,6 +64,14 @@ beforeEach(() => {
 });
 
 describe('challenge.getInfinite text query guard', () => {
+  it('an allowed query on an unfiltered feed stays unfiltered', async () => {
+    // No requested level on a non-green site: the feed applies no level filter (0).
+    await caller(VIEWER).getInfinite({ query: 'neon' });
+    await caller(VIEWER).getInfinite({});
+    const [withQuery, without] = h.feed.mock.calls.map(([input]) => input.browsingLevel);
+    expect(withQuery).toBe(without);
+  });
+
   it('a refused query gets no results, never the unguarded text search', async () => {
     h.includesInappropriate.mockReturnValue('inappropriate');
     const result = await caller(VIEWER).getInfinite({ query: 'bad words', browsingLevel: ALL });

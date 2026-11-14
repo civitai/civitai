@@ -70,7 +70,9 @@ export async function challengeTextQueryLevel({
     isModerator: user?.isModerator,
   });
   recordRefusal(track, refusal, query, 'challenges_text');
-  return queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  const verdict = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+  // An unnarrowed query keeps the feed's own level, so 0 (no filter) still shows unrated rows.
+  return verdict === browsingLevel ? level : verdict;
 }
 
 export async function searchSemanticChallenges({
