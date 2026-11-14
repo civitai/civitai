@@ -64,14 +64,21 @@ afterAll(() => db.close());
 let queries = 0;
 // Fails the candidate lookup (the collection-media-index query), which never throws on its own.
 let failCollectionLookup = false;
+// The cover-index probe: 'throws', 'missing' (the index is not valid), or undefined (as created).
+let coverProbe: 'throws' | 'missing' | undefined;
 beforeEach(async () => {
   vi.clearAllMocks();
   queries = 0;
   failCollectionLookup = false;
+  coverProbe = undefined;
   // Throws past a cap, so a loop that never ends fails by name.
   // Prisma.Sql from the service, or a tagged template from the collection lookup.
   const run = (async (sqlOrStrings: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
     if (++queries > 50) throw new Error('query loop did not end');
+    if (coverProbe && !('text' in sqlOrStrings) && sqlOrStrings.join('').includes('indisvalid')) {
+      if (coverProbe === 'throws') throw new Error('probe failed');
+      return [{ present: false }];
+    }
     if (failCollectionLookup && !('text' in sqlOrStrings)) {
       if (sqlOrStrings.join('').includes('"profilePictureId"')) throw new Error('lookup failed');
     }
@@ -297,6 +304,15 @@ describe('child-label reindex: reindex', () => {
     expect(collectionsQueueUpdate).not.toHaveBeenCalled();
     expect(result).toMatchObject({ lastImageId: 0, done: false, aborted: expect.any(String) });
   });
+
+  for (const probe of ['throws', 'missing'] as const)
+    it(`stops before queuing anything when the cover leg cannot run (probe ${probe})`, async () => {
+      coverProbe = probe;
+      const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+      expect(queueModelsReindex).not.toHaveBeenCalled();
+      expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ lastImageId: 0, done: false, aborted: expect.any(String) });
+    });
 
   it('queues every candidate it cannot read the documents of', async () => {
     getDocuments.mockRejectedValue(new Error('meili down'));

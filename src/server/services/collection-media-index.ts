@@ -242,9 +242,10 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean, db
  *
  * Reads through `dbWrite` by default so a just-committed transaction is visible — the
  * replica may still be behind, and a missed row here is a permanently stale document, not
- * a late one. A bulk caller with no write of its own to see passes `dbRead`. Never throws: callers run this immediately before their delete, so an exception
- * would cancel the deletion the user actually asked for. A caller with nothing to protect that must
- * tell a failure from "no collections" passes `throwOnError`.
+ * a late one. A bulk caller with no write of its own to see passes `dbRead`. Does not throw by
+ * default: callers run this immediately before their delete, so an exception would cancel the
+ * deletion the user actually asked for. A caller that must tell a partial or failed lookup from
+ * "no collections" passes `throwOnError`, which also throws when the cover leg cannot run.
  */
 export async function getCollectionIdsForImages({
   imageIds,
@@ -276,7 +277,10 @@ export async function getCollectionIdsForImages({
       `could not determine whether "${COVER_INDEX_NAME}" is usable; continuing without the cover leg`,
       error
     );
+    if (throwOnError) throw error;
   }
+  if (!withCover && throwOnError)
+    throw new Error(`"${COVER_INDEX_NAME}" is not present and valid: the cover leg cannot run`);
 
   if (!withCover)
     logToAxiom({

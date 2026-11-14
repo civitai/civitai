@@ -226,7 +226,6 @@ export async function runChildLabelReindex({
   try {
     documents = await documentIdsForImages(imageIds, chunkSize);
   } catch {
-    // Nothing is queued yet, so the whole run is retried from where it started.
     return {
       step,
       dryRun,
