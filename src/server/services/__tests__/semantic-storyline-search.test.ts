@@ -186,12 +186,23 @@ describe('semantic storyline search', () => {
     expect(sent[0].range?.gte).toBeUndefined();
   });
 
-  it('sends the same cutoff and gate on every page of one search', async () => {
+  it('sends the same cutoff and gate on every page of one search, though time passes', async () => {
     for (let id = 1; id <= 40; id++) await storyline(id, { owner: 7 });
-    await search(
-      Array.from({ length: 40 }, (_, i) => i + 1),
-      {}
-    );
+    // Only Date is faked, so Postgres still runs; each page is asked for a minute after the last.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const pages = ranking(Array.from({ length: 40 }, (_, i) => i + 1));
+      await searchSemanticStorylines({
+        input: { query: 'dragon heist', browsingLevel: PG, limit: 10 },
+        candidateSource: async (args) => {
+          const page = await pages(args);
+          vi.setSystemTime(Date.now() + 60_000);
+          return page;
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     expect(sent.length).toBeGreaterThan(1);
     for (const f of sent) {
       expect(f.range).toEqual(sent[0].range);

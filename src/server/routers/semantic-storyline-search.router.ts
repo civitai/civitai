@@ -8,7 +8,6 @@ import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 export const semanticStorylineSearchRouter = router({
   search: publicProcedure
     .use(timeSemanticSearch('storylines'))
-    // Storylines themselves are flagged too.
     .use(isFlagProtected('storylines'))
     .use(isFlagProtected('semanticStorylineSearch'))
     // Signed-out visitors share an IP bucket, so theirs is lower.
