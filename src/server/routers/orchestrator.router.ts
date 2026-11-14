@@ -60,6 +60,7 @@ import {
   patchWorkflowTags,
   queryWorkflows,
 } from '~/server/services/orchestrator/workflows';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
@@ -277,8 +278,11 @@ export const orchestratorRouter = router({
   getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
-    .query(({ ctx, input }) =>
-      getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } })
+    .query(async ({ ctx, input }) =>
+      withoutTrainingWeightHandles(
+        await getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } }),
+        { isModerator: ctx.user.isModerator }
+      )
     ),
   // #endregion
 
