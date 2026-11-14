@@ -229,6 +229,7 @@ import {
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import {
   anyMetricHidden,
   gateHiddenMetrics,
@@ -6585,24 +6586,38 @@ export async function getHeldLevelsByPost(postIds: number[]) {
   return held;
 }
 
+/** Who sees a held model's showcase whole: its owner or a moderator, on a session or full-access key. */
+export type HeldGalleryViewer = { id: number; isModerator: boolean };
+
 /**
- * Showcase images by model version, leaving out those above the gallery level of each version's
- * minor or SFW-only model. For reads no viewer sees whole, such as the public API. `models` maps
- * each version to its model, with the model's flags where the caller read the row: a flagged row is
- * held even when its cached gallery settings say otherwise. A model whose settings cannot be read
- * is served at SFW for this request. Never mutates `byVersion`: its entries can be the shared cache's.
+ * The viewer a tRPC read exempts from the showcase hold. An app or scoped key acting for a user is
+ * held like anyone else. Read it before any await: a request's other calls share `ctx`.
  */
-export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
-  byVersion: Record<number, E>,
-  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean }>
-): Promise<Record<number, E>> {
+export function heldGalleryViewer(
+  ctx: Parameters<typeof isSessionOrFullUserKey>[0] & {
+    user?: { id: number; isModerator?: boolean | null } | null;
+  }
+): HeldGalleryViewer | undefined {
+  if (!ctx.user || !isSessionOrFullUserKey(ctx)) return undefined;
+  return { id: ctx.user.id, isModerator: !!ctx.user.isModerator };
+}
+
+/**
+ * For each minor or SFW-only model, the level its showcase images may be served at. Flags, where
+ * the caller read the row, decide on their own: a flagged row is held even when its cached gallery
+ * settings say otherwise, and an unflagged row is not read. A model whose settings cannot be read
+ * is held at SFW for this request.
+ */
+export async function getShowcaseHeldLevels(
+  models: { modelId: number; minor?: boolean; sfwOnly?: boolean }[]
+) {
   const flagsOf = new Map<number, { minor: boolean; sfwOnly: boolean }>();
-  for (const { modelId, minor, sfwOnly } of models.values())
+  for (const { modelId, minor, sfwOnly } of models)
     if (minor !== undefined && sfwOnly !== undefined) flagsOf.set(modelId, { minor, sfwOnly });
 
   const levels = new Map<number, number>();
   await limitConcurrency(
-    uniq([...models.values()].map((m) => m.modelId)).map((id) => async () => {
+    uniq(models.map((m) => m.modelId)).map((id) => async () => {
       const flags = flagsOf.get(id);
       if (flags && !flags.minor && !flags.sfwOnly) return;
       try {
@@ -6622,6 +6637,35 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
     }),
     5
   );
+  return levels;
+}
+
+/** The images a held level allows; all of them when the level is undefined. */
+export function withinHeldLevel<T extends { nsfwLevel: number }>(images: T[], level?: number) {
+  return level === undefined
+    ? images
+    : images.filter((image) => Flags.intersects(level, image.nsfwLevel));
+}
+
+/**
+ * Showcase images by model version, leaving out those above the gallery level of each version's
+ * minor or SFW-only model (see `getShowcaseHeldLevels`). `models` maps each version to its model,
+ * with the model's flags and owner where the caller read the row. A `viewer` sees the whole
+ * showcase when they moderate, or own a model whose `ownerId` is given; pass none where no one is
+ * exempt (the public API, the search index, results shared between viewers). Never mutates
+ * `byVersion`: its entries can be the shared cache's.
+ */
+export async function holdShowcaseImages<E extends { images: { nsfwLevel: number }[] }>(
+  byVersion: Record<number, E>,
+  models: Map<number, { modelId: number; minor?: boolean; sfwOnly?: boolean; ownerId?: number }>,
+  viewer?: HeldGalleryViewer
+): Promise<Record<number, E>> {
+  if (viewer?.isModerator) return byVersion;
+  const exempt = new Set<number>();
+  for (const m of models.values()) if (viewer && m.ownerId === viewer.id) exempt.add(m.modelId);
+  const levels = await getShowcaseHeldLevels(
+    [...models.values()].filter((m) => !exempt.has(m.modelId))
+  );
 
   const result: Record<number, E> = {};
   for (const [key, entry] of Object.entries(byVersion)) {
@@ -6630,12 +6674,7 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
     // A version with no model to clear it serves none of its images.
     const level = modelId === undefined ? 0 : levels.get(modelId);
     result[versionId] =
-      level === undefined
-        ? entry
-        : {
-            ...entry,
-            images: entry.images.filter((image) => Flags.intersects(level, image.nsfwLevel)),
-          };
+      level === undefined ? entry : { ...entry, images: withinHeldLevel(entry.images, level) };
   }
   return result;
 }
