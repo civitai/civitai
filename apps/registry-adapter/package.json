@@ -1,0 +1,6 @@
+{
+  "name": "@civitai/registry-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Version source for the registry adapter image (apps/registry-adapter/Dockerfile; code in src/server/registry-adapter/). Read only by scripts/release-app.mjs, which bumps it and cuts the registry-adapter-vX.Y.Z tag the tag-webhook builds. Not a pnpm workspace member (excluded in pnpm-workspace.yaml): the adapter is built from the root package."
+}
