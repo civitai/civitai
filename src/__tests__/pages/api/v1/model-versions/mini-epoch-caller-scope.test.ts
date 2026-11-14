@@ -198,6 +198,22 @@ describe('mini/[id] epoch arm, a bearer without a download scope', () => {
   });
 });
 
+describe('mini/[id] epoch arm, X-Expires', () => {
+  it('ends when the re-signed url stops being usable', async () => {
+    const exp = Date.now() + 30 * 60_000;
+    const soon = `https://orchestration-new.civitai.com/v2/consumer/blobs/${BLOB_ID}?sig=f&exp=${new Date(
+      exp
+    ).toISOString()}`;
+    h.refreshBlobs.mockResolvedValue([{ blobId: BLOB_ID, status: 'refreshed', url: soon }]);
+    const { body, headers } = await request(
+      { user: { id: OWNER_ID }, context: bearer(TokenScope.ModelsRead, 'apiKey') },
+      [BLOB_FILE]
+    );
+    expect(body.downloadUrls).toEqual([soon]);
+    expect(new Map(headers).get('X-Expires')).toBe(new Date(exp - 5 * 60_000).toISOString());
+  });
+});
+
 describe('mini/[id], a moderator', () => {
   it('with a scoped key is not classed as a moderator; with a full personal key it is', async () => {
     const moderator = { id: 1, isModerator: true };

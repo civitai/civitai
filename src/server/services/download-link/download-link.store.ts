@@ -39,8 +39,10 @@ export type StoredDownloadLink = {
   credentialId: string;
   /** The minting client's `secretEpoch`; empty for an ApiKey. */
   credentialEpoch: string;
-  /** null for a public link. */
+  /** null for a public or provider link. */
   onBehalfOfUserId: number | null;
+  /** The provider a provider link serves, fetching as itself; null for any other link. */
+  provider: string | null;
   modelVersionId: number;
   fileId: number;
   workflowId: string;
@@ -48,7 +50,7 @@ export type StoredDownloadLink = {
   mintedAt: number;
   expiresAt: number;
   fetches: number;
-  /** This link's fetch cap, fixed at mint from the file's size. */
+  /** This link's fetch cap, fixed at mint from the file's size. A provider link has none. */
   maxFetches: number;
 };
 
@@ -78,19 +80,26 @@ const linkSecret = () => {
   const secret = env.DOWNLOAD_LINK_SECRET?.trim();
   return secret && secret.length >= MIN_SECRET_LENGTH ? secret : undefined;
 };
+/** Whether a repeat mint can return the link it made before. */
+export const linksAreReusable = () => linkSecret() !== undefined;
 
 const linkKey = (hash: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK}:${hash}` as const;
 const linkIdKey = (linkId: string) => `${REDIS_SYS_KEYS.DOWNLOAD_LINK.LINK_ID}:${linkId}` as const;
 const credSetKey = (credential: DownloadLinkCredential) =>
   `${REDIS_SYS_KEYS.DOWNLOAD_LINK.CRED_LINKS}:${credentialKey(credential)}` as const;
+type LinkAudience = Pick<StoredDownloadLink, 'onBehalfOfUserId' | 'provider'>;
 export const reuseKey = (
   credential: DownloadLinkCredential,
   fileId: number,
-  onBehalfOfUserId: number | null
+  { onBehalfOfUserId, provider }: LinkAudience
 ) =>
   `${REDIS_SYS_KEYS.DOWNLOAD_LINK.REUSE}:${credentialKey(credential)}:${fileId}:${
-    onBehalfOfUserId ?? 'public'
+    onBehalfOfUserId ?? (provider ? `provider:${provider}` : 'public')
   }` as const;
+
+/** Whether a fetch past the link's cap is refused. */
+export const isOverFetchCap = (link: StoredDownloadLink, fetches: number) =>
+  !link.provider && !(fetches <= link.maxFetches);
 
 function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
   if (!raw?.linkId || !raw.expiresAt) return null;
@@ -100,6 +109,7 @@ function parseLink(raw: Record<string, string>): StoredDownloadLink | null {
     credentialId: raw.credentialId,
     credentialEpoch: raw.credentialEpoch ?? '',
     onBehalfOfUserId: userId,
+    provider: raw.provider || null,
     modelVersionId: Number(raw.modelVersionId),
     fileId: Number(raw.fileId),
     workflowId: raw.workflowId ?? '',
@@ -132,6 +142,7 @@ export async function createLink(
     credentialId: credential.id,
     credentialEpoch: credential.epoch ?? '',
     onBehalfOfUserId: link.onBehalfOfUserId == null ? '' : String(link.onBehalfOfUserId),
+    provider: link.provider ?? '',
     modelVersionId: String(link.modelVersionId),
     fileId: String(link.fileId),
     workflowId: link.workflowId,
@@ -150,7 +161,7 @@ export async function createLink(
     .expire(credSetKey(credential), MAX_LINK_TTL_SECONDS);
   // Without the secret a link's URL cannot be rebuilt, so there is nothing to reuse.
   if (secret)
-    multi.set(reuseKey(credential, link.fileId, link.onBehalfOfUserId), hash, {
+    multi.set(reuseKey(credential, link.fileId, link), hash, {
       PXAT: link.expiresAt,
     });
   await multi.exec();
@@ -158,13 +169,15 @@ export async function createLink(
 }
 
 /**
- * The live link a repeat mint should return, or null to mint a new one: same credential, file and
- * user, at least `minRemainingMs` left, under the fetch cap, and an id the current secret rebuilds.
+ * The live link a repeat mint should return, or null to mint a new one: same credential, file,
+ * user and provider, at least `minRemainingMs` left, under the fetch cap, and an id the current
+ * secret rebuilds.
  */
 export async function findReusableLink({
   credential,
   fileId,
   onBehalfOfUserId,
+  provider,
   now,
   minRemainingMs,
   maxExpiresAt,
@@ -172,6 +185,7 @@ export async function findReusableLink({
   credential: DownloadLinkCredential;
   fileId: number;
   onBehalfOfUserId: number | null;
+  provider: string | null;
   now: number;
   minRemainingMs: number;
   /** A repeat mint never returns a link that outlives the lifetime it asked for. */
@@ -179,7 +193,7 @@ export async function findReusableLink({
 }): Promise<{ id: string; link: StoredDownloadLink } | null> {
   const secret = linkSecret();
   if (!secret) return null;
-  const hash = await sysRedis.get(reuseKey(credential, fileId, onBehalfOfUserId));
+  const hash = await sysRedis.get(reuseKey(credential, fileId, { onBehalfOfUserId, provider }));
   if (!hash) return null;
   const link = await readLinkByHash(hash);
   if (
@@ -189,9 +203,10 @@ export async function findReusableLink({
     link.credentialEpoch !== (credential.epoch ?? '') ||
     link.fileId !== fileId ||
     link.onBehalfOfUserId !== onBehalfOfUserId ||
+    link.provider !== provider ||
     link.expiresAt - now < minRemainingMs ||
     link.expiresAt > maxExpiresAt ||
-    !(link.fetches < link.maxFetches)
+    isOverFetchCap(link, link.fetches + 1)
   )
     return null;
   // A rotated secret rebuilds a different id: mint fresh rather than hand back a dead URL.
@@ -232,7 +247,7 @@ async function deleteLink(hash: string, link: StoredDownloadLink) {
   await sysRedis.del([linkKey(hash), linkIdKey(link.linkId)]);
   await sysRedis.sRem(credSetKey(credential), hash);
   await sysRedis.eval(DEL_IF_EQUALS_SCRIPT, {
-    keys: [reuseKey(credential, link.fileId, link.onBehalfOfUserId)],
+    keys: [reuseKey(credential, link.fileId, link)],
     arguments: [hash],
   });
 }
@@ -279,6 +294,12 @@ export const mayMintPublicLinks = (credential: DownloadLinkCredential) =>
       : env.DOWNLOAD_LINK_PUBLIC_API_KEY_IDS,
     credential.id
   );
+
+/** Also on `DOWNLOAD_LINK_PROVIDER_API_KEY_IDS`: may mint links a provider fetches as itself. */
+export const mayMintProviderLinks = (credential: DownloadLinkCredential) =>
+  credential.kind === 'apikey' &&
+  isAllowlistedMinter(credential) &&
+  listed(env.DOWNLOAD_LINK_PROVIDER_API_KEY_IDS, credential.id);
 
 /**
  * Revokes the links of any allowlisted credential among `credentials`, for the paths that revoke

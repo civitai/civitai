@@ -96,11 +96,14 @@ export async function serveProviderFetch({
   res,
   provider,
   check,
+  expiresInSeconds,
 }: {
   req: NextApiRequest;
   res: NextApiResponse;
   provider: string;
   check: GenerationFetchResult;
+  /** The signed file URL's lifetime; the delivery worker's default when omitted. */
+  expiresInSeconds?: number;
 }): Promise<ProviderServed> {
   if (!check.ok) {
     countProviderDownload(provider, 'refused_gate', 'unknown');
@@ -124,6 +127,7 @@ export async function serveProviderFetch({
   const { url } = await resolveDownloadUrl(check.fileId, check.fileUrl, check.fileName, {
     caller: 'download-route',
     actor: 'internal',
+    expiresInSeconds,
   });
   return { ok: true, url };
 }
