@@ -130,6 +130,11 @@ export default AuthedEndpoint(
       return onError(503, 'This model does not allow downloads.');
     }
 
+    // Unlike a deleted version, a taken-down model's files, images and details are moderators-only,
+    // vault included.
+    if (modelVersion && isModelTakenDown(modelVersion) && !user.isModerator)
+      return onError(404, 'File not found');
+
     const fileName = `${vaultItem.modelName}-${vaultItem.versionName}`;
 
     switch (input.type) {
@@ -137,9 +142,6 @@ export default AuthedEndpoint(
         const files = (vaultItem.files ?? []) as VaultItemFilesSchema;
         const file = input.fileId ? files.find((f) => f.id === input.fileId) : files[0];
         if (!file || !file.url) return onError(404, 'File not found');
-        // Unlike a deleted version, a taken-down model's files are moderators-only, vault included.
-        if (modelVersion && isModelTakenDown(modelVersion) && !user.isModerator)
-          return onError(404, 'File not found');
         if (!user.isModerator) {
           const select = { type: true, pickleScanResult: true, virusScanResult: true } as const;
           // A deleted row's bytes may still be other live rows': judge them by every one of those.

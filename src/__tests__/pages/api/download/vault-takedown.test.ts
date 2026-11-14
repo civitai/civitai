@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
-/** A vault copy of a taken-down model's file is served to moderators only. */
+/** A vault copy of a taken-down model's file, images or details is served to moderators only. */
 
 const { mockGetVaultWithStorage, mockHasEntityAccess, mockResolveDownloadUrl } = vi.hoisted(() => ({
   mockGetVaultWithStorage: vi.fn(),
@@ -17,7 +17,8 @@ vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEnt
 
 vi.mock('~/utils/delivery-worker', () => ({ resolveDownloadUrl: mockResolveDownloadUrl }));
 
-vi.mock('~/utils/s3-utils', () => ({ getGetUrlByKey: vi.fn() }));
+const { mockGetGetUrlByKey } = vi.hoisted(() => ({ mockGetGetUrlByKey: vi.fn() }));
+vi.mock('~/utils/s3-utils', () => ({ getGetUrlByKey: mockGetGetUrlByKey }));
 
 const TEST_USER = { id: 4242, isModerator: false };
 
@@ -34,10 +35,10 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 const mockVaultItemFindUnique = dbMock.dbRead.vaultItem.findUnique;
 const mockModelVersionFindUnique = dbMock.dbRead.modelVersion.findUnique;
 
-function run(fileId?: string) {
+function run(fileId?: string, type: 'model' | 'images' | 'details' = 'model') {
   const req = {
     method: 'GET',
-    query: { vaultItemId: '31', type: 'model', ...(fileId ? { fileId } : {}) },
+    query: { vaultItemId: '31', type, ...(fileId ? { fileId } : {}) },
     headers: {},
   } as unknown as NextApiRequest;
   const res = {
@@ -82,6 +83,9 @@ describe('/api/download/vault/[vaultItemId] — a taken-down model', () => {
     });
     mockHasEntityAccess.mockResolvedValue([{ hasAccess: true, permissions: 0xffff }]);
     mockResolveDownloadUrl.mockResolvedValue({ url: 'https://example.invalid/model.safetensors' });
+    mockGetGetUrlByKey.mockImplementation(async (key: string) => ({
+      url: `https://example.invalid/${key}`,
+    }));
   });
 
   it("refuses the vault's owner with the same 404 as a file it does not hold", async () => {
@@ -115,5 +119,49 @@ describe('/api/download/vault/[vaultItemId] — a taken-down model', () => {
     await promise;
 
     expect(res.redirect).toHaveBeenCalledWith('https://example.invalid/model.safetensors');
+  });
+
+  describe.each([
+    ['images', 'https://example.invalid/9/4242/images.zip'],
+    ['details', 'https://example.invalid/9/4242/details.pdf'],
+  ] as const)('the %s download', (type, signedUrl) => {
+    it("refuses the vault's owner with the model file's 404", async () => {
+      givenModel({ status: 'Published', mode: 'TakenDown' });
+      const { promise, res } = run(undefined, type);
+      await promise;
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(vi.mocked(res.json).mock.calls).toEqual([[{ error: 'File not found' }]]);
+      expect(res.redirect).not.toHaveBeenCalled();
+      expect(mockGetGetUrlByKey).not.toHaveBeenCalled();
+    });
+
+    it('still serves a moderator', async () => {
+      TEST_USER.isModerator = true;
+      givenModel({ status: 'Published', mode: 'TakenDown' });
+      const { promise, res } = run(undefined, type);
+      await promise;
+
+      expect(res.redirect).toHaveBeenCalledWith(signedUrl);
+    });
+
+    it.each([
+      ['a published model', { status: 'Published', mode: null }],
+      ['a deleted model', { status: 'Deleted', mode: null }],
+    ])('keeps serving %s from the vault', async (_state, model) => {
+      givenModel(model);
+      const { promise, res } = run(undefined, type);
+      await promise;
+
+      expect(res.redirect).toHaveBeenCalledWith(signedUrl);
+    });
+
+    it('keeps serving a version that no longer exists on the site', async () => {
+      mockModelVersionFindUnique.mockResolvedValue(null);
+      const { promise, res } = run(undefined, type);
+      await promise;
+
+      expect(res.redirect).toHaveBeenCalledWith(signedUrl);
+    });
   });
 });
