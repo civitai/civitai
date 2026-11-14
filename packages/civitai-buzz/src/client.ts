@@ -253,6 +253,30 @@ export const isSafeToRetry = (error: unknown) => {
 };
 
 /**
+ * Whether a failed WRITE may have committed on the ledger, so its outcome is unknown until the
+ * external id is looked up (and a lookup that finds nothing may mean "not yet"). False only where
+ * nothing can have landed: a connection that never opened (`isSafeToRetry`), or an answer from the
+ * service refusing it, a 4xx other than 408 (a proxy may time out a request it forwarded) and 409
+ * (the id is already taken). True for everything else: a 5xx, a client deadline, a reset, a
+ * runtime transport timeout (a `TypeError` whose cause is e.g. `UND_ERR_HEADERS_TIMEOUT`), and any
+ * error not recognised here.
+ *
+ * Reads the status from a `BuzzApiError`, or from one a consumer's `mapError` wrapped as `cause`.
+ */
+export const writeMayHaveLanded = (error: unknown): boolean => {
+  if (isSafeToRetry(error)) return false;
+  const status = buzzApiStatusOf(error);
+  if (status === undefined) return true;
+  return !(status >= 400 && status < 500 && status !== 408 && status !== 409);
+};
+
+function buzzApiStatusOf(error: unknown): number | undefined {
+  if (error instanceof BuzzApiError) return error.status;
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  return cause instanceof BuzzApiError ? cause.status : undefined;
+}
+
+/**
  * Which failed READS are worth one more attempt: anything but a timeout and a 4xx. A timeout means
  * the service is not answering, and a second wait of the same length only doubles the caller's;
  * a 4xx will be refused the same way again.
@@ -587,9 +611,16 @@ export function createBuzzClient(options: CreateBuzzClientOptions = {}) {
   // buzz-prefix-refund.ts) expect a repeat refund to be answered 200 or 409 rather than paid twice,
   // and treat a 409 as done only when `refund-<transactionId>` is on the ledger. That expectation is
   // theirs; this client does not check it.
-  const refundTransaction = (transactionId: string, body: BuzzRefundTransactionInput = {}) =>
+  // `opts` overrides per call like every other write: a caller refunding while it holds a lock
+  // passes a deadline so the lock is released.
+  const refundTransaction = (
+    transactionId: string,
+    body: BuzzRefundTransactionInput = {},
+    opts?: BuzzWriteOptions
+  ) =>
     post(`/transactions/${transactionId}/refund`, body, {
       shouldRetry: () => true,
+      ...opts,
     }) as Promise<RefundTransactionResponse>;
 
   return {

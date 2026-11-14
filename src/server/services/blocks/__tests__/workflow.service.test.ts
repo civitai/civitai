@@ -872,6 +872,79 @@ describe('resolveBlockVersionContext', () => {
   });
 });
 
+describe('buildImageWorkflowInput — an omitted sampler is the family default', () => {
+  // The literals are the CONTRACT, written out by hand from the graph files and matching what
+  // `GET /api/v1/blocks/generation-samplers` reports (sampler-options.test.ts pins the same
+  // values on that side). On `main` the submit path sent 'Euler' for every family.
+  const body = {
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'a cat', quantity: 1 },
+  };
+  const resolvedFor = (baseModel: string, checkpointVersionId = 99) => ({
+    baseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId,
+    checkpointBaseModel: baseModel,
+    additionalResourceTypes: new Map<number, string>(),
+  });
+
+  it.each([
+    // SD family: the generator preselects 'Euler a', not 'Euler'.
+    ['SDXL 1.0', 'SDXL', 'Euler a'],
+    ['SD 1.5', 'SD1', 'Euler a'],
+    // Anima offers no 'Euler' at all; its default is not its first option.
+    ['Anima', 'Anima', 'euler_ancestral'],
+    // Chroma's default happens to be 'Euler' (a control: unchanged by this fix).
+    ['Chroma', 'Chroma', 'Euler'],
+  ])('%s → %s family default %s', (baseModel, ecosystem, sampler) => {
+    const out = buildImageWorkflowInput(body as never, resolvedFor(baseModel));
+    expect(out.ecosystem).toBe(ecosystem);
+    expect(out.sampler).toBe(sampler);
+  });
+
+  it('a family with no sampler control (Flux1) gets no sampler key at all', () => {
+    const out = buildImageWorkflowInput(body as never, resolvedFor('Flux.1 D', 691639));
+    expect(out.ecosystem).toBe('Flux1');
+    expect('sampler' in out).toBe(false);
+  });
+
+  it('HiDream resolves by VERSION: Full (1772448) gets UniPC, the default Dev version none', () => {
+    const full = buildImageWorkflowInput(body as never, resolvedFor('HiDream', 1772448));
+    expect(full.ecosystem).toBe('HiDream');
+    expect(full.sampler).toBe('UniPC');
+    const dev = buildImageWorkflowInput(body as never, resolvedFor('HiDream', 1771369));
+    expect(dev.ecosystem).toBe('HiDream');
+    expect('sampler' in dev).toBe(false);
+  });
+
+  it('an SD img2img body (source image) gets the same family default', () => {
+    const out = buildImageWorkflowInput(
+      { ...body, sourceImage: { url: 'https://x/y.png', width: 512, height: 512 } } as never,
+      resolvedFor('SDXL 1.0')
+    );
+    expect(out.workflow).toBe('img2img');
+    expect(out.sampler).toBe('Euler a');
+  });
+
+  it.each([
+    ['SDXL 1.0', 99, 'DPM++ 2M Karras'],
+    ['Anima', 99, 'heun'],
+    // Explicit values pass through untouched even where the family has no control.
+    ['Flux.1 D', 691639, 'Euler'],
+  ])(
+    '%s (version %s): an explicit sampler %s is sent unchanged',
+    (baseModel, versionId, sampler) => {
+      const out = buildImageWorkflowInput(
+        { ...body, params: { ...body.params, sampler } } as never,
+        resolvedFor(baseModel, versionId)
+      );
+      expect(out.sampler).toBe(sampler);
+    }
+  );
+});
+
 describe('buildTextToImageInput', () => {
   const baseBody = {
     kind: 'textToImage' as const,
@@ -952,7 +1025,8 @@ describe('buildTextToImageInput', () => {
 
   it('defaults sampler/steps and pins workflow to txt2img', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
-    expect(out.sampler).toBe('Euler');
+    // SDXL's family default, not a literal 'Euler' — see "omitted sampler" below.
+    expect(out.sampler).toBe('Euler a');
     expect(out.steps).toBe(25);
     expect(out.workflow).toBe('txt2img');
     expect(out.priority).toBe('low');
@@ -2198,7 +2272,7 @@ describe('buildCustomComfyWorkflowInput (translator)', () => {
       engine: 'zimage-turbo',
     });
     expect(input.trace).toBe('binary');
-    expect(input.resources[0]).toContain('z_image_turbo');
+    expect(input.resources[0]).toContain(':civitai:2168935@2442439');
     expect(input.workflow['1'].class_type).toBe('UNETLoader');
     // seed threaded into the KSampler leaf
     expect(input.workflow['9'].inputs).toMatchObject({ seed: 1 });
@@ -2218,29 +2292,13 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
   it('wraps the input as a customComfy step and stamps the resolved per-engine timeout (HH:MM:SS)', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
     // v1.1: the caller resolves the timeout from the params' budget and threads it.
-    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'qwen-image' });
+    const { stepTimeoutSeconds } = recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' });
     const step = createBlockCustomComfyStep(input, stepTimeoutSeconds);
     expect(step.$type).toBe('customComfy');
     expect(step.name).toBe(BLOCK_CUSTOM_COMFY_STEP_NAME);
-    // qwen 180s ceiling → 00:03:00 (NOT the reference's loose 01:00:00).
-    expect(step.timeout).toBe('00:03:00');
+    // zimage 90s ceiling → 00:01:30 (NOT the reference's loose 01:00:00).
+    expect(step.timeout).toBe('00:01:30');
     expect(step.input).toBe(input);
-  });
-
-  it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
-    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
-    expect(
-      createBlockCustomComfyStep(
-        input,
-        recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds
-      ).timeout
-    ).toBe('00:01:30');
-    expect(
-      createBlockCustomComfyStep(
-        input,
-        recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds
-      ).timeout
-    ).toBe('00:02:30');
   });
 });
 

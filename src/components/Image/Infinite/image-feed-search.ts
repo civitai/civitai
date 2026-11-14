@@ -12,9 +12,9 @@ import { QS } from '~/utils/qs';
 
 // The feed filters the search index cannot apply. While a query is set they are shown greyed and
 // ignored, never sent: the index ranks by meaning and carries no tools, techniques, remix or meta
-// fields, and the viewer-only views (hidden, followed, own drafts) are not in it.
+// fields, and the viewer-only views (hidden, followed, own drafts) are not in it. Made on-site and
+// Metadata only are applied when hydrating instead.
 export const imageFeedSearchUnavailableKeys = [
-  'withMeta',
   'requiringMeta',
   'hidden',
   'scheduled',
@@ -44,7 +44,6 @@ export const imageFeedFilterLabels: Record<
   string
 > = {
   // As the Filters menu and the Followed button word them, so a greyed control reads the same.
-  withMeta: 'Metadata only',
   requiringMeta: 'Requiring Metadata',
   hidden: 'Hidden',
   scheduled: 'Scheduled',
@@ -87,6 +86,13 @@ const isActive = (value: unknown) =>
 export function ignoredWhileSearching(filters: FeedFilters) {
   const keys = [...imageFeedSearchUnavailableKeys, 'followed', 'newCreators'] as const;
   return keys.filter((key) => isActive(filters[key]));
+}
+
+export type ImageFeedSearchSort = 'newest';
+
+/** The feed's `?searchSort=`: Newest, or undefined for the search's own Best match order. */
+export function parseFeedSearchSort(value: unknown): ImageFeedSearchSort | undefined {
+  return value === 'newest' ? value : undefined;
 }
 
 export function normalizeFeedQuery(query: string | undefined) {
@@ -137,11 +143,13 @@ export function toSemanticImageSearchInput({
   query,
   filters,
   browsingLevel,
+  sort,
   now,
 }: {
   query: string;
   filters: FeedFilters;
   browsingLevel: number;
+  sort?: ImageFeedSearchSort;
   now?: Date;
 }): SemanticImageSearchInput {
   return {
@@ -154,7 +162,9 @@ export function toSemanticImageSearchInput({
     usernames: filters.username ? [filters.username] : undefined,
     userIds: filters.userId ? [filters.userId] : undefined,
     postedAfter: periodStart(filters.period, now),
+    sort,
     fromPlatform: filters.fromPlatform || undefined,
+    withMeta: filters.withMeta || undefined,
     limit: 50,
   };
 }

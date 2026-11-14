@@ -167,7 +167,6 @@ try {
 // reads its result, so it cannot change readiness. It runs in every process that runs this file,
 // which covers both the Next server and the standalone server (scripts/trpc-server/server.cjs
 // calls register()). It is DARK by default: it runs only when HEALTH_METRICS_INTERVAL_MS is a positive number. See ~/server/health/metrics-loop.
-// The sequence lives in ~/server/health/start-after-warmup (tested there); the imports stay here.
 void startWarmupAndHealthMetricsLoop({
   warmup: import('~/server/warmup'),
   metricsLoop: import('~/server/health/metrics-loop'),

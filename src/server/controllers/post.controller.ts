@@ -866,7 +866,19 @@ export const getPostResourcesHandler = async ({
       isModerator: ctx.user?.isModerator,
     });
 
-    return resources.filter((x) => x.name !== 'vae');
+    const rows = resources.filter((x) => x.name !== 'vae');
+    const modelIds = [...new Set(rows.map((x) => x.modelId).filter(isDefined))];
+    const models = modelIds.length
+      ? await dbRead.model.findMany({
+          where: { id: { in: modelIds } },
+          select: { id: true, userId: true },
+        })
+      : [];
+    const ownerByModelId = new Map(models.map((m) => [m.id, m.userId]));
+    return rows.map((x) => ({
+      ...x,
+      modelUserId: x.modelId != null ? ownerByModelId.get(x.modelId) ?? null : null,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

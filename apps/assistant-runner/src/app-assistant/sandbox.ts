@@ -76,6 +76,12 @@ export interface AppSandboxDeps {
   fetch?: typeof fetch;
   wakeTimeoutMs?: number;
   wakePollMs?: number;
+  /**
+   * How a paused app is started (`openApp` unless set). App hibernate sets `startOrWakeApp`, which
+   * resumes a listed app with a plain open and wakes one put to sleep since it was listed, rather
+   * than leave it new and empty.
+   */
+  open?(app: string): Promise<{ sandbox: Sandbox; created: boolean }>;
 }
 
 /**
@@ -288,7 +294,7 @@ export class AppSandbox {
     const { client, signal } = this.#deps;
     let opened: { sandbox: Sandbox; created: boolean };
     try {
-      opened = await openApp(client, app);
+      opened = await (this.#deps.open?.(app) ?? openApp(client, app));
     } catch (error) {
       this.#deps.log.warn(
         { err: (error as Error)?.name, runId: this.#deps.runId },
