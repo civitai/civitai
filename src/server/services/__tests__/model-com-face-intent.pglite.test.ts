@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type { ComFaceIntentRecord } from '~/server/schema/model.schema';
 
 /** The listing intent lock's own SQL against PGlite: which rows it may lock. Ids are invented. */
 
@@ -26,6 +27,7 @@ vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
 }));
 
 const {
+  comFaceIntentAfterModeratorUnlock,
   comFaceIntentTextHash,
   lockForComFaceIntent,
   overturnComFaceIntentSql,
@@ -272,5 +274,50 @@ describe('the face check after a moderator lifted the intent lock', () => {
 
     expect((await row()).meta.comFaceIntent.overturnedAt).toBeTruthy();
     expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(false);
+  });
+});
+
+// A moderator's unlock from the model form, on a lock the intent check never recorded a verdict for
+// (another filter's lock) or on one it did: a later fresh detection of that same text must not lock it.
+describe('the face check after a moderator unlocked from the model form', () => {
+  const OWNER = 1;
+  const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
+  const storedHash = comFaceIntentTextHash(stored);
+  const faceCheck = () => assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER });
+
+  async function unlockedByModerator(prior?: ComFaceIntentRecord) {
+    const comFaceIntent = comFaceIntentAfterModeratorUnlock(
+      prior,
+      storedHash,
+      new Date().toISOString()
+    );
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, '{}', true, $2, $3)`,
+      [MODEL, { comFaceIntent }, stored.description]
+    );
+  }
+
+  beforeEach(() => {
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: true, reason: 'r' },
+    });
+  });
+
+  it.each([
+    ['no stored verdict', undefined],
+    ['a stored detection', { detected: true, textHash: storedHash, at: '2026-01-01T00:00:00Z' }],
+  ])('does not re-lock the listing when there was %s', async (_, prior) => {
+    await unlockedByModerator(prior);
+
+    await faceCheck();
+    await recordComFaceIntent(MODEL, { detected: true, textHash: storedHash });
+
+    expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(false);
+    const after = await row();
+    expect(after.lockedProperties).toEqual([]);
+    expect(after.meta.comFaceIntent.overturnedAt).toBeTruthy();
+    expect(activities).toHaveLength(0);
   });
 });

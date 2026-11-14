@@ -3969,6 +3969,27 @@ function liftsNsfwLock(stored: string[] | null | undefined, next: string[] | und
   return next !== undefined && (stored ?? []).includes('nsfw') && !next.includes('nsfw');
 }
 
+/** The intent verdict a moderator's save writes when it lifts the nsfw lock, for the listing the
+ *  save leaves; null when it does not lift it. */
+async function intentAfterModeratorUnlock(
+  tx: Prisma.TransactionClient,
+  modelId: number,
+  locked: NonNullable<LockedModelRow>,
+  data: { name?: string; description?: string | null; lockedProperties?: string[] }
+) {
+  if (!liftsNsfwLock(locked.lockedProperties, data.lockedProperties)) return null;
+  const textHash = comFaceIntentTextHash({
+    name: data.name ?? locked.name,
+    description: data.description !== undefined ? data.description : locked.description,
+    triggerWords: await getOwnTriggerWords({ modelId, userId: locked.userId, db: tx }),
+  });
+  return comFaceIntentAfterModeratorUnlock(
+    locked.meta?.comFaceIntent,
+    textHash,
+    new Date().toISOString()
+  );
+}
+
 function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
   const { [SYSTEM_NSFW_LOCK_META_KEY]: _marker, ...rest } = meta;
   return rest;
@@ -4561,25 +4582,9 @@ export const upsertModel = async (
           const { [OWNER_FLAG_OVERRIDE_KEY]: _override, ...rest } = mergedMeta;
           mergedMeta = rest;
         }
-        if (
-          isModerator &&
-          locked &&
-          liftsNsfwLock(locked.lockedProperties, data.lockedProperties)
-        ) {
-          const textHash = comFaceIntentTextHash({
-            name: data.name ?? locked.name,
-            description: data.description !== undefined ? data.description : locked.description,
-            triggerWords: await getOwnTriggerWords({ modelId: id, userId: locked.userId, db: tx }),
-          });
-          mergedMeta = {
-            ...mergedMeta,
-            comFaceIntent: comFaceIntentAfterModeratorUnlock(
-              prevMeta?.comFaceIntent,
-              textHash,
-              new Date().toISOString()
-            ),
-          };
-        }
+        const intentRuling =
+          isModerator && locked ? await intentAfterModeratorUnlock(tx, id, locked, data) : null;
+        if (intentRuling) mergedMeta = { ...mergedMeta, comFaceIntent: intentRuling };
         if (locked?.minor && flags && !flags.minor && mergedMeta.minorFlagSnapshot)
           mergedMeta = {
             ...mergedMeta,
@@ -7640,6 +7645,9 @@ export const privateModelFromTraining = async ({
         }
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
+        const intentRuling = user.isModerator
+          ? await intentAfterModeratorUnlock(tx, id, locked, data)
+          : null;
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
         const restoreCannotPromote =
           locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
@@ -7689,6 +7697,7 @@ export const privateModelFromTraining = async ({
                   ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
                   : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
+                ...(intentRuling && { comFaceIntent: intentRuling }),
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
                 ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
