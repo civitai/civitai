@@ -46,6 +46,26 @@ export function reusableComFaceIntent(
   return { detected: record.detected && !record.overturnedAt, reason: record.reason };
 }
 
+/**
+ * What a moderator's lift of the nsfw lock writes, for the listing the save leaves (`textHash`).
+ * Lifting the intent check's own lock rules on the intent: its detection of this text is overturned,
+ * as `overturnComFaceIntentSql` does for a review ruling (a change to "overturned" goes in both).
+ * Lifting any other lock rules on the rating only: no verdict is written, so the face stays gated on
+ * the check, and only re-locking this text is suppressed. Text no check has read is never allowed.
+ */
+export function comFaceIntentMetaAfterModeratorUnlock(
+  meta: ModelMeta | null | undefined,
+  textHash: string,
+  at: string
+): Pick<ModelMeta, 'comFaceIntent' | 'comFaceIntentRelockSuppressed'> {
+  if (meta?.systemNsfwLock?.source !== COM_FACE_INTENT_LOCK_SOURCE)
+    return { comFaceIntentRelockSuppressed: { textHash, at } };
+  const record = meta.comFaceIntent;
+  if (record?.textHash !== textHash) return {};
+  const { priorSystemNsfwLock: _prior, laterVerdict: _later, ...rest } = record;
+  return { comFaceIntent: { ...rest, overturnedAt: record.overturnedAt ?? at } };
+}
+
 export async function readComFaceIntentModel(modelId: number) {
   return dbWrite.model.findUnique({
     where: { id: modelId },
@@ -124,6 +144,7 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
         AND m.meta->'comFaceIntent'->>'textHash' = ${textHash}
         AND m.meta->'comFaceIntent'->>'detected' = 'true'
         AND NOT (m.meta->'comFaceIntent' ? 'overturnedAt')
+        AND NOT COALESCE(m.meta->'comFaceIntentRelockSuppressed'->>'textHash' = ${textHash}, FALSE)
     `;
     if (updated)
       await tx.modActivity.create({
@@ -211,6 +232,16 @@ export const recordVerdictUnderIntentLock = (
     AND 'nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[]))
     AND m.meta->'systemNsfwLock'->>'source' = ${COM_FACE_INTENT_LOCK_SOURCE}
     AND jsonb_typeof(m.meta->'comFaceIntent') = 'object'
+`;
+
+/** The SQL twin of `comFaceIntentMetaAfterModeratorUnlock`'s non-intent branch, for a review ruling. */
+export const suppressComFaceIntentRelockSql = (modelId: number, textHash: string) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = ${asJsonbObjectSql('meta')} || jsonb_build_object(
+    'comFaceIntentRelockSuppressed',
+    jsonb_build_object('textHash', ${textHash}::text, 'at', now()::text)
+  )
+  WHERE id = ${modelId}
 `;
 
 /**

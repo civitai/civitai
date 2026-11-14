@@ -1,3 +1,4 @@
+import { getHatPlacementViews } from '~/server/events/points/placement-stats';
 import { getTurfEvent } from '~/server/events/turf/turf.service';
 import { Prisma } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
@@ -645,6 +646,18 @@ export async function getMyEventHats({
         ...hatScore(scored, season, hat, score, live),
       };
     });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getMyEventHatPlacementStats({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    await eventEngine.getReadableScoredEvent(event, user);
+    return await getHatPlacementViews(event, user.id);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

@@ -10,7 +10,9 @@ import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getModelVisibleToViewer } from '~/server/services/model-visibility.service';
 import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
+import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { createNotification } from '~/server/services/notification.service';
+import { postTextOwnerNoticeSql } from '~/server/notifications/comment.notifications';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
@@ -241,6 +243,35 @@ async function notifyComicOwner(comment: StoredCommentV3, ctx: ProtectedContext)
   });
 }
 
+/**
+ * Tells the post's owner about a new top-level comment on one of its texts, as a post comment
+ * linked to the text slide. Named by the post, never the text: a notice outlives a later hold.
+ * Same dedupe key as `notifyComicOwner`.
+ */
+async function notifyPostTextOwner(comment: StoredCommentV3, ctx: ProtectedContext) {
+  if (comment.parentId) return;
+  const [text] = await dbRead.$queryRawUnsafe<
+    { postId: number; userId: number; title: string | null; anchorImageId: number | null }[]
+  >(postTextOwnerNoticeSql, comment.entityId);
+  if (!text || text.userId === comment.userId) return;
+  await createNotification({
+    type: 'new-post-comment',
+    key: `new-comment-post-text:owner:v3:${comment.id}`,
+    category: NotificationCategory.Comment,
+    dedupeKey: `comment:v2:${comment.id}`,
+    userId: text.userId,
+    details: {
+      version: 3,
+      postId: text.postId,
+      postTitle: text.title,
+      commentId: comment.id,
+      username: ctx.user.username ?? 'Someone',
+      postTextId: comment.entityId,
+      anchorImageId: text.anchorImageId,
+    },
+  });
+}
+
 /** Every entity type with a comment section, so a new one does not compile until it has an entry. */
 export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
@@ -296,15 +327,17 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     },
   },
   appListing: {},
-  // Storyline text items: no thread is readable or writable yet, moderators included.
   postText: {
-    assertVisible: async () => {
-      throw throwNotFoundError('Text not found');
+    assertVisible: async (textId, ctx) => void (await assertPostTextVisible(textId, ctx)),
+    assertWritable: async (textId, ctx) => {
+      const text = await dbRead.postText.findUnique({
+        where: { id: textId },
+        select: { postId: true },
+      });
+      if (!text) throw throwNotFoundError('Text not found');
+      await accessGated('Post')(text.postId, ctx);
     },
-    // Moderators skip assertVisible, and an edit asks only this.
-    assertWritable: async () => {
-      throw throwBadRequestError('Comments on storyline text are closed.');
-    },
+    onCreated: (comment, ctx) => void notifyPostTextOwner(comment, ctx).catch(handleLogError),
   },
 };
 

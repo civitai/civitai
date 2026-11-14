@@ -32,6 +32,7 @@ import {
   getEventCosmeticScores,
   getEventHatCatalog,
   getMyEventHats,
+  getMyEventHatPlacementStats,
   getPlaceableEventContent,
   getPlaceableEventContentPage,
   getWornEventHat,
@@ -197,6 +198,10 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .query(({ ctx, input }) => getMyEventHats({ user: eventUserOf(ctx), ...input })),
+  getMyHatPlacementStats: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyEventHatPlacementStats({ user: eventUserOf(ctx), ...input })),
   getPlaceableContent: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
