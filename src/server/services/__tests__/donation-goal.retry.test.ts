@@ -357,3 +357,36 @@ describe('a donation across an unknown outcome', () => {
     });
   });
 });
+
+describe('one key, two amounts', () => {
+  // The donation prefix carries the amount, so a second amount under one key is its own donation:
+  // charged for its own amount, never answered from (or recorded on) the first one's charge.
+  const charged = (prefix: string) =>
+    ledger
+      .charges()
+      .filter((t) => t.externalTransactionId.startsWith(`${prefix}-`))
+      .reduce((sum, t) => sum + t.amount, 0);
+
+  it('while the first is still in flight: each donation is recorded at the amount it was charged', async () => {
+    ledger.queueFault('lose-response');
+    ledger.queueFault('hang');
+    const first = donate(KEY, 500).catch((e: unknown) => e);
+    for (let i = 0; i < 200 && !ledger.isHung(); i++) await settle();
+    expect(ledger.isHung(), 'the first donation is in flight').toBe(true);
+
+    await donate(KEY, 900);
+    ledger.releaseHung();
+    await first;
+
+    expect(donations.map((d) => d.amount).sort((a, b) => a - b)).toEqual([500, 900]);
+    for (const d of donations) expect(charged(d.buzzTransactionId)).toBe(d.amount);
+  });
+
+  it('after the first finished: the second amount is a separate charge and record', async () => {
+    await donate(KEY, 500);
+    await donate(KEY, 900);
+
+    expect(ledger.charges().map((t) => t.amount)).toEqual([500, 900]);
+    for (const d of donations) expect(charged(d.buzzTransactionId)).toBe(d.amount);
+  });
+});

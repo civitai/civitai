@@ -28,6 +28,8 @@ type Write = {
   amount: number;
   fromAccountId: number;
   toAccountId?: number;
+  fromAccountType?: string;
+  type?: number;
 };
 
 export const timeoutError = () =>
