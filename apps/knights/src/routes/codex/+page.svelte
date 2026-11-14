@@ -191,7 +191,7 @@
         <p>
           Judge {facts.watch.size} images in a UTC day to complete that day's Watch. A completed Watch pays a
           streak bonus of {count(facts.watch.bonusGold)} gold per day of streak, up to {facts.watch.streakCap}
-          days. The Watch is a goal, not a limit: keep judging after it and you keep earning, up to your rank's daily gold cap.
+          days. The Watch is a goal, not a limit: keep judging after it and you keep earning, up to your daily gold cap, which grows with your level.
         </p>
         <p>
           The Watch, streaks and days played are for Knights and above.
@@ -209,7 +209,7 @@
       <ul class="facts">
         <li><Icon name="flame" size={18} /><span><b>Streak bonus</b>Grows with every day, up to {facts.watch.streakCap}</span></li>
         <li><Icon name="shield-check" size={18} /><span><b>Weekly shield</b>Covers one missed day</span></li>
-        <li><Icon name="coins" size={18} /><span><b>Daily gold cap</b>Per rank; XP still counts past it</span></li>
+        <li><Icon name="coins" size={18} /><span><b>Daily gold cap</b>Grows with your level; XP still counts past it</span></li>
       </ul>
     </div>
   </section>
