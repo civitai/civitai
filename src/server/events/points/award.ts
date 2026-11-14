@@ -473,9 +473,9 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   }
 
   // A turf first's live totals, batched: one cap increment per credited player, then their owner and
-  // totals and one team increment for the sum. Issued together so the client pipelines them, two round
-  // trips whatever the player count. No per-hat, count or roster update: turf credits are not listed
-  // as hats, and the roster's points sort (display only) catches up at the hourly roster reconcile.
+  // totals, roster points and one team increment for the sum. Issued together so the client pipelines
+  // them, two round trips whatever the player count. No per-hat or count update: turf credits are not
+  // listed as hats.
   async function liveGrantTurf(
     event: LoadedEvent,
     action: EventPointAction,
@@ -509,6 +509,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     const ownerKey = keys.live(bucket, 'owner');
     const teamKey = keys.live(bucket, 'team');
     const sum = granted.reduce((n, g) => n + g.grant, 0);
+    const season = eventPointSeason(def.startDate, time);
     await Promise.all([
       ...granted
         .filter((g) => g.firstToday)
@@ -517,6 +518,16 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         .filter((g) => g.grant > 0)
         .map((g) => deps.redis.hIncrBy(ownerKey, String(g.ownerId), g.grant)),
       ...(sum > 0 ? [deps.redis.hIncrBy(teamKey, teamHat.team, sum)] : []),
+      // Display only, as in liveGrant: a roster failure costs neither the grant nor its push.
+      ...granted
+        .filter((g) => g.grant > 0)
+        .map((g) =>
+          Promise.resolve()
+            .then(() =>
+              addRosterPoints(deps.redis, def.name, teamHat.team, season, g.ownerId, g.grant)
+            )
+            .catch((error) => deps.logError('redis', 'eventPoints.rosterPoints', error))
+        ),
     ]);
     if (sum <= 0) return undefined;
     for (const g of granted)

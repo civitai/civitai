@@ -12,6 +12,7 @@ const { cappedGrant, createEventPointsEngine, streamIdBefore } = await import(
   '~/server/events/points/award'
 );
 const { eventRosterKeys } = await import('~/server/events/points/roster');
+const { packStanding, unpackPointsScore } = await import('~/server/events/points/roster-score');
 const {
   countField,
   encodeHat,
@@ -1020,6 +1021,53 @@ describe('Hat Turf', () => {
     expect(livePoints('team', 'Yellow')).toBe(2);
   });
 
+  it("raises each listed credited player's roster card points, so a refetch does not drop them", async () => {
+    const keys = eventRosterKeys(EVENT.name);
+    const rank = keys.rank('Yellow', 'points', 'live');
+    const standing = (id: number) =>
+      unpackPointsScore(fake.zsets.get(rank)?.get(String(id)) ?? 0).standing.points;
+    fake.zsets.set(
+      rank,
+      new Map([['21', packStanding('points', { hats: 0, points: 7, joinMinute: 0 })]])
+    );
+    fake.zsets.set(keys.points('Yellow', 'live'), new Map([['21', 7]]));
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    await engine.awardEventPoints([view(22)]);
+    expect(standing(21)).toBe(8);
+    expect(fake.zsets.get(keys.points('Yellow', 'live'))?.get('21')).toBe(8);
+    expect(fake.zsets.get(rank)?.has('23') ?? false).toBe(false);
+  });
+
+  it('adds only the capped grant to the roster', async () => {
+    const points = eventRosterKeys(EVENT.name).points('Yellow', 'live');
+    fake.zsets.set(
+      points,
+      new Map([
+        ['21', 7],
+        ['23', 7],
+      ])
+    );
+    build({ loadScoredEvents: async () => [turfEvent('live')] });
+    // 22's reaction is worth 5; 21 has 3 left under the cap from 22 today.
+    await fake.redis.hIncrBy(eventSeasonKeys(EVENT.name, 'live').cap('2026-11-05', 21), '22', 47);
+    await engine.awardEventPoints([reaction(22, 200)]);
+    expect(fake.zsets.get(points)?.get('21')).toBe(10);
+    expect(fake.zsets.get(points)?.get('23')).toBe(12);
+  });
+
+  it('keeps the turf points when the roster write fails, and logs it', async () => {
+    const logError = vi.fn();
+    build({ logError, loadScoredEvents: async () => [turfEvent('live')] });
+    (fake.redis as { zAddIncr: unknown }).zAddIncr = () => {
+      throw new Error('roster down');
+    };
+    await engine.awardEventPoints([view(22)]);
+    expect(livePoints('owner', '21')).toBe(1);
+    expect(livePoints('team', 'Yellow')).toBe(2);
+    expect(granted).toHaveLength(2);
+    expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.rosterPoints', expect.any(Error));
+  });
+
   it('a live first on a 25-player turf image costs a bounded number of Redis calls', async () => {
     const many = Array.from({ length: 25 }, (_, i) => 100 + i);
     fake.setTurf(EVENT.name, 'Image:200', encodeTurfEntry({ ...TURF, players: many }));
@@ -1041,8 +1089,9 @@ describe('Hat Turf', () => {
     await engine.awardEventPoints([view(31)]);
     expect(livePoints('team', 'Yellow')).toBe(50);
     // Per player: the cap increment, its TTL (set on this viewer's first grant to that player today)
-    // and the owner increment; plus the seen mark, its TTL and one team increment.
-    expect(calls).toBeLessThanOrEqual(3 * 25 + 5);
+    // the owner increment and the four roster sorts; plus the seen mark, its TTL and one team
+    // increment.
+    expect(calls).toBeLessThanOrEqual(7 * 25 + 5);
   });
 
   it('caps each credited player separately for one viewer', async () => {
