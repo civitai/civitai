@@ -288,6 +288,44 @@ describe('a new comic chapter comment', () => {
   });
 });
 
+describe('a new storyline text comment', () => {
+  const comment = (over: Record<string, unknown> = {}) =>
+    ({ id: 310, entityId: 50, userId: 2, parentId: null, ...over } as never);
+  const text = (ownerId: number) =>
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([
+      { postId: 31, userId: ownerId, title: 'Chapter one', anchorImageId: 10 },
+    ] as never);
+  const created = async (c: never) => {
+    commentSurface('postText').onCreated?.(c, member);
+    await vi.waitFor(() => expect(dbMock.dbRead.$queryRawUnsafe).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("tells the post's owner as a post comment, linked to the text slide, deduped with the thread's", async () => {
+    text(5);
+    await created(comment());
+    expect(m.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'new-post-comment', userId: 5, dedupeKey: 'comment:v2:310' })
+    );
+    const { commentNotifications } = await import('~/server/notifications/comment.notifications');
+    const { details } = m.notify.mock.calls[0][0] as unknown as { details: never };
+    // Names the post, not the text, and opens the slide.
+    expect(commentNotifications['new-post-comment'].prepareMessage({ details } as never)).toEqual({
+      message: 'ann commented on your post: "Chapter one"',
+      url: '/images/10?text=50&highlight=310',
+    });
+  });
+
+  it('tells nobody about the owner’s own comment, or a reply', async () => {
+    text(2);
+    await created(comment());
+    text(5);
+    commentSurface('postText').onCreated?.(comment({ parentId: 1 }), member);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+});
+
 describe('a model', () => {
   const model = (over: Record<string, unknown> = {}) => ({
     status: 'Published',

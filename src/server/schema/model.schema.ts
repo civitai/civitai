@@ -516,6 +516,9 @@ export type ModelMeta = Partial<{
    *  (`textHash`) is unchanged so a repeat attempt is not re-judged. `overturnedAt`: a dispute or a
    *  moderator lifted the lock it set. `reason` is for moderators only. Server-owned. */
   comFaceIntent: ComFaceIntentRecord;
+  /** A moderator lifted an nsfw lock that was not the intent check's: the check still gates the
+   *  face, but does not lock this listing text (`textHash`) again. Server-owned. */
+  comFaceIntentRelockSuppressed: { textHash: string; at: string };
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
    *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com

@@ -58,6 +58,11 @@ function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
     isError,
     dataUpdatedAt,
   } = trpc.event.getMyHats.useQuery({ event });
+  // Not part of getMyHats: a slow ClickHouse must never hold up the hats.
+  const { data: placementStats } = trpc.event.getMyHatPlacementStats.useQuery(
+    { event },
+    { enabled: !!hats?.some((h) => h.placedOn), staleTime: 5 * 60_000, retry: false }
+  );
   const teamColor = useTeamColor();
   const definition = getEventDecorationDefinition(event);
   const [now, setNow] = useState(() => new Date());
@@ -105,6 +110,9 @@ function EventHats({ event, owned }: { event: string; owned: OwnedHat[] }) {
             <MyHatCard
               key={`${hat.cosmeticId}:${hat.claimKey}`}
               hat={hat}
+              placement={placementStats?.find(
+                (p) => p.cosmeticId === hat.cosmeticId && p.claimKey === hat.claimKey
+              )}
               color={(hat.data.team && teamColor(hat.data.team)) || DEFAULT_HAT_COLOR}
               minutesLeft={minutesUntilMovable(
                 hat.moveCooldownLeftMs,

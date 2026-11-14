@@ -103,7 +103,12 @@ describe('orchestrator.queryWorkflowsByTags', () => {
     expect(h.withheld).toHaveBeenCalledTimes(1);
     expect(h.withheld).toHaveBeenCalledWith(7, ['wf-1', 'wf-2']);
     expect(JSON.stringify(items[0])).not.toContain(MARK);
-    expect(JSON.stringify(items[1])).toContain(MARK);
+    expect(items[0].steps?.[0]).toEqual({ $type: 'training', name: 'train', status: 'succeeded' });
+    // A run that is not withheld keeps its input and epochs; its weight handles go for any non-moderator.
+    expect(items[1].steps?.[0]).toMatchObject({
+      input: { ecosystem: 'sdxl' },
+      output: { epochs: [{ epochNumber: 1 }] },
+    });
     expect(items[2]).toEqual(generation);
   });
 });

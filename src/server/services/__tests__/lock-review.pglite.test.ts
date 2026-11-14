@@ -3,6 +3,7 @@ import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as Email from '~/server/email/templates';
@@ -314,6 +315,28 @@ describe('approving a lock review', () => {
     const meta = await modelMeta();
     expect(meta).not.toHaveProperty(SYSTEM_NSFW_LOCK_META_KEY);
     expect(meta.comFaceIntent).toEqual({ ...intent, overturnedAt: expect.any(String) });
+  });
+
+  // A review of another lock rules on the rating only, as the model form does.
+  it("keeps the detection and suppresses only the re-lock when the lock lifted isn't the intent check's", async () => {
+    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'text-scan', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta.comFaceIntent).toEqual(intent);
+    expect(meta.comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
   });
 
   // Edit the listing, have the edit allowed, restore the text: the original detection must still refuse it.
@@ -684,6 +707,95 @@ describe('approving a lock review', () => {
 
     expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
     expect(mocks.settleResolvedAppeals).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A moderator's ruling on a review the second pass left to them is a sample for tuning the prompt.
+describe('a moderator ruling on a listing intent dispute', () => {
+  const seedDispute = async (context: Record<string, unknown>) => {
+    await seed({
+      locked: ['nsfw'],
+      meta: { comFaceIntent: { detected: true, textHash: 'h', at: 'x', promptId: 77 } },
+    });
+    await db.query(`UPDATE "Appeal" SET context = $1 WHERE id = 1`, [context]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'n',
+      description: '',
+      userId: OWNER,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+  };
+  const samples = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.name === 'model-com-face-intent-dispute');
+
+  it.each([
+    ['an approval', approve, true],
+    ['a rejection', reject, false],
+  ])(
+    'logs one sample for %s, with the job outcome and the first prompt',
+    async (_, rule, approved) => {
+      await seedDispute({
+        kind: 'lock-review',
+        locks: ['nsfw'],
+        dispute: 'comFaceIntent',
+        autoReview: 'upheld',
+      });
+
+      await rule();
+
+      expect(samples()).toEqual([
+        expect.objectContaining({
+          message: 'moderator-ruled',
+          appealId: 1,
+          modelId: MODEL,
+          approved,
+          autoReview: 'upheld',
+          firstPromptId: 77,
+        }),
+      ]);
+    }
+  );
+
+  // The job logs its own sample where it judges; a second one here would count its approval twice.
+  it("logs nothing for the dispute job's own approval", async () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+        comFaceIntent: { detected: true, textHash: 'h', at: 'x', promptId: 77 },
+      },
+    });
+    await db.query(`UPDATE "Appeal" SET context = $1 WHERE id = 1`, [
+      { kind: 'lock-review', locks: ['nsfw'], dispute: 'comFaceIntent' },
+    ]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'n',
+      description: '',
+      userId: OWNER,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+
+    const { unlocked } = await resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: true,
+      userId: MODERATOR,
+      asDisputeJob: { intentLockAt: lockedAt },
+    });
+
+    expect(unlocked).toEqual(['nsfw']);
+    expect(samples()).toEqual([]);
+  });
+
+  it('logs nothing for an ordinary review (control)', async () => {
+    await seedDispute({ kind: 'lock-review', locks: ['nsfw'] });
+
+    await approve();
+
+    expect(samples()).toEqual([]);
   });
 });
 

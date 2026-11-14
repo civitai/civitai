@@ -61,6 +61,7 @@ import {
   patchWorkflowTags,
   queryWorkflows,
 } from '~/server/services/orchestrator/workflows';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
@@ -274,7 +275,13 @@ export const orchestratorRouter = router({
         token: ctx.token,
         hideMatureContent: ctx.hideMatureContent,
       });
-      return { ...result, items: await withholdTrainingOutputs(ctx.user, result.items) };
+      const items = await withholdTrainingOutputs(ctx.user, result.items);
+      return {
+        ...result,
+        items: items.map((workflow) =>
+          withoutTrainingWeightHandles(workflow, { isModerator: ctx.user.isModerator })
+        ),
+      };
     }),
   getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -285,7 +292,7 @@ export const orchestratorRouter = router({
         path: { workflowId: input.workflowId },
       });
       const [gated] = await withholdTrainingOutputs(ctx.user, [workflow]);
-      return gated;
+      return withoutTrainingWeightHandles(gated, { isModerator: ctx.user.isModerator });
     }),
   // #endregion
 
@@ -379,7 +386,12 @@ export const orchestratorRouter = router({
         await patchWorkflowSteps({
           input: steps.map((step) => ({
             ...step,
-            patches: step.patches.map((patch) => ({ ...patch, path: `/metadata${patch.path}` })),
+            // `from` is rooted too: a step patch reads and writes the step's metadata only.
+            patches: step.patches.map((patch) => ({
+              ...patch,
+              path: `/metadata${patch.path}`,
+              ...(patch.from !== undefined ? { from: `/metadata${patch.from}` } : {}),
+            })),
           })),
           token: ctx.token,
         });
@@ -848,7 +860,11 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
     .query(({ ctx, input }) =>
-      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+      getWorkflowStatusUpdate({
+        token: ctx.token,
+        workflowId: input.workflowId,
+        isModerator: ctx.user.isModerator,
+      })
     ),
 
   // ── Generic iterative image editor endpoints ──

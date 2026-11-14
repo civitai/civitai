@@ -22,6 +22,14 @@ export function articleRefFromEvent(topic: string, value: unknown): DomainRef | 
   return typeof id === 'number' && id > 0 ? { id } : null;
 }
 
+/**
+ * The live path syncs an article once per change, so an event flushed while the lane could not embed
+ * (embedding off, the connector gate shut, no model stamp) or whose embed failed left no point until
+ * the article changed again. The walk re-reads every article; a body read per article, so it runs
+ * less often than the small indexes'.
+ */
+export const ARTICLE_REFRESH = { everyMs: 6 * 60 * 60_000, batch: 500 };
+
 export const articleDomain: Domain<ArticlePayload> = {
   name: 'article',
   table: 'Article',
@@ -29,6 +37,7 @@ export const articleDomain: Domain<ArticlePayload> = {
   topics: ARTICLE_TOPICS,
   refFromEvent: articleRefFromEvent,
   cdcTables: ['public.Article', 'public.TagsOnArticle'],
+  refresh: ARTICLE_REFRESH,
   outboxEntity: 'Article',
   store: articleVectorStore,
   alias: () => config.vectorSync.articleAlias,
