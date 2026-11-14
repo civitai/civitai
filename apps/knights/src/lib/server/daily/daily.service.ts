@@ -124,7 +124,7 @@ async function completeWatch(
 export type DayRecord = { gold: number; bonus: number; watchCompleted: boolean };
 
 /**
- * Counts one vote into the player's UTC day: clamps its gold to the rank's daily cap and, on the
+ * Counts one vote into the player's UTC day: clamps its gold to the player's daily cap (by level, floored at their rank's first level) and, on the
  * vote that completes the Watch, advances the streak and prices the bonus. Only votes since `startAt`
  * (the last career reset) count toward the Watch; the cap counts the whole day's gold.
  *
