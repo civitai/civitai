@@ -5,19 +5,22 @@ import { ChallengeSort } from '~/server/schema/challenge.schema';
 import type { SemanticChallengeSearchInput } from '~/server/schema/semantic-challenge-search.schema';
 import { getInfiniteChallenges } from '~/server/services/challenge.service';
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
   isNonModClampOn,
   queryVerdictLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
-  type QueryRefusal,
   type QueryStage,
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
+  auditedTextCandidates,
   collectPage,
+  MAX_HITS_PER_USER,
   searchServiceSource,
+  viewerExcludedUserIds,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
@@ -26,9 +29,6 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { Flags } from '~/shared/utils/flags';
 import { ChallengeSource, ChallengeStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
-
-/** One creator's user challenges shown on a page at most, so a prolific creator cannot fill it. */
-export const MAX_HITS_PER_USER = 3;
 
 /** The feed's default when no status is picked: running and upcoming. */
 const OPEN_STATUSES = [ChallengeStatus.Active, ChallengeStatus.Scheduled];
@@ -74,7 +74,10 @@ export async function searchSemanticChallenges({
   );
   if (browsingLevelCap !== undefined)
     browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
-  const addonData = await getBrowsingSettingAddons();
+  const [hidden, addonData] = await Promise.all([
+    getAllHiddenForUser({ userId: user?.id }),
+    getBrowsingSettingAddons(),
+  ]);
   const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
@@ -102,6 +105,8 @@ export async function searchSemanticChallenges({
     : input.includeEnded
     ? LISTED_STATUSES
     : OPEN_STATUSES;
+  const excludedUserIds = viewerExcludedUserIds(hidden);
+  const excluded = new Set(excludedUserIds);
   const filter: CandidateFilter = {
     gate: {
       kind: 'challenge',
@@ -111,6 +116,7 @@ export async function searchSemanticChallenges({
       visibleBefore: now().toISOString(),
     },
     userIds: input.userId ? [input.userId] : undefined,
+    excludedUserIds,
     anyOf: {
       status: statuses,
       source: input.source?.length ? input.source : undefined,
@@ -124,7 +130,6 @@ export async function searchSemanticChallenges({
   };
 
   const perUser = new Map<number, number>();
-  let returned = 0;
   let hydrated = 0;
   const hydrate: Hydrate<HydratedChallenge> = async (ids) => {
     // A point can outlive the challenge's visibility (a cover's rating or scan changes no
@@ -152,7 +157,7 @@ export async function searchSemanticChallenges({
     // In rank order, so the cap keeps each creator's best matches.
     for (const id of ids) {
       const challenge = byId.get(id);
-      if (!challenge) continue;
+      if (!challenge || excluded.has(challenge.createdById)) continue;
       // System and Mod challenges share their creators; only user challenges are capped.
       if (challenge.source === ChallengeSource.User) {
         const count = perUser.get(challenge.createdById) ?? 0;
@@ -165,21 +170,14 @@ export async function searchSemanticChallenges({
     return kept;
   };
 
-  let correctedQuery: string | undefined;
-  let correctedRefusal: QueryRefusal | undefined;
+  const search = auditedTextCandidates({
+    source: candidateSource,
+    text: input.query,
+    filter,
+    audit: (correction) => refusalOf(correction, 'correction'),
+  });
   const page = await collectPage({
-    candidates: async (offset, limit) => {
-      const result = await candidateSource({ query: { text: input.query }, filter, offset, limit });
-      // The service embeds its spelling correction, not the text audited above.
-      if (correctedRefusal === undefined && result.correctedQuery !== undefined)
-        correctedRefusal =
-          result.correctedQuery !== input.query &&
-          (await refusalOf(result.correctedQuery, 'correction'));
-      if (correctedRefusal) return [];
-      correctedQuery ??= result.correctedQuery;
-      returned += result.ids.length;
-      return result.ids;
-    },
+    candidates: search.candidates,
     hydrate,
     offset: input.cursor ?? 0,
     limit: input.limit,
@@ -189,11 +187,11 @@ export async function searchSemanticChallenges({
   logToAxiom({
     type: 'info',
     name: 'semantic-challenge-search',
-    returned,
+    returned: search.state.returned,
     hydrated,
     shown: page.items.length,
   }).catch(() => undefined);
 
-  if (correctedRefusal) return none;
-  return { ...page, correctedQuery };
+  if (search.state.refused) return none;
+  return { ...page, correctedQuery: search.state.correctedQuery };
 }

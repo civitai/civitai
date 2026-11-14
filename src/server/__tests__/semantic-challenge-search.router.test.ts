@@ -42,11 +42,13 @@ describe('semanticChallengeSearch.search', () => {
   it.each([[1], [undefined]])("hands the service the site's cap (%s)", async (cap) => {
     h.cap = cap;
     await caller.search({ query: 'neon' });
+    expect(h.search).toHaveBeenCalledTimes(1);
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ browsingLevelCap: cap }));
   });
 
   it("hands the service the site's currency and user-challenge access", async () => {
     await caller.search({ query: 'neon' });
+    expect(h.search).toHaveBeenCalledTimes(1);
     expect(h.search).toHaveBeenCalledWith(
       expect.objectContaining({ isGreen: true, canAccessUserChallenges: false })
     );

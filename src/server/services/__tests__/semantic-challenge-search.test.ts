@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildQdrantFilter,
+  MAX_HITS_PER_USER,
   type CandidateFilter,
   type CandidateSource,
 } from '~/server/services/semantic-search-client';
@@ -12,6 +13,12 @@ const h = vi.hoisted(() => ({
   feedCalls: [] as Record<string, unknown>[],
   // Ids the feed's own query drops (its visibility rule says no).
   hidden: new Set<number>(),
+  // The viewer's hidden, blocked and blocked-by users (getAllHiddenForUser).
+  viewerHidden: { hiddenUsers: [], blockedUsers: [], blockedByUsers: [] } as Record<
+    'hiddenUsers' | 'blockedUsers' | 'blockedByUsers',
+    { id: number }[]
+  >,
+  hiddenFor: [] as (number | undefined)[],
   includesInappropriate: vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | false>(),
   evalBoolean: vi.fn<() => { enabled: unknown }>(),
   fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
@@ -32,6 +39,12 @@ vi.mock('~/utils/metadata/audit', () => ({
   includesMinor: () => false,
 }));
 vi.mock('~/server/services/system-cache', () => ({ getBrowsingSettingAddons: async () => [] }));
+vi.mock('~/server/services/user-preferences.service', () => ({
+  getAllHiddenForUser: async ({ userId }: { userId?: number }) => {
+    h.hiddenFor.push(userId);
+    return { ...h.viewerHidden, hiddenTags: [], hiddenModels: [], hiddenImages: [] };
+  },
+}));
 // The feed's query: ids >= 20 are user challenges by creator 7, the rest System challenges.
 vi.mock('~/server/services/challenge.service', () => ({
   getInfiniteChallenges: async (input: { ids: number[] } & Record<string, unknown>) => {
@@ -51,7 +64,7 @@ vi.mock('~/server/services/challenge.service', () => ({
   },
 }));
 
-const { searchSemanticChallenges, MAX_HITS_PER_USER } = await import(
+const { searchSemanticChallenges } = await import(
   '~/server/services/semantic-challenge-search.service'
 );
 
@@ -99,6 +112,8 @@ const run = (
 beforeEach(() => {
   h.feedCalls = [];
   h.hidden = new Set();
+  h.viewerHidden = { hiddenUsers: [], blockedUsers: [], blockedByUsers: [] };
+  h.hiddenFor = [];
   h.includesInappropriate.mockReset().mockReturnValue(false);
   // The containment switch reads enabled (clamped) unless a test lifts it.
   h.evalBoolean.mockReset().mockReturnValue({ enabled: true });
@@ -106,6 +121,22 @@ beforeEach(() => {
 });
 
 describe('searchSemanticChallenges', () => {
+  it("never returns a creator on the viewer's hidden, blocked or blocked-by list", async () => {
+    // Creator 7 owns every user challenge (ids >= 20); one list entry per kind.
+    h.viewerHidden = {
+      hiddenUsers: [{ id: 901 }],
+      blockedUsers: [{ id: 7 }],
+      blockedByUsers: [{ id: 903 }],
+    };
+    const viewer = { id: 42 } as SessionUser;
+    const { result, filters } = run([20, 1, 21], { user: viewer });
+    const { items } = await result;
+    expect(h.hiddenFor).toEqual([42]);
+    expect(filters[0].excludedUserIds).toEqual([901, 7, 903]);
+    // Even when the index proposes them, hydration drops the excluded creator's challenges.
+    expect(items.map((c) => c.id)).toEqual([1]);
+  });
+
   it('sends the full challenge gate, with the open statuses by default', async () => {
     const { result, filters } = run([1]);
     await result;
