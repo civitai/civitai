@@ -1,6 +1,5 @@
 import { Button } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
-import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { StorylineAuthorEdit } from '~/components/Storyline/StorylineAuthorEdit';
@@ -11,7 +10,7 @@ import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
 import { StorylineMapControl } from '~/components/Storyline/StorylineMap';
 import { StorylineEntryChip } from '~/components/Storyline/StorylinePill';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { useStorylinesEnabled } from '~/components/Storyline/storyline.queries';
+import { useStorylineForPost } from '~/components/Storyline/storyline.queries';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
@@ -157,14 +156,8 @@ export function StorylineStageOverlay({
 }
 
 function StorylineEntryPill({ postId, compact }: { postId: number | null; compact: boolean }) {
-  const enabled = useStorylinesEnabled();
   const storyline = useStorylineMode();
-  const browsingLevel = useViewerBrowsingLevelDebounced();
-  const { data } = trpc.storyline.getForPosts.useQuery(
-    { postIds: postId ? [postId] : [], browsingLevel },
-    { enabled: enabled && !!postId, staleTime: 60_000 }
-  );
-  const entry = postId ? data?.[postId] : undefined;
+  const entry = useStorylineForPost(postId);
   if (!entry) return null;
 
   return (

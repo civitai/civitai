@@ -51,4 +51,17 @@ describe('PostTextBlock', () => {
     expect(guard.ids.length).toBeGreaterThan(0);
     expect(guard.ids.every((id) => id === -8)).toBe(true);
   });
+
+  test("the author's unscanned text says it is pending review; a scanned one does not", async () => {
+    guard.safe = true;
+    renderWithProviders(<PostTextBlock text={{ ...text, id: 9, nsfwLevel: 0 }} postId={40} />);
+    const pending = page
+      .getByTestId('post-text-block')
+      .filter({ has: page.getByTestId('text-pending-review') });
+    await expect.element(pending).toHaveAttribute('data-text-id', '9');
+    renderWithProviders(<PostTextBlock text={{ ...text, id: 10, nsfwLevel: 1 }} postId={40} />);
+    const scanned = page.getByTestId('post-text-block').filter({ hasText: 'Meanwhile' }).last();
+    await expect.element(scanned).toHaveAttribute('data-text-id', '10');
+    expect(scanned.element().querySelector('[data-testid="text-pending-review"]')).toBeNull();
+  });
 });

@@ -1,7 +1,7 @@
 import { Paper } from '@mantine/core';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
 import { textGuardId } from '~/components/Image/Detail/detail-items';
-import { BlurredText } from '~/components/Image/DetailV2/BlurredText';
+import { BlurredText, TextPendingReview } from '~/components/Image/DetailV2/BlurredText';
 import { ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import articleBodyClasses from '~/components/RichTextEditor/ArticleBody.module.scss';
@@ -35,11 +35,14 @@ export function PostTextBlock({
       >
         {(safe) =>
           safe && text.content ? (
-            <RenderHtml
-              html={text.content}
-              className={articleBodyClasses.articleBody}
-              withMentions
-            />
+            <>
+              <TextPendingReview nsfwLevel={text.nsfwLevel} />
+              <RenderHtml
+                html={text.content}
+                className={articleBodyClasses.articleBody}
+                withMentions
+              />
+            </>
           ) : (
             <BlurredText className="min-h-[160px]" />
           )

@@ -1,3 +1,4 @@
+import { Badge } from '@mantine/core';
 import clsx from 'clsx';
 
 /** Stands in for a text item the viewer has not revealed: the text stays out of the page, not just out of sight. */
@@ -16,5 +17,24 @@ export function BlurredText({ className }: { className?: string }) {
         />
       ))}
     </div>
+  );
+}
+
+/**
+ * Unscanned text reaches only its author and moderators (the reader read leaves it out for
+ * everyone else); it says so until the scan lands.
+ */
+export function TextPendingReview({ nsfwLevel }: { nsfwLevel: number }) {
+  if (nsfwLevel) return null;
+  return (
+    <Badge
+      color="yellow"
+      variant="light"
+      size="sm"
+      className="mb-3"
+      data-testid="text-pending-review"
+    >
+      Pending review
+    </Badge>
   );
 }

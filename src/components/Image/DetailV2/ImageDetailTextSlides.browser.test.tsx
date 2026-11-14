@@ -38,7 +38,7 @@ const IMAGES = [image(101, 0), image(102, 1), image(103, 2)];
 const TEXT = { id: 7, index: 0, content: '<p>Meanwhile</p>', nsfwLevel: 1 };
 
 const { flags, calls, chapters } = vi.hoisted(() => ({
-  flags: { storylineText: true } as Record<string, boolean>,
+  flags: { storylines: true, storylineText: true } as Record<string, boolean>,
   calls: { postGet: [] as boolean[], getForPosts: [] as boolean[] },
   chapters: { value: {} as Record<number, unknown> },
 }));
@@ -185,8 +185,12 @@ async function openAt(
       <Dialog texts={texts} />
     </BrowserRouterProvider>
   );
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  getBrowserRouter().replace({ query }, `/images/${imageId}${search}`);
+  // The router provider subscribes from an effect, so a replace before it has does nothing:
+  // repeat the (idempotent) replace until the dialog has the route.
+  await vi.waitFor(() => {
+    getBrowserRouter().replace({ query }, `/images/${imageId}${search}`);
+    expect(page.getByTestId('shown').query()).not.toBeNull();
+  });
 }
 
 const shown = () => page.getByTestId('shown');

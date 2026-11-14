@@ -1,5 +1,5 @@
 import { Loader } from '@mantine/core';
-import { BlurredText } from '~/components/Image/DetailV2/BlurredText';
+import { BlurredText, TextPendingReview } from '~/components/Image/DetailV2/BlurredText';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
 import { textGuardId } from '~/components/Image/Detail/detail-items';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
@@ -12,9 +12,9 @@ const PAGE =
   'my-auto w-full max-w-[680px] rounded-xl bg-white p-6 shadow-sm @md:p-10 dark:bg-dark-6';
 
 /**
- * A storyline text item as a full-stage slide: the post's text in the article page's reading
- * typography, scrolling inside the slide. Path stubs carry no content; it comes from `post.get`
- * for the text's post, the read the chapter description already makes, so it is fetched once.
+ * A storyline text item as a full-stage slide, in the article page's reading typography,
+ * scrolling inside the slide. Path stubs carry no content; it comes from `post.get` for the
+ * text's post.
  */
 export function TextSlide({
   text,
@@ -46,6 +46,7 @@ export function TextSlide({
             <Loader className="self-center" />
           ) : (
             <div className={PAGE}>
+              <TextPendingReview nsfwLevel={text.nsfwLevel} />
               <RenderHtml html={content} className={articleBodyClasses.articleBody} withMentions />
             </div>
           )}
