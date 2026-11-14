@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
+import type * as WorkflowSteps from '~/server/services/orchestrator/workflowSteps';
 
 // 🔴 Do NOT mock `~/env/server` here — see `deprecated-rewards.gate.test.ts` for why importing
 // `orchestrator.router` relies on the canonical env mock.
 
 /** `orchestrator.getWorkflow` names a training run's weights to moderators only. */
 
-const h = vi.hoisted(() => ({ getWorkflow: vi.fn() }));
+const h = vi.hoisted(() => ({ getWorkflow: vi.fn(), patchWorkflowSteps: vi.fn() }));
 
 vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   ...(await importOriginal<typeof Workflows>()),
   getWorkflow: h.getWorkflow,
+}));
+vi.mock('~/server/services/orchestrator/workflowSteps', async (importOriginal) => ({
+  ...(await importOriginal<typeof WorkflowSteps>()),
+  patchWorkflowSteps: h.patchWorkflowSteps,
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'token'),
@@ -48,6 +53,7 @@ const trainingStep = {
   $type: 'training',
   name: 'train',
   metadata: { modelFileId: 11 },
+  preparation: [{ resource: SOURCE_EPOCH, status: 'downloaded' }],
   input: { engine: 'ai-toolkit', epochs: 10, continueFrom: SOURCE_EPOCH },
   output: {
     moderationStatus: 'approved',
@@ -63,7 +69,10 @@ const trainingStep = {
           publicUrl: 'https://blobs.example.invalid/EPOCH1.safetensors',
           urlExpiresAt: '2099-01-01T00:00:00Z',
         },
-        samples: [{ type: 'image', id: 'SAMPLE1', available: true, url: SAMPLE }],
+        samples: [
+          { type: 'image', id: 'SAMPLE1', jobId: 'JOB-EPOCH1', available: true, url: SAMPLE },
+        ],
+        traceUrl: 'https://orchestration.civitai.com/v2/consumer/jobs/JOB-EPOCH1/trace',
       },
     ],
   },
@@ -136,5 +145,36 @@ describe('orchestrator.getWorkflow — a training run’s weights', () => {
     await expect(caller().getWorkflow({ workflowId: 'wf-1' })).resolves.toEqual(
       workflow([generationStep])
     );
+  });
+
+  it("drops a training step's preparing resources", async () => {
+    const result = (await caller().getWorkflow({ workflowId: 'wf-1' })) as {
+      steps: Record<string, unknown>[];
+    };
+    expect(result.steps[0]).not.toHaveProperty('preparation');
+  });
+});
+
+describe('orchestrator.patch — a step patch stays in the step’s metadata', () => {
+  beforeEach(() => h.patchWorkflowSteps.mockReset().mockResolvedValue(undefined));
+
+  it('roots `from` under /metadata as it does `path`', async () => {
+    await caller().patch({
+      steps: [
+        {
+          workflowId: 'wf-1',
+          stepName: 'train',
+          patches: [
+            { op: 'copy', from: '/output/epochs/0/model/url', path: '/x' },
+            { op: 'add', path: '/y', value: 1 },
+          ],
+        },
+      ],
+    });
+
+    expect(h.patchWorkflowSteps.mock.calls[0][0].input[0].patches).toEqual([
+      { op: 'copy', from: '/metadata/output/epochs/0/model/url', path: '/metadata/x' },
+      { op: 'add', path: '/metadata/y', value: 1 },
+    ]);
   });
 });

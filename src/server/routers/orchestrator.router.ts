@@ -376,7 +376,12 @@ export const orchestratorRouter = router({
         await patchWorkflowSteps({
           input: steps.map((step) => ({
             ...step,
-            patches: step.patches.map((patch) => ({ ...patch, path: `/metadata${patch.path}` })),
+            // `from` is rooted too: a step patch reads and writes the step's metadata only.
+            patches: step.patches.map((patch) => ({
+              ...patch,
+              path: `/metadata${patch.path}`,
+              ...(patch.from !== undefined ? { from: `/metadata${patch.from}` } : {}),
+            })),
           })),
           token: ctx.token,
         });
