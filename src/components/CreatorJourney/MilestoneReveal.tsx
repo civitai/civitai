@@ -2,10 +2,9 @@ import { Badge, Button, Card, Group, Modal, Text } from '@mantine/core';
 import clsx from 'clsx';
 import type { RevealTier } from '~/components/CreatorJourney/milestone-rarity';
 import {
-  isBigReveal,
   rarityLabel,
   revealTier,
-  sortReveals,
+  splitReveals,
 } from '~/components/CreatorJourney/milestone-rarity';
 import { accentVar, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import type { RouterOutput } from '~/types/router';
@@ -37,8 +36,8 @@ function subtitle(reveal: Reveal) {
 }
 
 /**
- * Unlocks the owner has not seen yet. Epic and special ones get a full-screen moment each, rarest
- * first; common and rare ones share one row with a single "Got it". Dismissing marks them seen.
+ * Unlocks the owner has not seen yet: a few full-screen moments for the rarest, and one row with a
+ * single "Got it" for the rest. Dismissing marks them seen.
  */
 export function MilestoneReveals({ reveals }: { reveals: Reveal[] }) {
   const utils = trpc.useUtils();
@@ -48,9 +47,7 @@ export function MilestoneReveals({ reveals }: { reveals: Reveal[] }) {
       showErrorNotification({ title: 'Could not save that', error: new Error(error.message) }),
   });
 
-  const pending = sortReveals(reveals);
-  const big = pending.filter((reveal) => isBigReveal(revealTier(reveal)));
-  const small = pending.filter((reveal) => !isBigReveal(revealTier(reveal)));
+  const { modals: big, row: small } = splitReveals(reveals);
 
   const dismiss = (dismissing: Reveal[]) => {
     if (!dismissing.length) return;

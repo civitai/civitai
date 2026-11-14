@@ -36,5 +36,17 @@ export function sortReveals<T extends { special: boolean; rarity: number | null 
   );
 }
 
-/** Epic and special unlocks get the full-screen moment; the rest share one row. */
-export const isBigReveal = (tier: RevealTier) => tier === 'epic' || tier === 'special';
+const isBigReveal = (tier: RevealTier) => tier === 'epic' || tier === 'special';
+
+/** At most this many full-screen moments in one visit; any more wait in the row. */
+export const MODAL_LIMIT = 3;
+
+/**
+ * Rarest first. Epic and special unlocks get a full-screen moment each, up to MODAL_LIMIT; the rest
+ * share one row.
+ */
+export function splitReveals<T extends { special: boolean; rarity: number | null }>(reveals: T[]) {
+  const sorted = sortReveals(reveals);
+  const modals = sorted.filter((reveal) => isBigReveal(revealTier(reveal))).slice(0, MODAL_LIMIT);
+  return { modals, row: sorted.filter((reveal) => !modals.includes(reveal)) };
+}

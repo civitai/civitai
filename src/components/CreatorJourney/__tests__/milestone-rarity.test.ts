@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { rarityLabel, revealTier, sortReveals } from '~/components/CreatorJourney/milestone-rarity';
+import {
+  rarityLabel,
+  revealTier,
+  sortReveals,
+  splitReveals,
+} from '~/components/CreatorJourney/milestone-rarity';
 
 describe('rarityLabel', () => {
   it('keeps a decimal below 10% and whole numbers above', () => {
@@ -51,5 +56,22 @@ describe('sortReveals', () => {
       { key: 'e', special: false, rarity: 2.8 },
     ];
     expect(sortReveals(reveals).map((reveal) => reveal.key)).toEqual(['d', 'c', 'e', 'a', 'b']);
+  });
+});
+
+describe('splitReveals', () => {
+  // A first visit can hold several rare unlocks; past the limit they wait in the row, not in a modal queue.
+  it('caps the full-screen moments at three and puts the rest in the row, rarest first', () => {
+    const epic = (key: string, rarity: number) => ({ key, special: false, rarity });
+    const { modals, row } = splitReveals([
+      epic('a', 0.9),
+      epic('b', 0.1),
+      { key: 'c', special: false, rarity: 40 },
+      epic('d', 0.5),
+      epic('e', 0.7),
+      { key: 'f', special: true, rarity: null },
+    ]);
+    expect(modals.map((reveal) => reveal.key)).toEqual(['f', 'b', 'd']);
+    expect(row.map((reveal) => reveal.key)).toEqual(['e', 'a', 'c']);
   });
 });
