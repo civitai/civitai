@@ -720,11 +720,21 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   capability instead); that capability gate was removed from the runtime, and the
   user's own scope grant is the authority now. A token without the scope gets
   `block lacks buzz:read:self scope`.
-- **Choose the funding pool**: a workflow submit body may carry `accountType`
-  (`blue | green | yellow`). It is honored **preferred-first** while the maturity
-  policy clamp still applies (a SFW-domain block can't widen to a mature currency);
-  an out-of-set pick is rejected, absent → Auto (see
-  `resolveBlockCurrenciesForAccount`).
+- **Choose the funding pool**: a workflow body may carry `accountType`
+  (`blue | green | yellow`) — top-level on `textToImage`, on both `kind: 'step'`
+  arms (registered `step` id and pass-through `$type`) and once per
+  `kind: 'workflow'` body (the orchestrator takes one currency list per workflow,
+  so there is no per-step pick); under `params` on a `customComfy` recipe. It is
+  honored **preferred-first**: the picked pool goes first and the rest of the
+  app's allowed pools stay as fallback (an SFW app allows blue and green, a
+  mature app blue and yellow), so a pick never widens the maturity policy. An
+  out-of-set pick is a BAD_REQUEST on the estimate and the submit alike; absent →
+  Auto, blue first (see `resolveBlockCurrenciesForAccount`). The estimate prices
+  the same order the submit drains. A confirmed step quote is bound to its pool:
+  submitting it with a different `accountType` is refused as a changed body.
+  A pick does **not** guarantee an unrestricted output: when the picked pool
+  cannot cover the job the fallback pays, and a fallback to blue can still leave a
+  mature output restricted.
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
