@@ -10947,6 +10947,52 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       }
     });
 
+    // 🔴 The output-destination rule a multi-step workflow's steps get holds on this arm too.
+    it.each([
+      ['a destination key', { sourceUrl: 'https://a', destinationUrl: 'https://b' }],
+      ['a nested, re-cased destination key', { opts: [{ DestinationURL: 'https://b' }] }],
+    ])('refuses %s on submit and on estimate, before any orchestrator call', async (_l, input) => {
+      for (const call of ['submitWorkflow', 'estimateWorkflow'] as const) {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        mockSubmitWorkflow.mockClear();
+        const err = await caller()
+          [call]({ blockToken: 'tok', body: ptBody({ $type: 'transcode', input }) })
+          .then(
+            () => null,
+            (e: unknown) => e
+          );
+        expect(err, call).toMatchObject({
+          code: 'BAD_REQUEST',
+          message: 'a step input may not name an output destination or make its output public',
+        });
+        expect(mockSubmitWorkflow, call).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a chat step asking for image output, before any orchestrator call', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      mockSubmitWorkflow.mockClear();
+      const body = ptBody({
+        $type: 'chatCompletion',
+        input: { messages: [], modalities: ['image'] },
+      });
+      const err = await caller()
+        .submitWorkflow({ blockToken: 'tok', body })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(err).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'a chat step may not generate images',
+      });
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+    });
+
     // 🔴 A RAW comfy GRAPH IS REFUSED, under `$type: 'comfy'` or `'customComfy'`.
     // `workflow.service` delivers a comfy step's `output.blobs` as media and this arm
     // runs no prompt audit. Platform-built comfy steps (`kind: 'textToImage'`,

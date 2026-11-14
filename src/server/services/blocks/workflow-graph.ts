@@ -77,6 +77,18 @@ export type BlockWorkflowGraphResult =
       error: string;
     };
 
+/**
+ * THE one case fold for comparing a caller-supplied `$type` or key against a
+ * server-owned name. The denylist, the training checks, the pass-through audit and
+ * this graph all use it, so no two can disagree about what "the same name" means.
+ * Upper-casing first maps `ı` and `ſ` onto I and S.
+ */
+export function foldCase(text: string): string {
+  return text.toUpperCase().toLowerCase();
+}
+
+const fold = foldCase;
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -89,7 +101,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * string forwarded to a service this repo does not own.
  */
 export function isRepeatStepType(stepType: unknown): boolean {
-  return typeof stepType === 'string' && stepType.toLowerCase() === 'repeat';
+  return typeof stepType === 'string' && fold(stepType) === 'repeat';
 }
 
 /** True when every key of `object` is one of `allowed`, spelled exactly. */
@@ -199,7 +211,21 @@ export function repeatUnboundedProblem(
 
 /** `merge` reads other steps through `input.fields[*].$ref`, which is not a reference object. */
 export function isMergeStepType(stepType: unknown): boolean {
-  return typeof stepType === 'string' && stepType.toLowerCase() === 'merge';
+  return typeof stepType === 'string' && fold(stepType) === 'merge';
+}
+
+/** A merge input with a string `reduce` taken off each field, so each field reads as its reference. */
+function withoutMergeReduce(input: unknown): unknown {
+  if (!isPlainObject(input) || !isPlainObject(input.fields)) return input;
+  const fields = Object.fromEntries(
+    Object.entries(input.fields).map(([name, field]) => {
+      // Only a string `reduce` is dropped; anything else stays, and the field refuses.
+      if (!isPlainObject(field) || typeof field.reduce !== 'string') return [name, field];
+      const { reduce: _reduce, ...ref } = field;
+      return [name, ref];
+    })
+  );
+  return { ...input, fields };
 }
 
 /** The refusal for a `merge` step whose sources cannot be read for certain. */
@@ -210,23 +236,23 @@ export const MERGE_SHAPE_ERROR =
  * The step or `$arguments` each field of a `merge` reads, or `null` when that
  * cannot be read for certain (same fail-closed rule as `readRepeatInput`).
  */
-function readMergeSources(input: unknown): string[] | null {
+function readMergeSources(input: unknown): Array<{ source: string; path: unknown }> | null {
   if (!isPlainObject(input)) return null;
-  if (Object.keys(input).some((key) => key !== 'fields' && key.toLowerCase() === 'fields')) {
+  if (Object.keys(input).some((key) => key !== 'fields' && fold(key) === 'fields')) {
     return null;
   }
   const { fields } = input;
   if (!isPlainObject(fields)) return null;
-  const sources: string[] = [];
+  const sources: Array<{ source: string; path: unknown }> = [];
   for (const field of Object.values(fields)) {
     if (!isPlainObject(field)) return null;
-    if (Object.keys(field).some((key) => key !== '$ref' && key.toLowerCase() === '$ref')) {
+    if (Object.keys(field).some((key) => key !== '$ref' && fold(key) === '$ref')) {
       return null;
     }
     // Without `reduce` the entry is a plain reference object, which the
     // orchestrator replaces with whatever it points at before reading the field.
     if (typeof field.$ref !== 'string' || !('reduce' in field)) return null;
-    sources.push(field.$ref);
+    sources.push({ source: field.$ref, path: field.path });
   }
   return sources;
 }
@@ -277,6 +303,257 @@ export function collectBlockStepTemplates(
   return null;
 }
 
+/**
+ * Analysers: they read media and answer with text and labels only. A test walks
+ * each one's declared output type at every depth and fails on any url-, blob- or
+ * id-like field, so one that starts returning media cannot stay here.
+ */
+export const MEDIA_REF_ANALYSERS: readonly string[] = [
+  'wdTagging',
+  'mediaCaptioning',
+  'mediaRating',
+  'ageClassification',
+  'audioCaptioning',
+  'mediaHash',
+  'videoMetadata',
+];
+
+const ANALYSER_TYPES: ReadonlySet<string> = new Set(MEDIA_REF_ANALYSERS.map((type) => fold(type)));
+/** The analysers' media inputs, from their declared input types. */
+const ANALYSER_MEDIA_KEYS: ReadonlySet<string> = new Set(['mediaUrl', 'image', 'video']);
+
+/**
+ * Step `$type`s (lowercased) whose input can name an output destination. They take
+ * literal input only: a referenced value could carry a destination key the
+ * destination check never sees.
+ */
+const DESTINATION_STEP_TYPES: ReadonlySet<string> = new Set(['transcode']);
+const DESTINATION_STEP_REF_ERROR = 'a transcode step takes literal input only, no references';
+const WHOLE_INPUT_REF_ERROR = 'a step input must be an object, not a reference';
+
+/**
+ * Step `$type`s (lowercased) that may take a reference into media: generators
+ * whose own output the platform scans before it is served, so what they make
+ * from an earlier output carries a fresh verdict, plus `MEDIA_REF_ANALYSERS`.
+ * Every other consumer may only reference text (`TEXT_REF_LEAVES`). 🔴 An
+ * allow-list: a new `$type` starts refused.
+ */
+const MEDIA_REF_CONSUMERS: ReadonlySet<string> = new Set([
+  ...MEDIA_REF_ANALYSERS.map((type) => fold(type)),
+  'imagegen',
+  'texttoimage',
+  'imageupscaler',
+  'imagebackgroundremoval',
+  'videoenhancement',
+  'videobackgroundremoval',
+  'preprocessvideo',
+  'videoupscaler',
+  'videointerpolation',
+]);
+
+/**
+ * `videoGen` engines whose output the platform scans itself. Other engines hand
+ * moderation to their provider, so a reference would send an earlier output out
+ * with no verdict of ours. 🔴 An allow-list: a new engine starts refused, and an
+ * engine that is not a literal string (a reference, `$arguments`) fails closed.
+ */
+export const SCANNED_VIDEO_GEN_ENGINES: ReadonlySet<string> = new Set([
+  'wan',
+  'ltx2',
+  'ltx2.3',
+  'ltx2.5',
+  'hunyuan',
+  'mochi',
+  'lightricks',
+]);
+
+/**
+ * `provider` values whose output the platform scans. Any other value, or one that
+ * is not a literal string, refuses.
+ */
+export const SCANNED_VIDEO_GEN_PROVIDERS: ReadonlySet<string> = new Set(['comfy', 'civitai']);
+
+/**
+ * Engines whose default route differs by version, so `provider` must be given and
+ * scanned. The other scanned engines take media with no `provider`.
+ */
+export const VIDEO_GEN_ENGINES_NEEDING_PROVIDER: ReadonlySet<string> = new Set(['wan']);
+
+const CHAT_IMAGE_MODALITY_ERROR = 'a chat step may not generate images';
+/** The chat output modalities a block may ask for: an allow-list, so anything else refuses. */
+const CHAT_OUTPUT_MODALITIES: ReadonlySet<string> = new Set(['text', 'audio']);
+
+/** A chatCompletion input that asks for image output, or whose modalities cannot be read. */
+export function chatImageModalityProblem(stepType: unknown, input: unknown): string | null {
+  if (lowerType(stepType) !== 'chatcompletion' || !isPlainObject(input)) return null;
+  if (hasRecasedTwin(input, 'modalities')) return CHAT_IMAGE_MODALITY_ERROR;
+  if (!('modalities' in input)) return null;
+  const { modalities } = input;
+  if (!Array.isArray(modalities) || modalities.length === 0) return CHAT_IMAGE_MODALITY_ERROR;
+  return modalities.every((m) => typeof m === 'string' && CHAT_OUTPUT_MODALITIES.has(fold(m)))
+    ? null
+    : CHAT_IMAGE_MODALITY_ERROR;
+}
+
+/**
+ * The last path segments a non-media consumer may reference: text and scalar
+ * fields that cannot carry a url, a blob id or a blob. Anything else fails closed.
+ */
+const TEXT_REF_LEAVES: ReadonlySet<string> = new Set(
+  [
+    'text',
+    'content',
+    'prompt',
+    'negativePrompt',
+    'enhancedPrompt',
+    'caption',
+    'captions',
+    'summary',
+    'title',
+    'description',
+    'lyrics',
+    'transcript',
+    'language',
+    'tags',
+    'tag',
+    'labels',
+    'label',
+    'score',
+    'scores',
+    'nsfwLevel',
+    'seed',
+    'width',
+    'height',
+    'duration',
+    'count',
+    'status',
+  ].map((leaf) => fold(leaf))
+);
+
+export const MEDIA_REF_ERROR =
+  'this step may only reference text fields of other steps (a prompt, a caption, tags…), not ' +
+  'their media, urls or ids';
+
+export const WRITE_TARGET_ERROR =
+  'a step input may not name an output destination or make its output public';
+
+function lowerType(stepType: unknown) {
+  return typeof stepType === 'string' ? fold(stepType) : '';
+}
+
+/** Whether `stepType` (with this literal `input`) may take a reference into media. */
+export function acceptsMediaRefs(stepType: unknown, input: unknown): boolean {
+  const type = lowerType(stepType);
+  if (MEDIA_REF_CONSUMERS.has(type)) return true;
+  if (!isPlainObject(input)) return false;
+  if (type === 'videogen') {
+    if (hasRecasedTwin(input, 'engine') || hasRecasedTwin(input, 'provider')) return false;
+    if (typeof input.engine !== 'string' || !SCANNED_VIDEO_GEN_ENGINES.has(input.engine)) {
+      return false;
+    }
+    if (!('provider' in input)) return !VIDEO_GEN_ENGINES_NEEDING_PROVIDER.has(input.engine);
+    // A value is matched as the orchestrator reads it: ASCII, case-insensitive.
+    return (
+      typeof input.provider === 'string' &&
+      /^[\x20-\x7e]+$/.test(input.provider) &&
+      SCANNED_VIDEO_GEN_PROVIDERS.has(fold(input.provider))
+    );
+  }
+  if (type === 'composemedia') {
+    if (hasRecasedTwin(input, 'output') || !isPlainObject(input.output)) return false;
+    return !hasRecasedTwin(input.output, 'type') && input.output.type === 'video';
+  }
+  return false;
+}
+
+/**
+ * Whether `object` also carries `key` under another casing. Which twin the
+ * orchestrator binds is not something this repo can know, so the check refuses.
+ */
+function hasRecasedTwin(object: Record<string, unknown>, key: string): boolean {
+  return Object.keys(object).some((k) => k !== key && fold(k) === key);
+}
+
+/** A reference path that ends on a text field (`TEXT_REF_LEAVES`), never on media. */
+export function isTextRefPath(path: unknown): boolean {
+  if (typeof path !== 'string') return false;
+  const segments = path.split(/[.[\]]+/).filter(Boolean);
+  const last = segments[segments.length - 1];
+  return !!last && TEXT_REF_LEAVES.has(fold(last));
+}
+
+/**
+ * A path segment or field name that may hold media: a url, a blob, an id or a
+ * media container. `Id` and `Uri` are matched by case so `grid`, `paid` and
+ * `security` stay plain names.
+ */
+export function isMediaLikeSegment(segment: string): boolean {
+  return (
+    /url|blob|^uri|uris?$|^ids?$|^(images?|videos?|frames|svg|audio|model|mesh|samples?|preview|thumbnail)$/i.test(
+      segment
+    ) || /Uri|(Id|ID)s?$/.test(segment)
+  );
+}
+
+/**
+ * Whether a reference may reach media. Another step's output (or a repeat
+ * variable) must end on a known text leaf; `$arguments` are the app's own values,
+ * so only a path that names a url, an id or a blob container is refused there.
+ */
+export function refMayReachMedia(source: string, path: unknown): boolean {
+  if (source !== WORKFLOW_ARGUMENTS_REF) return !isTextRefPath(path);
+  if (typeof path !== 'string') return true;
+  return path
+    .split(/[.[\]]+/)
+    .filter(Boolean)
+    .some(isMediaLikeSegment);
+}
+
+const TOO_DEEP = Symbol('too deep');
+
+/**
+ * The first key naming an output destination, at any depth, or `null`. Past
+ * `WORKFLOW_INPUT_DEPTH_MAX` it returns `TOO_DEEP` rather than stop looking.
+ */
+function findWriteTargetKey(value: unknown): string | typeof TOO_DEEP | null {
+  return findKey(value, (key) => fold(key).includes('destination') || fold(key) === 'public');
+}
+
+/** The first key at any depth that `matches`, `TOO_DEEP` past the depth limit, or `null`. */
+function findKey(
+  value: unknown,
+  matches: (key: string) => boolean,
+  depth = 0
+): string | typeof TOO_DEEP | null {
+  if (typeof value !== 'object' || value === null) return null;
+  if (depth > WORKFLOW_INPUT_DEPTH_MAX) return TOO_DEEP;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findKey(entry, matches, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const [key, entry] of Object.entries(value)) {
+    if (matches(key)) return key;
+    const found = findKey(entry, matches, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+const isRefKey = (key: string) => fold(key) === '$ref';
+
+/**
+ * Why a step input may not be submitted as-is: it names an output destination,
+ * or is too deep to check for one. `null` when neither.
+ */
+export function writeTargetProblem(input: unknown): string | null {
+  const found = findWriteTargetKey(input);
+  if (found === TOO_DEEP) return `input is nested deeper than ${WORKFLOW_INPUT_DEPTH_MAX} levels`;
+  return found ? WRITE_TARGET_ERROR : null;
+}
+
 /** The orchestrator's reference predicate: `$ref` and `path`, and no other key but `default`/`format`. */
 function isRefObject(value: Record<string, unknown>): boolean {
   if (!('$ref' in value) || !('path' in value)) return false;
@@ -284,7 +561,32 @@ function isRefObject(value: Record<string, unknown>): boolean {
   return true;
 }
 
-type WalkState = { refs: number; loopVars: Set<string> };
+const RECASED_REF_ERROR = 'a reference key must be spelled "$ref", "path", "default" or "format"';
+
+const MALFORMED_REF_ERROR = 'a reference may carry only "$ref", "path", "default" and "format"';
+
+/** `$ref` and `path` with another key: not a reference here, and not plain data either. */
+function isMalformedRef(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value);
+  return (
+    keys.some(isRefKey) &&
+    keys.some((key) => fold(key) === 'path') &&
+    keys.some((key) => !REF_KEYS.has(fold(key)))
+  );
+}
+
+/**
+ * An object with `$ref` under any casing and a reference key spelled otherwise.
+ * Whether the orchestrator binds a re-cased key is not something this repo can
+ * know, so such an object is refused rather than walked as plain data.
+ */
+function hasRecasedRefKey(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value);
+  if (!keys.some(isRefKey)) return false;
+  return keys.some((key) => REF_KEYS.has(fold(key)) && !REF_KEYS.has(key));
+}
+
+type WalkState = { refs: number; loopVars: Set<string>; mediaRefsAllowed: boolean };
 
 /** A refusal message, or `null` when `value` is fine. */
 function checkValue(
@@ -305,6 +607,8 @@ function checkValue(
     return null;
   }
   const object = value as Record<string, unknown>;
+  if (hasRecasedRefKey(object)) return RECASED_REF_ERROR;
+  if (isMalformedRef(object)) return MALFORMED_REF_ERROR;
   if (isRefObject(object)) {
     if (typeof object.$ref !== 'string' || typeof object.path !== 'string') {
       return 'a reference needs a string "$ref" and a string "path"';
@@ -316,7 +620,13 @@ function checkValue(
     ) {
       return 'a reference "format" must be a string';
     }
-    return checkSource(object.$ref, sources, state);
+    const sourceProblem = checkSource(object.$ref, sources, state);
+    if (sourceProblem) return sourceProblem;
+    if (!state.mediaRefsAllowed && refMayReachMedia(object.$ref, object.path)) {
+      return MEDIA_REF_ERROR;
+    }
+    // A default stands in for the reference, so it is held to the same rules.
+    return checkValue(object.default, depth + 1, sources, state);
   }
   for (const entry of Object.values(object)) {
     const problem = checkValue(entry, depth + 1, sources, state);
@@ -355,18 +665,39 @@ function checkStepInput(
   sources: ReadonlySet<string>,
   state: WalkState
 ): string | null {
+  const writeTarget = writeTargetProblem(input);
+  if (writeTarget) return writeTarget;
+  const chatImages = chatImageModalityProblem(stepType, input);
+  if (chatImages) return chatImages;
+  if (isPlainObject(input) && findKey(input, isRefKey, 0) !== null) {
+    if (isRefObject(input) || hasRecasedRefKey(input)) return WHOLE_INPUT_REF_ERROR;
+    if (DESTINATION_STEP_TYPES.has(lowerType(stepType))) return DESTINATION_STEP_REF_ERROR;
+  }
+  state.mediaRefsAllowed = acceptsMediaRefs(stepType, input);
+  if (ANALYSER_TYPES.has(lowerType(stepType))) {
+    if (!isPlainObject(input)) state.mediaRefsAllowed = false;
+  }
+  if (ANALYSER_TYPES.has(lowerType(stepType)) && isPlainObject(input)) {
+    // An analyser takes media on its media field only; its free-text fields are text.
+    for (const [key, value] of Object.entries(input)) {
+      state.mediaRefsAllowed = ANALYSER_MEDIA_KEYS.has(key);
+      const problem = checkValue(value, depth + 1, sources, state);
+      if (problem) return problem;
+    }
+    return null;
+  }
   if (isMergeStepType(stepType)) {
     const mergeSources = readMergeSources(input);
     if (!mergeSources) return MERGE_SHAPE_ERROR;
-    for (const source of mergeSources) {
+    for (const { source, path } of mergeSources) {
       // A merge waits on its sources as STEPS, so a loop variable is not one.
       if (state.loopVars.has(source)) {
         return `a merge field cannot read the repeat variable ${JSON.stringify(source)}`;
       }
-      const problem = checkSource(source, sources, state);
-      if (problem) return problem;
+      if (refMayReachMedia(source, path)) return MEDIA_REF_ERROR;
     }
-    return checkValue(input, depth, sources, state);
+    // Each field is a reference plus `reduce`: walked as the reference it holds.
+    return checkValue(withoutMergeReduce(input), depth, sources, state);
   }
   if (!isRepeatStepType(stepType)) return checkValue(input, depth, sources, state);
   const repeat = readRepeatInput(input);
@@ -421,11 +752,32 @@ export function resolveBlockWorkflowGraph(body: {
     errorCode: 'workflow_ref_invalid',
     error: `workflow step ${index}: ${problem}`,
   });
+  // A `$arguments` reference resolves to whatever the arguments hold, so a
+  // destination key there reaches a step input the per-step check never saw.
+  const argumentsRef = findKey(body.arguments, isRefKey);
+  if (argumentsRef !== null && argumentsRef !== TOO_DEEP) {
+    return {
+      ok: false,
+      errorCode: 'workflow_ref_invalid',
+      error: 'workflow arguments may not hold a reference',
+    };
+  }
+  const argumentsTarget = findWriteTargetKey(body.arguments);
+  if (argumentsTarget) {
+    return {
+      ok: false,
+      errorCode: 'workflow_ref_invalid',
+      error:
+        argumentsTarget === TOO_DEEP
+          ? `workflow arguments are nested deeper than ${WORKFLOW_INPUT_DEPTH_MAX} levels`
+          : `workflow arguments: ${WRITE_TARGET_ERROR}`,
+    };
+  }
 
   const steps: ResolvedBlockWorkflowStep[] = [];
   const earlier = new Set<string>([WORKFLOW_ARGUMENTS_REF]);
   const taken = new Set<string>();
-  const state: WalkState = { refs: 0, loopVars: new Set() };
+  const state: WalkState = { refs: 0, loopVars: new Set(), mediaRefsAllowed: false };
 
   for (let index = 0; index < body.steps.length; index += 1) {
     const step = body.steps[index];

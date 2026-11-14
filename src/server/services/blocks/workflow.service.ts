@@ -35,7 +35,10 @@ import { getImagesLimit } from '~/shared/generation/images-limit';
 import { resolveDefaultSampler } from '~/shared/generation/sampler-options';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
-import type { AppBlockSucceededWithoutMediaReason } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordOutputTruncated,
+  type AppBlockSucceededWithoutMediaReason,
+} from '~/server/metrics/app-block-runtime.metrics';
 import type {
   BlockModel3dOutput,
   BlockPublishedModel,
@@ -429,6 +432,7 @@ function extractSnapshotStep(
       step.$type,
       (step as unknown as { output?: unknown }).output
     );
+    if (split.truncated > 0) recordOutputTruncated(split.truncated);
     for (const m of split.media) media.push(m.url);
     return {
       media,
@@ -736,6 +740,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
         step.$type,
         (step as unknown as { output?: unknown }).output
       );
+      if (split.truncated > 0) recordOutputTruncated(split.truncated);
       trainedEpochs.push(...split.trainedEpochs);
       model3dOutputs.push(...split.model3d);
       for (const m of split.media) {

@@ -242,7 +242,7 @@ function body(over: Record<string, unknown> = {}) {
     steps: [
       { name: 'gen', $type: 'imageGen', input: GEN_INPUT },
       { $type: 'imageUpscaler', input: UPSCALE_INPUT, suppressOutput: true },
-      { $type: 'transcode', input: CONVERT_INPUT },
+      { $type: 'imageBackgroundRemoval', input: CONVERT_INPUT },
     ],
     arguments: { strength: 0.4 },
     ...over,
@@ -431,7 +431,7 @@ describe("kind:'workflow' ESTIMATE", () => {
     expect(req.steps).toEqual([
       { $type: 'imageGen', name: 'gen', input: GEN_INPUT },
       { $type: 'imageUpscaler', name: '$1', input: UPSCALE_INPUT },
-      { $type: 'transcode', name: '$2', input: CONVERT_INPUT },
+      { $type: 'imageBackgroundRemoval', name: '$2', input: CONVERT_INPUT },
     ]);
     expect(req.arguments).toEqual({ strength: 0.4 });
     // No app text in a tag: the type slot is the kind, the model slot a constant.
@@ -629,7 +629,10 @@ describe("kind:'workflow' — refusals a block can branch on (estimate AND submi
             $type: 'repeat',
             input: {
               for: { $ref: '$arguments', path: 'frames', as: 'frame' },
-              template: { $type: 'imageScanning', input: { url: { $ref: 'frame', path: 'url' } } },
+              template: {
+                $type: 'imageScanning',
+                input: { note: { $ref: 'frame', path: 'text' } },
+              },
             },
           },
         ],
@@ -1185,7 +1188,7 @@ describe("kind:'workflow' SUBMIT — the money path", () => {
             action: 'workflow.submit',
             amount: -64,
             outcome: 'ok',
-            steps: ['imageGen', 'imageUpscaler', 'transcode'],
+            steps: ['imageGen', 'imageUpscaler', 'imageBackgroundRemoval'],
             variant: 'workflow',
             workflowId: WORKFLOW_ID,
           },

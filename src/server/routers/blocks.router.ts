@@ -271,6 +271,8 @@ import {
   REPEAT_SHAPE_ERROR,
   repeatUnboundedProblem,
   resolveBlockWorkflowGraph,
+  writeTargetProblem,
+  chatImageModalityProblem,
 } from '~/server/services/blocks/workflow-graph';
 import type { ResolvedBlockWorkflowStep } from '~/server/services/blocks/workflow-graph';
 import { collectTrainingTriggerWords } from '~/server/services/blocks/block-training-trigger-word';
@@ -11517,6 +11519,10 @@ function assertPassThroughStepTypeAllowed($type: string, input: unknown): void {
   // This arm's body has no `arguments`, so there is nothing a `repeat` may iterate.
   const unbounded = repeatUnboundedProblem($type, input, undefined);
   if (unbounded) throw new TRPCError({ code: 'BAD_REQUEST', message: unbounded });
+  const writeTarget = writeTargetProblem(input);
+  if (writeTarget) throw new TRPCError({ code: 'BAD_REQUEST', message: writeTarget });
+  const chatImages = chatImageModalityProblem($type, input);
+  if (chatImages) throw new TRPCError({ code: 'BAD_REQUEST', message: chatImages });
 }
 
 /**

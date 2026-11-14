@@ -1,3 +1,4 @@
+import { foldCase } from '~/server/services/blocks/workflow-graph';
 import { TRAINING_STEP_TYPES } from './output';
 
 /**
@@ -209,14 +210,9 @@ export function isPlatformInternalStepType(stepType: string): boolean {
   return PLATFORM_INTERNAL_LOOKUP.has(foldStepTypeCase(stepType));
 }
 
-/**
- * THE one case fold for comparing a caller-supplied `$type` against a server-owned
- * list. The comparisons that use it: `isPlatformInternalStepType` (the denylist) and
- * `isTrainingStepTypeIgnoringCase` (every training check on a caller-supplied `$type`,
- * listed there), so two lists cannot disagree about what "the same step type" means.
- */
+/** `foldCase` for a `$type`: the denylist and every training check compare through it. */
 export function foldStepTypeCase(stepType: string): string {
-  return stepType.toLowerCase();
+  return foldCase(stepType);
 }
 
 // Every orchestrator `$type` is ASCII letters and digits. Anything else could fold to a

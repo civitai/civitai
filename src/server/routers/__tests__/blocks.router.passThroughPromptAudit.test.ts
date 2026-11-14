@@ -313,6 +313,7 @@ describe('enforce: a `kind:workflow`', () => {
           $type: 'videoGen',
           input: {
             engine: 'wan',
+            provider: 'comfy',
             prompt: 'it runs',
             images: [{ $ref: 'gen', path: 'output.images[0].url' }],
           },
