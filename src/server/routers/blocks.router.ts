@@ -5112,9 +5112,12 @@ export const blocksRouter = router({
    * that procedure.)
    *
    * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
-   * open until the workflow reaches a terminal status instead of answering with
-   * whatever it is right now (its `?wait=` parameter; see
-   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold).
+   * open until the workflow CHANGES — its status, or one of its steps (`?wait=` +
+   * `?until=change`) — instead of answering with whatever it is right now; see
+   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold.
+   * It used to hold until a terminal status (`until=completion`, the
+   * orchestrator's default); returning on change is what keeps the snapshot's
+   * queue position, ETA and progress current while the block waits.
    * Omitted → byte-identical to the pre-existing request.
    *
    * 🔴 A 202 IS A NORMAL OUTCOME, NOT AN ERROR. When the hold elapses first the
@@ -5151,9 +5154,12 @@ export const blocksRouter = router({
    * `screenGeneratedText` memoizes a decided CONTENT verdict for 5 minutes but
    * deliberately does NOT memoize an operational fault (scanner error, timeout,
    * label drift, per-label error), so during such a fault the same text is
-   * re-scanned once per poll. A long poll REDUCES the poll rate — ~1 per 15s
-   * instead of ~1 per 2s — so it shrinks that blast radius by the same factor
-   * rather than enlarging it. The trade it makes is the other way round: a held
+   * re-scanned once per poll. A long poll REDUCES the poll rate below the ~1 per
+   * 2s short poll while a workflow is quiet — up to ~1 per 15s — so it shrinks
+   * that blast radius rather than enlarging it. ⚠️ Since the hold returns on
+   * CHANGE, a workflow whose step emits frequent job events can be read more
+   * often than that, up to whatever the event rate is; the `:poll:` bucket is
+   * the ceiling, not the hold. The trade it makes is the other way round: a held
    * request occupies an in-flight request slot for its whole duration, so
    * concurrent in-flight polls rise even as total polls fall. That is why the
    * hold is opt-in and capped, and why the SDK only requests it from a
@@ -5245,7 +5251,10 @@ export const blocksRouter = router({
         // not fetch. `workflowId` echoes the caller's own id because the SDK's
         // inbound validator DROPS a snapshot with an empty one (see
         // `components/AppBlocks/failureSnapshot.ts`), which would hang the block to
-        // its 120s transport timeout instead of letting it re-poll.
+        // its 120s transport timeout instead of letting it re-poll. `throttled: true`
+        // is what tells the block so: without it this reply is indistinguishable from
+        // a real non-terminal snapshot, and the block's queue/ETA/progress display
+        // would blank on every shed poll. A real snapshot never carries it.
         //
         // ⚠️ STATED COST: while a viewer is over this ceiling, a workflow that has
         // ALREADY gone terminal has its settle and its fee reversal DEFERRED, because
@@ -5256,6 +5265,8 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: input.workflowId,
             status: 'processing' as const,
+            // Not an observation: a block keeps its previous snapshot's values.
+            throttled: true as const,
           },
         };
       }
@@ -5279,7 +5290,19 @@ export const blocksRouter = router({
           path: { workflowId: input.workflowId },
           // `undefined` when there is no hold, so the request is byte-identical
           // to the pre-long-poll one rather than carrying a `?wait=0`.
-          ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+          //
+          // `until: 'change'`: a held read returns as soon as the workflow or one
+          // of its steps moves (a status change, or a job event while a step is
+          // processing — which is what refreshes its progress), not only at
+          // completion, so the block's queue position / ETA / progress is fresh
+          // instead of up to a whole hold stale. A workflow that is already
+          // terminal is answered at once either way (the orchestrator skips the
+          // hold for a final status). Sent only with a hold: without `wait` it
+          // means nothing. More round trips per running workflow, bounded by the
+          // `:poll:` bucket above and the hold-slot cap.
+          ...(waitSeconds !== undefined
+            ? { query: { wait: waitSeconds, until: 'change' as const } }
+            : {}),
         });
       } finally {
         await releaseHoldSlot?.();
@@ -5567,6 +5590,8 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: input.workflowId,
             status: 'processing' as const,
+            // Not an observation: a block keeps its previous snapshot's values.
+            throttled: true as const,
           },
         };
       }
@@ -9933,6 +9958,9 @@ function resolveBlockCurrencies(isGreen: boolean) {
   return BuzzTypes.toOrchestratorType(getBlockAllowedAccountTypes(isGreen));
 }
 
+/** The orchestrator `currencies` list a block workflow is quoted and submitted with. */
+type BlockCurrencies = ReturnType<typeof resolveBlockCurrencies>;
+
 // PREFERRED-FIRST + DOMAIN-CLAMPED currency selection for a viewer-picked
 // account (money page blocks). The domain-allowed set is derived from the
 // token's AUTHORITATIVE maturity ceiling (`getBlockAllowedAccountTypes`) — the
@@ -10280,7 +10308,11 @@ async function estimateBlockWorkflowCell(
   // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
   // the domain currency, derived from the SAME authoritative ceiling as the
   // output clamp. SFW → blue/green; mature → blue/yellow.
-  const currencies = resolveBlockCurrencies(isGreen);
+  // 🔴 THE SAME CALL AS THE SUBMIT, viewer pick included. This used to be
+  // `resolveBlockCurrencies(isGreen)`, which ignored `body.accountType`: the
+  // estimate priced Auto order while the submit drained the picked pool first,
+  // and a disallowed pick got a price here and a BAD_REQUEST on submit.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, input.body.accountType);
   // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
   // Declared out here because `buildTextToImageInput` below needs it to emit
   // graph-valid `resources` entries; on the MODEL path `additionalResources`
@@ -10585,6 +10617,10 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   // the per-engine display estimate) is validated/bounded; an invalid param
   // throws a ZodError → BAD_REQUEST, exactly as submit fails closed.
   const params = recipe.paramSchema.parse(body.params);
+  // The submit's own currency call, for its refusal only: a disallowed
+  // `params.accountType` is a BAD_REQUEST on this estimate too. There is no whatIf
+  // here, so the order itself is not used.
+  resolveBlockCurrenciesForAccount(resolveBlockMaturity(claims).isGreen, params.accountType);
   return {
     snapshot: {
       // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
@@ -11869,6 +11905,11 @@ async function estimateStepWorkflow(opts: {
   // orchestrator ROUND-TRIP becomes a coded `step_quote_*` snapshot instead.
   const plan = planStepSpend(step, params, variant);
   const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  // The submit's own call, so the estimate prices the order the submit drains.
+  const currencies = resolveBlockCurrenciesForAccount(
+    resolveBlockMaturity(claims).isGreen,
+    body.accountType
+  );
 
   const stepQuote = await quoteStepBuzz({
     ctx,
@@ -11877,6 +11918,7 @@ async function estimateStepWorkflow(opts: {
     orchestratorStep,
     userId,
     callerText: JSON.stringify(body.params),
+    currencies,
   });
   if (stepQuote.quotedBuzz === null) {
     return {
@@ -11989,13 +12031,18 @@ async function quoteStepBuzz(opts: {
   userId: number;
   /** The caller's own submitted params, serialized — see `classifyQuoteFailure`. */
   callerText: string;
+  /**
+   * Resolved by the CALLER, outside this catch: a disallowed `accountType` is a
+   * BAD_REQUEST, and inside the catch it would become "no quote".
+   */
+  currencies: BlockCurrencies;
 }): Promise<
   | { quotedBuzz: number; whatIfResult: Awaited<ReturnType<typeof submitWorkflow>> }
   | { quotedBuzz: null; failure: PassThroughQuoteFailure }
 > {
-  const { ctx, claims, step, orchestratorStep, userId, callerText } = opts;
+  const { ctx, claims, step, orchestratorStep, userId, callerText, currencies } = opts;
   try {
-    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const { allowMatureContent } = resolveBlockMaturity(claims);
     const token = await getOrchestratorToken(userId, ctx);
     const quote = await submitWorkflow({
       token,
@@ -12003,7 +12050,7 @@ async function quoteStepBuzz(opts: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: [orchestratorStep as any],
         tags: buildWorkflowTags(claims, step.id, 'step'),
-        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        currencies,
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
       },
       query: { whatif: true },
@@ -12077,10 +12124,10 @@ async function submitStepWorkflow(opts: {
   // THUNK: only a handler that reads it pays for the round-trip, and this
   // function keeps no per-posture branch.
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  // A registry step has no `accountType` field on its wire body (params are the
-  // step's own bounded contract), so currency selection is Auto — the
-  // domain-allowed set, drained blue-first.
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+  // The viewer's pick (`body.accountType`) goes first, the rest of the
+  // domain-allowed set stays as fallback; absent → Auto (blue-first). A pick
+  // outside the set is a BAD_REQUEST here, before any quote or reservation.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, body.accountType);
 
   // ── MODERATION POSTURE — dispatched on the entry's DECLARED posture, the same
   // way spend dispatches on its declared billing mode. No per-step and no
@@ -12893,6 +12940,11 @@ async function estimatePassThroughStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: [body] });
   await assertBlockTrainingModelsAllowed([body]);
   await checkAppStepResources(body.input);
+  // Before the mint and the quote: a disallowed pick refuses here, as on the submit.
+  const currencies = resolveBlockCurrenciesForAccount(
+    resolveBlockMaturity(claims).isGreen,
+    body.accountType
+  );
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // The token mint is INSIDE the quote's catch on this path and outside it on
@@ -12910,6 +12962,7 @@ async function estimatePassThroughStepWorkflow(opts: {
       stepType: body.$type,
       priceCheckLabel: PASS_THROUGH_RECIPE_LABEL,
       token,
+      currencies,
       phase: 'estimate',
     });
   } else {
@@ -12996,6 +13049,12 @@ async function quotePassThroughBuzz(opts: {
   priceCheckLabel: string;
   token: string;
   /**
+   * The currencies the submit sends, resolved by the CALLER from the body's
+   * `accountType` — outside this catch, so a disallowed pick is a BAD_REQUEST
+   * rather than "no quote", and the quote prices the order the submit drains.
+   */
+  currencies: BlockCurrencies;
+  /**
    * 🔴 THE PHASE, THREADED, NOT ASSUMED. `estimate_*` is defined by the counter
    * as "one emit per estimate, BEFORE any spend exists". This helper serves
    * estimates and submits, so a fixed label would file the one event that precedes a
@@ -13009,20 +13068,20 @@ async function quotePassThroughBuzz(opts: {
   phase: 'estimate' | 'submit';
 }): Promise<PassThroughQuote> {
   const { claims, steps, tags, workflowArguments, callerText, stepType, token, phase } = opts;
-  const { priceCheckLabel } = opts;
+  const { priceCheckLabel, currencies } = opts;
   const [quoted, absent] =
     phase === 'estimate'
       ? (['estimate_quoted', 'estimate_absent'] as const)
       : (['quoted', 'absent'] as const);
   try {
-    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const { allowMatureContent } = resolveBlockMaturity(claims);
     const quote = await submitWorkflow({
       token,
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: steps as any,
         tags,
-        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        currencies,
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
         ...(workflowArguments ? { arguments: workflowArguments } : {}),
       },
@@ -13115,10 +13174,10 @@ async function submitPassThroughStepWorkflow(opts: {
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: [body],
   });
-  // A pass-through body carries no `accountType` (its `.strict()` wire shape has
-  // no such field), so currency selection is Auto — the domain-allowed set,
-  // drained blue-first.
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+  // The viewer's pick (`body.accountType`) goes first, the rest of the
+  // domain-allowed set stays as fallback; absent → Auto (blue-first). The quote
+  // below is priced with the same array.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, body.accountType);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
   // `$type` never reaches the tag array as text — see `buildPassThroughWorkflowTags`.
@@ -13133,6 +13192,7 @@ async function submitPassThroughStepWorkflow(opts: {
     stepType: body.$type,
     priceCheckLabel: PASS_THROUGH_RECIPE_LABEL,
     token,
+    currencies,
     phase: 'submit',
   });
   const { quotedBuzz } = quote;
@@ -13695,6 +13755,11 @@ async function estimateMultiStepWorkflow(opts: {
   await assertBlockTrainingTriggerWordsAllowed({ claims, userId, steps: prepared.steps });
   await assertBlockTrainingModelsAllowed(prepared.steps);
   await checkAppStepResources(body);
+  // Per-WORKFLOW pick: the orchestrator takes one `currencies` list per workflow.
+  const currencies = resolveBlockCurrenciesForAccount(
+    resolveBlockMaturity(claims).isGreen,
+    body.accountType
+  );
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   // A mint failure is a missing quote here (`unavailable`), not a throw as on the
@@ -13711,6 +13776,7 @@ async function estimateMultiStepWorkflow(opts: {
       stepType: prepared.steps.map((step) => step.$type).join(','),
       priceCheckLabel: MULTI_STEP_RECIPE_LABEL,
       token,
+      currencies,
       phase: 'estimate',
     });
   } else {
@@ -13787,7 +13853,8 @@ async function submitMultiStepWorkflow(opts: {
     ...passThroughAuditContext(claims, userId, isGreen),
     steps: prepared.steps,
   });
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+  // Per-WORKFLOW pick (see the schema): one `currencies` list for every step.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, body.accountType);
 
   const orchestratorSteps = buildMultiStepOrchestratorSteps(prepared.steps);
   const tags = buildMultiStepWorkflowTags(claims, prepared.steps);
@@ -13803,6 +13870,7 @@ async function submitMultiStepWorkflow(opts: {
     stepType: prepared.steps.map((step) => step.$type).join(','),
     priceCheckLabel: MULTI_STEP_RECIPE_LABEL,
     token,
+    currencies,
     phase: 'submit',
   });
   const { quotedBuzz } = quote;
@@ -14465,7 +14533,13 @@ async function previewQuoteGrantFor(
       : null,
     exceedsDailyLimit: limit?.exceeds ?? false,
   };
-  if (kind === 'step') return { ...shared, stepType: String(quote.stepType) };
+  if (kind === 'step') {
+    return {
+      ...shared,
+      stepType: String(quote.stepType),
+      fundingOrder: confirmedStepFundingOrder(claims, quote.accountType),
+    };
+  }
   return {
     ...shared,
     imageCount: quote.imageCount as number,
@@ -14528,8 +14602,11 @@ type QuotedGrantSubmitPlan = {
   /** The orchestrator step — the SAME object is re-quoted and submitted. */
   step: Record<string, unknown>;
   tags: string[];
-  /** The orchestrator's fail-closed fixed price for `step`, or `null`. */
-  requote: (token: string) => Promise<number | null>;
+  /**
+   * The orchestrator's fail-closed fixed price for `step`, or `null`, priced with
+   * the `currencies` the submit sends.
+   */
+  requote: (token: string, currencies: BlockCurrencies) => Promise<number | null>;
   /** `detail.step` / `detail.variant` on the scope-invocation row. */
   invocation: { step: string; variant: string };
   /** Constant settle labels (metric cardinality). */
@@ -14548,6 +14625,11 @@ type QuotedGrantSubmitArm = {
   quoteId: string | undefined;
   /** Refused with this when the body names no quote. */
   missingQuoteMessage: string;
+  /**
+   * The body's preferred Buzz pool, or `undefined` (Auto). A training body names
+   * none. Resolved before the quote is claimed, so a disallowed pick consumes nothing.
+   */
+  accountType: BuzzSpendType | undefined;
   /**
    * The quote-binding hash of this body — the quote must have been priced for exactly
    * it. A FUNCTION, called after the quote is claimed and its ceiling checked, so a
@@ -14581,8 +14663,8 @@ type QuotedGrantSubmitArm = {
  * CONFIRMED-QUOTE SUBMIT, both kinds. Post-paid on the pass-through arm's reservation
  * belt, but the ceiling is the viewer-confirmed quote, not the token's per-call budget.
  *
- * Order: gate → kind preflight → a quote named → run identity → per-quote replay claim
- * (a lost-response retry of this submit replays) → consume the quote once → the
+ * Order: gate → kind preflight → currencies (a disallowed `accountType` refused) → a
+ * quote named → run identity → per-quote replay claim (a lost-response retry of this submit replays) → consume the quote once → the
  * kind's ceiling (binding, confirmation, validity, maximum) → body hash → the kind's
  * plan → a fail-closed re-quote, refused if it rose → the balance → reservations
  * (per-user daily cap → the viewer's daily limit → per-app cap → dev-session) →
@@ -14599,6 +14681,11 @@ async function submitConfirmedQuoteWorkflow(opts: {
   const auth = await assertQuotedGrantRequestAllowed(arm.kind, claims, ctx);
   const { userId } = auth;
   await arm.preflight?.(auth);
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // Before the replay claim and the quote consume: a disallowed pick is a
+  // BAD_REQUEST that leaves the quote usable. The re-quote and the submit both
+  // send this array.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, arm.accountType);
   const quoteId = arm.quoteId;
   if (!quoteId) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: arm.missingQuoteMessage });
@@ -14658,7 +14745,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
     plan = await arm.plan(auth, quote);
     token = await getOrchestratorToken(userId, ctx);
 
-    const requote = await plan.requote(token);
+    const requote = await plan.requote(token, currencies);
     if (requote === null) {
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
@@ -14699,8 +14786,6 @@ async function submitConfirmedQuoteWorkflow(opts: {
     throw e;
   }
 
-  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
   const costClause = `${copy.costNoun} costs ${jobBuzz}`;
 
   // ── Reserve the re-quoted price against the per-user cumulative cap.
@@ -15131,6 +15216,21 @@ async function hashConfirmedStepBodyOrRefuse(body: PassThroughStepBody): Promise
 }
 
 /**
+ * The order a confirmed step's pools are tried in, for the consent dialog — the
+ * submit's own `orderBlockCurrencyTypes` over the stored pick — or `null` when the
+ * quote names no pick (the dialog then shows nothing new, as before picks existed).
+ * Also `null` for a pick the token no longer allows: the submit refuses that one.
+ */
+function confirmedStepFundingOrder(claims: BlockClaims, accountType: unknown) {
+  if (accountType !== 'blue' && accountType !== 'green' && accountType !== 'yellow') return null;
+  const { ordered, disallowed } = orderBlockCurrencyTypes(
+    resolveBlockMaturity(claims).isGreen,
+    accountType
+  );
+  return disallowed ? null : ordered;
+}
+
+/**
  * The estimate's half: store a confirmable quote, or `null` (and the estimate reply is
  * unchanged). Granted only for a FIXED price strictly above the per-call budget and at
  * most `BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB`, to a token the shared gate admits, with
@@ -15173,6 +15273,8 @@ async function grantConfirmedStepQuote(opts: {
     total: price,
     bodyHash: await hashConfirmedStepBodyOrRefuse(body),
     stepType: body.$type,
+    // Shown by the consent dialog ("paid from … first"); absent with no pick.
+    ...(body.accountType ? { accountType: body.accountType } : {}),
   });
   return {
     quoteId: record.quoteId,
@@ -15209,6 +15311,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       kind: 'step',
       quoteId: body.quoteId,
       missingQuoteMessage: 'a confirmed step submit must name the confirmed quoteId',
+      // Part of the body hash too, so a quote priced with one pool cannot run with another.
+      accountType: body.accountType,
       bodyHash: () => hashConfirmedStepBodyOrRefuse(body),
       generationType: resolveBlockGenerationType(body),
       logFields: { stepType: body.$type },
@@ -15242,7 +15346,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
         return {
           step,
           tags,
-          requote: async (token) => {
+          requote: async (token, currencies) => {
             const q = await quotePassThroughBuzz({
               claims,
               steps: [step],
@@ -15251,6 +15355,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
               stepType: body.$type,
               priceCheckLabel: PASS_THROUGH_RECIPE_LABEL,
               token,
+              currencies,
               phase: 'submit',
             });
             // Fail-closed: no quote, a ≤0 quote or a variable price is not a price the
@@ -15327,7 +15432,8 @@ async function quoteBlockTrainingStep(opts: {
 /**
  * The viewer's Buzz across the accounts a training run or a confirmed step charges: the block's allowed
  * set for its maturity (`getBlockAllowedAccountTypes`), the same set
- * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
+ * `resolveBlockCurrenciesForAccount` sends with the submit (a pick only reorders it,
+ * and the sum does not depend on the order).
  * Throws when the balance cannot be read — including a response naming none of
  * those accounts, which is an unreadable balance, not a zero one.
  */
@@ -15513,6 +15619,8 @@ async function submitTrainingWorkflow(opts: {
       kind: 'training',
       quoteId: body.quoteId,
       missingQuoteMessage: 'a training submit must name the confirmed quoteId from its estimate',
+      // A training body has no `accountType` (its `.strict()` schema names none): Auto.
+      accountType: undefined,
       bodyHash: async () => hashTrainingBody(body),
       generationType: resolveBlockGenerationType(body),
       logFields: {},

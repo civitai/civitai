@@ -28,6 +28,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 
   const body = (await request.json().catch(() => null)) as { runs?: TrainingRunInput[] } | null;
   const runs = body?.runs;
+  // A continuation starts only through /api/continue-training, which checks its source run.
+  if (Array.isArray(runs) && runs.some((r) => r && typeof r === 'object' && 'continueFrom' in r))
+    error(400, 'Keep training from a checkpoint on the run itself.');
   let batch: SubmittedBatch;
   try {
     batch = await submitTrainingBatch(

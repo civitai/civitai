@@ -9,19 +9,17 @@ export default defineModeratorEndpoint('reviewBatches.mint', {
   returns: "{ batchId, tier: 'general' | 'held', link }",
   notes: [
     'Requires a personal API key of a moderator holding the held-media grant (`csamReports`); the viewer must hold it too.',
-    'The tier is decided here, never by the caller: any image with a CSAM or minor signal, any image whose signals cannot be read, a batch with no source card, or source text naming a suspect term sends the batch to the held tier.',
+    'The tier is decided here, never by the caller: any image with a CSAM or minor signal, any image whose signals cannot be read, a batch its caller declares suspect, or a batch with no source card sends the batch to the held tier. `suspect` can only raise the tier.',
     'A repeat with the same `idempotencyKey` from the same key revokes the batch it minted before and mints a new one; a repeat while one is in flight answers 409.',
-    'The source text is read and never stored, not even in this audit row.',
     'Brake: the Flipt flag `review-batches-mint`; off answers 503.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 * 60 },
-  auditExclude: ['sourceText', 'suspect'],
+  auditExclude: ['suspect'],
   input: z.object({
     ids: z.array(z.number().int().positive().max(2_147_483_647)).min(1).max(REVIEW_BATCH_MAX_IDS),
     viewer: z.number().int().positive().max(2_147_483_647),
     suspect: moderatorBoolean,
     source: z.string().trim().max(200),
-    sourceText: z.array(z.string().max(20_000)).max(20),
     seat: z
       .string()
       .regex(/^ag_[0-9a-f]{16}$/)

@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
 
 // A leaf: post, user and job deletes import it, so it imports nothing of theirs.
@@ -14,6 +14,19 @@ export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
   SELECT 1 FROM "PostText" ht
   WHERE ht."postId" = ${postId} AND post_text_held(ht.id, ht."csamHeld", ht."postId", ht."userId")
 )`;
+
+/**
+ * The texts among these under a Pending csam hold. The hold is written before `csamHeld` is set, and
+ * not in one transaction, so readers treat a pending hold as held (`postTextPendingCsamHoldText`).
+ */
+export async function pendingCsamHoldTextIds(textIds: number[]) {
+  if (!textIds.length) return new Set<number>();
+  const holds = await dbRead.textScanHold.findMany({
+    where: { entityType: 'PostText', entityId: { in: textIds }, label: 'csam', status: 'Pending' },
+    select: { entityId: true },
+  });
+  return new Set(holds.map((h) => h.entityId));
+}
 
 /** The posts among these holding held text, or holding these texts when they are held. */
 export async function heldPostTextPostIds({

@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/redis.mock';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
+import { wireParams } from '~/server/events/points/__tests__/clickhouse-wire';
 
 const query = vi.hoisted(() => vi.fn());
 vi.mock('~/server/clickhouse/client', () => ({
@@ -46,10 +47,10 @@ describe('getHatPlacementViews', () => {
     ]);
     const params = query.mock.calls[0][0].query_params;
     expect(params.from).toBe('2026-11-05 00:00:00.000');
-    expect(params.placements).toEqual([
-      [1, 'k1', 'Image', 11, '2026-11-09 06:00:00.000'],
-      [2, 'k2', 'Image', 12, '2026-11-05 00:00:00.000'],
-    ]);
+    // As the real client sends it: ClickHouse refuses `[[...]]` for the Array(Tuple(...)) param.
+    expect((await wireParams(params)).placements).toBe(
+      "[(1,'k1','Image',11,'2026-11-09 06:00:00.000'),(2,'k2','Image',12,'2026-11-05 00:00:00.000')]"
+    );
   });
 
   it('asks ClickHouse once for a user reloading while a read is in flight', async () => {

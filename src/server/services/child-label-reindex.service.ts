@@ -8,6 +8,7 @@ import {
   enqueueCollectionRebuild,
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
+import { COLLECTION_SEARCH_ELIGIBLE } from '~/server/search-index/collection-search-eligibility';
 import { queueModelsReindex } from '~/server/search-index/queue-models-reindex';
 import { chunkIds } from '~/utils/array-helpers';
 
@@ -70,6 +71,7 @@ async function selectImageIds(after: number, chunkSize: number, limit?: number) 
 // Far above any chunk's candidates, so none is dropped.
 const CANDIDATE_CAP = 1_000_000;
 const DOCUMENT_READ_BATCH = 1000;
+const ELIGIBILITY_BATCH = 5000;
 
 type StoredCollectionDocument = {
   id: number;
@@ -81,7 +83,8 @@ type StoredCollectionDocument = {
  * Of the collections any route reaches these images by, the ones whose stored search document
  * shows one of them. The stored document, not today's rows, decides: a document built when its
  * collection showed one of these images still does, until it is rebuilt. A batch whose documents
- * cannot be read is queued whole, and a candidate with no document is queued too.
+ * cannot be read, or whose read returns a document outside the batch, is queued whole (`unread`).
+ * A candidate with no document is returned in `missing`, for the caller to split by eligibility.
  */
 async function collectionIdsShowingImages(imageIds: number[]) {
   const wanted = new Set(imageIds);
@@ -93,8 +96,8 @@ async function collectionIdsShowingImages(imageIds: number[]) {
     throwOnError: true,
   });
   const shown: number[] = [];
-  let unread = 0;
-  let missing = 0;
+  const unread: number[] = [];
+  const missing: number[] = [];
   for (const batch of chunkIds(candidates.collectionIds, DOCUMENT_READ_BATCH)) {
     try {
       if (!searchClient) throw new Error('search client not configured');
@@ -105,18 +108,19 @@ async function collectionIdsShowingImages(imageIds: number[]) {
           fields: ['id', 'image', 'images'],
           limit: batch.length,
         });
+      const inBatch = new Set(batch);
+      if (results.some((doc) => !inBatch.has(doc.id)))
+        throw new Error('the id filter returned documents outside the batch');
       const read = new Set<number>();
       for (const doc of results) {
         read.add(doc.id);
         const docImageIds = [doc.image?.id, ...(doc.images ?? []).map((image) => image.id)];
         if (docImageIds.some((id) => id !== undefined && wanted.has(id))) shown.push(doc.id);
       }
-      const absent = batch.filter((id) => !read.has(id));
-      shown.push(...absent);
-      missing += absent.length;
+      missing.push(...batch.filter((id) => !read.has(id)));
     } catch {
       shown.push(...batch);
-      unread += batch.length;
+      unread.push(...batch);
     }
   }
   return { collectionIds: shown, truncated: candidates.truncated, unread, missing };
@@ -126,18 +130,43 @@ async function collectionIdsShowingImages(imageIds: number[]) {
 async function documentIdsForImages(imageIds: number[], chunkSize: number) {
   const modelIds = new Set<number>();
   const collectionIds = new Set<number>();
+  const unread = new Set<number>();
+  const missing = new Set<number>();
   let truncated = false;
-  let unread = 0;
-  let missing = 0;
   for (const chunk of chunkIds(imageIds, chunkSize)) {
     for (const id of await ids(modelIdsForImagesSql(chunk))) modelIds.add(id);
     const collections = await collectionIdsShowingImages(chunk);
     for (const id of collections.collectionIds) collectionIds.add(id);
+    for (const id of collections.unread) unread.add(id);
+    for (const id of collections.missing) missing.add(id);
     truncated ||= collections.truncated;
-    unread += collections.unread;
-    missing += collections.missing;
   }
-  return { modelIds: [...modelIds], collectionIds: [...collectionIds], truncated, unread, missing };
+  // A collection missing in one chunk's read may be shown or unread in another's.
+  for (const id of collectionIds) missing.delete(id);
+  // One the index should hold but does not is a gap, so it is queued; the rest have nothing to rebuild.
+  const eligible = await searchEligibleCollectionIds([...missing]);
+  for (const id of eligible) collectionIds.add(id);
+  return {
+    modelIds: [...modelIds],
+    collectionIds: [...collectionIds],
+    truncated,
+    unread: unread.size,
+    missingEligible: eligible.length,
+    missingIneligible: missing.size - eligible.length,
+  };
+}
+
+async function searchEligibleCollectionIds(collectionIds: number[]) {
+  const eligible: number[] = [];
+  for (const batch of chunkIds(collectionIds, ELIGIBILITY_BATCH))
+    eligible.push(
+      ...(await ids(
+        Prisma.sql`SELECT c.id AS id FROM "Collection" c WHERE c.id IN (${Prisma.join(
+          batch
+        )}) AND ${Prisma.join(COLLECTION_SEARCH_ELIGIBLE, ' AND ')}`
+      ))
+    );
+  return eligible;
 }
 
 const holdsChildTag = (entry?: { tags: number[] }) =>
@@ -245,7 +274,8 @@ export async function runChildLabelReindex({
       aborted: 'the collection lookup failed: retry from the same `after`',
     };
   }
-  const { modelIds, collectionIds, truncated, unread, missing } = documents;
+  const { modelIds, collectionIds, truncated, unread, missingEligible, missingIneligible } =
+    documents;
   const models = await queueModelsReindex(modelIds, { dryRun, chunkSize });
   const collectionsQueued = dryRun
     ? 0
@@ -262,7 +292,8 @@ export async function runChildLabelReindex({
     collections: collectionIds.length,
     collectionsTruncated: truncated,
     collectionsUnread: unread,
-    collectionsMissing: missing,
+    collectionsMissingEligible: missingEligible,
+    collectionsMissingIneligible: missingIneligible,
     collectionsQueued,
   };
 }

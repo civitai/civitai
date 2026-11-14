@@ -720,11 +720,24 @@ Civitai Buzz is split into spendable pools — **blue** (purchased), **green**
   capability instead); that capability gate was removed from the runtime, and the
   user's own scope grant is the authority now. A token without the scope gets
   `block lacks buzz:read:self scope`.
-- **Choose the funding pool**: a workflow submit body may carry `accountType`
-  (`blue | green | yellow`). It is honored **preferred-first** while the maturity
-  policy clamp still applies (a SFW-domain block can't widen to a mature currency);
-  an out-of-set pick is rejected, absent → Auto (see
-  `resolveBlockCurrenciesForAccount`).
+- **Choose the funding pool**: a workflow body may carry `accountType`
+  (`blue | green | yellow`) — top-level on `textToImage`, on both `kind: 'step'`
+  arms (registered `step` id and pass-through `$type`) and once per
+  `kind: 'workflow'` body (the orchestrator takes one currency list per workflow,
+  so there is no per-step pick); under `params` on a `customComfy` recipe. It is
+  honored **preferred-first**: the picked pool goes first and the rest of the
+  app's allowed pools stay as fallback (an SFW app allows blue and green, a
+  mature app blue and yellow), so a pick never widens the maturity policy. An
+  out-of-set pick is a BAD_REQUEST on the estimate and the submit alike; absent →
+  Auto, blue first (see `resolveBlockCurrenciesForAccount`). The estimate prices
+  the same order the submit drains (the `customComfy` recipe estimate has no
+  price quote but refuses a disallowed pick the same way). A confirmed step quote
+  is bound to its pool: submitting it with a different `accountType` is refused
+  as a changed body, and its consent dialog names the order ("Paid from Yellow
+  Buzz first, then Blue."); with no pick the dialog has no pool line.
+  A pick does **not** guarantee an unrestricted output: when the picked pool
+  cannot cover the job the fallback pays, and a fallback to blue can still leave a
+  mature output restricted.
 - **Which pool actually paid**: the workflow status snapshot carries
   `spentAccountType` — the `accountType` of the largest _realized_ debit — so a
   block can attribute spend after the fact (internal-only accounts are omitted).
@@ -960,6 +973,28 @@ only the one in front counts down; the others start their wait when they come to
 is the model's own format (`glb`, `fbx`, …) and `variant` the output field it came from
 (`model`, `riggedFbxModel`, `basicAnimations.walkingModel`, …). The same field is on
 `QUERY_APP_WORKFLOWS` items.
+
+**Queue position, ETA and progress.** A non-terminal snapshot carries
+`eta: { stepName, queuedAhead, startsAt, completesAt, progress, support }` for the step
+the viewer is waiting on: the first step the orchestrator reports as queued, else the
+first processing step. While queued, `queuedAhead` is the number of jobs ahead,
+`startsAt` / `completesAt` are the orchestrator's estimates (ISO-8601) and `support` is
+`available`, `unavailable` (no worker can take it right now) or `unsupported`; `progress`
+is null. While running those four are null and `progress` is 0..1. Each `steps[]` entry
+(`kind:'workflow'`) carries the same per step as `queue`, `progress`, `startedAt` and
+`completedAt`. `progress` is reported only for image and video generation steps
+(`textToImage`, `imageGen`, `videoGen`); other types, training among them, report a
+fraction that restarts at each phase, so they get none. A field with nothing to report
+is omitted, and a terminal snapshot has no `eta`; read absent as null. All of it is an
+estimate. A held poll (`waitSeconds`) returns as soon as the workflow or one of its steps
+changes, not only when it finishes, so the block re-polls to keep these current.
+
+**Throttled polls.** A poll the host could not serve — the poll rate limit refused it, or
+the host's request failed without an answer — is answered with
+`{ workflowId, status: 'processing', throttled: true }`: a poll the host could not serve;
+keep the previous snapshot's values (its `eta`, progress, images). The same placeholder
+answers a cancel the rate limit refused; the cancel was not issued. A real snapshot never
+carries `throttled`.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

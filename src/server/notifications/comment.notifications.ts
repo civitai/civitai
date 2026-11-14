@@ -9,6 +9,7 @@ import {
 } from '~/server/notifications/base.notifications';
 import { TEXT_SLIDE_PARAM } from '~/components/Image/Detail/detail-items';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { postTextPendingCsamHoldText } from '~/server/services/storyline-visibility.sql';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
@@ -61,7 +62,7 @@ export const notOnHiddenModel = (alias: string, ownerMay?: string) => `NOT EXIST
 export const notOnHiddenPostText = (alias: string, ownerMay?: string) => `NOT EXISTS (
             SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
             WHERE ${alias}."entityType" = 'postText' AND ht.id = ${alias}."entityId"
-              AND (ht.refused OR ht."csamHeld" OR (
+              AND (ht.refused OR ht."csamHeld" OR ${postTextPendingCsamHoldText('ht')} OR (
                 (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
                   OR hp."nsfwLevel" = 0)${ownerMay ? ` AND hp."userId" <> ${ownerMay}` : ''}
               ))
@@ -106,12 +107,17 @@ export const postTextAnchorImage = (text: string) => `(
           LIMIT 1
         )`;
 
-/** What the owner notice of a comment on text `$1` names and links to (`notifyPostTextOwner`). */
+/**
+ * What the owner notice of a comment on text `$1` names and links to (`notifyPostTextOwner`), or no
+ * row once the text is refused or held: read at send time, after the comment's own check.
+ */
 export const postTextOwnerNoticeSql = `SELECT t."postId", p."userId", p.title, a.id "anchorImageId"
      FROM "PostText" t
      JOIN "Post" p ON p.id = t."postId"
      LEFT JOIN LATERAL ${postTextAnchorImage('t')} a ON true
-     WHERE t.id = $1`;
+     WHERE t.id = $1 AND NOT t.refused AND NOT t."csamHeld" AND NOT ${postTextPendingCsamHoldText(
+       't'
+     )}`;
 
 export const v3AppListingResolved = (alias: string) =>
   `(${alias}."entityType" <> 'appListing' OR al.slug IS NOT NULL)`;
