@@ -126,7 +126,7 @@ export default function BlockConsentModal({
   // rather than show it.
   const sourceName = source ? source.sourceName ?? source.from : 'another app';
   const appLabel = blockName ?? 'This app';
-  const [limitEnabled, setLimitEnabled] = useState(false);
+  const [limitEnabled, setLimitEnabled] = useState(true);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
   const grant = trpc.blocks.grantScopes.useMutation({
     onSuccess: () => {

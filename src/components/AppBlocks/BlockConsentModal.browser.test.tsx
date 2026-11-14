@@ -140,8 +140,8 @@ describe('BlockConsentModal — per-app spend limit', () => {
       />
     );
     await expect.element(page.getByTestId('block-consent-budget-toggle')).toBeInTheDocument();
-    // OFF by default, so the input is not yet shown.
-    expect(page.getByTestId('block-consent-budget-input').elements()).toHaveLength(0);
+    // ON by default, pre-filled with the suggested daily limit.
+    await expect.element(page.getByTestId('block-consent-budget-input')).toHaveValue('1000');
   });
 
   // INVARIANT GUARD — green at both, and vacuously at base for the same reason: the base
@@ -158,6 +158,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
+    await page.getByTestId('block-consent-budget-toggle').click();
     await page.getByRole('button', { name: 'Allow' }).click();
     expect(mutate).toHaveBeenCalledTimes(1);
     const payload = mutate.mock.calls[0][0];
@@ -167,7 +168,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
     expect(Object.hasOwn(payload, 'buzzBudgetPerDay')).toBe(false);
   });
 
-  test('with the limit ON, Allow sends the entered budget', async () => {
+  test('with the limit left ON (the default), Allow sends the pre-filled budget', async () => {
     mutate.mockClear();
     renderWithProviders(
       <BlockConsentModal
@@ -177,7 +178,6 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await page.getByTestId('block-consent-budget-toggle').click();
     await expect.element(page.getByTestId('block-consent-budget-input')).toBeInTheDocument();
     await page.getByRole('button', { name: 'Allow' }).click();
     expect(mutate).toHaveBeenCalledTimes(1);
@@ -206,6 +206,7 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
+    await page.getByTestId('block-consent-budget-toggle').click();
     const el = page.getByTestId('block-consent-budget-off');
     await expect.element(el).toBeInTheDocument();
     const text = ((await el.element().textContent) ?? '').replace(/\s+/g, ' ').trim();
@@ -229,7 +230,6 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await page.getByTestId('block-consent-budget-toggle').click();
     const input = page.getByTestId('block-consent-budget-input');
     // 1000 (the default) is comfortably fundable → no warning.
     expect(page.getByTestId('block-consent-budget-low-warning').elements()).toHaveLength(0);
@@ -268,7 +268,6 @@ describe('BlockConsentModal — per-app spend limit', () => {
         onGranted={vi.fn()}
       />
     );
-    await page.getByTestId('block-consent-budget-toggle').click();
     const input = page.getByTestId('block-consent-budget-input');
     await input.clear();
     await input.fill('999999');
