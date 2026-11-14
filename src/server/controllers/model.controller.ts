@@ -692,6 +692,7 @@ export async function getModelsFeed(input: GetAllModelsOutput, ctx: Context) {
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const queryOptions = {
       user: ctx.user,
+      heldViewer: isSessionOrFullUserKey(ctx),
       domain: getRequestBoardDomainColor(ctx.req),
       imagesPerModel,
       biasImageSlice: slim,
