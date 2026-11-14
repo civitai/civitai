@@ -317,6 +317,28 @@ describe('approving a lock review', () => {
     expect(meta.comFaceIntent).toEqual({ ...intent, overturnedAt: expect.any(String) });
   });
 
+  // A review of another lock rules on the rating only, as the model form does.
+  it("keeps the detection and suppresses only the re-lock when the lock lifted isn't the intent check's", async () => {
+    const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'text-scan', at: intent.at },
+        comFaceIntent: intent,
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta.comFaceIntent).toEqual(intent);
+    expect(meta.comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
+    });
+  });
+
   // Edit the listing, have the edit allowed, restore the text: the original detection must still refuse it.
   it('leaves a detection of other text standing, so restoring that text is still refused', async () => {
     const intent = { detected: true, textHash: listingHash, at: '2026-01-01T00:00:00.000Z' };

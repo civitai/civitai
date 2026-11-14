@@ -23,6 +23,7 @@ import {
   dropReplacedRatingMarkerSql,
   restoreReplacedRatingMarkerSql,
   storedListingTextHash,
+  suppressComFaceIntentRelockSql,
 } from '~/server/services/model-com-face-intent.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
@@ -341,16 +342,18 @@ export async function resolveLockReviewAppeal({
         await tx.$executeRaw`
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
-        // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
-        // intent detection stops refusing a civitai.com version for this text. The rating marker
-        // the intent lock replaced comes back only when the lock lifted is the intent check's;
-        // under any other lock that old marker is stale, and goes.
-        await tx.$executeRaw(
-          row.lockSource === COM_FACE_INTENT_LOCK_SOURCE
-            ? restoreReplacedRatingMarkerSql(modelId)
-            : dropReplacedRatingMarkerSql(modelId)
-        );
-        await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
+        // Lifting the intent check's own lock rules on the intent: its detection of this text is
+        // overturned and the rating marker it replaced comes back. Any other lock is a ruling on
+        // the rating only, as on the model form: the detection still gates the civitai.com face,
+        // the stale marker goes, and only re-locking this text is suppressed.
+        if (row.lockSource === COM_FACE_INTENT_LOCK_SOURCE) {
+          await tx.$executeRaw(restoreReplacedRatingMarkerSql(modelId));
+          await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
+        } else {
+          await tx.$executeRaw(dropReplacedRatingMarkerSql(modelId));
+          if (ruledTextHash)
+            await tx.$executeRaw(suppressComFaceIntentRelockSql(modelId, ruledTextHash));
+        }
       }
     }
 
@@ -391,8 +394,7 @@ export async function resolveLockReviewAppeal({
     };
   });
 
-  // A moderator's ruling on a review the intent check's second pass left to them: a prompt-tuning
-  // sample. The job's own approvals log their sample where they are judged.
+  // The job logs its own approvals where it judges them; a second sample here would count them twice.
   if (dispute && !asDisputeJob) {
     const context = dispute.context as Record<string, unknown> | null;
     logToAxiom({

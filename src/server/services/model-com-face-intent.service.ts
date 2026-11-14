@@ -234,6 +234,16 @@ export const recordVerdictUnderIntentLock = (
     AND jsonb_typeof(m.meta->'comFaceIntent') = 'object'
 `;
 
+/** The SQL twin of `comFaceIntentMetaAfterModeratorUnlock`'s non-intent branch, for a review ruling. */
+export const suppressComFaceIntentRelockSql = (modelId: number, textHash: string) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = ${asJsonbObjectSql('meta')} || jsonb_build_object(
+    'comFaceIntentRelockSuppressed',
+    jsonb_build_object('textHash', ${textHash}::text, 'at', now()::text)
+  )
+  WHERE id = ${modelId}
+`;
+
 /**
  * After a ruling lifted the intent lock: marks the stored detection overturned only when it was
  * read from `ruledTextHash`, the listing the ruling was made on. A detection of other text stands,
