@@ -109,11 +109,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
           </span>
           {closed ? (
             <span className={clsx(classes.count, classes.margin)} data-testid="flag-badge-closed">
-              {counting
-                ? 'Counting…'
-                : winners.length
-                ? `${winners.join(' & ')} won`
-                : 'Closed'}
+              {counting ? 'Counting…' : winners.length ? `${winners.join(' & ')} won` : 'Closed'}
             </span>
           ) : (
             clock && (
