@@ -255,6 +255,34 @@ describe('orchestrator.getWorkflow — steps that read a training run', () => {
     expect(result.steps[1]).not.toHaveProperty('output');
   });
 
+  // The shapes the orchestrator and the App Blocks graph use (workflow-graph.ts): `$ref` is a step
+  // name, the workflow's arguments, or a repeat's loop variable, with the path beside it.
+  it('keeps steps that read the workflow arguments or a loop variable', async () => {
+    const fromArguments = {
+      $type: 'textToImage',
+      name: 'a',
+      input: { prompt: { $ref: '$arguments', path: 'prompt' } },
+      output: { images: [{ id: 'IMG2', url: 'https://example.invalid/IMG2.jpg' }] },
+    };
+    const repeat = {
+      $type: 'repeat',
+      name: 'r',
+      input: {
+        for: { $ref: '$arguments', path: 'prompts', as: 'item' },
+        template: { $type: 'textToImage', input: { prompt: { $ref: 'item', path: 'text' } } },
+      },
+      output: { items: [{ images: [{ id: 'IMG3' }] }] },
+    };
+    const merge = {
+      $type: 'merge',
+      name: 'm',
+      input: { fields: { images: { $ref: 'a', path: 'output.images[*].id', reduce: 'concat' } } },
+      output: { fields: { images: ['IMG2'] } },
+    };
+    const result = await read([trainingStep, fromArguments, repeat, merge]);
+    expect(result.steps.slice(1)).toEqual([fromArguments, repeat, merge]);
+  });
+
   it('keeps a step that reads no training step', async () => {
     const result = await read([trainingStep, generationStep, reader('m', 'merge', 'gen')]);
     expect(result.steps[2]).toEqual(reader('m', 'merge', 'gen'));

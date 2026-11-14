@@ -1,5 +1,6 @@
 import type { Workflow } from '@civitai/orchestration-client';
 import { isTrainingStepTypeIgnoringCase } from '~/server/services/blocks/steps/orchestrator-denylist';
+import { WORKFLOW_ARGUMENTS_REF } from '~/server/services/blocks/workflow-graph';
 
 type TrainingStep = {
   $type?: string;
@@ -70,6 +71,21 @@ function refsIn(value: unknown, refs = new Set<string>(), depth = 0): Set<string
   return refs;
 }
 
+/** The loop variables (`for.as`) a `repeat` declares, at any depth. */
+function loopVarsIn(value: unknown, vars = new Set<string>(), depth = 0): Set<string> {
+  if (depth > 32 || !value || typeof value !== 'object') return vars;
+  if (Array.isArray(value)) {
+    for (const item of value) loopVarsIn(item, vars, depth + 1);
+    return vars;
+  }
+  const fields = value as Record<string, unknown>;
+  const forClause = fields.for as { as?: unknown } | undefined;
+  if (forClause && typeof forClause === 'object' && typeof forClause.as === 'string')
+    vars.add(forClause.as);
+  for (const child of Object.values(fields)) loopVarsIn(child, vars, depth + 1);
+  return vars;
+}
+
 /** Whether an input runs a training step itself, as a `repeat` template does, at any depth. */
 function runsTraining(value: unknown, depth = 0): boolean {
   if (depth > 32 || !value || typeof value !== 'object') return false;
@@ -92,7 +108,12 @@ export function withoutTrainingWeightHandles<W extends Workflow>(
 ): W {
   const steps = workflow?.steps as (TrainingStep & { name?: unknown })[] | undefined;
   if (isModerator || !steps?.length) return workflow;
-  const names = new Set(steps.map((step) => step.name).filter((name) => typeof name === 'string'));
+  // A `$ref` names an earlier step, the workflow's arguments, or a `repeat`'s loop variable.
+  const names = new Set<unknown>([
+    WORKFLOW_ARGUMENTS_REF,
+    ...steps.map((step) => step.name),
+    ...steps.flatMap((step) => [...loopVarsIn(step.input)]),
+  ]);
   const tainted = new Set<number>();
   steps.forEach((step, index) => {
     if (isTrainingStep(step) || runsTraining(step.input)) tainted.add(index);
