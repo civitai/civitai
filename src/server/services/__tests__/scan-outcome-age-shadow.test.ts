@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { blockedNSFW, blockedNSFWOverridable } from '@civitai/mod-utils/prompt-audit/lists';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ImageService from '~/server/services/image.service';
@@ -47,6 +48,9 @@ import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { AGE_PROMPT_SHADOW_EVENT } from '~/server/services/age-prompt-shadow.service';
 
 const AGE_PROMPT = 'portrait of a 14 year old, studio light';
+const overridable = new Set(blockedNSFWOverridable);
+const hardWord = blockedNSFW.find((w) => /^[a-z]+$/.test(w) && !overridable.has(w));
+if (!hardWord) throw new Error('no hard-blocked word to test with');
 
 const image = () =>
   ({
@@ -140,6 +144,21 @@ describe('post-scan prompt check — age check behind shadow-age-prompt', () => 
     expect(outcome.ingestion).toBe('Blocked');
     expect(moderatePrompt).not.toHaveBeenCalled();
     expect(shadowEvents()[0]).toMatchObject({ classifierStatus: 'skipped', blocked: true });
+  });
+
+  it('flag on, classifier clean: another regex hit in the same prompt still blocks it', async () => {
+    const outcome = await scan(`${AGE_PROMPT}, ${hardWord}`);
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(shadowEvents()[0]).toMatchObject({ blocked: true });
+  });
+
+  it('control: that word alone blocks', async () => {
+    expect((await scan(hardWord)).ingestion).toBe('Blocked');
+  });
+
+  it('buckets an age under 13 as <13', async () => {
+    await scan('portrait of a 12 year old, studio light');
+    expect(shadowEvents()[0]).toMatchObject({ ageBucket: '<13' });
   });
 
   it('the shadow event carries no prompt, user or image field', async () => {

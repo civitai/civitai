@@ -143,6 +143,20 @@ describe('audit-remix-sources — age check behind shadow-age-prompt', () => {
     expect(flagged()).toBe(true);
   });
 
+  it('flag on, classifier clean: a rule that needs the age text still flags it', async () => {
+    findUnique.mockResolvedValue({
+      id: 101,
+      meta: { prompt: 'a 14 year old harmed' },
+      metadata: null,
+      userId: 7,
+      needsReview: null,
+      ingestion: 'Scanned',
+    } as never);
+    await runJob();
+    expect(flagged()).toBe(true);
+    expect(shadowEvents()[0]).toMatchObject({ classifierStatus: 'fell-back-to-regex' });
+  });
+
   it('the shadow event carries no prompt, user or image field', async () => {
     await runJob();
     const [event] = shadowEvents();

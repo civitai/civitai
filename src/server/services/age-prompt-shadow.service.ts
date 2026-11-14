@@ -4,7 +4,6 @@ import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import type { ExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { auditPromptEnriched } from '~/utils/metadata/audit';
-import { normalizeText } from '~/utils/normalize-text';
 
 export const AGE_PROMPT_SHADOW_EVENT = 'age-prompt-shadow';
 
@@ -13,18 +12,33 @@ type ClassifierStatus = 'ok' | 'failed' | 'skipped' | 'fell-back-to-regex';
 
 const MAX_AGE_SPANS = 10;
 
+/** Where `span` occurs as a whole token run in `text`, as the audit's word boundaries see it. */
+function indexOfWhole(text: string, span: string) {
+  const isWordChar = (c: string | undefined) => !!c && /[a-zA-Z0-9]/.test(c);
+  for (let at = text.indexOf(span); at >= 0; at = text.indexOf(span, at + 1)) {
+    if (!isWordChar(text[at - 1]) && !isWordChar(text[at + span.length])) return at;
+  }
+  return -1;
+}
+
 /**
- * The prompt, normalized, with every age-check match cut out, so the rest of the regex audit can
- * still run on it. Undefined when a match cannot be located in the text.
+ * The prompt with every age-check match cut out, so the rest of the regex audit can still run on
+ * it. Undefined when an age match cannot be isolated: it cannot be located, or the audit reports
+ * another rule matching too, which may need the age text.
  */
 export function withoutMinorAge(prompt: string): string | undefined {
-  let text = normalizeText(prompt);
+  let text = prompt;
   for (let i = 0; i < MAX_AGE_SPANS; i++) {
     // The age check runs first in the audit, so any age match is the first trigger.
     const [first] = auditPromptEnriched(text, undefined, false).triggers;
     if (first?.category !== 'minor_age') return text;
-    const at = first.matchedText ? text.indexOf(first.matchedText) : -1;
-    if (!first.matchedText || at < 0) return undefined;
+    // The age rule is also reported under the minor rule, with the same regex.
+    const otherRule = first.matches?.some(
+      (m) => m.category !== 'minor_age' && m.matchedRegex !== first.matchedRegex
+    );
+    if (otherRule || !first.matchedText) return undefined;
+    const at = indexOfWhole(text, first.matchedText);
+    if (at < 0) return undefined;
     text = `${text.slice(0, at)} ${text.slice(at + first.matchedText.length)}`;
   }
   return undefined;
