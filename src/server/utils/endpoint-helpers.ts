@@ -21,6 +21,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
+import { apiSurfaceLabel, recordApiRequest } from '~/server/prom/api-requests.metrics';
 import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
@@ -291,6 +292,7 @@ function withApiMetrics(
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     instrumentApiResponse(req, res);
+    instrumentApiRequestCredential(req, res);
     // `await` without returning so this closure is Promise<void> — withAxiom's
     // AxiomApiHandler overload requires that, and withAxiom already discards a
     // handler's return value (same shape the 6 wrappers below rely on).
@@ -595,6 +597,61 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
   }
 
   return requestCarriesQueryToken(req);
+}
+
+/** Every value `apiCredentialLabel` can return. A metric label, so the set is fixed. */
+export const API_CREDENTIAL_LABELS = [
+  'anonymous',
+  'key_header',
+  'key_param',
+  'cookie',
+  'unverified',
+] as const;
+export type ApiCredentialLabel = (typeof API_CREDENTIAL_LABELS)[number];
+
+/**
+ * The credential this request was served under, as a bounded metric label.
+ *
+ * Reads only what `getServerAuthSession` already left on `req.context` plus the
+ * request headers — no session decode, no db/redis hop. Call it once auth has had
+ * its chance to run (at `finish`, or after the handler's own session lookup).
+ *
+ *  - `key_header` / `key_param`: a bearer credential resolved to a session.
+ *    `getServerAuthSession` records `tokenScope` on `req.context` only on that
+ *    path, and it reads the `Authorization` header in preference to `?token=`, so
+ *    the header's presence names the carrier the same way auth chose it.
+ *  - `cookie`: a session resolved without a bearer credential, i.e. from the hub
+ *    or the legacy session cookie. A banned cookie user still counts here even on
+ *    routes that then serve them as anonymous.
+ *  - `unverified`: a credential was presented (`requestCarriesCallerCredentials`)
+ *    but no session was resolved on this request. That is EITHER a route that
+ *    never authenticates (it serves the anonymous body whatever is presented) OR
+ *    an invalid / expired / revoked credential; the two are not separated.
+ *  - `anonymous`: no credential was presented.
+ */
+export function apiCredentialLabel(req: NextApiRequest): ApiCredentialLabel {
+  const context = (req as { context?: Record<string, unknown> }).context;
+  if (context?.session) {
+    if ('tokenScope' in context) return req.headers?.authorization ? 'key_header' : 'key_param';
+    return 'cookie';
+  }
+  return requestCarriesCallerCredentials(req) ? 'unverified' : 'anonymous';
+}
+
+/**
+ * Count the response in `civitai_app_api_requests_total` once it finishes, by the
+ * credential it was served under. A preflight is not traffic and is skipped. Like
+ * `instrumentApiResponse`, a partial `res` double without `.once` is a no-op.
+ */
+function instrumentApiRequestCredential(req: NextApiRequest, res: NextApiResponse): void {
+  if (!res || typeof res.once !== 'function' || req.method === 'OPTIONS') return;
+  res.once('finish', () => {
+    try {
+      recordApiRequest(apiSurfaceLabel(req.url), apiCredentialLabel(req));
+    } catch {
+      /* never throw from telemetry */
+    }
+  });
 }
 
 export function PublicEndpoint(

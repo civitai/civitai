@@ -9,7 +9,11 @@ import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
-import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import {
+  apiCredentialLabel,
+  handleEndpointError,
+  PublicEndpoint,
+} from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
@@ -156,7 +160,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   // this metric exists to measure. (Also the correct slot for the bulkhead merge:
   // the #2428 acquire goes immediately above this, so a 503-rejected request is
   // never timed.) Ended in finally; `?.` because early returns leave it unstarted.
-  let endTimer: (() => void) | undefined;
+  let endTimer: ReturnType<typeof requestDurationSeconds.startTimer> | undefined;
 
   let releaseSlot: (() => void) | undefined;
   try {
@@ -336,7 +340,10 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // original shape.
     return handleEndpointError(res, error);
   } finally {
-    endTimer?.();
+    // `credential` is read here, not at startTimer: it is only known once auth has run, and
+    // the session lookup above always precedes the timer, so every timed request has one.
+    // The inner `getImagesFromSearch` observations on this histogram carry no `credential`.
+    endTimer?.({ credential: apiCredentialLabel(req) });
     // Release the heavy slot as soon as the handler resolves (synchronous
     // serialization — the actual pin cost — is done by now), not on socket close.
     releaseSlot?.();
