@@ -111,6 +111,32 @@ export function heldChargeMatches(
  */
 export const READ_BACK_RETRY_DELAYS_MS = [200, 400, 800] as const;
 
+/**
+ * The ledger's transaction under `externalTransactionId`, read again after each of
+ * `READ_BACK_RETRY_DELAYS_MS` while it is not found (the ledger read can lag its write). Null when
+ * it is never found. A read that fails is "may have gone through" (`reason` says which read).
+ * Holds no database transaction.
+ */
+export async function findChargeWithRetry(
+  externalTransactionId: string,
+  context: { userId: number; amount?: number },
+  reason: string
+) {
+  for (const delayMs of [0, ...READ_BACK_RETRY_DELAYS_MS]) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    let found: Awaited<ReturnType<typeof getTransactionByExternalId>>;
+    try {
+      found = await getTransactionByExternalId(externalTransactionId);
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown({ externalTransactionId, ...context }, `${reason} failed`, {
+        lookupError,
+      });
+    }
+    if (found) return found;
+  }
+  return null;
+}
+
 type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   toAccountId: number;
   externalTransactionId: string;
@@ -197,15 +223,43 @@ export async function chargeByExternalId(
   }
   const wasHeld = transactionId !== undefined;
 
+  // A send declined for funds under a reused id may be a retry whose earlier charge spent the
+  // balance and committed after the lookup above missed it (the balance is checked before the id).
+  // So the id is read again (with the read-back's retries) before the decline is final; found, it
+  // is continued from as a held charge.
+  let heldAfterDecline = false;
+  const continueIfHeld = async () => {
+    if (!reusable) return undefined;
+    const held = await findChargeWithRetry(
+      input.externalTransactionId,
+      context,
+      'lookup after a decline'
+    );
+    if (!held) return undefined;
+    if (!heldChargeMatches(held, input, { matchAmount }))
+      throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
+    heldAfterDecline = true;
+    return resend('held after a declined send');
+  };
+
   if (!transactionId) {
     let sent: { transactionId: string | null };
     try {
       sent = await createBuzzTransaction(input);
     } catch (error) {
-      if (chargeWasDeclined(error)) throw error;
-      sent = { transactionId: await resend('unknown outcome', error) };
+      if (!chargeWasDeclined(error))
+        sent = { transactionId: await resend('unknown outcome', error) };
+      else {
+        const continued = await continueIfHeld();
+        if (!continued) throw error;
+        sent = { transactionId: continued };
+      }
     }
-    if (!sent.transactionId) throw throwBadRequestError(declinedMessage);
+    if (!sent.transactionId) {
+      const continued = await continueIfHeld();
+      if (!continued) throw throwBadRequestError(declinedMessage);
+      sent = { transactionId: continued };
+    }
     transactionId = sent.transactionId;
   }
   if (!reusable) return { transactionId };
@@ -214,17 +268,12 @@ export async function chargeByExternalId(
   // request under the key got there first, so what was charged is read back and compared.
   // The ledger read can lag its write, so a charge just made may read back as not found for a
   // moment: not found is read again after each delay before it is called unknown. An error is not.
-  if (!wasHeld) {
-    let charged: Held = null;
-    for (const delayMs of [0, ...READ_BACK_RETRY_DELAYS_MS]) {
-      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      try {
-        charged = await getTransactionByExternalId(input.externalTransactionId);
-      } catch (lookupError) {
-        throw paymentOutcomeUnknown(context, 'lookup after charging failed', { lookupError });
-      }
-      if (charged) break;
-    }
+  if (!wasHeld && !heldAfterDecline) {
+    const charged = await findChargeWithRetry(
+      input.externalTransactionId,
+      context,
+      'lookup after charging'
+    );
     if (!charged) throw paymentOutcomeUnknown(context, 'charge not found after charging');
     if (!heldChargeMatches(charged, input, { matchAmount }))
       throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);

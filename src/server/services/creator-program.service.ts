@@ -1228,22 +1228,21 @@ async function burnAndRecordKeyedWithdrawal({
     recordStepError,
     refundUnlessRecorded,
     withChargeKeyLock,
+    findChargeWithRetry,
   } = await loadKeyedCharge();
 
   // A new burn is never for more than the cash ready to withdraw (the ledger's balance check is the
-  // other guard). Not checked for a burn this key already holds: the ready figure may already
-  // exclude it, and refusing would strand that burn.
-  let held: unknown;
-  try {
-    held = await getTransactionByExternalId(externalTransactionId);
-  } catch (lookupError) {
-    throw paymentOutcomeUnknown(
-      { externalTransactionId, userId, amount },
-      'withdrawal lookup before checks failed',
-      { lookupError }
-    );
-  }
-  if (!held && amount > ready)
+  // other guard). Not for a burn this key already holds: the ready figure may already exclude it,
+  // and refusing would strand that burn. So before refusing, the key's burn is looked up, with
+  // retries since the ledger read can lag its write.
+  if (
+    amount > ready &&
+    !(await findChargeWithRetry(
+      externalTransactionId,
+      { userId, amount },
+      'withdrawal lookup before the ready check'
+    ))
+  )
     throw throwBadRequestError('This amount is more than your cash ready to withdraw.');
 
   const { transactionId } = await chargeByExternalId(
