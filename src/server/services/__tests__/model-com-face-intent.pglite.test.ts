@@ -4,7 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
-import type { ComFaceIntentRecord } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 
 /** The listing intent lock's own SQL against PGlite: which rows it may lock. Ids are invented. */
 
@@ -27,7 +27,7 @@ vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
 }));
 
 const {
-  comFaceIntentAfterModeratorUnlock,
+  comFaceIntentMetaAfterModeratorUnlock,
   comFaceIntentTextHash,
   lockForComFaceIntent,
   overturnComFaceIntentSql,
@@ -277,23 +277,29 @@ describe('the face check after a moderator lifted the intent lock', () => {
   });
 });
 
-// A moderator's unlock from the model form, on a lock the intent check never recorded a verdict for
-// (another filter's lock) or on one it did: a later fresh detection of that same text must not lock it.
+// What a moderator's unlock from the model form leaves, against the real lock SQL and face check.
 describe('the face check after a moderator unlocked from the model form', () => {
   const OWNER = 1;
   const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
   const storedHash = comFaceIntentTextHash(stored);
-  const faceCheck = () => assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER });
+  const detection = { detected: true, textHash: storedHash, at: '2026-01-01T00:00:00Z' };
+  const faceCheck = (listing = stored) =>
+    assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
 
-  async function unlockedByModerator(prior?: ComFaceIntentRecord) {
-    const comFaceIntent = comFaceIntentAfterModeratorUnlock(
-      prior,
-      storedHash,
-      new Date().toISOString()
-    );
+  // The row as the save leaves it: lock gone, the system marker dropped, and the unlock's meta merged.
+  async function unlockedByModerator(lockSource: string | null) {
+    const before = {
+      ...(lockSource && { systemNsfwLock: { source: lockSource, at: 'x' } }),
+      comFaceIntent: detection,
+    } as ModelMeta;
+    const { systemNsfwLock: _marker, ...kept } = before;
+    const meta = {
+      ...kept,
+      ...comFaceIntentMetaAfterModeratorUnlock(before, storedHash, new Date().toISOString()),
+    };
     await db.query(
       `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, '{}', true, $2, $3)`,
-      [MODEL, { comFaceIntent }, stored.description]
+      [MODEL, meta, stored.description]
     );
   }
 
@@ -306,18 +312,35 @@ describe('the face check after a moderator unlocked from the model form', () => 
   });
 
   it.each([
-    ['no stored verdict', undefined],
-    ['a stored detection', { detected: true, textHash: storedHash, at: '2026-01-01T00:00:00Z' }],
-  ])('does not re-lock the listing when there was %s', async (_, prior) => {
-    await unlockedByModerator(prior);
+    ['a text-scan lock', 'text-scan'],
+    ['a lock with no system marker', null],
+  ])('after lifting %s, still refuses the face and does not lock again', async (_, source) => {
+    await unlockedByModerator(source);
+
+    await expect(faceCheck()).rejects.toThrow();
+    expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(false);
+
+    expect((await row()).lockedProperties).toEqual([]);
+    expect(activities).toHaveLength(0);
+  });
+
+  it('locks again once the owner saves new text the check detects', async () => {
+    await unlockedByModerator('text-scan');
+    const saved = { ...stored, description: 'new saved listing' };
+    await db.query(`UPDATE "Model" SET description = $2 WHERE id = $1`, [MODEL, saved.description]);
+
+    await expect(faceCheck(saved)).rejects.toThrow();
+
+    expect((await row()).lockedProperties).toEqual(['nsfw']);
+  });
+
+  it("clears the face and blocks a re-lock after lifting the intent check's own lock", async () => {
+    await unlockedByModerator('com-face-intent');
 
     await faceCheck();
     await recordComFaceIntent(MODEL, { detected: true, textHash: storedHash });
 
     expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(false);
-    const after = await row();
-    expect(after.lockedProperties).toEqual([]);
-    expect(after.meta.comFaceIntent.overturnedAt).toBeTruthy();
-    expect(activities).toHaveLength(0);
+    expect((await row()).meta.comFaceIntent.overturnedAt).toBeTruthy();
   });
 });

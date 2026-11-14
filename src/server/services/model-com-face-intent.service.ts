@@ -47,19 +47,23 @@ export function reusableComFaceIntent(
 }
 
 /**
- * The verdict after a moderator lifts the nsfw lock: that ruling covers the listing text as it
- * stands, so the check never locks that text again. With no stored verdict for this text there was
- * no detection to overturn, so it is stored as allowed. The review ruling's twin is
- * `overturnComFaceIntentSql`; a change to what "overturned" means goes in both.
+ * What a moderator's lift of the nsfw lock writes, for the listing the save leaves (`textHash`).
+ * Lifting the intent check's own lock rules on the intent: its detection of this text is overturned,
+ * as `overturnComFaceIntentSql` does for a review ruling (a change to "overturned" goes in both).
+ * Lifting any other lock rules on the rating only: no verdict is written, so the face stays gated on
+ * the check, and only re-locking this text is suppressed. Text no check has read is never allowed.
  */
-export function comFaceIntentAfterModeratorUnlock(
-  record: ComFaceIntentRecord | undefined,
+export function comFaceIntentMetaAfterModeratorUnlock(
+  meta: ModelMeta | null | undefined,
   textHash: string,
   at: string
-): ComFaceIntentRecord {
-  if (record?.textHash !== textHash) return { detected: false, textHash, at, overturnedAt: at };
+): Pick<ModelMeta, 'comFaceIntent' | 'comFaceIntentRelockSuppressed'> {
+  if (meta?.systemNsfwLock?.source !== COM_FACE_INTENT_LOCK_SOURCE)
+    return { comFaceIntentRelockSuppressed: { textHash, at } };
+  const record = meta.comFaceIntent;
+  if (record?.textHash !== textHash) return {};
   const { priorSystemNsfwLock: _prior, laterVerdict: _later, ...rest } = record;
-  return { ...rest, overturnedAt: record.overturnedAt ?? at };
+  return { comFaceIntent: { ...rest, overturnedAt: record.overturnedAt ?? at } };
 }
 
 export async function readComFaceIntentModel(modelId: number) {
@@ -140,6 +144,7 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
         AND m.meta->'comFaceIntent'->>'textHash' = ${textHash}
         AND m.meta->'comFaceIntent'->>'detected' = 'true'
         AND NOT (m.meta->'comFaceIntent' ? 'overturnedAt')
+        AND NOT COALESCE(m.meta->'comFaceIntentRelockSuppressed'->>'textHash' = ${textHash}, FALSE)
     `;
     if (updated)
       await tx.modActivity.create({

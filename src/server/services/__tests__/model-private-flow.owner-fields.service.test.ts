@@ -483,14 +483,30 @@ describe('privateModelFromTraining — a moderator lifting the nsfw lock', () =>
   });
   const detection = { detected: true, textHash: listingHash, at: '2026-11-01T00:00:00.000Z' };
 
-  it('overturns the stored detection of the listing', async () => {
-    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+  it("overturns the stored detection when the lock lifted is the intent check's own", async () => {
+    mockStored({
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: { source: 'com-face-intent', at: 'x' }, comFaceIntent: detection },
+    });
 
     await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: [] });
 
     expect(writtenMeta().comFaceIntent).toEqual({
       ...detection,
       overturnedAt: expect.any(String),
+    });
+  });
+
+  it('keeps the detection and suppresses only the re-lock when lifting another lock', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: moderator, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+    expect(writtenMeta().comFaceIntentRelockSuppressed).toEqual({
+      textHash: listingHash,
+      at: expect.any(String),
     });
   });
 
