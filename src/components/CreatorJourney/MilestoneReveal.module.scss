@@ -1,0 +1,67 @@
+.pill {
+  animation: slide-in 0.4s ease-out both;
+}
+
+.rays {
+  position: absolute;
+  left: 50%;
+  top: 120px;
+  width: 440px;
+  height: 440px;
+  margin: -220px 0 0 -220px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--cj-accent) 22%, transparent) 0 10deg,
+    transparent 10deg 20deg
+  );
+  animation: spin 14s linear infinite;
+}
+
+.badge {
+  animation: pop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.glow {
+  animation: pop 0.9s cubic-bezier(0.2, 1.6, 0.4, 1) both,
+    glow 2s ease-in-out 0.9s infinite alternate;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.2) rotate(-25deg);
+  }
+}
+
+@keyframes glow {
+  from {
+    filter: drop-shadow(0 0 10px var(--cj-accent));
+  }
+  to {
+    filter: drop-shadow(0 0 30px var(--cj-accent));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pill,
+  .rays,
+  .badge,
+  .glow {
+    animation: none;
+  }
+}
