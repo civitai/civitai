@@ -1,6 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
-import { suspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
+import { reviewSuspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import {
   imageAuditContentHash,
   imageRoutesHeld,
@@ -94,7 +94,7 @@ export async function getBatchMedia(
       'i.type',
       'i.mimeType',
       'i.blockedFor',
-      sql<boolean>`${sql.raw(suspectImageSql('i'))}`.as('suspect'),
+      sql<boolean>`${sql.raw(reviewSuspectImageSql('i'))}`.as('suspect'),
       sql<boolean>`${sql.raw(unreadableImageSql('i'))}`.as('unreadable'),
     ])
     .where('i.id', '=', imageId)

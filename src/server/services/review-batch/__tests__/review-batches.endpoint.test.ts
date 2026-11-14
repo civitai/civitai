@@ -62,7 +62,8 @@ beforeEach(() => {
 });
 
 describe('POST /api/mod/review-batches', () => {
-  it('audits the call without the card text or the suspect flag, in the payload or affected', async () => {
+  // An older hub still sends `sourceText`: the mint must accept the call and never see the field.
+  it('ignores card text from an older hub, and audits without it or the suspect flag', async () => {
     const sent = await call({
       ids: [1, 2],
       viewer: 8,
@@ -71,10 +72,7 @@ describe('POST /api/mod/review-batches', () => {
       sourceText: [SECRET],
     });
     expect(sent.status).toBe(200);
-    expect(mockMint).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceText: [SECRET] }),
-      expect.anything()
-    );
+    expect(mockMint.mock.calls[0][0]).not.toHaveProperty('sourceText');
     expect(mockAudit).toHaveBeenCalledTimes(1);
     const row = mockAudit.mock.calls[0][0];
     expect(row.payload).toEqual({ ids: [1, 2], viewer: 8, source: 'card-1' });
@@ -92,7 +90,7 @@ describe('POST /api/mod/review-batches', () => {
       tokenScope: TokenScope.Full,
     });
     const sent = await call(
-      { ids: [1], viewer: 8, suspect: false, source: 'card-1', sourceText: [] },
+      { ids: [1], viewer: 8, suspect: false, source: 'card-1' },
       { authorization: 'Bearer key-4242' }
     );
     expect(sent.status).toBe(200);
