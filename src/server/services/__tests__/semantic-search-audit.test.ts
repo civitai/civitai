@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import type { CaptureConfig } from '~/server/clickhouse/sampled-row-buffer';
+import type { QueryRefusal } from '~/server/services/semantic-query-guard';
 import {
   buildSemanticAuditRow,
   createSemanticSearchAudit,
@@ -38,15 +39,21 @@ describe('buildSemanticAuditRow', () => {
     expect(row(entry()).resultIds).toEqual(SERVED.slice(0, 20));
   });
 
-  it.each(['minor', 'poi-minor', 'error'] as const)(
-    'stores no ids for a %s verdict, even when results were served',
-    (wordVerdict) => {
-      const r = row(entry({ wordVerdict }));
-      expect(r.resultIds).toEqual([]);
-      expect(r.wordVerdict).toBe(wordVerdict);
-      expect(r.query).toBe('fox');
-    }
-  );
+  it.each([
+    'minor',
+    'minor-safe',
+    'poi-minor',
+    'poi',
+    'blocked',
+    'error',
+    // A verdict added after this list was written must withhold too.
+    'not-yet-a-verdict' as QueryRefusal,
+  ] as const)('stores no ids for a %s verdict, even when results were served', (wordVerdict) => {
+    const r = row(entry({ wordVerdict }));
+    expect(r.resultIds).toEqual([]);
+    expect(r.wordVerdict).toBe(wordVerdict);
+    expect(r.query).toBe('fox');
+  });
 
   it('stores no ids when an earlier verdict of the same search withheld them', () => {
     expect(row(entry({ wordVerdict: 'blocked', withholdIds: true })).resultIds).toEqual([]);

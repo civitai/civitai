@@ -16,7 +16,7 @@ import {
 } from '~/server/flipt/client';
 import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import {
-  IDS_WITHHELD_VERDICTS,
+  verdictKeepsServedIds,
   recordSemanticAudit,
   type SemanticAuditEntry,
 } from '~/server/services/semantic-search-audit.service';
@@ -202,7 +202,7 @@ export function beginSemanticAudit({
     verdict(refusal: QueryRefusal) {
       if (!refusal) return;
       wordVerdict ||= refusal;
-      if (IDS_WITHHELD_VERDICTS.has(refusal)) withholdIds = true;
+      if (!verdictKeepsServedIds(refusal)) withholdIds = true;
     },
     candidates(result: { guard?: GuardRead; cacheHit?: boolean } | undefined) {
       candidates ??= result;

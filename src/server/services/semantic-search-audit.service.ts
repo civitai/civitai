@@ -19,12 +19,11 @@ export const SEMANTIC_SEARCH_AUDIT_TABLE = 'semanticSearchAudit';
 const CONFIG_TTL_MS = 15_000;
 const MAX_RESULT_IDS = 20;
 const MAX_QUERY_LENGTH = 1_000;
-// Rows for these keep the query, rule and level, never what was served.
-export const IDS_WITHHELD_VERDICTS: ReadonlySet<QueryRefusal> = new Set<QueryRefusal>([
-  'minor',
-  'poi-minor',
-  'error',
-]);
+// Only a query the audit passed keeps what was served. Every verdict withholds the ids, including
+// any added later; its row keeps the query, rule and level.
+export function verdictKeepsServedIds(verdict: QueryRefusal) {
+  return verdict === false;
+}
 
 const batchCounter = registerCounterWithLabels({
   name: 'semantic_search_audit_batches_total',
@@ -84,7 +83,7 @@ export function buildSemanticAuditRow(
     ? guard.rules.some((r) => withheldRules.has(r))
     : guard.rules.length > 0;
   const withhold =
-    entry.withholdIds || IDS_WITHHELD_VERDICTS.has(entry.wordVerdict) || withheldByGuard;
+    entry.withholdIds || !verdictKeepsServedIds(entry.wordVerdict) || withheldByGuard;
   const userId = entry.viewer?.id;
   return {
     time: formatClickhouseDateTime64(at),
