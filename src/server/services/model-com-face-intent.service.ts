@@ -49,7 +49,8 @@ export function reusableComFaceIntent(
 /**
  * The verdict after a moderator lifts the nsfw lock: that ruling covers the listing text as it
  * stands, so the check never locks that text again. With no stored verdict for this text there was
- * no detection to overturn, so it is stored as allowed.
+ * no detection to overturn, so it is stored as allowed. The review ruling's twin is
+ * `overturnComFaceIntentSql`; a change to what "overturned" means goes in both.
  */
 export function comFaceIntentAfterModeratorUnlock(
   record: ComFaceIntentRecord | undefined,

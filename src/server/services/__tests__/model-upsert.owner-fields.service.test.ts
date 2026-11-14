@@ -485,6 +485,7 @@ describe('a moderator lifting the nsfw lock', () => {
     textHash: listingHash,
     at: '2026-11-01T00:00:00.000Z',
     priorSystemNsfwLock: { source: 'text-scan', at: '2026-10-01T00:00:00.000Z' },
+    laterVerdict: { source: 'xguard-text-moderation', at: '2026-11-02T00:00:00.000Z' },
   };
 
   beforeEach(() => {
@@ -503,6 +504,7 @@ describe('a moderator lifting the nsfw lock', () => {
     expect(meta.comFaceIntent).toMatchObject({ detected: true, textHash: listingHash });
     expect(meta.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
     expect(meta.comFaceIntent).not.toHaveProperty('priorSystemNsfwLock');
+    expect(meta.comFaceIntent).not.toHaveProperty('laterVerdict');
     expect(reusableComFaceIntent(meta, listingHash)).toEqual({ detected: false, reason: 'r' });
   });
 

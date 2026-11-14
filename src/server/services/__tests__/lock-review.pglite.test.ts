@@ -736,6 +736,38 @@ describe('a moderator ruling on a listing intent dispute', () => {
     }
   );
 
+  // The job logs its own sample where it judges; a second one here would count its approval twice.
+  it("logs nothing for the dispute job's own approval", async () => {
+    const lockedAt = '2026-02-01T00:00:00.000Z';
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: lockedAt },
+        comFaceIntent: { detected: true, textHash: 'h', at: 'x', promptId: 77 },
+      },
+    });
+    await db.query(`UPDATE "Appeal" SET context = $1 WHERE id = 1`, [
+      { kind: 'lock-review', locks: ['nsfw'], dispute: 'comFaceIntent' },
+    ]);
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({
+      name: 'n',
+      description: '',
+      userId: OWNER,
+    } as never);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([] as never);
+
+    const { unlocked } = await resolveLockReviewAppeal({
+      appealId: 1,
+      modelId: MODEL,
+      approve: true,
+      userId: MODERATOR,
+      asDisputeJob: { intentLockAt: lockedAt },
+    });
+
+    expect(unlocked).toEqual(['nsfw']);
+    expect(samples()).toEqual([]);
+  });
+
   it('logs nothing for an ordinary review (control)', async () => {
     await seedDispute({ kind: 'lock-review', locks: ['nsfw'] });
 
