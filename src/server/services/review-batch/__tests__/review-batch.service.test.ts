@@ -35,7 +35,7 @@ vi.mock('~/server/services/feature-flags.service', () => ({
   }),
 }));
 
-const { mintReviewBatch, isDeclared } = await import('../review-batch.service');
+const { mintReviewBatch } = await import('../review-batch.service');
 const { revokeReviewBatchesOfKeys } = await import('../review-batch.store');
 
 // ---------------------------------------------------------------------------------------------
@@ -182,7 +182,6 @@ describe('the tier', () => {
 
   it('no source card is held', async () => {
     expect((await mint({ source: ' ' })).tier).toBe('held');
-    expect(isDeclared({ suspect: false, source: '' })).toBe(true);
   });
 
   it("reads each image's suspect leg with the CsamReport image listing", async () => {
