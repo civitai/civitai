@@ -40,6 +40,8 @@ function holderTeam(reads: ScanReads, event: string, userId: number) {
   if (!team) {
     team = readEventHolderTeam(event, userId);
     reads.teams.set(key, team);
+    // A failed read is tried again for the holder's next box, not kept for the run.
+    team.catch(() => reads.teams.delete(key));
   }
   return team;
 }

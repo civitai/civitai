@@ -29,6 +29,8 @@ const holder = vi.hoisted(() => ({
   locks: 0,
   /** Each pool read the job made: on the replica or not, with the team and catalog it passed. */
   poolReads: [] as { onReplica: boolean; team: string | undefined; catalog: unknown }[],
+  /** SQL committed after the job's locked pool read, before the next holder lock: an open. */
+  afterLockedRead: null as string | null,
 }));
 
 // Read only: a test fails if the job places a holder in a team.
@@ -66,6 +68,10 @@ vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
     const key = `${p.boxDefinitionId}:${p.userId}`;
     const onReplica = client === (await import('~/server/db/client')).dbRead;
     holder.poolReads.push({ onReplica, team: p.team, catalog: p.catalog });
+    if (!onReplica && holder.afterLockedRead) {
+      holder.before = { marker: 'pg_advisory_xact_lock', sql: holder.afterLockedRead };
+      holder.afterLockedRead = null;
+    }
     if (onReplica && holder.replicaDown) throw new Error('replica down');
     const size = (onReplica ? holder.replicaPool.get(key) : undefined) ?? holder.pool.get(key) ?? 0;
     return Array.from({ length: size }, () => ({}));
@@ -266,6 +272,7 @@ beforeEach(async () => {
   holder.before = null;
   holder.locks = 0;
   holder.poolReads = [];
+  holder.afterLockedRead = null;
   teams.readEventHolderTeam.mockReset();
   teams.getEventBuyerTeam.mockClear();
   for (const fn of [
@@ -467,6 +474,44 @@ describe('refundBoxPurchase', () => {
     expect((await purchaseOf('p1')).refunded).toBe(false);
   });
 
+  it('checks the shares again when a pack is partly refunded after its pre-check', async () => {
+    await buy('p1', { meta: { pack: { size: 2, guaranteedTierIds: [1] } } });
+    await hold('p1#pack-01');
+    await hold('p1#pack-02');
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'a',
+        externalTransactionId: 'p1-yellow',
+        accountId: BUYER,
+        amount: 500,
+        accountType: 'yellow',
+      },
+      {
+        transactionId: 'b',
+        externalTransactionId: 'p1-green',
+        accountId: BUYER,
+        amount: 500,
+        accountType: 'green',
+      },
+    ]);
+    // The over-pool job stamps a box share after this refund's unlocked read.
+    holder.before = {
+      marker: 'SELECT meta FROM "UserCosmeticShopPurchases"',
+      sql: `UPDATE "UserCosmeticShopPurchases" SET meta = meta || '{"packOverPoolRefunds":{"9":{"at":"x"}}}' WHERE "buzzTransactionId" = 'p1'`,
+    };
+
+    const outcome = await refundBoxPurchase({
+      buzzTransactionId: 'p1',
+      userId: BUYER,
+      reason: 'moderator',
+      actorId: MOD,
+    });
+
+    expect(outcome).toMatchObject({ status: 'failed', error: expect.stringContaining('by hand') });
+    expect(await heldCount()).toBe(2);
+    expect((await purchaseOf('p1')).refunded).toBe(false);
+  });
+
   it('takes nothing back from a partly refunded pack whose shares it could not pay', async () => {
     await buy('p1', {
       meta: { pack: { size: 2, guaranteedTierIds: [1] }, packOverPoolRefunds: { 9: { at: 'x' } } },
@@ -563,11 +608,8 @@ describe('refundOverPoolBoxes', () => {
   it('refunds nothing for a box opened after the job chose it', async () => {
     await buy('p1');
     await hold('p1');
-    // The holder opens it between the job's choice and its claim.
-    holder.before = {
-      marker: 'SELECT id FROM "Item"',
-      sql: `DELETE FROM "Item" WHERE "sourceKey" = 'p1'`,
-    };
+    // The holder opens it after the job chose it, before the refund takes the holder lock.
+    holder.afterLockedRead = `DELETE FROM "Item" WHERE "sourceKey" = 'p1'`;
     const opened = await open('p1');
 
     const result = await refundOverPoolBoxes();

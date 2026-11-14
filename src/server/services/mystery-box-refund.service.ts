@@ -70,8 +70,15 @@ async function claim(
   reason: BoxRefundReason,
   actorId: number,
   heldBoxId?: bigint
-): Promise<{ meta: Prisma.JsonValue } | 'taken' | 'gone'> {
+): Promise<{ meta: Prisma.JsonValue } | 'taken' | 'gone' | 'changed'> {
   await lockItemHolder(tx, purchase.userId);
+  // The pre-check chose its ledger check from the unlocked read; an over-pool box share stamped
+  // since (under this lock) makes it a partly refunded pack, refunded share by share instead.
+  const [current] = await tx.$queryRaw<{ meta: Prisma.JsonValue }[]>`
+    SELECT meta FROM "UserCosmeticShopPurchases"
+    WHERE "buzzTransactionId" = ${purchase.buzzTransactionId}`;
+  if (current && partlyRefundedPack(current.meta) !== partlyRefundedPack(purchase.meta))
+    return 'changed';
   // Opens take the holder lock too, so a box still held here is still unopened when it's deleted.
   if (heldBoxId !== undefined) {
     const [held] = await tx.$queryRaw<{ id: bigint }[]>`
@@ -246,6 +253,10 @@ export async function refundBoxPurchase({
       );
       if (claimed === 'taken') return { status: 'skipped', reason: 'already refunded' };
       if (claimed === 'gone') return { status: 'skipped', reason: 'box no longer held' };
+      // Nothing was taken. Once partly refunded a pack stays so, so the second run checks its
+      // shares and can't come back here.
+      if (claimed === 'changed')
+        return refundBoxPurchase({ buzzTransactionId, userId, reason, actorId, heldBoxId });
       purchase.meta = claimed.meta;
     }
     const outcome = await finish(purchase, reason);
