@@ -27,6 +27,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: h.stripBenignPhrases,
 }));
+vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,

@@ -1,0 +1,91 @@
+import { readFile } from 'node:fs/promises';
+import { BlocklistType } from '~/server/common/enums';
+import { countQueryRuleRead } from '~/server/metrics/semantic-search.metrics';
+import {
+  readBlocklistWithSource,
+  type BlocklistReadSource,
+} from '~/server/services/blocklist.service';
+import { checkable, poiCheckOptions } from '~/utils/metadata/audit';
+
+export const QUERY_RULE_TYPES = [
+  BlocklistType.SemanticSearchPoiRefuse,
+  BlocklistType.SemanticSearchMinorSafe,
+] as const;
+export type QueryRuleType = (typeof QUERY_RULE_TYPES)[number];
+export type QueryRuleSource = BlocklistReadSource | 'fallback';
+
+export interface QueryRuleReader {
+  read(type: QueryRuleType): Promise<{ terms: string[]; source: QueryRuleSource }>;
+}
+
+/** Mounted read-only from a sealed Secret; read only while the blocklist cannot be. */
+export const FALLBACK_RULES_PATH = '/etc/search-rules/fallback-rules.txt';
+
+/**
+ * One rule per line, `<type> <term>`: the type, then whitespace, then the term to its end of line.
+ * Blank lines and `#` lines are skipped. An unknown type or an empty term throws, so a typo fails
+ * the read closed rather than dropping a rule.
+ */
+export function parseFallbackRules(text: string): Map<QueryRuleType, string[]> {
+  const rules = new Map<QueryRuleType, string[]>(QUERY_RULE_TYPES.map((t) => [t, []]));
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) return;
+    const match = /^(\S+)\s+(.+)$/.exec(line);
+    const terms = match && rules.get(match[1] as QueryRuleType);
+    if (!match || !terms) throw new Error(`fallback rules: line ${i + 1} is malformed`);
+    terms.push(match[2].trim());
+  });
+  return rules;
+}
+
+/**
+ * The blocklist (Redis, then its last-known copy, then the row), and the fallback file only when
+ * that throws. The file is read on every fallback, never held, so a re-sealed Secret applies at the
+ * next read. If both fail, the error propagates: the caller refuses.
+ */
+export function createQueryRuleReader({
+  fallbackPath = FALLBACK_RULES_PATH,
+}: { fallbackPath?: string } = {}): QueryRuleReader {
+  return {
+    async read(type) {
+      try {
+        const { dto, source } = await readBlocklistWithSource(type);
+        return { terms: dto.data, source };
+      } catch {
+        const rules = parseFallbackRules(await readFile(fallbackPath, 'utf8'));
+        return { terms: rules.get(type) ?? [], source: 'fallback' };
+      }
+    },
+  };
+}
+
+// Matching mirrors the audit list each type adds to: POI names as `poi`, minor terms as `young`.
+const MATCH_OPTIONS: Record<QueryRuleType, Parameters<typeof checkable>[1]> = {
+  [BlocklistType.SemanticSearchPoiRefuse]: poiCheckOptions,
+  [BlocklistType.SemanticSearchMinorSafe]: { pluralize: true },
+};
+
+const matchers = new Map<QueryRuleType, { key: string; check: ReturnType<typeof checkable> }>();
+function matcherFor(type: QueryRuleType, terms: string[]) {
+  const key = terms.join('\n');
+  const known = matchers.get(type);
+  if (known?.key === key) return known.check;
+  const check = checkable(terms, MATCH_OPTIONS[type]);
+  matchers.set(type, { key, check });
+  return check;
+}
+
+let defaultReader: QueryRuleReader = createQueryRuleReader();
+/** Tests only. */
+export function setQueryRuleReaderForTests(reader?: QueryRuleReader) {
+  defaultReader = reader ?? createQueryRuleReader();
+}
+
+/** Whether `query` matches a rule of `type`. Throws when no copy of the rules can be read. */
+export async function matchesQueryRule(query: string, type: QueryRuleType): Promise<boolean> {
+  const { terms, source } = await defaultReader.read(type);
+  countQueryRuleRead(type, source);
+  if (!terms.length) return false;
+  return matcherFor(type, terms).inPrompt(query) !== false;
+}

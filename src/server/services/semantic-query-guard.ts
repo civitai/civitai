@@ -1,7 +1,9 @@
 import { BlocklistType } from '~/server/common/enums';
 import type { Tracker } from '~/server/clickhouse/tracker';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { matchesQueryRule } from '~/server/services/search-query-rules';
 import {
+  allBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -96,6 +98,11 @@ export async function semanticQueryRefusal(
     // Mirrors the search boxes, which a request can skip: raw text, since the benign phrases do not
     // carve out this list, and moderators exempt.
     if (!isModerator && getBlockedNsfwWords(query).length) return 'blocked';
+    // Moderator-edited additions to the audit lists. Mods are exempt from the POI additions; a
+    // minor addition narrows a non-mod and refuses a mod, as `queryVerdictLevel` does for 'minor'.
+    if (!isModerator && (await matchesQueryRule(audited, BlocklistType.SemanticSearchPoiRefuse)))
+      return 'poi';
+    if (await matchesQueryRule(audited, BlocklistType.SemanticSearchMinorSafe)) return 'minor';
     return false;
   } catch {
     return 'error';
@@ -115,6 +122,27 @@ export function queryVerdictLevel(
   if (refusal === 'minor' && !isModerator)
     return Flags.intersection(level, sfwBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
   return 'refuse';
+}
+
+export type DryRunOutcome = { verdict: QueryRefusal; result: 'allow' | 'narrow' | 'refuse' };
+
+/**
+ * What the query audit would do to `query` for a non-moderator and for a moderator, at every
+ * browsing level. The verdict only: never which list or term matched.
+ */
+export async function dryRunSemanticQuery(query: string) {
+  const outcome = async (isModerator: boolean): Promise<DryRunOutcome> => {
+    const verdict = await semanticQueryRefusal(query, {
+      browsingLevel: allBrowsingLevelsFlag,
+      disablePoi: false,
+      isModerator,
+    });
+    const level = queryVerdictLevel(verdict, allBrowsingLevelsFlag, isModerator);
+    const result =
+      level === 'refuse' ? 'refuse' : level === allBrowsingLevelsFlag ? 'allow' : 'narrow';
+    return { verdict, result };
+  };
+  return { nonModerator: await outcome(false), moderator: await outcome(true) };
 }
 
 export type QueryStage = 'query' | 'correction';

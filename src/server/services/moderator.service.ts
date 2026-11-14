@@ -195,6 +195,11 @@ type SiteAlertModActivity = {
   activity: 'post' | 'edit' | 'extend' | 'end';
 };
 
+type SearchQueryRuleModActivity = {
+  entityType: 'searchQueryRule';
+  activity: 'dryRun';
+};
+
 type CsamReportModActivity = {
   entityType: 'csamReport';
   activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
@@ -220,6 +225,7 @@ type ModActivity = {
   | SiteAlertModActivity
   | HeldMediaGridModActivity
   | StorylineModActivity
+  | SearchQueryRuleModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

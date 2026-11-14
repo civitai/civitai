@@ -43,6 +43,21 @@ export function countQueryVerdict(index: string, verdict: string, stage: string,
   ensureRegisterQueryVerdictCounter(reg).inc({ index, verdict, stage });
 }
 
+const RULE_READS = 'semantic_search_query_rule_reads_total';
+
+/** Labels carry the rule type and where it was read from, never a term. */
+export function countQueryRuleRead(type: string, source: string, reg: Registry = client.register) {
+  const counter =
+    (reg.getSingleMetric(RULE_READS) as Counter<string> | undefined) ??
+    new client.Counter({
+      name: RULE_READS,
+      help: 'Semantic search query rule reads by rule type and source (db, cache or fallback)',
+      labelNames: ['type', 'source'],
+      registers: [reg],
+    });
+  counter.inc({ type, source });
+}
+
 const CACHE_NAME = 'semantic_search_candidate_cache_total';
 const STAGE_NAME = 'semantic_search_stage_seconds';
 
