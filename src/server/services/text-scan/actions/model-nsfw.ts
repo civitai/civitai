@@ -19,6 +19,7 @@ import type { RatingFloorResult } from '~/server/services/text-scan/rated-entiti
 import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { SCAN_RATING_SOURCES } from '~/server/utils/minor-flag-meta';
+import { recordVerdictUnderIntentLock } from '~/server/services/model-com-face-intent.service';
 import {
   holdRestrictedVerdict,
   holdsRatingSql,
@@ -72,6 +73,8 @@ export async function applySystemModelNsfwFlag({
     // Gated on the level actually being wrong: `updateModelNsfwLevels` matches every
     // `nsfw = true` row unconditionally, so calling it on a correct row still writes,
     // fires the model row trigger, and queues a Meilisearch re-render.
+    // Under the intent check's own lock, the verdict is recorded for whoever lifts it.
+    await recordVerdictUnderIntentLock(dbWrite, model.id, source);
     if (model.nsfw && model.nsfwLevel !== nsfwBrowsingLevelsFlag) {
       await updateModelNsfwLevels([model.id]);
       return 'repaired';

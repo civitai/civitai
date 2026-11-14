@@ -207,6 +207,14 @@
       nthThisYear={row.appealNthThisYear}
     />
     <ComFaceCard face={row.comFace} />
+    {#if row.comFaceLaterVerdict && row.comFaceDispute !== 'later-verdict'}
+      <section class="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-xs text-amber-200">
+        <p class="m-0">
+          A system rating verdict ({row.comFaceLaterVerdict}) landed while the listing check's lock
+          was on. Approving lifts the lock and that verdict with it.
+        </p>
+      </section>
+    {/if}
     {#if row.comFaceDispute}
       <section class="rounded-md border border-dark-4 p-3 text-xs leading-[1.45] text-dark-1">
         <p class="m-0">
@@ -214,6 +222,9 @@
           for sexual content and locked its rating.
           {#if row.comFaceDispute === 'upheld'}
             An automatic second check read it the same way.
+          {:else if row.comFaceDispute === 'later-verdict'}
+            The second check allowed it, but a system rating verdict landed while the lock was on;
+            approving lifts the lock and that verdict with it.
           {:else if row.comFaceDispute === 'pending'}
             An automatic second check runs first; this may close on its own.
           {:else}

@@ -297,6 +297,39 @@ describe('the scan on a restricted model', () => {
     expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
   });
 
+  describe('a verdict that lands under a lock', () => {
+    it("is recorded under the listing check's lock, for whoever lifts it", async () => {
+      await seed({
+        nsfw: true,
+        locked: ['nsfw'],
+        meta: {
+          systemNsfwLock: { source: 'com-face-intent', at: '2026-01-01T00:00:00.000Z' },
+          comFaceIntent: { detected: true, textHash: 'h', at: 'x' },
+        },
+      });
+      expect(
+        await applySystemModelNsfwFlag({
+          model: scanned({ nsfw: true, nsfwLevel: 60, lockedProperties: ['nsfw'] }),
+          source: 'xguard-text-moderation',
+        })
+      ).toBe('skipped_locked');
+      expect((await row()).meta.comFaceIntent.laterVerdict).toMatchObject({
+        source: 'xguard-text-moderation',
+      });
+    });
+
+    it("writes nothing under a moderator's lock", async () => {
+      await seed({ nsfw: true, locked: ['nsfw'], meta: { comFaceIntent: { detected: true } } });
+      expect(
+        await applySystemModelNsfwFlag({
+          model: scanned({ nsfw: true, nsfwLevel: 60, lockedProperties: ['nsfw'] }),
+          source: 'text-scan',
+        })
+      ).toBe('skipped_locked');
+      expect((await row()).meta.comFaceIntent).toEqual({ detected: true });
+    });
+  });
+
   it('locks for a source it does not know, by default', async () => {
     await seed({});
     await applySystemModelNsfwFlag({ model: scanned(), source: 'some-later-check' });

@@ -353,6 +353,30 @@ describe('approving a lock review', () => {
     expect(new Date(restored.at).getTime()).toBeGreaterThan(ruledAt);
   });
 
+  it("never puts back a replaced marker when the lock lifted is not the listing check's", async () => {
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    storesListing(listing);
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'profanity-filter', at: '2026-02-01T00:00:00.000Z' },
+        comFaceIntent: {
+          detected: false,
+          textHash: 'other',
+          at: 'x',
+          priorSystemNsfwLock: scan,
+          laterVerdict: { source: 'xguard-text-moderation', at: 'y' },
+        },
+      },
+    });
+
+    await approve();
+
+    const meta = await modelMeta();
+    expect(meta).not.toHaveProperty(SYSTEM_NSFW_LOCK_META_KEY);
+    expect(meta.comFaceIntent).toEqual({ detected: false, textHash: 'other', at: 'x' });
+  });
+
   it('puts the marker back even when the stored verdict is now for other text', async () => {
     const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
     storesListing(listing);

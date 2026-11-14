@@ -282,6 +282,8 @@ export type MinorFlagAppealRow = {
   /** A dispute of the civitai.com listing check's lock: what its automatic re-check found ('upheld',
    *  'needs-moderator', 'unavailable'), or 'pending' before it ran. Null on any other request. */
   comFaceDispute: string | null;
+  /** The source of a system rating verdict that landed under the listing check's lock, if any. */
+  comFaceLaterVerdict: string | null;
   lockedProperties: string[];
   textScanFlags: unknown;
   latestScan: LatestScan | null;
@@ -560,6 +562,8 @@ export async function getMinorFlagAppealsForReview({
              CASE WHEN ${isLockReviewSql} THEN a.context->'locks' END AS "lockReview",
              CASE WHEN ${isLockReviewSql} AND a.context->>'dispute' = 'comFaceIntent'
                THEN COALESCE(a.context->>'autoReview', 'pending') END AS "comFaceDispute",
+             CASE WHEN ${isLockReviewSql} AND m.meta->'systemNsfwLock'->>'source' = 'com-face-intent'
+               THEN m.meta->'comFaceIntent'->'laterVerdict'->>'source' END AS "comFaceLaterVerdict",
              COALESCE(m."lockedProperties", '{}') AS "lockedProperties",
              m."createdAt" AS "modelCreatedAt",
              m.meta->'textScanFlags' AS "textScanFlags",

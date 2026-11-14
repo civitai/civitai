@@ -871,6 +871,7 @@ describe('lock review rows', () => {
       lockReview: ['nsfw'],
       lockedProperties: ['nsfw', 'tags'],
       comFaceDispute: null,
+      comFaceLaterVerdict: null,
     });
     expect(items.find((i) => i.modelId === 1)!.lockReview).toBeNull();
   });

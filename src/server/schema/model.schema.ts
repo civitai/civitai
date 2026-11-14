@@ -435,6 +435,8 @@ export type ComFaceIntentRecord = {
   overturnedAt?: string;
   /** The scan's rating marker the intent lock replaced, put back when that lock is lifted. */
   priorSystemNsfwLock?: { source: string; at: string };
+  /** A system rating verdict that landed while the intent lock was on. */
+  laterVerdict?: { source: string; at: string };
 };
 
 export type ModelMeta = Partial<{

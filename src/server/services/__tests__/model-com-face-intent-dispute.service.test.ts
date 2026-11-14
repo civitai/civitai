@@ -85,6 +85,22 @@ describe('processComFaceIntentDisputes', () => {
     expect(appealWrites()).toEqual([['needs-moderator', 1]]);
   });
 
+  it('leaves it to a moderator when a system rating verdict landed under the lock', async () => {
+    const meta = {
+      ...recorded,
+      comFaceIntent: {
+        ...recorded.comFaceIntent,
+        laterVerdict: { source: 'xguard-text-moderation', at: '2026-02-01T00:00:00.000Z' },
+      },
+    };
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute({ meta })] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed' });
+
+    expect(await processComFaceIntentDisputes()).toMatchObject({ 'later-verdict': 1 });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(appealWrites()).toEqual([['later-verdict', 1]]);
+  });
+
   it('never approves once a moderator has ruled on the lock since it was set', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
     mocks.verdict.mockResolvedValue({ status: 'allowed' });

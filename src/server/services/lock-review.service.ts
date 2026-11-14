@@ -20,6 +20,7 @@ import { hasPendingMinorHashMatch } from '~/server/services/minor-hash.service';
 import {
   COM_FACE_INTENT_LOCK_SOURCE,
   overturnComFaceIntentSql,
+  dropReplacedRatingMarkerSql,
   restoreReplacedRatingMarkerSql,
   storedListingTextHash,
 } from '~/server/services/model-com-face-intent.service';
@@ -261,9 +262,11 @@ export async function resolveLockReviewAppeal({
         held: boolean;
         ownerFiled: boolean;
         detectionHeld: boolean;
+        lockSource: string | null;
       }[]
     >`
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
+        m.meta->'systemNsfwLock'->>'source' AS "lockSource",
         a."userId" = m."userId" AS "ownerFiled",
         COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
           OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
@@ -308,8 +311,14 @@ export async function resolveLockReviewAppeal({
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
         // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
-        // intent detection stops refusing a civitai.com version for this text.
-        await tx.$executeRaw(restoreReplacedRatingMarkerSql(modelId));
+        // intent detection stops refusing a civitai.com version for this text. The rating marker
+        // the intent lock replaced comes back only when the lock lifted is the intent check's;
+        // under any other lock that old marker is stale, and goes.
+        await tx.$executeRaw(
+          row.lockSource === COM_FACE_INTENT_LOCK_SOURCE
+            ? restoreReplacedRatingMarkerSql(modelId)
+            : dropReplacedRatingMarkerSql(modelId)
+        );
         await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
       }
     }

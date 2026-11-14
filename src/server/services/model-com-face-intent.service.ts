@@ -73,13 +73,14 @@ export async function recordComFaceIntent(
   const value = JSON.stringify({ ...record, at: new Date().toISOString() });
   await dbWrite.$executeRaw`
     UPDATE "Model"
-    -- A rating marker an intent lock replaced stays with the verdict until that lock is lifted.
+    -- What the intent lock carries (the marker it replaced, a verdict that landed under it) stays
+    -- with the verdict until that lock ends.
     SET meta = ${asJsonbObjectSql(
       'meta'
-    )} || jsonb_build_object('comFaceIntent', ${value}::jsonb || CASE
-      WHEN jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
-      THEN jsonb_build_object('priorSystemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock')
-      ELSE '{}'::jsonb END)
+    )} || jsonb_build_object('comFaceIntent', ${value}::jsonb || jsonb_strip_nulls(jsonb_build_object(
+      'priorSystemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock',
+      'laterVerdict', meta->'comFaceIntent'->'laterVerdict'
+    )))
     WHERE id = ${modelId}
   `.catch((error: Error) =>
     logToAxiom({
@@ -110,7 +111,7 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
             'systemNsfwLock',
             jsonb_build_object('source', ${COM_FACE_INTENT_LOCK_SOURCE}::text, 'at', now()),
             'comFaceIntent',
-            (m.meta->'comFaceIntent') || CASE
+            ((m.meta->'comFaceIntent') - 'priorSystemNsfwLock' - 'laterVerdict') || CASE
               WHEN jsonb_typeof(m.meta->'systemNsfwLock') = 'object'
               THEN jsonb_build_object('priorSystemNsfwLock', m.meta->'systemNsfwLock')
               ELSE '{}'::jsonb END
@@ -162,10 +163,39 @@ export const restoreReplacedRatingMarkerSql = (modelId: number) => Prisma.sql`
   SET meta = meta || jsonb_build_object(
     'systemNsfwLock', (meta->'comFaceIntent'->'priorSystemNsfwLock')
       || jsonb_build_object('at', now() + interval '1 second'),
-    'comFaceIntent', (meta->'comFaceIntent') - 'priorSystemNsfwLock'
+    'comFaceIntent', (meta->'comFaceIntent') - 'priorSystemNsfwLock' - 'laterVerdict'
   )
   WHERE id = ${modelId}
     AND jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
+`;
+
+/** Drops what an intent lock carried (the marker it replaced, a later verdict) once the lock is
+ *  gone; under any other lock they no longer stand for the rating. */
+export const dropReplacedRatingMarkerSql = (modelId: number) => Prisma.sql`
+  UPDATE "Model"
+  SET meta = jsonb_set(meta, '{comFaceIntent}',
+    (meta->'comFaceIntent') - 'priorSystemNsfwLock' - 'laterVerdict')
+  WHERE id = ${modelId}
+    AND jsonb_typeof(meta->'comFaceIntent') = 'object'
+`;
+
+/**
+ * A system rating verdict that the intent lock kept from applying: recorded on the verdict, so the
+ * dispute job leaves the dispute to a moderator and the moderator sees it. Only under the intent
+ * check's own lock; a moderator's lock still skips with nothing written.
+ */
+export const recordVerdictUnderIntentLock = (
+  db: Pick<typeof dbWrite, '$executeRaw'>,
+  modelId: number,
+  source: string
+) => db.$executeRaw`
+  UPDATE "Model" m
+  SET meta = jsonb_set(m.meta, '{comFaceIntent,laterVerdict}',
+    jsonb_build_object('source', ${source}::text, 'at', now()))
+  WHERE m.id = ${modelId}
+    AND 'nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[]))
+    AND m.meta->'systemNsfwLock'->>'source' = ${COM_FACE_INTENT_LOCK_SOURCE}
+    AND jsonb_typeof(m.meta->'comFaceIntent') = 'object'
 `;
 
 /**

@@ -30,6 +30,8 @@ export type ComFaceIntentDisputeOutcome =
   | 'needs-moderator'
   /** No verdict after {@link MAX_ATTEMPTS} runs. */
   | 'unavailable'
+  /** Allowed, but a system rating verdict landed under the lock: left for a moderator. */
+  | 'later-verdict'
   | 'retry';
 
 type PendingDispute = {
@@ -74,6 +76,7 @@ export async function processComFaceIntentDisputes() {
     upheld: 0,
     'needs-moderator': 0,
     unavailable: 0,
+    'later-verdict': 0,
     retry: 0,
     failed: 0,
   };
@@ -140,6 +143,8 @@ async function judgeDispute(row: PendingDispute): Promise<ComFaceIntentDisputeOu
 
   // The tag was stamped at filing: a moderator's ruling on the lock since then makes it theirs.
   if (!(await stillIntentLock(row))) return markJudged(row, 'needs-moderator');
+  // A system rating verdict the lock kept from applying would be lost with it: a moderator decides.
+  if (laterVerdictUnderLock(row)) return markJudged(row, 'later-verdict');
 
   try {
     await resolveLockReviewAppeal({
@@ -172,6 +177,13 @@ async function stillIntentLock(row: PendingDispute) {
   if (!row.lockedProperties.includes('nsfw')) return false;
   if (marker?.source !== COM_FACE_INTENT_LOCK_SOURCE || !at) return false;
   return !(await moderatorRuledNsfwSince(row.modelId, at, { alsoRejections: true }));
+}
+
+function laterVerdictUnderLock(row: PendingDispute) {
+  const meta = row.meta as ModelMeta | null;
+  const lockedAt = readSystemNsfwLockAt(meta);
+  const later = meta?.comFaceIntent?.laterVerdict?.at;
+  return !!lockedAt && !!later && new Date(later) > lockedAt;
 }
 
 async function markJudged(row: PendingDispute, outcome: ComFaceIntentDisputeOutcome) {
