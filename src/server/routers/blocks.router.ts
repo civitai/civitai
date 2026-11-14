@@ -3919,7 +3919,8 @@ export const blocksRouter = router({
    * the host's raise dialog. `null` when there is nothing to raise: the flag is off, the app is
    * not approved, no limit is set, spending is revoked, or this viewer has read it too often.
    * `refusedRecently`: a spend was refused at the current limit in the last few minutes
-   * (`markConsentLimitRefused`), the only thing that lets an app's own request open the dialog.
+   * (`markConsentLimitRefused`). It lets an app's own request open the dialog when the host did
+   * not relay a refusal itself, as for a REST submitter.
    * Session only, so an app holding a block token cannot call it.
    */
   getMyAppDailyLimit: protectedProcedure
