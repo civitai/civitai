@@ -354,6 +354,18 @@ export const getKeyedStickerTopUpPrefix = (
   idempotencyKey: string
 ) => `sticker-topup-k-${userId}-${cosmeticId}-${idempotencyKey}`;
 
+/**
+ * The base of a keyed top-up's creator payout ids (`<base>:sell:<creator>:<colour>`). NOT the
+ * charge prefix: the ledger lists and refunds a prefix by `startsWith`, so payouts filed under it
+ * would read back as legs of the buyer's charge (a retry would be refused as other terms) and be
+ * reached by its refund.
+ */
+export const getKeyedStickerTopUpPayoutBase = (
+  userId: number,
+  cosmeticId: number,
+  idempotencyKey: string
+) => `sticker-topup-payout-k-${userId}-${cosmeticId}-${idempotencyKey}`;
+
 /** The Redis claim on the grant of a keyed top-up's charge, named by the charge's prefix. */
 export const stickerTopUpGrantClaimKey = (prefix: string) =>
   `sticker-topup-grant:${prefix}` as RedisKeyTemplateSys;
@@ -413,6 +425,7 @@ async function chargeAndGrantKeyedTopUp({
   | {
       alreadyGranted: false;
       transactionId: string;
+      payoutBase: string;
       topUpRowRemaining: number;
       bluePaid: () => Promise<number>;
     }
@@ -512,7 +525,13 @@ async function chargeAndGrantKeyedTopUp({
       !replayed && sent ? sent.transactionIds : await getMultiAccountTransactionsByPrefix(prefix);
     return legs.filter((t) => t.accountType === 'blue').reduce((sum, t) => sum + t.amount, 0);
   };
-  return { alreadyGranted: false, transactionId: prefix, topUpRowRemaining, bluePaid };
+  return {
+    alreadyGranted: false,
+    transactionId: prefix,
+    payoutBase: getKeyedStickerTopUpPayoutBase(userId, cosmeticId, idempotencyKey),
+    topUpRowRemaining,
+    bluePaid,
+  };
 }
 
 /**
@@ -693,6 +712,8 @@ export async function purchaseStickerUses({
   };
 
   let transactionId: string;
+  // The creator payout ids' base: the charge's id keyless, its own family keyed.
+  let payoutBase: string;
   let topUpRowRemaining: number;
   // What the buyer paid in Blue, for the creator's payout split. With a key the
   // charge may be an earlier request's, so it is read from the ledger instead.
@@ -719,6 +740,7 @@ export async function purchaseStickerUses({
       return { cosmeticId, quantity, pricePerUse, amount, remaining };
     }
     transactionId = keyed.transactionId;
+    payoutBase = keyed.payoutBase;
     topUpRowRemaining = keyed.topUpRowRemaining;
     bluePaid = keyed.bluePaid;
   } else {
@@ -727,6 +749,7 @@ export async function purchaseStickerUses({
     // share an external id — and a duplicate is treated as "the money already
     // moved", which would grant uses for a charge that never happened.
     transactionId = `sticker-topup-${userId}-${cosmeticId}-${randomUUID()}`;
+    payoutBase = transactionId;
     const transaction = await charge(transactionId);
     if (!transaction.transactionCount)
       throw throwBadRequestError('There was an error creating the transaction');
@@ -799,7 +822,7 @@ export async function purchaseStickerUses({
               amount: p.amount,
               type: TransactionType.Sell,
               description: `A user has bought more uses of your sticker - ${cosmetic.name}`,
-              externalTransactionId: `${transactionId}:sell:${creatorId}:${p.color}`,
+              externalTransactionId: `${payoutBase}:sell:${creatorId}:${p.color}`,
               details: { purchasedBy: userId, originalAmount: amount, quantity },
             })
           )

@@ -181,8 +181,11 @@ describe('a keyed sticker top-up across an unknown outcome', () => {
     expect(buyerCharges()).toHaveLength(1);
     expect(grants).toBe(1);
     expect(again).toMatchObject({ quantity: QUANTITY, amount: AMOUNT, remaining: QUANTITY });
-    // The creator is paid by the request that granted, once.
-    expect(payouts()).toHaveLength(1);
+    // The creator is paid by the request that granted, once, under ids outside the charge's
+    // prefix (which the ledger lists and refunds by `startsWith`).
+    expect(payouts().map((p) => p.externalTransactionId)).toEqual([
+      `sticker-topup-payout-k-${BUYER}-${COSMETIC_ID}-${KEY}:sell:${CREATOR}:yellow`,
+    ]);
   });
 
   it('answers "may have gone through" when the resend also fails, and grants nothing', async () => {
