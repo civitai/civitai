@@ -323,4 +323,29 @@ describe('/api/v1/users avatar', () => {
   it('serves a PG avatar (control)', async () => {
     expect(await avatarFor(1)).toBe('avatar.png');
   });
+
+  describe('getUsers rows (deprecated avatarNsfw beside the numeric level)', () => {
+    async function rowAvatar(avatarNsfwLevel: number) {
+      mockGetAll.mockResolvedValue([
+        { id: 1, username: 'a', avatarUrl: 'avatar.png', avatarNsfw: 'None', avatarNsfwLevel },
+      ]);
+      const { req, res } = createMocks({ query: { query: 'a' } });
+      await handler(req, res);
+      return res._getJSONData().items[0];
+    }
+
+    it('serves a PG avatar, and keeps the numeric level off the response', async () => {
+      const user = await rowAvatar(1);
+      expect(user.avatarUrl).toBe('avatar.png');
+      expect(user).not.toHaveProperty('avatarNsfwLevel');
+    });
+
+    it('serves no unrated avatar', async () => {
+      expect((await rowAvatar(0)).avatarUrl).toBeNull();
+    });
+
+    it('serves no avatar above PG', async () => {
+      expect((await rowAvatar(4)).avatarUrl).toBeNull();
+    });
+  });
 });

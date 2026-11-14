@@ -108,7 +108,7 @@ export type PartnerPricingModel = "Duration" | "PerImage";
 
 export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
-export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
+export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline" | "postText";
 
 export type TagEngagementType = "Hide" | "Follow" | "Allow";
 
@@ -1671,6 +1671,7 @@ export interface Post {
   moderatorNsfwLevel: number | null;
   moderatorNsfwLevelBasis: number | null;
   images?: Image[];
+  texts?: PostText[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
   helper?: PostHelper | null;
@@ -6806,6 +6807,20 @@ export interface ImageCaption {
   content: string;
   refused: boolean;
   nsfwLevel: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PostText {
+  id: number;
+  postId: number;
+  post?: Post;
+  userId: number;
+  index: number;
+  content: string;
+  nsfwLevel: number;
+  refused: boolean;
+  csamHeld: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

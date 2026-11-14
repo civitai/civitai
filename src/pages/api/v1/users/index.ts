@@ -11,12 +11,12 @@ import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { avatarAtLevel } from '~/server/utils/public-avatar';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
-/** `avatarNsfw` is a numeric rating only on the search path; anything else serves no avatar. */
-function withPublicAvatarUrl<U extends { avatarUrl?: string | null; avatarNsfw?: unknown }>(
-  user: U
-): U {
+/** The search path rates the avatar in `avatarNsfw`; getUsers in `avatarNsfwLevel`. Unrated serves none. */
+function withPublicAvatarUrl<
+  U extends { avatarUrl?: string | null; avatarNsfw?: unknown; avatarNsfwLevel?: number }
+>({ avatarNsfwLevel, ...user }: U): Omit<U, 'avatarNsfwLevel'> {
   if (!('avatarUrl' in user)) return user;
-  const nsfwLevel = typeof user.avatarNsfw === 'number' ? user.avatarNsfw : 0;
+  const nsfwLevel = avatarNsfwLevel ?? (typeof user.avatarNsfw === 'number' ? user.avatarNsfw : 0);
   const shown = avatarAtLevel({ nsfwLevel }, publicBrowsingLevelsFlag);
   return { ...user, avatarUrl: shown ? user.avatarUrl : null };
 }

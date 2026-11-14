@@ -3,6 +3,7 @@ import '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { getModelsWithImagesAndModelVersions } from '~/server/services/model.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
+import { getCoverImages } from '~/server/services/model-cover.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import type { SessionUser } from '~/types/session';
 
@@ -25,7 +26,9 @@ vi.mock('~/server/flipt/client', () => ({
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
 }));
-const { modelRow } = vi.hoisted(() => ({ modelRow: { nsfw: false } }));
+const { modelRow } = vi.hoisted(() => ({
+  modelRow: { nsfw: false, minor: false, sfwOnly: false },
+}));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {
     cancellableQuery: async () => ({
@@ -36,6 +39,8 @@ vi.mock('~/server/db/pgDb', () => ({
           name: 'model',
           type: 'LORA',
           nsfw: modelRow.nsfw,
+          minor: modelRow.minor,
+          sfwOnly: modelRow.sfwOnly,
           nsfwLevel: 31,
           status: 'Published',
           mode: null,
@@ -108,7 +113,12 @@ const image = (id: number, nsfwLevel: number, extra: { poi?: boolean; minor?: bo
 
 async function cardImages(
   browsingLevel: number,
-  opts: { user?: Partial<SessionUser>; disablePoi?: boolean; disableMinor?: boolean } = {}
+  opts: {
+    user?: Partial<SessionUser>;
+    heldViewer?: boolean;
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  } = {}
 ) {
   vi.mocked(enforceBlockedBrowsingTagsForModels).mockImplementation(async (input) => {
     // Stands in for the addon resolution getModelsRaw runs on the viewer's input.
@@ -119,6 +129,7 @@ async function cardImages(
   const { items } = await getModelsWithImagesAndModelVersions({
     input: { browsingLevel, limit: 10, sort: 'Newest', period: 'AllTime' } as never,
     user: opts.user as SessionUser | undefined,
+    heldViewer: opts.heldViewer,
     metricPrivacyEnabled: false,
   });
   return items.find((m) => m.id === MODEL)?.images.map((i) => i.id) ?? [];
@@ -127,6 +138,10 @@ async function cardImages(
 describe('getModelsWithImagesAndModelVersions card images', () => {
   beforeEach(() => {
     modelRow.nsfw = false;
+    modelRow.minor = false;
+    modelRow.sfwOnly = false;
+    redisMock.redis.get.mockResolvedValue(null);
+    vi.mocked(getCoverImages).mockResolvedValue(new Map());
     vi.mocked(getImagesForModelVersionCache).mockResolvedValue({
       [VERSION]: {
         modelVersionId: VERSION,
@@ -180,6 +195,72 @@ describe('getModelsWithImagesAndModelVersions card images', () => {
       expect(
         await cardImages(1, { user: { id: OWNER }, disablePoi: true, disableMinor: true })
       ).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe('a minor or SFW-only model', () => {
+    // Its cached gallery settings: held, at PG|PG13.
+    const holdAt = (level: number) =>
+      redisMock.redis.get.mockResolvedValue(JSON.stringify({ sfwHeld: true, level }) as never);
+
+    it('serves a level-31 viewer only the images within its hold', async () => {
+      modelRow.sfwOnly = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: 99 } })).toEqual([1]);
+    });
+
+    it('serves its owner the whole showcase', async () => {
+      modelRow.minor = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: OWNER }, heldViewer: true })).toEqual([
+        1, 4, 8, 16,
+      ]);
+    });
+
+    it('serves a moderator the whole showcase', async () => {
+      modelRow.minor = true;
+      holdAt(1 | 2);
+      expect(
+        await cardImages(31, { user: { id: 99, isModerator: true }, heldViewer: true })
+      ).toEqual([1, 4, 8, 16]);
+    });
+
+    it('holds it for an owner or moderator on a limited credential', async () => {
+      modelRow.minor = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: OWNER } })).toEqual([1]);
+      expect(await cardImages(31, { user: { id: 99, isModerator: true } })).toEqual([1]);
+    });
+
+    it('holds it for any other viewer on a full credential', async () => {
+      modelRow.minor = true;
+      holdAt(1 | 2);
+      expect(await cardImages(31, { user: { id: 99 }, heldViewer: true })).toEqual([1]);
+    });
+
+    it('serves a moderator a cover found outside the shown images', async () => {
+      modelRow.sfwOnly = true;
+      holdAt(1 | 2);
+      vi.mocked(getCoverImages).mockResolvedValue(new Map([[MODEL, image(99, 8)]]) as never);
+      expect(
+        await cardImages(31, { user: { id: 5, isModerator: true }, heldViewer: true })
+      ).toEqual([99, 1, 4, 8, 16]);
+    });
+
+    it('holds a cover found outside the shown images', async () => {
+      modelRow.sfwOnly = true;
+      holdAt(1 | 2);
+      vi.mocked(getCoverImages).mockResolvedValue(new Map([[MODEL, image(99, 8)]]) as never);
+      expect(await cardImages(31, { user: { id: 99 } })).toEqual([1]);
+    });
+
+    it('keeps that cover for the owner', async () => {
+      modelRow.sfwOnly = true;
+      holdAt(1 | 2);
+      vi.mocked(getCoverImages).mockResolvedValue(new Map([[MODEL, image(99, 8)]]) as never);
+      expect(await cardImages(31, { user: { id: OWNER }, heldViewer: true })).toEqual([
+        99, 1, 4, 8, 16,
+      ]);
     });
   });
 });
