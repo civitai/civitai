@@ -24,6 +24,7 @@ import {
 } from '~/components/HatTurf/hat-turf.utils';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { pluralize } from '~/shared/utils/pluralize';
 
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
@@ -53,7 +54,6 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
     : `Flag ${rank}: ${flag.pot} points up for grabs${leader ? `, ${leader} holds it` : ''}.`;
 
   return (
-    // The status is a chip of its own after the badge, so on a narrow card it wraps under it.
     <div className="flex min-w-0 flex-wrap items-center gap-1">
       <Popover
         opened={open}
@@ -67,7 +67,6 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
           <button
             type="button"
             className={clsx(classes.badge, classes.chip, finalHour && 'animate-pulse', className)}
-            style={{ '--hat-turf-badge-size': '18px' } as React.CSSProperties}
             aria-label={`${label} Show details`}
             aria-expanded={open}
             data-testid="flag-badge"
@@ -107,7 +106,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
                 />
               </svg>
               <span className={classes.disc}>
-                <IconFlag size={8} stroke={2.5} />
+                <IconFlag size={10} stroke={2.5} />
               </span>
             </span>
             <span className={classes.count} data-testid="flag-badge-pot">
@@ -124,7 +123,6 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
           type="button"
           aria-label={`${label} Show details`}
           onClick={(event) => {
-            // Inside the card's link, like the badge: a tap shows the details, not the image.
             event.preventDefault();
             event.stopPropagation();
             setOpen(true);
@@ -132,7 +130,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
           className={clsx(
             classes.chip,
             classes.count,
-            'inline-flex h-[18px] cursor-pointer items-center gap-0.5 rounded-full border-0 pl-1.5'
+            'inline-flex h-6 cursor-pointer items-center gap-0.5 rounded-full border-0 pl-1.5'
           )}
           style={
             !closed && clock?.phase === 'final'
@@ -292,7 +290,7 @@ function FlagDetails({ imageId }: { imageId: number }) {
               </>
             ) : (
               <>
-                {feed.team} needs <b>{plural(-gap + 1, 'hat', 'hats')}</b> to take it
+                {feed.team} needs <b>{pluralize(-gap + 1, 'hat')}</b> to take it
               </>
             )}
           </Text>
@@ -302,7 +300,7 @@ function FlagDetails({ imageId }: { imageId: number }) {
       <Group gap={12} c="dimmed">
         <Group gap={4} wrap="nowrap">
           <IconUsers size={14} />
-          <Text size="xs">{plural(flag.players, 'player', 'players')}</Text>
+          <Text size="xs">{pluralize(flag.players, 'player')}</Text>
         </Group>
         {clock && clock.phase !== 'closed' && (
           <Group gap={4} wrap="nowrap">
@@ -322,6 +320,3 @@ function FlagDetails({ imageId }: { imageId: number }) {
     </Stack>
   );
 }
-
-const plural = (n: number, one: string, many: string) =>
-  `${abbreviateNumber(n)} ${n === 1 ? one : many}`;

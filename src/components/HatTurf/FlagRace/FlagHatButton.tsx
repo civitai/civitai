@@ -6,6 +6,7 @@ import classes from '~/components/HatTurf/HatTurfButton.module.css';
 import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
 import { flagHatChoices } from '~/components/HatTurf/FlagRace/flag-race.utils';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
+import { useTeamColor } from '~/components/Events/events.utils';
 import { useChosenHat, useHatStock, useJoin } from '~/components/HatTurf/useHatTurf';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification } from '~/utils/notifications';
@@ -24,6 +25,7 @@ export function FlagHatButton({ imageId }: { imageId: number }) {
   const [open, setOpen] = useState(false);
   const utils = trpc.useUtils();
   const join = useJoin(() => setOpen(false));
+  const teamColor = useTeamColor();
   const place = trpc.hatTurf.placeFlagHats.useMutation({
     onSuccess: (standing) => {
       setOpen(false);
@@ -107,12 +109,18 @@ export function FlagHatButton({ imageId }: { imageId: number }) {
               >
                 How many hats would you like to place?
               </Text>
-              <Group gap={6} wrap="nowrap" role="group" aria-labelledby={`flag-hats-q-${imageId}`}>
+              <Group
+                grow
+                gap={6}
+                wrap="nowrap"
+                role="group"
+                aria-labelledby={`flag-hats-q-${imageId}`}
+              >
                 {choices.map((count) => (
                   <Button
                     key={count}
                     size="xs"
-                    miw={44}
+                    color={feed?.team ? teamColor(feed.team) : undefined}
                     disabled={!cosmeticId || place.isPending}
                     loading={place.isPending && place.variables?.count === count}
                     data-testid={`flag-add-${count}`}
