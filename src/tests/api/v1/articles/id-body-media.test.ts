@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NsfwLevel } from '~/server/common/enums';
 import type { ArticleBodyImageState } from '~/server/utils/article-body-media';
 
-const { mockGetArticleById, mockGetBodyImageStates, mockSession, mockCanViewNsfw } = vi.hoisted(
-  () => ({
+const { mockGetArticleById, mockGetBodyImageStates, mockSession, mockCanViewNsfw, mockRestricted } =
+  vi.hoisted(() => ({
     mockGetArticleById: vi.fn(),
     mockGetBodyImageStates: vi.fn(),
     mockSession: vi.fn(),
     mockCanViewNsfw: vi.fn(),
-  })
-);
+    mockRestricted: vi.fn(),
+  }));
 
 vi.mock('~/server/services/article.service', () => ({
   getArticleById: mockGetArticleById,
@@ -23,7 +23,7 @@ vi.mock('~/server/utils/public-api-rate-limit', () => ({
 }));
 vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => ({ countryCode: 'XX' }),
-  isRegionRestricted: () => false,
+  isRegionRestricted: mockRestricted,
 }));
 vi.mock('@civitai/next-axiom', () => ({
   withAxiom:
@@ -40,7 +40,7 @@ import '~/__tests__/mocks/db.mock';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import handler from '~/pages/api/v1/articles/[id]';
 
-const { PG, R } = NsfwLevel;
+const { PG, PG13, R } = NsfwLevel;
 const AUTHOR = 5;
 const PG_UUID = '11111111-1111-4111-8111-111111111111';
 const R_UUID = '22222222-2222-4222-8222-222222222222';
@@ -53,8 +53,11 @@ function state(url: string, nsfwLevel: number, extra: Partial<ArticleBodyImageSt
   return { url, nsfwLevel, ingestion: 'Scanned', needsReview: null, tosViolation: false, ...extra };
 }
 
-/** A PG article whose body holds two images and a video, rated by `images`. */
-function serve(images: ArticleBodyImageState[]) {
+/**
+ * A PG article whose body holds two images, a video and an off-site image, rated by `images`.
+ * `listed` is what the article read saw, when a rating changed between the two reads.
+ */
+function serve(images: ArticleBodyImageState[], listed = images) {
   mockGetBodyImageStates.mockResolvedValue(images);
   mockGetArticleById.mockResolvedValue({
     id: 7,
@@ -64,8 +67,9 @@ function serve(images: ArticleBodyImageState[]) {
       `<p>intro</p><img src="${imageUrl(PG_UUID)}" alt="a"><p>middle</p>` +
       `<img src="${imageUrl(
         R_UUID
-      )}" alt="b"><edge-media url="${VIDEO_UUID}" type="video"></edge-media>`,
-    contentImages: images.map(({ url, nsfwLevel, ingestion }, i) => ({
+      )}" alt="b"><edge-media url="${VIDEO_UUID}" type="video"></edge-media>` +
+      `<img src="https://example.com/${R_UUID}.png">`,
+    contentImages: listed.map(({ url, nsfwLevel, ingestion }, i) => ({
       id: i + 1,
       url,
       nsfwLevel,
@@ -100,6 +104,7 @@ describe('GET /api/v1/articles/[id] body media', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCanViewNsfw.mockReturnValue(true);
+    mockRestricted.mockReturnValue(false);
   });
 
   it('🔴 an anonymous caller gets no uuid of an R body image, and keeps the PG one', async () => {
@@ -111,6 +116,8 @@ describe('GET /api/v1/articles/[id] body media', () => {
     expect(body).not.toContain(VIDEO_UUID);
     expect(body).toContain(PG_UUID);
     expect(parsed?.content).toContain('<p>middle</p>');
+    expect(body).not.toContain('example.com');
+    expect(JSON.stringify(parsed?.contentJson)).toContain(PG_UUID);
     expect(parsed?.contentImages).toEqual([{ id: 1, url: PG_UUID, ingestion: 'Scanned' }]);
   });
 
@@ -157,6 +164,18 @@ describe('GET /api/v1/articles/[id] body media', () => {
 
     expect(body).not.toContain(R_UUID);
     expect(body).not.toContain(VIDEO_UUID);
+    expect(body).toContain(PG_UUID);
+  });
+
+  it('🔴 in a restricted region a key holder is held to SFW, even if the article read saw less', async () => {
+    mockRestricted.mockReturnValue(true);
+    const pgImage = state(PG_UUID, PG);
+    serve([pgImage, state(R_UUID, R), state(VIDEO_UUID, PG13)], [pgImage]);
+
+    const { body } = await call(keyHolder(PG | PG13 | R));
+
+    expect(body).not.toContain(R_UUID);
+    expect(body).toContain(VIDEO_UUID);
     expect(body).toContain(PG_UUID);
   });
 
