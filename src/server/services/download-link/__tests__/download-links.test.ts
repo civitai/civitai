@@ -1199,10 +1199,31 @@ describe('provider links', () => {
     expect(store.size).toBe(0);
   });
 
-  it('dies at use once its credential leaves the provider allowlist', async () => {
-    const { url } = await minted(PUBLIC_VERSION);
-    setEnv({ DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: [] });
-    expect((await fetchLink(url)).status).toBe(404);
+  it.each(['DOWNLOAD_LINK_API_KEY_IDS', 'DOWNLOAD_LINK_PROVIDER_API_KEY_IDS'])(
+    'dies at use once its credential leaves %s',
+    async (allowlist) => {
+      const { url } = await minted(PUBLIC_VERSION);
+      setEnv({ [allowlist]: [] });
+      expect((await fetchLink(url)).status).toBe(404);
+    }
+  );
+
+  it('records one download however many times the link is fetched', async () => {
+    const { url } = await minted(PRIVATE_VERSION);
+    for (let i = 0; i < 3; i++) expect((await fetchLink(url)).status).toBe(302);
+    expect(mockModelVersionEvent).toHaveBeenCalledTimes(1);
+    expect(mockCountProviderDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not spend a user link's fetch cap while only provider links are on", async () => {
+    const { url } = await mintOne(userItem(PUBLIC_VERSION));
+    mockIsFlipt.mockImplementation(
+      async (_flag: string, _entityId?: string, context?: Record<string, string>) =>
+        context?.mode === 'provider'
+    );
+    for (let i = 0; i < 60; i++) expect((await fetchLink(url)).status).toBe(404);
+    mockIsFlipt.mockResolvedValue(true);
+    expect((await fetchLink(url)).status).toBe(302);
   });
 
   it('takes mint budget for fresh mints only', async () => {

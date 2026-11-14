@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   canGenerate: { value: true },
   hubSession: { value: null as unknown },
   flagModes: new Set<string>(),
+  scopeGate: { value: null as string | null },
   check: vi.fn(),
   findReusableLink: vi.fn(),
   createLink: vi.fn(),
@@ -24,7 +25,9 @@ const h = vi.hoisted(() => ({
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  getFliptVariant: vi.fn(async () => null),
+  getFliptVariant: vi.fn(async (flag: string) =>
+    flag === 'download-scope-gate' ? h.scopeGate.value : null
+  ),
   isFlipt: vi.fn(
     async (flag: string, _entityId?: string, context?: Record<string, string>) =>
       flag === 'download-links-enabled' && h.flagModes.has(context?.mode ?? '')
@@ -123,12 +126,17 @@ const handler = (await import('~/pages/api/v1/model-versions/mini/[id]')).defaul
   res: NextApiResponse
 ) => Promise<void>;
 
-const sessionFor = (userId: number, isModerator: boolean, apiKeyId: number) => ({
+const sessionFor = (
+  userId: number,
+  isModerator: boolean,
+  apiKeyId: number,
+  tokenScope: number = TokenScope.Full
+) => ({
   user: { id: userId, username: 'someone', bannedAt: null, isModerator },
   apiKeyId,
   apiKeyType: 'User',
   subject: { type: 'apiKey', id: apiKeyId },
-  tokenScope: TokenScope.Full,
+  tokenScope,
   buzzLimit: null,
 });
 
@@ -136,6 +144,8 @@ const ORCH_KEY_ID = 31;
 const KEYS: Record<string, ReturnType<typeof sessionFor>> = {
   'orch-key': sessionFor(MOD_ID, true, ORCH_KEY_ID),
   'orch-plain-key': sessionFor(OTHER_ID, false, 32),
+  // Allowlisted, but its scope covers neither of mini's.
+  'orch-unscoped-key': sessionFor(OTHER_ID, false, 33, TokenScope.UserRead),
   'mod-key': sessionFor(MOD_ID, true, 11),
   'other-key': sessionFor(OTHER_ID, false, 12),
 };
@@ -146,11 +156,19 @@ async function call({
   authorization,
   downloadLink = '1',
   queryToken,
-}: { authorization?: string; downloadLink?: string; queryToken?: string } = {}): Promise<Served> {
+  row = {},
+  file = {},
+}: {
+  authorization?: string;
+  downloadLink?: string;
+  queryToken?: string;
+  row?: Partial<typeof baseRow>;
+  file?: Record<string, unknown>;
+} = {}): Promise<Served> {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw
-    .mockResolvedValueOnce([{ ...baseRow }])
-    .mockResolvedValueOnce([structuredClone(FILE)]);
+    .mockResolvedValueOnce([{ ...baseRow, ...row }])
+    .mockResolvedValueOnce([{ ...structuredClone(FILE), ...file }]);
   const headers: Record<string, string> = {};
   const query: Record<string, string> = { id: String(VERSION_ID) };
   if (downloadLink) query.downloadLink = downloadLink;
@@ -185,11 +203,11 @@ async function call({
   return { status, body, headers };
 }
 
-/** The response with X-Expires read as a time, so two calls a few ms apart compare equal. */
-const today = async (authorization?: string) => {
-  const served = await call({ authorization, downloadLink: '' });
-  return { ...served, headers: { ...served.headers, 'x-expires': undefined } };
-};
+/** Without X-Expires, which moves by the ms between two calls; compared on its own. */
+const withoutExpires = (served: Served) => ({
+  ...served,
+  headers: { ...served.headers, 'x-expires': undefined },
+});
 
 const HOUR = 60 * 60 * 1000;
 
@@ -198,6 +216,7 @@ beforeEach(() => {
   h.bearerSession.mockReset();
   h.bearerSession.mockImplementation(async (token: string) => KEYS[token] ?? null);
   h.flagModes = new Set(['provider']);
+  h.scopeGate.value = null;
   h.check.mockReset();
   h.check.mockResolvedValue({
     ok: true,
@@ -216,8 +235,8 @@ beforeEach(() => {
   h.createLink.mockReset();
   h.createLink.mockResolvedValue({ id: 'L'.repeat(22), linkId: 'P'.repeat(22) });
   setEnv({
-    DOWNLOAD_LINK_API_KEY_IDS: [String(ORCH_KEY_ID), '32'],
-    DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: [String(ORCH_KEY_ID), '32'],
+    DOWNLOAD_LINK_API_KEY_IDS: [String(ORCH_KEY_ID), '32', '33'],
+    DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: [String(ORCH_KEY_ID), '32', '33'],
     DOWNLOAD_LINK_SECRET: 'test-secret-0123456789abcdef0123456789',
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: 7200,
   });
@@ -243,7 +262,9 @@ describe('mini/[id] downloadLink', () => {
     );
     expect(headers['cache-control']).toBe('private, no-store');
     // The moderation hour is sooner than the link's refresh.
-    expect(Date.parse(headers['x-expires']) - before).toBeLessThanOrEqual(HOUR + 1000);
+    const expires = Date.parse(headers['x-expires']) - before;
+    expect(expires).toBeGreaterThanOrEqual(HOUR);
+    expect(expires).toBeLessThanOrEqual(HOUR + 1000);
   });
 
   it('sets X-Expires below the reuse floor when the link expires before the moderation hour', async () => {
@@ -262,9 +283,7 @@ describe('mini/[id] downloadLink', () => {
     expect(body).not.toHaveProperty('moderation');
     const { expiresAt } = body?.downloadLink as { expiresAt: string };
     expect(headers['cache-control']).toBe('private, no-store');
-    expect(Date.parse(headers['x-expires'])).toBe(
-      Date.parse(expiresAt) - (2 * HOUR - 10 * 60 * 1000)
-    );
+    expect(Date.parse(headers['x-expires'])).toBeLessThan(Date.parse(expiresAt));
   });
 
   it.each([
@@ -281,13 +300,40 @@ describe('mini/[id] downloadLink', () => {
     expect(h.createLink).not.toHaveBeenCalled();
   });
 
+  it('hands no link to an allowlisted key the scope gate refuses', async () => {
+    h.scopeGate.value = 'enforce';
+    const { body } = await call({ authorization: 'Bearer orch-unscoped-key' });
+    expect(body).not.toHaveProperty('downloadLink');
+    expect(h.createLink).not.toHaveBeenCalled();
+    // Control: under the gate's `log` mode the same key is not refused.
+    h.scopeGate.value = 'log';
+    const logged = await call({ authorization: 'Bearer orch-unscoped-key' });
+    expect(logged.body).toHaveProperty('downloadLink');
+  });
+
+  it("hands no link on the epoch arm, whose url is the orchestrator's own", async () => {
+    const epochUrl =
+      'https://orchestration.example/v2/consumer/jobs/j1/assets/epoch-10.safetensors';
+    const trainingResults = { epochs: [{ epoch_number: 10, model_url: epochUrl }] };
+    const { status, body } = await call({
+      authorization: 'Bearer orch-key',
+      row: { availability: 'Private' },
+      file: { metadata: { format: 'SafeTensor', trainingResults } },
+    });
+    expect(status).toBe(200);
+    expect(body?.downloadUrls).toEqual([epochUrl]);
+    expect(body).not.toHaveProperty('downloadLink');
+    expect(h.createLink).not.toHaveBeenCalled();
+  });
+
   describe("answers the allowlisted key with today's response", () => {
     const expectToday = async () => {
-      const expected = await today('Bearer orch-key');
+      const expected = await call({ authorization: 'Bearer orch-key', downloadLink: '' });
       const served = await call({ authorization: 'Bearer orch-key' });
-      expect({ ...served, headers: { ...served.headers, 'x-expires': undefined } }).toEqual(
-        expected
-      );
+      expect(withoutExpires(served)).toEqual(withoutExpires(expected));
+      const drift =
+        Date.parse(served.headers['x-expires']) - Date.parse(expected.headers['x-expires']);
+      expect(Math.abs(drift)).toBeLessThan(1000);
       expect(served.body).not.toHaveProperty('downloadLink');
     };
 

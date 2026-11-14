@@ -18,6 +18,7 @@ import {
   isLinkToken,
   isOverFetchCap,
   linksAreReusable,
+  readLink,
   mayMintProviderLinks,
   mayMintPublicLinks,
   recordFetch,
@@ -89,13 +90,10 @@ const refused = (error: MintError): MintItemResult => ({
 });
 
 /**
- * The flag's `mode` context: `api` for `/api/v1/download-links` and its links, `provider` for the
- * links mini hands a provider.
+ * Off, unknown or unreachable all read as off. `mode`: `api` for `/api/v1/download-links` and its
+ * links, `provider` for the links mini hands a provider.
  */
-export type DownloadLinkSurface = 'api' | 'provider';
-
-/** Off, unknown or unreachable all read as off. */
-export const downloadLinksEnabled = (mode: DownloadLinkSurface) =>
+export const downloadLinksEnabled = (mode: 'api' | 'provider') =>
   isFlipt(FLIPT_FEATURE_FLAGS.DOWNLOAD_LINKS_ENABLED, undefined, { mode }).catch(() => false);
 
 const linkUrl = (id: string) => `${getBaseUrl()}/api/download/l/${id}`;
@@ -386,6 +384,8 @@ export async function fetchDownloadLink({
     downloadLinksEnabled('provider'),
   ]);
   if (!apiEnabled && !providerEnabled) return null;
+  // A fetch refused by its mode's flag must not spend the link's cap.
+  if (!apiEnabled && !(await readLink(id))?.provider) return null;
 
   const counted = await recordFetch(id);
   if (!counted) return null;
@@ -416,6 +416,8 @@ export async function fetchDownloadLink({
       provider: link.provider,
       check,
       expiresInSeconds: env.DOWNLOAD_LINK_FILE_URL_TTL_SECONDS,
+      // Older workers GET the link once per range: one download, one record.
+      record: fetch === 1,
     });
     if (!served.ok) return refuseUse(link.linkId, check.ok ? 'not-found' : check.error, fetch);
     logUse(link.linkId, 'redirect', fetch);

@@ -224,6 +224,9 @@ if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
 return redis.call('HINCRBY', KEYS[1], 'fetches', 1)
 `;
 
+/** The link `id`, without counting a fetch; null if absent. */
+export const readLink = (id: string) => readLinkByHash(sha256(id));
+
 /** Counts one fetch of the link `id` and returns it with its fetch number, or null if absent. */
 export async function recordFetch(
   id: string

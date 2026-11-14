@@ -17,37 +17,29 @@ export function getConsumerBlobId(url: string): string | undefined {
   return url.match(CONSUMER_BLOB_RE)?.groups?.blobId;
 }
 
-/**
- * A signed consumer blob URL's expiry (ms); undefined if it is not one or carries no usable expiry.
- * Throws on a URL that does not parse.
- */
-function signedBlobExpiry(url: string): number | undefined {
-  const urlObj = new URL(url);
-  const sig = urlObj.searchParams.get('sig');
-  const exp = urlObj.searchParams.get('exp');
-  if (!sig || !exp) return undefined;
-  const expiry = new Date(exp).getTime();
-  return isNaN(expiry) ? undefined : expiry;
-}
-
 export function shouldRefreshBlobUrl(url: string): boolean {
   try {
     if (!CONSUMER_BLOB_RE.test(url)) return false;
-    const expiry = signedBlobExpiry(url);
-    // Unsigned, or an unparseable exp → treat as expired
-    if (expiry === undefined) return true;
-    return expiry - Date.now() < BLOB_REFRESH_BUFFER_MS;
+    const urlObj = new URL(url);
+    const sig = urlObj.searchParams.get('sig');
+    const exp = urlObj.searchParams.get('exp');
+    if (!sig || !exp) return true;
+
+    const expiryDate = new Date(exp);
+    if (isNaN(expiryDate.getTime())) return true; // Unparseable exp → treat as expired
+    return expiryDate.getTime() - Date.now() < BLOB_REFRESH_BUFFER_MS;
   } catch {
     return false;
   }
 }
 
-/** When a consumer blob URL stops being usable: its expiry less the refresh buffer. */
+/** When a signed consumer blob URL stops being usable: its expiry less the refresh buffer. */
 export function blobUrlUsableUntil(url: string): number | undefined {
   try {
     if (!CONSUMER_BLOB_RE.test(url)) return undefined;
-    const expiry = signedBlobExpiry(url);
-    return expiry === undefined ? undefined : expiry - BLOB_REFRESH_BUFFER_MS;
+    const exp = new URL(url).searchParams.get('exp');
+    const expiry = exp ? Date.parse(exp) : NaN;
+    return isNaN(expiry) ? undefined : expiry - BLOB_REFRESH_BUFFER_MS;
   } catch {
     return undefined;
   }
