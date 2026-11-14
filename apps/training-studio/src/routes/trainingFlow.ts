@@ -547,6 +547,18 @@ export function defaultStepsForRun(run: Run): number {
   return versionStepDefault(runVersion(run).key);
 }
 
+/** How many times training sees each dataset item: every optimizer step trains on `batchSize` items,
+ *  so exposure is steps × batch / items. A cleared batch field counts as the model's default, which is
+ *  what `buildTrainingRuns` submits. */
+export function timesEachItemSeen(
+  params: RunParams,
+  defaults: RunParams,
+  itemCount: number
+): number {
+  if (itemCount <= 0) return 0;
+  return Math.round((params.steps * num(params.batchSize, defaults.batchSize)) / itemCount);
+}
+
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
 export function defaultRunParams(run: Run, trigger = '', loraType = ''): RunParams {
   const d = paramsForVersion(runCard(run), run.versionKey, loraType);

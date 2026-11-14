@@ -62,6 +62,7 @@
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
+    timesEachItemSeen,
     blockedSelectionMessage,
     filledPrompts,
     paramLockReason,
@@ -265,7 +266,7 @@
   );
 
   function seen(i: number) {
-    return imageCount > 0 ? Math.round(paramsAt(i).steps / imageCount) : 0;
+    return timesEachItemSeen(paramsAt(i), defaultsAt(i), imageCount);
   }
   function low(i: number) {
     return seen(i) < Math.round(presetSeen * 0.6);
