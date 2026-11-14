@@ -58,7 +58,9 @@ function call(
 const MOD = 990000123;
 beforeEach(() => {
   vi.clearAllMocks();
-  session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+  session.current = {
+    user: { id: MOD, isModerator: true, bannedAt: null, permissions: ['textScanPromptPublish'] },
+  };
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -86,6 +88,19 @@ describe('mod/text-scan', () => {
       401
     );
     expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it('refuses putPrompt to a moderator without the publish permission, reaching no harness', async () => {
+    session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+    const res = await call({ action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' });
+    expect(res.status).toBe(403);
+    expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it('serves other actions to a moderator without the publish permission (control)', async () => {
+    session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+    expect((await call({ action: 'getPrompts' })).status).toBe(200);
+    expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
   });
 
   it('writes a prompt as the signed-in moderator, whatever id the body names', async () => {
@@ -193,7 +208,12 @@ describe('mod/text-scan', () => {
   });
 
   describe('API keys', () => {
-    const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
+    const MOD_USER = {
+      id: MOD,
+      isModerator: true,
+      bannedAt: null,
+      permissions: ['textScanPromptPublish'],
+    };
     const asApiKey = (tokenScope: number) => {
       vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
         user: MOD_USER,
