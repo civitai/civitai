@@ -32,9 +32,13 @@ vi.mock('~/server/services/text-scan/route', () => route);
 dbMock.dbWrite.$executeRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['executeRaw']>
 ) => pgliteRaw(holder.db).executeRaw(...a)) as never);
+// The label store is not booted here; a csam decision's record of itself is its own test's.
 dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
-) => pgliteRaw(holder.db).queryRaw(...a)) as never);
+) =>
+  Array.isArray(a[0]) && a[0].join('').includes('label_store.record_label')
+    ? Promise.resolve([{ record_label: null }])
+    : pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const { updateServiceOfferingNsfwLevels } = await import('~/server/services/nsfwLevels.service');
 const { serviceOfferingShowableWhere, shopRatingFilter, serviceOfferingReviewState } = await import(
@@ -46,6 +50,7 @@ const { reconcileAction, serviceOfferingIngestionReconcile } = await import(
   '~/server/jobs/service-offering-ingestion-reconcile'
 );
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { decideCsamHold } = await import('~/server/services/text-scan/csam-hold-decision');
 
 const MIGRATIONS = [
   '20261016150000_text_scan_hold',
@@ -609,6 +614,22 @@ describe('the moderation adapter', () => {
       expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Blocked);
     });
 
+    it('resubmits, rather than blocks, an offering edited since the reconcile job read it', async () => {
+      const old = new Date(Date.now() - 60 * 60_000);
+      row.updatedAt = old;
+      dbMock.dbRead.serviceOffering.findMany.mockResolvedValueOnce([
+        { id: OFFERING, updatedAt: new Date(old.getTime() - 60_000) },
+      ] as never);
+      dbMock.dbRead.entityModeration.findMany.mockResolvedValueOnce([
+        { entityId: OFFERING, status: 'Succeeded', blocked: true, updatedAt: new Date() },
+      ] as never);
+      await serviceOfferingIngestionReconcile.run({}).result;
+      expect(row.ingestion).toBe(ServiceOfferingIngestionStatus.Pending);
+      expect(report.createReport).not.toHaveBeenCalled();
+      expect(notifications.createNotification).not.toHaveBeenCalled();
+      expect(route.submitTextModerationOrScan).toHaveBeenCalledTimes(1);
+    });
+
     it('lets the reconcile job list an offering whose verdict found nothing', async () => {
       verdict([]);
       await reconcile();
@@ -946,5 +967,236 @@ describe('the reconcile job', () => {
         opts
       )
     ).toBe('submit');
+  });
+});
+
+describe('a moderator dismissing the csam hold on a service offering', () => {
+  const ID = 11;
+  const TEXT = { title: 'Portraits', description: 'desc' };
+  const hashOf = (title: string) =>
+    textScanTextHash({
+      fields: [
+        { heading: 'Title', text: title },
+        { heading: 'Description', text: TEXT.description },
+      ],
+      declared: {},
+    });
+  const currentHash = hashOf(TEXT.title);
+  const offering = async () =>
+    (
+      await q<Row>(
+        `SELECT id, "sellerId", title, description, "declaredNsfwLevel", "maxNsfwLevel",
+           status::text AS status, ingestion::text AS ingestion, "updatedAt", "scanWorkflowId"
+         FROM "ServiceOffering" WHERE id = $1`,
+        [ID]
+      )
+    )[0];
+  const ingestion = async () => (await offering()).ingestion;
+  const holdRows = () =>
+    q<{ id: number; status: string; textHash: string; meta: Row | null }>(
+      `SELECT id, status::text AS status, "textHash", meta FROM "TextScanHold" WHERE "entityId" = $1 ORDER BY id`,
+      [ID]
+    );
+  // The Prisma reads and writes on the offering go to its Postgres row.
+  const toSet = (cond: unknown) =>
+    cond && typeof cond === 'object' && 'not' in cond
+      ? { in: Object.values(ServiceOfferingIngestionStatus).filter((s) => s !== (cond as Row).not) }
+      : cond;
+  const evaluate = async (w: Row) =>
+    matches(await offering(), 'ingestion' in w ? { ...w, ingestion: toSet(w.ingestion) } : w);
+
+  const scan = (textHash: string, workflowId: string) =>
+    serviceOfferingModerationAdapter.applyTextScan!({
+      entityId: ID,
+      workflowId,
+      outcome: { csam: { detected: true, reason: 'r' }, triggeredLabels: ['csam'] } as never,
+      subject: { fields: [{ heading: 'Title', text: TEXT.title }], declared: {}, userId: 1 },
+      textHash,
+    });
+  const verdictFor = (textHash: string) =>
+    q(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", "triggeredLabels", result, status)
+       VALUES ('ServiceOffering', $1, '{csam}', $2::jsonb, 'Succeeded')
+       ON CONFLICT ("entityType", "entityId") DO UPDATE SET result = EXCLUDED.result`,
+      [ID, JSON.stringify({ version: 1, textHash })]
+    );
+  const decide = async (decision: 'dismiss' | 'remove') => {
+    const [hold] = (await holdRows()).filter((h) => h.status === 'Pending');
+    return decideCsamHold({
+      holdId: hold.id,
+      textHash: hold.textHash,
+      decision,
+      actor: { id: 7 },
+      tracker: {} as never,
+    });
+  };
+  const reconcile = () => {
+    dbMock.dbRead.serviceOffering.findMany.mockImplementationOnce((async () =>
+      q(
+        `SELECT id, "updatedAt" FROM "ServiceOffering"
+         WHERE ingestion IN ('Pending', 'Error') AND "updatedAt" < now() - interval '10 minutes'`
+      )) as never);
+    dbMock.dbRead.entityModeration.findMany.mockImplementationOnce((async () =>
+      (
+        await q<Row>(
+          `SELECT "entityId", status, coalesce(blocked, false) AS blocked FROM "EntityModeration"`
+        )
+      ).map((m) => ({ ...m, updatedAt: new Date() }))) as never);
+    return serviceOfferingIngestionReconcile.run({}).result;
+  };
+  // What the reconcile job's resubmit does: the route answers with a new check id.
+  const rescan = () => scanServiceOffering(ID, { forceRescan: true });
+
+  beforeEach(async () => {
+    await q(
+      `INSERT INTO "ServiceOffering" (id, "sellerId", title, description, price, "deliveryDays", ingestion, "scanWorkflowId", "updatedAt")
+       VALUES ($1, 1, $2, $3, 500, 3, 'Pending', 'wf-1', now() - interval '1 hour')`,
+      [ID, TEXT.title, TEXT.description]
+    );
+    dbMock.dbWrite.serviceOffering.findFirst.mockImplementation((async ({
+      where,
+    }: {
+      where: Row;
+    }) =>
+      (await evaluate(where))
+        ? { ...(await offering()), seller: { username: null } }
+        : null) as never);
+    dbMock.dbWrite.serviceOffering.updateMany.mockImplementation((async ({
+      where,
+      data,
+    }: {
+      where: Row;
+      data: Row;
+    }) => {
+      if (!(await evaluate(where))) return { count: 0 };
+      await q(
+        `UPDATE "ServiceOffering" SET ingestion = $1::"ServiceOfferingIngestionStatus" WHERE id = $2`,
+        [data.ingestion, ID]
+      );
+      return { count: 1 };
+    }) as never);
+    dbMock.dbWrite.serviceOffering.findMany.mockImplementation((async () => [
+      await offering(),
+    ]) as never);
+    dbMock.dbWrite.serviceOffering.findUnique.mockImplementation((async () => offering()) as never);
+    dbMock.dbWrite.entityModeration.findUnique.mockImplementation(
+      (async () =>
+        (
+          await q(
+            `SELECT status, "triggeredLabels", result FROM "EntityModeration" WHERE "entityId" = $1`,
+            [ID]
+          )
+        )[0] ?? null) as never
+    );
+    dbMock.dbWrite.entityModeration.findFirst.mockResolvedValue(null as never);
+    dbMock.dbWrite.textScanHold.findMany.mockImplementation((async () => holdRows()) as never);
+    dbMock.dbWrite.textScanHold.findFirst.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        (
+          await q(
+            `SELECT id, status::text AS status, "entityType", "entityId", "userId", text, "textHash", meta
+           FROM "TextScanHold" WHERE id = $1 AND label = 'csam'`,
+            [where.id]
+          )
+        )[0] ?? null) as never
+    );
+    dbMock.dbWrite.textScanHold.updateMany.mockImplementation((async ({
+      where,
+      data,
+    }: {
+      where: { id: number; textHash: string };
+      data: { status: string; decidedAt: Date; decidedById: number; meta: Row };
+    }) => ({
+      count:
+        (
+          await holder.db.query(
+            `UPDATE "TextScanHold" SET status = $1::"TextScanHoldStatus", "decidedAt" = $2,
+               "decidedById" = $3, meta = $4::jsonb
+             WHERE id = $5 AND label = 'csam' AND status = 'Pending' AND "textHash" = $6`,
+            [
+              data.status,
+              data.decidedAt,
+              data.decidedById,
+              JSON.stringify(data.meta),
+              where.id,
+              where.textHash,
+            ]
+          )
+        ).affectedRows ?? 0,
+    })) as never);
+
+    // Held by the csam queue: the check found csam in the current text.
+    await verdictFor(currentHash);
+    await scan(currentHash, 'wf-1');
+    expect(await ingestion()).toBe('Blocked');
+    expect((await holdRows()).map((h) => h.status)).toEqual(['Pending']);
+  });
+
+  it('sends the offering back to its check, and the reconcile job shows it', async () => {
+    await decide('dismiss');
+    expect(await ingestion()).toBe('Pending');
+    await reconcile();
+    expect(await ingestion()).toBe('Scanned');
+    expect((await holdRows()).map((h) => h.status)).toEqual(['Dismissed']);
+    expect(report.createReport).not.toHaveBeenCalled();
+  });
+
+  it('keeps an offering the moderator removed hidden', async () => {
+    await decide('remove');
+    expect(await ingestion()).toBe('Blocked');
+    await reconcile();
+    expect(await ingestion()).toBe('Blocked');
+  });
+
+  it('keeps it hidden while another hold on it is still pending', async () => {
+    await q(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, meta, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'other', 't', 'r', '{}', now())`,
+      [ID]
+    );
+    const [first] = await holdRows();
+    await decideCsamHold({
+      holdId: first.id,
+      textHash: first.textHash,
+      decision: 'dismiss',
+      actor: { id: 7 },
+      tracker: {} as never,
+    });
+    expect(await ingestion()).toBe('Blocked');
+  });
+
+  it('settles a rescan of the same text that finds csam again, with no new hold', async () => {
+    await decide('dismiss');
+    await rescan();
+    await scan(currentHash, 'wf-new');
+    expect(await ingestion()).toBe('Scanned');
+    expect(await holdRows()).toHaveLength(1);
+    // Nothing brings it back round without a moderator.
+    await reconcile();
+    expect(await ingestion()).toBe('Scanned');
+    expect(await holdRows()).toHaveLength(1);
+  });
+
+  it('holds changed text that finds csam after the dismiss in a fresh hold', async () => {
+    await decide('dismiss');
+    const edited = 'Portraits, revised';
+    await q(
+      `UPDATE "ServiceOffering" SET title = $1, "updatedAt" = now() - interval '30 minutes' WHERE id = $2`,
+      [edited, ID]
+    );
+    await rescan();
+    await verdictFor(hashOf(edited));
+    await scan(hashOf(edited), 'wf-new');
+    expect(await ingestion()).toBe('Blocked');
+    const [dismissed, fresh] = await holdRows();
+    expect(dismissed.status).toBe('Dismissed');
+    expect(fresh).toMatchObject({ status: 'Pending', textHash: hashOf(edited) });
+    expect(fresh.meta).toMatchObject({ kind: 'redetected', priorHoldId: dismissed.id });
+    // Only the queue lets it out: neither the job nor a seller edit does.
+    await reconcile();
+    await requeueBlockedServiceOffering(ID);
+    expect(await ingestion()).toBe('Blocked');
+    expect(await holdRows()).toHaveLength(2);
+    expect(report.createReport).not.toHaveBeenCalled();
   });
 });

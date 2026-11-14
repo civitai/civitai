@@ -22,11 +22,7 @@ const CONCURRENCY = 5;
 
 export type ReconcileAction = 'submit' | 'settle' | 'block' | 'leave';
 
-/**
- * What to do with an offering still Pending, or in Error, past the grace window. A succeeded check whose result
- * never reached the offering is applied; a missing or lost submit is resubmitted. Failed rows are
- * left to the retry cron.
- */
+/** What to do with an offering still Pending, or in Error, past the grace window. Failed checks are the retry cron's. */
 export function reconcileAction(
   moderation: { status: EntityModerationStatus; blocked: boolean | null; updatedAt: Date } | null,
   { offeringUpdatedAt, pendingBefore }: { offeringUpdatedAt: Date; pendingBefore: Date }
@@ -44,10 +40,7 @@ export function reconcileAction(
   return 'leave';
 }
 
-/**
- * Offerings whose content check never settled: a lost submit or a callback whose result never
- * reached the offering. Also how offerings that predate the check are first submitted.
- */
+/** Settles offerings whose check never did, and first submits the ones that predate it. */
 export const serviceOfferingIngestionReconcile = createJob(
   'service-offering-ingestion-reconcile',
   '*/10 * * * *',
@@ -95,7 +88,12 @@ export const serviceOfferingIngestionReconcile = createJob(
               'unverified'
             )
               await scanServiceOffering(id, { forceRescan: true });
-          } else if (action === 'block') await blockServiceOffering(id);
+          } else if (
+            action === 'block' &&
+            !(await blockServiceOffering(id, { unchangedSince: updatedAt }))
+          )
+            // Edited since it was read: the verdict is about the old text.
+            await scanServiceOffering(id, { forceRescan: true });
         } catch (error) {
           errors++;
           logToAxiom({

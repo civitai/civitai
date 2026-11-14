@@ -142,11 +142,12 @@ export async function settleOrHoldServiceOffering(offeringId: number, current: C
   return state;
 }
 
+/** False when the offering is no longer the text checked, or is already blocked. */
 export async function blockServiceOffering(
   offeringId: number,
   current: CurrentText = {},
   { inHoldQueue = false } = {}
-) {
+): Promise<boolean> {
   const where = {
     ...forCurrentText(offeringId, current),
     ingestion: { not: ServiceOfferingIngestionStatus.Blocked },
@@ -156,7 +157,7 @@ export async function blockServiceOffering(
     where,
     select: { sellerId: true, seller: { select: { username: true } } },
   });
-  if (!offering) return;
+  if (!offering) return false;
   await updateServiceOfferingNsfwLevels([offeringId]);
   // Filed before the offering is held, so a failure here leaves it Pending for the reconcile job to
   // try again rather than held with nothing for a moderator to review. It joins only a report still
@@ -180,7 +181,7 @@ export async function blockServiceOffering(
     where,
     data: { ingestion: ServiceOfferingIngestionStatus.Blocked, scannedAt: new Date() },
   });
-  if (count === 0) return;
+  if (count === 0) return false;
   await createNotification({
     userId: offering.sellerId,
     category: NotificationCategory.System,
@@ -193,6 +194,7 @@ export async function blockServiceOffering(
         : '/',
     },
   });
+  return true;
 }
 
 /**

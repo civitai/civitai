@@ -268,7 +268,10 @@ const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`
       OR (ue."userId" = ${seller} AND ue."targetUserId" = ${buyer}))
 )`;
 
-/** `serviceOfferingShowableWhere`, as SQL: the offering's content checks, and its cover's, are done. */
+/**
+ * `serviceOfferingShowableWhere`, as SQL, but without the viewer's rating cut: the cover only has to
+ * be rated, and the rating is compared through `offeringLevel`. Change the two together.
+ */
 const offeringShowable = Prisma.sql`(o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus"
   AND (o."coverImageId" IS NULL OR EXISTS (
     SELECT 1 FROM "Image" ci
