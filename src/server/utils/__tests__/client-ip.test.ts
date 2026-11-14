@@ -80,6 +80,44 @@ describe('resolveClientIp', () => {
     expect(resolveClientIp(reqWith({}))).toBe(SOCKET_PEER);
   });
 
+  describe('the fallback never honours x-client-ip', () => {
+    // Distinct from SOCKET_PEER and from every forwarded-for value below, so a
+    // result equal to it can only have come from the header under test.
+    const CHOSEN_BY_CALLER = '192.0.2.200';
+    const FORWARDED = '198.51.100.21';
+
+    it('prefers the forwarded-for chain over a caller-supplied x-client-ip', () => {
+      // The library resolver alone would return the caller's choice here; that
+      // is the precondition this case exists to defeat.
+      const headers = { 'x-client-ip': CHOSEN_BY_CALLER, 'x-forwarded-for': FORWARDED };
+      expect(requestIp.getClientIp(reqWith(headers))).toBe(CHOSEN_BY_CALLER);
+      expect(resolveClientIp(reqWith(headers))).toBe(FORWARDED);
+    });
+
+    it('falls through to the transport peer when x-client-ip is the only address header', () => {
+      expect(resolveClientIp(reqWith({ 'x-client-ip': CHOSEN_BY_CALLER }))).toBe(SOCKET_PEER);
+    });
+
+    it('is unchanged when x-client-ip is rotated', () => {
+      const keyFor = (v: string) =>
+        resolveClientIp(reqWith({ 'x-client-ip': v, 'x-forwarded-for': FORWARDED }));
+      expect(keyFor('192.0.2.1')).toBe(keyFor('192.0.2.2'));
+    });
+
+    it('POSITIVE CONTROL: rotating the forwarded-for chain does change the result', () => {
+      // Without this, the invariance above would also hold for a constant.
+      const keyFor = (v: string) =>
+        resolveClientIp(reqWith({ 'x-client-ip': CHOSEN_BY_CALLER, 'x-forwarded-for': v }));
+      expect(keyFor('198.51.100.31')).not.toBe(keyFor('198.51.100.32'));
+    });
+
+    it("does not mutate the caller's request", () => {
+      const req = reqWith({ 'x-client-ip': CHOSEN_BY_CALLER });
+      resolveClientIp(req);
+      expect(req.headers['x-client-ip']).toBe(CHOSEN_BY_CALLER);
+    });
+  });
+
   describe('the unresolvable-caller label', () => {
     /**
      * `'unknown'` is not decoration: it is the SHARED bucket every caller with
@@ -142,7 +180,7 @@ describe('resolveClientIp', () => {
     /**
      * A COMPETING non-edge header is mandatory in the fixtures below, and the
      * reason is worth stating: `request-ip` ALSO consults `cf-connecting-ip`
-     * (gated by its own `is.ip()`), and it does so AFTER `x-client-ip`. So a
+     * (gated by its own `is.ip()`), and it does so AFTER `x-forwarded-for`. So a
      * fixture carrying ONLY `cf-connecting-ip` cannot tell "the CF branch
      * accepted this address" from "the CF branch rejected it and the fallback
      * happened to recover the same value" — the two paths return an identical
@@ -154,7 +192,8 @@ describe('resolveClientIp', () => {
      * answer is visibly different from the CF branch's.
      */
     const RESCUER = '198.51.100.77';
-    const withRescuer = (cf: string) => reqWith({ 'cf-connecting-ip': cf, 'x-client-ip': RESCUER });
+    const withRescuer = (cf: string) =>
+      reqWith({ 'cf-connecting-ip': cf, 'x-forwarded-for': RESCUER });
 
     it.each(['2400:cb00:2049:1::a29f:1804', '2001:db8::1', '::ffff:1.2.3.4'])(
       'accepts the IPv6 address %s on the CF branch itself',

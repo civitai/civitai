@@ -57,7 +57,8 @@ import requestIp from 'request-ip';
  * origin did not take on the caller's word. Fall back
  * to `requestIp.getClientIp` (XFF chain → socket peer) for non-CF / local
  * requests that never traversed the edge, so dev and direct-to-origin traffic
- * still bucket sensibly.
+ * still bucket sensibly. The fallback never sees `x-client-ip` — see
+ * `IGNORED_FALLBACK_HEADERS`.
  *
  * WHY A SHARED PREDICATE: a bucket key is only as good as the value it is
  * derived from, and a per-call-site derivation drifts — each new limiter picks
@@ -120,7 +121,33 @@ export function resolveClientIp(req: NextApiRequest): string {
   // the two were folded together because two implementations of one rule can
   // only ever agree by convention, and neither failed when the other changed.
   if (isIpAddress(candidate)) return candidate;
-  return requestIp.getClientIp(req) ?? UNRESOLVED_CLIENT_IP;
+  return requestIp.getClientIp(withoutIgnoredFallbackHeaders(req)) ?? UNRESOLVED_CLIENT_IP;
+}
+
+/**
+ * Headers the fallback resolver must never consult.
+ *
+ * `request-ip` reads `x-client-ip` BEFORE `x-forwarded-for`. A reverse proxy
+ * governs `x-forwarded-for` (it decides whose chain to keep and appends the
+ * peer it saw), but nothing in front of the app rewrites `x-client-ip`, so on
+ * any request that reaches the fallback that header is exactly what the caller
+ * sent. Honouring it lets a caller pick its own bucket key and rotate away from
+ * it at will. With it removed, the fallback's first choice is the forwarded-for
+ * chain, which is as trustworthy as the proxy's forwarded-header policy.
+ */
+const IGNORED_FALLBACK_HEADERS = ['x-client-ip'] as const;
+
+function withoutIgnoredFallbackHeaders(req: NextApiRequest): NextApiRequest {
+  const headers = req.headers;
+  if (!headers || !IGNORED_FALLBACK_HEADERS.some((name) => name in headers)) return req;
+  const filtered = { ...headers };
+  for (const name of IGNORED_FALLBACK_HEADERS) delete filtered[name];
+  // A view of the same request with only `headers` replaced: the prototype is the
+  // original, so the socket/connection fields `request-ip` falls back to are the
+  // real ones, and the caller's object is not mutated.
+  return Object.create(req, {
+    headers: { value: filtered, enumerable: true },
+  }) as NextApiRequest;
 }
 
 /**
