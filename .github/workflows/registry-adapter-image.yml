@@ -91,8 +91,10 @@ jobs:
           [ "$(echo "$config" | jq -r .WorkingDir)" = "/app" ]
 
       # The command, run with no environment, must get as far as the site's env validation
-      # (src/env/server.ts), which it can only reach after loading the bundle and the externals it
-      # requires first. Exiting for any other reason, or not exiting, fails this step.
+      # (src/env/), which proves the CMD runs the bundle on the image's Node. It does not prove the
+      # externals load: env validation runs early, before most of them are required. The runtime
+      # stage's load check covers those. Exiting for any other reason, or not exiting, fails this
+      # step.
       - name: Command starts the bundle
         run: |
           # The step shell runs with -e; a failing command substitution must not end it here.
