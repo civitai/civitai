@@ -2074,11 +2074,13 @@ export const getModelsWithImagesAndModelVersions = async ({
           disableMinor: rawInput.disableMinor,
           viewer: user,
         });
-        const filteredImages = excludedTagIds
-          ? versionImages.filter(
-              (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
-            )
-          : versionImages;
+        // The owner is exempt from the whole set, as in getModelsRaw's tag clause.
+        const filteredImages =
+          excludedTagIds && model.user.id !== user?.id
+            ? versionImages.filter(
+                (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
+              )
+            : versionImages;
 
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
