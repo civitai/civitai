@@ -489,7 +489,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
       WHERE c."entityType" = 'postText' AND ht.id = c."entityId"
-      AND (ht.refused OR ht."csamHeld" OR (
+      AND (ht.refused OR ht."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = ht.id AND th.label = 'csam' AND th.status = 'Pending') OR (
       (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
       OR hp."nsfwLevel" = 0) AND hp."userId" <> pc."userId"
       ))
@@ -639,7 +640,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
       WHERE c."entityType" = 'postText' AND ht.id = c."entityId"
-      AND (ht.refused OR ht."csamHeld" OR (
+      AND (ht.refused OR ht."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = ht.id AND th.label = 'csam' AND th.status = 'Pending') OR (
       (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
       OR hp."nsfwLevel" = 0)
       ))
@@ -739,7 +741,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       SELECT 1 FROM "PostText" ht JOIN "Post" hp ON hp.id = ht."postId"
       WHERE c."entityType" = 'postText' AND ht.id = c."entityId"
-      AND (ht.refused OR ht."csamHeld" OR (
+      AND (ht.refused OR ht."csamHeld" OR EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+      AND th."entityId" = ht.id AND th.label = 'csam' AND th.status = 'Pending') OR (
       (ht."nsfwLevel" = 0 OR hp."publishedAt" IS NULL OR hp."publishedAt" >= now()
       OR hp."nsfwLevel" = 0)
       ))

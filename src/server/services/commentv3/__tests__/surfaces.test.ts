@@ -316,6 +316,14 @@ describe('a new storyline text comment', () => {
     });
   });
 
+  it('tells nobody about a text with no image to open it on', async () => {
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([
+      { postId: 31, userId: 5, title: 'Chapter one', anchorImageId: null },
+    ] as never);
+    await created(comment());
+    expect(m.notify).not.toHaveBeenCalled();
+  });
+
   it('tells nobody about the owner’s own comment, or a reply', async () => {
     text(2);
     await created(comment());
