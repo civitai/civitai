@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockedForSignal,
+  imageAuditContentHash,
   isReviewBatchId,
   matchesSuspectTerm,
   newReviewBatchId,
@@ -13,6 +14,16 @@ import vectors from './fixtures/review-terms-vectors.json';
 
 // Placeholder terms and patterns: the real lists are private and never in the repo.
 const TERMS = parseSuspectTerms('# comment\nalpha\nbeta gamma\n')!;
+
+// Wire contract: ClickHouse already holds scan rows under these hashes. Changing the function
+// orphans every stored row, and each image then reads as unscanned.
+describe('imageAuditContentHash', () => {
+  it('matches the hashes stored scan rows are keyed by', () => {
+    expect(imageAuditContentHash(1)).toBe('d958978c84fa167c');
+    expect(imageAuditContentHash(123)).toBe('5eaacd96ca0060b2');
+    expect(imageAuditContentHash(2147483647)).toBe('984ec8d802c32865');
+  });
+});
 
 describe('matchesSuspectTerm', () => {
   it('matches a term as a whole word, through case, width and punctuation', () => {

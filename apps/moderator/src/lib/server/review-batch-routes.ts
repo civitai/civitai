@@ -62,9 +62,6 @@ export function batchItemHandler(tier: ReviewTier): RequestHandler {
     const review = { batchHash: batch.hash, tier, declared: batch.declared };
 
     if (tier === 'held') {
-      // A held batch serves only images that still carry a signal, unless the batch was declared.
-      if (!media.held && !batch.declared && !(await scannerHoldsImage(media.imageId)))
-        error(404, 'Not available here.');
       const token = cookies.get(SHEET_COOKIE);
       return streamStoredMedia({
         media,

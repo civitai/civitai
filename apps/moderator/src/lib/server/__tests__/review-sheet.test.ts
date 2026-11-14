@@ -392,27 +392,29 @@ describe('the batch item routes', () => {
     expect(streamStoredMedia).not.toHaveBeenCalled();
   });
 
-  it('a held batch serves a suspect image, and refuses a clean one unless the batch was declared', async () => {
-    getBatchMedia.mockResolvedValue({
-      imageId: 101,
+  // Ruled 2026-11-14: a held batch serves all of its images to its viewer, clean ones included.
+  // The tier is fixed at mint, so refusing a clean one leaves a gap nobody can close.
+  it('a mixed undeclared held batch serves its clean image on the held route, audited', async () => {
+    getBatchMedia.mockImplementation(async (_batch: unknown, n: number) => ({
+      imageId: 101 + n,
       url: 'k',
       type: 'image',
       mimeType: null,
-      held: true,
-    });
+      held: n === 0,
+    }));
     expect((await item('held', HELD, '0', heldLocals([HELD_HASH]))).status).toBe(200);
-    getBatchMedia.mockResolvedValue({
-      imageId: 101,
-      url: 'k',
-      type: 'image',
-      mimeType: null,
-      held: false,
-    });
-    expect((await item('held', HELD, '0', heldLocals([HELD_HASH]))).status).toBe(404);
-    scannerHoldsImage.mockResolvedValueOnce(true);
-    expect((await item('held', HELD, '0', heldLocals([HELD_HASH]))).status).toBe(200);
-    seedBatch(HELD, 'held', { declared: true });
-    expect((await item('held', HELD, '0', heldLocals([HELD_HASH]))).status).toBe(200);
+    expect((await item('held', HELD, '1', heldLocals([HELD_HASH]))).status).toBe(200);
+    expect(insertModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activity: 'heldMedia:view',
+        entityId: 102,
+        credential: 'sheet',
+        review: { batchHash: HELD_HASH, tier: 'held', declared: false },
+      })
+    );
+    // The same clean image in a general batch serves on the general route only.
+    expect((await item('review', GENERAL, '1', reviewLocals([GENERAL_HASH]))).status).toBe(200);
+    expect((await item('held', GENERAL, '1', heldLocals([GENERAL_HASH]))).status).toBe(404);
   });
 
   it('refuses an index past the batch, a batch not in the session, a tier mismatch, or a dead minting key', async () => {

@@ -6,7 +6,7 @@ import {
   reviewCookie,
 } from '$lib/server/held-sheet';
 
-// Reached without a web session: hooks.server.ts lets this one path through, and `locals.user` is unset.
+// No web session here: hooks.server.ts skips auth for the sheet exchange paths, so `locals.user` is unset.
 export const POST: RequestHandler = async ({ request, cookies }) => {
   const headers = { 'cache-control': 'no-store' };
   if (!reviewBatchesEnabled()) return new Response(null, { status: 404, headers });
