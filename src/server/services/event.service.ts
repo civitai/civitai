@@ -876,9 +876,10 @@ const UNSCORED_HAT = {
   remixes: 0,
 };
 
-// The hat of this event worn on one piece of content, who wears it and what it has earned there, for
-// the popover a click on a card's hat opens. Null when no hat of the event is on it, or when the
-// content is not public: the answer is the same for every viewer and is edge-cached as such.
+// The hat of this event worn on one piece of content, who wears it and what the hat has earned
+// everywhere it has been worn (totals are per hatField, with no entity), for the popover a click on
+// a card's hat opens. Null when no hat of the event is on it, or when the content is not public: the
+// answer is the same for every viewer and is edge-cached as such.
 // Hats stay on content after the event, so the hat comes from the content's decoration, not the
 // hat map the event stops keeping.
 export async function getWornEventHat({
