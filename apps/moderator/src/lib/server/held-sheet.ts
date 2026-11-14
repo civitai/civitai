@@ -38,7 +38,9 @@ export const isSheetImagePath = (pathname: string) => SHEET_IMAGE_PATH.test(path
 
 export const REVIEW_SHEET_COOKIE = '__Secure-review_sheet';
 export const REVIEW_SHEET_COOKIE_PATH = '/api/review-media/';
-export const REVIEW_SHEET_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+/** One general sign-in lasts a day: 24 h at most, 8 h idle. Held keeps its own short session above. */
+export const REVIEW_SHEET_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const REVIEW_SHEET_IDLE_MS = 8 * 60 * 60 * 1000;
 export const REVIEW_SHEET_MAX_BATCHES = 20;
 
 const BATCH_PATH = /^\/api\/(held|review)-media\/b\/[A-Za-z0-9_-]{22}(?:\/\d{1,3})?$/;
@@ -64,12 +66,19 @@ type CodeRecord = StartParams & { userId: number; web: WebSession; batch?: Batch
 /** A held session with `batch` serves that batch's routes and nothing else; one without serves the
  *  image-id route. */
 type SessionRecord = { userId: number; web: WebSession; createdAt: number; batch?: string };
-type ReviewSessionRecord = {
-  userId: number;
-  web: WebSession;
-  createdAt: number;
-  batches: string[];
-};
+/** A review session. Its batch hashes are a set beside it (`reviewBatchesKey`), so concurrent
+ *  requests add to it atomically. It is written once, at sign-in: requests only EXPIRE it, which
+ *  never re-creates a key, so a session Sign out deleted stays deleted. */
+type ReviewSessionRecord = { userId: number; web: WebSession; createdAt: number };
+
+/** Seconds the store keeps it: the idle window, never past the day's cap. The TTL is the idle clock. */
+const reviewTtlSeconds = (createdAt: number, now: number) =>
+  Math.max(
+    1,
+    Math.ceil(
+      (Math.min(createdAt + REVIEW_SHEET_MAX_AGE_MS, now + REVIEW_SHEET_IDLE_MS) - now) / 1000
+    )
+  );
 
 const webSession = ({ sub, sid, jti, signedAt }: SessionClaims): WebSession => ({
   sub,
@@ -86,6 +95,37 @@ const sessionKey = (token: string) =>
   `${REDIS_SYS_KEYS.APP.HELD_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateSys;
 const reviewKey = (token: string) =>
   `${REDIS_SYS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}` as RedisKeyTemplateSys;
+const reviewBatchesKey = (token: string) =>
+  `${REDIS_SYS_KEYS.APP.REVIEW_SHEET_SESSION}:${sha256(token)}:batches` as RedisKeyTemplateSys;
+
+/** Slides both keys' TTL; false when the session is gone (expired or signed out). */
+async function slideReviewSession(token: string, createdAt: number, now: number) {
+  const redis = getSysRedis();
+  const ttl = reviewTtlSeconds(createdAt, now);
+  const [record] = await Promise.all([
+    redis.expire(reviewKey(token), ttl),
+    redis.expire(reviewBatchesKey(token), ttl),
+  ]);
+  return record;
+}
+
+/** Adds a batch hash to a live review session, refusing the one past REVIEW_SHEET_MAX_BATCHES. */
+async function addReviewBatch(token: string, hash: string, createdAt: number, now: number) {
+  const redis = getSysRedis();
+  const set = reviewBatchesKey(token);
+  const added = await redis.sAdd(set, hash);
+  await redis.expire(set, reviewTtlSeconds(createdAt, now));
+  if (added && (await redis.sCard(set)) > REVIEW_SHEET_MAX_BATCHES) {
+    await redis.sRem(set, hash);
+    return false;
+  }
+  // Signed out while this request ran: its set must not outlive the session.
+  if (!(await redis.exists(reviewKey(token)))) {
+    await redis.del(set);
+    return false;
+  }
+  return true;
+}
 
 /**
  * The one redirect the sheet may name: `HELD_SHEET_CALLBACK_URL`, an https URL with no query,
@@ -184,8 +224,8 @@ export async function exchangeCode(code: unknown, codeVerifier: unknown): Promis
 
 /**
  * The review session token a general-tier code adds its batch to: the session `current` names when
- * it is live and belongs to the same moderator, else a new one. Only a code, which only a web session
- * can issue, ever adds a batch; the cookie alone cannot.
+ * it is live, belongs to the same moderator, its web session still admits them, and it has room;
+ * else a new one.
  */
 export async function exchangeReviewCode(
   code: unknown,
@@ -196,22 +236,33 @@ export async function exchangeReviewCode(
   if (!record || record.batch?.tier !== 'general') return null;
   const redis = getSysRedis();
   const now = Date.now();
+  const hash = record.batch.hash;
 
   const existing = current && TOKEN.test(current) ? await redis.get(reviewKey(current)) : null;
   const live = existing ? (JSON.parse(existing) as ReviewSessionRecord) : null;
-  const joinable =
+  if (
     live &&
     live.userId === record.userId &&
     now - live.createdAt < REVIEW_SHEET_MAX_AGE_MS &&
-    (live.batches.includes(record.batch.hash) || live.batches.length < REVIEW_SHEET_MAX_BATCHES);
+    (await sessionUser(live)) &&
+    (await addReviewBatch(current!, hash, live.createdAt, now)) &&
+    (await slideReviewSession(current!, live.createdAt, now))
+  )
+    return current!;
 
-  const token = joinable ? current! : newSecret();
-  const session: ReviewSessionRecord = joinable
-    ? { ...live, batches: [...new Set([...live.batches, record.batch.hash])] }
-    : { userId: record.userId, web: record.web, createdAt: now, batches: [record.batch.hash] };
-  const ttl = Math.ceil((session.createdAt + REVIEW_SHEET_MAX_AGE_MS - now) / 1000);
+  const token = newSecret();
+  const session: ReviewSessionRecord = { userId: record.userId, web: record.web, createdAt: now };
+  const ttl = reviewTtlSeconds(now, now);
   await redis.set(reviewKey(token), JSON.stringify(session), { EX: ttl });
+  await redis.sAdd(reviewBatchesKey(token), hash);
+  await redis.expire(reviewBatchesKey(token), ttl);
   return token;
+}
+
+/** Ends a review session on the server (the sheet's Sign out). A token that names none is a no-op. */
+export async function revokeReviewSession(token: string | undefined): Promise<void> {
+  if (!token || !TOKEN.test(token)) return;
+  await getSysRedis().del([reviewKey(token), reviewBatchesKey(token)]);
 }
 
 let sessions: ReturnType<typeof createSessionClient> | undefined;
@@ -252,18 +303,35 @@ export async function resolveHeldSession(
   return { user, batch: session.batch ?? null };
 }
 
-/** A review sheet session and the general batches it may open. It expires on its creation clock
- *  alone, never slid. */
-export async function resolveReviewSession(
-  token: string | undefined
-): Promise<{ user: SessionUser; batches: string[] } | null> {
+/**
+ * A review sheet session, the general batches it holds, and `join`, which adds one more. A hit
+ * slides the idle window; the session never outlives REVIEW_SHEET_MAX_AGE_MS or the web session
+ * that started it. `join` only records a hash: the caller has already checked the batch is live,
+ * general, minted for this moderator, and that its minting key is live.
+ */
+export async function resolveReviewSession(token: string | undefined): Promise<{
+  user: SessionUser;
+  batches: string[];
+  join: (hash: string) => Promise<boolean>;
+} | null> {
   if (!token || !TOKEN.test(token)) return null;
-  const raw = await getSysRedis().get(reviewKey(token));
+  const redis = getSysRedis();
+  const raw = await redis.get(reviewKey(token));
   if (!raw) return null;
   const session = JSON.parse(raw) as ReviewSessionRecord;
-  if (Date.now() - session.createdAt > REVIEW_SHEET_MAX_AGE_MS) return null;
+  const now = Date.now();
+  if (now - session.createdAt >= REVIEW_SHEET_MAX_AGE_MS) {
+    await revokeReviewSession(token);
+    return null;
+  }
   const user = await sessionUser(session);
-  return user ? { user, batches: session.batches } : null;
+  if (!user) return null;
+  if (!(await slideReviewSession(token, session.createdAt, now))) return null;
+
+  const batches = await redis.sMembers<string>(reviewBatchesKey(token));
+  const join = async (hash: string) =>
+    batches.includes(hash) || addReviewBatch(token, hash, session.createdAt, now);
+  return { user, batches, join };
 }
 
 async function sessionUser(session: { userId: number; web: WebSession }) {
