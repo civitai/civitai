@@ -82,6 +82,7 @@ import {
 } from '~/server/services/generation-input-urls';
 import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
   getWorkflow,
   setWorkflowDownloadPriority,
@@ -1344,7 +1345,7 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
-  /** A base model in the submit restricts mature generation. */
+  /** The submit's ecosystem, or a resource's base model, restricts mature generation. */
   capOutput: boolean;
 }> {
   data = expandAvatarData(data);
@@ -1418,6 +1419,17 @@ export async function createWorkflowStepsFromGraph({
     // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
+    // Handlers branch on the checkpoint's base model, so prefer the stored one over the client's.
+    ...('model' in data && data.model
+      ? {
+          model: {
+            ...data.model,
+            baseModel:
+              enrichedResources.find((r) => r.id === data.model?.id)?.baseModel ??
+              data.model.baseModel,
+          },
+        }
+      : {}),
   };
 
   // Convert graph output to legacy {resources, params} format for storage.
@@ -1620,6 +1632,7 @@ export async function createWorkflowStepsFromGraph({
  * with its token-derived `isGreen`/`isModerator` in the router). Resource
  * enrichment, canGenerate/availability gating, and POI detection still run
  * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ * Callers must apply `capOutput` to the submit body.
  */
 export async function createWorkflowStepsFromGraphInput({
   input,
@@ -3324,7 +3337,7 @@ export async function updateWorkflow({
 }
 
 export async function formatGenerationResponse2(
-  workflows: Workflow[],
+  rawWorkflows: Workflow[],
   user?: { id?: number; isModerator?: boolean; tier?: string },
   {
     acceptBoostRequired = false,
@@ -3336,6 +3349,10 @@ export async function formatGenerationResponse2(
     skipResourceEnrichment?: boolean;
   } = {}
 ): Promise<NormalizedWorkflow[]> {
+  // A training run's weights are moderators-only on every workflow read (`withoutTrainingWeightHandles`).
+  const workflows = rawWorkflows.map((workflow) =>
+    withoutTrainingWeightHandles(workflow, { isModerator: user?.isModerator })
+  );
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
   const allResourceRefs: Array<{ id: number; epoch?: number }> = [];
@@ -3720,11 +3737,14 @@ export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUp
 export async function getWorkflowStatusUpdate({
   token,
   workflowId,
+  isModerator,
 }: {
   token: string;
   workflowId: string;
+  isModerator?: boolean;
 }) {
-  const result = await getWorkflow({ token, path: { workflowId } });
+  const fetched = await getWorkflow({ token, path: { workflowId } });
+  const result = fetched && withoutTrainingWeightHandles(fetched, { isModerator });
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;

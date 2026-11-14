@@ -2,13 +2,23 @@ import {
   ecosystemByKey,
   getBaseModelsByEcosystemId,
   isMatureRestricted,
+  type EcosystemRecord,
 } from '~/shared/constants/basemodel.constants';
 import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 
+const restrictsGeneration = (baseModel: string | undefined) =>
+  isMatureRestricted(baseModel, 'generation');
+
+// SDXL holds SDXL Turbo but is not restricted: an ecosystem restricts only when every base in it does.
+const ecosystemRestrictsGeneration = (ecosystem: EcosystemRecord) => {
+  const bases = getBaseModelsByEcosystemId(ecosystem.id);
+  return bases.length > 0 && bases.every((m) => restrictsGeneration(m.name));
+};
+
 /**
- * Whether a submit's base models restrict mature generation. A submit with no resources (an edit
- * that runs the ecosystem's own weights) is decided by its ecosystem, and only when every base
- * model in it restricts generation: SDXL holds SDXL Turbo but is not restricted.
+ * Whether a submit restricts mature generation: its ecosystem does, or any resource's base model.
+ * The ecosystem counts even with resources, so a request on a restricted ecosystem stays capped
+ * whatever its resources are labelled, raw-AIR epochs (which carry no base model) included.
  */
 export function capsGenerationOutput({
   baseModels,
@@ -17,10 +27,9 @@ export function capsGenerationOutput({
   baseModels: (string | undefined)[];
   ecosystem?: string;
 }) {
-  if (baseModels.length > 0) return baseModels.some((bm) => isMatureRestricted(bm, 'generation'));
   const record = ecosystem ? ecosystemByKey.get(ecosystem) : undefined;
-  const bases = record ? getBaseModelsByEcosystemId(record.id) : [];
-  return bases.length > 0 && bases.every((m) => isMatureRestricted(m.name, 'generation'));
+  if (record && ecosystemRestrictsGeneration(record)) return true;
+  return baseModels.some(restrictsGeneration);
 }
 
 /**
