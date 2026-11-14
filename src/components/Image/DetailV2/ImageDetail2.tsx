@@ -49,7 +49,7 @@ import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Place
 import { useStickerRevealParam } from '~/store/sticker-reveal.store';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -843,8 +843,6 @@ function ImageDetail2Content() {
                           <ImageRemixOfDetails imageId={image.id} />
                           <RemixGalleryCard imageId={image.id} />
                           <ImageGenerationData imageId={image.id} collapsible />
-                          {/* <ImageRemixesDetails imageId={image.id} /> */}
-                          {/* {!hideAds && <AdUnitSide_3 />} */}
                           <CollapsibleCard
                             title="Discussion"
                             icon={<IconBrandWechat />}

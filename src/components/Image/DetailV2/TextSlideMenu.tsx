@@ -1,7 +1,5 @@
-import { openReportModal } from '~/components/Dialog/triggers/report';
 import { Menu } from '~/components/MantineOverlays';
-import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { ReportEntity } from '~/shared/utils/report-helpers';
+import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 
 /**
  * A text slide's ⋯ menu. A text is reported through its post's report, where moderators see the
@@ -12,10 +10,7 @@ export function TextSlideMenu({ postId, children }: { postId: number; children: 
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
-        <ReportMenuItem
-          label="Report post"
-          onReport={() => openReportModal({ entityType: ReportEntity.Post, entityId: postId })}
-        />
+        <ReportChapterMenuItem postId={postId} label="Report post" />
       </Menu.Dropdown>
     </Menu>
   );
