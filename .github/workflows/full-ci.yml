@@ -58,7 +58,7 @@ name: Full CI on label
 # If it finds one, the PR run is the full run, in the checks list, and nothing is dispatched;
 # the summary links it. Otherwise (label added to an existing PR, the PR run not created yet
 # after ~90 s, a docs-only PR the Lint `paths:` filter skips) it dispatches as before.
-# On a skip, apps.yml and moderator-boot.yml are not dispatched either: their PR runs follow
+# On a skip, apps.yml, moderator-boot.yml and feed-go.yml are not dispatched either: their PR runs follow
 # their `paths:` filters, exactly as on every later push with the label on.
 
 on:
