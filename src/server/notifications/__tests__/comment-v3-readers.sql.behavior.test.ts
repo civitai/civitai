@@ -37,6 +37,7 @@ const {
 } = await import('~/server/notifications/comment.notifications');
 const { mentionNotifications } = await import('~/server/notifications/mention.notifications');
 const { reactionNotifications } = await import('~/server/notifications/reaction.notifications');
+const { postTextWithPendingHoldSql } = await import('~/server/services/post-text-hold');
 const { commentDetailFetcher } = await import(
   '~/server/notifications/detail-fetchers/comment.detail-fetcher'
 );
@@ -777,6 +778,31 @@ describe('the mute menu', () => {
     expect(await menu(100, 6)).toEqual({ muted: true, viaAncestor: false, canMute: true });
     expect(await menu(102, 6)).toEqual({ muted: true, viaAncestor: true, canMute: true });
     expect(await menu(100, 9)).toEqual({ muted: false, viaAncestor: false, canMute: true });
+  });
+});
+
+describe("the text thread gate's one read", () => {
+  const read = async () => {
+    const q = postTextWithPendingHoldSql(50);
+    return (await db.pg.query(q.text, q.values)).rows;
+  };
+
+  it('reads the row, and whether a Pending csam hold is on it, in one statement', async () => {
+    expect(await read()).toEqual([
+      { postId: 1, refused: false, csamHeld: false, nsfwLevel: 1, pendingHold: false },
+    ]);
+    await temporarily(
+      `INSERT INTO "TextScanHold"("entityType", "entityId", label) VALUES ('PostText', 50, 'csam')`,
+      `DELETE FROM "TextScanHold"`,
+      async () => expect((await read())[0].pendingHold).toBe(true)
+    );
+    // A decided hold, or another label, is not pending csam.
+    await temporarily(
+      `INSERT INTO "TextScanHold"("entityType", "entityId", label, status) VALUES
+         ('PostText', 50, 'csam', 'Confirmed'), ('PostText', 50, 'poi', 'Pending')`,
+      `DELETE FROM "TextScanHold"`,
+      async () => expect((await read())[0].pendingHold).toBe(false)
+    );
   });
 });
 

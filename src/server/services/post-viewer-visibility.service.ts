@@ -2,7 +2,7 @@ import type { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { getPostDetail } from '~/server/services/post.service';
-import { pendingCsamHoldTextIds } from '~/server/services/post-text-hold';
+import { postTextWithPendingHoldSql } from '~/server/services/post-text-hold';
 import { isPostTextShownToViewer } from '~/server/services/post-text.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -35,18 +35,22 @@ export async function assertPostTextVisible(
   ctx: Pick<Context, 'user' | 'features' | 'req'>
 ) {
   if (!ctx.features?.storylineText) throw throwNotFoundError('Text not found');
-  // The row and its hold from one source, the primary: a confirm moves both in one transaction.
-  const text = await dbWrite.postText.findUnique({
-    where: { id: textId },
-    select: { postId: true, refused: true, csamHeld: true, nsfwLevel: true },
-  });
+  // The row and its Pending hold in one statement on the primary, so no lag can fall between them.
+  const [text] = await dbWrite.$queryRaw<
+    {
+      postId: number;
+      refused: boolean;
+      csamHeld: boolean;
+      nsfwLevel: number;
+      pendingHold: boolean;
+    }[]
+  >(postTextWithPendingHoldSql(textId));
   if (!text) throw throwNotFoundError('Text not found');
   const post = await assertPostVisibleToViewer({ id: text.postId, user: ctx.user });
   const seesAll = !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator);
-  const pending = await pendingCsamHoldTextIds([textId], { primary: true });
   if (
     !isPostTextShownToViewer(
-      { ...text, csamHeld: text.csamHeld || pending.has(textId) },
+      { ...text, csamHeld: text.csamHeld || text.pendingHold },
       {
         browsingLevel: storylineReaderLevel(ctx, undefined),
         seesAll,

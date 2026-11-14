@@ -57,7 +57,7 @@ const stored = (content = '<p>old</p>', csamHeld = false) =>
 beforeEach(() => {
   vi.clearAllMocks();
   w.$queryRaw.mockResolvedValue([] as never);
-  r.textScanHold.findMany.mockResolvedValue([] as never);
+  w.textScanHold.findMany.mockResolvedValue([] as never);
   w.$executeRaw.mockResolvedValue(1 as never);
   w.post.findUnique.mockResolvedValue({ userId: AUTHOR } as never);
   w.storylineChapter.findFirst.mockResolvedValue({ id: 9 } as never);
@@ -291,9 +291,10 @@ describe('what readers are shown', () => {
 
   // A csam hold is written before `csamHeld` is set, and not in one transaction: a Pending hold
   // with the flag still false is held all the same.
-  it('treats a text with a Pending csam hold as held, author included', async () => {
+  it('treats a text with a Pending csam hold as held, author included, reading the hold from the primary', async () => {
     r.postText.findMany.mockResolvedValue(rows as never);
-    r.textScanHold.findMany.mockResolvedValue([{ entityId: 1 }] as never);
+    // Written seconds ago: on the primary, not yet on the replica.
+    w.textScanHold.findMany.mockResolvedValue([{ entityId: 1 }] as never);
     for (const seesAll of [false, true]) {
       const texts = await getPostTextsForViewer({
         postId: POST,
@@ -309,7 +310,7 @@ describe('what readers are shown', () => {
         maxNsfwLevel: NsfwLevel.XXX,
       })
     ).toEqual([{ id: 2, postId: POST, index: 1, nsfwLevel: NsfwLevel.XXX }]);
-    expect(r.textScanHold.findMany).toHaveBeenCalledWith(
+    expect(w.textScanHold.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           entityType: 'PostText',
@@ -319,6 +320,17 @@ describe('what readers are shown', () => {
         },
       })
     );
+  });
+
+  it('makes no primary call for a post with no texts', async () => {
+    r.postText.findMany.mockResolvedValue([] as never);
+    await getPostTextsForViewer({ postId: POST, browsingLevel: NsfwLevel.PG, seesAll: true });
+    await getStorylineTextStubs({
+      postIds: [POST],
+      browsingLevel: NsfwLevel.PG,
+      maxNsfwLevel: NsfwLevel.PG,
+    });
+    expect(w.textScanHold.findMany).not.toHaveBeenCalled();
   });
 
   it("holds the path's stubs to the storyline ceiling, with no content", async () => {

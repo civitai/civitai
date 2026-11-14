@@ -39,11 +39,11 @@ const ctx = (user: unknown, over: Record<string, unknown> = {}) =>
 
 type Row = { refused: boolean; csamHeld: boolean; nsfwLevel: number };
 const scanned: Row = { refused: false, csamHeld: false, nsfwLevel: NsfwLevel.PG };
+/** The gate's one primary read: the row and whether it has a Pending csam hold. */
+const givenGateRow = (row: (Row & { pendingHold: boolean }) | null) =>
+  dbMock.dbWrite.$queryRaw.mockResolvedValue((row ? [{ postId: POST, ...row }] : []) as never);
 const givenText = (row: Row | null) => {
-  for (const client of [dbMock.dbRead, dbMock.dbWrite])
-    client.postText.findUnique.mockResolvedValue(
-      row ? ({ postId: POST, ...row } as never) : (null as never)
-    );
+  givenGateRow(row && { ...row, pendingHold: false });
   dbMock.dbRead.postText.findMany.mockResolvedValue(
     row ? ([{ id: TEXT, index: 0, content: '<p>t</p>', ...row }] as never) : []
   );
@@ -111,8 +111,8 @@ describe("a storyline text's thread is readable exactly where post.get serves th
 
   it('a text with a Pending csam hold has no readable thread, author and moderators included', async () => {
     givenText(scanned);
-    dbMock.dbRead.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
     dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
+    givenGateRow({ ...scanned, pendingHold: true });
     for (const user of [undefined, member, author, moderator]) {
       const c = ctx(user);
       expect(await threadReadable(c)).toBe(false);
@@ -122,21 +122,16 @@ describe("a storyline text's thread is readable exactly where post.get serves th
 
   it('reads a Pending csam hold from the primary, so one just written is not missed on a lagging replica', async () => {
     givenText(scanned);
-    dbMock.dbRead.textScanHold.findMany.mockResolvedValue([] as never);
-    dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
+    givenGateRow({ ...scanned, pendingHold: true });
     expect(await threadReadable(ctx(member))).toBe(false);
+    expect(dbMock.dbRead.postText.findUnique).not.toHaveBeenCalled();
   });
 
   it('stays held right after a moderator confirms the hold, while the replica still shows it pending', async () => {
     // A confirm ends the Pending hold and sets csamHeld in one primary transaction.
     givenText(scanned);
     dbMock.dbRead.textScanHold.findMany.mockResolvedValue([{ entityId: TEXT }] as never);
-    dbMock.dbWrite.textScanHold.findMany.mockResolvedValue([] as never);
-    dbMock.dbWrite.postText.findUnique.mockResolvedValue({
-      postId: POST,
-      ...scanned,
-      csamHeld: true,
-    } as never);
+    givenGateRow({ ...scanned, csamHeld: true, pendingHold: false });
     for (const user of [member, author, moderator])
       expect(await threadReadable(ctx(user))).toBe(false);
   });

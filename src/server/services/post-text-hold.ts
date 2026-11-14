@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
+import { postTextPendingCsamHoldText } from '~/server/services/storyline-visibility.sql';
 import { OWNER_CONTENT_KEPT } from '~/server/services/legal-hold.service';
 
 // A leaf: post, user and job deletes import it, so it imports nothing of theirs.
@@ -15,14 +16,22 @@ export const postHoldsHeldTextSql = (postId: Prisma.Sql) => Prisma.sql`EXISTS (
   WHERE ht."postId" = ${postId} AND post_text_held(ht.id, ht."csamHeld", ht."postId", ht."userId")
 )`;
 
+/** One text's row and whether it has a Pending csam hold, read in one statement. */
+export const postTextWithPendingHoldSql = (textId: number) =>
+  Prisma.sql`SELECT t."postId", t.refused, t."csamHeld", t."nsfwLevel",
+      ${Prisma.raw(postTextPendingCsamHoldText('t'))} AS "pendingHold"
+    FROM "PostText" t WHERE t.id = ${textId}`;
+
 /**
  * The texts among these under a Pending csam hold. The hold is written before `csamHeld` is set, and
  * not in one transaction, so readers treat a pending hold as held (`postTextPendingCsamHoldText`).
  */
-export async function pendingCsamHoldTextIds(textIds: number[], { primary = false } = {}) {
+export async function pendingCsamHoldTextIds(textIds: number[]) {
+  // No texts, no primary read.
   if (!textIds.length) return new Set<number>();
-  // `primary`: a hold written a moment ago may not have reached the replica yet.
-  const holds = await (primary ? dbWrite : dbRead).textScanHold.findMany({
+  // The primary: a hold written a moment ago may not have reached the replica. The text rows can
+  // come from the replica, since the hold is written before `csamHeld`.
+  const holds = await dbWrite.textScanHold.findMany({
     where: { entityType: 'PostText', entityId: { in: textIds }, label: 'csam', status: 'Pending' },
     select: { entityId: true },
   });
