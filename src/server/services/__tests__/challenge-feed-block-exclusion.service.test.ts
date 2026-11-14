@@ -189,3 +189,38 @@ describe('getInfiniteChallenges — feed block/hide exclusion', () => {
     expect(mockBlockedUsersGetCached).not.toHaveBeenCalled();
   });
 });
+
+// The semantic search hydrates its candidates through this query by id, so `ids` must narrow it
+// and an empty list must match nothing rather than the whole feed.
+describe('getInfiniteChallenges — by id', () => {
+  const base = {
+    limit: 20,
+    includeEnded: false,
+    excludeEventChallenges: false,
+    isGreen: false,
+    canAccessUserChallenges: true,
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockDbRead.image.findMany.mockResolvedValue([]);
+  });
+
+  it('narrows the feed to the given ids, keeping its visibility gates', async () => {
+    await getInfiniteChallenges({ ...base, ids: [41, 42] } as Parameters<
+      typeof getInfiniteChallenges
+    >[0]);
+    const { text, values } = captureQuery();
+    expect(text).toContain('c.id IN (');
+    expect(values).toEqual(expect.arrayContaining([41, 42]));
+    expect(text).toContain('"visibleAt" <= now()');
+  });
+
+  it('matches nothing for an empty id list', async () => {
+    const result = await getInfiniteChallenges({ ...base, ids: [] as number[] } as Parameters<
+      typeof getInfiniteChallenges
+    >[0]);
+    expect(result.items).toEqual([]);
+    expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+});
