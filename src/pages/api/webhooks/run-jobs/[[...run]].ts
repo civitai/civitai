@@ -108,6 +108,7 @@ import { creatorServiceDealJobs } from '~/server/jobs/creator-service-deal-jobs'
 import { creatorServiceDealFileJobs } from '~/server/jobs/creator-service-deal-file-jobs';
 import { creatorShopWithdrawnRefundsJob } from '~/server/jobs/creator-shop-withdrawn-refunds';
 import { creatorBoxPayoutSweepJob } from '~/server/jobs/creator-box-payout-sweep';
+import { mysteryBoxOverPoolRefundsJob } from '~/server/jobs/mystery-box-over-pool-refunds';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { syncEmailBlocklist } from '~/server/jobs/sync-email-blocklist';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
@@ -170,6 +171,7 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { grantCreatorMilestones } from '~/server/jobs/grant-creator-milestones';
+import { countCreatorMilestoneRarity } from '~/server/jobs/count-creator-milestone-rarity';
 import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
@@ -278,6 +280,7 @@ export const jobs: Job[] = [
   buildResourceIntentTagIndexJob,
   updateUserScore,
   grantCreatorMilestones,
+  countCreatorMilestoneRarity,
   userScoreHealthCheckJob,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
@@ -340,6 +343,7 @@ export const jobs: Job[] = [
   ...creatorServiceDealFileJobs,
   creatorShopWithdrawnRefundsJob,
   creatorBoxPayoutSweepJob,
+  mysteryBoxOverPoolRefundsJob,
   retryFailedTextModeration,
   textScanRetention,
   textScanChatWindowsJob,

@@ -389,6 +389,65 @@ describe('refundShopPurchase: a mystery box', () => {
   });
 });
 
+describe("refundShopPurchase: a creator's box", () => {
+  beforeEach(async () => {
+    await db.exec(
+      `INSERT INTO "User" ("id") VALUES (77); UPDATE "ItemDefinition" SET "sellerId" = 77 WHERE "id" = 1`
+    );
+  });
+
+  // Its sale paid the creator, so the main app returns the Buzz and reverses the payout.
+  it('hands the refund to the main app and takes nothing back here', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await holdBox('box-a');
+    mainAppAnswers = () => new Response(JSON.stringify({ status: 'refunded' }), { status: 200 });
+
+    await expect(refund('box-a')).resolves.toEqual({ ok: true });
+
+    expect(mainApp).toEqual([
+      expect.objectContaining({
+        url: 'https://main.test/api/mod/cosmetic/refund-box-purchase',
+        body: { userId: BUYER, buzzTransactionId: 'box-a' },
+      }),
+    ]);
+    expect(await heldBoxes()).toEqual(['box-a']);
+    expect(await isRefunded('box-a')).toBe(false);
+  });
+
+  it('reports the main app refusing it, taking nothing back here', async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    await holdBox('box-a');
+    mainAppAnswers = () =>
+      new Response(JSON.stringify({ error: 'Refund failed: buzz down' }), { status: 400 });
+
+    await expect(refund('box-a')).resolves.toMatchObject({ ok: false });
+    expect(await heldBoxes()).toEqual(['box-a']);
+    expect(await isRefunded('box-a')).toBe(false);
+  });
+
+  it("warns when the buyer's Buzz came back but the creator's payout did not", async () => {
+    await purchase('box-a', BOX_LISTING, null);
+    mainAppAnswers = () =>
+      new Response(JSON.stringify({ status: 'refunded', payoutFailures: 1 }), { status: 200 });
+
+    await expect(refund('box-a')).resolves.toMatchObject({
+      ok: true,
+      warning: expect.stringContaining('payout was not reversed'),
+    });
+  });
+
+  it('refunds a platform box here, as before (control)', async () => {
+    await db.exec(`UPDATE "ItemDefinition" SET "sellerId" = NULL WHERE "id" = 1`);
+    await purchase('box-a', BOX_LISTING, null);
+    await holdBox('box-a');
+
+    await expect(refund('box-a')).resolves.toMatchObject({ ok: true });
+
+    expect(mainApp).toEqual([]);
+    expect(await heldBoxes()).toEqual([]);
+  });
+});
+
 describe('refundShopPurchase: a pack of boxes', () => {
   const packKey = (n: number) => `pack-a#pack-0${n}`;
   const PACK_TERMS = { pack: { size: 3, guaranteedTierIds: [1] } };
@@ -437,7 +496,7 @@ describe('refundShopPurchase: a pack of boxes', () => {
     expect(result).toEqual({
       ok: true,
       warning:
-        "A takedown pays back 1 of this pack's boxes (450 Buzz) itself; return only the rest.",
+        "1 of this pack's boxes (450 Buzz) are paid back on their own; return only the rest.",
     });
     expect(await heldBoxes()).toEqual([]);
     expect(await isRefunded('pack-a')).toBe(true);
@@ -452,7 +511,17 @@ describe('refundShopPurchase: a pack of boxes', () => {
 
     await expect(refund('pack-a')).resolves.toMatchObject({
       ok: true,
-      warning: expect.stringContaining('pays back 1 of'),
+      warning: expect.stringContaining("1 of this pack's boxes"),
+    });
+  });
+
+  it('counts a box the unopenable-box refund paid back on its own', async () => {
+    await packPurchase({ ...PACK_TERMS, packOverPoolRefunds: { 78: { at: 'x' } } });
+    await holdBox(packKey(1));
+
+    await expect(refund('pack-a')).resolves.toMatchObject({
+      ok: true,
+      warning: expect.stringContaining("1 of this pack's boxes (450 Buzz)"),
     });
   });
 

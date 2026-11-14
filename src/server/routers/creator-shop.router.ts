@@ -63,6 +63,7 @@ import {
 } from '~/server/services/creator-shop-pack.service';
 import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
 import { refundShopPurchases } from '~/server/services/creator-shop-withdrawn-refund.service';
+import { takedownMysteryBox } from '~/server/services/mystery-box-takedown.service';
 import {
   lowerMysteryPackPrice,
   reviseMysteryPack,
@@ -386,6 +387,9 @@ export const creatorShopRouter = router({
   takedownItem: moderatorProcedure
     .input(takedownCosmeticShopItemSchema)
     .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
+  takedownMysteryBox: moderatorProcedure
+    .input(takedownCosmeticShopItemSchema)
+    .mutation(({ input, ctx }) => takedownMysteryBox({ ...input, moderatorId: ctx.user.id })),
   // Not flag-gated, like takedowns: refunding a sale can't wait on the rollout.
   refundPurchases: moderatorProcedure
     .input(refundShopPurchasesSchema)
