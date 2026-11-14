@@ -23,7 +23,12 @@ import {
 } from '~/server/utils/download-credential-gate';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { getVaultState } from '~/utils/vault';
-import { FAILED_SCAN_DOWNLOAD_MESSAGE, hasFailedScan } from '~/server/utils/failed-scan';
+import {
+  FAILED_SCAN_DOWNLOAD_MESSAGE,
+  hasFailedScan,
+  hasSettledScanSnapshot,
+  refuseUnjudgedVaultFile,
+} from '~/server/utils/failed-scan';
 
 const schema = z.object({
   vaultItemId: z.preprocess((val) => Number(val), z.number()),
@@ -147,7 +152,9 @@ export default AuthedEndpoint(
           const rows = own
             ? [own]
             : await dbRead.modelFile.findMany({ where: { url: file.url }, select });
-          if (rows.some(hasFailedScan)) return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
+          // With its own row gone, the snapshot is judged alongside any live row holding the bytes.
+          if ([...rows, ...(own ? [] : [file])].some(hasFailedScan))
+            return onError(403, FAILED_SCAN_DOWNLOAD_MESSAGE);
           // Training data is never a vault's file; the site's own rules decide who gets it. With no row
           // left, the name it was stored under (`getFileDisplayName`) still says what it was.
           if (
@@ -156,6 +163,8 @@ export default AuthedEndpoint(
               : file.displayName === 'Training Data'
           )
             return onError(404, 'File not found');
+          if (!rows.length && !hasSettledScanSnapshot(file) && refuseUnjudgedVaultFile(file))
+            return onError(403, 'This file is not available for download');
         }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.displayName, {
           caller: 'vault',

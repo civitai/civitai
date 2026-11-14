@@ -145,7 +145,16 @@ beforeEach(() => {
     modelVersionId: 9,
     modelName: 'model',
     versionName: 'v1',
-    files: [{ id: 1, url: 'files/model.safetensors', displayName: 'model.safetensors' }],
+    files: [
+      {
+        id: 1,
+        url: 'files/model.safetensors',
+        displayName: 'model.safetensors',
+        pickleScanResult: 'Success',
+        virusScanResult: 'Success',
+        rowDeletedAt: '2026-01-01T00:00:00Z',
+      },
+    ],
   } as never);
   dbMock.dbRead.modelVersion.findUnique.mockImplementation((async (args: {
     include?: { model?: unknown };

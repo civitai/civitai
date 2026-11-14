@@ -78,7 +78,16 @@ describe('/api/download/vault/[vaultItemId] — a taken-down model', () => {
       modelVersionId: 9,
       modelName: 'model',
       versionName: 'v1',
-      files: [{ id: 1, url: 'files/model.safetensors', displayName: 'model.safetensors' }],
+      files: [
+        {
+          id: 1,
+          url: 'files/model.safetensors',
+          displayName: 'model.safetensors',
+          pickleScanResult: 'Success',
+          virusScanResult: 'Success',
+          rowDeletedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
     });
     mockHasEntityAccess.mockResolvedValue([{ hasAccess: true, permissions: 0xffff }]);
     mockResolveDownloadUrl.mockResolvedValue({ url: 'https://example.invalid/model.safetensors' });
