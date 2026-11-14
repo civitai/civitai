@@ -3,8 +3,9 @@ import { listTrainingWorkflows } from '$lib/server/orchestrator';
 import { orchestratorToken } from '$lib/server/orchestrator-token';
 import { SAMPLE_ROWS, workflowToRow, type TrainingRow } from '$lib/data/trainingRows';
 import { sampleReviewWorkflows } from '$lib/data/sampleReviewRuns';
+import { gateRows } from '$lib/server/withheld';
 
-export const load: PageServerLoad = async ({ locals }) => {
+export const load: PageServerLoad = async ({ locals, request }) => {
   // The dev-login stub isn't a real user: show the sample list so the UI is previewable.
   if (locals.devPreview) {
     const held = sampleReviewWorkflows().flatMap((w) => workflowToRow(w) ?? []);
@@ -31,5 +32,9 @@ export const load: PageServerLoad = async ({ locals }) => {
       })
     : [];
 
-  return { username: locals.user.username, image: locals.user.image, rows };
+  return {
+    username: locals.user.username,
+    image: locals.user.image,
+    rows: await gateRows(request.headers.get('cookie') ?? '', rows),
+  };
 };

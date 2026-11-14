@@ -10,6 +10,11 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
   AuthedEndpoint: (handler: unknown) => handler,
 }));
 
+const studioWithheldWorkflowIds = vi.fn();
+vi.mock('~/server/services/orchestrator/training/studio-withheld', () => ({
+  studioWithheldWorkflowIds: (...args: unknown[]) => studioWithheldWorkflowIds(...args),
+}));
+
 const handler = (await import('~/pages/api/training-studio/model-status')).default as unknown as (
   req: NextApiRequest,
   res: NextApiResponse,
@@ -37,9 +42,13 @@ const passes = (r: Row, c: Clause) =>
     : r.deletedBy !== null && r.deletedBy !== c.deletedBy?.not;
 
 async function status(id: string) {
+  return call({ id }, OWNER);
+}
+
+async function call(query: Record<string, string>, user: SessionUser) {
   let code = 200;
   let body: unknown;
-  const req = { method: 'GET', query: { id } } as unknown as NextApiRequest;
+  const req = { method: 'GET', query } as unknown as NextApiRequest;
   const res = {
     setHeader: () => res,
     status(c: number) {
@@ -51,7 +60,7 @@ async function status(id: string) {
       return res;
     },
   } as unknown as NextApiResponse;
-  await handler(req, res, OWNER);
+  await handler(req, res, user);
   return { code, body };
 }
 
@@ -93,4 +102,33 @@ describe('GET /api/training-studio/model-status', () => {
   it('refuses a malformed id', async () => {
     expect((await status('abc')).code).toBe(400);
   });
+});
+
+describe('GET /api/training-studio/model-status?workflowIds', () => {
+  beforeEach(() => studioWithheldWorkflowIds.mockReset());
+
+  it("answers the caller's withheld runs among the ids asked", async () => {
+    studioWithheldWorkflowIds.mockResolvedValueOnce(['wf-2']);
+    expect(await call({ workflowIds: 'wf-1,wf-2,wf-1' }, OWNER)).toEqual({
+      code: 200,
+      body: { withheld: ['wf-2'] },
+    });
+    expect(studioWithheldWorkflowIds).toHaveBeenCalledWith(OWNER.id, ['wf-1', 'wf-2']);
+  });
+
+  it('withholds nothing from a moderator', async () => {
+    const mod = { ...OWNER, isModerator: true } as SessionUser;
+    expect(await call({ workflowIds: 'wf-1' }, mod)).toEqual({
+      code: 200,
+      body: { withheld: [] },
+    });
+    expect(studioWithheldWorkflowIds).not.toHaveBeenCalled();
+  });
+
+  it.each([[''], [Array.from({ length: 101 }, (_, i) => `wf-${i}`).join(',')]])(
+    'refuses an empty or oversized batch',
+    async (workflowIds) => {
+      expect((await call({ workflowIds }, OWNER)).code).toBe(400);
+    }
+  );
 });

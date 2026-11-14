@@ -20,6 +20,9 @@ import {
   versionSuffix,
   type Media,
 } from './trainingModels';
+import type { Callbackless } from '$lib/workflow-redaction';
+
+type FetchedWorkflow = Callbackless<Workflow>;
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
@@ -129,7 +132,7 @@ export function canDeleteRun(row: Pick<TrainingRow, 'state' | 'hasModel'>): bool
   return (row.state === 'ready' || ENDED_UNTRAINED.has(row.state)) && !row.hasModel;
 }
 
-function workflowHasModel(w: Workflow, meta: TrainingStudioMeta): boolean {
+function workflowHasModel(w: FetchedWorkflow, meta: TrainingStudioMeta): boolean {
   return (
     typeof meta.modelId === 'number' ||
     (w.tags ?? []).some((t) => t.startsWith('modelVersion:')) ||
@@ -295,7 +298,7 @@ function reviewedState(
  * own `TrainingStudioMeta` when present — existing (main-app-created) runs carry no metadata, so the step is
  * the source. `state` is undefined for a status we can't map; callers drop the workflow.
  */
-function resolveWorkflow(w: Workflow) {
+function resolveWorkflow(w: FetchedWorkflow) {
   const meta = (w.metadata ?? {}) as TrainingStudioMeta;
   // `status` is typed non-null but the orchestrator can omit it on a run mid-transition (the main app's
   // read paths guard `!workflow.status`), so an unmapped status yields no state and the caller drops it.
@@ -407,7 +410,7 @@ function completedEpochCount(epochs: TrainingStepOutput['epochs']): number {
 }
 
 /** Map one orchestrator workflow to a My-trainings row. Returns null for a workflow we can't place. */
-export function workflowToRow(w: Workflow): TrainingRow | null {
+export function workflowToRow(w: FetchedWorkflow): TrainingRow | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
   const {
     meta,
@@ -609,7 +612,7 @@ export const editPairCount = (dataset: DatasetItem[]): number =>
   dataset.filter((i) => i.path?.startsWith('main/')).length;
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
-export function workflowToDetail(w: Workflow): TrainingDetail | null {
+export function workflowToDetail(w: FetchedWorkflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;
   const { meta, input, state, output, media, base, code, name, progress, startedAt, completedAt } =
     resolveWorkflow(w);
@@ -824,7 +827,7 @@ export function estimateArchiveTokenLength(part: ArchivePart): number {
  *  `ARCHIVE_TOKEN_BUDGET` and `MAX_ARCHIVE_ENTRIES` allow. Weights and samples are separate archives
  *  so the file a user can't regenerate never shares a URL budget with dozens of images. Legacy runs
  *  whose epochs carry only signed URLs (no blob ids) yield no parts. */
-export function epochArchiveParts(w: Workflow, kind: ArchiveKind): ArchivePart[] {
+export function epochArchiveParts(w: FetchedWorkflow, kind: ArchiveKind): ArchivePart[] {
   const { output, name, base } = resolveWorkflow(w);
   // Flat names (`<run>-<base>-epoch-03.safetensors`, `…-epoch-03-sample-2.png`): the orchestrator
   // strips path components from entry names.

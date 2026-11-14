@@ -10,6 +10,10 @@ const train = vi.hoisted(() => ({
 }));
 vi.mock('$lib/server/train', () => train);
 vi.mock('$lib/server/token', () => ({ requireToken: async () => 'token' }));
+vi.mock('$lib/server/withheld', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/withheld')>()),
+  assertNotWithheld: async () => undefined,
+}));
 // The routes load train-core only for its error classes; the real client's dist cannot load under
 // Node's ESM loader (see train-core.test.ts).
 vi.mock('@civitai/orchestration-client', () => ({}));

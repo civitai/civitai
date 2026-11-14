@@ -102,7 +102,6 @@ export async function continueTrainingWhatIf(
     onMatureCount: datasetRating
       ? ({ unratedKeys }) => warmDatasetRating(token, userId, unratedKeys)
       : undefined,
-    callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
   });
 }

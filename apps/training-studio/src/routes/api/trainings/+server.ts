@@ -4,12 +4,15 @@ import { requireToken } from '$lib/server/token';
 import { listTrainingWorkflows } from '$lib/server/orchestrator';
 import { deleteTraining } from '$lib/server/train';
 import { DeleteRefusedError } from '$lib/train-core';
+import { gateRows } from '$lib/server/withheld';
 
 // The caller's training runs, for the "reuse a dataset" picker in the Data step.
-export const GET: RequestHandler = async ({ locals }) => {
+export const GET: RequestHandler = async ({ locals, request }) => {
   if (locals.devPreview) return json([]);
   const token = await requireToken(locals, 'Trainings are unavailable right now.');
-  return json(await listTrainingWorkflows(token));
+  return json(
+    await gateRows(request.headers.get('cookie') ?? '', await listTrainingWorkflows(token))
+  );
 };
 
 // Delete one training. The token scopes to the caller, so this only touches the caller's own workflows.
