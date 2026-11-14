@@ -7987,6 +7987,9 @@ model Donation {
   buzzTransactionId String
   notes             String?
   createdAt         DateTime     @default(now())
+
+  // donateToGoal's keyed "already recorded?" lookup (userId + buzzTransactionId equality).
+  @@index([userId, buzzTransactionId])
 }
 
 model Blocklist {
