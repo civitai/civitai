@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -710,7 +711,7 @@ export async function getInfiniteChallenges(
 
   // Text search (parameterized - safe from SQL injection)
   if (query) {
-    const searchPattern = `%${query}%`;
+    const searchPattern = ilikeContains(query);
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
@@ -4246,7 +4247,7 @@ export async function getCompletedChallengesWithWinners(
   }
 
   if (query) {
-    const searchPattern = `%${String(query)}%`;
+    const searchPattern = ilikeContains(String(query));
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 

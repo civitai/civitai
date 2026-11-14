@@ -28,6 +28,7 @@ import {
   upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { Context } from '~/server/createContext';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { challengeTextQueryLevel } from '~/server/services/semantic-challenge-search.service';
 import { z } from 'zod';
@@ -91,6 +92,31 @@ import { getJudgeCommentForImage } from '~/server/services/challenge-judge-revie
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+/**
+ * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
+ * request's own unless a minor verdict narrowed it to the safe levels.
+ */
+async function guardTextQuery(
+  input: { query?: string; browsingLevel?: number },
+  ctx: Pick<Context, 'features' | 'user' | 'track'>
+): Promise<number | undefined | 'refuse'> {
+  const query = input.query?.trim();
+  if (!query) return input.browsingLevel;
+  const effective = getEffectiveBrowsingLevel({
+    isGreen: ctx.features.isGreen,
+    isLoggedIn: !!ctx.user,
+    requested: input.browsingLevel,
+  });
+  const level = await challengeTextQueryLevel({
+    query,
+    level: effective,
+    user: ctx.user,
+    track: ctx.track,
+  });
+  if (level === 'refuse') return 'refuse';
+  return level === effective ? input.browsingLevel : level;
+}
+
 // Router definition
 export const challengeRouter = router({
   // Get paginated list of challenges
@@ -99,27 +125,11 @@ export const challengeRouter = router({
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
     .query(async ({ input, ctx }) => {
-      let browsingLevel = input.browsingLevel;
-      const query = input.query?.trim();
-      if (query) {
-        // A text query gets the semantic search's audit: refused, or narrowed to the safe levels.
-        const effective = getEffectiveBrowsingLevel({
-          isGreen: ctx.features.isGreen,
-          isLoggedIn: !!ctx.user,
-          requested: input.browsingLevel,
-        });
-        const level = await challengeTextQueryLevel({
-          query,
-          level: effective,
-          user: ctx.user,
-          track: ctx.track,
-        });
-        if (level === 'refuse') return { items: [], nextCursor: undefined };
-        if (level !== effective) browsingLevel = level;
-      }
+      const guard = await guardTextQuery(input, ctx);
+      if (guard === 'refuse') return { items: [], nextCursor: undefined };
       return getInfiniteChallenges({
         ...input,
-        browsingLevel,
+        browsingLevel: guard,
         currentUserId: ctx.user?.id,
         isGreen: ctx.features.isGreen,
         canAccessUserChallenges: ctx.features.userChallenges,
@@ -186,14 +196,17 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCompletedChallengesWithWinnersSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) =>
-      getCompletedChallengesWithWinners({
+    .query(async ({ input, ctx }) => {
+      const guard = await guardTextQuery(input, ctx);
+      if (guard === 'refuse') return { items: [], nextCursor: undefined };
+      return getCompletedChallengesWithWinners({
         ...input,
+        browsingLevel: guard,
         isGreen: ctx.features.isGreen,
         currentUserId: ctx.user?.id,
         canAccessUserChallenges: ctx.features.userChallenges,
-      })
-    ),
+      });
+    }),
 
   // Get winner cooldown status for current user on a challenge
   getWinnerCooldownStatus: protectedProcedure

@@ -14,11 +14,16 @@ const h = vi.hoisted(() => ({
     items: [{ id: 1 }],
     nextCursor: undefined,
   })),
+  winners: vi.fn(async (_input: Record<string, unknown>) => ({
+    items: [{ id: 2 }],
+    nextCursor: undefined,
+  })),
   includesInappropriate: vi.fn<(input: { prompt?: string }, nsfw?: boolean) => unknown>(),
 }));
 vi.mock('~/server/services/challenge.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getInfiniteChallenges: h.feed,
+  getCompletedChallengesWithWinners: h.winners,
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: async (text: string) => text,
@@ -60,6 +65,7 @@ const VIEWER = { id: 5, isModerator: false };
 
 beforeEach(() => {
   h.feed.mockClear();
+  h.winners.mockClear();
   h.includesInappropriate.mockReset().mockReturnValue(false);
 });
 
@@ -107,5 +113,18 @@ describe('challenge.getInfinite text query guard', () => {
     expect(withQuery).toBe(without);
     // No query, no audit.
     expect(h.includesInappropriate).toHaveBeenCalledTimes(1);
+  });
+
+  it('the winners list refuses a refused query, and narrows a minor one', async () => {
+    h.includesInappropriate.mockReturnValue('inappropriate');
+    const refused = await caller(VIEWER).getCompletedWithWinners({ query: 'bad words' } as never);
+    expect(refused.items).toEqual([]);
+    expect(h.winners).not.toHaveBeenCalled();
+
+    h.includesInappropriate.mockReturnValue('minor');
+    await caller(VIEWER).getCompletedWithWinners({ query: 'young', browsingLevel: ALL } as never);
+    const level = h.winners.mock.calls[0][0].browsingLevel as number;
+    expect(level).toBeGreaterThan(0);
+    expect(Flags.intersection(level, ~sfwBrowsingLevelsFlag)).toBe(0);
   });
 });
