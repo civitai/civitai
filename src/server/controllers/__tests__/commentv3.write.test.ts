@@ -417,20 +417,21 @@ describe('commentv3 create', () => {
     expect(m.insertComment).not.toHaveBeenCalled();
   });
 
-  it('refuses a comment on storyline text, and its edit, to a moderator too', async () => {
-    await expect(
-      createCommentV3Handler({
-        ctx: ctx(STRANGER, true),
-        input: { entityType: 'postText', entityId: 1, content: '<p>x</p>' } as never,
-      })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    m.stored.set(500, row(500, { entityType: 'postText', entityId: 1, userId: STRANGER }));
-    for (const isModerator of [false, true])
-      await expect(update(STRANGER, 500, isModerator)).rejects.toMatchObject({
-        code: 'BAD_REQUEST',
-      });
+  it("checks access on a storyline text's post, and refuses a text that is gone", async () => {
+    dbMock.dbRead.postText.findUnique.mockResolvedValue({ postId: 77 } as never);
+    m.access.mockResolvedValueOnce([{ hasAccess: false }]);
+    await expect(create(STRANGER, { entityType: 'postText', entityId: 5 })).rejects.toThrow(
+      'You do not have access to this resource.'
+    );
+    expect(m.access).toHaveBeenLastCalledWith(
+      expect.objectContaining({ entityType: 'Post', entityIds: [77] })
+    );
+
+    dbMock.dbRead.postText.findUnique.mockResolvedValue(null as never);
+    await expect(create(STRANGER, { entityType: 'postText', entityId: 5 })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
     expect(m.insertComment).not.toHaveBeenCalled();
-    expect(m.updateCommentContent).not.toHaveBeenCalled();
   });
 
   it('refuses an entity type with no comment section', async () => {

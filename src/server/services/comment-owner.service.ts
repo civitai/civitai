@@ -90,6 +90,13 @@ export async function getThreadEntityOwnerId({
       });
       return row?.project?.userId ?? null;
     }
+    case 'postText': {
+      const row = await dbRead.postText.findUnique({
+        where: { id: entityId },
+        select: { post: { select: { userId: true } } },
+      });
+      return row?.post.userId ?? null;
+    }
     default:
       return null;
   }
