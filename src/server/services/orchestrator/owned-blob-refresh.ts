@@ -10,7 +10,7 @@ import {
 } from '~/server/services/orchestrator/refreshBlobs';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 
-/** A refresh resets a blob's lifetime to 30 days, so no older workflow can hold a live blob. */
+/** How far back the caller's workflows are scanned; outputs of older ones are denied. */
 export const OWNED_BLOB_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export const OWNED_BLOB_PAGE_SIZE = 100;
 export const MAX_OWNED_BLOB_PAGES = 5;
@@ -30,22 +30,48 @@ type OwnedScan = {
   done: boolean;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === 'object';
+/**
+ * The typed output fields that hold blobs a step generated. An allowlist, not a walk: some step
+ * types (merge, repeat, echo, pass-through conversions) can carry submitter-supplied values in
+ * their output, and those prove nothing.
+ */
+const GENERATED_BLOB_FIELDS: Record<string, readonly string[]> = {
+  textToImage: ['images'],
+  imageGen: ['images'],
+  comfy: ['blobs'],
+  customComfy: ['blobs'],
+  videoGen: ['video', 'additionalVideos'],
+  imageUpscaler: ['blob'],
+  videoUpscaler: ['video'],
+  videoEnhancement: ['video'],
+  videoInterpolation: ['video'],
+  imageBackgroundRemoval: ['image'],
+  videoBackgroundRemoval: ['video'],
+  videoFrameExtraction: ['frames'],
+};
+/** Bounds one user's cached entry; ids past it are denied. */
+const MAX_OWNED_BLOB_IDS = 5000;
 
-function collectOutputBlobIds(node: unknown, into: Set<string>, depth = 0) {
-  if (depth > 8 || !isRecord(node)) return;
-  if (typeof node.id === 'string' && typeof node.available === 'boolean') into.add(node.id);
-  for (const child of Array.isArray(node) ? node : Object.values(node))
-    collectOutputBlobIds(child, into, depth + 1);
+type StepOutputView = { $type?: string; output?: Record<string, unknown> | null };
+
+function addGeneratedBlobIds(step: StepOutputView, into: Set<string>) {
+  const fields = step.$type ? GENERATED_BLOB_FIELDS[step.$type] : undefined;
+  if (!fields || !step.output) return;
+  for (const field of fields) {
+    const value = step.output[field];
+    for (const blob of Array.isArray(value) ? value : [value]) {
+      if (into.size >= MAX_OWNED_BLOB_IDS) return;
+      const id = (blob as { id?: unknown } | null)?.id;
+      if (typeof id === 'string') into.add(id);
+    }
+  }
 }
 
 function addOwnedOutputs(workflow: Workflow, userId: number, fromMs: number, into: Set<string>) {
   if (workflowOwnerId(workflow.id) !== userId) return;
   const createdMs = Date.parse(workflow.createdAt);
   if (!(createdMs >= fromMs)) return;
-  // Outputs only: an input is whatever the submitter named, so it proves nothing.
-  for (const step of workflow.steps ?? []) collectOutputBlobIds(step.output, into);
+  for (const step of workflow.steps ?? []) addGeneratedBlobIds(step as StepOutputView, into);
 }
 
 /**

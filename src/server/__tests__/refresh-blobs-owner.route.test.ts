@@ -30,14 +30,23 @@ const CALLER = 7;
 const OTHER = 8;
 const DAY = 24 * 60 * 60 * 1000;
 
-type Fixture = { owner: number; outputs?: string[]; inputs?: string[]; ageDays?: number };
-const workflow = ({ owner, outputs = [], inputs = [], ageDays = 1 }: Fixture) => ({
+const blob = (id: string) => ({ id, available: true, url: `https://o/v2/consumer/blobs/${id}` });
+
+type Fixture = {
+  owner: number;
+  outputs?: string[];
+  inputs?: string[];
+  ageDays?: number;
+  steps?: Record<string, unknown>[];
+};
+const workflow = ({ owner, outputs = [], inputs = [], ageDays = 1, steps }: Fixture) => ({
   id: `${owner}-${Date.now() - ageDays * DAY}`,
   createdAt: new Date(Date.now() - ageDays * DAY).toISOString(),
-  steps: [
+  steps: steps ?? [
     {
-      input: { images: inputs.map((id) => `https://o/v2/consumer/blobs/${id}?sig=s`) },
-      output: { images: outputs.map((id) => ({ id, available: true, url: `https://o/${id}` })) },
+      $type: 'imageGen',
+      input: { images: inputs.map(blob) },
+      output: { images: outputs.map(blob) },
     },
   ],
 });
@@ -118,6 +127,51 @@ describe('refreshBlobs re-signs only the caller’s own blobs', () => {
 
     expect((await call(['THEIRS.jpeg'])).byId).toEqual({ 'THEIRS.jpeg': 'denied' });
     expect(mockRefreshBlob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['merge', { $type: 'merge', output: { fields: { x: [blob('THEIRS.jpeg')] } } }],
+    [
+      'repeat',
+      {
+        $type: 'repeat',
+        output: {
+          steps: [{ $type: 'imageGen', input: { images: [blob('THEIRS.jpeg')] }, output: {} }],
+        },
+      },
+    ],
+    ['echo', { $type: 'echo', output: { images: [blob('THEIRS.jpeg')] } }],
+    [
+      'metadata',
+      { $type: 'imageGen', output: { images: [] }, metadata: { x: blob('THEIRS.jpeg') } },
+    ],
+  ])('does not count a blob a %s step carries through', async (_, step) => {
+    mockQueryWorkflows.mockResolvedValue(page([workflow({ owner: CALLER, steps: [step] })]));
+
+    expect((await call(['THEIRS.jpeg'])).byId).toEqual({ 'THEIRS.jpeg': 'denied' });
+    expect(mockRefreshBlob).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a video the caller generated', async () => {
+    mockQueryWorkflows.mockResolvedValue(
+      page([
+        workflow({
+          owner: CALLER,
+          steps: [{ $type: 'videoGen', output: { video: blob('V.mp4') } }],
+        }),
+      ])
+    );
+
+    expect((await call(['V.mp4'])).byId).toEqual({ 'V.mp4': 'refreshed' });
+  });
+
+  it('answers a repeat request from the cached scan without rescanning', async () => {
+    mockQueryWorkflows.mockResolvedValue(page([], 'deeper'));
+    await call(['DEEP.jpeg']);
+    mockQueryWorkflows.mockClear();
+
+    expect((await call(['DEEP.jpeg'])).byId).toEqual({ 'DEEP.jpeg': 'denied' });
+    expect(mockQueryWorkflows).not.toHaveBeenCalled();
   });
 
   it('denies an output of a workflow older than 30 days', async () => {
