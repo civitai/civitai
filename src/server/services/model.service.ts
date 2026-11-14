@@ -3961,23 +3961,18 @@ function withoutPoiFlagLocks(
   );
 }
 
-function liftsSfwOnlyLock(stored: string[] | null | undefined, next: string[] | undefined) {
-  return next !== undefined && (stored ?? []).includes('sfwOnly') && !next.includes('sfwOnly');
+function liftsLock(lock: string, stored: string[] | null | undefined, next: string[] | undefined) {
+  return next !== undefined && (stored ?? []).includes(lock) && !next.includes(lock);
 }
 
-function liftsNsfwLock(stored: string[] | null | undefined, next: string[] | undefined) {
-  return next !== undefined && (stored ?? []).includes('nsfw') && !next.includes('nsfw');
-}
-
-/** The intent verdict a moderator's save writes when it lifts the nsfw lock, for the listing the
- *  save leaves; null when it does not lift it. */
+/** Hashes the listing the save leaves, not the stored one: an unlock save may also edit the text. */
 async function intentAfterModeratorUnlock(
   tx: Prisma.TransactionClient,
   modelId: number,
   locked: NonNullable<LockedModelRow>,
   data: { name?: string; description?: string | null; lockedProperties?: string[] }
 ) {
-  if (!liftsNsfwLock(locked.lockedProperties, data.lockedProperties)) return null;
+  if (!liftsLock('nsfw', locked.lockedProperties, data.lockedProperties)) return null;
   const textHash = comFaceIntentTextHash({
     name: data.name ?? locked.name,
     description: data.description !== undefined ? data.description : locked.description,
@@ -4758,7 +4753,7 @@ export const upsertModel = async (
           await heldVerdict.dropLiftedBy(tx, updated.id, { flagged: true });
         else if (isModerator && (locked?.minor || locked?.poi) && !updated.minor && !updated.poi)
           await heldVerdict.holdLeadAfterFlagLift(tx, updated.id, 'moderator');
-        if (isModerator && liftsSfwOnlyLock(locked?.lockedProperties, data.lockedProperties))
+        if (isModerator && liftsLock('sfwOnly', locked?.lockedProperties, data.lockedProperties))
           await heldVerdict.holdLeadAfterSfwOnlyLift(tx, updated.id);
         if (
           (locked?.availability ?? beforeUpdate.availability) === Availability.Private &&

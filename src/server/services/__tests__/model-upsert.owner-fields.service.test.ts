@@ -519,6 +519,30 @@ describe('a moderator lifting the nsfw lock', () => {
     expect(written.comFaceIntent?.overturnedAt).toEqual(expect.any(String));
   });
 
+  // The ruling covers the listing this save leaves, not the one it replaced.
+  it('rules on the edited listing when the unlock save also edits it', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    const edited = { name: 'Renamed', description: 'Rewritten' };
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: [],
+      ...edited,
+    });
+    const editedHash = comFaceIntentTextHash({ ...edited, triggerWords: words });
+    const meta = updateData().meta as ModelMeta;
+    expect(meta.comFaceIntent).toMatchObject({ detected: false, textHash: editedHash });
+    expect(reusableComFaceIntent(meta, editedHash)).toEqual({ detected: false });
+    expect(reusableComFaceIntent(meta, listingHash)).toBeNull();
+  });
+
+  it("leaves the verdict alone on an owner's save (control)", async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, lockedProperties: [] });
+    expect((updateData().meta as ModelMeta).comFaceIntent).toEqual(detection);
+  });
+
   it('leaves the verdict alone when the save keeps the lock (control)', async () => {
     mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
     await upsert({
