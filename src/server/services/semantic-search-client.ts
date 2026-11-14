@@ -2,6 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 
+/** One creator's hits shown on a page at most, so a prolific creator cannot fill it. */
+export const MAX_HITS_PER_USER = 3;
+
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
 // Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
