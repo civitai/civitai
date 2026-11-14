@@ -623,6 +623,9 @@ describe('the advisory locks have exactly one call site', () => {
   // app-hibernation/hibernation.repo takes one per user (0x48424e54) as the first statement of its
   // commit transaction, around the record, usage and User FOR SHARE reads, the decision and the upsert.
   // The only advisory lock in its transaction, never nested inside another lock.
+  // storyline takes one per (user, spark image) (0x53544c31, hashtext of both) as the first
+  // statement of createStoryline's spark start, around the unwritten-storyline lookup and the reuse
+  // or insert. The only advisory lock in its transaction.
   const ALLOWED = [
     'services/access-token.service.ts',
     'services/app-hibernation/hibernation.repo.ts',
@@ -641,6 +644,7 @@ describe('the advisory locks have exactly one call site', () => {
     'services/platform-feedback.service.ts',
     'services/scan-label-flag.service.ts',
     'services/storyline-placement.service.ts',
+    'services/storyline.service.ts',
     'services/support-membership-code.service.ts',
     'services/text-scan/actions/csam-hold.ts',
     'services/text-scan/actions/model-rules-hold.ts',
