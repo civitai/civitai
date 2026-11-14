@@ -127,6 +127,7 @@ import {
   setCanonChapter,
   updateStoryline,
   STORYLINE_SPARK_REFUSALS,
+  STORYLINE_SPARK_START_LOCK_CLASS,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/cover-image.service';
@@ -5128,6 +5129,88 @@ describe('a storyline started from an image', () => {
           })
         ).resolves.toEqual({ id: 10, rootChapterId: 20 });
         expect(w.storyline.create).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('twice at once', () => {
+      /**
+       * Storyline rows, a lookup that answers from them, and an advisory lock that holds a key
+       * until the transaction that took it ends, as Postgres does. Every step yields, so two
+       * starts interleave: without the lock both look up before either inserts.
+       */
+      let rows: Array<{ id: number; userId: number; sparkImageId: number; title: string }>;
+      let lockCalls: Array<{ sql: string; values: unknown[] }>;
+      const yieldTurn = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      beforeEach(() => {
+        rows = [];
+        lockCalls = [];
+        const queue = new Map<string, Promise<void>>();
+        w.$queryRaw.mockImplementation((async (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => {
+          await yieldTurn();
+          if (!strings.join('?').includes('"sparkImageId" =')) return [];
+          const [userId, sparkImageId] = values as number[];
+          const mine = rows.filter((s) => s.userId === userId && s.sparkImageId === sparkImageId);
+          return mine.slice(-1).map(({ id, title }) => ({ id, title }));
+        }) as never);
+        w.storyline.create.mockImplementation((async ({
+          data,
+        }: {
+          data: { userId: number; sparkImageId: number; title: string };
+        }) => {
+          await yieldTurn();
+          const row = { ...data, id: 10 + rows.length };
+          rows.push(row);
+          return { id: row.id };
+        }) as never);
+        w.$transaction.mockImplementation((async (run: (tx: unknown) => Promise<unknown>) => {
+          const held: Array<() => void> = [];
+          const tx = new Proxy(w, {
+            get: (target, key) =>
+              key !== '$executeRaw'
+                ? target[key as keyof typeof target]
+                : async (strings: TemplateStringsArray, ...values: unknown[]) => {
+                    const sql = strings.join('?');
+                    if (!sql.includes('pg_advisory_xact_lock')) return 0;
+                    lockCalls.push({ sql, values });
+                    const key = JSON.stringify(values);
+                    const before = queue.get(key) ?? Promise.resolve();
+                    let release!: () => void;
+                    const mine = new Promise<void>((resolve) => (release = resolve));
+                    queue.set(
+                      key,
+                      before.then(() => mine)
+                    );
+                    held.push(release);
+                    await before;
+                    return 1;
+                  },
+          });
+          try {
+            return await run(tx);
+          } finally {
+            for (const release of held) release();
+          }
+        }) as never);
+      });
+
+      it('creates one storyline and returns it to both', async () => {
+        const [first, second] = await Promise.all([start(), start()]);
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+        expect(second.id).toBe(first.id);
+        expect(lockCalls[0]).toEqual({
+          sql: "SELECT pg_advisory_xact_lock(?::int, hashtext(?::text || ':' || ?::text)::int)",
+          values: [STORYLINE_SPARK_START_LOCK_CLASS, OWNER, 77],
+        });
+      });
+
+      it('still creates one for each of two different users', async () => {
+        const [mine, theirs] = await Promise.all([start(), start(NsfwLevel.R, STRANGER)]);
+        expect(w.storyline.create).toHaveBeenCalledTimes(2);
+        expect(theirs.id).not.toBe(mine.id);
       });
     });
 

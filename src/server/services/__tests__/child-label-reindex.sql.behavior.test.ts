@@ -158,12 +158,28 @@ describe('child-label reindex: bust', () => {
     );
     const result = await runChildLabelReindex({ step: 'bust', dryRun: false, chunkSize: 2 });
     expect(refresh).toHaveBeenCalledTimes(1);
+    // Resuming from lastImageId re-runs the chunk that failed.
     expect(result).toMatchObject({
       refreshed: 2,
       verified: 0,
-      lastImageId: 2,
+      lastImageId: 0,
+      done: false,
       aborted: expect.any(String),
     });
+  });
+
+  it('a stopped bust resumed above `after` hands back that same `after`', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({
+      step: 'bust',
+      dryRun: false,
+      chunkSize: 2,
+      after: 1,
+    });
+    expect(refreshedIds()).toEqual([2, 3]);
+    expect(result).toMatchObject({ lastImageId: 1, aborted: expect.any(String) });
   });
 
   it('stops when any entry of the first chunk lacks the child tag', async () => {
@@ -230,7 +246,48 @@ describe('child-label reindex: reindex', () => {
     expect(fetch).toHaveBeenCalledWith([1, 3], { bypassLocal: true, writeBack: false });
     expect(queueModelsReindex).not.toHaveBeenCalled();
     expect(collectionsQueueUpdate).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ probe: 2, probeVerified: 0, aborted: expect.any(String) });
+    expect(result).toMatchObject({
+      probe: 2,
+      probeVerified: 0,
+      lastImageId: 0,
+      done: false,
+      aborted: expect.any(String),
+    });
+  });
+
+  it('a reindex stopped above `after` hands back that same `after`', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({
+      step: 'reindex',
+      dryRun: false,
+      chunkSize: 2,
+      after: 1,
+    });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      images: 2,
+      lastImageId: 1,
+      done: false,
+      aborted: expect.any(String),
+    });
+  });
+
+  it('a dry run over stale entries counts and does not stop', async () => {
+    fetch.mockImplementation(async (ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [id, { imageId: id, tags: [9001] }]))
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: true, chunkSize: 2 });
+    expect(result).toMatchObject({
+      probe: 3,
+      probeVerified: 0,
+      collections: 8,
+      collectionsQueued: 0,
+    });
+    expect(result).not.toHaveProperty('aborted');
+    expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 2 });
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
   });
 
   it('looks up models and collections a chunk of images at a time', async () => {
@@ -262,4 +319,33 @@ describe('child-label reindex: reindex', () => {
     expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 500 });
     expect(result).toMatchObject({ collections: 8, collectionsQueued: 0 });
   });
+});
+
+describe('child-label reindex: done', () => {
+  for (const step of ['bust', 'reindex'] as const) {
+    it(`step=${step} past maxChunks is not done and resumes after the last selected image`, async () => {
+      const result = await runChildLabelReindex({
+        step,
+        dryRun: false,
+        chunkSize: 1,
+        maxChunks: 2,
+      });
+      expect(result).toMatchObject({ images: 2, lastImageId: 2, done: false });
+    });
+
+    it(`step=${step} whose selection runs out within maxChunks is done`, async () => {
+      const result = await runChildLabelReindex({
+        step,
+        dryRun: false,
+        chunkSize: 2,
+        maxChunks: 5,
+      });
+      expect(result).toMatchObject({ images: 3, lastImageId: 3, done: true });
+    });
+
+    it(`a dry run of step=${step} reports done the same way`, async () => {
+      const result = await runChildLabelReindex({ step, dryRun: true, chunkSize: 1, maxChunks: 2 });
+      expect(result).toMatchObject({ images: 2, lastImageId: 2, done: false });
+    });
+  }
 });

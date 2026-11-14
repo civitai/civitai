@@ -67,6 +67,142 @@ export function chargeWasDeclined(error: unknown): boolean {
   return refusedBeforeSending || !writeMayHaveLanded(error);
 }
 
+/** Told to the user when the action's key already holds a charge for a different payment. */
+export const PAYMENT_KEY_REUSED_MESSAGE =
+  'This payment was already started with different details. Please start it again.';
+
+/**
+ * What a keyed charge must have moved, for both a single-id charge (`chargeByExternalId`) and a
+ * prefix charge's legs (`chargeByPrefix`). The optional fields are compared only when named here
+ * and present on the held transaction.
+ */
+export type ExpectedCharge = {
+  amount: number;
+  fromAccountId: number;
+  /** A held leg's source account type must be one of these. */
+  fromAccountTypes?: readonly string[];
+  toAccountId: number;
+  toAccountType?: string;
+  type?: TransactionType;
+};
+
+/** A prefix charge always names its source account types and its transaction type. */
+export type ExpectedPrefixCharge = ExpectedCharge & {
+  fromAccountTypes: readonly string[];
+  type: TransactionType;
+};
+
+type HeldTransaction = Awaited<ReturnType<typeof getTransactionByExternalId>>;
+type HeldLeg = { externalTransactionId: string; amount: number };
+
+/**
+ * The one terms check for a reused key. The ledger answers a held id with what it holds and moves
+ * nothing, whatever was sent, so a key resent with other content (another amount, currency or
+ * recipient) would otherwise be recorded at the new request's terms on the old request's money.
+ * Every held transaction must be readable; together they total the amount (unless `matchAmount`
+ * is false, for a caller that charges less than it was asked for); each is from and to the same
+ * accounts. The account types and the transaction type are compared only when both sides have
+ * them: a read that leaves one out is not a different payment, and refusing it would refuse an
+ * honest retry.
+ */
+export function heldChargeMatches(
+  held: readonly HeldTransaction[],
+  expected: ExpectedCharge,
+  { matchAmount = true }: { matchAmount?: boolean } = {}
+): boolean {
+  if (!held.length || held.some((leg) => !leg)) return false;
+  const total = held.reduce((sum, leg) => sum + (leg?.amount ?? 0), 0);
+  if (matchAmount && total !== expected.amount) return false;
+  return held.every(
+    (leg) =>
+      !!leg &&
+      leg.fromAccountId === expected.fromAccountId &&
+      (expected.fromAccountTypes === undefined ||
+        leg.fromAccountType == null ||
+        expected.fromAccountTypes.includes(leg.fromAccountType)) &&
+      leg.toAccountId === expected.toAccountId &&
+      (expected.toAccountType === undefined ||
+        leg.toAccountType == null ||
+        leg.toAccountType === expected.toAccountType) &&
+      (expected.type === undefined || leg.type == null || leg.type === expected.type)
+  );
+}
+
+/** The refusal of a reused key with other terms: a 400 (nothing was charged for THIS request). */
+function keyReused(outcomeContext: {
+  externalTransactionId: string;
+  userId: number;
+  amount?: number;
+}) {
+  logToAxiom({
+    name: 'buzz-payment-key-reused',
+    type: 'error',
+    message: 'a keyed charge was resent with different details',
+    ...outcomeContext,
+  }).catch(() => undefined);
+  return new TRPCError({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
+}
+
+/**
+ * The waits before each re-read when a keyed charge reads the ledger for something it expects to
+ * be there: a write the ledger committed can be missing from its first read. Four reads over about
+ * 1.4s at most. Used after a refused send (both paths), for the read-back after a send, and by the
+ * withdrawal's ready-cash check.
+ */
+export const KEYED_READ_RETRY_DELAYS_MS = [200, 400, 800] as const;
+
+/**
+ * The one bounded not-found re-read: `read` until `found` says so, once and then again after each
+ * of `KEYED_READ_RETRY_DELAYS_MS`; the last read otherwise.
+ * A read that fails says nothing, so it is "may have gone through" (the client keeps its key).
+ * Holds no database transaction.
+ */
+async function readUntilFound<T>(
+  read: () => Promise<T>,
+  found: (value: T) => boolean,
+  outcomeContext: { externalTransactionId: string; userId: number; amount?: number },
+  reason: string
+): Promise<T> {
+  let value!: T;
+  for (const delayMs of [0, ...KEYED_READ_RETRY_DELAYS_MS]) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    try {
+      value = await read();
+    } catch (lookupError) {
+      throw paymentOutcomeUnknown(outcomeContext, `${reason} failed`, { lookupError });
+    }
+    if (found(value)) return value;
+  }
+  return value;
+}
+
+/** The ledger's transaction under `externalTransactionId` (bounded re-read); null if never found. */
+export async function findChargeWithRetry(
+  externalTransactionId: string,
+  context: { userId: number; amount?: number },
+  reason: string
+): Promise<HeldTransaction> {
+  return readUntilFound(
+    () => getTransactionByExternalId(externalTransactionId),
+    (transaction) => !!transaction,
+    { externalTransactionId, ...context },
+    reason
+  );
+}
+
+/** Legs held under `prefix` (bounded re-read); empty if none appear. */
+function heldAfterRefusal(
+  prefix: string,
+  outcomeContext: { externalTransactionId: string; userId: number; amount?: number }
+): Promise<HeldLeg[]> {
+  return readUntilFound(
+    () => getMultiAccountTransactionsByPrefix(prefix),
+    (legs) => legs.length > 0,
+    outcomeContext,
+    'lookup after a refused charge'
+  );
+}
+
 type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   toAccountId: number;
   externalTransactionId: string;
@@ -87,6 +223,10 @@ export const CHARGE_DECLINED_MESSAGE = 'Unable to charge this payment';
  * - The ledger answers a held id with whatever it holds, including a charge a failed earlier
  *   attempt refunded, so that is checked and refused with a 400: the client starts a new action
  *   with a new key.
+ * - It also answers a held id whatever this request sent. However the id was reached (held
+ *   before charging, a resend, or a first send another request beat), the held transaction is
+ *   compared with this request (`heldChargeMatches`) and a mismatch is refused with a 400
+ *   (`PAYMENT_KEY_REUSED_MESSAGE`) before the caller records anything.
  *
  * Not held (or not reusable): charged. A failure that provably moved nothing is rethrown. Any other
  * failure is an unknown outcome, resolved by resending the same write once (see
@@ -99,7 +239,17 @@ export async function chargeByExternalId(
   {
     reusable,
     declinedMessage = CHARGE_DECLINED_MESSAGE,
-  }: { reusable: boolean; declinedMessage?: string }
+    matchAmount = true,
+  }: {
+    reusable: boolean;
+    declinedMessage?: string;
+    /**
+     * false: a held charge is this request's whatever its amount (payer, payee and types are still
+     * compared). For a caller that charges less than it was asked for, so a retry resending the
+     * asked amount still matches its own earlier charge.
+     */
+    matchAmount?: boolean;
+  }
 ): Promise<{ transactionId: string }> {
   const context = {
     externalTransactionId: input.externalTransactionId,
@@ -107,6 +257,14 @@ export async function chargeByExternalId(
     amount: input.amount,
   };
   const { insufficientFundsErrorMsg: _message, ...transaction } = input;
+  const expected: ExpectedCharge = {
+    amount: input.amount,
+    fromAccountId: input.fromAccountId,
+    fromAccountTypes: input.fromAccountType ? [input.fromAccountType] : undefined,
+    toAccountId: input.toAccountId,
+    type: input.type,
+  };
+  const matches = (held: HeldTransaction) => heldChargeMatches([held], expected, { matchAmount });
 
   // Resends the same write: the ledger answers a held id with its transaction, moving nothing.
   const resend = async (reason: string, error?: unknown) => {
@@ -124,27 +282,69 @@ export async function chargeByExternalId(
 
   let transactionId: string | undefined;
   if (reusable) {
-    let held: unknown;
+    let held: HeldTransaction;
     try {
       held = await getTransactionByExternalId(input.externalTransactionId);
     } catch (lookupError) {
       throw paymentOutcomeUnknown(context, 'lookup before charging failed', { lookupError });
     }
-    if (held) transactionId = await resend('held before charging');
+    if (held) {
+      if (!matches(held)) throw keyReused(context);
+      transactionId = await resend('held before charging');
+    }
   }
+  const wasHeld = transactionId !== undefined;
+
+  // A send declined for funds under a reused id may be a retry whose earlier charge spent the
+  // balance and committed after the lookup above missed it (the balance is checked before the id).
+  // So the id is read again (with the read-back's retries) before the decline is final; found, it
+  // is continued from as a held charge.
+  let heldAfterDecline = false;
+  const continueIfHeld = async () => {
+    if (!reusable) return undefined;
+    const held = await findChargeWithRetry(
+      input.externalTransactionId,
+      context,
+      'lookup after a decline'
+    );
+    if (!held) return undefined;
+    if (!matches(held)) throw keyReused(context);
+    heldAfterDecline = true;
+    return resend('held after a declined send');
+  };
 
   if (!transactionId) {
-    let sent: { transactionId: string | null };
+    let sentId: string | null | undefined;
     try {
-      sent = await createBuzzTransaction(input);
+      ({ transactionId: sentId } = await createBuzzTransaction(input));
     } catch (error) {
-      if (chargeWasDeclined(error)) throw error;
-      sent = { transactionId: await resend('unknown outcome', error) };
+      if (!chargeWasDeclined(error)) sentId = await resend('unknown outcome', error);
+      else {
+        sentId = await continueIfHeld();
+        if (!sentId) throw error;
+      }
     }
-    if (!sent.transactionId) throw throwBadRequestError(declinedMessage);
-    transactionId = sent.transactionId;
+    if (!sentId) {
+      sentId = await continueIfHeld();
+      if (!sentId) throw throwBadRequestError(declinedMessage);
+    }
+    transactionId = sentId;
   }
   if (!reusable) return { transactionId };
+
+  // A send (first or resend) under a reused id is answered with the held transaction if another
+  // request under the key got there first, so what was charged is read back and compared.
+  // The ledger read can lag its write, so a charge just made may read back as not found for a
+  // moment: not found is read again after each delay before it is called unknown. An error is not.
+  if (!wasHeld && !heldAfterDecline) {
+    const charged = await findChargeWithRetry(
+      input.externalTransactionId,
+      context,
+      'lookup after charging'
+    );
+    if (!charged) throw paymentOutcomeUnknown(context, 'charge not found after charging');
+    if (!matches(charged)) throw keyReused(context);
+  }
 
   let refund: unknown;
   try {
@@ -184,31 +384,10 @@ export async function prefixWasRefunded(
   }
 }
 
-/** Told to the user when the action's key already holds a charge for a different payment. */
-export const PAYMENT_KEY_REUSED_MESSAGE =
-  'This payment was already started with different details. Please start it again.';
-
-/** What a keyed prefix charge must have moved: checked against held legs before reusing them. */
-export type ExpectedPrefixCharge = {
-  amount: number;
-  fromAccountId: number;
-  fromAccountTypes: readonly string[];
-  toAccountId: number;
-  /** Compared only when the charge names one. */
-  toAccountType?: string;
-  type: TransactionType;
-};
-
-type HeldLeg = { externalTransactionId: string; amount: number };
-
 /**
- * Legs the ledger already held under `prefix` are reused only when they are this request's charge.
- * The ledger answers a held id with what it holds and moves nothing, whatever was sent, so a key
- * resent with other content (another amount, currency or recipient) would otherwise be recorded at
- * the new request's terms on the old request's money. Each leg is read in full; together they must
- * total the amount, from and to the same accounts, of the same type. A mismatch is a 400 (nothing
- * was charged for THIS request, and the client starts over with a new key); a read that fails is
- * "may have gone through".
+ * Legs the ledger already held under `prefix` are reused only when they are this request's charge
+ * (`heldChargeMatches`). Each leg is read in full. A mismatch is a 400 (the client starts over with
+ * a new key); a read that fails, or a leg that cannot be read, is "may have gone through".
  */
 async function assertHeldChargeMatches(
   prefix: string,
@@ -218,7 +397,7 @@ async function assertHeldChargeMatches(
 ) {
   const outcomeContext = { externalTransactionId: prefix, ...context };
   let legs: HeldLeg[];
-  let held: Awaited<ReturnType<typeof getTransactionByExternalId>>[];
+  let held: HeldTransaction[];
   try {
     legs = listed ?? (await getMultiAccountTransactionsByPrefix(prefix));
     held = await Promise.all(
@@ -229,55 +408,7 @@ async function assertHeldChargeMatches(
   }
   if (!legs.length || held.some((leg) => !leg))
     throw paymentOutcomeUnknown(outcomeContext, 'held charge legs could not be read');
-
-  const total = held.reduce((sum, leg) => sum + (leg?.amount ?? 0), 0);
-  const matches =
-    total === expected.amount &&
-    held.every(
-      (leg) =>
-        !!leg &&
-        leg.fromAccountId === expected.fromAccountId &&
-        expected.fromAccountTypes.includes(leg.fromAccountType) &&
-        leg.toAccountId === expected.toAccountId &&
-        (expected.toAccountType === undefined || leg.toAccountType === expected.toAccountType) &&
-        leg.type === expected.type
-    );
-  if (!matches) {
-    logToAxiom({
-      name: 'buzz-payment-key-reused',
-      type: 'error',
-      message: 'a keyed charge was resent with different details',
-      ...outcomeContext,
-    }).catch(() => undefined);
-    throw new TRPCError({ code: 'BAD_REQUEST', message: PAYMENT_KEY_REUSED_MESSAGE });
-  }
-}
-
-/** How many times, and how far apart, a refused keyed charge looks for a held one first. */
-export const HELD_AFTER_REFUSAL_LOOKUPS = 3;
-export const HELD_AFTER_REFUSAL_PAUSE_MS = 250;
-
-/**
- * Legs held under `prefix`, looked up a few times apart: a write the ledger committed can be
- * missing from its first read. Empty when none appear. A lookup that fails says nothing about
- * them, so it is "may have gone through" (the client keeps its key) rather than the refusal.
- */
-async function heldAfterRefusal(
-  prefix: string,
-  outcomeContext: { externalTransactionId: string; userId: number; amount?: number }
-): Promise<HeldLeg[]> {
-  for (let attempt = 1; ; attempt++) {
-    let legs: HeldLeg[];
-    try {
-      legs = await getMultiAccountTransactionsByPrefix(prefix);
-    } catch (lookupError) {
-      throw paymentOutcomeUnknown(outcomeContext, 'lookup after a refused charge failed', {
-        lookupError,
-      });
-    }
-    if (legs.length || attempt >= HELD_AFTER_REFUSAL_LOOKUPS) return legs;
-    await new Promise((resolve) => setTimeout(resolve, HELD_AFTER_REFUSAL_PAUSE_MS));
-  }
+  if (!heldChargeMatches(held, expected)) throw keyReused(outcomeContext);
 }
 
 /**

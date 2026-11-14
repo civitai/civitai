@@ -53,6 +53,7 @@ describe('child-label-reindex route', () => {
       dryRun: true,
       chunkSize: 500,
       after: 0,
+      maxChunks: 20,
     });
   });
 
