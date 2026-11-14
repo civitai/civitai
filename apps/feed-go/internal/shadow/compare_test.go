@@ -2,6 +2,8 @@ package shadow
 
 import (
 	"testing"
+
+	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
 func TestCompareIgnoresKeyOrderAndReferentialEqualities(t *testing.T) {
@@ -50,6 +52,81 @@ func TestCompareFindsValueMissingAndAnnotationDiffs(t *testing.T) {
 	}
 	if c := Classify(r, goEnv, nodeEnv); c != "fields" {
 		t.Fatalf("classify = %s, want fields", c)
+	}
+}
+
+// superjson.serialize writes an undefined object member as `null` annotated ["undefined"]
+// (transformValue: undefined -> null), and superjson.deserialize sets every annotated path back to
+// undefined (setDeep assigns `parent[lastKey]` unconditionally). This service's writer omits the
+// member and writes the same annotation, which deserializes to the same object. The first live shadow
+// window counted every such member as missing-in-go (`images.*.tags`, `images.*.thumbnailUrl` on
+// every non-video image, `review` on every post without one): a comparator artifact, not a parity gap.
+func TestCompareAppliesUndefinedAnnotations(t *testing.T) {
+	item := superjson.Object{
+		{Key: "postId", Val: int64(1)},
+		{Key: "images", Val: []any{superjson.Object{
+			{Key: "id", Val: int64(5)},
+			{Key: "tags", Val: superjson.Undefined{}},
+			{Key: "tagIds", Val: []any{int64(3)}},
+			{Key: "thumbnailUrl", Val: superjson.Undefined{}},
+		}}},
+		{Key: "review", Val: superjson.Undefined{}},
+	}
+	goEnv, err := superjson.Serialize(superjson.Object{{Key: "items", Val: []any{item}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What superjson.serialize (2.x) writes for the same JS object, then JSON.stringify.
+	nodeEnv := []byte(`{"json":{"items":[{"postId":1,"images":[{"id":5,"tags":null,"tagIds":[3],"thumbnailUrl":null}],"review":null}]},` +
+		`"meta":{"values":{"items.0.images.0.tags":["undefined"],"items.0.images.0.thumbnailUrl":["undefined"],"items.0.review":["undefined"]},"v":1}}`)
+	r, err := Compare(goEnv, nodeEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Match {
+		t.Fatalf("want match, got %+v\ngo:   %s", r.Diffs, goEnv)
+	}
+	if got := Classify(r, goEnv, nodeEnv); got != "match" {
+		t.Fatalf("classify = %s", got)
+	}
+}
+
+// A real null (no annotation) is not undefined after decode, and an undefined member on one side only
+// is still a difference.
+func TestCompareUndefinedIsNotNull(t *testing.T) {
+	goEnv := []byte(`{"json":{"a":{"x":1}},"meta":{"values":{"a.review":["undefined"]},"v":1}}`)
+	nodeEnv := []byte(`{"json":{"a":{"x":1,"review":null}}}`)
+	r, err := Compare(goEnv, nodeEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, d := range r.Diffs {
+		got[d.Path+"/"+d.Kind] = true
+	}
+	if len(r.Diffs) != 2 || !got["a.review/type"] || !got["a.review/annotation"] {
+		t.Fatalf("want a type and an annotation diff on a.review, got %+v", r.Diffs)
+	}
+
+	// Undefined on the Go side, a value on the Node side.
+	nodeEnv = []byte(`{"json":{"a":{"x":1,"review":{"id":2}}}}`)
+	r, err = Compare(goEnv, nodeEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Match {
+		t.Fatal("undefined vs an object must differ")
+	}
+
+	// Undefined inside an array: both writers emit null + annotation.
+	r, err = Compare(
+		[]byte(`{"json":{"a":[null,1]},"meta":{"values":{"a.0":["undefined"]},"v":1}}`),
+		[]byte(`{"json":{"a":[null,1]},"meta":{"values":{"a.0":["undefined"]},"v":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Match {
+		t.Fatalf("array undefined: %+v", r.Diffs)
 	}
 }
 

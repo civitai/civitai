@@ -180,9 +180,14 @@ type Metrics map[string]int
 // metricHashKey is cacheKeys.metric (event-engine-common/utils/cache-keys.ts); never namespace-prefixed.
 func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 
-// ImageMetrics reads the watcher-fed metric hashes. An image with no hash at all is a miss and falls
-// back (the Node path populates it from ClickHouse); a `notFound` marker means "no metrics", which is
-// absent from the result exactly as in MetricService.parseCachedMetrics.
+// ImageMetrics is getImageMetricsObject over the watcher-fed metric hashes. An image with no hash at
+// all is a miss and falls back (the Node path populates it from ClickHouse). Every image whose hash
+// exists is KNOWN, a `notFound` marker included: on the direct read getImageMetricsObjectDirect writes
+// `shapeImageMetrics(id, metrics[id])` for every requested id, so the id MetricService.fetch skips for
+// the marker gets an all-null entry; on the image-metrics-swr read shapeCachedMetricHash shapes the
+// marker hash to nulls. Either way toImageV2Stats sees an entry: zero counts, statsUnknown false.
+// (Node reports statsUnknown only when the ClickHouse read failed or timed out and the cache held no
+// hash; an image with no hash falls back here, so this service never answers statsUnknown true.)
 func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Metrics, error) {
 	imageIDs = Unique(imageIDs)
 	out := map[int]Metrics{}
@@ -199,17 +204,32 @@ func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Met
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fallback.Newf("metrics-read-failed", "%v", err)
 	}
+	hashes := make([]map[string]string, len(cmds))
 	for i, cmd := range cmds {
 		hash, err := cmd.Result()
 		if err != nil {
 			return nil, fallback.Newf("metrics-read-failed", "%v", err)
 		}
+		hashes[i] = hash
+	}
+	return MetricsFromHashes(imageIDs, hashes)
+}
+
+// MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
+// hash as HGETALL returned it. An empty hash (no key) falls back; any other hash is an entry, a
+// `notFound` marker as an entry with no counts.
+func MetricsFromHashes(ids []int, hashes []map[string]string) (map[int]Metrics, error) {
+	out := make(map[int]Metrics, len(ids))
+	for i, id := range ids {
+		hash := hashes[i]
 		if len(hash) == 0 {
 			return nil, fallback.New("metrics-miss")
 		}
-		if m, ok := ParseMetricHash(hash); ok {
-			out[imageIDs[i]] = m
+		m, ok := ParseMetricHash(hash)
+		if !ok {
+			m = Metrics{} // notFound: known, every count 0 (see above)
 		}
+		out[id] = m
 	}
 	return out, nil
 }
