@@ -21,6 +21,7 @@ const SCHEMA = `
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   CREATE TABLE "EvidenceHeldUser" ("userId" int);
+  CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int, "csamHeld" boolean NOT NULL);
 `;
 
 /** Storyline `id` owned by `owner`, chapter 1 = post `id * 10` with image `id * 100`. */
@@ -119,6 +120,7 @@ describe('storyline removal', () => {
     ['chapter 1 image in CSAM review', `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 100`],
     ['chapter 1 image blocked for CSAM', `UPDATE "Image" SET "blockedFor" = 'CSAM' WHERE id = 100`],
     ['chapter 1 image listed on a report', `INSERT INTO "CsamReport" (images) VALUES ('[100]')`],
+    ['chapter 1 text item held', `INSERT INTO "PostText" ("postId", "csamHeld") VALUES (10, true)`],
   ];
   test.each(leaves)(
     'a storyline whose %s loses its point on the next sync',

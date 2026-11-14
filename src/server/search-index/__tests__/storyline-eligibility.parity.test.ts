@@ -49,6 +49,7 @@ const SCHEMA = `
     id int PRIMARY KEY, "storylineId" int NOT NULL, "postId" int, depth int NOT NULL,
     "removedAt" timestamp(3)
   );
+  CREATE TABLE "PostText" (id serial PRIMARY KEY, "postId" int NOT NULL, "csamHeld" boolean NOT NULL);
 `;
 
 const eligible = {
@@ -69,6 +70,8 @@ const eligible = {
   image: `1, NULL, NULL` as string | false,
   /** A second image on chapter 1's post, the same shape, or false. */
   secondImage: false as string | false,
+  /** A text item on chapter 1's post, held or clean, or none. */
+  text: 'none' as 'none' | 'held' | 'clean',
 };
 
 const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}): ParityRow => {
@@ -96,6 +99,13 @@ const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}
                   `INSERT INTO "Image" VALUES (${id * 100 + 1}, ${
                     c.secondImage.split(',')[0]
                   }, ${postId},${c.secondImage.slice(c.secondImage.indexOf(',') + 1)})`,
+                ]),
+            ...(c.text === 'none'
+              ? []
+              : [
+                  `INSERT INTO "PostText" ("postId", "csamHeld") VALUES (${postId}, ${
+                    c.text === 'held'
+                  })`,
                 ]),
           ]
         : []),
@@ -158,6 +168,8 @@ const spec: ParitySpec = {
     storyline(30, 'eligible:placeholderImageOwner', { image: `-1, NULL, NULL` }),
     // One held image among clean ones is enough.
     storyline(31, 'anyImageHeld', { secondImage: `1, 'csam', NULL` }),
+    storyline(32, 'textHeld', { text: 'held' }),
+    storyline(33, 'eligible:cleanText', { text: 'clean' }),
   ],
   clauses: [
     'tosViolation',
@@ -185,6 +197,7 @@ const spec: ParitySpec = {
     'imageOwnerSecondaryReported',
     'imageOwnerEvidenceHold',
     'anyImageHeld',
+    'textHeld',
   ],
   site: async (prisma) =>
     (await prisma.$queryRawUnsafe<{ id: number }[]>(SITE)).map((r) => Number(r.id)),

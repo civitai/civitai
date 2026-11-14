@@ -40,7 +40,8 @@ export const storylineSemanticEligibleText = ({
   AND ${rp}.availability = 'Public'
   AND NOT ${heldUserSql(`${st}."userId"`)} AND NOT ${heldUserSql(`${rp}."userId"`)}
   AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = ${rp}.id
-    AND ${semanticImageHeldText('ri')}))`;
+    AND ${semanticImageHeldText('ri')})
+  AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = ${rp}.id AND rt."csamHeld"))`;
 
 /**
  * The level `isStorylineOutsideLevel` judges a storyline `st` by: chapter 1's post `rp` (the
