@@ -83,6 +83,13 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
       why: 'one-off backfill; the locks it adds carry no marker, which reads as not disputable',
     },
   },
+  'scripts/oneoffs/backfill-mature-lock-reason.ts': {
+    lockWrites: 2,
+    decision: {
+      kind: 'exempt',
+      why: 'both counted literals are filter inputs; its one write adds attribution to an existing marker and never changes the lock',
+    },
+  },
 };
 
 function sourceFiles(): string[] {
