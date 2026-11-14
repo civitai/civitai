@@ -21,6 +21,7 @@ import { CommentBadge } from '~/components/CommentsV3/CommentBadge';
 import { useScrollToHighlightedComment } from '~/components/CommentsV3/useScrollToHighlightedComment';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { CommentTimeChip } from '~/components/Music/TimedComments/TimedCommentChips';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -124,6 +125,9 @@ export function CommentItem({
               <Text c="dimmed" size="xs" mt={2}>
                 <DaysFromNow date={comment.createdAt} />
               </Text>
+              {comment.timestampSec != null && (
+                <CommentTimeChip timestampSec={comment.timestampSec} />
+              )}
               {comment.pinnedAt && (
                 <ThemeIcon size="sm" color="orange">
                   <IconPinned size={16} stroke={2} />
