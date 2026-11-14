@@ -260,6 +260,17 @@ describe('the shared flag summary', () => {
     expect(closed?.frozen).toBe(true);
   });
 
+  it('stops counting once the freeze runs, even on a day nobody placed a hat on', async () => {
+    const { freezeFlagDays } = await import('~/server/events/turf/flag-freeze');
+    const after = new Date(CUT.getTime() + 120_000);
+    expect(await getFlagSummary('e', after)).toMatchObject({ closed: true, frozen: false });
+    // The freeze writes a marker for every flag, won or not, so an empty day still reads as paid.
+    expect(await freezeFlagDays({ name: 'e', startDate: START }, FLAGS, after)).toBeGreaterThan(0);
+    const frozen = await getFlagSummary('e', after);
+    expect(frozen).toMatchObject({ closed: true, frozen: true, teamPoints: {} });
+    expect(frozen?.flags[0].winners).toEqual([]);
+  });
+
   it('caches an open or unfrozen day for seconds, and a frozen day for longer', async () => {
     const lastTtl = () => (redisMock.sysRedis.set.mock.calls.at(-1)?.[2] as { EX: number }).EX;
     await add(5);
