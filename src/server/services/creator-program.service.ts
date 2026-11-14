@@ -628,10 +628,13 @@ export async function bankBuzz(
           );
         }
         if (held) {
-          // Resends under the held id (moves nothing) and refuses a deposit since refunded.
+          // Resends under the held id (moves nothing) and refuses a deposit since refunded. The
+          // amount is not compared: the earlier attempt may have banked less than was asked (the
+          // cap or the bankable amount clamps it), and this retry resends the asked amount. The
+          // banked total is read from the ledger, so the held deposit's own amount is what counts.
           await keyed.chargeByExternalId(
             { ...deposit(), externalTransactionId: keyedId },
-            { reusable: true, declinedMessage }
+            { reusable: true, declinedMessage, matchAmount: false }
           );
           await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
           return true;

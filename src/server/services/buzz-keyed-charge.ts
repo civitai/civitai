@@ -88,9 +88,10 @@ export function heldChargeMatches(
     toAccountId: number;
     fromAccountType?: string;
     type?: unknown;
-  }
+  },
+  { matchAmount = true }: { matchAmount?: boolean } = {}
 ): boolean {
-  if (Number(held.amount) !== input.amount) return false;
+  if (matchAmount && Number(held.amount) !== input.amount) return false;
   if (Number(held.fromAccountId) !== input.fromAccountId) return false;
   if (Number(held.toAccountId) !== input.toAccountId) return false;
   if (
@@ -103,6 +104,12 @@ export function heldChargeMatches(
     return false;
   return true;
 }
+
+/**
+ * Waits before each re-read of a charge that read back as not found (the ledger read can lag its
+ * write): four reads over about 1.4s at most, outside any database transaction.
+ */
+export const READ_BACK_RETRY_DELAYS_MS = [200, 400, 800] as const;
 
 type KeyedChargeInput = Parameters<typeof createBuzzTransaction>[0] & {
   toAccountId: number;
@@ -140,7 +147,17 @@ export async function chargeByExternalId(
   {
     reusable,
     declinedMessage = CHARGE_DECLINED_MESSAGE,
-  }: { reusable: boolean; declinedMessage?: string }
+    matchAmount = true,
+  }: {
+    reusable: boolean;
+    declinedMessage?: string;
+    /**
+     * false: a held charge is this request's whatever its amount (payer, payee and types are still
+     * compared). For a caller that charges less than it was asked for, so a retry resending the
+     * asked amount still matches its own earlier charge.
+     */
+    matchAmount?: boolean;
+  }
 ): Promise<{ transactionId: string }> {
   const context = {
     externalTransactionId: input.externalTransactionId,
@@ -173,7 +190,8 @@ export async function chargeByExternalId(
       throw paymentOutcomeUnknown(context, 'lookup before charging failed', { lookupError });
     }
     if (held) {
-      if (!heldChargeMatches(held, input)) throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
+      if (!heldChargeMatches(held, input, { matchAmount }))
+        throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
       transactionId = await resend('held before charging');
     }
   }
@@ -194,15 +212,22 @@ export async function chargeByExternalId(
 
   // A send (first or resend) under a reused id is answered with the held transaction if another
   // request under the key got there first, so what was charged is read back and compared.
+  // The ledger read can lag its write, so a charge just made may read back as not found for a
+  // moment: not found is read again after each delay before it is called unknown. An error is not.
   if (!wasHeld) {
-    let charged: Held;
-    try {
-      charged = await getTransactionByExternalId(input.externalTransactionId);
-    } catch (lookupError) {
-      throw paymentOutcomeUnknown(context, 'lookup after charging failed', { lookupError });
+    let charged: Held = null;
+    for (const delayMs of [0, ...READ_BACK_RETRY_DELAYS_MS]) {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        charged = await getTransactionByExternalId(input.externalTransactionId);
+      } catch (lookupError) {
+        throw paymentOutcomeUnknown(context, 'lookup after charging failed', { lookupError });
+      }
+      if (charged) break;
     }
     if (!charged) throw paymentOutcomeUnknown(context, 'charge not found after charging');
-    if (!heldChargeMatches(charged, input)) throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
+    if (!heldChargeMatches(charged, input, { matchAmount }))
+      throw throwBadRequestError(CHARGE_MISMATCH_MESSAGE);
   }
 
   let refund: unknown;
