@@ -97,21 +97,28 @@ export function FlagHatButton({ imageId }: { imageId: number }) {
               You don&apos;t have any hats to add to this race right now.
             </Text>
           ) : (
-            <Group gap={6} wrap="nowrap" role="group" aria-label={`Add hats to flag ${rank}`}>
-              {choices.map((count) => (
-                <Button
-                  key={count}
-                  size="xs"
-                  miw={44}
-                  disabled={!cosmeticId || place.isPending}
-                  loading={place.isPending && place.variables?.count === count}
-                  data-testid={`flag-add-${count}`}
-                  onClick={() => cosmeticId && place.mutate({ event, imageId, cosmeticId, count })}
-                >
-                  {count}
-                </Button>
-              ))}
-            </Group>
+            <>
+              <Text size="sm" fw={600} mb={6} id={`flag-hats-q-${imageId}`}>
+                How many hats would you like to place?
+              </Text>
+              <Group gap={6} wrap="nowrap" role="group" aria-labelledby={`flag-hats-q-${imageId}`}>
+                {choices.map((count) => (
+                  <Button
+                    key={count}
+                    size="xs"
+                    miw={44}
+                    disabled={!cosmeticId || place.isPending}
+                    loading={place.isPending && place.variables?.count === count}
+                    data-testid={`flag-add-${count}`}
+                    onClick={() =>
+                      cosmeticId && place.mutate({ event, imageId, cosmeticId, count })
+                    }
+                  >
+                    {count}
+                  </Button>
+                ))}
+              </Group>
+            </>
           )}
         </Popover.Dropdown>
       </Popover>

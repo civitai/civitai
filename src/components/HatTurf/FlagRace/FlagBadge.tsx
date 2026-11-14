@@ -1,16 +1,12 @@
 import { useState } from 'react';
 import { Stack, Text } from '@mantine/core';
-import { IconFlag } from '@tabler/icons-react';
+import { IconClock, IconFlag } from '@tabler/icons-react';
+import { Countdown } from '~/components/Countdown/Countdown';
 import clsx from 'clsx';
 import { Popover } from '~/components/MantineOverlays';
 import classes from '~/components/HatTurf/HatTurfBadge.module.css';
 import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
-import {
-  flagCounting,
-  flagGap,
-  flagLeader,
-  formatClock,
-} from '~/components/HatTurf/FlagRace/flag-race.utils';
+import { flagCounting, flagGap, flagLeader } from '~/components/HatTurf/FlagRace/flag-race.utils';
 import { useFlagClock } from '~/components/HatTurf/FlagRace/FlagCountdown';
 import { useTurfFeed } from '~/components/HatTurf/TurfSummaryProvider';
 import {
@@ -25,6 +21,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
 const HOUR_MS = 60 * 60 * 1000;
+const finalHourAt = (closesAt: Date | string) => new Date(new Date(closesAt).getTime() - HOUR_MS);
 
 /** A home-row flag's corner badge: who holds it, its points, and once closed, who won them. */
 export function FlagBadge({ imageId, className }: { imageId: number; className?: string }) {
@@ -62,6 +59,8 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
         <button
           type="button"
           className={clsx(classes.badge, classes.chip, finalHour && 'animate-pulse', className)}
+          // A smaller dial than a Turf badge's: the flag's points and clock are what matter here.
+          style={{ '--hat-turf-badge-size': '18px' } as React.CSSProperties}
           aria-label={`${label} Show details`}
           aria-expanded={open}
           data-testid="flag-badge"
@@ -101,7 +100,7 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
               />
             </svg>
             <span className={classes.disc}>
-              <IconFlag size={10} stroke={2.5} />
+              <IconFlag size={8} stroke={2.5} />
             </span>
           </span>
           <span className={classes.count} data-testid="flag-badge-pot">
@@ -120,7 +119,12 @@ export function FlagBadge({ imageId, className }: { imageId: number; className?:
                 }
                 data-testid="flag-badge-clock"
               >
-                ⏱ {clock.phase === 'final' ? 'Any moment' : formatClock(clock.secondsLeft)}
+                <IconClock size={11} stroke={2.5} className="mr-0.5 inline align-[-1px]" />
+                {clock.phase === 'final' ? (
+                  'Any moment'
+                ) : (
+                  <Countdown endTime={finalHourAt(summary.closesAt)} format="short" />
+                )}
               </span>
             )
           )}
