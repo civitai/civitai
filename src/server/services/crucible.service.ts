@@ -2353,29 +2353,37 @@ export const submitEntry = async ({
     ): Promise<{ entry: SavedEntry; recordedHere: boolean }> => {
       if (!fee)
         return dbWrite.$transaction(async (tx) => ({ entry: await write(tx), recordedHere: true }));
-      return recordKeyedCharge(fee.prefix, fee.context, {
-        findRecorded: async (tx) => {
-          const recorded = await tx.crucibleEntry.findFirst({
-            where: { crucibleId, userId, buzzTransactionId: fee.prefix },
-            select: submittedEntrySelect,
-          });
-          return recorded ? { entry: recorded, recordedHere: false } : null;
-        },
-        isRefunded: () => prefixWasRefunded(fee.prefix, fee.context, CHARGE_LOCKED_READ),
-        record: async (tx) => ({ entry: await write(tx), recordedHere: true }),
-        refund: () =>
-          refundMultiAccountTransaction(
-            {
-              externalTransactionIdPrefix: fee.prefix,
-              description: getCrucibleTransactionDescription(
-                'Crucible entry fee refund - entry not saved',
-                crucible
-              ),
-              details: { entityId: crucibleId, entityType: 'Crucible', reason: 'entry-not-saved' },
-            },
-            CHARGE_LOCKED_REFUND
-          ),
-      });
+      return recordKeyedCharge<{ entry: SavedEntry; recordedHere: boolean }>(
+        fee.prefix,
+        fee.context,
+        {
+          findRecorded: async (tx) => {
+            const recorded = await tx.crucibleEntry.findFirst({
+              where: { crucibleId, userId, buzzTransactionId: fee.prefix },
+              select: submittedEntrySelect,
+            });
+            return recorded ? { entry: recorded, recordedHere: false } : null;
+          },
+          isRefunded: () => prefixWasRefunded(fee.prefix, fee.context, CHARGE_LOCKED_READ),
+          record: async (tx) => ({ entry: await write(tx), recordedHere: true }),
+          refund: () =>
+            refundMultiAccountTransaction(
+              {
+                externalTransactionIdPrefix: fee.prefix,
+                description: getCrucibleTransactionDescription(
+                  'Crucible entry fee refund - entry not saved',
+                  crucible
+                ),
+                details: {
+                  entityId: crucibleId,
+                  entityType: 'Crucible',
+                  reason: 'entry-not-saved',
+                },
+              },
+              CHARGE_LOCKED_REFUND
+            ),
+        }
+      );
     };
 
     // Create the entry with default ELO score (1500)
