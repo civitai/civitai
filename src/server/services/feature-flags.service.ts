@@ -462,6 +462,8 @@ const featureFlags = createFeatureFlags({
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
+  // The semantic storyline search endpoint. Dark: Flipt is its only switch.
+  semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
