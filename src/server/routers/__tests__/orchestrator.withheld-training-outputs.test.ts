@@ -78,10 +78,8 @@ describe('orchestrator.getWorkflow on a withheld training run', () => {
       h.getWorkflow.mockResolvedValue(run('wf-1', $type));
       const wf = await caller().getWorkflow({ workflowId: 'wf-1' });
       expect(JSON.stringify(wf)).not.toContain(MARK);
-      expect(wf).toMatchObject({
-        id: 'wf-1',
-        steps: [{ $type, name: 'train', status: 'succeeded' }],
-      });
+      expect(wf).toMatchObject({ id: 'wf-1' });
+      expect(wf.steps).toEqual([{ $type, name: 'train', status: 'succeeded' }]);
       expect(h.withheld).toHaveBeenCalledWith(7, ['wf-1']);
     }
   );
