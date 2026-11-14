@@ -92,7 +92,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 const { flagImagesOnRestrictedVersions } = vi.hoisted(() => ({
-  flagImagesOnRestrictedVersions: vi.fn(async () => ({ flagged: 0, postIds: [] })),
+  flagImagesOnRestrictedVersions: vi.fn(async () => ({ flagged: 0, postIds: [] as number[] })),
 }));
 vi.mock('~/server/services/restricted-images.service', async (importOriginal) => ({
   ...(await importOriginal<typeof RestrictedImagesService>()),
@@ -311,6 +311,21 @@ describe('addResourceToPostImage restricted base models', () => {
       modelVersionIds: [NEW_VERSION_ID],
       imageIds: [IMAGE_ID, OTHER_IMAGE_ID],
     });
+  });
+
+  it("refreshes a flagged image's post caches after flagging it", async () => {
+    arrange({ adding: ModelType.Checkpoint, existing: [], imageIds: [IMAGE_ID] });
+    mockImageFindMany.mockResolvedValue([{ postId: 7, meta: null, type: 'image' }]);
+    flagImagesOnRestrictedVersions.mockResolvedValueOnce({ flagged: 1, postIds: [7] });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    await add([IMAGE_ID]);
+    // bustCachesForPosts' one post query, issued once the flag is set.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    const params = (dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[]).slice(1);
+    expect(params).toContainEqual(expect.objectContaining({ values: [7] }));
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeGreaterThan(
+      flagImagesOnRestrictedVersions.mock.invocationCallOrder[0]
+    );
   });
 
   it('has nothing to apply when every resource was already credited', async () => {

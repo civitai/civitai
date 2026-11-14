@@ -1,4 +1,4 @@
-import { PGlite } from '@electric-sql/pglite';
+import { PGlite, type Transaction } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -29,6 +29,39 @@ const RESTRICTED_VERSION = 1;
 const OPEN_VERSION = 2;
 
 let db: PGlite;
+/** The caller's open transaction: a second connection would not see its uncommitted rows. */
+let openTx: Transaction | undefined;
+
+// Integers typed as Prisma sends them: untyped, `"modelVersionId" IN ($1)` compares int to text.
+const INT4_OID = 23;
+const runOn =
+  (conn: () => Pick<Transaction, 'query'>) =>
+  async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+    const { Prisma: P } = await import('@prisma/client');
+    const sql = Array.isArray(strings)
+      ? P.sql(strings as TemplateStringsArray, ...values)
+      : (strings as Prisma.Sql);
+    const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
+    return (await conn().query(sql.text, sql.values, { paramTypes })).rows;
+  };
+
+/** Runs `fn` in a real transaction, as `tx`: only `tx` can see rows it wrote before commit. */
+async function inTransaction(
+  fn: (tx: Prisma.TransactionClient, run: (sql: string) => Promise<unknown>) => Promise<void>
+) {
+  await db.transaction(async (t) => {
+    openTx = t;
+    const tx = new Proxy(dbMock.dbWrite, {
+      get: (target, key) =>
+        key === '$queryRaw' ? runOn(() => t) : target[key as keyof typeof target],
+    }) as unknown as Prisma.TransactionClient;
+    try {
+      await fn(tx, (sql) => t.exec(sql));
+    } finally {
+      openTx = undefined;
+    }
+  });
+}
 
 beforeAll(async () => {
   db = new PGlite();
@@ -48,25 +81,22 @@ beforeAll(async () => {
 
     INSERT INTO "ModelVersion" VALUES (${RESTRICTED_VERSION}, 'Restricted'), (${OPEN_VERSION}, 'Open');
   `);
-  // Integers typed as Prisma sends them: untyped, `"modelVersionId" IN ($1)` compares int to text.
-  const INT4_OID = 23;
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (
-    strings: TemplateStringsArray | Prisma.Sql,
-    ...values: unknown[]
-  ) => {
-    const { Prisma: P } = await import('@prisma/client');
-    const sql = Array.isArray(strings)
-      ? P.sql(strings as TemplateStringsArray, ...values)
-      : (strings as Prisma.Sql);
-    const paramTypes = sql.values.map((v) => (Number.isInteger(v) ? INT4_OID : 0));
-    return (await db.query(sql.text, sql.values, { paramTypes })).rows;
-  }) as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation(
+    runOn(() => {
+      if (openTx) throw new Error("queried dbWrite while the caller's transaction is open");
+      return db;
+    }) as never
+  );
 });
 afterAll(() => db.close());
 
 beforeEach(async () => {
   bustCachesForPosts.mockClear();
-  await db.exec(`TRUNCATE "Image", "ImageResourceNew", detected_resources`);
+  // The trigger commits with the transaction if the code under test fails to throw.
+  await db.exec(`
+    DROP TRIGGER IF EXISTS fail_flag ON "Image";
+    TRUNCATE "Image", "ImageResourceNew", detected_resources;
+  `);
   dbMock.dbWrite.image.findUnique.mockResolvedValue({ meta: {} } as never);
 });
 
@@ -93,35 +123,38 @@ describe('createImageResources', () => {
   });
 
   describe("inside a caller's transaction", () => {
-    const tx = dbMock.dbWrite as unknown as Prisma.TransactionClient;
-    beforeEach(() =>
-      db.exec(`
+    // The image row is written inside the transaction, as a bounty's images are, so the flag
+    // has to go through `tx`: dbWrite could not see the row yet.
+    const insertImage = (run: (sql: string) => Promise<unknown>) =>
+      run(`
         INSERT INTO "Image" VALUES (1, NULL, false);
         INSERT INTO detected_resources VALUES
           (1, ${RESTRICTED_VERSION}, 'checkpoint', 'bbbbbbbbbb', NULL, true);
-      `)
-    );
+      `);
 
-    it('restricts the image', async () => {
-      await createImageResources({ imageId: 1, tx });
+    it('restricts the image it wrote before the transaction commits', async () => {
+      await inTransaction(async (tx, run) => {
+        await insertImage(run);
+        await createImageResources({ imageId: 1, tx });
+      });
 
       expect(await restrictedIds()).toEqual([1]);
     });
 
     it('fails the write when the flag cannot be set, since the transaction is already aborted', async () => {
-      const query = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
-      dbMock.dbWrite.$queryRaw.mockImplementation(((
-        strings: TemplateStringsArray,
-        ...values: unknown[]
-      ) =>
-        strings.join('').includes('UPDATE "Image"')
-          ? Promise.reject(new Error('statement timeout'))
-          : query(strings, ...values)) as never);
-      try {
-        await expect(createImageResources({ imageId: 1, tx })).rejects.toThrow('statement timeout');
-      } finally {
-        dbMock.dbWrite.$queryRaw.mockImplementation(query);
-      }
+      await expect(
+        inTransaction(async (tx, run) => {
+          await insertImage(run);
+          await run(`
+            CREATE FUNCTION fail_flag() RETURNS trigger LANGUAGE plpgsql AS
+              $$ BEGIN RAISE EXCEPTION 'statement timeout'; END $$;
+            CREATE TRIGGER fail_flag BEFORE UPDATE ON "Image" FOR EACH ROW EXECUTE FUNCTION fail_flag();
+          `);
+          await createImageResources({ imageId: 1, tx });
+        })
+      ).rejects.toThrow('statement timeout');
+      // Rolled back: the image and the trigger are gone with the transaction.
+      expect(await db.query(`SELECT 1 FROM "Image"`)).toMatchObject({ rows: [] });
     });
   });
 });
