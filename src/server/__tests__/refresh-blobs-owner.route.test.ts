@@ -193,9 +193,11 @@ describe('refreshBlobs re-signs only the caller’s own blobs', () => {
   });
 
   it('denies what the page cap leaves unproven, without refreshing it', async () => {
-    mockQueryWorkflows.mockResolvedValue(
-      page([workflow({ owner: CALLER, outputs: ['A.jpeg'] })], 'more')
-    );
+    // Throws past the cap so a broken cap fails the count below instead of looping forever.
+    mockQueryWorkflows.mockImplementation(async () => {
+      if (mockQueryWorkflows.mock.calls.length > 20) throw new Error('scan did not stop');
+      return page([workflow({ owner: CALLER, outputs: ['A.jpeg'] })], 'more');
+    });
 
     expect((await call(['DEEP.jpeg'])).byId).toEqual({ 'DEEP.jpeg': 'denied' });
     expect(mockQueryWorkflows).toHaveBeenCalledTimes(5);
