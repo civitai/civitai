@@ -55,6 +55,14 @@ export function hostTagFor(src: string, field: string): string | null {
 export const wraps = (tag: string): boolean =>
   /\bwhitespace-(normal|pre-line|pre-wrap)\b/.test(tag) && !/\bwhitespace-nowrap\b/.test(tag);
 
+/**
+ * Does this opening tag keep its contents' `\n` as line breaks? `pre-line` or `pre-wrap`, and no
+ * other whitespace mode on the same tag (a responsive `md:whitespace-normal` would undo it).
+ */
+export const keepsNewlines = (tag: string): boolean =>
+  /\bwhitespace-(pre-line|pre-wrap)\b/.test(tag) &&
+  !/\bwhitespace-(normal|nowrap|pre)(?![\w-])/.test(tag);
+
 /** The one source in `dir` that renders `field`, with the tag it renders it in. */
 function soleHost(dir: string, field: string): { name: string; tag: string } {
   const hosts = sveltesIn(dir)
@@ -94,6 +102,49 @@ describe('the locator can go wrong — controls', () => {
 
   it('accepts an explicit opt-in — positive control', () => {
     expect(wraps('<p class="break-words whitespace-normal">')).toBe(true);
+  });
+
+  it('accepts the line-preserving opt-in as wrapping too', () => {
+    expect(wraps('<p class="break-words whitespace-pre-line">')).toBe(true);
+  });
+
+  it('rejects a tag that collapses line breaks — negative control', () => {
+    // Wraps, but flattens the producer's `\n`.
+    expect(keepsNewlines('<p class="break-words whitespace-normal">')).toBe(false);
+    expect(keepsNewlines('<p class="break-words">')).toBe(false);
+  });
+
+  it('rejects a tag that keeps line breaks and then cancels itself', () => {
+    expect(keepsNewlines('<p class="whitespace-pre-line md:whitespace-normal">')).toBe(false);
+  });
+
+  it('accepts a line-preserving opt-in — positive control', () => {
+    expect(keepsNewlines('<p class="break-words whitespace-pre-line">')).toBe(true);
+    expect(keepsNewlines('<p class="whitespace-pre-wrap">')).toBe(true);
+  });
+});
+
+/**
+ * A finding's reason keeps its line breaks.
+ *
+ * Detectors put a `\n` before the closing `Proposed action: …` line. Under `whitespace-normal` that
+ * newline collapses to a space and the proposal reads as the paragraph's last sentence rather than
+ * its own line. `whitespace-pre-line` keeps the `\n`, still collapses runs of spaces, and still wraps.
+ *
+ * ⚠️ SOURCE-LEVEL, like the rest of this file: it says the class is on the tag, not that a browser
+ * draws the break.
+ */
+describe('a finding’s reason preserves its line breaks', () => {
+  it('🔴 the reason renders in an element that keeps `\\n`', () => {
+    const { name, tag } = soleHost(RUN_PAGE_DIR, 'reason');
+    expect(keepsNewlines(tag), `${RUN_PAGE_DIR}/${name} renders reason in ${tag}`).toBe(true);
+  });
+
+  it('the reason still breaks a long unbroken token — invariant guard', () => {
+    // Changing the whitespace mode must not drop the opt-in that stops a long URL or id
+    // overflowing the card.
+    const { name, tag } = soleHost(RUN_PAGE_DIR, 'reason');
+    expect(tag, `${RUN_PAGE_DIR}/${name} renders reason in ${tag}`).toMatch(/\bbreak-words\b/);
   });
 });
 
