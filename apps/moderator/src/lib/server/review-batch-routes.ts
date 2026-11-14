@@ -19,8 +19,9 @@ export const ROUTING_MISS_EVENT = 'review-batch-routing-miss';
 
 const noStore = { 'cache-control': 'no-store' };
 
-/** The batch this request may open: live, of this route's tier, in this sheet session, minted for
- *  this moderator, who still holds the tier's page grant. Anything else answers 404. */
+/** The batch this request may open: live, of this route's tier, minted for this moderator, its key
+ *  live, who still holds the tier's page grant, and in this sheet session. A general session joins
+ *  such a batch on first open (one sign-in a day); a held one never does. Anything else answers 404. */
 async function authorizedBatch(
   locals: App.Locals,
   tier: ReviewTier,
@@ -32,14 +33,13 @@ async function authorizedBatch(
   if (!canAccess(user, TIER_PAGE[tier])) error(403, 'You do not have access to this page.');
   const batch = await getReviewBatch(batchId).catch(() => undefined);
   if (batch === undefined) error(503, 'Could not read the batch.');
-  if (
-    !batch ||
-    batch.tier !== tier ||
-    batch.viewer !== user.id ||
-    !sheet.batches.includes(batch.hash)
-  )
-    error(404, 'Not available here.');
+  if (!batch || batch.tier !== tier || batch.viewer !== user.id) error(404, 'Not available here.');
   if (!(await mintingKeyLive(batch.keyId))) error(404, 'Not available here.');
+  if (!sheet.batches.includes(batch.hash)) {
+    // The tier here is the route's and the stored batch's, never anything the client sent.
+    const joined = tier === 'general' && sheet.join ? await sheet.join(batch.hash) : false;
+    if (!joined) error(404, 'Not available here.');
+  }
   return { batch, user };
 }
 

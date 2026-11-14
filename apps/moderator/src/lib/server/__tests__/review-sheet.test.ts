@@ -116,7 +116,7 @@ const reviewStart = await import('../../../routes/api/review-media/auth/start/+s
 const reviewExchange = await import('../../../routes/api/review-media/auth/exchange/+server');
 const heldItem = await import('../../../routes/api/held-media/b/[batchId]/[n]/+server');
 const reviewItem = await import('../../../routes/api/review-media/b/[batchId]/[n]/+server');
-const reviewCount = await import('../../../routes/api/review-media/b/[batchId]/+server');
+const signout = await import('../../../routes/api/review-media/auth/signout/+server');
 const { handle } = await import('../../../hooks.server');
 const { reviewBatchHash } = await import('@civitai/shared/review-batch');
 
@@ -297,22 +297,129 @@ describe('signing in to a batch', () => {
     const { locals } = await hook(`/api/review-media/b/${GENERAL_2}`, `${COOKIE.review}=${token}`);
     expect(locals.reviewSheet!.batches).toHaveLength(2);
   });
+});
 
-  it('the review cookie alone cannot enroll a batch', async () => {
-    const token = (await signIn('review', GENERAL))!;
+// Ruled 2026-11-14 (Justin's "Once a day", the Moderation Lead's design GO): one general sign-in
+// lasts the day, and the review cookie itself joins each new general batch minted for this
+// moderator. Before you make the cookie unable to enroll a batch again, note that every new batch
+// would cost him a Continue tap, which is the choice he declined.
+describe('one general sign-in a day', () => {
+  const H = (id: string) => reviewBatchHash(id);
+  const open = async (family: Family, batchId: string, token: string, n = '0') => {
     const { res, locals } = await hook(
-      `/api/review-media/b/${GENERAL_2}`,
-      `${COOKIE.review}=${token}`
+      `/api/${family}-media/b/${batchId}/${n}`,
+      `${COOKIE[family]}=${token}`
     );
-    expect(res.status).toBe(299);
-    expect(locals.reviewSheet!.batches).toEqual([reviewBatchHash(GENERAL)]);
-    expect(
-      (
-        await Promise.resolve(
-          reviewCount.GET({ params: { batchId: GENERAL_2 }, locals } as never)
-        ).catch((e: { status: number }) => e)
-      ).status
-    ).toBe(404);
+    if (res.status !== 299) return res.status;
+    return (await item(family, batchId, n, locals)).status;
+  };
+  const batchesOf = async (token: string) =>
+    (await hook(`/api/review-media/b/${GENERAL}`, `${COOKIE.review}=${token}`)).locals.reviewSheet
+      ?.batches ?? null;
+
+  it('the review cookie joins a second live general batch minted for this moderator', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', GENERAL_2, token)).toBe(200);
+    expect(await batchesOf(token)).toEqual([H(GENERAL), H(GENERAL_2)]);
+  });
+
+  it('a held session never joins a batch by its cookie, even its own viewer with a live key', async () => {
+    const HELD_2 = 'Y'.repeat(22);
+    seedBatch(HELD_2, 'held');
+    const held = (await signIn('held', HELD))!;
+    expect(await open('held', HELD, held)).toBe(200);
+    expect(await open('held', HELD_2, held)).toBe(404);
+  });
+
+  it("another moderator's general batch is refused and not joined", async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', OTHER_VIEWER, token)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL)]);
+  });
+
+  it('a held batch on the general route is refused and not joined', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', HELD, token)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL)]);
+  });
+
+  it('the 21st batch is refused', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const ids = Array.from({ length: 20 }, (_, i) => `B${String(i).padStart(21, '0')}`);
+    ids.forEach((id) => seedBatch(id, 'general'));
+    for (const id of ids.slice(0, 19)) expect(await open('review', id, token)).toBe(200);
+    expect(await batchesOf(token)).toHaveLength(20);
+    expect(await open('review', ids[19], token)).toBe(404);
+    expect(await batchesOf(token)).toHaveLength(20);
+  });
+
+  it('a batch whose minting key is revoked, or that is no longer live, is refused and not joined', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    mintingKeyLive.mockResolvedValueOnce(false);
+    expect(await open('review', GENERAL_2, token)).toBe(404);
+    store.delete(`app:review-batch:${H(GENERAL_2)}`);
+    expect(await open('review', GENERAL_2, token)).toBe(404);
+    expect(await batchesOf(token)).toEqual([H(GENERAL)]);
+  });
+
+  it('idle for 8 h and a minute ends it; so does 24 h and a minute, however active', async () => {
+    vi.useFakeTimers();
+    try {
+      const idle = (await signIn('review', GENERAL))!;
+      vi.advanceTimersByTime(8 * 3600_000 - 60_000);
+      expect(await open('review', GENERAL, idle)).toBe(200);
+      vi.advanceTimersByTime(8 * 3600_000 + 60_000);
+      expect(await open('review', GENERAL, idle)).toBe(401);
+
+      const busy = (await signIn('review', GENERAL))!;
+      for (let h = 0; h < 24; h += 4) {
+        vi.advanceTimersByTime(4 * 3600_000);
+        expect(await open('review', GENERAL, busy)).toBe(h + 4 < 24 ? 200 : 401);
+      }
+      vi.advanceTimersByTime(60_000);
+      expect(await open('review', GENERAL, busy)).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a revoked web session ends it on the next request', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    expect(await open('review', GENERAL, token)).toBe(200);
+    isRevoked.mockResolvedValue(true);
+    expect(await open('review', GENERAL, token)).toBe(401);
+  });
+
+  it('a ban, or losing the moderator role, ends it on the next request', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    getSessionUserById.mockResolvedValueOnce({ ...MOD, bannedAt: new Date() });
+    expect(await open('review', GENERAL, token)).toBe(401);
+    getSessionUserById.mockResolvedValueOnce({ ...MOD, isModerator: false });
+    expect(await open('review', GENERAL, token)).toBe(401);
+    expect(await open('review', GENERAL, token)).toBe(200);
+  });
+
+  it('a joined batch still answers 409 for an image that became held', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    getBatchMedia.mockResolvedValue({
+      imageId: 101,
+      url: 'k',
+      type: 'image',
+      mimeType: null,
+      held: true,
+    });
+    expect(await open('review', GENERAL_2, token)).toBe(409);
+    expect(streamStoredMedia).not.toHaveBeenCalled();
+  });
+
+  it('sign out ends the session on the server, not just the cookie', async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const res = await signout.POST({
+      cookies: { get: (n: string) => (n === COOKIE.review ? token : undefined) },
+    } as never);
+    expect(res.status).toBe(204);
+    expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(await open('review', GENERAL, token)).toBe(401);
   });
 });
 

@@ -41,6 +41,8 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 const SHEET_EXCHANGE_PATHS = new Set([
   '/api/held-media/auth/exchange',
   '/api/review-media/auth/exchange',
+  // Sign out carries only the review cookie, which it ends.
+  '/api/review-media/auth/signout',
 ]);
 
 const noStore = (status: number, extra: Record<string, string> = {}) =>
@@ -66,9 +68,10 @@ async function handleBatchRoute(
   if (sent.length !== 1) return noStore(401);
   const token = parseCookieHeader(cookieHeader)[name];
 
+  // Only a general session may join a batch by its cookie; a held one is bound to its code's batch.
   const session = await (tier === 'held'
     ? resolveHeldSession(token).then(
-        (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [] }
+        (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [], join: undefined }
       )
     : resolveReviewSession(token)
   ).catch(() => {
@@ -80,7 +83,7 @@ async function handleBatchRoute(
 
   event.locals.user = session.user;
   event.locals.heldCredential = 'sheet';
-  event.locals.reviewSheet = { tier, batches: session.batches };
+  event.locals.reviewSheet = { tier, batches: session.batches, join: session.join };
   applyGrants(await loadPageAccessGrants());
   event.locals.grants = resolvePermissions(session.user);
   return resolve(event);

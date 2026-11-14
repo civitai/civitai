@@ -29,7 +29,12 @@ declare global {
       heldCredential?: 'sheet';
       /** Set by `hooks.server.ts` only on a review batch route: the sheet session's tier and the
        *  batch hashes it may open. */
-      reviewSheet?: { tier: import('@civitai/shared/review-batch').ReviewTier; batches: string[] };
+      reviewSheet?: {
+        tier: import('@civitai/shared/review-batch').ReviewTier;
+        batches: string[];
+        /** General sessions only: add a batch the route has already authorized. */
+        join?: (hash: string) => Promise<boolean>;
+      };
     }
     // interface PageData {}
     // interface PageState {}
