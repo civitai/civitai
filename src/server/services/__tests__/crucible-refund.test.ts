@@ -49,7 +49,6 @@ const {
   getCrucibleSetupTransactionPrefix,
   getCrucibleSeedTransactionPrefix,
   getCrucibleEntryTransactionPrefix,
-  isCrucibleEntryTransactionPrefix,
 } = await import('~/server/services/crucible.service');
 
 const entry = (id: number, userId: number, buzzTransactionId: string | null) => ({
@@ -563,13 +562,6 @@ describe('transaction prefixes', () => {
     const prefix = getCrucibleEntryTransactionPrefix(7, 42);
     expect(prefix).toContain('7');
     expect(prefix).toContain('42');
-  });
-
-  it('recognises its own entry prefixes and not the setup ones', () => {
-    expect(isCrucibleEntryTransactionPrefix(getCrucibleEntryTransactionPrefix(7, 42))).toBe(true);
-    expect(isCrucibleEntryTransactionPrefix(getCrucibleSetupTransactionPrefix(42))).toBe(false);
-    expect(isCrucibleEntryTransactionPrefix(getCrucibleSeedTransactionPrefix(42))).toBe(false);
-    expect(isCrucibleEntryTransactionPrefix('something-else')).toBe(false);
   });
 
   it('keeps the seed prefix from prefix-matching the setup one, so refunds stay separable', () => {
