@@ -47,4 +47,18 @@ describe('blocklists add action', () => {
     await add('PromptBenignPhrase', 'teen titans');
     expect(upsertBlocklist).toHaveBeenCalledOnce();
   });
+
+  it('refuses a POI search rule that matching would strip to nothing', async () => {
+    const result = await add('SemanticSearchPoiRefuse', 'zqvoxpoitoken, 日本語');
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('"日本語"') },
+    });
+    expect(upsertBlocklist).not.toHaveBeenCalled();
+  });
+
+  it('saves a punctuated POI search rule', async () => {
+    await add('SemanticSearchPoiRefuse', "zq-vox o'poi");
+    expect(upsertBlocklist).toHaveBeenCalledOnce();
+  });
 });

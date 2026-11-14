@@ -32,7 +32,7 @@ describe('blocklists dry-run action', () => {
     callModEndpoint.mockResolvedValue({ ok: true, body: VERDICTS });
   });
 
-  it('asks the main app as the acting moderator and returns its verdicts', async () => {
+  it('sends the trimmed query to the dry-run endpoint and returns its verdicts', async () => {
     const result = await dryRun('  a test query  ');
     expect(callModEndpoint).toHaveBeenCalledWith(
       'search-query-rule-dry-run',
@@ -45,6 +45,11 @@ describe('blocklists dry-run action', () => {
   it('passes on nothing the main app adds beyond the verdicts', async () => {
     callModEndpoint.mockResolvedValue({ ok: true, body: { ...VERDICTS, matched: 'zqvoxtoken' } });
     expect(JSON.stringify(await dryRun('q'))).not.toContain('zqvoxtoken');
+  });
+
+  it('refuses a query over 500 characters without calling the main app', async () => {
+    expect(await dryRun('q'.repeat(501))).toMatchObject({ status: 400 });
+    expect(callModEndpoint).not.toHaveBeenCalled();
   });
 
   it('refuses an empty query without calling the main app', async () => {

@@ -4,7 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
 import { callModEndpoint } from '$lib/server/user-actions.service';
-import { inertEntries, parseRowId } from './form';
+import { inertEntries, inertEntriesError, parseRowId } from './form';
 import {
   BlocklistRowMismatchError,
   getBlocklistDTO,
@@ -69,12 +69,7 @@ export const actions: Actions = {
     if (items.length === 0) return fail(400, { error: 'No items to add.' });
 
     const inert = inertEntries(type, items);
-    if (inert.length > 0)
-      return fail(400, {
-        error: `Not a single word, so the filter can never match it: ${inert
-          .map((i) => `"${i}"`)
-          .join(', ')}. Enter one word per entry, without spaces or punctuation.`,
-      });
+    if (inert.length > 0) return fail(400, { error: inertEntriesError(type, inert) });
 
     // `type` and `id` arrive as two independent form fields, so the pair is checked in the
     // statement itself rather than here — see `upsertBlocklist`.
