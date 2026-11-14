@@ -9,6 +9,8 @@ import {
   revealChance,
   shelfPricesByCosmetic,
   tierColor,
+  FALLBACK_TIER_COLORS,
+  CREATOR_TIER_COLORS,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
 
@@ -201,9 +203,9 @@ describe('shelfPricesByCosmetic', () => {
 describe('tierColor', () => {
   it("uses the tier's own colour, else the rarity default for its place", () => {
     expect(tierColor({ color: '#123456', sortOrder: 0 })).toBe('#123456');
-    expect(tierColor({ color: null, sortOrder: 1 })).toBe('#22c55e');
+    expect(tierColor({ color: null, sortOrder: 1 })).toBe(FALLBACK_TIER_COLORS[1]);
     // Past the four rarities, the rarest colour.
-    expect(tierColor({ color: null, sortOrder: 9 })).toBe('#f59e0b');
+    expect(tierColor({ color: null, sortOrder: 9 })).toBe(FALLBACK_TIER_COLORS[3]);
   });
 });
 
@@ -226,5 +228,21 @@ describe('boxOpenClaimKey', () => {
   it('is the same key from the server bigint and the client string', () => {
     expect(boxOpenClaimKey(501n)).toBe('box-open-501');
     expect(boxOpenClaimKey('501')).toBe('box-open-501');
+  });
+});
+
+describe('tierColor for a creator pack', () => {
+  it('colours a tier by its name when none is stored, so Legendary is amber in any tier count', () => {
+    expect(tierColor({ key: 'legendary', color: null, sortOrder: 2 })).toBe(
+      CREATOR_TIER_COLORS.legendary
+    );
+    expect(tierColor({ key: 'common', color: null, sortOrder: 0 })).toBe(
+      CREATOR_TIER_COLORS.common
+    );
+  });
+
+  it('keeps a stored colour, and falls back by order for an unknown key', () => {
+    expect(tierColor({ key: 'legendary', color: '#123456', sortOrder: 2 })).toBe('#123456');
+    expect(tierColor({ key: 'custom', color: null, sortOrder: 1 })).toBe(FALLBACK_TIER_COLORS[1]);
   });
 });

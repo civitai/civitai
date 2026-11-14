@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
+  COM_FACE_INTENT_DISPUTE,
   LOCK_REVIEW_COOLDOWN_DAYS,
   LOCK_REVIEW_KIND,
   type LockReviewContext,
@@ -16,6 +17,16 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { hasPendingMinorHashMatch } from '~/server/services/minor-hash.service';
+import {
+  COM_FACE_INTENT_LOCK_SOURCE,
+  overturnComFaceIntentSql,
+  dropReplacedRatingMarkerSql,
+  restoreReplacedRatingMarkerSql,
+  storedListingTextHash,
+} from '~/server/services/model-com-face-intent.service';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
+import { hasLaterVerdictUnderLock, readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { POI_HASH_MATCH_KEY } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
@@ -33,6 +44,8 @@ export type LockReviewState = {
   pending: boolean;
   /** Set while a recent request was closed with every setting it named still locked. */
   reopensAt: Date | null;
+  /** The nsfw lock is the listing intent check's, added when the owner tried a civitai.com version. */
+  comFaceIntent: boolean;
 };
 
 export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.";
@@ -42,6 +55,12 @@ export const LOCK_REVIEW_HELD =
 /** Moderators only. */
 export const LOCK_REVIEW_DETECTION_HELD =
   'A real person or minor detection on this model is waiting for a moderator. Rule on it first, or reject this review.';
+/** The re-judging job only: the lock is no longer the intent lock it judged, so a moderator decides. */
+export const LOCK_REVIEW_LOCK_CHANGED =
+  "This nsfw lock is no longer the listing intent check's; a moderator must rule on it.";
+/** The re-judging job only: a system rating verdict landed under the lock, so a moderator decides. */
+export const LOCK_REVIEW_LATER_VERDICT =
+  'A system rating verdict landed under this lock; a moderator must rule on it.';
 /** Moderators only. */
 export const LOCK_REVIEW_MATCH_CHECK_FAILED =
   "Couldn't check this model for a file match waiting for a moderator, so it can't be approved now. Try again.";
@@ -60,12 +79,21 @@ export async function getLockReviewState({
   if (isModerator) return null;
   const model = await db.model.findUnique({
     where: { id: modelId },
-    select: { userId: true, lockedProperties: true, poi: true, minor: true },
+    select: { userId: true, lockedProperties: true, poi: true, minor: true, meta: true },
   });
   if (!model || model.userId !== userId) return null;
 
   const requestable = requestableLocks(model);
-  if (!requestable.length) return { requestable, pending: false, reopensAt: null };
+  // The intent check's lock only while no moderator has ruled on it since, a rejected review included:
+  // a refiled dispute after a moderator upheld the lock goes to a moderator, never the job.
+  const marker = (model.meta as ModelMeta | null)?.systemNsfwLock;
+  const markedAt = readSystemNsfwLockAt(model.meta);
+  const comFaceIntent =
+    requestable.includes('nsfw') &&
+    marker?.source === COM_FACE_INTENT_LOCK_SOURCE &&
+    !!markedAt &&
+    !(await moderatorRuledNsfwSince(modelId, markedAt, { alsoRejections: true }));
+  if (!requestable.length) return { requestable, pending: false, reopensAt: null, comFaceIntent };
 
   const latest = await db.appeal.findFirst({
     where: {
@@ -79,9 +107,9 @@ export async function getLockReviewState({
     select: { status: true, resolvedAt: true, context: true },
   });
   const asked = parseLockReviewContext(latest?.context);
-  if (!latest || !asked) return { requestable, pending: false, reopensAt: null };
+  if (!latest || !asked) return { requestable, pending: false, reopensAt: null, comFaceIntent };
   if (latest.status === AppealStatus.Pending)
-    return { requestable, pending: true, reopensAt: null };
+    return { requestable, pending: true, reopensAt: null, comFaceIntent };
 
   // A request whose settings were all left locked starts the cooldown; lifting any of them ends it.
   const locked = model.lockedProperties ?? [];
@@ -93,6 +121,7 @@ export async function getLockReviewState({
     requestable,
     pending: false,
     reopensAt: reopensAt && reopensAt > new Date() ? reopensAt : null,
+    comFaceIntent,
   };
 }
 
@@ -175,7 +204,14 @@ export async function assertLockReviewAllowed({
         'MMMM D, YYYY'
       )}.`
     );
-  return lockReviewContext(locks as RequestableLock[]);
+  // An nsfw lock the listing intent check added is re-judged by a job before a moderator sees it.
+  // Only a request naming the nsfw lock alone: the job's approval lifts every lock a request names,
+  // and the others are a moderator's.
+  const dispute =
+    state.comFaceIntent && locks.length === 1 && locks[0] === 'nsfw'
+      ? COM_FACE_INTENT_DISPUTE
+      : undefined;
+  return lockReviewContext(locks as RequestableLock[], dispute);
 }
 
 /**
@@ -189,6 +225,7 @@ export async function resolveLockReviewAppeal({
   userId,
   resolvedReason,
   internalNotes,
+  asDisputeJob,
 }: {
   /** The request the moderator was shown; a model can carry another, after a transfer. */
   appealId: number;
@@ -197,6 +234,12 @@ export async function resolveLockReviewAppeal({
   userId: number;
   resolvedReason?: string;
   internalNotes?: string;
+  /**
+   * The re-judging job's approval, re-checked under the row lock: refused unless the nsfw lock is
+   * still the intent lock the job judged (its marker stamped at `intentLockAt`), and refused when a
+   * system rating verdict was recorded under it.
+   */
+  asDisputeJob?: { intentLockAt: string };
 }) {
   const status = approve ? AppealStatus.Approved : AppealStatus.Rejected;
   if (resolvedReason) {
@@ -205,6 +248,8 @@ export async function resolveLockReviewAppeal({
   }
 
   const markerView = approve ? await holdMarkerViewExists() : false;
+  // The listing an approval rules on, so it overturns only an intent detection of that text.
+  const ruledTextHash = approve ? await storedListingTextHash(modelId) : null;
   // Outside the row lock: it reads the model's files and every moderator-flagged minor model's.
   let minorMatchPending = false;
   if (approve)
@@ -230,9 +275,15 @@ export async function resolveLockReviewAppeal({
         held: boolean;
         ownerFiled: boolean;
         detectionHeld: boolean;
+        lockSource: string | null;
+        verdictMeta: unknown;
       }[]
     >`
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
+        m.meta->'systemNsfwLock'->>'source' AS "lockSource",
+        jsonb_build_object('systemNsfwLock', m.meta->'systemNsfwLock',
+          'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
+        ) AS "verdictMeta",
         a."userId" = m."userId" AS "ownerFiled",
         COALESCE(m.meta->${TEXT_SCAN_FLAGS_KEY}->'poi' ? 'redetected'
           OR m.meta->${TEXT_SCAN_FLAGS_KEY}->'minor' ? 'redetected'
@@ -265,6 +316,18 @@ export async function resolveLockReviewAppeal({
         );
       if (row.detectionHeld || minorMatchPending)
         throw throwBadRequestError(LOCK_REVIEW_DETECTION_HELD);
+      if (asDisputeJob) {
+        // A moderator's ruling can replace the lock without a moderator activity row to show it.
+        const marker = (row.verdictMeta as ModelMeta | null)?.systemNsfwLock;
+        if (
+          !locked.includes('nsfw') ||
+          row.lockSource !== COM_FACE_INTENT_LOCK_SOURCE ||
+          marker?.at !== asDisputeJob.intentLockAt
+        )
+          throw throwBadRequestError(LOCK_REVIEW_LOCK_CHANGED);
+        if (hasLaterVerdictUnderLock(row.verdictMeta))
+          throw throwBadRequestError(LOCK_REVIEW_LATER_VERDICT);
+      }
       lift = locksToLift(asked.locks, locked);
       if (lift.length)
         await tx.model.update({
@@ -272,10 +335,21 @@ export async function resolveLockReviewAppeal({
           data: { lockedProperties: locked.filter((key) => !(lift as string[]).includes(key)) },
         });
       // As the model form does on a moderator's nsfw unlock: a later lock must not read as the system's.
-      if (lift.includes('nsfw'))
+      if (lift.includes('nsfw')) {
         await tx.$executeRaw`
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
+        // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
+        // intent detection stops refusing a civitai.com version for this text. The rating marker
+        // the intent lock replaced comes back only when the lock lifted is the intent check's;
+        // under any other lock that old marker is stale, and goes.
+        await tx.$executeRaw(
+          row.lockSource === COM_FACE_INTENT_LOCK_SOURCE
+            ? restoreReplacedRatingMarkerSql(modelId)
+            : dropReplacedRatingMarkerSql(modelId)
+        );
+        await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
+      }
     }
 
     // Appeal rows are reopened in place, which erases this ruling from the row: the owner's

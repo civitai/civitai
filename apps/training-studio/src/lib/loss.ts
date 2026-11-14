@@ -23,7 +23,8 @@ export function recordReadings(readings: Map<number, Reading>, epoch: number, po
   for (const p of points) {
     const prev = readings.get(p.step);
     readings.set(p.step, {
-      epoch: prev?.epoch ?? epoch,
+      // Reattached trainer logs replay earlier steps; traces may finish loading out of order.
+      epoch: prev ? Math.min(prev.epoch, epoch) : epoch,
       losses: { ...prev?.losses, ...p.losses },
       lr: p.lr ?? prev?.lr ?? null,
     });

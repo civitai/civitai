@@ -65,8 +65,10 @@ import {
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   buzzCapRedisKey,
-  buzzCapWindowKey,
   clearDailyCapRefusal,
+  consentBudgetRedisKey,
+  consentCapExceeded,
+  markConsentLimitRefused,
   markDailyCapRefused,
 } from '~/server/services/blocks/block-buzz-cap';
 import { resolveUserAppCaps } from '~/server/services/blocks/user-app-caps.service';
@@ -445,6 +447,12 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import type { SessionUser } from '~/types/session';
+import {
+  MEDIA_UPLOAD_BATCH_DISABLED_ERROR,
+  MEDIA_UPLOAD_BATCH_MAX_BYTES,
+  MEDIA_UPLOAD_BATCH_MAX_ITEMS,
+  MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR,
+} from '~/shared/constants/media-upload-batch.constants';
 
 // G6 — the terminal orchestrator states (as mapped onto the block-contract
 // status by snapshotFromWorkflow). A block-workflow read-model row only ever
@@ -934,6 +942,58 @@ async function recordBlockReactionInvocation(opts: {
   } catch {
     /* best-effort: an audit failure never breaks a reaction that landed */
   }
+}
+
+type MediaUploadBatchRequestAuth = {
+  claims: Awaited<ReturnType<typeof authorizeBlockBridgeToken>>;
+  userId: number;
+};
+
+/**
+ * The authorization ladder for the three batch-upload procedures (`startMediaUploadBatch`,
+ * `presignMediaUploadBatchItem`, `recordMediaUploadBatchItem`), in one place so a later step can
+ * never be reachable on a token an earlier one would refuse:
+ *
+ *   1. the bridge guard (validity, revocation, the backing app still approved);
+ *   2. a non-anon subject that IS the signed-in session user — the files go into that account;
+ *   3. a page token: the batch path is page-only, like `OPEN_MEDIA_UPLOAD`;
+ *   4. the App-Blocks runtime flag on that subject, which must hydrate;
+ *   5. the dedicated, fail-closed batch-upload flag on that subject.
+ *
+ * No consent scope, like `OPEN_MEDIA_UPLOAD`: the host's confirm is the viewer's consent, and the
+ * files are private to them. ⚠️ The return type is a named alias, and the guard is never spelled
+ * with an open paren in prose, for the textual-scanner reasons recorded on
+ * `authorizeBlockPostRequest`.
+ */
+async function authorizeMediaUploadBatchRequest(
+  blockToken: string,
+  sessionUserId: number
+): Promise<MediaUploadBatchRequestAuth> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'uploading requires a signed-in viewer' });
+  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
+  if (!isPageToken(claims)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'batch media upload is available to page apps only',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
+  if (subjectUser == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'uploading subject could not be resolved, please try again',
+    });
+  }
+  const { isAppBlocksBatchMediaUploadEnabled } = await import('~/server/services/app-blocks-flag');
+  if (!(await isAppBlocksBatchMediaUploadEnabled({ user: subjectUser }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: MEDIA_UPLOAD_BATCH_DISABLED_ERROR });
+  }
+  return { claims, userId };
 }
 
 /** What `authorizeBlockBridgeViewer` puts on `ctx.blockViewer`. */
@@ -1551,15 +1611,6 @@ async function reservePrivateRunBuzzSpend(
 // to before this existed, which is what makes shipping it without a backfill safe.
 const CONSENT_BUDGET_TTL_SECONDS = 25 * 60 * 60;
 
-function consentBudgetRedisKey(
-  userId: number,
-  appBlockId: string
-): `${typeof REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${string}` {
-  // PER-(user, app) — the appBlockId IS in the key, which is the whole difference
-  // from buzzCapRedisKey. Same UTC-day window so the two counters roll together.
-  return `${REDIS_SYS_KEYS.BLOCKS.CONSENT_BUDGET}:${userId}:${appBlockId}:${buzzCapWindowKey()}`;
-}
-
 /**
  * Atomically reserves `cost` against the (user, app, UTC-day) consent-budget
  * counter. Same shared `reserveCumulativeBuzzKey` primitive as
@@ -1583,16 +1634,6 @@ async function reserveConsentBudgetSpend(
 }
 
 /**
- * What the viewer has already spent today against their consent limit for this app —
- * a READ of the counter `reserveConsentBudgetSpend` increments (same key, same UTC-day
- * window). Reserves nothing. 0 when the counter is absent or unreadable as a number.
- */
-async function readConsentBudgetSpent(userId: number, appBlockId: string): Promise<number> {
-  const raw = Number((await sysRedis.get(consentBudgetRedisKey(userId, appBlockId))) ?? 0);
-  return Number.isFinite(raw) && raw > 0 ? raw : 0;
-}
-
-/**
  * The reservation a spend path holds. `key`/`total`/`cap` are the PLATFORM
  * cumulative reservation (daily per-user, or the run-for-real session ceiling) —
  * unchanged names so every existing destructure still reads the same thing.
@@ -1604,7 +1645,7 @@ type BlockBuzzReservation = {
   total: number;
   key: string;
   cap: number;
-  consent: { total: number; key: string; cap: number } | null;
+  consent: { total: number; key: string; cap: number; userId: number; appBlockId: string } | null;
 };
 
 /**
@@ -1762,7 +1803,10 @@ async function reserveBlockBuzzSpendForClaims(
 
   try {
     const consent = await reserveConsentBudgetSpend(userId, claims.appBlockId, cost);
-    return { ...platform, consent: { ...consent, cap: budget } };
+    return {
+      ...platform,
+      consent: { ...consent, cap: budget, userId, appBlockId: claims.appBlockId },
+    };
   } catch (e) {
     await refundBlockBuzzSpend(key, cost);
     throw e;
@@ -1805,32 +1849,42 @@ function consentBudgetExceeded(
 }
 
 /**
- * THE consent-limit rule: a day's spend INCLUDING the cost under judgement exceeds the
- * viewer's limit. One copy — the reservation above applies it to the counter it just
- * incremented, and the confirmed-quote preview applies it to `spent so far + cost`
- * (`readConsentDailyLimit`), so the dialog and the submit cannot disagree about the
- * boundary.
- */
-function consentCapExceeded(totalIncludingCost: number, cap: number): boolean {
-  return totalIncludingCost > cap;
-}
-
-/**
  * Rejection copy for a consent-budget breach. Deliberately NUMBER-BEARING, unlike
  * the per-app aggregate cap's message: that ceiling is a platform secret an app
  * must not learn, while THIS one is the user's own setting — they chose it, they
  * are the one being told, and hiding it would make the rejection unactionable.
- * `costClause` differs per path (a fixed estimate vs a post-paid ceiling).
+ * `costClause` differs per path (a fixed estimate vs a post-paid ceiling). Also marks the
+ * refusal so the host may offer the raise dialog (`markConsentLimitRefused`).
  */
 function consentBudgetRejection(
   consent: NonNullable<BlockBuzzReservation['consent']>,
   cost: number,
   costClause: string
 ): string {
+  void markConsentLimitRefused(consent.userId, consent.appBlockId, consent.cap);
   return (
     `app Buzz limit reached: ${consent.total - Math.ceil(cost)} already spent today by ` +
     `this app on your behalf, ${costClause}, your limit for this app is ${consent.cap}`
   );
+}
+
+const DAILY_LIMIT_READ_RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
+
+/** Fails closed: a Redis error reads as over the limit, which only keeps the dialog shut. */
+async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
+  const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
+  try {
+    const count = await sysRedis.incrBy(key, 1);
+    if (count === 1) {
+      await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
+    } else {
+      const ttl = await sysRedis.ttl(key);
+      if (ttl < 0) await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
+    }
+    return count <= DAILY_LIMIT_READ_RATE_LIMIT.max;
+  } catch {
+    return false;
+  }
 }
 
 // RUN-FOR-REAL mint rate limit — per-mod fixed window. A privileged,
@@ -3798,9 +3852,8 @@ export const blocksRouter = router({
       // NOTE the ORDER: this reads the CURRENT grant, so consenting to a budget in
       // the same call that grants `ai:write:budgeted` works (the scope is in
       // `toGrant`), and so does raising a budget on an app that already holds it.
-      const { recordScopeGrant, getGrantedScopes } = await import(
-        '~/server/services/blocks/scope-grant.service'
-      );
+      const { recordScopeGrant, getGrantedScopes, getConsentBuzzBudget, recordConsentLimitChange } =
+        await import('~/server/services/blocks/scope-grant.service');
       // `CONSENT_SPEND_SCOPE`, not the literal — along with the ELEVEN identical
       // `claims.scopes.includes(...)` spend gates elsewhere in this file.
       //
@@ -3830,6 +3883,14 @@ export const blocksRouter = router({
           })
         ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
+      const writesBudget = input.buzzBudgetPerDay !== undefined && budgetIsMeaningful;
+      const previousLimit = writesBudget
+        ? await getConsentBuzzBudget({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+            db: 'write',
+          })
+        : null;
       // `apps:storage:import`: the consent covers exactly what the prompt DISPLAYED — each source
       // app with its collections and access, one row per source. The client sends what it
       // showed; it must equal the approved manifest's imports now, or nothing is recorded.
@@ -3902,6 +3963,14 @@ export const blocksRouter = router({
         block.manifest,
         cleared.revokedScopesAfterClear
       );
+      if (writesBudget) {
+        await recordConsentLimitChange({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+          previousLimit,
+          limit: input.buzzBudgetPerDay ?? null,
+        });
+      }
       return {
         ok: true,
         granted: toGrant,
@@ -3912,6 +3981,103 @@ export const blocksRouter = router({
             ? input.buzzBudgetPerDay
             : undefined,
       };
+    }),
+
+  /**
+   * The viewer's own daily Buzz limit for one app and what they have spent against it today, for
+   * the host's raise dialog. `null` when there is nothing to raise: the flag is off, the app is
+   * not approved, no limit is set, spending is revoked, or this viewer has read it too often.
+   * `refusedRecently`: a spend was refused at the current limit in the last few minutes
+   * (`markConsentLimitRefused`). It lets an app's own request open the dialog when the host did
+   * not relay a refusal itself, as for a REST submitter.
+   * Session only, so an app holding a block token cannot call it.
+   */
+  getMyAppDailyLimit: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user!.id;
+      const { isAppDailyLimitRaiseEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!ctx.features.appBlocks || !(await isAppDailyLimitRaiseEnabled({ user: ctx.user })))
+        return null;
+      if (!(await checkDailyLimitReadRateLimit(userId))) return null;
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true },
+      });
+      if (block?.status !== 'approved') return null;
+      const [{ readConsentDailyLimit }, { wasConsentLimitRefusedRecently }] = await Promise.all([
+        import('~/server/services/blocks/scope-grant.service'),
+        import('~/server/services/blocks/block-buzz-cap'),
+      ]);
+      const limit = await readConsentDailyLimit(userId, input.appBlockId, 0);
+      if (!limit) return null;
+      return {
+        limit: limit.limit,
+        spentToday: limit.spentToday,
+        refusedRecently: await wasConsentLimitRefusedRecently(
+          userId,
+          input.appBlockId,
+          limit.limit
+        ),
+      };
+    }),
+
+  /**
+   * Raises the viewer's own daily Buzz limit for one app, from the host's dialog. Raise only, and
+   * never a scope change: it refuses unless spending is granted and unrevoked right now, a limit
+   * is set, and the new value is higher (`raiseConsentDailyLimit`).
+   */
+  raiseAppDailyLimit: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        buzzBudgetPerDay: z
+          .number()
+          .int()
+          .min(BLOCK_CONSENT_BUDGET_MIN_PER_DAY)
+          .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user!.id;
+      const { isAppDailyLimitRaiseEnabled } = await import('~/server/services/app-blocks-flag');
+      if (!ctx.features.appBlocks || !(await isAppDailyLimitRaiseEnabled({ user: ctx.user }))) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Raising a limit here is not available',
+        });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.status !== 'approved') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      const { raiseConsentDailyLimit, recordConsentLimitChange } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const raised = await raiseConsentDailyLimit({
+        userId,
+        appBlockId: input.appBlockId,
+        buzzBudgetPerDay: input.buzzBudgetPerDay,
+      });
+      if (!raised) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Your limit for this app changed. Close this and try again.',
+        });
+      }
+      await recordConsentLimitChange({
+        userId,
+        appBlockId: input.appBlockId,
+        previousLimit: raised.previousLimit,
+        limit: input.buzzBudgetPerDay,
+      });
+      return { previousLimit: raised.previousLimit, limit: input.buzzBudgetPerDay };
     }),
 
   /**
@@ -5993,6 +6159,128 @@ export const blocksRouter = router({
     }),
 
   /**
+   * `OPEN_MEDIA_UPLOAD_BATCH`, step 1 of 3: the viewer confirmed a batch in host chrome. Charges
+   * their UTC-day batch quota for every file and writes the audit row; returns the batch id the
+   * two steps below name. A refusal here uploads nothing. See `media-upload-batch.service.ts`.
+   *
+   * RATE LIMIT: none of the bridge buckets. The daily quota charged here (files and bytes per
+   * viewer, across all apps) is the bound, and it fails closed. The per-install catalog bucket
+   * would be the wrong one: a page app's install id is shared by every viewer.
+   */
+  startMediaUploadBatch: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        items: z
+          .array(
+            z.object({
+              kind: z.enum(['image', 'video', 'audio']),
+              sizeBytes: z.number().int().positive(),
+            })
+          )
+          .min(1)
+          .max(MEDIA_UPLOAD_BATCH_MAX_ITEMS)
+          .refine(
+            (items) =>
+              items.reduce((sum, i) => sum + i.sizeBytes, 0) <= MEDIA_UPLOAD_BATCH_MAX_BYTES,
+            { message: MEDIA_UPLOAD_BATCH_TOO_LARGE_ERROR }
+          ),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeMediaUploadBatchRequest(
+        input.blockToken,
+        ctx.user.id
+      );
+      const { startMediaUploadBatch } = await import(
+        '~/server/services/blocks/media-upload-batch.service'
+      );
+      const { batchId, expiresAt } = await startMediaUploadBatch({
+        actor: {
+          userId,
+          appBlockId: claims.appBlockId,
+          appId: claims.appId,
+          blockId: claims.blockId,
+        },
+        items: input.items,
+      });
+      return { batchId, expiresAt: expiresAt.toISOString() };
+    }),
+
+  /**
+   * `OPEN_MEDIA_UPLOAD_BATCH`, step 2 of 3: one upload URL for one attempt at one file. 🔴 Minted
+   * with the VIEWER's orchestrator token (`getOrchestratorToken`), never a system client: these
+   * are the viewer's files, uploaded and checked as theirs.
+   *
+   * RATE LIMIT: none of the bridge buckets. Bounded by the batch instead: only for an open batch of
+   * this viewer and app, and at most three URLs per declared file, counted by its position.
+   */
+  presignMediaUploadBatchItem: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        batchId: z.number().int().positive(),
+        // The file's position among the files `startMediaUploadBatch` was told about.
+        index: z
+          .number()
+          .int()
+          .min(0)
+          .max(MEDIA_UPLOAD_BATCH_MAX_ITEMS - 1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeMediaUploadBatchRequest(
+        input.blockToken,
+        ctx.user.id
+      );
+      const { presignMediaUploadBatchItem } = await import(
+        '~/server/services/blocks/media-upload-batch.service'
+      );
+      const token = await getOrchestratorToken(userId, ctx);
+      const { uploadUrl, expiresAt } = await presignMediaUploadBatchItem({
+        actor: { userId, appBlockId: claims.appBlockId },
+        batchId: input.batchId,
+        index: input.index,
+        token,
+      });
+      return { uploadUrl, expiresAt };
+    }),
+
+  /**
+   * `OPEN_MEDIA_UPLOAD_BATCH`, step 3 of 3: records one uploaded file's blob key on the batch's
+   * audit row, for the moderator view.
+   *
+   * RATE LIMIT: none of the bridge buckets. Bounded by the batch: one key per file it declared,
+   * no repeats, while it is open.
+   */
+  recordMediaUploadBatchItem: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        batchId: z.number().int().positive(),
+        blobKey: z.string().min(1).max(128),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeMediaUploadBatchRequest(
+        input.blockToken,
+        ctx.user.id
+      );
+      const { recordMediaUploadBatchItem } = await import(
+        '~/server/services/blocks/media-upload-batch.service'
+      );
+      const { expiresAt } = await recordMediaUploadBatchItem({
+        actor: { userId, appBlockId: claims.appBlockId },
+        batchId: input.batchId,
+        blobKey: input.blobKey,
+      });
+      return { expiresAt: expiresAt.toISOString() };
+    }),
+
+  /**
    * ── CREATE_POST_FROM_APP, part 1 of 2: the READ-ONLY preview. ───────────────
    *
    * Resolves EVERYTHING the host-chrome consent dialog renders — the exact title
@@ -7537,6 +7825,7 @@ export const blocksRouter = router({
               cost,
               `this generation costs ${cost}`
             ),
+            errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
             ...(preflightSubstitutions?.length
               ? { modelSubstitutions: preflightSubstitutions }
               : {}),
@@ -10630,6 +10919,7 @@ async function submitCustomComfyWorkflow(opts: {
           ceiling,
           `this generation may cost up to ${ceiling}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -12055,6 +12345,7 @@ async function submitStepWorkflow(opts: {
           reserveBuzz,
           `this step costs ${reserveBuzz}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -12977,6 +13268,7 @@ async function submitPassThroughStepWorkflow(opts: {
           ceiling,
           `this step may cost up to ${ceiling}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -13652,6 +13944,7 @@ async function submitMultiStepWorkflow(opts: {
           reserveBuzz,
           `this workflow may cost up to ${reserveBuzz}`
         ),
+        errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
   }
@@ -14079,34 +14372,6 @@ async function authorizeQuotedGrantConsentRequest(
 }
 
 /**
- * The viewer's own opted-in daily Buzz limit for this app, what remains of it today,
- * and whether `cost` would exceed it — or `null` when they set none (or the grant is
- * revoked; the submit refuses that on its own). Read-only.
- *
- * 🔴 ONE RULE: the "exceeds" answer is `consentCapExceeded`, the same predicate the
- * submit's reservation (`consentBudgetExceeded`) applies to the same counter
- * (`readConsentBudgetSpent` reads the key `reserveConsentBudgetSpend` increments).
- */
-async function readConsentDailyLimit(
-  userId: number,
-  appBlockId: string,
-  cost: number
-): Promise<{ limit: number; spentToday: number; remaining: number; exceeds: boolean } | null> {
-  const { resolveConsentSpendPosture } = await import(
-    '~/server/services/blocks/scope-grant.service'
-  );
-  const posture = await resolveConsentSpendPosture({ userId, appBlockId });
-  if (posture.kind !== 'budget') return null;
-  const spentToday = await readConsentBudgetSpent(userId, appBlockId);
-  return {
-    limit: posture.budget,
-    spentToday,
-    remaining: Math.max(0, posture.budget - spentToday),
-    exceeds: consentCapExceeded(spentToday + cost, posture.budget),
-  };
-}
-
-/**
  * The read-only consent PREVIEW, both kinds: every number the host's confirm shows,
  * resolved from the server-stored quote, never from the block. Confers nothing.
  *
@@ -14182,6 +14447,7 @@ async function previewQuoteGrantFor(
   // consent leg there and the training host does not act on `exceedsDailyLimit`. That
   // is how training private runs behaved before this read existed; the private-run cap
   // bounds them.
+  const { readConsentDailyLimit } = await import('~/server/services/blocks/scope-grant.service');
   let limit: Awaited<ReturnType<typeof readConsentDailyLimit>>;
   try {
     limit = await readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);

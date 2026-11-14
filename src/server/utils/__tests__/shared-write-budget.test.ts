@@ -4,6 +4,7 @@ import { resetSharedMocks } from '~/__tests__/mocks';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
+  DOC_STORE_SHARED_WRITE_BUDGET,
   reserveSharedWrite,
   SHARED_WRITE_BUDGET,
   type SharedWriteBudgetParams,
@@ -21,12 +22,14 @@ const T0 = Date.parse('2031-07-08T09:10:11.000Z') + 437;
 const USER = 4127;
 const APP = 'apb_budget_fixture';
 const KEY = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:shared-write:v2:${APP}:${USER}`;
+// The document store's budget lives under its own namespace (written out literally here).
+const DOC_KEY = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:docs-shared-write:v1:${APP}:${USER}`;
 
 // Large enough that a bucket never binds unless a test means it to.
 const LOOSE = { capacity: 1_000, refillIntervalMs: 1 };
 
 function params(over: Partial<SharedWriteBudgetParams>): SharedWriteBudgetParams {
-  return { burst: LOOSE, daily: LOOSE, rejections: LOOSE, ...over };
+  return { keyspace: 'shared-write:v2', burst: LOOSE, daily: LOOSE, rejections: LOOSE, ...over };
 }
 
 let lua: LuaRedis;
@@ -208,9 +211,104 @@ describe('write budget: transport', () => {
 describe('write budget: production constants', () => {
   it('pins the operator-approved numbers', () => {
     expect(SHARED_WRITE_BUDGET).toEqual({
+      keyspace: 'shared-write:v2',
       burst: { capacity: 10, refillIntervalMs: 360_000 },
       daily: { capacity: 50, refillIntervalMs: 1_728_000 },
       rejections: { capacity: 10, refillIntervalMs: 1_800_000 },
     });
+  });
+
+  it('pins the document store numbers: burst 30 (one a minute), 300 a day, rejections unchanged', () => {
+    expect(DOC_STORE_SHARED_WRITE_BUDGET).toEqual({
+      keyspace: 'docs-shared-write:v1',
+      burst: { capacity: 30, refillIntervalMs: 60_000 },
+      daily: { capacity: 300, refillIntervalMs: 288_000 },
+      rejections: { capacity: 10, refillIntervalMs: 1_800_000 },
+    });
+  });
+});
+
+// The production budgets, run through the real script. The legacy budget is the default.
+describe('write budget: the legacy shared-KV budget (the default)', () => {
+  it('allows 10, refuses the 11th with the 6-minute burst wait', async () => {
+    for (let i = 0; i < 10; i++) expect((await reserveSharedWrite(USER, APP)).allowed).toBe(true);
+    await expect(reserveSharedWrite(USER, APP)).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 360,
+    });
+    expect(lua.hash(KEY)).toBeDefined();
+    expect(lua.hash(DOC_KEY)).toBeUndefined();
+  });
+});
+
+describe('write budget: the document store budget', () => {
+  const D = DOC_STORE_SHARED_WRITE_BUDGET;
+
+  it('allows 30 at once, refuses the 31st with a one-minute wait, and gives one back a minute later', async () => {
+    expect((await reserveTimes(30, D)).every((r) => r.allowed)).toBe(true);
+    await expect(reserveSharedWrite(USER, APP, D)).resolves.toEqual({
+      allowed: false,
+      retryAfterSeconds: 60,
+    });
+    lua.nowMs = T0 + 59_400;
+    expect((await reserveSharedWrite(USER, APP, D)).allowed).toBe(false);
+    lua.nowMs = T0 + 60_600;
+    expect((await reserveSharedWrite(USER, APP, D)).allowed).toBe(true);
+    expect((await reserveSharedWrite(USER, APP, D)).allowed).toBe(false);
+    expect(lua.hash(DOC_KEY)).toBeDefined();
+    expect(lua.hash(KEY)).toBeUndefined();
+  });
+
+  it('the daily bucket binds at a steady one write per 61s: 380 land, the 381st waits 148s', async () => {
+    // At one write per 61s the burst (one back per 60s) never binds. Each write moves the daily
+    // bucket's full-at instant 288s on while the clock moves 61s, so write k (from 0) is allowed
+    // while k * 227s <= 299 * 288s, i.e. k <= 379. Refused at k = 380 with a wait of
+    // 380 * 227s - 299 * 288s = 148s. A daily capacity of 299 would admit 379; one of 301, 381.
+    let allowed = 0;
+    let refusal: unknown;
+    for (let k = 0; k < 400; k++) {
+      lua.nowMs = T0 + k * 61_000;
+      const r = await reserveSharedWrite(USER, APP, D);
+      if (!r.allowed) {
+        refusal = r;
+        break;
+      }
+      allowed += 1;
+    }
+    expect(allowed).toBe(380);
+    expect(refusal).toEqual({ allowed: false, retryAfterSeconds: 148 });
+  });
+
+  it('keys the hash under its own namespace, never the legacy one', async () => {
+    await reserveSharedWrite(USER, APP, D);
+    expect(redisMock.redis.eval.mock.calls[0][1]).toMatchObject({ keys: [DOC_KEY] });
+  });
+});
+
+describe('write budget: the document store and legacy budgets do not drain each other', () => {
+  it('an exhausted document store budget leaves the legacy budget whole', async () => {
+    expect((await reserveTimes(30, DOC_STORE_SHARED_WRITE_BUDGET)).every((r) => r.allowed)).toBe(
+      true
+    );
+    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(
+      false
+    );
+    for (let i = 0; i < 10; i++) {
+      expect((await reserveSharedWrite(USER, APP, SHARED_WRITE_BUDGET)).allowed).toBe(true);
+    }
+    expect((await reserveSharedWrite(USER, APP, SHARED_WRITE_BUDGET)).allowed).toBe(false);
+  });
+
+  it('an exhausted legacy budget leaves the document store budget whole', async () => {
+    for (let i = 0; i < 10; i++) {
+      expect((await reserveSharedWrite(USER, APP, SHARED_WRITE_BUDGET)).allowed).toBe(true);
+    }
+    expect((await reserveSharedWrite(USER, APP, SHARED_WRITE_BUDGET)).allowed).toBe(false);
+    expect((await reserveTimes(30, DOC_STORE_SHARED_WRITE_BUDGET)).every((r) => r.allowed)).toBe(
+      true
+    );
+    expect((await reserveSharedWrite(USER, APP, DOC_STORE_SHARED_WRITE_BUDGET)).allowed).toBe(
+      false
+    );
   });
 });

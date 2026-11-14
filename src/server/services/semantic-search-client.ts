@@ -2,6 +2,9 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 
+/** One creator's hits shown on a page at most, so a prolific creator cannot fill it. */
+export const MAX_HITS_PER_USER = 3;
+
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
 // Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
@@ -82,6 +85,9 @@ function gateConditions(collection: SearchCollection, gate: ViewerGate | undefin
   const levels = { any: gate.nsfwLevels };
   const must: QdrantCondition[] = [{ key: 'nsfwLevel', match: levels }];
   const must_not: QdrantCondition[] = [];
+  // A 3D model is embedded from its thumbnail, rated apart from the model. A point without the
+  // field matches nothing, so one written before it existed is never served.
+  if (collection === 'models3d') must.push({ key: 'thumbnailNsfwLevel', match: levels });
 
   if (gate.kind === 'challenge') {
     if (!gate.domainBuzzType) refuse(collection, 'no domain currency');
@@ -209,6 +215,51 @@ export function searchServiceSource(
       correctedQuery: changes.length ? corrected : undefined,
     };
   };
+}
+
+/** The viewer's hidden users, those they blocked and those who blocked them: never candidates. */
+export function viewerExcludedUserIds(hidden: {
+  hiddenUsers: { id: number }[];
+  blockedUsers: { id: number }[];
+  blockedByUsers: { id: number }[];
+}) {
+  return [
+    ...new Set(
+      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
+    ),
+  ];
+}
+
+/**
+ * Candidates for a text query, with the service's spelling correction audited as well: the service
+ * embeds its correction, not the text the caller audited. `audit` returns a truthy refusal; a
+ * refused correction ends the search, and `state.refused` tells the caller to return nothing.
+ */
+export function auditedTextCandidates({
+  source,
+  text,
+  filter,
+  audit,
+}: {
+  source: CandidateSource;
+  text: string;
+  filter: CandidateFilter;
+  audit: (correction: string) => Promise<unknown>;
+}) {
+  const state = { correctedQuery: undefined as string | undefined, refused: false, returned: 0 };
+  let audited = false;
+  const candidates = async (offset: number, limit: number) => {
+    const result = await source({ query: { text }, filter, offset, limit });
+    if (!audited && result.correctedQuery !== undefined) {
+      audited = true;
+      state.refused = result.correctedQuery !== text && !!(await audit(result.correctedQuery));
+    }
+    if (state.refused) return [];
+    state.correctedQuery ??= result.correctedQuery;
+    state.returned += result.ids.length;
+    return result.ids;
+  };
+  return { candidates, state };
 }
 
 export type Hydrate<T extends { id: number }> = (ids: number[]) => Promise<T[]>;

@@ -7034,6 +7034,13 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
         'app Buzz limit reached: 60 already spent today by this app on your behalf, ' +
           'this generation may cost up to 90, your limit for this app is 100'
       );
+      // Machine-readable, and marked, so the host may offer the viewer the raise.
+      expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
+      expect(mockSysRedis.set).toHaveBeenCalledWith(
+        expect.stringMatching(/^system:blocks:consent-limit-refused:\d+:/),
+        '100',
+        { EX: 300 }
+      );
       // NOTHING was spent…
       expect(mockSubmitWorkflow).not.toHaveBeenCalled();
       // …and BOTH counters were given back — a denial that burned either one would
@@ -8969,6 +8976,7 @@ describe("step-type registry bridge (kind: 'step')", () => {
           'app Buzz limit reached: 11 already spent today by this app on your behalf, ' +
             'this step costs 1, your limit for this app is 10'
         );
+        expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
         expect(
           realSubmitCalls(),
           'the free QUOTE may have run; NOTHING may have been SPENT'

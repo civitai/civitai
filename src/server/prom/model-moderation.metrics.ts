@@ -53,7 +53,9 @@ export type ModelTextModerationOutcome =
   | 'repaired'
   | 'declined_race'
   /** The model is minor, POI or SFW-only: the verdict waits for a moderator, nsfw untouched. */
-  | 'held_restricted';
+  | 'held_restricted'
+  /** Already nsfw: left as it is, with the scan's origin marker recorded. */
+  | 'skipped_nsfw';
 
 /** Never let a metrics failure take down a moderation callback. */
 export function recordModelTextModerationOutcome(outcome: ModelTextModerationOutcome) {

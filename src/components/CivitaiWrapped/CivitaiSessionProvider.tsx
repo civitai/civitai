@@ -210,6 +210,19 @@ const publicContentSettings: BrowsingSettings = {
 
 const signedOutUser: UnauthedUser = { type: 'unauthed', settings: publicContentSettings };
 
+/** A fixed signed-in session for harnesses with no auth hub (Ladle stories of author-only UI). */
+export function FixedSessionProvider({
+  user,
+  children,
+}: {
+  /** Only the fields the story's components read; the rest are absent. */
+  user: Partial<AuthedUser> & { id: number };
+  children: React.ReactNode;
+}) {
+  const value = { settings: publicContentSettings, ...user, type: 'authed' } as AuthedUser;
+  return <CivitaiSessionContext.Provider value={value}>{children}</CivitaiSessionContext.Provider>;
+}
+
 /** A fixed signed-out session for harnesses with no auth hub (Ladle). The app mounts
  * `CivitaiSessionProvider`. */
 export function SignedOutSessionProvider({ children }: { children: React.ReactNode }) {

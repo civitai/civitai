@@ -140,6 +140,7 @@ import type {
   StorylineWhoCanContinue,
   StorylineFollowScope,
   ServiceOfferingStatus,
+  ServiceOfferingIngestionStatus,
   ServicePreviewKind,
   ServiceBuzzType,
   ServiceDealStatus,
@@ -403,6 +404,44 @@ export type AppBlockPublishRequest = {
   deploy_updated_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+};
+export type AppBlockUploadBatch = {
+  id: Generated<number>;
+  user_id: number;
+  /**
+   * The verified token's AppBlock id (`apb_*`), its OauthClient id and its block id.
+   */
+  app_block_id: string;
+  app_id: string;
+  block_id: string;
+  /**
+   * `AppBlock.version` when the batch started; NULL when the token's app has no AppBlock row.
+   */
+  version: string | null;
+  item_count: number;
+  /**
+   * Raw bytes the host declared for the items it was about to upload (before an image's JPEG
+   * re-encode). Declared by the browser, so an upper bound the quota counted, not a measurement.
+   */
+  total_bytes: string;
+  /**
+   * Upload URLs minted for this batch so far (a retried file takes a second one).
+   */
+  presign_count: Generated<number>;
+  /**
+   * Upload URLs minted per declared file, by position: at most three each.
+   */
+  presign_counts: Generated<number[]>;
+  /**
+   * The consumer blob keys of the files uploaded, in upload-completion order.
+   */
+  blob_keys: Generated<string[]>;
+  created_at: Generated<Timestamp>;
+  /**
+   * `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+   * consumer-blob retention). Not a deletion time.
+   */
+  expires_at: Timestamp;
 };
 export type AppCollaborator = {
   app_listing_id: string;
@@ -1343,7 +1382,7 @@ export type BlockScopeInvocation = {
    */
   oauth_client_id: string | null;
   /**
-   * Discriminates the token population that made the call. THREE values, and this
+   * Discriminates the token population that made the call. FOUR values, and this
    * comment is the single source for the generated type docs, so keep it complete:
    * * `'app-block'`      — an App Block block-token, the historical default.
    * * `'external-oauth'` — a standard external OAuth access token verified at
@@ -1356,6 +1395,9 @@ export type BlockScopeInvocation = {
    * load-bearing discriminator rather than a label. Written
    * only from the verified `privateRun` token claim; see
    * `scope-activity-predicate.ts`.
+   * * `'viewer-consent'` — not an app call: the VIEWER changed their daily Buzz limit for
+   * the app in host UI. Shown on the viewer's own Activity feed,
+   * excluded from the app owner's analytics.
    * Free-text with NO CHECK constraint — the value space is enforced in TypeScript
    * (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
    * backfill to `'app-block'` via the column DEFAULT.
@@ -3941,6 +3983,18 @@ export type ModActivity = {
    * Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
    */
   credential: string | null;
+  /**
+   * The review batch a media view was served from. NULL on every other row.
+   */
+  reviewBatchId: string | null;
+  /**
+   * That batch's tier: 'general' or 'held'. NULL on every other row.
+   */
+  reviewTier: string | null;
+  /**
+   * Whether that batch was declared suspect at mint. NULL on every other row.
+   */
+  declaredSuspect: boolean | null;
 };
 export type Model = {
   id: Generated<number>;
@@ -4932,6 +4986,33 @@ export type PostTag = {
   upVotes: number;
   downVotes: number;
 };
+export type PostText = {
+  id: Generated<number>;
+  postId: number;
+  /**
+   * Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+   */
+  userId: number;
+  index: number;
+  /**
+   * Sanitized HTML.
+   */
+  content: string;
+  /**
+   * The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+   */
+  nsfwLevel: Generated<number>;
+  /**
+   * The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+   */
+  refused: Generated<boolean>;
+  /**
+   * Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+   */
+  csamHeld: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type PressMention = {
   id: Generated<number>;
   title: string;
@@ -5618,9 +5699,27 @@ export type ServiceOffering = {
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
   /**
-   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   * The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+   * seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+   * `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
    */
   maxNsfwLevel: Generated<number>;
+  /**
+   * The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+   * written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+   * copies it here.
+   */
+  declaredNsfwLevel: number | null;
+  /**
+   * Where the title and description are in their content check.
+   */
+  ingestion: Generated<ServiceOfferingIngestionStatus>;
+  /**
+   * The check submitted for the current text. Cleared when the text changes, so a result for
+   * earlier text is not applied to it.
+   */
+  scanWorkflowId: string | null;
+  scannedAt: Timestamp | null;
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;
@@ -6593,6 +6692,7 @@ export type DB = {
   ApiKey: ApiKey;
   app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
+  app_block_upload_batches: AppBlockUploadBatch;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
@@ -6885,6 +6985,7 @@ export type DB = {
   PostResourceHelper: PostResourceHelper;
   PostStat: PostStat;
   PostTag: PostTag;
+  PostText: PostText;
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;

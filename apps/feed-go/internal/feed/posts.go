@@ -11,6 +11,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/feedsvc"
 	"github.com/civitai/civitai/apps/feed-go/internal/superjson"
 )
 
@@ -21,8 +22,12 @@ type Config struct {
 	// CreatorPromotions mirrors the `creator-promotions` flag: on, a first model-gallery page may carry
 	// a sponsored post (not ported -> fallback).
 	CreatorPromotions bool
-	// LazyPostImages mirrors `gallery-lazy-post-images` (not ported -> fallback).
+	// LazyPostImages mirrors `gallery-lazy-post-images`: on, each post is completed to its whole
+	// image set, then sent as its first GalleryPostImageSlice images plus `imageCount`.
 	LazyPostImages bool
+	// ImageIndexFeed mirrors `image-index-feed`: on, the pages come from the feed service
+	// (getAllImagesIndex) instead of the Postgres query (getAllImages).
+	ImageIndexFeed bool
 	// VisibleDecorationEvents is the set of event decorations every viewer may see.
 	VisibleDecorationEvents map[string]bool
 }
@@ -56,8 +61,10 @@ type Deps struct {
 	Hydrator Hydrator
 	Gallery  *GalleryStore
 	Addons   *AddonSource
-	Config   Config
-	Now      func() time.Time
+	// Feed is the feed service; nil = not configured (index-path requests fall back).
+	Feed   FeedFetcher
+	Config Config
+	Now    func() time.Time
 }
 
 // Request is one call.
@@ -71,16 +78,13 @@ type Request struct {
 
 // Result is the procedure's value: `{nextCursor, items}`.
 type Result struct {
-	NextCursor int
+	NextCursor Cursor
 	Items      []any
 }
 
 // Value returns the superjson value of the result.
 func (r *Result) Value() superjson.Object {
-	var next any = superjson.Undefined{}
-	if r.NextCursor != 0 {
-		next = int64(r.NextCursor)
-	}
+	next := r.NextCursor.value()
 	items := r.Items
 	if items == nil {
 		items = []any{}
@@ -97,9 +101,10 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	if d.Now != nil {
 		now = d.Now()
 	}
-	if d.Config.LazyPostImages {
-		return nil, fallback.New("lazy-post-images")
+	if d.Config.ImageIndexFeed && d.Feed == nil {
+		return nil, fallback.New("index-feed-unconfigured")
 	}
+	inCursor := Cursor{N: in.Cursor, S: in.CursorText}
 	var viewer Viewer
 	if req.Viewer != nil {
 		viewer = *req.Viewer
@@ -168,11 +173,16 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		}
 	}
 	pinned := settings.PinnedFor(in.ModelVersionID)
-	if len(pinned) > 0 && in.Cursor == 0 {
+	if len(pinned) > 0 && inCursor.None() {
 		return nil, fallback.New("pinned-posts")
 	}
-	if in.Cursor == 0 && in.ModelID != 0 && in.ModelVersionID != 0 && d.Config.CreatorPromotions {
+	if inCursor.None() && in.ModelID != 0 && in.ModelVersionID != 0 && d.Config.CreatorPromotions {
 		return nil, fallback.New("sponsored-post")
+	}
+	// Past page 1 the pinned posts are not fetched, but their images are still kept off the page.
+	pinnedSet := make(map[int]bool, len(pinned))
+	for _, id := range pinned {
+		pinnedSet[id] = true
 	}
 
 	// enforceBlockedBrowsingTags (the addon half; tag filters are a fallback shape) and
@@ -182,11 +192,17 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		level = browsing.PublicLevels
 	}
 	resolved := browsing.ResolveAddons(d.Addons.Addons(ctx), level, viewer.IsModerator, "")
+	// In the order Node's input holds them: as sent, then (when any) the addons' tags unioned in by a
+	// Set, then the challenge tag unioned in. The feed-service query sends this list as is.
 	excluded := append([]int(nil), in.ExcludedTagIDs...)
-	excluded = append(excluded, resolved.ExcludedTagIDs...)
-	if in.HideChallenges {
-		excluded = append(excluded, challengeTagID)
+	if len(resolved.ExcludedTagIDs) > 0 {
+		excluded = unionInts(excluded, resolved.ExcludedTagIDs)
 	}
+	if in.HideChallenges {
+		excluded = unionInts(excluded, []int{challengeTagID})
+	}
+	disablePoi := in.DisablePoi || resolved.DisablePoi
+	disableMinor := in.DisableMinor || resolved.DisableMinor
 
 	q := ImagesQuery{
 		Limit:          int(math.Ceil(float64(in.Limit) * 2)), // overscan, so posts can be merged
@@ -201,32 +217,63 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		Generation:     in.Generation,
 		WithMeta:       in.WithMeta,
 		FromPlatform:   in.FromPlatform,
-		DisablePoi:     in.DisablePoi || resolved.DisablePoi,
-		DisableMinor:   in.DisableMinor || resolved.DisableMinor,
+		DisablePoi:     disablePoi,
+		DisableMinor:   disableMinor,
 		ExcludedTagIDs: excluded,
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
 	}
 
-	posts := map[int][]Image{}
-	cursor := in.Cursor
-	for {
-		q.Cursor = cursor
-		page, err := FetchImages(ctx, d.DB, d.Cache, d.Hydrator, q, viewer, d.Config.VisibleDecorationEvents, now)
-		if err != nil {
-			return nil, err
+	overscan := int(math.Ceil(float64(in.Limit) * 2)) // so posts can be merged
+	var src pageSource
+	if d.Config.ImageIndexFeed {
+		// feedHydrateQuery: the feed already applied the paging, the period and the model scope.
+		hq := q
+		hq.ModelID, hq.ModelVersionID, hq.Period, hq.Cursor = 0, 0, "AllTime", 0
+		hq.ThrowOnStatementTimeout = true
+		src = &indexSource{
+			feed: d.Feed,
+			base: feedsvc.Query{
+				BrowsingLevel:   browsingLevel,
+				ExcludedTagIDs:  excluded,
+				ExcludedUserIDs: in.ExcludedUserIDs,
+				ModelID:         in.ModelID,
+				ModelVersionID:  in.ModelVersionID,
+				Model3DID:       in.Model3DID,
+				Types:           in.Types,
+				WithMeta:        in.WithMetaFlag,
+				FromPlatform:    in.FromPlatform,
+				DisableMinor:    disableMinor,
+				DisablePoi:      disablePoi,
+				ViewerID:        viewer.ID,
+				Sort:            in.Sort,
+				Period:          in.Period,
+				HasGeneration:   len(in.Generation) > 0,
+				HasRemixOfID:    in.HasRemixOfID,
+				RequiringMeta:   in.RequiringMeta,
+			},
+			hydrate: func(ctx context.Context, ids, postIDs []int) ([]Image, error) {
+				h := hq
+				h.IDs, h.PostIDs, h.Limit = ids, postIDs, len(ids)
+				page, err := FetchImages(ctx, d.DB, d.Cache, d.Hydrator, h, viewer, d.Config.VisibleDecorationEvents, now)
+				if err != nil {
+					return nil, err
+				}
+				return page.Images, nil
+			},
 		}
-		for _, img := range page.Images {
-			if img.PostID == 0 {
-				continue
-			}
-			posts[img.PostID] = append(posts[img.PostID], img)
+	} else {
+		if !in.NumericCursor() {
+			// getCursor reads a single-field sort's cursor as one integer; anything else is a 400.
+			return nil, fallback.Newf("input-cursor", "%q", in.CursorText)
 		}
-		cursor = page.NextCursor
-		if cursor == 0 || len(posts) >= in.Limit {
-			break
-		}
+		src = &dbSource{d: d, q: q, viewer: viewer, now: now}
+	}
+
+	posts, cursor, err := collectPosts(ctx, src, inCursor, overscan, in.Limit, pinnedSet)
+	if err != nil {
+		return nil, err
 	}
 
 	// Object.values over integer keys: ascending postId. The sorts below are stable on that order.
@@ -235,6 +282,20 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		postIDs = append(postIDs, id)
 	}
 	sort.Ints(postIDs)
+
+	if d.Config.LazyPostImages {
+		// Without counts every post is completed (getPostImageCounts' failure is logged, not thrown).
+		counts, err := PostImageCounts(ctx, d.DB, postIDs)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			counts = nil
+		}
+		if err := completePosts(ctx, src, posts, postIDs, counts); err != nil {
+			return nil, err
+		}
+	}
 
 	var reviews map[int]Review
 	if in.ModelID != 0 || in.ModelVersionID != 0 {
@@ -255,7 +316,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 
 	results := make([]post, 0, len(postIDs))
 	for _, id := range postIDs {
-		results = append(results, buildPost(id, posts[id], in.Sort, reviews))
+		results = append(results, buildPost(id, posts[id], in.Sort, reviews, d.Config.LazyPostImages))
 	}
 	sortPosts(results, in.Sort)
 
@@ -264,6 +325,44 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		items[i] = p.wire
 	}
 	return &Result{NextCursor: cursor, Items: items}, nil
+}
+
+// collectPosts is the handler's page loop: fetch from cursor, merge images by postId (skipping images
+// with no post and the pinned posts), and stop at the end of the feed or once limit posts are held.
+// It returns the posts and the cursor the response carries.
+func collectPosts(ctx context.Context, src pageSource, cursor Cursor, overscan, limit int, pinned map[int]bool) (map[int][]Image, Cursor, error) {
+	posts := map[int][]Image{}
+	for {
+		images, next, err := src.Page(ctx, cursor, overscan)
+		if err != nil {
+			return nil, Cursor{}, err
+		}
+		for _, img := range images {
+			if img.PostID == 0 || pinned[img.PostID] {
+				continue
+			}
+			posts[img.PostID] = append(posts[img.PostID], img)
+		}
+		cursor = next
+		if cursor.None() || len(posts) >= limit {
+			return posts, cursor, nil
+		}
+	}
+}
+
+// unionInts is `[...new Set([...a, ...b])]`: a's order first, duplicates dropped.
+func unionInts(a, b []int) []int {
+	seen := make(map[int]bool, len(a)+len(b))
+	out := make([]int, 0, len(a)+len(b))
+	for _, list := range [][]int{a, b} {
+		for _, n := range list {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	return out
 }
 
 func orInt(v, def int) int {
@@ -293,8 +392,13 @@ func statOf(stats superjson.Object, key string) int64 {
 	return n
 }
 
+// GalleryPostImageSlice is GALLERY_POST_IMAGE_SLICE: the images a post carries with lazy post images on.
+const GalleryPostImageSlice = 6
+
 // buildPost is the per-post `results` map of the handler (pinned/sponsored are fallback shapes).
-func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review) post {
+// lazy is buildPostImagesWire's `lazy`: the first GalleryPostImageSlice images (after the Newest index
+// sort) and `imageCount`, the post's whole count, before `images`.
+func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review, lazy bool) post {
 	// The post-level fields come from the first image as fetched: the handler destructures it BEFORE
 	// it sorts a Newest post's images by index.
 	first := images[0]
@@ -309,9 +413,15 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 		})
 	}
 	nsfw := 0
-	wireImages := make([]any, len(images))
-	for i, img := range images {
+	for _, img := range images {
 		nsfw |= img.NsfwLevel
+	}
+	shown := images
+	if lazy && len(shown) > GalleryPostImageSlice {
+		shown = shown[:GalleryPostImageSlice]
+	}
+	wireImages := make([]any, len(shown))
+	for i, img := range shown {
 		wireImages[i] = img.Wire
 	}
 	var review any = superjson.Undefined{}
@@ -337,9 +447,14 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 		{Key: "sortAt", Val: first.SortAt},
 		{Key: "createdAt", Val: createdAt},
 		{Key: "user", Val: first.User},
-		{Key: "images", Val: wireImages},
-		{Key: "review", Val: review},
 	}
+	if lazy {
+		wire = append(wire, superjson.Field{Key: "imageCount", Val: int64(len(images))})
+	}
+	wire = append(wire,
+		superjson.Field{Key: "images", Val: wireImages},
+		superjson.Field{Key: "review", Val: review},
+	)
 	// getReactionTotals & co. read `images[0]` of the built post, i.e. after the Newest index sort.
 	stats := images[0].Stats
 	return post{

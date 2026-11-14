@@ -1741,6 +1741,12 @@ model ModActivity {
   host       String?
   /// Which credential fetched a held-media view: 'sheet' or 'web'. NULL on every other row.
   credential String?
+  /// The review batch a media view was served from. NULL on every other row.
+  reviewBatchId String?
+  /// That batch's tier: 'general' or 'held'. NULL on every other row.
+  reviewTier String?
+  /// Whether that batch was declared suspect at mint. NULL on every other row.
+  declaredSuspect Boolean?
 
   @@index([entityType, entityId, createdAt])
   @@index([userId, createdAt])
@@ -2134,6 +2140,7 @@ model Post {
   moderatorNsfwLevelBasis Int?
 
   images          Image[]
+  texts           PostText[]
   tags            TagsOnPost[]
   reactions       PostReaction[]
   helper          PostHelper?
@@ -2294,6 +2301,7 @@ model Image {
   appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -4883,7 +4891,7 @@ model BlockScopeInvocation {
   /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
   /// OauthClient it references (an audit trail must outlive the app).
   oauthClientId    String?  @map("oauth_client_id")
-  /// Discriminates the token population that made the call. THREE values, and this
+  /// Discriminates the token population that made the call. FOUR values, and this
   /// comment is the single source for the generated type docs, so keep it complete:
   ///   * `'app-block'`      — an App Block block-token, the historical default.
   ///   * `'external-oauth'` — a standard external OAuth access token verified at
@@ -4896,6 +4904,9 @@ model BlockScopeInvocation {
   ///                          load-bearing discriminator rather than a label. Written
   ///                          only from the verified `privateRun` token claim; see
   ///                          `scope-activity-predicate.ts`.
+  ///   * `'viewer-consent'` — not an app call: the VIEWER changed their daily Buzz limit for
+  ///                          the app in host UI. Shown on the viewer's own Activity feed,
+  ///                          excluded from the app owner's analytics.
   /// Free-text with NO CHECK constraint — the value space is enforced in TypeScript
   /// (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
   /// backfill to `'app-block'` via the column DEFAULT.
@@ -4985,6 +4996,45 @@ model AppUserScopeGrant {
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")
+}
+
+/// One batch of private generation inputs an App Block uploaded for a viewer through
+/// `OPEN_MEDIA_UPLOAD_BATCH` (`media-upload-batch.service.ts`): the moderator audit record of
+/// which consumer blobs a batch created, for which user and app. Written when the viewer confirms
+/// the batch, then one key appended per uploaded file.
+///
+/// No foreign keys, on purpose: an audit row must outlive the app (a deleted or synthetic dev
+/// `app_block_id`) the same way `BlockScopeInvocation.oauthClientId` does.
+///
+/// MANUALLY APPLIED (migration 20270102120000_app_block_upload_batches). Until it is, the batch
+/// path refuses every batch with a clear error; the single-file upload paths do not touch it.
+model AppBlockUploadBatch {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @map("user_id")
+  /// The verified token's AppBlock id (`apb_*`), its OauthClient id and its block id.
+  appBlockId   String   @map("app_block_id")
+  appId        String   @map("app_id")
+  blockId      String   @map("block_id")
+  /// `AppBlock.version` when the batch started; NULL when the token's app has no AppBlock row.
+  version      String?
+  itemCount    Int      @map("item_count")
+  /// Raw bytes the host declared for the items it was about to upload (before an image's JPEG
+  /// re-encode). Declared by the browser, so an upper bound the quota counted, not a measurement.
+  totalBytes   BigInt   @map("total_bytes")
+  /// Upload URLs minted for this batch so far (a retried file takes a second one).
+  presignCount Int      @default(0) @map("presign_count")
+  /// Upload URLs minted per declared file, by position: at most three each.
+  presignCounts Int[]   @default([]) @map("presign_counts")
+  /// The consumer blob keys of the files uploaded, in upload-completion order.
+  blobKeys     String[] @default([]) @map("blob_keys")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// `created_at` + 30 days: the files are kept at least this long (the orchestrator's default
+  /// consumer-blob retention). Not a deletion time.
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([userId, createdAt(sort: Desc)], map: "app_block_upload_batches_user_created_idx")
+  @@index([appBlockId, createdAt(sort: Desc)], map: "app_block_upload_batches_app_created_idx")
+  @@map("app_block_upload_batches")
 }
 
 // App Blocks cross-app storage imports: the per-source consent ledger. RAW SQL ONLY
@@ -5374,6 +5424,7 @@ enum CommentEntityType {
   appListing
   crucible
   storyline
+  postText
 }
 
 // Partitioned by entityType in the database, with the entity FK on each partition. No @relation to
@@ -7975,6 +8026,9 @@ model Donation {
   buzzTransactionId String
   notes             String?
   createdAt         DateTime     @default(now())
+
+  // donateToGoal's keyed "already recorded?" lookup (userId + buzzTransactionId equality).
+  @@index([userId, buzzTransactionId])
 }
 
 model Blocklist {
@@ -10899,6 +10953,29 @@ model ImageCaption {
   updatedAt DateTime @updatedAt
 }
 
+/// Storylines: a text item in a post's reading order, between or around its images. `index` shares
+/// `Image.index`'s number space on the post; ties sort images first, then texts by id.
+model PostText {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  /// Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+  userId    Int
+  index     Int
+  /// Sanitized HTML.
+  content   String
+  /// The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+  nsfwLevel Int      @default(0)
+  /// The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+  refused   Boolean  @default(false)
+  /// Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+  csamHeld  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId, index])
+}
+
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
 /// are listed before everyone else's. A row is an invitation until the user accepts it: until
 /// then they are not shown on the storyline and have no collaborator rights.
@@ -11016,6 +11093,13 @@ enum ServiceOfferingStatus {
   Removed
 }
 
+enum ServiceOfferingIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 /// What the seller shows before the buyer accepts. `None` skips the preview: the
 /// buyer accepts the delivery on trust.
 enum ServicePreviewKind {
@@ -11114,11 +11198,24 @@ model ServiceOffering {
   title             String
   description       String
   coverImageId      Int?
+  coverImage        Image?                @relation("ServiceOfferingCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+  /// seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+  /// `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+  /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+  /// copies it here.
+  declaredNsfwLevel Int?
+  /// Where the title and description are in their content check.
+  ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  /// The check submitted for the current text. Cleared when the text changes, so a result for
+  /// earlier text is not applied to it.
+  scanWorkflowId    String?
+  scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -11141,6 +11238,7 @@ model ServiceOffering {
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+  @@index([coverImageId])
 }
 
 model ServiceOfferingReport {

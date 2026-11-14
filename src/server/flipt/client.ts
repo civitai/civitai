@@ -9,8 +9,13 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
   RATING_DISPUTE = 'rating-dispute',
+  // Kill switch for minting review sheet batches; off answers 503.
+  REVIEW_BATCHES_MINT = 'review-batches-mint',
   // Percentage rollout keyed on the image id: the share of scanned images sampled.
   SHADOW_SEXUAL_PROMPT = 'shadow-sexual-prompt',
+  // Remix sweep and post scan: an age-check hit goes to the external classifier instead of
+  // blocking. Off when Flipt is unreachable.
+  SHADOW_AGE_PROMPT = 'shadow-age-prompt',
   // Percentage rollout keyed on the file id: the share of files whose mini response leads with
   // the content-hash download url. Each file's url changes once over the ramp. Create the key in
   // Flipt (disabled is fine) before this deploys: a missing key evaluates false but logs an error
@@ -29,10 +34,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // unknown flag or an uninitialised client, which keeps every call going to the feed, as before.
   // Global boolean, read at most once per 5s per process (`createCachedFlagGate`).
   FEED_SERVICE_DEGRADE = 'feed-service-degrade',
-  // Off-switch for the image feed's shorter feed-service budget: on puts it back from 2.5s to 5s
-  // (`FEED_PRIMARY_TIMEOUT_MS`). Off, unknown or an uninitialised client keep 2.5s. Global boolean,
-  // read at most once per 5s per process (`createCachedFlagGate`).
-  FEED_SERVICE_TIMEOUT_WIDEN = 'feed-service-timeout-widen',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
   // Reads the viewer's image reactions (`getUserReactionsForImages`) through Kysely-over-pg instead
   // of the Prisma query engine — an A/B of the engine's per-query CPU on one high-volume read.
@@ -559,11 +560,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // state (enabled: false) before this code serves traffic.
   SSR_CLIENT_ONLY_SECTIONS = 'ssr-client-only-sections',
 
-  // Download links (`/api/download/l/<id>` and the mint at `/api/v1/download-links`). Off, unknown
-  // or unreachable: every link answers 404 and no link is minted.
+  // Download links (`/api/download/l/<id>`, the mint at `/api/v1/download-links`, and the provider
+  // links mini hands out on `?downloadLink=1`). Off, unknown or unreachable: every link answers 404
+  // and no link is minted.
   //
-  // 🔴 BOOLEAN ONLY, global: evaluated with no entityId on every mint and every link fetch. The key
-  // must exist in flag state (enabled: false) before this code serves traffic.
+  // 🔴 BOOLEAN ONLY, no entityId, with context `mode`: `api` (the mint route and its links) or
+  // `provider` (mini's links), so a rule can turn on one without the other. The key must exist in
+  // flag state (enabled: false) before this code serves traffic.
   DOWNLOAD_LINKS_ENABLED = 'download-links-enabled',
   // The standalone Training Studio's closed-beta gate (apps/training-studio/src/lib/server/flipt.ts),
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented

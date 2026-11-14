@@ -121,6 +121,7 @@ describe('endpoint label map ⇄ server writers drift guard', () => {
       ...WRITER_FILES,
       'src/server/middleware/block-scope.middleware.ts', // normalizeEndpoint REST paths
       'src/server/services/oauth/oauth-scope-audit.ts', // no appBlockId -> excluded
+      'src/server/services/blocks/scope-grant.service.ts', // viewer-consent source -> excluded
     ].sort();
     const found = grepFiles('src/server', /recordScopeInvocation\(\{/).sort();
     expect(found).toEqual(KNOWN_WRITERS);

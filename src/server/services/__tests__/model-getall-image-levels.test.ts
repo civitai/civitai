@@ -169,8 +169,29 @@ describe('getModelsWithImagesAndModelVersions card images', () => {
     expect(await cardImages(1 | 4, { user: { id: 99 } })).toEqual([1, 2, 4]);
   });
 
-  it('leaves a caller that passes no browsing level unfiltered', async () => {
-    expect(await cardImages(undefined as never)).toEqual([1, 4, 8, 16]);
+  it('sends a caller that passes no browsing level only public images', async () => {
+    expect(await cardImages(undefined as never)).toEqual([1]);
+    expect(await cardImages(0)).toEqual([1]);
+  });
+
+  describe('a cover found outside the shown images', () => {
+    it('is sent when within the viewer level', async () => {
+      vi.mocked(getCoverImages).mockResolvedValue(new Map([[MODEL, image(97, 1)]]) as never);
+      expect(await cardImages(1)).toEqual([97, 1]);
+    });
+
+    it('is dropped above the viewer level, and with no level given', async () => {
+      vi.mocked(getCoverImages).mockResolvedValue(new Map([[MODEL, image(99, 8)]]) as never);
+      expect(await cardImages(1)).toEqual([1]);
+      expect(await cardImages(undefined as never)).toEqual([1]);
+    });
+
+    it('is dropped when flagged and the viewer settings hide it', async () => {
+      vi.mocked(getCoverImages).mockResolvedValue(
+        new Map([[MODEL, image(98, 1, { poi: true })]]) as never
+      );
+      expect(await cardImages(1, { user: { id: 99 }, disablePoi: true })).toEqual([1]);
+    });
   });
 
   describe('poi and minor flags', () => {

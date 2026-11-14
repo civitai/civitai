@@ -19,6 +19,8 @@ const SDK_CALLS: Record<string, string[]> = {
 // Callers of getConsumerBlobUploadUrlService, the token each passes, and its binding.
 const SERVICE_CALLS: Record<string, string[]> = {
   'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': ['token <- (not bound locally)'],
+  // App Blocks batch upload (OPEN_MEDIA_UPLOAD_BATCH): `token` is a parameter, fed below.
+  'src/server/services/blocks/media-upload-batch.service.ts': ['token <- (not bound locally)'],
   'src/server/services/training.service.ts': ['token <- await getUserToken()'],
 };
 
@@ -29,6 +31,11 @@ const UPSTREAM: [file: string, source: string][] = [
   [
     'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts',
     'OrchestratorEndpoint( async function handler(req, res, user, token) {',
+  ],
+  // The App Blocks batch presign procedure: the token subject's own token.
+  [
+    'src/server/routers/blocks.router.ts',
+    'const token = await getOrchestratorToken(userId, ctx); const { uploadUrl, expiresAt } = await presignMediaUploadBatchItem({ actor: { userId, appBlockId: claims.appBlockId }, batchId: input.batchId, index: input.index, token, });',
   ],
   // The training wizard's auto-label upload.
   [
