@@ -28,10 +28,14 @@ import {
   optimizerLrParams,
   teLocked,
   paramDeviations,
+  paramLockReason,
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
   runExtraCapabilities,
+  runEngine,
+  runParamsKey,
+  runTrainingParams,
   sampleImagesProblem,
   seedPrompts,
   startLabelPass,
@@ -817,5 +821,100 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
     expect(cardUnavailability(klein, on, status)).toBeNull();
     expect(newRun(klein, on, status).versionKey).toBe('flux2klein_4b');
     expect(newRun(klein, on).versionKey).toBe('flux2klein_9b');
+  });
+});
+
+describe('Kohya engine selection and options', () => {
+  it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(runEngine(original)).toBe('ai-toolkit');
+    expect(runParamsKey(original)).not.toBe(runParamsKey(kohya));
+    expect(defaultRunParams(kohya)).toMatchObject({
+      optimizer: 'Adafactor',
+      lrScheduler: 'cosine_with_restarts',
+      batchSize: '4',
+      numRepeats: '1',
+      enableBucket: true,
+      lrSchedulerNumCycles: '3',
+      vParameterization: 'auto',
+      zeroTerminalSnr: 'auto',
+    });
+  });
+
+  it.each(['flux', 'chroma'])('offers custom %s checkpoints only for Kohya', (cardType) => {
+    const card = cardByType(cardType)!;
+    expect(versionOptions(card).some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(false);
+    expect(versionOptions(card, undefined, 'kohya').some((v) => v.key === CUSTOM_VERSION_KEY)).toBe(
+      true
+    );
+  });
+
+  it('keeps Kohya resolution editable while AI Toolkit resolution is locked', () => {
+    const original = run('sdxl');
+    const kohya = { ...original, engine: 'kohya' };
+    expect(paramLockReason(original, 'resolution')).toBeDefined();
+    expect(paramLockReason(kohya, 'resolution')).toBeUndefined();
+    const params = { ...defaultRunParams(kohya), resolution: '768' };
+    expect(paramDeviations(kohya, params, 'tag')).toContainEqual(
+      expect.objectContaining({ field: 'resolution', value: '768' })
+    );
+    expect(runTrainingParams(kohya, params, 'tag').resolution).toBe(768);
+  });
+
+  it('uses Kohya model defaults for cleared fields in both quotes and submits', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(kohya, 'ohwx'),
+      unetLr: '',
+      batchSize: '',
+      clipSkip: '',
+      keepTokens: '',
+    };
+    const quoted = runTrainingParams(kohya, params, 'tag', 'ohwx', 'character');
+    const [submitted] = buildTrainingRuns(
+      { media: 'image', loraType: 'character', runs: [kohya] },
+      [],
+      'ohwx',
+      'Example',
+      [{ run: kohya, params }],
+      [],
+      [],
+      'tag'
+    );
+    expect(quoted).toMatchObject({
+      engine: 'kohya',
+      unetLr: 0.0005,
+      batchSize: 6,
+      keepTokens: 1,
+      kohya: { clipSkip: 2 },
+    });
+    expect(submitted).toMatchObject(quoted);
+  });
+
+  it('restores safe learning rates when leaving the Pony Prodigy preset', () => {
+    const kohya = { ...run('pony'), engine: 'kohya' };
+    const p = defaultRunParams(kohya);
+    expect(p).toMatchObject({ optimizer: 'Prodigy', unetLr: '1', textEncoderLr: '1' });
+    expect(optimizerLrParams(kohya, { ...p, optimizer: 'AdamW8bit' })).toEqual({
+      unetLr: '0.0005',
+      textEncoderLr: '0.00005',
+    });
+  });
+
+  it('sends caption controls only for tag datasets while retaining Kohya options', () => {
+    const kohya = { ...run('sd15', 'anime'), engine: 'kohya' };
+    const p = defaultRunParams(kohya, 'ohwx');
+    expect(p.networkAlpha).toBe('8');
+    expect(runTrainingParams(kohya, p, 'tag')).toMatchObject({
+      engine: 'kohya',
+      shuffleTokens: true,
+      keepTokens: 1,
+      kohya: { clipSkip: 2, enableBucket: true },
+    });
+    expect(runTrainingParams(kohya, p, 'caption')).toMatchObject({
+      shuffleTokens: false,
+      keepTokens: 0,
+    });
   });
 });

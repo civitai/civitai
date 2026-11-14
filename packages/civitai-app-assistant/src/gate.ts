@@ -1,4 +1,4 @@
-import { CREATE_APP, USE_OPEN_APP } from './app-tools';
+import { CREATE_APP, USE_OPEN_APP, WAKE_APP } from './app-tools';
 import { letStepCallsReachGate, type AssistantTool, type ToolGate, type ToolResult } from './tool';
 import type { SandboxFeatures } from './sandbox-tools';
 import { SUBMIT_FOR_REVIEW, createSubmitTool } from './submit';
@@ -105,15 +105,17 @@ export const submitNotChosen = (app: string) =>
   `${app} was not submitted: this chat did not make it or work on it. If the user clearly asked to submit ${app} itself, call use_open_app with app ${app}, check it is ready, then call submit_for_review again; otherwise ask them which app they mean.`;
 
 /**
- * The app a finished `create_app` or `use_open_app` call chose for the chat, if it did. Only a
- * `create_app` that made a new app chooses it: one that found an app the user already had
- * (`existed`: the open one, a paused one it started, one made elsewhere) chooses nothing.
+ * The app a finished `create_app`, `use_open_app` or `wake_app` call chose for the chat, if it
+ * did. Only a `create_app` that made a new app chooses it: one that found an app the user already
+ * had (`existed`: the open one, a paused one it started, one made elsewhere, a sleeping one it
+ * offered to wake) chooses nothing. A `wake_app` that woke the app chooses it (the user asked to
+ * work on it); one that found it already kept (`existed`) does not.
  */
 export function chosenAppOf({ name, output, isError, refused, stopped, subagent }: ToolResult) {
-  if (name !== CREATE_APP && name !== USE_OPEN_APP) return null;
+  if (name !== CREATE_APP && name !== USE_OPEN_APP && name !== WAKE_APP) return null;
   if (isError || refused !== undefined || stopped || subagent !== undefined) return null;
   const result = output as { app?: unknown; existed?: unknown } | null | undefined;
-  if (name === CREATE_APP && result?.existed === true) return null;
+  if ((name === CREATE_APP || name === WAKE_APP) && result?.existed === true) return null;
   return typeof result?.app === 'string' ? result.app : null;
 }
 
@@ -702,14 +704,14 @@ export function reportReadyDescription(runChecks: boolean): string {
   return `Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, ${checks}, and every set_checklist item is done. data says where what the app shows comes from: 'civitai', 'sample' (made-up data, only once the user agreed through set_checklist and the app shows a visible "Sample data" label) or 'none'. When it is refused, do what it says; never tell the user the app is ready without it.`;
 }
 
-/** A `create_app` call that opened an app other than `app`: the checks start over. */
+/** A `create_app` or `wake_app` call that opened an app other than `app`: the checks start over. */
 function opensOtherApp(
   { name, output, isError, refused, stopped }: ToolResult,
   app: string | null
 ): boolean {
   const opened = (output as { app?: unknown } | null)?.app;
   return (
-    name === CREATE_APP &&
+    (name === CREATE_APP || name === WAKE_APP) &&
     !isError &&
     refused === undefined &&
     !stopped &&

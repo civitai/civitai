@@ -10,17 +10,9 @@ import { logToAxiom, safeError } from '~/server/logging/client';
  * - `defaults-firing`        getGenerationStatus / getTrainingServiceStatus
  *                            / getCreationBlockedTags could not read their
  *                            value. getCreationBlockedTags falls back to
- *                            schema defaults. getGenerationStatus and
- *                            getTrainingServiceStatus do NOT: each serves the
- *                            last value this process read
- *                            (`served: 'last-known-good'`) or, with none,
- *                            refuses — generation DISABLED, training PAUSED
- *                            (`served: 'fail-closed'`). With
- *                            TRAINING_STATUS_FAIL_CLOSED=off the training
- *                            reader falls back to the schema default
- *                            `available=true` instead (`served: 'defaults'`):
- *                            if an admin had paused training, it then appears
- *                            available.
+ *                            schema defaults; getGenerationStatus and
+ *                            getTrainingServiceStatus serve last-known-good
+ *                            or refuse (see their `served` field).
  *
  * - `tracking-write-cliff`   setToken's USER_TOKENS write failed. Next
  *                            authenticated request from that user will

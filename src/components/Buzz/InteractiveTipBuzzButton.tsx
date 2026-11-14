@@ -1,3 +1,4 @@
+import { paymentIntentKey, tipIntent } from '~/components/Buzz/payment-intent-keys';
 import type { UnstyledButtonProps } from '@mantine/core';
 import { Group, Stack, Text, UnstyledButton, Button } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
@@ -195,13 +196,18 @@ export function InteractiveTipBuzzButton({
         details: { toUserId, entityType, entityId, amount },
       }).catch(() => undefined);
 
+      const tip = {
+        toAccountId: toUserId,
+        amount,
+        entityId,
+        entityType,
+        fromAccountType: selectedCurrencyType,
+      };
       return tipUserMutation.mutate(
         {
-          toAccountId: toUserId,
-          amount,
-          entityId,
-          entityType,
-          fromAccountType: selectedCurrencyType,
+          ...tip,
+          // Held across a failure that may have moved the Buzz: see payment-intent-keys.
+          idempotencyKey: paymentIntentKey(tipIntent(tip)),
           toAccountType: selectedCurrencyType,
           details: {
             entityId,

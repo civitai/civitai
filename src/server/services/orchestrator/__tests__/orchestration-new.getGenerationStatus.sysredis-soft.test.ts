@@ -79,6 +79,8 @@ vi.mock('~/server/services/image.service', () => ({
 
 import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
 import * as generationService from '~/server/services/generation/generation.service';
+import { GenerationConfigUnavailableError } from '~/server/services/generation/generation-kill-switch';
+import { __resetGenerationConfigLastKnownForTests } from '~/server/services/generation/generation.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -87,13 +89,8 @@ beforeEach(() => {
   mockHGetAll.mockReset();
   mockWithSysReadDeadline.mockReset();
   mockWithSysReadDeadline.mockImplementation((p) => p); // transparent by default
-  // Each test starts as a fresh process: nothing read before. Looked up by key (a mocked module
-  // throws on reading an export it lacks) so the file also runs against a build without the
-  // last-known state, where there is nothing to reset.
-  const reset = Object.entries(generationService).find(
-    ([name]) => name === '__resetGenerationConfigLastKnownForTests'
-  )?.[1] as (() => void) | undefined;
-  reset?.();
+  // Each test starts as a fresh process: nothing read before.
+  __resetGenerationConfigLastKnownForTests();
 });
 
 const hiddenRule = {
@@ -150,10 +147,13 @@ describe('buildGenerationContext — kill switch and gate rules on a sysRedis fa
   it('sysRedis down with nothing read before: refused with a clear error, never enabled', async () => {
     sysRedisDown();
 
-    await expect(buildGenerationContext('free', {}, {}, 'onsite')).rejects.toMatchObject({
+    const error = await buildGenerationContext('free', {}, {}, 'onsite').catch((e: unknown) => e);
+    expect(error).toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
       message: 'Generation is temporarily unavailable. Please try again in a few minutes.',
     });
+    // Its own class: the comic-panels job retries this one, never an orchestrator 503.
+    expect(error).toBeInstanceOf(GenerationConfigUnavailableError);
   });
 
   it('...for a moderator and an App Blocks caller too', async () => {

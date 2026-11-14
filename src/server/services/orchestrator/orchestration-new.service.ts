@@ -43,7 +43,7 @@ import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
-import { workflowOutputRestrictions } from './form-graph/output-restrictions';
+import { capsGenerationOutput, workflowOutputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -1344,6 +1344,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
+  /** A base model in the submit restricts mature generation. */
+  capOutput: boolean;
 }> {
   data = expandAvatarData(data);
 
@@ -1369,6 +1371,10 @@ export async function createWorkflowStepsFromGraph({
       acceptBoostRequired
     )
   );
+  const capOutput = capsGenerationOutput({
+    baseModels: enrichedResources.map((r) => r.baseModel),
+    ecosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+  });
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1592,6 +1598,7 @@ export async function createWorkflowStepsFromGraph({
       tags: extraTags,
       hasTipEligibleResource,
       boostRequired,
+      capOutput,
     };
   });
 }
@@ -1628,7 +1635,11 @@ export async function createWorkflowStepsFromGraphInput({
   isWhatIf?: boolean;
   isGreen?: boolean;
   inputGate: GenerationInputGate;
-}): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
+}): Promise<{
+  steps: WorkflowStepTemplate[];
+  workflowMetadata?: Record<string, unknown>;
+  capOutput: boolean;
+}> {
   const { data, computedKeys } = validateInput(input, externalCtx);
   await assertGraphInputsUsable(data, user?.id, inputGate);
   if (!isWhatIf)
@@ -1644,7 +1655,7 @@ export async function createWorkflowStepsFromGraphInput({
   // It is intentionally `undefined` on whatIf — the caller must only attach it to
   // the REAL submit body, mirroring `generateFromGraph` (see below). Return it so
   // the App-Blocks submit path can carry it; the normal path bakes it in directly.
-  const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
+  const { steps, workflowMetadata, capOutput } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
     user: user && { ...user, tier: externalCtx.user.tier },
@@ -1652,7 +1663,7 @@ export async function createWorkflowStepsFromGraphInput({
     sourceImageIds,
     isGreen,
   });
-  return { steps, workflowMetadata };
+  return { steps, workflowMetadata, capOutput };
 }
 
 type SnippetsPayloadShape = {
@@ -2016,6 +2027,7 @@ export async function generateFromGraph({
     tags: assemblyTags,
     hasTipEligibleResource,
     boostRequired,
+    capOutput,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -2149,6 +2161,7 @@ export async function generateFromGraph({
       ...workflowOutputRestrictions({
         workflow: data.workflow,
         isPrivateGeneration,
+        capOutput,
         allowMatureContent,
       }),
       // @ts-ignore - BuzzSpendType is properly supported

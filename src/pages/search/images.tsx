@@ -27,12 +27,14 @@ import { resolveTags } from '~/server/services/semantic-search-client';
 import { imageFeedUrlFromLegacySearch } from '~/components/Image/Infinite/image-feed-search';
 import { legacyImageSearchDestination } from '~/components/Search/search-target';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
 import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-footer';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSimilarImage } from '~/components/Search/useSimilarImage';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
@@ -101,6 +103,14 @@ function ImagesHitList() {
   useEffect(() => {
     if (query && similar.imageId) clearSimilar(undefined);
   }, [query, similar.imageId, clearSimilar]);
+  useScrollToTopOnChange(
+    JSON.stringify({
+      query,
+      similarTo,
+      refinementList: indexUiState.refinementList,
+      range: indexUiState.range,
+    })
+  );
 
   // Image search ranks by meaning, so it needs words (or an image) to rank by; filters alone list
   // nothing.
@@ -220,7 +230,7 @@ function ImagesHitList() {
         </ImagesProvider>
       </div> */}
       <div>
-        <ImagesProvider images={decorated as any} hideReactions>
+        <ImagesProvider images={decorated as any}>
           <MasonryColumnsVirtual
             data={decorated as any}
             imageDimensions={(data) => {
@@ -236,6 +246,9 @@ function ImagesHitList() {
           />
         </ImagesProvider>
       </div>
+      {hits.length > 0 && isLastPage && (
+        <EndOfFeed text="Try other words or filters to find more" />
+      )}
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

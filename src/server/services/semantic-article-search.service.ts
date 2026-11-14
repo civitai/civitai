@@ -10,6 +10,7 @@ import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
   queryVerdictLevel,
   recordRefusal,
+  isNonModClampOn,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
   type QueryRefusal,
@@ -51,7 +52,11 @@ export async function searchSemanticArticles({
   candidateSource?: CandidateSource;
 }) {
   const none = { items: [] as HydratedArticle[], nextCursor: undefined, correctedQuery: undefined };
-  let browsingLevel = resolveSemanticBrowsingLevel(input.browsingLevel, user);
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    input.browsingLevel,
+    user,
+    await isNonModClampOn()
+  );
   const [hidden, addonData, userIds, tagIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
     getBrowsingSettingAddons(),
@@ -61,13 +66,13 @@ export async function searchSemanticArticles({
   // A named user or tag that does not exist can match nothing.
   if (userIds && !userIds.length) return none;
   if (tagIds && tagIds.length < new Set(input.tagNames).size) return none;
-  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
-    isModerator: user?.isModerator,
-  });
+  const addonsFor = (level: number) =>
+    resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
+  let addons = addonsFor(browsingLevel);
   const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
-      disablePoi,
+      disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
     });
     recordRefusal(track, refusal, text, 'articles_semantic', stage);
@@ -76,14 +81,22 @@ export async function searchSemanticArticles({
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   if (verdictLevel === 'refuse') return none;
-  browsingLevel = verdictLevel;
+  if (verdictLevel !== browsingLevel) {
+    browsingLevel = verdictLevel;
+    addons = addonsFor(browsingLevel);
+  }
 
   const excludedUserIds = [
     ...new Set(
       [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
     ),
   ];
-  const excludedTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
+  const excludedTagIds = [
+    ...new Set([
+      ...addons.excludedTagIds,
+      ...hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id),
+    ]),
+  ];
   const filter: CandidateFilter = {
     gate: { kind: 'level', nsfwLevels: Flags.instanceToArray(browsingLevel) },
     tagIds,

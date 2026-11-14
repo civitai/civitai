@@ -278,6 +278,10 @@ export type SubmitEntrySchema = z.infer<typeof submitEntrySchema>;
 export const submitEntrySchema = z.object({
   crucibleId: z.number(),
   imageId: z.number(),
+  // Minted by the client once per entry and resent on its retries: the entry fee's ledger ids
+  // derive from it, so a retry after an unanswered submit cannot charge the fee again. Optional
+  // for clients from before keys, which get a new id per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type CheckCrucibleEntryEligibilitySchema = z.infer<

@@ -1,6 +1,7 @@
 import {
   firstPublishCardSchema,
   legendStatusSchema,
+  markRevealsSeenSchema,
   milestoneShareSchema,
   profileAchievementsSchema,
 } from '~/server/schema/creator-journey.schema';
@@ -11,6 +12,8 @@ import {
   getLegendStatus,
   getProfileAchievements,
 } from '~/server/services/creator-journey.service';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { markMilestonesSeen } from '~/server/services/creator-milestone-grant.service';
 import { getCreatorShowcase } from '~/server/services/creator-showcase.service';
 import { getMyRemovedImages } from '~/server/services/creator-removed-images.service';
 import {
@@ -54,6 +57,17 @@ export const creatorJourneyRouter = router({
       ]);
       return { ...journey, share };
     }),
+  // The update touches only the viewer's own unseen rows, so a key that is not theirs changes nothing.
+  markRevealsSeen: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .use(isFlagProtected('creatorJourney'))
+    .input(markRevealsSeenSchema)
+    .mutation(({ ctx, input }) =>
+      markMilestonesSeen(
+        pgDbWrite,
+        input.keys.map((milestoneKey) => ({ userId: ctx.user.id, milestoneKey }))
+      )
+    ),
   getMyRemovedImages: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .use(isFlagProtected('creatorJourney'))

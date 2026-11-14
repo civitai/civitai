@@ -80,6 +80,9 @@ CREATE TABLE "Post" (
   "createdAt" TIMESTAMP(3) NOT NULL, "publishedAt" TIMESTAMP(3)
 );
 CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "userId" INTEGER NOT NULL);
+CREATE TABLE "PostText" (
+  "id" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL, "index" INTEGER NOT NULL, "content" TEXT NOT NULL
+);
 CREATE TABLE "CommentV3" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
   "userId" INTEGER NOT NULL, "content" TEXT NOT NULL, "createdAt" TIMESTAMP(3) NOT NULL,
@@ -99,7 +102,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(
-    `TRUNCATE "Post", "Image", "CommentV3";
+    `TRUNCATE "Post", "Image", "CommentV3", "PostText";
      INSERT INTO "Post" VALUES (100, ${OWNER}, '<p>caption &amp; <b>more</b></p>', '2026-10-01', '2026-10-02 08:30');
      INSERT INTO "Post" VALUES (200, ${OTHER}, '<p>unrelated post</p>', '2026-10-01', NULL);
      INSERT INTO "Post" VALUES (501, ${OTHER}, 'a post sharing an image id', '2026-10-01', NULL);
@@ -134,6 +137,18 @@ describe('candidates', () => {
     expect(rows.find((r) => r.id === 12)).toMatchObject({ imageId: 501, deleted: true });
     expect(rows.find((r) => r.id === 11)).toMatchObject({ authorIsReportedUser: false });
     expect(rows.find((r) => r.id === 22)).toMatchObject({ authorIsReportedUser: true });
+  });
+
+  it("adds the post's storyline text items to its text, in reading order", async () => {
+    await db.pg.exec(`
+      INSERT INTO "PostText" VALUES (1, 100, 5, '<p>second</p>'), (2, 100, 1, '<p>first</p>'),
+        (3, 100, 9, '');
+    `);
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+
+    expect(candidates.find((r) => r.source === 'postDescription')?.text).toBe(
+      'caption & more\n\nfirst\n\nsecond'
+    );
   });
 
   it('says more comments exist past the page size, listing each once', async () => {

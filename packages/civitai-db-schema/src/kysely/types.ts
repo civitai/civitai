@@ -140,6 +140,7 @@ import type {
   StorylineWhoCanContinue,
   StorylineFollowScope,
   ServiceOfferingStatus,
+  ServiceOfferingIngestionStatus,
   ServicePreviewKind,
   ServiceBuzzType,
   ServiceDealStatus,
@@ -1343,7 +1344,7 @@ export type BlockScopeInvocation = {
    */
   oauth_client_id: string | null;
   /**
-   * Discriminates the token population that made the call. THREE values, and this
+   * Discriminates the token population that made the call. FOUR values, and this
    * comment is the single source for the generated type docs, so keep it complete:
    * * `'app-block'`      — an App Block block-token, the historical default.
    * * `'external-oauth'` — a standard external OAuth access token verified at
@@ -1356,6 +1357,9 @@ export type BlockScopeInvocation = {
    * load-bearing discriminator rather than a label. Written
    * only from the verified `privateRun` token claim; see
    * `scope-activity-predicate.ts`.
+   * * `'viewer-consent'` — not an app call: the VIEWER changed their daily Buzz limit for
+   * the app in host UI. Shown on the viewer's own Activity feed,
+   * excluded from the app owner's analytics.
    * Free-text with NO CHECK constraint — the value space is enforced in TypeScript
    * (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
    * backfill to `'app-block'` via the column DEFAULT.
@@ -3050,6 +3054,30 @@ export type CustomerSubscription = {
   createdAt: Timestamp;
   endedAt: Timestamp | null;
   updatedAt: Timestamp | null;
+};
+export type CustomerSubscriptionHistory = {
+  id: Generated<number>;
+  userId: number;
+  subscriptionId: string;
+  buzzType: string;
+  productId: string;
+  priceId: string;
+  status: string;
+  metadata: Generated<unknown>;
+  cancelAtPeriodEnd: Generated<boolean>;
+  cancelAt: Timestamp | null;
+  canceledAt: Timestamp | null;
+  startedAt: Timestamp;
+  currentPeriodStart: Timestamp;
+  currentPeriodEnd: Timestamp;
+  endedAt: Timestamp | null;
+  /**
+   * Set when the live row moved on: 'removed' | 'replaced' | 'plan-changed' | 'restarted'
+   */
+  closedAt: Timestamp | null;
+  closedReason: string | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
 };
 export type Donation = {
   id: Generated<number>;
@@ -4908,6 +4936,33 @@ export type PostTag = {
   upVotes: number;
   downVotes: number;
 };
+export type PostText = {
+  id: Generated<number>;
+  postId: number;
+  /**
+   * Who wrote it, the post's author when written. Not a relation, as `ImageCaption.userId`.
+   */
+  userId: number;
+  index: number;
+  /**
+   * Sanitized HTML.
+   */
+  content: string;
+  /**
+   * The text's rating from the scan, a single `NsfwLevel` flag (0 until scanned; reset to 0 by an edit).
+   */
+  nsfwLevel: Generated<number>;
+  /**
+   * The text scan refused it (poi / minor): never shown to readers. A clean, current verdict clears it.
+   */
+  refused: Generated<boolean>;
+  /**
+   * Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
+   */
+  csamHeld: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type PressMention = {
   id: Generated<number>;
   title: string;
@@ -5271,9 +5326,6 @@ export type ResourceReviewReport = {
   resourceReviewId: number;
   reportId: number;
 };
-export type RestrictedBaseModels = {
-  baseModel: string;
-};
 export type RewardsBonusEvent = {
   id: Generated<number>;
   name: string;
@@ -5597,9 +5649,27 @@ export type ServiceOffering = {
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
   /**
-   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   * The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+   * seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+   * `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
    */
   maxNsfwLevel: Generated<number>;
+  /**
+   * The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+   * written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+   * copies it here.
+   */
+  declaredNsfwLevel: number | null;
+  /**
+   * Where the title and description are in their content check.
+   */
+  ingestion: Generated<ServiceOfferingIngestionStatus>;
+  /**
+   * The check submitted for the current text. Cleared when the text changes, so a result for
+   * earlier text is not applied to it.
+   */
+  scanWorkflowId: string | null;
+  scannedAt: Timestamp | null;
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;
@@ -6728,6 +6798,7 @@ export type DB = {
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
   CustomerSubscription: CustomerSubscription;
+  CustomerSubscriptionHistory: CustomerSubscriptionHistory;
   Donation: Donation;
   DonationGoal: DonationGoal;
   DownloadHistory: DownloadHistory;
@@ -6863,6 +6934,7 @@ export type DB = {
   PostResourceHelper: PostResourceHelper;
   PostStat: PostStat;
   PostTag: PostTag;
+  PostText: PostText;
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;
@@ -6894,7 +6966,6 @@ export type DB = {
   ResourceReviewHelper: ResourceReviewHelper;
   ResourceReviewReaction: ResourceReviewReaction;
   ResourceReviewReport: ResourceReviewReport;
-  RestrictedBaseModels: RestrictedBaseModels;
   RewardsBonusEvent: RewardsBonusEvent;
   Role: Role;
   RunStrategy: RunStrategy;

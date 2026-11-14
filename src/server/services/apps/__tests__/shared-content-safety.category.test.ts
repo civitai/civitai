@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -179,11 +180,7 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
  */
 describe('assertSharedTextSafe — the platform audit unable to run', () => {
   const input = { title: 'A listing', body: 'some text', userId: 1 };
-  const unavailable = () =>
-    new TRPCError({
-      code: 'SERVICE_UNAVAILABLE',
-      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
-    });
+  const unavailable = () => new PromptCheckUnavailableError();
 
   beforeEach(() => {
     vi.clearAllMocks();

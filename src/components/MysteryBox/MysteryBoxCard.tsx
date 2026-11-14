@@ -5,11 +5,13 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MysteryBoxArt } from '~/components/MysteryBox/MysteryBoxArt';
 import MysteryBoxModal from '~/components/MysteryBox/MysteryBoxModal';
 import { MysteryBoxOddsBar } from '~/components/MysteryBox/MysteryBoxOddsBar';
-import type { MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
+import type { MysteryBoxSource, MysteryBoxView } from '~/components/MysteryBox/mystery-box.utils';
 import {
   boxActions,
+  boxNoun,
   collectedCount,
   MYSTERY_BOX_FALLBACK_DESCRIPTION,
+  MYSTERY_PACK_FALLBACK_DESCRIPTION,
   guaranteedTierSummaries,
   tierSummaries,
 } from '~/components/MysteryBox/mystery-box.utils';
@@ -17,11 +19,11 @@ import { numberWithCommas } from '~/utils/number-helpers';
 
 /** A mystery box at the head of the team shelf: what it holds for you, your odds, and its buttons. */
 export function MysteryBoxCard({
-  event,
+  source,
   view,
   color,
 }: {
-  event: string;
+  source: MysteryBoxSource;
   view: MysteryBoxView;
   color: string;
 }) {
@@ -32,7 +34,7 @@ export function MysteryBoxCard({
   const show = (start?: 'buy' | 'open') =>
     dialogStore.trigger({
       component: MysteryBoxModal,
-      props: { source: { event }, boxDefinitionId: view.boxDefinitionId, color, start },
+      props: { source, boxDefinitionId: view.boxDefinitionId, color, start },
     });
 
   return (
@@ -48,8 +50,13 @@ export function MysteryBoxCard({
       <Stack gap={6}>
         <Group gap="xs">
           <Badge variant="filled" style={{ background: color }}>
-            Mystery Box
+            {view.seller ? 'Mystery Pack' : 'Mystery Box'}
           </Badge>
+          {view.listing && view.seller && (
+            <Text size="sm" fw={700}>
+              {numberWithCommas(view.listing.unitAmount)} Buzz
+            </Text>
+          )}
           {held > 0 && (
             <Badge variant="light" color="gray">
               {held} unopened
@@ -59,8 +66,14 @@ export function MysteryBoxCard({
         <Text fw={700} size="lg">
           {view.name}
         </Text>
+        {view.seller && view.seller.username && (
+          <Text size="xs" c="dimmed">
+            Sold by @{view.seller.username}
+          </Text>
+        )}
         <Text size="sm" c="dimmed">
-          {view.description ?? MYSTERY_BOX_FALLBACK_DESCRIPTION}
+          {view.description ??
+            (view.seller ? MYSTERY_PACK_FALLBACK_DESCRIPTION : MYSTERY_BOX_FALLBACK_DESCRIPTION)}
         </Text>
         <MysteryBoxOddsBar tiers={tierSummaries(view)} />
         <Group gap="sm" wrap="nowrap" mt={4}>
@@ -69,7 +82,7 @@ export function MysteryBoxCard({
             color={color}
             size="sm"
             className="max-w-72 flex-1"
-            aria-label="Hats collected"
+            aria-label={`${boxNoun(view)}s collected`}
           />
           <Text size="xs" className="shrink-0">
             <b>{collected}</b> / {total} collected
@@ -110,11 +123,11 @@ export function MysteryBoxCard({
  * guaranteed a rarer tier. Its boxes are the box's, so they are held and opened from the box's card.
  */
 export function MysteryBoxPackCard({
-  event,
+  source,
   view,
   color,
 }: {
-  event: string;
+  source: MysteryBoxSource;
   view: MysteryBoxView;
   color: string;
 }) {
@@ -128,7 +141,7 @@ export function MysteryBoxPackCard({
   const show = (start?: 'buyPack') =>
     dialogStore.trigger({
       component: MysteryBoxModal,
-      props: { source: { event }, boxDefinitionId: view.boxDefinitionId, color, start },
+      props: { source, boxDefinitionId: view.boxDefinitionId, color, start },
     });
 
   return (

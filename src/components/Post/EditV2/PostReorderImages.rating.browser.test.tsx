@@ -35,11 +35,16 @@ vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
   usePostEditStore: (selector: (state: unknown) => unknown) =>
     selector({
       images: [added(601, 0), added(602, NsfwLevel.R)],
+      texts: [],
       setImages: vi.fn(),
       post: { id: 1 },
       isReordering: true,
       toggleReordering: vi.fn(),
     }),
+}));
+vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
+  ...(await orig<object>()),
+  useFeatureFlags: () => ({}),
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (orig) => ({
   ...(await orig<object>()),

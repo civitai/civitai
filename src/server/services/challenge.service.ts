@@ -96,6 +96,7 @@ import {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { challengeScanGates } from '~/server/services/challenge-visibility.sql';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import {
   challengeJudgingEngineForCreate,
@@ -594,42 +595,14 @@ async function challengeVisibilityConditions({
   const conditions: Prisma.Sql[] = [];
 
   // Only show challenges past their visibility window — except to their own creator, so a creator
-  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan/POI gates below.
+  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan gates below.
   conditions.push(
     viewerId
       ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${viewerId})`
       : Prisma.sql`c."visibleAt" <= now()`
   );
 
-  // Scan gate: hide challenges that haven't passed the moderation scan, except from their
-  // own creator (so a creator can preview their pending challenge). System/mod challenges
-  // default to Scanned, so they're unaffected.
-  conditions.push(
-    viewerId
-      ? Prisma.sql`(c."ingestion" = 'Scanned'::"ChallengeIngestionStatus" OR c."createdById" = ${viewerId})`
-      : Prisma.sql`c."ingestion" = 'Scanned'::"ChallengeIngestionStatus"`
-  );
-
-  // A challenge with no cover image is incomplete — never surface it in the feed.
-  conditions.push(Prisma.sql`c."coverImageId" IS NOT NULL`);
-
-  // POI gate: keep challenges whose cover depicts a real person out of public feeds (the image
-  // scanner sets Image.poi). Creator can still see their own, mirroring the scan gate above.
-  conditions.push(
-    viewerId
-      ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${viewerId})`
-      : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
-  );
-
-  // Cover-scan gate: the cover image itself must have finished moderation scanning before the
-  // challenge is publicly visible — separate from the challenge text-scan gate above. Scoped to
-  // user challenges only, mirroring the detail path (getChallengeDetail): System/mod covers are
-  // trusted and default to Scanned, so they're exempt. Creator exempt, mirroring the POI gate.
-  conditions.push(
-    viewerId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${viewerId})`
-      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
-  );
+  conditions.push(...challengeScanGates(viewerId));
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
   // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
@@ -4146,17 +4119,83 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
+/**
+ * A challenge's winners, only when the viewer may see the challenge in a public list
+ * (challengeVisibilityConditions); otherwise the same empty list as an unknown id. Moderators keep
+ * the detail page's exemptions (getChallengeDetail): every gate but the userChallenges flag.
+ */
+export async function getVisibleChallengeWinners({
+  challengeId,
+  isGreen,
+  viewerId,
+  isModerator = false,
+  canAccessUserChallenges = false,
+  browsingLevel,
+}: {
+  challengeId: number;
+  isGreen: boolean;
+  viewerId?: number;
+  isModerator?: boolean;
+  canAccessUserChallenges?: boolean;
+  browsingLevel?: number;
+}) {
+  const conditions: Prisma.Sql[] = [Prisma.sql`c.id = ${challengeId}`];
+  if (isModerator) {
+    if (!canAccessUserChallenges)
+      conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
+  } else {
+    // Cancelled stays hidden from all but its creator, as on the detail page.
+    conditions.push(
+      viewerId
+        ? Prisma.sql`(c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus" OR c."createdById" = ${viewerId})`
+        : Prisma.sql`c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus"`
+    );
+    conditions.push(
+      ...(await challengeVisibilityConditions({
+        isGreen,
+        viewerId,
+        canAccessUserChallenges,
+        browsingLevel,
+      }))
+    );
+  }
+  const visible = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "Challenge" c WHERE ${Prisma.join(conditions, ' AND ')}
+  `;
+  if (!visible.length) return [];
+  return getChallengeWinners(challengeId, { isGreen, viewerId });
+}
+
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput & { isGreen: boolean; currentUserId?: number }
+  input: GetCompletedChallengesWithWinnersInput & {
+    isGreen: boolean;
+    currentUserId?: number;
+    canAccessUserChallenges?: boolean;
+  }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
+  const {
+    cursor,
+    limit,
+    eventId,
+    browsingLevel,
+    query,
+    source,
+    isGreen,
+    currentUserId,
+    canAccessUserChallenges = false,
+  } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
+    ...challengeScanGates(currentUserId),
   ];
+
+  // User challenges stay behind the `userChallenges` flag, as on the feed and the detail page.
+  if (!canAccessUserChallenges)
+    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
 
   if (eventId) {
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);

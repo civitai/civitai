@@ -41,8 +41,10 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
       (key) =>
         isEmptyFilter(patch[key as keyof typeof patch]) && !isEmptyFilter(storeFilters?.[key])
     );
+    // A change of query is a search, so Back returns to the previous one; a filter tweak is not.
+    const method = 'query' in patch ? 'push' : 'replace';
     if (inUrl.length)
-      void router.replace(
+      void router[method](
         {
           pathname: router.pathname,
           query: removeEmpty({
@@ -108,6 +110,16 @@ export function ImageFeedSearchSummary({ query, correctedQuery, filters, failed,
         {isClient && filters.username && (
           <Pill withRemoveButton onRemove={() => update({ username: undefined })}>
             @{filters.username}
+          </Pill>
+        )}
+        {isClient && filters.fromPlatform && (
+          <Pill withRemoveButton onRemove={() => update({ fromPlatform: undefined })}>
+            Made On-site
+          </Pill>
+        )}
+        {isClient && filters.withMeta && (
+          <Pill withRemoveButton onRemove={() => update({ withMeta: undefined })}>
+            Metadata only
           </Pill>
         )}
         <Anchor component="button" size="sm" onClick={() => update({ query: undefined })}>
