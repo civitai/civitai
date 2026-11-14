@@ -16,33 +16,46 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties, PointerEvent, ReactNode } from 'react';
-import { forwardRef, useCallback, useRef, useState } from 'react';
+import { forwardRef, useCallback, useMemo, useState } from 'react';
+import { resamplePeaks } from '~/components/Audio/resample-peaks';
 import { useAudioPeaks } from '~/components/Audio/useAudioPeaks';
 import { WaveformBars } from '~/components/Audio/WaveformBars';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { NextLink } from '~/components/NextLink/NextLink';
 import type { MusicAccent } from '~/components/MusicPlayer/music-accent';
 import { withAlpha } from '~/components/MusicPlayer/music-accent';
 import { seekMusicPlayer } from '~/components/MusicPlayer/MusicPlayerAudio';
-import { MUSIC_PLAYER_Z_INDEX, PlayerTooltip } from '~/components/MusicPlayer/MusicPlayerLayers';
+import {
+  MUSIC_PLAYER_BAR_HEIGHT,
+  MUSIC_PLAYER_Z_INDEX,
+  PlayerTooltip,
+} from '~/components/MusicPlayer/MusicPlayerLayers';
 import {
   ACCENT,
   accentAt,
   dimmed,
   Equalizer,
   SongArt,
+  songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
 import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import type { MusicTrack } from '~/store/music-player.store';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime, playbackProgress, timeFromPointer } from '~/utils/audio-player';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 
 const SEEK_STEP_SECONDS = 5;
-const WAVEFORM_BARS = 100;
+// Decoded once at this resolution, then shown as one bar per WAVEFORM_BAR_PITCH px of the timeline,
+// so a wide screen gets more bars rather than the same bars spread thin.
+const WAVEFORM_PEAKS = 400;
+const WAVEFORM_BAR_PITCH = 6;
+const WAVEFORM_MIN_BARS = 40;
 // The waveform decode downloads the whole song: wait until it has played this long, so skipping
 // through songs costs nothing.
 const WAVEFORM_AFTER_LISTENED_SEC = 1;
@@ -108,21 +121,24 @@ function CompactBar({ track }: { track: MusicTrack }) {
     >
       <CompactProgress track={track} onColour={onColour} />
       <div className="flex min-h-0 min-w-0 flex-1 items-center gap-3 px-4">
-        <SongArt url={cover?.url} width={40} iconSize={20} className="size-10 rounded-lg" />
+        <SongDetailLink track={track} className="shrink-0">
+          <SongArt url={cover?.url} width={40} iconSize={20} className="size-10 rounded-lg" />
+        </SongDetailLink>
         <div className="flex min-w-0 flex-1 flex-col gap-px">
-          <span
+          <SongDetailLink
+            track={track}
             className={clsx(
               'truncate text-sm font-bold leading-tight',
               onColour ? 'text-white' : 'text-black dark:text-white'
             )}
           >
             {track.title || 'Untitled song'}
-          </span>
-          <span
-            className={clsx('truncate text-xs font-semibold', onColour ? 'text-white/90' : dimmed)}
-          >
-            {error ? "Couldn't play this song" : track.creator.username}
-          </span>
+          </SongDetailLink>
+          <CreatorLine
+            track={track}
+            error={error}
+            className={clsx('text-xs font-semibold', onColour ? 'text-white/90' : dimmed)}
+          />
         </div>
         <button
           type="button"
@@ -191,7 +207,7 @@ function Bar({ track }: { track: MusicTrack }) {
           ...(accent && { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }),
           zIndex: MUSIC_PLAYER_Z_INDEX,
           // The last in-flow row of `#__next`: the viewport's bottom edge, as the ad bar was.
-          height: 'calc(112px + var(--safe-area-inset-bottom))',
+          height: `calc(${MUSIC_PLAYER_BAR_HEIGHT}px + var(--safe-area-inset-bottom))`,
           paddingBottom: 'var(--safe-area-inset-bottom)',
         } as CSSProperties
       }
@@ -200,22 +216,67 @@ function Bar({ track }: { track: MusicTrack }) {
       <IconButton label="Minimize player" onClick={() => store().minimize()}>
         <IconArrowsDiagonalMinimize2 size={18} />
       </IconButton>
-      <Cover url={cover?.url} accent={accent} playing={playing} />
+      <SongDetailLink track={track} className="shrink-0">
+        <Cover url={cover?.url} accent={accent} playing={playing} />
+      </SongDetailLink>
       <div className="flex w-[200px] shrink-0 flex-col gap-0.5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[19px] font-bold leading-tight text-black dark:text-white">
+          <SongDetailLink
+            track={track}
+            className="truncate text-[15px] font-bold leading-tight text-black dark:text-white"
+          >
             {track.title || 'Untitled song'}
-          </span>
+          </SongDetailLink>
           <Equalizer playing={playing} />
         </div>
-        <span className={clsx('truncate text-xs', dimmed)}>
-          {error ? "Couldn't play this song" : track.creator.username}
-        </span>
+        <CreatorLine track={track} error={error} className={clsx('text-xs', dimmed)} />
       </div>
       <Transport playing={playing} />
       <Timeline track={track} playing={playing} />
       <Controls track={track} accent={accent} />
     </div>
+  );
+}
+
+/** The song's cover or title: opens the song's detail view. */
+function SongDetailLink({
+  track,
+  className,
+  children,
+}: {
+  track: MusicTrack;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <RoutedDialogLink
+      name="imageDetail"
+      state={{ imageId: track.id }}
+      className={clsx('hover:underline', className)}
+    >
+      {children}
+    </RoutedDialogLink>
+  );
+}
+
+/** The creator's name, linking to their profile, or the playback error in its place. */
+function CreatorLine({
+  track,
+  error,
+  className,
+}: {
+  track: MusicTrack;
+  error: boolean;
+  className: string;
+}) {
+  if (error) return <span className={clsx('truncate', className)}>Couldn&apos;t play this song</span>;
+  return (
+    <NextLink
+      href={songCreatorHref(track.creator.username)}
+      className={clsx('truncate hover:underline', className)}
+    >
+      {track.creator.username}
+    </NextLink>
   );
 }
 
@@ -251,8 +312,8 @@ function Cover({
       : `0 4px 14px ${withAlpha(accent.accent, 0.2)}`
     : undefined;
   return (
-    <div className="shrink-0 rounded-[14px]" style={{ boxShadow: glow }}>
-      <SongArt url={url} width={64} iconSize={28} className="size-16 rounded-[14px]" />
+    <div className="shrink-0 rounded-xl" style={{ boxShadow: glow }}>
+      <SongArt url={url} width={48} iconSize={22} className="size-12 rounded-xl" />
     </div>
   );
 }
@@ -288,7 +349,7 @@ function Transport({ playing }: { playing: boolean }) {
           type="button"
           aria-label={playing ? 'Pause' : 'Play'}
           onClick={() => store().togglePlay()}
-          className="flex size-11 shrink-0 items-center justify-center rounded-full text-white transition-transform hover:scale-105"
+          className="flex size-10 shrink-0 items-center justify-center rounded-full text-white transition-transform hover:scale-105"
           style={{ backgroundColor: ACCENT }}
         >
           {playing ? <IconPlayerPauseFilled size={20} /> : <IconPlayerPlayFilled size={20} />}
@@ -324,12 +385,18 @@ function Transport({ playing }: { playing: boolean }) {
 function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
   const currentTime = useMusicPlayheadStore((s) => s.currentTime);
   const duration = useMusicPlayheadStore((s) => s.duration) || track.durationSec;
-  const sliderRef = useRef<HTMLDivElement>(null);
+  const [barCount, setBarCount] = useState(100);
+  const sliderRef = useResizeObserver<HTMLDivElement>((entry) =>
+    setBarCount(
+      Math.max(WAVEFORM_MIN_BARS, Math.floor(entry.contentRect.width / WAVEFORM_BAR_PITCH))
+    )
+  );
   const { url } = useEdgeUrl(track.url, { type: 'audio' });
   const listened = useMusicPlayerStore(
     (s) => (s.playback?.listenedSec ?? 0) >= WAVEFORM_AFTER_LISTENED_SEC
   );
-  const peaks = useAudioPeaks(url, WAVEFORM_BARS, sliderRef, { enabled: listened });
+  const peaks = useAudioPeaks(url, WAVEFORM_PEAKS, sliderRef, { enabled: listened });
+  const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT : accentAt(50);
 
@@ -366,10 +433,10 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
           e.preventDefault();
         }}
       >
-        {peaks ? (
+        {bars ? (
           <>
             <WaveformBars
-              peaks={peaks}
+              peaks={bars}
               progress={progress}
               className="justify-between"
               barClassName="min-w-px max-w-[3px] flex-1 rounded-[2px]"
