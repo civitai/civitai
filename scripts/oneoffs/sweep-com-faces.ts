@@ -13,8 +13,9 @@
  *     longer a candidate.
  *   Both take --concurrency (default 4).
  *
- * Prints counts only, never model ids, text or reasons. Run it with no `prisma*` entry in LOGGING:
- * those print each query's parameters. A model any moderator has ruled on for nsfw is never locked.
+ * Prints counts only, never model ids, text or reasons; it refuses to start with a `prisma*` entry in
+ * LOGGING, which prints each query's parameters. A model with a logged moderator nsfw ruling is not
+ * locked; rulings from the model form before 2026-10-20 were never logged, so those are not seen.
  */
 import path from 'path';
 import type { ComFaceIntentWrites } from '~/server/services/model-sfw-face.service';
@@ -77,7 +78,7 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   const textHash = comFaceIntentTextHash(listing);
   // A face save checks for a moderator's nsfw ruling only since a stored verdict, and no candidate
   // has one: a ruling made before `comFaceIntentRelockSuppressed` existed would go unseen, and a
-  // bulk lock would override it. So any moderator nsfw ruling ever keeps the sweep's lock off.
+  // bulk lock would override it. So any logged moderator nsfw ruling keeps the sweep's lock off.
   let ruled = false;
   const lock: ComFaceIntentWrites['lock'] = async (modelId, hash) => {
     if (await moderatorRuledNsfwSince(modelId, new Date(0))) {
@@ -162,17 +163,23 @@ class UsageError extends Error {}
 
 /** The services' `logToAxiom` echoes each event, model id and error text included, to stdout outside
  *  production, which is how `tsscript` runs. Dropped here, counted: stdout stays counts only. */
-function muteAxiomEcho() {
+export function muteAxiomEcho() {
   const log = console.log;
-  const muted = { lines: 0 };
+  const muted: Record<string, number> = {};
   console.log = (...args: unknown[]) => {
-    if (args[0] === 'logToAxiom') muted.lines++;
-    else log(...args);
+    if (args[0] !== 'logToAxiom') return log(...args);
+    const event = args[1] as { name?: string; message?: string } | undefined;
+    // The services' fixed messages ('lock not added') are kept; a free-form error text is not.
+    const fixed = typeof event?.message === 'string' && /^[a-z ]{1,40}$/i.test(event.message);
+    const key = `${event?.name}: ${fixed ? event?.message : 'other'}`;
+    muted[key] = (muted[key] ?? 0) + 1;
   };
   return muted;
 }
 
 async function main() {
+  if (/(^|,)\s*prisma/.test(process.env.LOGGING ?? ''))
+    throw new UsageError('unset the prisma entries in LOGGING: they print query parameters');
   const muted = muteAxiomEcho();
   const apply = process.argv.includes('--apply');
   const limit = Number(arg('--limit'));
@@ -193,11 +200,14 @@ async function main() {
     ...outcomes,
     ownersLocked,
     failed,
-    // An apply that leaves this as high as `candidates` made no progress (verdicts not stored).
-    ...(apply && { candidatesAfter: (await readCandidates(1, apply)).candidates }),
-    mutedLogLines: muted.lines,
+    // By event name and message only; the echo's model ids and error text are dropped.
+    mutedLogLines: muted,
     elapsedSeconds: Math.round((Date.now() - started) / 1000),
   });
+  if (!apply) return;
+  // As high as `candidates` means the run made no progress (verdicts not stored).
+  const after = await readCandidates(1, apply).catch(() => null);
+  console.log({ candidatesAfter: after?.candidates ?? 'count failed' });
 }
 
 if (path.basename(process.argv[1] ?? '').startsWith(`${SCRIPT_BASENAME}.`))
