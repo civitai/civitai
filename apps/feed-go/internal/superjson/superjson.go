@@ -20,13 +20,13 @@
 package superjson
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Undefined is the JS `undefined` value.
@@ -67,54 +67,66 @@ type annotation struct {
 	typ  string
 }
 
+// segment is one step of the path to the value being written: an object key, or an array index
+// (index >= 0). Indexes stay ints so that no string is built unless an annotation needs the path.
+type segment struct {
+	key   string
+	index int
+}
+
+// initialBufSize pre-sizes the output; a feed page is tens of KiB, and append doubles from here.
+const initialBufSize = 16 << 10
+
 type writer struct {
-	buf   bytes.Buffer
+	buf []byte
+	// path is a stack pushed/popped around every object member and array element. It is only
+	// joined into a string by note() and the error paths, which are rare.
+	path  []segment
 	notes []annotation
 }
 
 // Serialize returns the superjson envelope for v as JSON bytes: `{"json":…}` or
 // `{"json":…,"meta":{"values":{…},"v":1}}`.
 func Serialize(v any) ([]byte, error) {
-	w := &writer{}
-	if err := w.value(v, nil, false); err != nil {
+	w := &writer{buf: make([]byte, 0, initialBufSize), path: make([]segment, 0, 8)}
+	_, isUndef := v.(Undefined)
+	if isUndef {
+		// JSON.stringify drops an undefined top-level json; superjson then reads `json` as undefined.
+		// value() writes nothing for it (it is not in an array) and only records the annotation.
+		w.buf = append(w.buf, '{')
+	} else {
+		w.buf = append(w.buf, `{"json":`...)
+	}
+	if err := w.value(v, false); err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	out.WriteString(`{"json":`)
-	if _, isUndef := v.(Undefined); isUndef {
-		// JSON.stringify drops an undefined top-level json; superjson then reads `json` as undefined.
-		out.Truncate(0)
-		out.WriteString(`{`)
-	} else {
-		out.Write(w.buf.Bytes())
-	}
 	if len(w.notes) > 0 {
-		if out.Len() > 1 {
-			out.WriteString(`,`)
+		if !isUndef {
+			w.buf = append(w.buf, ',')
 		}
-		out.WriteString(`"meta":{"values":`)
+		w.buf = append(w.buf, `"meta":{"values":`...)
 		if len(w.notes) == 1 && w.notes[0].path == "" {
 			// A transformed ROOT value is annotated as a bare array (`["Date"]`), not a path map.
-			out.WriteString(`[`)
-			writeString(&out, w.notes[0].typ)
-			out.WriteString(`]`)
+			w.buf = append(w.buf, '[')
+			w.buf = appendString(w.buf, w.notes[0].typ)
+			w.buf = append(w.buf, ']')
 		} else {
-			out.WriteString(`{`)
+			w.buf = append(w.buf, '{')
 			for i, n := range w.notes {
 				if i > 0 {
-					out.WriteString(`,`)
+					w.buf = append(w.buf, ',')
 				}
-				writeString(&out, n.path)
-				out.WriteString(`:[`)
-				writeString(&out, n.typ)
-				out.WriteString(`]`)
+				w.buf = appendString(w.buf, n.path)
+				w.buf = append(w.buf, `:[`...)
+				w.buf = appendString(w.buf, n.typ)
+				w.buf = append(w.buf, ']')
 			}
-			out.WriteString(`}`)
+			w.buf = append(w.buf, '}')
 		}
-		out.WriteString(`,"v":1}`)
+		w.buf = append(w.buf, `,"v":1}`...)
 	}
-	out.WriteString(`}`)
-	return out.Bytes(), nil
+	w.buf = append(w.buf, '}')
+	return w.buf, nil
 }
 
 // EscapeKey mirrors superjson's pathstringifier.escapeKey.
@@ -123,125 +135,155 @@ func EscapeKey(k string) string {
 	return strings.ReplaceAll(k, `.`, `\.`)
 }
 
-func joinPath(path []string) string {
-	parts := make([]string, len(path))
-	for i, p := range path {
-		parts[i] = EscapeKey(p)
+// joinPath renders the current path the way superjson stringifies it: escaped keys and decimal
+// indexes joined by ".".
+func (w *writer) joinPath() string {
+	n := 0
+	for _, s := range w.path {
+		n += len(s.key) + 8 // separator plus an index's digits, or slack for EscapeKey's backslashes
 	}
-	return strings.Join(parts, ".")
+	var b strings.Builder
+	b.Grow(n)
+	for i, s := range w.path {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		if s.index >= 0 {
+			b.WriteString(strconv.Itoa(s.index))
+		} else {
+			b.WriteString(EscapeKey(s.key))
+		}
+	}
+	return b.String()
 }
 
-func (w *writer) note(path []string, typ string) {
-	w.notes = append(w.notes, annotation{path: joinPath(path), typ: typ})
+func (w *writer) note(typ string) {
+	w.notes = append(w.notes, annotation{path: w.joinPath(), typ: typ})
 }
 
-// value writes v. inArray says whether an Undefined must be written as null (array element) — object
-// members that are Undefined are skipped by the caller before reaching here.
-func (w *writer) value(v any, path []string, inArray bool) error {
+func (w *writer) push(s segment) { w.path = append(w.path, s) }
+
+func (w *writer) pop() { w.path = w.path[:len(w.path)-1] }
+
+// value writes v at the current path. inArray says whether an Undefined must be written as null
+// (array element) — object members that are Undefined are skipped by the caller before reaching here.
+func (w *writer) value(v any, inArray bool) error {
 	switch t := v.(type) {
 	case nil:
-		w.buf.WriteString("null")
+		w.buf = append(w.buf, "null"...)
 	case Undefined:
-		w.note(path, "undefined")
+		w.note("undefined")
 		if inArray {
-			w.buf.WriteString("null")
+			w.buf = append(w.buf, "null"...)
 		}
 	case time.Time:
-		w.note(path, "Date")
-		writeString(&w.buf, FormatDate(t))
+		w.note("Date")
+		// FormatDate's output never contains a byte JSON escapes, so it skips appendString.
+		w.buf = append(w.buf, '"')
+		w.buf = t.UTC().AppendFormat(w.buf, isoLayout)
+		w.buf = append(w.buf, '"')
 	case *time.Time:
 		if t == nil {
-			w.buf.WriteString("null")
+			w.buf = append(w.buf, "null"...)
 			return nil
 		}
-		return w.value(*t, path, inArray)
+		return w.value(*t, inArray)
 	case string:
-		writeString(&w.buf, t)
+		w.buf = appendString(w.buf, t)
 	case bool:
-		if t {
-			w.buf.WriteString("true")
-		} else {
-			w.buf.WriteString("false")
-		}
+		w.buf = strconv.AppendBool(w.buf, t)
 	case int:
-		w.buf.WriteString(strconv.FormatInt(int64(t), 10))
+		w.buf = strconv.AppendInt(w.buf, int64(t), 10)
 	case int32:
-		w.buf.WriteString(strconv.FormatInt(int64(t), 10))
+		w.buf = strconv.AppendInt(w.buf, int64(t), 10)
 	case int64:
-		w.buf.WriteString(strconv.FormatInt(t, 10))
+		w.buf = strconv.AppendInt(w.buf, t, 10)
 	case uint32:
-		w.buf.WriteString(strconv.FormatUint(uint64(t), 10))
+		w.buf = strconv.AppendUint(w.buf, uint64(t), 10)
 	case uint64:
-		w.buf.WriteString(strconv.FormatUint(t, 10))
+		w.buf = strconv.AppendUint(w.buf, t, 10)
 	case float32:
-		return w.float(float64(t), path)
+		return w.float(float64(t))
 	case float64:
-		return w.float(t, path)
+		return w.float(t)
 	case json.RawMessage:
 		if len(t) == 0 {
-			w.buf.WriteString("null")
+			w.buf = append(w.buf, "null"...)
 		} else {
-			w.buf.Write(t)
+			w.buf = append(w.buf, t...)
 		}
 	case Object:
-		w.buf.WriteByte('{')
+		w.buf = append(w.buf, '{')
 		first := true
 		for _, f := range t {
-			child := append(append([]string(nil), path...), f.Key)
+			w.push(segment{key: f.Key, index: -1})
 			if _, undef := f.Val.(Undefined); undef {
-				w.note(child, "undefined")
+				w.note("undefined")
+				w.pop()
 				continue
 			}
 			if !first {
-				w.buf.WriteByte(',')
+				w.buf = append(w.buf, ',')
 			}
 			first = false
-			writeString(&w.buf, f.Key)
-			w.buf.WriteByte(':')
-			if err := w.value(f.Val, child, false); err != nil {
+			w.buf = appendString(w.buf, f.Key)
+			w.buf = append(w.buf, ':')
+			if err := w.value(f.Val, false); err != nil {
 				return err
 			}
+			w.pop()
 		}
-		w.buf.WriteByte('}')
+		w.buf = append(w.buf, '}')
 	case *Object:
 		if t == nil {
-			w.buf.WriteString("null")
+			w.buf = append(w.buf, "null"...)
 			return nil
 		}
-		return w.value(*t, path, inArray)
+		return w.value(*t, inArray)
 	case []any:
-		w.buf.WriteByte('[')
+		w.buf = append(w.buf, '[')
 		for i, e := range t {
 			if i > 0 {
-				w.buf.WriteByte(',')
+				w.buf = append(w.buf, ',')
 			}
-			if err := w.value(e, append(append([]string(nil), path...), strconv.Itoa(i)), true); err != nil {
+			w.push(segment{index: i})
+			if err := w.value(e, true); err != nil {
 				return err
 			}
+			w.pop()
 		}
-		w.buf.WriteByte(']')
+		w.buf = append(w.buf, ']')
 	case []int:
-		w.buf.WriteByte('[')
+		w.buf = append(w.buf, '[')
 		for i, e := range t {
 			if i > 0 {
-				w.buf.WriteByte(',')
+				w.buf = append(w.buf, ',')
 			}
-			w.buf.WriteString(strconv.Itoa(e))
+			w.buf = strconv.AppendInt(w.buf, int64(e), 10)
 		}
-		w.buf.WriteByte(']')
+		w.buf = append(w.buf, ']')
 	default:
-		return fmt.Errorf("superjson: unsupported type %T at %q", v, joinPath(path))
+		return fmt.Errorf("superjson: unsupported type %T at %q", v, w.joinPath())
 	}
 	return nil
 }
 
-func (w *writer) float(f float64, path []string) error {
+func (w *writer) float(f float64) error {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		// superjson annotates these as ["number"] with a string value; nothing here produces them.
-		return fmt.Errorf("superjson: non-finite number at %q", joinPath(path))
+		return fmt.Errorf("superjson: non-finite number at %q", w.joinPath())
 	}
-	w.buf.WriteString(FormatNumber(f))
+	w.buf = appendNumber(w.buf, f)
 	return nil
+}
+
+// appendNumber appends FormatNumber(f). The common case (a plain decimal) is formatted straight into
+// dst; zero and the exponent forms go through FormatNumber, which stays the one definition.
+func appendNumber(dst []byte, f float64) []byte {
+	if abs := math.Abs(f); f != 0 && abs < 1e21 && abs >= 1e-6 {
+		return strconv.AppendFloat(dst, f, 'f', -1, 64)
+	}
+	return append(dst, FormatNumber(f)...)
 }
 
 // FormatNumber renders a float the way JS Number#toString does for the finite values this service
@@ -262,18 +304,71 @@ func FormatNumber(f float64) string {
 	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
+const isoLayout = "2006-01-02T15:04:05.000Z"
+
 // FormatDate is Date#toISOString: UTC, millisecond precision, `Z` suffix.
 func FormatDate(t time.Time) string {
-	return t.UTC().Format("2006-01-02T15:04:05.000Z")
+	return t.UTC().Format(isoLayout)
 }
 
-// writeString writes s as a JSON string. It differs from JSON.stringify only in escaping U+2028/U+2029
-// (Go writes  ) and replacing invalid UTF-8 — both decode to the same string on the client.
-func writeString(buf *bytes.Buffer, s string) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(s)
-	out := b.Bytes()
-	buf.Write(out[:len(out)-1]) // drop Encoder's trailing newline
+const hexDigits = "0123456789abcdef"
+
+// appendString appends s as a quoted JSON string, byte-for-byte what encoding/json writes with
+// SetEscapeHTML(false) (it mirrors appendString in encoding/json/encode.go): `"` and `\` are
+// backslash-escaped, \b \f \n \r \t get their short escapes, other bytes < 0x20 become \u00XX in
+// lowercase hex, U+2028/U+2029 become \u2028/\u2029, and each invalid UTF-8 byte becomes \ufffd.
+// <, > and & are left alone. It differs from JSON.stringify only in the U+2028/U+2029 escapes and the
+// invalid-UTF-8 replacement — both decode to the same string on the client.
+//
+// Runs of bytes that need no escaping are copied with a single append, so a plain string costs one
+// comparison per byte and one copy.
+func appendString(dst []byte, s string) []byte {
+	dst = append(dst, '"')
+	start := 0
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			if b >= 0x20 && b != '"' && b != '\\' {
+				i++
+				continue
+			}
+			dst = append(dst, s[start:i]...)
+			switch b {
+			case '\\', '"':
+				dst = append(dst, '\\', b)
+			case '\b':
+				dst = append(dst, '\\', 'b')
+			case '\f':
+				dst = append(dst, '\\', 'f')
+			case '\n':
+				dst = append(dst, '\\', 'n')
+			case '\r':
+				dst = append(dst, '\\', 'r')
+			case '\t':
+				dst = append(dst, '\\', 't')
+			default:
+				dst = append(dst, '\\', 'u', '0', '0', hexDigits[b>>4], hexDigits[b&0xF])
+			}
+			i++
+			start = i
+			continue
+		}
+		c, size := utf8.DecodeRuneInString(s[i:])
+		if c == utf8.RuneError && size == 1 {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, `\ufffd`...)
+			i++
+			start = i
+			continue
+		}
+		if c == '\u2028' || c == '\u2029' {
+			dst = append(dst, s[start:i]...)
+			dst = append(dst, '\\', 'u', '2', '0', '2', hexDigits[c&0xF])
+			i += size
+			start = i
+			continue
+		}
+		i += size
+	}
+	dst = append(dst, s[start:]...)
+	return append(dst, '"')
 }
