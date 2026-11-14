@@ -218,7 +218,7 @@ describe('deletePostText', () => {
     expect(w.postText.delete).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps held text from its author and from a moderator alike', async () => {
+  it('keeps held text from deletion by its author and by a moderator alike', async () => {
     w.$queryRaw.mockResolvedValue([{ postId: POST }] as never);
     // The owner is never told why; a moderator is.
     await expect(deletePostText({ id: TEXT, userId: AUTHOR })).rejects.toMatchObject({

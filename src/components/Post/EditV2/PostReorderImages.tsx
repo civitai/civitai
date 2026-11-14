@@ -25,7 +25,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { PostEditTextDetail } from '~/server/services/post.service';
 
 export function PostReorderImages() {
-  // With text items on, they move in the same list; without, the original image-only reorder.
   const textOn = !!useFeatureFlags().storylineText;
   const texts = usePostEditStore((state) => state.texts);
   if (textOn && texts.length) return <PostReorderItems />;

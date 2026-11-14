@@ -45,7 +45,7 @@ export type CommentThreadTarget = {
  */
 export const UNADDRESSABLE_ENTITY_TYPES = [
   'model3dReview',
-  // A storyline text's thread has no route yet, and its surface refuses every comment.
+  // A storyline text's thread has no route yet.
   'postText',
 ] as const;
 

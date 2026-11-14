@@ -74,7 +74,6 @@ export function StorylineTextCard({ text }: { text: PostEditTextDetail }) {
     );
   }
 
-  // The editor is the card: no frame around it, and its actions sit in its toolbar.
   return (
     <div data-testid="storyline-text-card">
       <RichTextEditor
