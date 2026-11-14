@@ -8,6 +8,7 @@ vi.mock('../../../lib/server/blocklist.service', () => ({
   removeBlocklistItems: vi.fn(),
 }));
 
+vi.mock('../../../lib/server/user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 // The load's query parser reaches the database client, which throws at import without an env.
 vi.mock('../../../lib/server/query', () => ({ parseQuery: vi.fn() }));
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
 import { BLOCKLIST_TYPES } from '$lib/blocklist';
+import { callModEndpoint } from '$lib/server/user-actions.service';
 import { inertEntries, parseRowId } from './form';
 import {
   BlocklistRowMismatchError,
@@ -30,7 +31,33 @@ const parseItems = (raw: FormDataEntryValue | null) =>
 const isType = (t: string): t is (typeof BLOCKLIST_TYPES)[number] =>
   (BLOCKLIST_TYPES as readonly string[]).includes(t);
 
+const dryRunVerdict = z.object({
+  verdict: z.union([z.string(), z.literal(false)]),
+  result: z.enum(['allow', 'narrow', 'refuse']),
+});
+const dryRunResponse = z.object({ nonModerator: dryRunVerdict, moderator: dryRunVerdict });
+export type DryRunState = z.infer<typeof dryRunResponse> & { query: string };
+
 export const actions: Actions = {
+  // The main app's query audit, rules included; it answers the verdict only, never what matched.
+  dryRun: async ({ request }) => {
+    const form = await request.formData();
+    const query = String(form.get('query') ?? '').trim();
+    if (!query) return fail(400, { dryRunError: 'Enter a query to test.' });
+    if (query.length > 500)
+      return fail(400, { dryRunError: 'Keep the query under 500 characters.' });
+
+    const result = await callModEndpoint('search-query-rule-dry-run', { query }, 'Dry run');
+    if (!result.ok)
+      return fail(result.status && result.status >= 400 ? result.status : 502, {
+        dryRunError: result.error,
+      });
+    const parsed = dryRunResponse.safeParse(result.body);
+    if (!parsed.success)
+      return fail(502, { dryRunError: 'The dry run answered in an unexpected shape.' });
+    const dryRun: DryRunState = { query, ...parsed.data };
+    return { dryRun };
+  },
   add: async ({ request, locals }) => {
     const form = await request.formData();
     const type = String(form.get('type') ?? '');
