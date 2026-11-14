@@ -144,6 +144,7 @@ export function RichTextEditor({
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
+  toolbarEnd,
   ...props
 }: Props) {
   const addHeading = includeControls.includes('heading');
@@ -549,6 +550,12 @@ export function RichTextEditor({
                   <InsertBlurbControl />
                 </RTE.ControlsGroup>
               )}
+              {toolbarEnd && (
+                // Phone: its own row above the controls. Wider: the toolbar's right end.
+                <div className="order-first flex w-full items-center justify-end gap-2 sm:order-none sm:ml-auto sm:w-auto">
+                  {toolbarEnd}
+                </div>
+              )}
             </RTE.Toolbar>
           )}
 
@@ -651,4 +658,6 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;
+    /** The surface's own actions (save state, delete), at the toolbar's right end. */
+    toolbarEnd?: React.ReactNode;
   };

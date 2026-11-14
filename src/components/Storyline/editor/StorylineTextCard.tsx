@@ -71,8 +71,9 @@ export function StorylineTextCard({ text }: { text: PostEditTextDetail }) {
     );
   }
 
+  // The editor is the card: no frame around it, and its actions sit in its toolbar.
   return (
-    <Card withBorder data-testid="storyline-text-card" className="flex flex-col gap-2">
+    <div data-testid="storyline-text-card">
       <RichTextEditor
         value={value}
         onChange={handleChange}
@@ -80,41 +81,41 @@ export function StorylineTextCard({ text }: { text: PostEditTextDetail }) {
         placeholder="Write what happens next..."
         editorSize="md"
         disabled={remove.isPending}
+        toolbarEnd={
+          <>
+            {save.isPending && <Loader size="xs" aria-label="Saving" />}
+            {save.isSuccess && (
+              <Text size="sm" c="teal" className="flex items-center gap-1" role="status">
+                <IconCheck size={14} aria-hidden /> Saved
+              </Text>
+            )}
+            {save.isError && (
+              <Text size="sm" c="red" role="status">
+                Not saved
+              </Text>
+            )}
+            {tooLong && (
+              <Text size="sm" c="red" role="status">
+                {length.toLocaleString()} / {STORYLINE_TEXT_MAX_LENGTH.toLocaleString()} characters
+              </Text>
+            )}
+            <Tooltip label="Delete text">
+              <ActionIcon
+                variant="subtle"
+                color="red"
+                aria-label="Delete text"
+                loading={remove.isPending}
+                onClick={() => {
+                  debounce.cancel();
+                  remove.mutate({ id: text.id });
+                }}
+              >
+                <IconTrash size={18} />
+              </ActionIcon>
+            </Tooltip>
+          </>
+        }
       />
-      <div className="flex min-h-[28px] items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          {save.isPending && <Loader size="xs" aria-label="Saving" />}
-          {save.isSuccess && (
-            <Text size="sm" c="teal" className="flex items-center gap-1" role="status">
-              <IconCheck size={14} aria-hidden /> Saved
-            </Text>
-          )}
-          {save.isError && (
-            <Text size="sm" c="red" role="status">
-              Not saved
-            </Text>
-          )}
-          {tooLong && (
-            <Text size="sm" c="red" role="status">
-              {length.toLocaleString()} / {STORYLINE_TEXT_MAX_LENGTH.toLocaleString()} characters
-            </Text>
-          )}
-        </div>
-        <Tooltip label="Delete text">
-          <ActionIcon
-            variant="subtle"
-            color="red"
-            aria-label="Delete text"
-            loading={remove.isPending}
-            onClick={() => {
-              debounce.cancel();
-              remove.mutate({ id: text.id });
-            }}
-          >
-            <IconTrash size={18} />
-          </ActionIcon>
-        </Tooltip>
-      </div>
-    </Card>
+    </div>
   );
 }

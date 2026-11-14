@@ -40,11 +40,21 @@ vi.mock('~/components/Post/EditV2/PostEditProvider', async (orig) => ({
 }));
 // The real editor is TipTap behind next/dynamic; the card's contract is the HTML it hands back.
 vi.mock('~/components/RichTextEditor/RichTextEditor', () => ({
-  RichTextEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
-    <textarea aria-label="Text" value={value} onChange={(e) => onChange(e.target.value)} />
+  RichTextEditor: ({
+    value,
+    onChange,
+    toolbarEnd,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    toolbarEnd?: React.ReactNode;
+  }) => (
+    <div>
+      <div>{toolbarEnd}</div>
+      <textarea aria-label="Text" value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
   ),
 }));
-
 vi.mock('~/components/RenderHtml/RenderHtml', () => ({
   RenderHtml: ({ html }: { html: string }) => <div dangerouslySetInnerHTML={{ __html: html }} />,
 }));
