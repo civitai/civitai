@@ -169,8 +169,9 @@ describe('getModelsWithImagesAndModelVersions card images', () => {
     expect(await cardImages(1 | 4, { user: { id: 99 } })).toEqual([1, 2, 4]);
   });
 
-  it('leaves a caller that passes no browsing level unfiltered', async () => {
-    expect(await cardImages(undefined as never)).toEqual([1, 4, 8, 16]);
+  it('sends a caller that passes no browsing level only public images', async () => {
+    expect(await cardImages(undefined as never)).toEqual([1]);
+    expect(await cardImages(0)).toEqual([1]);
   });
 
   describe('poi and minor flags', () => {

@@ -283,6 +283,7 @@ import {
   allBrowsingLevelsFlag,
   modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { CommercialUse, DomainColor, ModelType } from '~/shared/utils/prisma/enums';
@@ -2060,16 +2061,15 @@ export const getModelsWithImagesAndModelVersions = async ({
           model,
           showSfwFace
         );
-        // The image cache holds every level; send only what this viewer's settings show.
-        const versionImages = input.browsingLevel
-          ? filterImagesForViewer(faceImages, {
-              browsingLevel: input.browsingLevel,
-              modelNsfw: model.nsfw,
-              disablePoi: rawInput.disablePoi,
-              disableMinor: rawInput.disableMinor,
-              viewer: user,
-            })
-          : faceImages;
+        // The image cache holds every level; send only what this viewer's settings show, and
+        // only public images to a caller that names no level.
+        const versionImages = filterImagesForViewer(faceImages, {
+          browsingLevel: input.browsingLevel || publicBrowsingLevelsFlag,
+          modelNsfw: model.nsfw,
+          disablePoi: rawInput.disablePoi,
+          disableMinor: rawInput.disableMinor,
+          viewer: user,
+        });
         const filteredImages = excludedTagIds
           ? versionImages.filter(
               (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
