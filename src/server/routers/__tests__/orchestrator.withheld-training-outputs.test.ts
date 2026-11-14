@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 describe('orchestrator.getWorkflow on a withheld training run', () => {
-  it.each(['training', 'imageResourceTraining'])(
+  it.each(['training', 'imageResourceTraining', 'Training', 'ImageResourceTraining'])(
     'returns a %s run with nothing but its step type, name and status',
     async ($type) => {
       h.getWorkflow.mockResolvedValue(run('wf-1', $type));

@@ -1,11 +1,12 @@
+import { isTrainingStepTypeIgnoringCase } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/training/studio-withheld';
-
-const TRAINING_STEP_TYPES = new Set(['training', 'imageResourceTraining']);
 
 type StepLike = { $type?: string; name?: string; status?: unknown };
 type WorkflowLike = { id?: string | null; steps?: StepLike[] | null };
 
-const isTrainingStep = (step: StepLike) => TRAINING_STEP_TYPES.has(step.$type ?? '');
+// Any casing, as the weight-handle strip (workflow-epoch-urls) reads it.
+const isTrainingStep = (step: StepLike) =>
+  typeof step.$type === 'string' && isTrainingStepTypeIgnoringCase(step.$type);
 
 // Only these survive on a withheld training step: its input, output and metadata can each carry
 // the run's epoch keys and URLs.
