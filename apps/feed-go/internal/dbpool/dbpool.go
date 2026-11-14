@@ -19,18 +19,10 @@ import (
 
 // Defaults.
 //
-// DefaultMaxConns = 8. Shadow concurrency is FEED_GO_SHADOW_WORKERS (4 in the deployment)
-// comparisons; each runs its page queries one at a time, each followed by a parallel hydration of nine
-// lookups of which at most five can reach Postgres at once (basic users, cosmetics and profile
-// pictures on a cache miss; video thumbnails; a signed-in viewer's reactions), then a 3D-model read
-// when the page has any. With lazy post images on, a comparison then runs one post-count query and up
-// to completionConcurrency (4, internal/feed/pager.go) completion fetches at once, each a page query
-// plus its hydration. So the worst case is ~4 × 4 × 5 = 80 concurrent reads, and the common case is
-// far fewer (page queries plus the reads that always go to Postgres). 8 covers the common case with
-// headroom and makes a burst wait for a connection (bounded by the request context) instead of
-// opening 80 pooler connections per pod.
-// Waiting adds wall time to a shadow comparison, not CPU, so it does not move the CPU-per-call read.
-// Raise it for serving, where concurrency is the request rate rather than the worker count.
+// DefaultMaxConns = 8. Shadow comparisons fan out (hydration lookups, lazy-post completions), so the
+// worst case is far above 8. A small pool makes a burst wait for a connection, bounded by the request
+// context, instead of opening many pooler connections per pod. Waiting adds wall time, not CPU. Raise
+// it for serving, where concurrency is the request rate. (The worst-case arithmetic is in DESIGN.md §3.)
 const (
 	DefaultMaxConns        = 8
 	DefaultMaxConnLifetime = 30 * time.Minute

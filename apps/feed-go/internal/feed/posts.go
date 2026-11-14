@@ -19,9 +19,9 @@ import (
 // configuration (see DESIGN.md "Flags"). When a flag turns on a shape not ported here, the matching
 // field makes those requests fall back instead of being answered wrong.
 type Config struct {
-	// CreatorPromotions mirrors the `creator-promotions` flag: on, a first model-gallery page may carry
-	// a sponsored post (not ported -> fallback).
-	CreatorPromotions bool
+	// CreatorPromotions mirrors the `creator-promotions` flag's audience: who a first model-version
+	// gallery page may carry a sponsored post for (PromotionAudience).
+	CreatorPromotions PromotionAudience
 	// LazyPostImages mirrors `gallery-lazy-post-images`: on, each post is completed to its whole
 	// image set, then sent as its first GalleryPostImageSlice images plus `imageCount`.
 	LazyPostImages bool
@@ -62,9 +62,26 @@ type Deps struct {
 	Gallery  *GalleryStore
 	Addons   *AddonSource
 	// Feed is the feed service; nil = not configured (index-path requests fall back).
-	Feed   FeedFetcher
-	Config Config
-	Now    func() time.Time
+	Feed FeedFetcher
+	// Promotions and Resources default to Gallery (tests replace them).
+	Promotions PromotionStore
+	Resources  ImageResourceReader
+	Config     Config
+	Now        func() time.Time
+}
+
+func (d *Deps) promotions() PromotionStore {
+	if d.Promotions != nil {
+		return d.Promotions
+	}
+	return d.Gallery
+}
+
+func (d *Deps) resources() ImageResourceReader {
+	if d.Resources != nil {
+		return d.Resources
+	}
+	return d.Gallery
 }
 
 // Request is one call.
@@ -109,7 +126,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 	if req.Viewer != nil {
 		viewer = *req.Viewer
 	}
-	browsingLevel, _ := in.ApplyDomainCap(req.Cap)
+	browsingLevel, preCap := in.ApplyDomainCap(req.Cap)
 
 	// Model-gallery gates: settings, the held level of minor / SFW-only models, taken-down models.
 	var modelIDs []int
@@ -166,6 +183,13 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 			}
 		}
 		if isHeld {
+			// preCapBrowsingLevel: (preCap ?? browsingLevel) & held, from the level before the hold.
+			pc := browsingLevel
+			if preCap != nil {
+				pc = *preCap
+			}
+			pc &= held
+			preCap = &pc
 			browsingLevel &= held
 			if browsingLevel == 0 {
 				return empty, nil
@@ -173,17 +197,6 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		}
 	}
 	pinned := settings.PinnedFor(in.ModelVersionID)
-	if len(pinned) > 0 && inCursor.None() {
-		return nil, fallback.New("pinned-posts")
-	}
-	if inCursor.None() && in.ModelID != 0 && in.ModelVersionID != 0 && d.Config.CreatorPromotions {
-		return nil, fallback.New("sponsored-post")
-	}
-	// Past page 1 the pinned posts are not fetched, but their images are still kept off the page.
-	pinnedSet := make(map[int]bool, len(pinned))
-	for _, id := range pinned {
-		pinnedSet[id] = true
-	}
 
 	// enforceBlockedBrowsingTags (the addon half; tag filters are a fallback shape) and
 	// applyHideChallengesExclusion, as getAllImages applies them to every fetch.
@@ -271,7 +284,45 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		src = &dbSource{d: d, q: q, viewer: viewer, now: now}
 	}
 
-	posts, cursor, err := collectPosts(ctx, src, inCursor, overscan, in.Limit, pinnedSet)
+	// The first page's pinned posts and sponsored post, before the page loop (which skips both).
+	fp := &firstPage{}
+	if inCursor.None() {
+		fetch := func(ctx context.Context, q ImagesQuery) ([]Image, error) {
+			page, err := FetchImages(ctx, d.DB, d.Cache, d.Hydrator, q, viewer, d.Config.VisibleDecorationEvents, now)
+			if err != nil {
+				return nil, err
+			}
+			return page.Images, nil
+		}
+		var err error
+		fp, err = loadFirstPage(ctx, firstPageArgs{
+			fetch:          fetch,
+			resources:      d.resources(),
+			promotions:     d.promotions(),
+			audience:       d.Config.CreatorPromotions,
+			viewer:         req.Viewer,
+			q:              q,
+			modelID:        in.ModelID,
+			modelVersionID: in.ModelVersionID,
+			pinnedIDs:      pinned,
+			browsingLevel:  browsingLevel,
+			preCap:         preCap,
+			now:            now,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	// Past page 1 the pinned posts are not fetched, but their images are still kept off the page.
+	skip := make(map[int]bool, len(pinned)+1)
+	for _, id := range pinned {
+		skip[id] = true
+	}
+	if id := fp.sponsoredPostID(); id != 0 {
+		skip[id] = true
+	}
+
+	posts, cursor, err := collectPosts(ctx, src, inCursor, overscan, in.Limit, skip)
 	if err != nil {
 		return nil, err
 	}
@@ -299,10 +350,15 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 
 	var reviews map[int]Review
 	if in.ModelID != 0 || in.ModelVersionID != 0 {
+		// The creators of every merged post, pinned ones included (not the sponsored post).
 		var userIDs []int
 		seen := map[int]bool{}
-		for _, id := range postIDs {
-			uid := userIDOf(posts[id][0])
+		for _, id := range mergedPostIDs(fp.pinned, posts) {
+			images, ok := fp.pinned[id]
+			if !ok {
+				images = posts[id]
+			}
+			uid := userIDOf(images[0])
 			if !seen[uid] {
 				seen[uid] = true
 				userIDs = append(userIDs, uid)
@@ -314,23 +370,15 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		}
 	}
 
-	results := make([]post, 0, len(postIDs))
-	for _, id := range postIDs {
-		results = append(results, buildPost(id, posts[id], in.Sort, reviews, d.Config.LazyPostImages))
-	}
-	sortPosts(results, in.Sort)
-
-	items := make([]any, len(results))
-	for i, p := range results {
-		items[i] = p.wire
-	}
+	items := assemble(fp, posts, in.Sort, reviews, d.Config.LazyPostImages)
 	return &Result{NextCursor: cursor, Items: items}, nil
 }
 
 // collectPosts is the handler's page loop: fetch from cursor, merge images by postId (skipping images
 // with no post and the pinned posts), and stop at the end of the feed or once limit posts are held.
-// It returns the posts and the cursor the response carries.
-func collectPosts(ctx context.Context, src pageSource, cursor Cursor, overscan, limit int, pinned map[int]bool) (map[int][]Image, Cursor, error) {
+// It returns the posts and the cursor the response carries. skip holds the pinned post ids and the
+// sponsored post's id.
+func collectPosts(ctx context.Context, src pageSource, cursor Cursor, overscan, limit int, skip map[int]bool) (map[int][]Image, Cursor, error) {
 	posts := map[int][]Image{}
 	for {
 		images, next, err := src.Page(ctx, cursor, overscan)
@@ -338,7 +386,7 @@ func collectPosts(ctx context.Context, src pageSource, cursor Cursor, overscan, 
 			return nil, Cursor{}, err
 		}
 		for _, img := range images {
-			if img.PostID == 0 || pinned[img.PostID] {
+			if img.PostID == 0 || skip[img.PostID] {
 				continue
 			}
 			posts[img.PostID] = append(posts[img.PostID], img)
@@ -380,6 +428,7 @@ func userIDOf(img Image) int {
 
 type post struct {
 	wire      superjson.Object
+	pinned    bool
 	createdAt time.Time
 	reactions int64
 	comments  int64
@@ -395,10 +444,10 @@ func statOf(stats superjson.Object, key string) int64 {
 // GalleryPostImageSlice is GALLERY_POST_IMAGE_SLICE: the images a post carries with lazy post images on.
 const GalleryPostImageSlice = 6
 
-// buildPost is the per-post `results` map of the handler (pinned/sponsored are fallback shapes).
+// buildPost is the per-post `results` map of the handler (the sponsored post is buildSponsored).
 // lazy is buildPostImagesWire's `lazy`: the first GalleryPostImageSlice images (after the Newest index
-// sort) and `imageCount`, the post's whole count, before `images`.
-func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review, lazy bool) post {
+// sort) and `imageCount`, the post's whole count, before `images`. pinned is `!!pinned[postId]`.
+func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review, lazy, pinned bool) post {
 	// The post-level fields come from the first image as fetched: the handler destructures it BEFORE
 	// it sorts a Newest post's images by index.
 	first := images[0]
@@ -439,7 +488,7 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 	}
 	wire := superjson.Object{
 		{Key: "postId", Val: int64(postID)},
-		{Key: "pinned", Val: false},
+		{Key: "pinned", Val: pinned},
 		{Key: "sponsored", Val: false},
 		{Key: "nsfwLevel", Val: int64(nsfw)},
 		{Key: "modelVersionId", Val: first.ModelVerID},
@@ -459,6 +508,7 @@ func buildPost(postID int, images []Image, sortBy string, reviews map[int]Review
 	stats := images[0].Stats
 	return post{
 		wire:      wire,
+		pinned:    pinned,
 		createdAt: createdAt,
 		reactions: statOf(stats, "likeCountAllTime") + statOf(stats, "laughCountAllTime") + statOf(stats, "heartCountAllTime") + statOf(stats, "cryCountAllTime") - statOf(stats, "dislikeCountAllTime"),
 		comments:  statOf(stats, "commentCountAllTime"),
@@ -486,9 +536,9 @@ func JSDateString(t time.Time) string {
 	return t.UTC().Format("Mon Jan 02 2006 15:04:05") + " GMT+0000 (Coordinated Universal Time)"
 }
 
-// sortPosts is the handler's per-sort comparator; pinned posts are a fallback shape, so only the
-// unpinned branch applies. sort.SliceStable keeps the ascending-postId order on ties, as V8's stable
-// Array#sort does.
+// sortPosts is the handler's per-sort comparator: pinned posts first, each group in the sort's
+// order (every branch of the handler's comparators reduces to that). sort.SliceStable keeps the
+// ascending-postId order on ties, as V8's stable Array#sort does. Any other sort leaves the order.
 func sortPosts(results []post, sortBy string) {
 	var less func(a, b post) bool
 	switch sortBy {
@@ -505,5 +555,10 @@ func sortPosts(results []post, sortBy string) {
 	default:
 		return
 	}
-	sort.SliceStable(results, func(i, j int) bool { return less(results[i], results[j]) })
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].pinned != results[j].pinned {
+			return results[i].pinned
+		}
+		return less(results[i], results[j])
+	})
 }
