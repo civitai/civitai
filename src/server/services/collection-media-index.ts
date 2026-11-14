@@ -243,18 +243,21 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean, db
  * Reads through `dbWrite` by default so a just-committed transaction is visible — the
  * replica may still be behind, and a missed row here is a permanently stale document, not
  * a late one. A bulk caller with no write of its own to see passes `dbRead`. Never throws: callers run this immediately before their delete, so an exception
- * would cancel the deletion the user actually asked for.
+ * would cancel the deletion the user actually asked for. A caller with nothing to protect that must
+ * tell a failure from "no collections" passes `throwOnError`.
  */
 export async function getCollectionIdsForImages({
   imageIds,
   source = 'unknown',
   cap = DEFAULT_COLLECTION_CAP,
   db = dbWrite,
+  throwOnError = false,
 }: {
   imageIds: number[];
   source?: string;
   cap?: number;
   db?: typeof dbWrite;
+  throwOnError?: boolean;
 }): Promise<CollectionsToRebuild> {
   const uniqueImageIds = [...new Set(imageIds)];
   if (!uniqueImageIds.length) return EMPTY;
@@ -292,6 +295,7 @@ export async function getCollectionIdsForImages({
       'failed to resolve collections for removed images',
       error
     );
+    if (throwOnError) throw error;
     return EMPTY;
   }
 }

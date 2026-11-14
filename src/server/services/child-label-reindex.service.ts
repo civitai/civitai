@@ -90,6 +90,7 @@ async function collectionIdsShowingImages(imageIds: number[]) {
     source: SOURCE,
     cap: CANDIDATE_CAP,
     db: dbRead,
+    throwOnError: true,
   });
   const shown: number[] = [];
   let unread = 0;
@@ -221,10 +222,23 @@ export async function runChildLabelReindex({
       aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
     };
 
-  const { modelIds, collectionIds, truncated, unread } = await documentIdsForImages(
-    imageIds,
-    chunkSize
-  );
+  let documents: Awaited<ReturnType<typeof documentIdsForImages>>;
+  try {
+    documents = await documentIdsForImages(imageIds, chunkSize);
+  } catch {
+    // Nothing is queued yet, so the whole run is retried from where it started.
+    return {
+      step,
+      dryRun,
+      images: imageIds.length,
+      probe: probe.length,
+      probeVerified,
+      lastImageId: after,
+      done: false,
+      aborted: 'the collection lookup failed: retry from the same `after`',
+    };
+  }
+  const { modelIds, collectionIds, truncated, unread } = documents;
   const models = await queueModelsReindex(modelIds, { dryRun, chunkSize });
   const collectionsQueued = dryRun
     ? 0
@@ -240,7 +254,6 @@ export async function runChildLabelReindex({
     models,
     collections: collectionIds.length,
     collectionsTruncated: truncated,
-    // Candidates queued without reading their document, because it could not be read.
     collectionsUnread: unread,
     collectionsQueued,
   };

@@ -62,13 +62,19 @@ beforeAll(async () => {
 afterAll(() => db.close());
 
 let queries = 0;
+// Fails the candidate lookup (the collection-media-index query), which never throws on its own.
+let failCollectionLookup = false;
 beforeEach(async () => {
   vi.clearAllMocks();
   queries = 0;
+  failCollectionLookup = false;
   // Throws past a cap, so a loop that never ends fails by name.
   // Prisma.Sql from the service, or a tagged template from the collection lookup.
   const run = (async (sqlOrStrings: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
     if (++queries > 50) throw new Error('query loop did not end');
+    if (failCollectionLookup && !('text' in sqlOrStrings)) {
+      if (sqlOrStrings.join('').includes('"profilePictureId"')) throw new Error('lookup failed');
+    }
     const sql = 'text' in sqlOrStrings ? sqlOrStrings : Prisma.sql(sqlOrStrings, ...values);
     return (await db.query(sql.text, sql.values as unknown[])).rows;
   }) as never;
@@ -268,6 +274,28 @@ describe('child-label reindex: reindex', () => {
     storedDocs.set(75, { images: [{ id: 31 }] });
     await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
     expect(queuedCollections()).not.toContain(75);
+  });
+
+  it('queues only the batch whose documents it cannot read', async () => {
+    // One image per chunk; the first chunk's document read fails.
+    getDocuments.mockRejectedValueOnce(new Error('meili down'));
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 1 });
+    // Image 1's candidates 70, 75, 80 are queued unread; 82 is still read and skipped.
+    expect(queuedCollections()).toEqual([70, 72, 73, 75, 77, 78, 80]);
+    expect(result).toMatchObject({ collectionsUnread: 3 });
+  });
+
+  it('stops before queuing anything when the collection lookup fails', async () => {
+    failCollectionLookup = true;
+    const result = await runChildLabelReindex({
+      step: 'reindex',
+      dryRun: false,
+      chunkSize: 500,
+      after: 0,
+    });
+    expect(queueModelsReindex).not.toHaveBeenCalled();
+    expect(collectionsQueueUpdate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ lastImageId: 0, done: false, aborted: expect.any(String) });
   });
 
   it('queues every candidate it cannot read the documents of', async () => {
