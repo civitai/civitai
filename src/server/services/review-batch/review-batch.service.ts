@@ -59,7 +59,10 @@ export async function readImageSignals(ids: number[]): Promise<Map<number, Image
  * unblocked scan stores its minor verdict nowhere else. Null when ClickHouse cannot answer in time:
  * the caller holds every image.
  */
-export async function readScannerHits(ids: number[]): Promise<Set<number> | null> {
+export async function readScannerHits(
+  ids: number[],
+  { absentHolds = true } = {}
+): Promise<Set<number> | null> {
   if (!clickhouse) return null;
   const abort = AbortSignal.timeout((CLICKHOUSE_TIMEOUT_SECONDS + 1) * 1000);
   try {
@@ -70,7 +73,11 @@ export async function readScannerHits(ids: number[]): Promise<Set<number> | null
       abort_signal: abort,
       clickhouse_settings: { max_execution_time: CLICKHOUSE_TIMEOUT_SECONDS },
     });
-    return scannerHeldIds(ids, await result.json<{ contentHash: string; hit: number }>());
+    return scannerHeldIds(
+      ids,
+      await result.json<{ contentHash: string; hit: number }>(),
+      absentHolds
+    );
   } catch (e) {
     void logToAxiom({
       name: 'review-batch-scanner-read-failed',

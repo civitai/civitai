@@ -11,8 +11,7 @@ export const REVIEW_TIERS: readonly ReviewTier[] = ['general', 'held'];
 
 export const REVIEW_BATCH_MAX_IDS = 50;
 
-/** The ModActivity `activity` for general-tier bytes served from byte 0; the routing-miss job reads
- *  these rows back. */
+/** The ModActivity `activity` for general-tier bytes served from byte 0. */
 export const REVIEW_SERVED_ACTIVITY = 'review-media-served';
 export const REVIEW_BATCH_TTL_SECONDS = 24 * 60 * 60;
 
@@ -34,9 +33,12 @@ export const newReviewBatchId = () => randomBytes(16).toString('base64url');
 const BATCH_ID = /^[A-Za-z0-9_-]{22}$/;
 export const isReviewBatchId = (value: string) => BATCH_ID.test(value);
 
-/** The `contentHash` an image's scan rows are written under in ClickHouse `scanner_label_results`. */
-export const imageAuditContentHash = (imageId: number) =>
-  createHash('sha256').update(`image:${imageId}`, 'utf8').digest('hex').slice(0, 16);
+/** The `contentHash` a scanner_label_results row is keyed by: the first 16 hex of sha256(input). */
+export const scannerContentHash = (input: string) =>
+  createHash('sha256').update(input, 'utf8').digest('hex').slice(0, 16);
+
+/** The `contentHash` an image's scan rows are written under. */
+export const imageAuditContentHash = (imageId: number) => scannerContentHash(`image:${imageId}`);
 
 /**
  * Per image, whether its scanner rows mark CSAM or a minor, or cannot show it does not. The audit
@@ -51,12 +53,19 @@ export const SCANNER_HITS_SQL = `
 `;
 export function scannerHeldIds(
   ids: readonly number[],
-  rows: readonly { contentHash: string; hit: number | boolean | string }[]
+  rows: readonly { contentHash: string; hit: number | boolean | string }[],
+  /** False only for a reader asking whether a label is present, never for a routing decision. */
+  absentHolds = true
 ): Set<number> {
   const byHash = new Map(
     rows.map((row) => [row.contentHash, Number(row.hit) === 1 || row.hit === true])
   );
-  return new Set(ids.filter((id) => byHash.get(imageAuditContentHash(id)) !== false));
+  return new Set(
+    ids.filter((id) => {
+      const hit = byHash.get(imageAuditContentHash(id));
+      return absentHolds ? hit !== false : hit === true;
+    })
+  );
 }
 
 /** What Redis stores in place of the id, which is the link's only secret. */

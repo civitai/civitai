@@ -173,6 +173,11 @@ describe('the tier', () => {
     expect((await mint()).tier).toBe('general');
   });
 
+  it('a batch its minter declares suspect is held, whatever its images', async () => {
+    const { batchId, tier } = await mint({ suspect: true });
+    expect(tier).toBe('held');
+    expect(batchFor(batchId)!.declared).toBe(true);
+  });
   it('suspect=false is overridden by a term in the source text', async () => {
     expect((await mint({ sourceText: ['see ALPHA here'] })).tier).toBe('held');
   });

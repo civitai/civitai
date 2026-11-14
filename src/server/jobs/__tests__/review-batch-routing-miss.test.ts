@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import type * as ReviewBatchService from '~/server/services/review-batch/review-batch.service';
 
 /**
  * The daily routing-miss check: a general-tier view whose image carries a signal now is recorded
@@ -12,7 +13,8 @@ const { mockReadSignals, mockReadScanner } = vi.hoisted(() => ({
   mockReadSignals: vi.fn(),
   mockReadScanner: vi.fn(),
 }));
-vi.mock('~/server/services/review-batch/review-batch.service', () => ({
+vi.mock('~/server/services/review-batch/review-batch.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewBatchService>()),
   readImageSignals: mockReadSignals,
   readScannerHits: mockReadScanner,
 }));
@@ -123,5 +125,23 @@ describe('the routing-miss check', () => {
     const written = inserts.map((i) => sqlText(i) + JSON.stringify(i.values)).join('\n');
     expect(written).not.toMatch(/"CsamReport"/);
     expect(written).not.toMatch(/\bsig\b|minor|csam/i);
+  });
+});
+
+describe('what is not a miss', () => {
+  it('a scan gone back to pending, or an image with no scanner rows, is not recorded', async () => {
+    served = [
+      { imageId: 4, batchHash: 'h4' },
+      { imageId: 5, batchHash: 'h4' },
+    ];
+    mockReadSignals.mockResolvedValue(
+      new Map([
+        [4, row(4, { unreadable: true })],
+        [5, row(5)],
+      ])
+    );
+    expect((await checkReviewBatchRoutingMisses()).misses).toBe(0);
+    expect(mockReadScanner).toHaveBeenCalledWith([4, 5], { absentHolds: false });
+    expect(missRows()).toHaveLength(0);
   });
 });

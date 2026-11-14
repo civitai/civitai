@@ -23,7 +23,7 @@ const SYSTEM_USER_ID = -1;
 type Served = { imageId: number; batchHash: string };
 
 /**
- * Each general-tier view of the last two days whose image now carries a CSAM or minor signal: a
+ * Each general-tier view within `LOOKBACK_HOURS` whose image now carries a CSAM or minor signal: a
  * batch the server routed general that it would route held today. Records each one once, with the
  * image's CSAM report when there is one, and writes a dated heartbeat row every run, misses or not,
  * so a run that never happened shows as a missing day.
@@ -58,7 +58,7 @@ export async function checkReviewBatchRoutingMisses(now = new Date()) {
   `;
   await logToAxiom({
     name: 'review-batch-routing-miss-check',
-    type: fresh.length ? 'error' : 'info',
+    type: fresh.length || !misses.scannerRead ? 'error' : 'info',
     served: served.length,
     misses: fresh.length,
     batchHashes: [...new Set(fresh.map((miss) => miss.batchHash))],
@@ -70,20 +70,30 @@ export async function checkReviewBatchRoutingMisses(now = new Date()) {
 /** `20261114` for that UTC day: one heartbeat row per day, findable by its date. */
 const dayNumber = (date: Date) => Number(date.toISOString().slice(0, 10).replaceAll('-', ''));
 
+const CHUNK = 1000;
+
 async function findMisses(ids: number[]) {
-  const [signals, scannerHits] = await Promise.all([readImageSignals(ids), readScannerHits(ids)]);
   const patterns = parseBlockedForPatterns(env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS);
-  // A miss is a signal present now. An image that is gone, or a pattern list that is missing, is not
-  // evidence of one, so neither counts here; the routing itself treats both as held.
-  const held = new Set(
-    ids.filter((id) => {
+  const held = new Set<number>();
+  let scannerRead = true;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const part = ids.slice(i, i + CHUNK);
+    const [signals, scannerHits] = await Promise.all([
+      readImageSignals(part),
+      readScannerHits(part, { absentHolds: false }),
+    ]);
+    if (!scannerHits) scannerRead = false;
+    // A miss is a signal present now. A missing image, row or pattern list, or a scan gone back to
+    // pending, is not evidence of one; the routing itself treats all of those as held.
+    for (const id of part) {
       const row = signals.get(id);
-      if (!row) return false;
-      if (scannerHits?.has(id)) return true;
-      return imageRoutesHeld(row, patterns ?? { signal: [], nonMinor: [/^/] });
-    })
-  );
-  return { held, scannerRead: scannerHits !== null };
+      if (!row) continue;
+      const clean = patterns ?? { signal: [], nonMinor: [/^/] };
+      if (scannerHits?.has(id) || imageRoutesHeld({ ...row, unreadable: false }, clean))
+        held.add(id);
+    }
+  }
+  return { held, scannerRead };
 }
 
 async function alreadyRecorded(imageIds: number[]) {

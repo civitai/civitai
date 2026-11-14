@@ -2254,7 +2254,7 @@ export const REDIS_SYS_KEYS = {
     HELD_SHEET_CODE: 'app:held-sheet:code',
     // `app:held-sheet:session:<sha256(token)>` — one held-media sheet session, sliding idle expiry.
     HELD_SHEET_SESSION: 'app:held-sheet:session',
-    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON, 24 h. Written by the
+    // `app:review-batch:<sha256(batchId)>` — one review-sheet batch, plain JSON. Written by the
     // main app's mint, read by the moderator app's sign-in and batch routes.
     REVIEW_BATCH: 'app:review-batch',
     // `app:review-batch-key:<keyId>` — set of the live batch hashes one moderator API key minted.

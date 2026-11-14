@@ -79,8 +79,7 @@ export async function streamStoredMedia(input: {
       upstream: upstream.headers,
     })
   );
-  // Awaited, so the row is there before the page that loads these bytes reports them shown. A HEAD
-  // (answered by this handler) delivers no bytes.
+  // Awaited, so the row is there before the page that loads these bytes reports them shown.
   if (request.method !== 'HEAD' && isAuditedServe(upstream)) {
     const written = await input.audit().then(
       () => true,
