@@ -342,10 +342,7 @@ export async function resolveLockReviewAppeal({
         await tx.$executeRaw`
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
-        // Lifting the intent check's own lock rules on the intent: its detection of this text is
-        // overturned and the rating marker it replaced comes back. Any other lock is a ruling on
-        // the rating only, as on the model form: the detection still gates the civitai.com face,
-        // the stale marker goes, and only re-locking this text is suppressed.
+        // SQL twin of comFaceIntentMetaAfterModeratorUnlock: keep the two in step.
         if (row.lockSource === COM_FACE_INTENT_LOCK_SOURCE) {
           await tx.$executeRaw(restoreReplacedRatingMarkerSql(modelId));
           await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));

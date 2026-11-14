@@ -510,6 +510,16 @@ describe('privateModelFromTraining — a moderator lifting the nsfw lock', () =>
     });
   });
 
+  // The private flow refuses a mature save, so the owner's only reach is a lock on a SFW listing.
+  it('neither overturns nor suppresses when the owner sends the lock lifted', async () => {
+    mockStored({ nsfw: false, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
+
+    await privateFromTraining({ user: owner, nsfw: false, lockedProperties: [] });
+
+    expect(writtenMeta().comFaceIntent).toEqual(detection);
+    expect(writtenMeta()).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
   it('leaves the verdict alone when the lock stays (control)', async () => {
     mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { comFaceIntent: detection } });
 
