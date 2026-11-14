@@ -4407,6 +4407,7 @@ export async function getStorylinesInfinite({
   viewer,
   browsingLevel,
   userId,
+  ids,
 }: {
   filter: StorylineFeedFilter;
   sort: StorylineFeedSort;
@@ -4417,6 +4418,8 @@ export async function getStorylinesInfinite({
   browsingLevel: number;
   /** Only this owner's storylines (their profile), under the same gates as the feed. */
   userId?: number;
+  /** Only these storylines (a search's candidates), under the same gates as the feed. */
+  ids?: number[];
 }) {
   const excluded = [...(await getViewerExcludedIds(viewer))];
   const viewerId = viewer?.id ?? -1;
@@ -4445,6 +4448,7 @@ export async function getStorylinesInfinite({
       SELECT 1 FROM "StorylineFollow" sf WHERE sf."storylineId" = st.id AND sf."userId" = ${viewerId}
     )`);
   if (userId) where.push(Prisma.sql`st."userId" = ${userId}`);
+  if (ids) where.push(Prisma.sql`st.id = ANY(${ids}::int[])`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);

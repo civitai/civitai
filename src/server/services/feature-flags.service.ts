@@ -464,6 +464,8 @@ const featureFlags = createFeatureFlags({
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
   // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
+  // The semantic storyline search endpoint. Dark: Flipt is its only switch.
+  semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
