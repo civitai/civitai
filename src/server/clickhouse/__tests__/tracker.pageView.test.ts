@@ -5,9 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * 🔴 WHY THIS FILE EXISTS, AND WHY THE UNIT TESTS NEXT DOOR ARE NOT ENOUGH.
  * `tracker-pageview-clamp.test.ts` calls `clampToColumn` with the TEST FILE'S OWN copies
- * of the bounds, and its wiring assertions match the SOURCE TEXT `clampToColumn(windowWidth,
- * INT16_MAX)` — the identifier, not its value. So no assertion over there is a function of
- * the two constants in `tracker.ts` that actually decide what reaches ClickHouse.
+ * of the bounds, so no assertion over there is a function of the two constants in
+ * `tracker.ts` that actually decide what reaches ClickHouse.
  *
  * Measured: changing `INT16_MAX` from 32_767 to 65_535 in tracker.ts left that suite
  * entirely green — 87 passed, identical to unmutated — while every window dimension in
