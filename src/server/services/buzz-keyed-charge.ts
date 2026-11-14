@@ -11,7 +11,7 @@ import {
 import { getPrefixRefundState } from '~/server/services/buzz-prefix-refund';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import type { TransactionType } from '~/shared/constants/buzz.constants';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 /**
@@ -165,7 +165,7 @@ async function readUntilFound<T>(
 ): Promise<T> {
   let value!: T;
   for (const delayMs of [0, ...KEYED_READ_RETRY_DELAYS_MS]) {
-    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (delayMs) await sleep(delayMs);
     try {
       value = await read();
     } catch (lookupError) {

@@ -1059,9 +1059,12 @@ export async function createEntityAppeal({
         const { chargeByPrefix, prefixWasRefunded } = await import(
           '~/server/services/buzz-keyed-charge'
         );
-        const { CHARGE_LOCKED_READ, CHARGE_LOCKED_REFUND, recordKeyedCharge } = await import(
-          '~/server/services/buzz-charge-lock'
-        );
+        const {
+          CHARGE_LOCKED_READ,
+          CHARGE_LOCKED_REFUND,
+          recordKeyedCharge,
+          ROUTINE_REFUSAL_REFUND_ATTEMPTS,
+        } = await import('~/server/services/buzz-charge-lock');
         const prefix = appealFeeTransactionPrefix(userId, entityType, entityId, idempotencyKey);
         const feeContext = { userId, amount: APPEAL_FEE };
         await chargeByPrefix(prefix, feeContext, {
@@ -1098,6 +1101,10 @@ export async function createEntityAppeal({
             isPrismaUniqueViolation(error)
               ? new TRPCError({ code: 'BAD_REQUEST', message: APPEAL_ALREADY_PENDING })
               : error,
+          // Already pending and IMAGE_NOT_APPEALABLE are routine, and a retry is then refused by the
+          // handler before it reaches the charge, so the refund is retried here. Worst case: the
+          // record transaction (45s) plus three refund transactions (31s each) and the pauses, ~140s.
+          refundAttempts: ROUTINE_REFUSAL_REFUND_ATTEMPTS,
         });
       }
 

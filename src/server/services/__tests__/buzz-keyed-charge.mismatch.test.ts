@@ -202,6 +202,7 @@ describe('heldChargeMatches', () => {
     fromAccountId: 2_222,
     fromAccountTypes: ['cashSettled'],
     toAccountId: 3_333,
+    toAccountType: 'yellow',
     type: TransactionType.Withdrawal,
   };
   const leg = {
@@ -222,8 +223,9 @@ describe('heldChargeMatches', () => {
   it.each([
     ['amount', { amount: 1_112 }],
     ['payer', { fromAccountId: 2_223 }],
-    ['payee', { toAccountId: 3_334 }],
-    ['source account type', { fromAccountType: 'yellow' }],
+    ['recipient account id', { toAccountId: 3_334 }],
+    ['source account type', { fromAccountType: 'blue' }],
+    ['destination account type', { toAccountType: 'green' }],
     ['transaction type', { type: TransactionType.Tip }],
   ])('refuses another %s', (_name, change) => {
     expect(check([{ ...leg, ...change }])).toBe(false);
@@ -257,10 +259,18 @@ describe('heldChargeMatches', () => {
       check([{ ...leg, fromAccountType: undefined, toAccountType: undefined, type: undefined }])
     ).toBe(true);
     // The charge did not name them.
-    const { fromAccountTypes: _types, type: _type, ...unnamed } = expected;
-    expect(check([{ ...leg, fromAccountType: 'yellow', type: TransactionType.Tip }], unnamed)).toBe(
-      true
-    );
+    const {
+      fromAccountTypes: _fromTypes,
+      toAccountType: _toType,
+      type: _type,
+      ...unnamed
+    } = expected;
+    expect(
+      check(
+        [{ ...leg, fromAccountType: 'blue', toAccountType: 'green', type: TransactionType.Tip }],
+        unnamed
+      )
+    ).toBe(true);
     // Amount, payer and payee are always compared.
     expect(check([{ ...leg, fromAccountType: undefined, type: undefined, amount: 1_112 }])).toBe(
       false
