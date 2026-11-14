@@ -261,17 +261,31 @@ describe('what readers are shown', () => {
     expect(texts.map((t) => t.id)).toEqual([1]);
   });
 
-  it('gives the author every row', async () => {
-    r.postText.findMany.mockResolvedValue(rows as never);
+  it('gives the author every level and their unscanned text, but never a refused or held text', async () => {
+    r.postText.findMany.mockResolvedValue([
+      ...rows,
+      { id: 3, postId: POST, index: 2, content: 'draft', nsfwLevel: 0, refused: false },
+      { id: 4, postId: POST, index: 3, content: 'refused words', nsfwLevel: 1, refused: true },
+      {
+        id: 5,
+        postId: POST,
+        index: 4,
+        content: 'held words',
+        nsfwLevel: 1,
+        refused: false,
+        csamHeld: true,
+      },
+    ] as never);
     const texts = await getPostTextsForViewer({
       postId: POST,
       browsingLevel: NsfwLevel.PG,
       seesAll: true,
     });
     expect(r.postText.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { postId: POST } })
+      expect.objectContaining({ where: { postId: POST, refused: false, csamHeld: false } })
     );
-    expect(texts.map((t) => t.id)).toEqual([1, 2]);
+    expect(texts.map((t) => t.id)).toEqual([1, 2, 3]);
+    expect(JSON.stringify(texts)).not.toMatch(/refused words|held words/);
   });
 
   it("holds the path's stubs to the storyline ceiling, with no content", async () => {
