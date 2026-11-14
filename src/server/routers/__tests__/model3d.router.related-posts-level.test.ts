@@ -8,12 +8,14 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 // leave every viewer at the service's PG default, and one that passed the input through would
 // let a request ask past its cap.
 
-const { related } = vi.hoisted(() => ({
+const { related, byId } = vi.hoisted(() => ({
   related: vi.fn(async (..._: unknown[]) => ({ items: [], nextCursor: undefined })),
+  byId: vi.fn(async (..._: unknown[]) => ({ id: 1 })),
 }));
 vi.mock('~/server/services/model3d.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Model3DService>()),
   getModel3DRelatedPosts: related,
+  getModel3DById: byId,
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -22,16 +24,21 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const { model3dRouter } = await import('../model3d.router');
 
-const caller = (user: Record<string, unknown> | undefined, canViewNsfw: boolean) =>
+const caller = (
+  user: Record<string, unknown> | undefined,
+  canViewNsfw: boolean,
+  isGreen = !canViewNsfw,
+  cookies: Record<string, string> = {}
+) =>
   model3dRouter.createCaller({
     user,
     acceptableOrigin: true,
     tokenScope: TokenScope.Full,
     apiKeyId: null,
-    req: { headers: {} },
+    req: { headers: {}, cookies },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
-    features: { model3dFeed: true, canViewNsfw, isGreen: !canViewNsfw },
+    features: { model3dFeed: true, canViewNsfw, isGreen },
     track: {},
   } as never);
 
@@ -61,5 +68,55 @@ describe('model3d.getRelatedPosts', () => {
     expect(await levelPassed(user, true)).toBe(NsfwLevel.PG | NsfwLevel.R);
     related.mockClear();
     expect(await levelPassed(user, true, NsfwLevel.XXX)).toBe(NsfwLevel.XXX);
+  });
+
+  it('lets unrated content through only where the domain serves mature content', async () => {
+    const moderator = { id: 1, isModerator: true, showNsfw: true, browsingLevel: NsfwLevel.PG };
+    const servesUnrated = async (canViewNsfw: boolean) => {
+      related.mockClear();
+      await caller(moderator, canViewNsfw).getRelatedPosts({ model3dId: 1 });
+      return (related.mock.calls[0][0] as { servesUnrated: boolean }).servesUnrated;
+    };
+    expect(await servesUnrated(false)).toBe(false);
+    expect(await servesUnrated(true)).toBe(true);
+  });
+
+  it('decides unrated by the domain, not by the viewer, for any viewer', async () => {
+    const viewer = { id: 7, isModerator: false, showNsfw: true, browsingLevel: NsfwLevel.PG };
+    const servesUnrated = async (isGreen: boolean) => {
+      related.mockClear();
+      // A mature-enabled viewer either way: only the domain differs.
+      await caller(viewer, true, isGreen).getRelatedPosts({ model3dId: 1 });
+      return (related.mock.calls[0][0] as { servesUnrated: boolean }).servesUnrated;
+    };
+    expect(await servesUnrated(true)).toBe(false);
+    expect(await servesUnrated(false)).toBe(true);
+  });
+
+  it("passes the viewer's disableHidden setting from its cookie", async () => {
+    const disableHidden = async (cookies: Record<string, string>) => {
+      related.mockClear();
+      await caller({ id: 7 }, true, false, cookies).getRelatedPosts({ model3dId: 1 });
+      return (related.mock.calls[0][0] as { disableHidden?: boolean }).disableHidden;
+    };
+    expect(await disableHidden({ disableHidden: 'true' })).toBe(true);
+    expect(await disableHidden({ disableHidden: 'false' })).toBe(false);
+    expect(await disableHidden({})).toBeFalsy();
+  });
+
+  it("hands a 3D model page the viewer's own capped level, for its source image", async () => {
+    const levelFor = async (user: Record<string, unknown> | undefined, canViewNsfw: boolean) => {
+      byId.mockClear();
+      await caller(user, canViewNsfw).getById({ id: 1 });
+      return (byId.mock.calls[0][0] as { browsingLevel?: number }).browsingLevel;
+    };
+    const mature = {
+      id: 7,
+      isModerator: false,
+      showNsfw: true,
+      browsingLevel: NsfwLevel.PG | NsfwLevel.R,
+    };
+    expect(await levelFor(undefined, true)).toBe(NsfwLevel.PG);
+    expect(await levelFor(mature, true)).toBe(NsfwLevel.PG | NsfwLevel.R);
   });
 });

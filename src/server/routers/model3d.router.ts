@@ -1,3 +1,4 @@
+import { booleanString } from '~/utils/zod-helpers';
 import {
   router,
   publicProcedure,
@@ -61,7 +62,8 @@ import {
   createModel3DReport,
   createModel3DReviewReport,
 } from '~/server/services/model3d-report.service';
-import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
+import { domainServableLevels, relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 // All model3d procedures are gated by the `model3dFeed` flag. The feed flag
 // controls viewing + commenting + reviewing the Model3D entity itself; the
@@ -117,7 +119,13 @@ export const model3dRouter = router({
   getById: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DByIdSchema)
-    .query(({ input, ctx }) => getModel3DById({ ...input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getModel3DById({
+        ...input,
+        user: ctx.user,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
+      })
+    ),
   // Look up a Model3D by orchestrator workflowId — used by the queue-card
   // "Post from Generation" flow. Requires login + ownership (or mod); the
   // service returns null instead of throwing when the draft hasn't landed yet
@@ -137,6 +145,7 @@ export const model3dRouter = router({
         ...input,
         userId: ctx.user?.id,
         isModerator: !!ctx.user?.isModerator,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
       })
     ),
   // Lazy materialization for the "Post from Generation" CTA. The webhook
@@ -179,7 +188,13 @@ export const model3dRouter = router({
   getFiles: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DFilesSchema)
-    .query(({ input, ctx }) => getModel3DFiles({ input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getModel3DFiles({
+        input,
+        user: ctx.user,
+        browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
+      })
+    ),
   // Fire-and-forget download tracking. Writes a ClickHouse `files` Download
   // event (entityType 'Model3D') the same way the AI-model download path does,
   // so the metrics job can roll it up into Model3DMetric.downloadCount and the
@@ -198,6 +213,9 @@ export const model3dRouter = router({
         input,
         user: ctx.user,
         browsingLevel: relatedPostsBrowsingLevel(ctx, input.browsingLevel),
+        // Unrated content is never served where the domain serves only safe levels.
+        servesUnrated: domainServableLevels(ctx) === allBrowsingLevelsFlag,
+        disableHidden: booleanString().optional().safeParse(ctx.req.cookies?.disableHidden).data,
       })
     ),
 

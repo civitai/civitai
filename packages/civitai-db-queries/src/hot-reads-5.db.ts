@@ -38,6 +38,7 @@ export function getPostModel3d(db: Kysely<DB>, postId: number) {
       'Model3D.userId as model3dUserId',
       'Model3D.status as model3dStatus',
       'Model3D.deletedAt as model3dDeletedAt',
+      'Model3D.tosViolation as model3dTosViolation',
     ])
     .where('Post.id', '=', postId)
     .executeTakeFirst();

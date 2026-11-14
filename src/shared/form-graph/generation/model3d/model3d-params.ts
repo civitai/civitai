@@ -145,3 +145,23 @@ export function getModel3dDetailRows(params: Record<string, unknown>) {
   }
   return rows;
 }
+
+const URL_VALUE = /^\s*(https?:|data:|blob:)|:\/\//i;
+
+/**
+ * The stored params of a 3D generation as anyone but its owner and moderators may read them: only
+ * the fields the details panel draws, as plain values, and never one holding a URL.
+ */
+export function publicModel3dParams(
+  params: unknown
+): Record<string, string | number | boolean> | null {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return null;
+  const migrated = migrateModel3dParams(params as Record<string, unknown>);
+  const out: Record<string, string | number | boolean> = {};
+  for (const field of ['ecosystem', ...Object.keys(model3dFieldLabels)]) {
+    const value = migrated[field];
+    if (typeof value === 'number' || typeof value === 'boolean') out[field] = value;
+    else if (typeof value === 'string' && !URL_VALUE.test(value)) out[field] = value;
+  }
+  return out;
+}

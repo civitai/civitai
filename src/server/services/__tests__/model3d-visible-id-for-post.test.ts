@@ -43,7 +43,13 @@ const { kyselyRead } = await import('~/server/db/kyselyDb');
 
 /** The post's row from the Kysely read: the Model3D columns are null when nothing is linked. */
 const setPostModel3d = (
-  model3d: { id: number; userId: number; status: Model3DStatus; deletedAt: Date | null } | null
+  model3d: {
+    id: number;
+    userId: number;
+    status: Model3DStatus;
+    deletedAt: Date | null;
+    tosViolation?: boolean;
+  } | null
 ) =>
   h.getPostModel3d.mockResolvedValueOnce({
     postId: 9,
@@ -51,6 +57,7 @@ const setPostModel3d = (
     model3dUserId: model3d?.userId ?? null,
     model3dStatus: model3d?.status ?? null,
     model3dDeletedAt: model3d?.deletedAt ?? null,
+    model3dTosViolation: model3d ? model3d.tosViolation ?? false : null,
   });
 
 beforeEach(() => h.getPostModel3d.mockReset());
@@ -78,6 +85,18 @@ describe('getVisibleModel3DIdForPost', () => {
 
   it('returns the id for a moderator even when the model is deleted', async () => {
     setPostModel3d({ id: 321, userId: 1, status: Model3DStatus.Published, deletedAt: new Date() });
+    await expect(
+      getVisibleModel3DIdForPost({ postId: 9, userId: 5, isModerator: true })
+    ).resolves.toBe(321);
+  });
+
+  it('returns null for a non-owner non-mod when a moderator removed the model', async () => {
+    const removed = { id: 321, userId: 1, status: Model3DStatus.Published, deletedAt: null };
+    setPostModel3d({ ...removed, tosViolation: true });
+    await expect(getVisibleModel3DIdForPost({ postId: 9, userId: 99 })).resolves.toBeNull();
+    setPostModel3d({ ...removed, tosViolation: true });
+    await expect(getVisibleModel3DIdForPost({ postId: 9, userId: 1 })).resolves.toBe(321);
+    setPostModel3d({ ...removed, tosViolation: true });
     await expect(
       getVisibleModel3DIdForPost({ postId: 9, userId: 5, isModerator: true })
     ).resolves.toBe(321);

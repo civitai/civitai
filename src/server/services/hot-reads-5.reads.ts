@@ -48,7 +48,11 @@ export async function readKeyValueViaKysely(
 
 /** The Prisma `post.findUnique` shape: `null` for a missing post, `model3d: null` for no Model3D. */
 type PostModel3dRead = Prisma.PostGetPayload<{
-  select: { model3d: { select: { id: true; userId: true; status: true; deletedAt: true } } };
+  select: {
+    model3d: {
+      select: { id: true; userId: true; status: true; deletedAt: true; tosViolation: true };
+    };
+  };
 }> | null;
 
 export async function readPostModel3dViaKysely(
@@ -64,6 +68,7 @@ export async function readPostModel3dViaKysely(
       userId: row.model3dUserId as number,
       status: row.model3dStatus as NonNullable<NonNullable<PostModel3dRead>['model3d']>['status'],
       deletedAt: row.model3dDeletedAt,
+      tosViolation: row.model3dTosViolation as boolean,
     },
   };
 }

@@ -60,9 +60,7 @@ describe('getVisibleModel3DIds — batched feed authZ for the model3dId field', 
   });
 
   it('nulls a deleted (Published-but-deletedAt) model for a non-owner non-mod', async () => {
-    setRows([
-      { id: 12, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() },
-    ]);
+    setRows([{ id: 12, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() }]);
     const visible = await getVisibleModel3DIds({ model3dIds: [12], userId: OTHER });
     expect(visible.has(12)).toBe(false);
   });
@@ -74,9 +72,7 @@ describe('getVisibleModel3DIds — batched feed authZ for the model3dId field', 
   });
 
   it('keeps a deleted model for a moderator', async () => {
-    setRows([
-      { id: 14, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() },
-    ]);
+    setRows([{ id: 14, userId: OWNER, status: Model3DStatus.Published, deletedAt: new Date() }]);
     const visible = await getVisibleModel3DIds({
       model3dIds: [14],
       userId: OTHER,
@@ -102,6 +98,12 @@ describe('getVisibleModel3DIds — batched feed authZ for the model3dId field', 
     await getVisibleModel3DIds({ model3dIds: [30, 30, 30] });
     const arg = h.findMany.mock.calls[0][0];
     expect(arg.where).toEqual({ id: { in: [30] } });
-    expect(arg.select).toEqual({ id: true, userId: true, status: true, deletedAt: true });
+    expect(arg.select).toEqual({
+      id: true,
+      userId: true,
+      status: true,
+      deletedAt: true,
+      tosViolation: true,
+    });
   });
 });

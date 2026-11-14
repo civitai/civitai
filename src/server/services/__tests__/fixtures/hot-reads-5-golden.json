@@ -248,7 +248,8 @@
       "status": "Deleted",
       "deletedAt": {
         "$date": "2026-02-03T04:05:06.789Z"
-      }
+      },
+      "tosViolation": true
     }
   },
   "model3d:a missing post": null,
@@ -257,7 +258,8 @@
       "id": 5201,
       "userId": 5101,
       "status": "Published",
-      "deletedAt": null
+      "deletedAt": null,
+      "tosViolation": false
     }
   },
   "model3d:no Model3D": {

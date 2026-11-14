@@ -4,6 +4,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { IconPlus, IconUsers } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
@@ -37,7 +38,9 @@ export function MakesUsesRail({ model3dId }: MakesUsesRailProps) {
     { placeholderData: keepPreviousData }
   );
 
-  const items = data?.items ?? [];
+  // The viewer's hidden users and images apply here as on every other post list.
+  const { items: visible } = useApplyHiddenPreferences({ type: 'posts', data: data?.items });
+  const items = visible ?? [];
   const isMuted = currentUser?.muted ?? false;
 
   const handleAddPostClick = () => {
@@ -76,16 +79,12 @@ export function MakesUsesRail({ model3dId }: MakesUsesRailProps) {
         ) : items.length === 0 ? (
           <Stack gap="xs" align="flex-start">
             <Text c="dimmed" size="sm">
-              No community posts yet. Share an image of what you made with this 3D model
-              to be the first.
+              No community posts yet. Share an image of what you made with this 3D model to be the
+              first.
             </Text>
             {!isMuted && (
               <LoginRedirect reason="post-images">
-                <Button
-                  size="xs"
-                  leftSection={<IconPlus size={14} />}
-                  onClick={handleAddPostClick}
-                >
+                <Button size="xs" leftSection={<IconPlus size={14} />} onClick={handleAddPostClick}>
                   Add the first post
                 </Button>
               </LoginRedirect>

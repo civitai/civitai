@@ -19,6 +19,7 @@ describe('canViewModel3d — authZ for the image-payload model3dId gate', () => 
       canViewModel3d({
         status: Model3DStatus.Draft,
         deletedAt: new Date(),
+        tosViolation: false,
         ownerId: OWNER,
         userId: OTHER,
         isModerator: true,
@@ -28,12 +29,19 @@ describe('canViewModel3d — authZ for the image-payload model3dId gate', () => 
 
   it('the owner sees their own at any status', () => {
     expect(
-      canViewModel3d({ status: Model3DStatus.Draft, deletedAt: null, ownerId: OWNER, userId: OWNER })
+      canViewModel3d({
+        status: Model3DStatus.Draft,
+        deletedAt: null,
+        tosViolation: false,
+        ownerId: OWNER,
+        userId: OWNER,
+      })
     ).toBe(true);
     expect(
       canViewModel3d({
         status: Model3DStatus.Published,
         deletedAt: null,
+        tosViolation: false,
         ownerId: OWNER,
         userId: OWNER,
       })
@@ -42,12 +50,18 @@ describe('canViewModel3d — authZ for the image-payload model3dId gate', () => 
 
   it('the public sees a Published, not-deleted model', () => {
     expect(
-      canViewModel3d({ status: Model3DStatus.Published, deletedAt: null, ownerId: OWNER })
+      canViewModel3d({
+        status: Model3DStatus.Published,
+        deletedAt: null,
+        tosViolation: false,
+        ownerId: OWNER,
+      })
     ).toBe(true);
     expect(
       canViewModel3d({
         status: Model3DStatus.Published,
         deletedAt: null,
+        tosViolation: false,
         ownerId: OWNER,
         userId: OTHER,
       })
@@ -56,11 +70,22 @@ describe('canViewModel3d — authZ for the image-payload model3dId gate', () => 
 
   it('hides a non-Published model from a non-owner non-mod', () => {
     expect(
-      canViewModel3d({ status: Model3DStatus.Draft, deletedAt: null, ownerId: OWNER, userId: OTHER })
+      canViewModel3d({
+        status: Model3DStatus.Draft,
+        deletedAt: null,
+        tosViolation: false,
+        ownerId: OWNER,
+        userId: OTHER,
+      })
     ).toBe(false);
     // anonymous (no userId) is treated as public
     expect(
-      canViewModel3d({ status: Model3DStatus.Draft, deletedAt: null, ownerId: OWNER })
+      canViewModel3d({
+        status: Model3DStatus.Draft,
+        deletedAt: null,
+        tosViolation: false,
+        ownerId: OWNER,
+      })
     ).toBe(false);
   });
 
@@ -69,6 +94,7 @@ describe('canViewModel3d — authZ for the image-payload model3dId gate', () => 
       canViewModel3d({
         status: Model3DStatus.Published,
         deletedAt: new Date(),
+        tosViolation: false,
         ownerId: OWNER,
         userId: OTHER,
       })
@@ -77,7 +103,28 @@ describe('canViewModel3d — authZ for the image-payload model3dId gate', () => 
 
   it('owner does NOT match when userId is undefined (anonymous never an owner)', () => {
     expect(
-      canViewModel3d({ status: Model3DStatus.Draft, deletedAt: null, ownerId: OWNER, userId: undefined })
+      canViewModel3d({
+        status: Model3DStatus.Draft,
+        deletedAt: null,
+        tosViolation: false,
+        ownerId: OWNER,
+        userId: undefined,
+      })
     ).toBe(false);
+  });
+
+  it('a model a moderator removed is hidden from everyone but its owner and moderators', () => {
+    const removed = {
+      status: Model3DStatus.Published,
+      deletedAt: null,
+      tosViolation: true,
+      ownerId: OWNER,
+    };
+    expect(canViewModel3d({ ...removed })).toBe(false);
+    expect(canViewModel3d({ ...removed, userId: OTHER })).toBe(false);
+    expect(canViewModel3d({ ...removed, userId: OWNER })).toBe(true);
+    expect(canViewModel3d({ ...removed, userId: OTHER, isModerator: true })).toBe(true);
+    // Control: the same model in good standing is public.
+    expect(canViewModel3d({ ...removed, tosViolation: false, userId: OTHER })).toBe(true);
   });
 });

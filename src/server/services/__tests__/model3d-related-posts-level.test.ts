@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
@@ -10,6 +10,23 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
+const h = vi.hoisted(() => ({
+  // Each viewer's own hidden tags, by user id (-1: signed out).
+  hiddenByUser: {} as Record<number, { id: number; hidden: boolean }[]>,
+  addons: [] as unknown[],
+}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getAllHiddenForUser: async ({ userId = -1 }: { userId?: number }) => ({
+    hiddenTags: h.hiddenByUser[userId] ?? [],
+  }),
+}));
+vi.mock('~/server/services/system-cache', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getBrowsingSettingAddons: async () => h.addons,
+  getBlockedBrowsingTags: async () => [],
+}));
+
 const { getModel3DRelatedPosts } = await import('~/server/services/model3d.service');
 
 /**
@@ -19,7 +36,7 @@ const { getModel3DRelatedPosts } = await import('~/server/services/model3d.servi
  * would select.
  */
 type Row = Record<string, unknown>;
-const OPERATORS = new Set(['in', 'not', 'lte', 'some']);
+const OPERATORS = new Set(['in', 'not', 'lte', 'some', 'none']);
 const matches = (row: Row, where: Row | undefined): boolean =>
   !where ||
   Object.entries(where).every(([key, cond]) => {
@@ -28,13 +45,14 @@ const matches = (row: Row, where: Row | undefined): boolean =>
     if (!(key in row)) throw new Error(`The fake has no column ${key}`);
     const value = row[key];
     if (cond !== null && typeof cond === 'object' && !(cond instanceof Date)) {
-      const ops = cond as { in?: unknown[]; not?: unknown; lte?: Date; some?: Row };
+      const ops = cond as { in?: unknown[]; not?: unknown; lte?: Date; some?: Row; none?: Row };
       for (const op of Object.keys(ops))
         if (!OPERATORS.has(op)) throw new Error(`The fake does not know ${op}`);
       if ('in' in ops && !ops.in!.includes(value)) return false;
       if ('not' in ops && value === ops.not) return false;
       if ('lte' in ops && !(value instanceof Date && value <= ops.lte!)) return false;
       if ('some' in ops && !(value as Row[]).some((r) => matches(r, ops.some))) return false;
+      if ('none' in ops && (value as Row[]).some((r) => matches(r, ops.none))) return false;
       return true;
     }
     return value === cond;
@@ -56,6 +74,8 @@ const image = (nsfwLevel: number, over: Row = {}) => ({
   acceptableMinor: false,
   poi: false,
   minor: false,
+  modelRestricted: false,
+  tags: [] as Row[],
   ...over,
 });
 const post = (id: number, nsfwLevel: number, images: Row[], over: Row = {}) => ({
@@ -92,13 +112,31 @@ const POSTS = [
   post(13, PG | Blocked, [image(PG), image(Blocked)]),
   post(14, PG, [image(PG, { blockedFor: 'tos' })]),
   // A restricted model's mature image is passed over for the next one.
-  post(15, R, [image(R, { id: 9001 }), image(R)]),
+  post(15, R, [image(R, { id: 9001, modelRestricted: true }), image(R)]),
   // Blocked alone is no level a viewer browses at.
   post(16, Blocked, [image(Blocked)]),
   // A post level that has drifted from its images: rated XXX, its one image PG.
   post(17, XXX, [image(PG)]),
+  // Another user's unrated draft: its image not yet rated.
+  post(18, 0, [image(0, { userId: STRANGER, ingestion: 'Pending' })], {
+    userId: STRANGER,
+    publishedAt: null,
+  }),
+  // Their PG draft whose first image is not yet rated.
+  post(
+    19,
+    PG,
+    [image(0, { userId: STRANGER, ingestion: 'Pending' }), image(PG, { userId: STRANGER })],
+    {
+      userId: STRANGER,
+      publishedAt: null,
+    }
+  ),
 ];
-const RESTRICTED_MATURE = new Set([9001]);
+/** Every fixture image by id, for the restricted-model query. */
+const imageById = (id: number) =>
+  (rows as typeof POSTS).flatMap((p) => p.images as Row[]).find((i) => i.id === id);
+let rows: Row[] = POSTS;
 
 type Args = {
   where: Row;
@@ -107,33 +145,56 @@ type Args = {
   select: { images: { where?: Row; take: number; select: Row } };
 };
 beforeEach(() => {
-  dbMock.dbRead.model3D.findUnique.mockResolvedValue({ id: MODEL3D, userId: OWNER } as never);
+  rows = POSTS;
+  h.hiddenByUser = {};
+  h.addons = [];
+  dbMock.dbRead.model3D.findUnique.mockResolvedValue({
+    id: MODEL3D,
+    userId: OWNER,
+    status: 'Published',
+    deletedAt: null,
+    tosViolation: false,
+  } as never);
   // The restricted-model lookup, over the cover candidates it is asked about.
+  // The restricted-model query, run as its own text says: each condition applies only if the
+  // statement has it, so a dropped condition shows in what comes back.
   dbMock.dbRead.$queryRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ) =>
-    Prisma.sql(strings, ...(values as never[]))
-      .values.filter((v): v is number => typeof v === 'number' && RESTRICTED_MATURE.has(v))
-      .map((id) => ({ id }))) as never);
+  ) => {
+    const { sql, values: params } = Prisma.sql(strings, ...(values as never[]));
+    const masked = /\(i\."nsfwLevel" & \?\) != 0/.test(sql);
+    const restricted = /AND i\."modelRestricted"/.test(sql);
+    const mask = masked ? (params[params.length - 1] as number) : 0;
+    const ids = (masked ? params.slice(0, -1) : params) as number[];
+    return ids
+      .map(imageById)
+      .filter(
+        (i): i is Row =>
+          !!i &&
+          (!masked || ((i.nsfwLevel as number) & mask) !== 0) &&
+          (!restricted || i.modelRestricted === true)
+      )
+      .map((i) => ({ id: i.id }));
+  }) as never);
   dbMock.dbRead.post.findMany.mockImplementation((async (args: Args) => {
-    const ordered = POSTS.filter((p) => matches(p, args.where)).sort(
-      (a, b) =>
-        Number(!a.publishedAt) - Number(!b.publishedAt) ||
-        (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0) ||
-        b.id - a.id
-    );
+    const ordered = (rows as typeof POSTS)
+      .filter((p) => matches(p, args.where))
+      .sort(
+        (a, b) =>
+          Number(!a.publishedAt) - Number(!b.publishedAt) ||
+          (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0) ||
+          b.id - a.id
+      );
     const from = args.cursor ? ordered.findIndex((p) => p.id === args.cursor!.id) : 0;
     return ordered.slice(from, from + args.take).map((p) => ({
       ...p,
       images: (p.images as Row[])
         .filter((i) => matches(i, args.select.images.where))
         .slice(0, args.select.images.take)
-        // A field the query leaves out is not in the row it returns.
+        // Only the fields the query selects are in the row it returns.
         .map((i) =>
-          Object.fromEntries(
-            Object.entries(i).filter(([k]) => args.select.images.select[k] !== false)
-          )
+          Object.fromEntries(Object.entries(i).filter(([k]) => args.select.images.select[k]))
         ),
     }));
   }) as never);
@@ -142,12 +203,13 @@ beforeEach(() => {
 const page = (
   user: { id: number; isModerator?: boolean } | undefined,
   level?: number,
-  extra: { limit?: number; cursor?: number } = {}
+  extra: { limit?: number; cursor?: number; servesUnrated?: boolean } = {}
 ) =>
   getModel3DRelatedPosts({
     input: { model3dId: MODEL3D, limit: extra.limit ?? 12, cursor: extra.cursor },
     user: user as never,
     browsingLevel: level,
+    servesUnrated: extra.servesUnrated,
   });
 const listed = async (...args: Parameters<typeof page>) =>
   (await page(...args)).items.map((p) => ({ id: p.id, cover: p.images[0]?.nsfwLevel ?? null }));
@@ -200,11 +262,25 @@ describe('getModel3DRelatedPosts', () => {
     ]);
   });
 
-  it('shows a viewer their own draft with their own cover, and not to anyone else', async () => {
-    const own = await listed({ id: STRANGER }, publicBrowsingLevelsFlag);
-    expect(own.find((p) => p.id === 5)).toEqual({ id: 5, cover: R });
+  it('shows a viewer their own draft within their level, and not to anyone else', async () => {
+    const own = async (level: number, servesUnrated = false) =>
+      (await listed({ id: STRANGER }, level, { limit: 50, servesUnrated })).filter((p) =>
+        [5, 18].includes(p.id)
+      );
+    expect(await own(PG | R)).toEqual([{ id: 5, cover: R }]);
+    // Their R draft is above a PG level, own or not.
+    expect(await own(PG)).toEqual([]);
+    // Unrated, only where the domain serves unrated content.
+    expect(await own(PG, true)).toEqual([{ id: 18, cover: 0 }]);
+    // An unrated image is passed over for a rated cover where the domain doesn't serve unrated.
+    const draft = async (servesUnrated: boolean) =>
+      (await listed({ id: STRANGER }, PG, { limit: 50, servesUnrated })).find((p) => p.id === 19);
+    expect(await draft(false)).toEqual({ id: 19, cover: PG });
+    expect(await draft(true)).toEqual({ id: 19, cover: 0 });
     expect(
-      (await listed({ id: 77 }, allBrowsingLevelsFlag, { limit: 50 })).some((p) => p.id === 5)
+      (await listed({ id: 77 }, allBrowsingLevelsFlag, { limit: 50, servesUnrated: true })).some(
+        (p) => [5, 18, 19].includes(p.id)
+      )
     ).toBe(false);
   });
 
@@ -226,11 +302,132 @@ describe('getModel3DRelatedPosts', () => {
     }
   });
 
-  it('shows a moderator every post with its first image (control)', async () => {
-    const all = await listed({ id: 1, isModerator: true }, publicBrowsingLevelsFlag, { limit: 50 });
-    expect(all).toHaveLength(POSTS.length);
+  it('shows a moderator posts in any state, but only within their level', async () => {
+    const mod = { id: 1, isModerator: true };
+    const atPG = await listed(mod, publicBrowsingLevelsFlag, { limit: 50 });
+    // A draft and posts whose only image is in review or flagged: a moderator still sees them.
+    expect(atPG.find((p) => p.id === 8)).toEqual({ id: 8, cover: PG });
+    expect(atPG.find((p) => p.id === 7)).toEqual({ id: 7, cover: PG });
+    // Nothing above PG: no XXX post, no XXX cover, and no unrated post on a SFW-only domain.
+    expect(atPG.some((p) => [2, 11, 17, 3, 18].includes(p.id))).toBe(false);
+    expect(atPG.every((p) => p.cover === null || p.cover === PG)).toBe(true);
+    expect(atPG.find((p) => p.id === 12)).toEqual({ id: 12, cover: null });
+    // Unrated, where the domain serves it.
+    const unrated = await listed(mod, publicBrowsingLevelsFlag, { limit: 50, servesUnrated: true });
+    expect(unrated.find((p) => p.id === 18)).toEqual({ id: 18, cover: 0 });
+    // At every level they see every post that has one (control).
+    const all = await listed(mod, allBrowsingLevelsFlag, { limit: 50, servesUnrated: true });
     expect(all.find((p) => p.id === 2)).toEqual({ id: 2, cover: XXX });
-    expect(all.find((p) => p.id === 8)).toEqual({ id: 8, cover: PG });
+  });
+
+  it('answers for a draft, deleted or ToS-flagged 3D model only to its owner and moderators', async () => {
+    for (const state of [{ status: 'Draft' }, { deletedAt: past }, { tosViolation: true }]) {
+      dbMock.dbRead.model3D.findUnique.mockResolvedValue({
+        id: MODEL3D,
+        userId: OWNER,
+        status: 'Published',
+        deletedAt: null,
+        tosViolation: false,
+        ...state,
+      } as never);
+      await expect(page(undefined, publicBrowsingLevelsFlag)).rejects.toThrow(/No 3D model/);
+      await expect(page({ id: STRANGER }, publicBrowsingLevelsFlag)).rejects.toThrow(/No 3D model/);
+      expect((await page({ id: OWNER }, publicBrowsingLevelsFlag)).items).toBeInstanceOf(Array);
+      expect(
+        (await page({ id: 1, isModerator: true }, publicBrowsingLevelsFlag)).items
+      ).toBeInstanceOf(Array);
+    }
+  });
+});
+
+describe('getModel3DRelatedPosts, with hidden tags', () => {
+  const HIDDEN = 100;
+  const SITE_HIDDEN = 200;
+  const tagged = (tagId: number, disabled = false) => [{ tagId, disabled }];
+  const TAG_POSTS = [
+    // Its first image carries a hidden tag: the next one is its cover.
+    post(30, PG, [image(PG, { tags: tagged(HIDDEN) }), image(PG)]),
+    // Its only image carries a hidden tag: not listed.
+    post(31, PG, [image(PG, { tags: tagged(HIDDEN) })]),
+    // A tag vote that was disabled hides nothing.
+    post(32, PG, [image(PG, { tags: tagged(HIDDEN, true) })]),
+    // Another user's post whose only image carries a tag the site hides at PG.
+    post(33, PG, [image(PG, { userId: STRANGER, tags: tagged(SITE_HIDDEN) })], {
+      userId: STRANGER,
+    }),
+  ];
+  const coverOf = async (user: Parameters<typeof page>[0]) =>
+    Object.fromEntries(
+      (await page(user, publicBrowsingLevelsFlag, { limit: 50 })).items.map((p) => [
+        p.id,
+        p.images[0]?.id ?? null,
+      ])
+    );
+  const [first30, second30] = TAG_POSTS[0].images.map((i) => i.id);
+  beforeEach(() => {
+    rows = TAG_POSTS;
+  });
+
+  it('lists every post and its first cover when nothing is hidden (control)', async () => {
+    expect(await coverOf({ id: 77 })).toEqual({
+      30: first30,
+      31: TAG_POSTS[1].images[0].id,
+      32: TAG_POSTS[2].images[0].id,
+      33: TAG_POSTS[3].images[0].id,
+    });
+  });
+
+  it('passes over a cover carrying a tag the viewer hid, moderators included', async () => {
+    h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: true }], 1: [{ id: HIDDEN, hidden: true }] };
+    // Another viewer's hides are not this viewer's (control).
+    expect((await coverOf({ id: STRANGER }))[30]).toBe(first30);
+    for (const user of [{ id: 77 }, { id: 1, isModerator: true }]) {
+      const covers = await coverOf(user);
+      expect(covers[30]).toBe(second30);
+      expect(covers[32]).toBe(TAG_POSTS[2].images[0].id);
+    }
+    expect(await coverOf({ id: 77 })).not.toHaveProperty('31');
+    // A moderator sees posts in any state: listed, with no cover.
+    expect((await coverOf({ id: 1, isModerator: true }))[31]).toBeNull();
+    // A tag the viewer only voted on, not hid, hides nothing.
+    h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: false }] };
+    expect((await coverOf({ id: 77 }))[30]).toBe(first30);
+  });
+
+  it('an R+ post whose only passing cover carries a child tag is not listed for an R viewer', async () => {
+    const CHILD = 300;
+    rows = [
+      post(40, R, [image(R, { userId: STRANGER, tags: tagged(CHILD) })], { userId: STRANGER }),
+      // Control: the same post without the tag is listed.
+      post(41, R, [image(R, { userId: STRANGER })], { userId: STRANGER }),
+    ];
+    h.addons = [{ type: 'some', nsfwLevels: [R, X, XXX], excludedTagIds: [CHILD] }];
+    const ids = (await page({ id: 77 }, R, { limit: 50 })).items.map((p) => p.id);
+    expect(ids).toEqual([41]);
+  });
+
+  it("keeps covers with a tag the viewer hid when they turned hiding off; the site's tags still apply", async () => {
+    h.hiddenByUser = { 77: [{ id: HIDDEN, hidden: true }] };
+    h.addons = [{ type: 'some', nsfwLevels: [PG], excludedTagIds: [SITE_HIDDEN] }];
+    const { items } = await getModel3DRelatedPosts({
+      input: { model3dId: MODEL3D, limit: 50 },
+      user: { id: 77 } as never,
+      browsingLevel: publicBrowsingLevelsFlag,
+      disableHidden: true,
+    });
+    const covers = Object.fromEntries(items.map((p) => [p.id, p.images[0]?.id ?? null]));
+    expect(covers[30]).toBe(first30);
+    expect(covers).toHaveProperty('31');
+    expect(covers).not.toHaveProperty('33');
+  });
+
+  it("hides a site-hidden tag at the viewer's level, except on the viewer's own image", async () => {
+    h.addons = [{ type: 'some', nsfwLevels: [PG], excludedTagIds: [SITE_HIDDEN] }];
+    expect(await coverOf(undefined)).not.toHaveProperty('33');
+    expect(await coverOf({ id: 77 })).not.toHaveProperty('33');
+    expect((await coverOf({ id: STRANGER }))[33]).toBe(TAG_POSTS[3].images[0].id);
+    // A moderator is not held to the site's hidden tags.
+    expect((await coverOf({ id: 1, isModerator: true }))[33]).toBe(TAG_POSTS[3].images[0].id);
   });
 });
 
@@ -275,5 +472,44 @@ describe('relatedPostsBrowsingLevel', () => {
   it("reads a signed-in mature viewer's saved level when none is asked, and what they ask for otherwise", () => {
     expect(relatedPostsBrowsingLevel(mature(PG | R), undefined)).toBe(PG | R);
     expect(relatedPostsBrowsingLevel(mature(PG | R), XXX)).toBe(XXX);
+  });
+});
+
+describe("getModel3DRelatedPosts, a restricted model's images", () => {
+  beforeEach(() => {
+    rows = [
+      // A mature image of a restricted model is passed over for the next.
+      post(
+        50,
+        R,
+        [image(R, { userId: STRANGER, modelRestricted: true }), image(R, { userId: STRANGER })],
+        {
+          userId: STRANGER,
+        }
+      ),
+      // A restricted model's PG image is kept: only its mature images are dropped.
+      post(
+        51,
+        PG,
+        [image(PG, { userId: STRANGER, modelRestricted: true }), image(PG, { userId: STRANGER })],
+        {
+          userId: STRANGER,
+        }
+      ),
+      // A mature image of an unrestricted model is kept.
+      post(52, R, [image(R, { userId: STRANGER }), image(R, { userId: STRANGER })], {
+        userId: STRANGER,
+      }),
+    ];
+  });
+
+  it('drops only the mature images of a restricted model', async () => {
+    const [first50, second50] = (rows[0].images as Row[]).map((i) => i.id);
+    const [first51] = (rows[1].images as Row[]).map((i) => i.id);
+    const [first52] = (rows[2].images as Row[]).map((i) => i.id);
+    const { items } = await page({ id: 77 }, PG | R, { limit: 50 });
+    const covers = Object.fromEntries(items.map((p) => [p.id, p.images[0]?.id]));
+    expect(covers).toEqual({ 50: second50, 51: first51, 52: first52 });
+    expect(covers[50]).not.toBe(first50);
   });
 });

@@ -35,7 +35,6 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   throwAuthorizationError,
@@ -67,6 +66,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { publicModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 import { NsfwLevel } from '~/server/common/enums';
 import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import {
@@ -75,6 +75,8 @@ import {
 } from '~/server/orchestrator/polygen/polygen-output';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 
 type SessionUser = {
   id: number;
@@ -106,9 +108,31 @@ const model3dFileSelect = {
   createdAt: true,
 } satisfies Prisma.Model3DFileSelect;
 
-// Every image a 3D model read returns: never its generation data, which no 3D model surface shows
-// and which an image's owner may have hidden.
-const model3dImageSelect = { ...imageSelect, meta: false } satisfies Prisma.ImageSelect;
+// Every image a 3D model read returns: only what its cards and pages draw. Never its generation
+// data, which an image's owner may have hidden, nor its moderation state.
+const model3dImageSelect = {
+  id: true,
+  name: true,
+  url: true,
+  nsfwLevel: true,
+  width: true,
+  height: true,
+  hash: true,
+  type: true,
+  userId: true,
+  createdAt: true,
+  postId: true,
+} satisfies Prisma.ImageSelect;
+
+// A feed card's thumbnail also carries what its media player reads from `metadata`, and nothing
+// else in it: the rest holds moderation reasons.
+const CARD_METADATA_KEYS = ['width', 'height', 'duration', 'thumbnailFrame'] as const;
+const cardMetadata = (metadata: Prisma.JsonValue) => {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  return Object.fromEntries(
+    CARD_METADATA_KEYS.filter((key) => key in metadata).map((key) => [key, metadata[key]])
+  );
+};
 
 const model3dDetailSelect = {
   id: true,
@@ -168,7 +192,7 @@ const model3dListSelect = {
   publishedAt: true,
   createdAt: true,
   thumbnailImageId: true,
-  thumbnailImage: { select: model3dImageSelect },
+  thumbnailImage: { select: { ...model3dImageSelect, metadata: true } },
   user: { select: userWithCosmeticsSelect },
   metric: true,
   // Tags drive client-side `useApplyHiddenPreferences` filtering on the feed.
@@ -211,11 +235,83 @@ const periodStartDate = (period: MetricTimeframe): Date | null => {
 // Read helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Of these images, the ones the feed would show at these levels: scanned, out of review, never
+ * blocked, not flagged, within the levels, and not a restricted model's mature image.
+ */
+async function servableImageIds(ids: number[], levels: number[]) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Set<number>();
+  const [states, restricted] = await Promise.all([
+    dbRead.image.findMany({
+      where: { id: { in: unique } },
+      select: {
+        id: true,
+        nsfwLevel: true,
+        ingestion: true,
+        blockedFor: true,
+        needsReview: true,
+        minor: true,
+        poi: true,
+      },
+    }),
+    restrictedMatureImageIds(unique),
+  ]);
+  return new Set(
+    states
+      .filter(
+        (state) =>
+          state.ingestion === 'Scanned' &&
+          !state.blockedFor &&
+          !state.needsReview &&
+          !state.minor &&
+          !state.poi &&
+          levels.includes(state.nsfwLevel) &&
+          !restricted.has(state.id)
+      )
+      .map((state) => state.id)
+  );
+}
+
+// Anyone but its owner and moderators gets a model, and its images, as the feed shows them: a
+// model rated within the viewer's level, and images scanned, out of review, never blocked, not
+// flagged, within that level, and not a restricted model's mature image.
+const model3dAccess = ({
+  ownerId,
+  nsfwLevel,
+  userId,
+  isModerator,
+  browsingLevel,
+}: {
+  ownerId: number;
+  nsfwLevel: number;
+  userId?: number;
+  isModerator: boolean;
+  /** The viewer's resolved, capped level. */
+  browsingLevel: number;
+}) => {
+  const levels = parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel));
+  const exempt = isModerator || ownerId === userId;
+  return {
+    exempt,
+    modelVisible: exempt || levels.includes(nsfwLevel),
+    servableImage: async <T extends { id: number }>(image: T | null) =>
+      image && (exempt || (await servableImageIds([image.id], levels)).has(image.id))
+        ? image
+        : null,
+  };
+};
+
 export type Model3DGetById = NonNullable<Awaited<ReturnType<typeof getModel3DById>>>;
 export const getModel3DById = async ({
   id,
   user,
-}: GetModel3DByIdInput & { user?: SessionUser | null }) => {
+  browsingLevel = publicBrowsingLevelsFlag,
+}: GetModel3DByIdInput & {
+  user?: SessionUser | null;
+  /** The viewer's resolved, capped level; unset reads PG only. */
+  browsingLevel?: number;
+}) => {
   try {
     const isModerator = !!user?.isModerator;
     const model3d = await dbRead.model3D.findUnique({
@@ -227,14 +323,32 @@ export const getModel3DById = async ({
     // Visibility rules:
     // - Mods see everything.
     // - Owner sees their own (any status).
-    // - Public sees Published and not-Deleted.
-    const isOwner = !!user && model3d.userId === user.id;
-    if (!isModerator && !isOwner) {
-      if (model3d.status !== Model3DStatus.Published) {
-        throw throwNotFoundError(`No 3D model with id ${id}`);
-      }
-      if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
-    }
+    // - Public sees Published, not-Deleted and not removed by a moderator.
+    if (
+      !canViewModel3d({
+        status: model3d.status,
+        deletedAt: model3d.deletedAt,
+        tosViolation: model3d.tosViolation,
+        ownerId: model3d.userId,
+        userId: user?.id,
+        isModerator,
+      })
+    )
+      throw throwNotFoundError(`No 3D model with id ${id}`);
+
+    const access = model3dAccess({
+      ownerId: model3d.userId,
+      nsfwLevel: model3d.nsfwLevel,
+      userId: user?.id,
+      isModerator,
+      browsingLevel,
+    });
+    if (!access.modelVisible) throw throwNotFoundError(`No 3D model with id ${id}`);
+    const sourceImage = await access.servableImage(model3d.sourceImage);
+    const thumbnailImage = await access.servableImage(model3d.thumbnailImage);
+    const generationParams = access.exempt
+      ? model3d.generationParams
+      : publicModel3dParams(model3d.generationParams);
 
     // The signed-in user's own recommend (thumbs-up), so the detail page can
     // render the gold thumbs-up toggle in its correct state.
@@ -247,6 +361,9 @@ export const getModel3DById = async ({
 
     return {
       ...model3d,
+      sourceImage,
+      thumbnailImage,
+      generationParams,
       tags: model3d.tags.map((t) => t.tag),
       userReview,
     };
@@ -471,6 +588,11 @@ export const getModel3DsInfinite = async ({
       }
     }
 
+    // A model a moderator removed shows only to its owner and to moderators.
+    if (!isModerator) {
+      AND.push({ OR: [{ tosViolation: false }, ...(user ? [{ userId: user.id }] : [])] });
+    }
+
     if (userId) AND.push({ userId });
     if (username) AND.push({ user: { username } });
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
@@ -614,6 +736,17 @@ export const getModel3DsInfinite = async ({
         : [];
     const reviewByModel = new Map(userReviews.map((r) => [r.model3dId, r]));
 
+    // A card's thumbnail as the model page shows it: its owner and moderators always get it.
+    const othersThumbnailIds = isModerator
+      ? []
+      : rows.flatMap((r) =>
+          r.thumbnailImage && r.userId !== user?.id ? [r.thumbnailImage.id] : []
+        );
+    const servableThumbnails = await servableImageIds(
+      othersThumbnailIds,
+      parseBitwiseBrowsingLevel(onlySelectableLevels(browsingLevel || publicBrowsingLevelsFlag))
+    );
+
     // Flatten `tags: [{ tagId }]` → `tags: number[]` so the client-side
     // `useApplyHiddenPreferences` hook can apply tag-based filtering with
     // the same shape it uses for the `'models'` branch.
@@ -621,6 +754,13 @@ export const getModel3DsInfinite = async ({
       const review = reviewByModel.get(rest.id);
       return {
         ...rest,
+        thumbnailImage:
+          rest.thumbnailImage &&
+          (isModerator ||
+            rest.userId === user?.id ||
+            servableThumbnails.has(rest.thumbnailImage.id))
+            ? { ...rest.thumbnailImage, metadata: cardMetadata(rest.thumbnailImage.metadata) }
+            : null,
         tags: tags.map((t) => t.tagId),
         userReview: review ? { id: review.id, recommended: review.recommended } : null,
       };
@@ -1198,9 +1338,12 @@ export const restoreModel3D = async ({ id, user }: RestoreModel3DInput & { user:
 export const getModel3DFiles = async ({
   input,
   user,
+  browsingLevel = publicBrowsingLevelsFlag,
 }: {
   input: GetModel3DFilesInput;
   user?: SessionUser | null;
+  /** The viewer's resolved, capped level; unset reads PG only. */
+  browsingLevel?: number;
 }) => {
   const isModerator = !!user?.isModerator;
   const model3d = await dbRead.model3D.findUnique({
@@ -1210,6 +1353,8 @@ export const getModel3DFiles = async ({
       userId: true,
       status: true,
       deletedAt: true,
+      tosViolation: true,
+      nsfwLevel: true,
       files: {
         select: model3dFileSelect,
         orderBy: [
@@ -1221,13 +1366,25 @@ export const getModel3DFiles = async ({
   });
   if (!model3d) throw throwNotFoundError(`No 3D model with id ${input.id}`);
 
-  const isOwner = !!user && model3d.userId === user.id;
-  if (!isModerator && !isOwner) {
-    if (model3d.status !== Model3DStatus.Published) {
-      throw throwNotFoundError(`No 3D model with id ${input.id}`);
-    }
-    if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${input.id}`);
-  }
+  if (
+    !canViewModel3d({
+      status: model3d.status,
+      deletedAt: model3d.deletedAt,
+      tosViolation: model3d.tosViolation,
+      ownerId: model3d.userId,
+      userId: user?.id,
+      isModerator,
+    })
+  )
+    throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  const access = model3dAccess({
+    ownerId: model3d.userId,
+    nsfwLevel: model3d.nsfwLevel,
+    userId: user?.id,
+    isModerator,
+    browsingLevel,
+  });
+  if (!access.modelVisible) throw throwNotFoundError(`No 3D model with id ${input.id}`);
 
   // Sign each file URL. Two URL shapes can land in Model3DFile.url:
   //   - **Full URL** (e.g. https://civitai-media-uploads.s3.../key.glb) — this
@@ -1278,7 +1435,13 @@ export const getModel3DByPostId = async ({
   postId,
   userId,
   isModerator = false,
-}: GetModel3DByPostIdInput & { userId?: number; isModerator?: boolean }) => {
+  browsingLevel = publicBrowsingLevelsFlag,
+}: GetModel3DByPostIdInput & {
+  userId?: number;
+  isModerator?: boolean;
+  /** The viewer's resolved, capped level; unset reads PG only. */
+  browsingLevel?: number;
+}) => {
   const post = await dbRead.post.findUnique({
     where: { id: postId },
     select: {
@@ -1289,6 +1452,8 @@ export const getModel3DByPostId = async ({
           userId: true,
           status: true,
           deletedAt: true,
+          tosViolation: true,
+          nsfwLevel: true,
           thumbnailImage: { select: { id: true, url: true, name: true } },
         },
       },
@@ -1301,17 +1466,26 @@ export const getModel3DByPostId = async ({
     !canViewModel3d({
       status: model3d.status,
       deletedAt: model3d.deletedAt,
+      tosViolation: model3d.tosViolation,
       ownerId: model3d.userId,
       userId,
       isModerator,
     })
   )
     return null;
+  const access = model3dAccess({
+    ownerId: model3d.userId,
+    nsfwLevel: model3d.nsfwLevel,
+    userId,
+    isModerator,
+    browsingLevel,
+  });
+  if (!access.modelVisible) return null;
 
   return {
     id: model3d.id,
     name: model3d.name,
-    thumbnailImage: model3d.thumbnailImage,
+    thumbnailImage: await access.servableImage(model3d.thumbnailImage),
   };
 };
 
@@ -1337,6 +1511,7 @@ export const getVisibleModel3DIdForPost = async ({
     !canViewModel3d({
       status: model3d.status,
       deletedAt: model3d.deletedAt,
+      tosViolation: model3d.tosViolation,
       ownerId: model3d.userId,
       userId,
       isModerator,
@@ -1368,7 +1543,7 @@ export const getVisibleModel3DIds = async ({
   if (!ids.length) return new Set();
   const rows = await dbRead.model3D.findMany({
     where: { id: { in: ids } },
-    select: { id: true, userId: true, status: true, deletedAt: true },
+    select: { id: true, userId: true, status: true, deletedAt: true, tosViolation: true },
   });
   const visible = new Set<number>();
   for (const row of rows) {
@@ -1376,6 +1551,7 @@ export const getVisibleModel3DIds = async ({
       canViewModel3d({
         status: row.status,
         deletedAt: row.deletedAt,
+        tosViolation: row.tosViolation,
         ownerId: row.userId,
         userId,
         isModerator,
@@ -1590,36 +1766,56 @@ export const getModel3DRelatedPosts = async ({
   input,
   user,
   browsingLevel = publicBrowsingLevelsFlag,
+  servesUnrated = false,
+  disableHidden = false,
 }: {
   input: GetModel3DRelatedPostsInput;
   user?: SessionUser | null;
   /** The viewer's resolved, capped level (`relatedPostsBrowsingLevel`); unset reads PG only. */
   browsingLevel?: number;
+  /** Whether this domain may serve unrated (level 0) content; the SFW domain may not. */
+  servesUnrated?: boolean;
+  /** The viewer turned off hiding their own hidden tags (the `disableHidden` setting). */
+  disableHidden?: boolean;
 }) => {
   try {
     const { model3dId, limit, cursor } = input;
     const isModerator = !!user?.isModerator;
 
+    const viewerId = user?.id;
     const model3d = await dbRead.model3D.findUnique({
       where: { id: model3dId },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, status: true, deletedAt: true, tosViolation: true },
     });
-    if (!model3d) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
+    // The rail answers only for a 3D model the viewer may see: a draft, deleted or ToS-flagged
+    // one only to its owner and moderators.
+    const visible =
+      !!model3d &&
+      canViewModel3d({
+        status: model3d.status,
+        deletedAt: model3d.deletedAt,
+        tosViolation: model3d.tosViolation,
+        ownerId: model3d.userId,
+        userId: viewerId,
+        isModerator,
+      });
+    if (!visible) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
 
-    const viewerId = user?.id;
-
-    // Visibility:
-    //  - Moderators see everything.
-    //  - Everyone else sees published+public posts rated within their level AND their own posts
-    //    (any state, so a user who just created a draft post linked to this
-    //    model3d sees it on the page immediately, before they hit Publish).
     // A post's level is its images' combined level: it is listed when it shares a level with the
-    // viewer's, as the post feed does, and an unrated post (0) never is; nor is one with no cover
-    // the viewer may see. Blocked is never a level a viewer browses at.
+    // viewer's, as the post feed does. Blocked is never a level a viewer browses at, and the level
+    // is already held to the domain's cap. Moderators see posts in any state, and a viewer their
+    // own (a draft shows before they hit Publish), but both only within that level; an unrated
+    // post or image (0) as well, where the domain serves unrated content.
     const level = onlySelectableLevels(browsingLevel);
-    // The cover, for a post that is not the viewer's, as the feed shows images: scanned, within
-    // their level, out of review and never blocked. A mature image of a restricted model is
-    // dropped below: that column is not in the Prisma schema.
+    const levelPosts: Prisma.PostWhereInput = servesUnrated
+      ? { OR: [{ nsfwLevel: { in: postLevelsWithin(level) } }, { nsfwLevel: 0 }] }
+      : { nsfwLevel: { in: postLevelsWithin(level) } };
+    const levelImages: Prisma.ImageWhereInput = {
+      nsfwLevel: { in: [...parseBitwiseBrowsingLevel(level), ...(servesUnrated ? [0] : [])] },
+    };
+    // The cover of someone else's post, as the feed shows images: scanned, within the viewer's
+    // level, out of review and never blocked. A mature image of a restricted model is dropped
+    // below: that column is not in the Prisma schema.
     const coverGate: Prisma.ImageWhereInput = {
       ingestion: 'Scanned',
       nsfwLevel: { in: parseBitwiseBrowsingLevel(level) },
@@ -1629,21 +1825,54 @@ export const getModel3DRelatedPosts = async ({
       poi: false,
       minor: false,
     };
+    // As the post feed: never a cover carrying a tag the viewer hid (unless they turned hiding
+    // off), nor one the browsing settings exclude at this level unless it is the viewer's own image.
+    const siteRules: { browsingLevel?: number; excludedTagIds?: number[] } = {
+      browsingLevel: level,
+    };
+    const [hidden] = await Promise.all([
+      disableHidden ? undefined : getAllHiddenForUser({ userId: viewerId }),
+      enforceBlockedBrowsingTags(siteRules, {
+        id: viewerId,
+        username: user?.username,
+        isModerator,
+      }),
+    ]);
+    const hiddenTagIds = (hidden?.hiddenTags ?? [])
+      .filter((tag) => tag.hidden)
+      .map((tag) => tag.id);
+    const systemTagIds = siteRules.excludedTagIds ?? [];
+    const withoutTags = (tagIds: number[]): Prisma.ImageWhereInput => ({
+      tags: { none: { tagId: { in: tagIds }, disabled: false } },
+    });
+    const tagCover: Prisma.ImageWhereInput[] = [
+      ...(hiddenTagIds.length ? [withoutTags(hiddenTagIds)] : []),
+      ...(systemTagIds.length
+        ? [
+            viewerId
+              ? { OR: [{ userId: viewerId }, withoutTags(systemTagIds)] }
+              : withoutTags(systemTagIds),
+          ]
+        : []),
+    ];
     const publishedClause: Prisma.PostWhereInput = {
       publishedAt: { lte: new Date() },
       availability: { not: 'Private' },
       nsfwLevel: { in: postLevelsWithin(level) },
-      images: { some: coverGate },
+      images: { some: tagCover.length ? { AND: [coverGate, ...tagCover] } : coverGate },
     };
-    const coverWhere: Prisma.ImageWhereInput | undefined = isModerator
-      ? undefined
+    const levelCover: Prisma.ImageWhereInput = isModerator
+      ? levelImages
       : viewerId
-      ? { OR: [{ userId: viewerId }, coverGate] }
+      ? { OR: [{ userId: viewerId, ...levelImages }, coverGate] }
       : coverGate;
+    const coverWhere: Prisma.ImageWhereInput = tagCover.length
+      ? { AND: [levelCover, ...tagCover] }
+      : levelCover;
     const visibility: Prisma.PostWhereInput = isModerator
-      ? {}
+      ? levelPosts
       : viewerId
-      ? { OR: [publishedClause, { userId: viewerId }] }
+      ? { OR: [publishedClause, { userId: viewerId, ...levelPosts }] }
       : publishedClause;
 
     const where: Prisma.PostWhereInput = {
