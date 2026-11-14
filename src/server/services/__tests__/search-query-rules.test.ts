@@ -181,6 +181,14 @@ describe('semanticQueryRefusal with query rules', () => {
     expect(await refusal('a red bicycle', false)).toBe(false);
   });
 
+  it('matches a moderator term with punctuation and metacharacters as typed', async () => {
+    setQueryRuleReaderForTests(
+      stubReader({ [POI_TYPE]: ["zq-vox o'poi"], [MINOR_TYPE]: ['zq.min(r)'] })
+    );
+    expect(await refusal("photo of zq-vox o'poi", false)).toBe('poi');
+    expect(await refusal('a zq.min(r) portrait', false)).toBe('minor-safe');
+  });
+
   it('fails closed when the rules cannot be read', async () => {
     setQueryRuleReaderForTests({ read: () => Promise.reject(new Error('no copy')) });
     expect(await refusal('a red bicycle', false)).toBe('error');

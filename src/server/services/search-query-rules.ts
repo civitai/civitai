@@ -44,13 +44,10 @@ export function parseFallbackRules(text: string): Map<QueryRuleType, string[]> {
 }
 
 /**
- * In order: the blocklist (Redis, then its short-lived last-known copy, then the row); this reader's
- * own last good copy, at any age; the fallback file; else the error propagates and the caller
- * refuses. A stale copy can only lack rules added since it was read, never be looser than what this
- * pod already enforced, so it outranks the hand-sealed file. `semantic_search_query_rule_stale_seconds`
- * carries its age, and `semantic_search_query_rule_fallback` is 1 while the file answers; a rule
- * removed during the outage lingers until the blocklist reads again.
- * The file is read on every fallback, never held, so a re-sealed Secret applies at the next read.
+ * A last good copy can only lack rules added since it was read, never be looser than what this pod
+ * already enforced, so it outranks the hand-sealed file at any age; a rule removed during an
+ * outage lingers until the blocklist reads again. The file is never held, so a re-sealed Secret
+ * applies at the next read.
  */
 export function createQueryRuleReader({
   fallbackPath = FALLBACK_RULES_PATH,
@@ -85,15 +82,23 @@ const MATCH_OPTIONS: Record<QueryRuleType, Parameters<typeof checkable>[1]> = {
 };
 
 const matchers = new Map<QueryRuleType, { key: string; check: ReturnType<typeof checkable> }>();
-// Terms are literal text a moderator typed. `checkable` builds regex source from its words, so an
+// Terms are literal text a moderator typed, but `checkable` builds regex source from its words: an
 // unescaped "(" would throw on every query and a "." or "|" would match far more than the term.
-const escapeTerm = (term: string) => term.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+// The type's preprocessor strips the query (POI drops most punctuation), so it strips the term too,
+// or a hyphenated or apostrophised name could never match.
+function prepareTerm(type: QueryRuleType, term: string) {
+  const stripped = MATCH_OPTIONS[type]?.preprocessor?.(term) ?? term;
+  return stripped.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+}
 
 function matcherFor(type: QueryRuleType, terms: string[]) {
   const key = terms.join('\n');
   const known = matchers.get(type);
   if (known?.key === key) return known.check;
-  const check = checkable(terms.map(escapeTerm), MATCH_OPTIONS[type]);
+  const check = checkable(
+    terms.map((term) => prepareTerm(type, term)),
+    MATCH_OPTIONS[type]
+  );
   matchers.set(type, { key, check });
   return check;
 }
