@@ -1,4 +1,5 @@
 import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
+import { moderatorActedBeforeDeleteSql } from '~/server/common/model-moderator-action';
 
 /**
  * The drafts the old-drafts reaper keeps, as SQL over the "Model" row aliased `m`. The reaper's
@@ -37,12 +38,14 @@ const LISTED_IMAGE_INT_IDS_SQL = `
   SELECT CASE WHEN li.id ~ '^[0-9]{1,9}$' THEN li.id::int END
   FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) li`;
 
-/** A model a moderator acted on: taken down, or deleted by someone other than its owner. An owner's
- *  own delete, and an account delete (no actor), stay reapable. */
+/** A model a moderator acted on: taken down, deleted by someone other than its owner, or deleted by
+ *  its owner after a moderator had taken it down (`moderatorActedBeforeDeleteSql`, which the creator
+ *  score reads too). An owner's own delete, and an account delete (no actor), stay reapable otherwise. */
 export function draftModeratedSql(model: string): string {
   const m = alias(model);
   return `(${m}.mode::text IS NOT DISTINCT FROM 'TakenDown'
-  OR (${m}.status::text = 'Deleted' AND ${m}."deletedBy" IS NOT NULL AND ${m}."deletedBy" <> ${m}."userId"))`;
+  OR (${m}.status::text = 'Deleted' AND ${m}."deletedBy" IS NOT NULL AND ${m}."deletedBy" <> ${m}."userId")
+  OR (${m}.status::text = 'Deleted' AND ${moderatorActedBeforeDeleteSql(m)}))`;
 }
 
 /** A model tied to any CsamReport, whatever its status: one naming its owner or a past owner,

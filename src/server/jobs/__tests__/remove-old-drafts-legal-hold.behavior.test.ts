@@ -72,7 +72,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL DEFAULT 'Draft', mode text,
-      "deletedBy" int
+      "deletedBy" int, meta jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "Thread" (
       id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
@@ -247,15 +247,82 @@ describe('remove-old-drafts and models a moderator acted on', () => {
     { id: 240, status: 'Deleted', mode: null, deletedBy: FREE_OWNER, kept: false },
     { id: 250, status: 'Deleted', mode: null, deletedBy: null, kept: false },
     { id: 260, status: 'Draft', mode: null, deletedBy: null, kept: false },
-  ];
+    // Unpublished by a moderator for a violation, then deleted by its owner.
+    {
+      id: 270,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: {
+        statusAtDelete: 'UnpublishedViolation',
+        unpublishedReason: 'other',
+        unpublishedBy: MOD,
+      },
+    },
+    // Unpublished by a moderator, then deleted by its owner.
+    {
+      id: 271,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: { statusAtDelete: 'Unpublished', unpublishedBy: MOD },
+    },
+    // The same, deleted before deletes recorded statusAtDelete: the takedown marks decide.
+    {
+      id: 272,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: { unpublishedReason: 'other', unpublishedBy: MOD },
+    },
+    // A takedown reason alone, with no actor recorded, counts as a moderator's.
+    {
+      id: 275,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: true,
+      meta: { unpublishedReason: 'other' },
+    },
+    // Controls: the owner unpublished it, or deleted it live.
+    {
+      id: 273,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: false,
+      meta: { statusAtDelete: 'Unpublished', unpublishedBy: FREE_OWNER },
+    },
+    {
+      id: 274,
+      status: 'Deleted',
+      mode: null,
+      deletedBy: FREE_OWNER,
+      kept: false,
+      meta: { statusAtDelete: 'Published' },
+    },
+  ] as {
+    id: number;
+    status: string;
+    mode: string | null;
+    deletedBy: number | null;
+    kept: boolean;
+    meta?: Record<string, unknown>;
+  }[];
   const sql = (v: string | number | null) =>
     v === null ? 'NULL' : typeof v === 'number' ? v : `'${v}'`;
 
   beforeEach(async () => {
     await db.exec(`
       DELETE FROM "Model";
-      INSERT INTO "Model" (id, "userId", status, mode, "deletedBy") VALUES ${CASES.map(
-        (c) => `(${c.id}, ${FREE_OWNER}, ${sql(c.status)}, ${sql(c.mode)}, ${sql(c.deletedBy)})`
+      INSERT INTO "Model" (id, "userId", status, mode, "deletedBy", meta) VALUES ${CASES.map(
+        (c) =>
+          `(${c.id}, ${FREE_OWNER}, ${sql(c.status)}, ${sql(c.mode)}, ${sql(
+            c.deletedBy
+          )}, ${`'${JSON.stringify(c.meta ?? {})}'`})`
       ).join(', ')};
       INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${CASES.map(
         (c) => `(${c.id * 10}, ${c.id}, now() - interval '200 days', now() - interval '200 days')`
