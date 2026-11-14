@@ -365,10 +365,9 @@ on Node).
 Shadow mode gives both sides the same requests. During it the Go process does nothing but handle
 shadow samples, so its CPU per call is a plain ratio. **That ratio is an UPPER BOUND for serving:**
 each shadow sample also costs work serving never does — receiving and decoding Node's envelope (up
-to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That comparison
-overhead is included in `process_cpu_seconds_total` and is not separated out, so a measured Go
-figure below Node's is conservative, and a figure near Node's does not by itself show Go is no
-cheaper.
+to 32 MiB) and `shadow.Compare` parsing both answers and walking the two trees. That overhead is
+in `process_cpu_seconds_total`, so a whole-process figure below Node's is conservative, and one near
+Node's does not by itself show Go is no cheaper. The per-phase series below separate it out.
 
 ```promql
 # Go: CPU seconds per computed answer (shadow), GC and runtime included.
@@ -382,6 +381,83 @@ sum(rate(feed_go_requests_total{mode="shadow",outcome="served"}[10m]))
 # What blocks serving more: fallback reasons by rate.
 topk(10, sum by (reason) (rate(feed_go_fallback_total{mode="shadow"}[1h])))
 ```
+
+### 10.1 Compute-only CPU: the per-phase series
+
+Each shadow sample runs three phases, each recorded with `{phase, outcome}`:
+
+| phase | covers | outcomes | serving pays it? |
+|---|---|---|---|
+| `decode` | reading the posted body and parsing the `ShadowRequest` (Node's envelope included) | `ok`, `bad_request` | no |
+| `compute` | `compute`: auth, the page, hydration, `superjson.Serialize` — the answer serving returns | `served`, `fallback`, `error` | yes |
+| `compare` | `shadow.Compare` (parses both envelopes, walks both trees) + `Classify` | `ok`, `bad_request` | no |
+
+Series:
+
+- `feed_go_shadow_phase_seconds` — wall time of every phase (histogram).
+- `feed_go_shadow_phase_cpu_seconds_total` — **process** CPU (`getrusage(RUSAGE_SELF)`, user+system)
+  consumed between the phase's start and end, added only when the phase was **solo**: it was the only
+  shadow sample holding a queue slot when it started, and no sample was admitted before it ended.
+- `feed_go_shadow_phase_solo_total` — how many phases were counted in the CPU series (its denominator).
+
+**Method, and why.** Go has no faithful per-request CPU clock: a request's work runs on several
+goroutines (the hydration lookups run in parallel) that migrate across OS threads, so a thread CPU
+clock misses work and a goroutine cannot be pinned without changing the program. Process CPU deltas
+are exact when only one request is running, and the shadow pod is in that regime almost all the time
+(it serves nothing but sampled shadow requests, at a low rate). So the CPU series counts only phases
+no other sample overlapped, and `solo_total` says how many that was. Wall time is NOT a CPU proxy for
+`compute`: it is mostly waiting on Redis, Postgres and the feed service, so apportioning process CPU by
+wall-time share overstates compute; use the wall histogram for latency and as a sanity check only.
+
+```promql
+# Go CPU per SERVED call, compute only (the go/no-go figure).
+sum(rate(feed_go_shadow_phase_cpu_seconds_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+
+# Coverage: share of served computes that were solo (low share = the per-phase figure is a sample).
+sum(rate(feed_go_shadow_phase_solo_total{phase="compute",outcome="served"}[1h]))
+  / sum(rate(feed_go_shadow_phase_seconds_count{phase="compute",outcome="served"}[1h]))
+
+# Shadow overhead per sample (what the whole-process ratio above over-counts).
+sum by (phase) (rate(feed_go_shadow_phase_cpu_seconds_total{phase=~"decode|compare"}[1h]))
+  / sum by (phase) (rate(feed_go_shadow_phase_solo_total{phase=~"decode|compare"}[1h]))
+
+# Cross-check: CPU the phases do not account for (idle runtime, GC not inside a phase, scrapes,
+# fallback samples). Should be small next to the phase CPU when coverage is high.
+sum(rate(process_cpu_seconds_total{job="feed-go"}[1h]))
+  - sum(rate(feed_go_shadow_phase_cpu_seconds_total[1h]))
+```
+
+**Limits.**
+
+- *Background runtime work is attributed to whichever phase it lands in.* The GC runs concurrently:
+  the collection of `compute`'s garbage may run during `compare` (which allocates heavily and so tends
+  to trigger it), or after the sample. `compute` can therefore read slightly LOW against serving, where
+  that GC is paid between requests. Bound it with the unaccounted-CPU cross-check, and with the Go GC
+  series (`go_gc_*`) from the runtime collector; under real serving load the GC share is better read
+  from a profile (below) than from these series.
+- *Solo only.* Overlapping samples are excluded, not apportioned; if coverage is low (raised sample
+  rate, a burst), the figure is a sample of the quiet periods, which can differ from loaded behaviour
+  (less cache contention, no scheduler pressure).
+- *Not covered:* building the synthetic request, the goroutine hand-off, and on the serving path the
+  response write (`trpc.WriteResult`) and the reverse-proxy cost of a fallback. All are small next to
+  `compute`; a fallback's proxy cost is Node's request, read on Node's side.
+- A Prometheus scrape that lands inside a phase is charged to it (one scrape per interval, small).
+- Off unix there is no process CPU clock: only the wall histogram is recorded.
+
+### 10.2 CPU profile
+
+With `FEED_GO_PPROF=true` the internal listener (the `FEED_GO_INTERNAL_ADDR` port, never the public
+one) serves `net/http/pprof` under `/debug/pprof/`. Off by default; turning it on is an env change
+and a restart. Pull a profile through a port-forward to the pod's internal port:
+
+```bash
+go tool pprof -http=: 'http://localhost:9090/debug/pprof/profile?seconds=60'
+```
+
+A profile is the authority on where compute's CPU goes (including the GC share), and checks the
+phase series: `compute` frames (`server.(*Server).compute` and below) against `shadow.Compare` and the
+`ShadowHandler` body decode.
 
 Node's side is the per-procedure CPU attribution already used to rank tRPC procedures (the same
 measurement that identified this one), read over the same window for
@@ -400,8 +476,9 @@ measurement that identified this one), read over the same window for
   rate is raised (shadowing doubles the read work for sampled requests, and on the feed-service path
   each sample is one more feed-service call per page and per completion batch).
 
-The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity,
-with Go's side read as an upper bound (it includes the shadow decode and compare, above).
+The decision input is the ratio of the two CPU-per-call figures, on the same requests, at parity.
+For Go, read the compute-only figure (§10.1) as the serving estimate, with its coverage beside it,
+and the whole-process figure (above) as the upper bound that includes the shadow decode and compare.
 
 ## 11. Deploy prerequisites (infrastructure repo, later)
 
