@@ -1,4 +1,4 @@
-import { READ_DOCS } from './docs';
+import { IN_SANDBOX_GUIDE, READ_DOCS } from './docs';
 import type { Sandbox } from './sandbox-client';
 import type { SandboxFeatures } from './sandbox-tools';
 
@@ -41,13 +41,17 @@ export const DEV_SERVER_PORT = 5173;
  * /workspace): what the assistant is told to start it with, and what the runner's Restart preview
  * starts it with when it is not running. CIVITAI_DEV_TUNNEL_HMR=1 is what makes the dev server send
  * the headers the preview needs to load.
+ *
+ * Copied by hand from the Civitai CLI's scaffolds (their `dev:tunnel` script and the dev-embed
+ * module their vite config reads the flag in), which live in another repository: nothing here
+ * fails when the CLI renames the flag. The port is this sandbox's own (the CLI's default is 5186).
  */
 export const DEV_SERVER_COMMAND = `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port ${DEV_SERVER_PORT}`;
 
 /** Where a reply runs: `browser` (the page) or `remote` (the server runner, which has fewer tools). */
 export type AssistantRunner = 'browser' | 'remote';
 
-const SETUP_GUIDE = 'https://developer.civitai.com/agent-setup/in-sandbox.md';
+const SETUP_GUIDE = IN_SANDBOX_GUIDE;
 
 /**
  * The setup-guide rule. The browser's assistant fetches pages itself (`fetch_page`); the runner's
@@ -58,9 +62,14 @@ const SETUP_RULE: Record<AssistantRunner, string> = {
   remote: `- You are already inside a configured sandbox. Your setup guide is ${SETUP_GUIDE}; read it, and the developer.civitai.com pages it links, with ${READ_DOCS} (the sandbox has no internet). When it, or a page it links, tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps.`,
 };
 
-/** The unpiped-checks rule, for a sandbox without `run_checks`. */
+/**
+ * The unpiped-checks rule, for a sandbox without `run_checks`. The scaffolds differ (page-vite and
+ * static define no test script, and only the TypeScript ones a typecheck), so it points at the
+ * project's own scripts, as package.json defines them and the AGENTS.md block `civitai agent-setup`
+ * renders lists them, rather than fixed commands.
+ */
 const CHECKS_RULE =
-  '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.';
+  '- Run the tests and the typecheck with the project’s own scripts, as its AGENTS.md (Local development) or package.json scripts name them: cd <blockId> && npm test, cd <blockId> && npm run typecheck. Run each on its own and unpiped, never through | tail, | grep or | head: the exit code must be the check’s own. Do not run a script the project does not define; if it has no test or typecheck script, tell the user.';
 
 /**
  * The rules for the newer sandbox tools, each only when the sandbox lists its tool: these are sent
@@ -114,7 +123,7 @@ export const SUBMIT_RULE =
 
 /** Where real Civitai data comes from, and what to do when the app needs data Civitai cannot give. */
 export const DATA_RULE =
-  "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
+  "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site/reference.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
 
 /**
  * The viewer's own Buzz history. @civitai/sdk's BREAKING.md lists it under "No v1 route", which an
