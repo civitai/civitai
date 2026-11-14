@@ -307,5 +307,21 @@ describe('/api/v1/images?ids= — batch by id', () => {
       expect(res._getStatusCode()).toBe(200);
       expect(res._getJSONData().items).toEqual([]);
     });
+
+    it.each([{ username: 'someone' }, {}])(
+      "drops images above their post's held level from a search that names no model (%o)",
+      async (query) => {
+        // Whichever source the search reads (the feed service or the database).
+        const page = { items: [rated(1, 1), rated(2, 4), rated(3, 4, OTHER_POST)] };
+        mockGetAllImages.mockResolvedValue({ ...page, nextCursor: undefined });
+        mockGetImagesFromFeed.mockResolvedValue({ ...page, nextCursor: undefined });
+        const { req, res } = createMocks({ query: { ...query, nsfw: 'X' } });
+
+        await handler(req, res);
+
+        expect(res._getStatusCode()).toBe(200);
+        expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([1, 3]);
+      }
+    );
   });
 });

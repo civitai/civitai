@@ -160,6 +160,7 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     // Default: under the per-token ceiling (existing clamp tests must be served).
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
@@ -220,8 +221,8 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(input.data).not.toHaveProperty('someJunk');
   });
 
-  it.each([{ ids: '1,2' }, { imageId: '2' }])(
-    'leaves out held images from a search by image id (%o)',
+  it.each([{ ids: '1,2' }, { imageId: '2' }, { username: 'someone' }, {}])(
+    'leaves out held images from a search that names no model (%o)',
     async (query) => {
       claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
       const found = [{ id: 1 }, { id: 2 }];
@@ -234,13 +235,6 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
       expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
     }
   );
-
-  it('does not filter a search that names no image id', async () => {
-    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-    await invoke({ username: 'someone' });
-
-    expect(mockWithoutHeld).not.toHaveBeenCalled();
-  });
 
   it('forwards the selector params (type/limit/sort/modelId/postId/username)', async () => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
@@ -392,6 +386,7 @@ describe('/api/v1/blocks/images — a held model or version', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
   });
@@ -466,6 +461,7 @@ describe('/api/v1/blocks/images — ?ids= batch', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
 

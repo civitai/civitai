@@ -247,8 +247,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         req,
       }
     );
-    // Images picked by id name no model, so each is held by its own post's model.
-    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
+    // Images not selected by a model (by id, by user, or none) are each held by their own post's model.
+    const items =
+      data.modelId || data.modelVersionId || data.postId ? found : await withoutHeldImages(found);
 
     const metadata: Metadata = { nextCursor };
     if (usingPaging) {
