@@ -132,9 +132,9 @@ export async function updateByStripeConnectAccount({
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
+      }).catch((error) => {
         // The row is already written: a throw here would fail the webhook after the write.
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   } else if (stripeAccount.requirements?.disabled_reason) {
@@ -154,9 +154,9 @@ export async function updateByStripeConnectAccount({
         category: NotificationCategory.System,
         key: `creators-program-rejected-stripe:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
+      }).catch((error) => {
         // The row is already written: a throw here would fail the webhook after the write.
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   } else if (stripeAccount.details_submitted) {
@@ -375,9 +375,9 @@ export async function updateByTipaltiAccount({
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
+      }).catch((error) => {
         // The row is already written: a throw here would hide that from the caller.
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   } else if (isBlockedTipaltiStatus(tipaltiAccountStatus)) {
@@ -388,8 +388,8 @@ export async function updateByTipaltiAccount({
         category: NotificationCategory.System,
         key: `creators-program-rejected-tipalti:${crypto.randomUUID()}`,
         details: {},
-      }).catch(() => {
-        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      }).catch((error) => {
+        log({ method: 'createNotification', error, userId: userPaymentConfig.userId });
       });
     }
   }

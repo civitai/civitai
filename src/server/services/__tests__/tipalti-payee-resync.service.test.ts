@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 // Module scope: see the note in user-payment-configuration.tipalti-status.test.ts on why this
 // import graph is not loaded from a test body.
 import {
@@ -280,6 +281,9 @@ describe('resyncTipaltiPayees', () => {
     expect(row.error).toBeUndefined();
     expect(bust).toHaveBeenCalledWith(USER_ID);
     expect(trackModActivity).toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'createNotification', error: expect.any(Error) })
+    );
   });
 
   it('a failed cache bust still reports the write as applied', async () => {
