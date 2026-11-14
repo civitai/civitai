@@ -28,6 +28,8 @@ const row = (workflowId: string) =>
 const detail = {
   workflowId: 'wf-1',
   name: 'Run',
+  traces: [{ epoch: 1, url: `https://x/t?${MARK}`, done: true }],
+  liveTraceUrl: `https://x/t?${MARK}`,
   epochs: [
     {
       id: '1-0',
@@ -82,6 +84,12 @@ describe.each([
   it('hides every epoch output of a withheld run', async () => {
     expect(await body(await read())).not.toContain(MARK);
     expect(withheldRuns).toHaveBeenCalledWith({ cookie: COOKIE, userId: 1 }, ['wf-1']);
+  });
+
+  it('withholds a detail that comes back under another id than the one checked', async () => {
+    withheldRuns.mockImplementation(async () => new Set());
+    orch.getTrainingWorkflow.mockResolvedValue({ ...detail, workflowId: 'WF-1' });
+    expect(await body(await read())).not.toContain(MARK);
   });
 
   it('keeps everything for a run that is not withheld', async () => {

@@ -118,6 +118,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         selectedEpochNumber: epoch,
       }));
     } catch (error) {
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND') return refuse('not-found');
       return refuse(getPublishRefusalReason(error) ?? 'unavailable');
     }
 

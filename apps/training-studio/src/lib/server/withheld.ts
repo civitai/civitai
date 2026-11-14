@@ -30,6 +30,8 @@ export async function withheldRuns(asker: Asker, workflowIds: string[]): Promise
 
 export const withholdDetail = (detail: TrainingDetail): TrainingDetail => ({
   ...detail,
+  traces: [],
+  liveTraceUrl: undefined,
   epochs: detail.epochs.map(({ id, number, samples }) => ({
     id,
     number,

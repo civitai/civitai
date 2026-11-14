@@ -33,7 +33,8 @@ export const load: PageServerLoad = async ({ locals, params, depends, request })
   }
   if (!detail) throw error(404, 'Training not found.');
   return {
-    detail: withheld.has(params.id) ? withholdDetail(detail) : detail,
+    detail:
+      withheld.has(params.id) || detail.workflowId !== params.id ? withholdDetail(detail) : detail,
     username: locals.user.username,
     image: locals.user.image,
   };

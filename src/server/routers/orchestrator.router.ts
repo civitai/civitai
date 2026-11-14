@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { withholdTrainingOutputs } from '~/server/services/orchestrator/training/studio-withheld-outputs';
 import { acceptGenerationLicense } from '~/server/services/generation-license.service';
 import { generatorAcceptsBoostRequired } from '~/server/services/generation/coverage-source';
 import { assertSourceMetadataWithinCap } from '~/server/services/orchestrator/source-metadata-cap';
@@ -268,18 +269,24 @@ export const orchestratorRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowQuerySchema)
     .query(async ({ ctx, input }) => {
-      return queryWorkflows({
+      const result = await queryWorkflows({
         ...input,
         token: ctx.token,
         hideMatureContent: ctx.hideMatureContent,
       });
+      return { ...result, items: await withholdTrainingOutputs(ctx.user, result.items) };
     }),
   getWorkflow: orchestratorOwnWorkProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(workflowIdSchema)
-    .query(({ ctx, input }) =>
-      getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } })
-    ),
+    .query(async ({ ctx, input }) => {
+      const workflow = await getWorkflow({
+        token: ctx.token,
+        path: { workflowId: input.workflowId },
+      });
+      const [gated] = await withholdTrainingOutputs(ctx.user, [workflow]);
+      return gated;
+    }),
   // #endregion
 
   // #region [requests]

@@ -15,5 +15,6 @@ export const GET: RequestHandler = async ({ locals, request, url }) => {
     withheldRuns(askerOf({ locals, request }), [id]),
   ]);
   if (!detail) error(404, 'Training not found.');
-  return json(withheld.has(id) ? withholdDetail(detail) : detail);
+  // A detail for any other id than the one checked is withheld too.
+  return json(withheld.has(id) || detail.workflowId !== id ? withholdDetail(detail) : detail);
 };
