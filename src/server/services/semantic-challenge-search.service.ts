@@ -26,6 +26,7 @@ import {
   type Hydrate,
 } from '~/server/services/semantic-search-client';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { ChallengeSource, ChallengeStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -41,6 +42,36 @@ type HydratedChallenge = Awaited<ReturnType<typeof getInfiniteChallenges>>['item
 const searchServiceCandidates = searchServiceSource('challenges', {
   notFoundMessage: 'Challenge not found',
 });
+
+/**
+ * The semantic path's query audit, for the feed's own text search (getInfinite with a query): the
+ * search's fallback and a Cancelled-only filter reach it with the same text. `level` is the feed's
+ * effective level, 0 meaning no level filter. Returns 'refuse' or the level to search at.
+ */
+export async function challengeTextQueryLevel({
+  query,
+  level,
+  user,
+  track,
+}: {
+  query: string;
+  level: number;
+  user?: SessionUser;
+  track?: QueryTracker;
+}): Promise<number | 'refuse'> {
+  const browsingLevel = level || allBrowsingLevelsFlag;
+  const addonData = await getBrowsingSettingAddons();
+  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
+    isModerator: user?.isModerator,
+  });
+  const refusal = await semanticQueryRefusal(query, {
+    browsingLevel,
+    disablePoi,
+    isModerator: user?.isModerator,
+  });
+  recordRefusal(track, refusal, query, 'challenges_text');
+  return queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
+}
 
 export async function searchSemanticChallenges({
   input,

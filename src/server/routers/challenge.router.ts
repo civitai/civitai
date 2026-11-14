@@ -28,6 +28,8 @@ import {
   upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
+import { challengeTextQueryLevel } from '~/server/services/semantic-challenge-search.service';
 import { z } from 'zod';
 import {
   isFlagProtected,
@@ -96,14 +98,32 @@ export const challengeRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getInfiniteChallengesSchema)
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input, ctx }) =>
-      getInfiniteChallenges({
+    .query(async ({ input, ctx }) => {
+      let browsingLevel = input.browsingLevel;
+      const query = input.query?.trim();
+      if (query) {
+        // A text query gets the semantic search's audit: refused, or narrowed to the safe levels.
+        const level = await challengeTextQueryLevel({
+          query,
+          level: getEffectiveBrowsingLevel({
+            isGreen: ctx.features.isGreen,
+            isLoggedIn: !!ctx.user,
+            requested: input.browsingLevel,
+          }),
+          user: ctx.user,
+          track: ctx.track,
+        });
+        if (level === 'refuse') return { items: [], nextCursor: undefined };
+        browsingLevel = level;
+      }
+      return getInfiniteChallenges({
         ...input,
+        browsingLevel,
         currentUserId: ctx.user?.id,
         isGreen: ctx.features.isGreen,
         canAccessUserChallenges: ctx.features.userChallenges,
-      })
-    ),
+      });
+    }),
 
   // Active + next few upcoming daily (System) challenges for the horizontal daily row
   getDaily: publicProcedure
