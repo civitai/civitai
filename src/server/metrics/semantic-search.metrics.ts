@@ -70,3 +70,17 @@ export function semanticSearchStage(reg: Registry = client.register) {
     registers: [reg],
   });
 }
+
+const GUARD_STATUS_NAME = 'semantic_search_guard_status_reads_total';
+
+/** Reads of the search service's guard status; a run of `unknown` means the candidate cache is off. */
+export function semanticGuardStatusReads(reg: Registry = client.register) {
+  const existing = reg.getSingleMetric(GUARD_STATUS_NAME) as Counter<string> | undefined;
+  if (existing) return existing;
+  return new client.Counter({
+    name: GUARD_STATUS_NAME,
+    help: 'Semantic search guard status reads by outcome (ok, unknown)',
+    labelNames: ['outcome'],
+    registers: [reg],
+  });
+}
