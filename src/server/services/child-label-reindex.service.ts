@@ -133,7 +133,8 @@ export async function runChildLabelReindex({
             chunks: chunks.length,
             refreshed,
             verified,
-            lastImageId,
+            // Resume where this run started, so the next run retries the failed chunk.
+            lastImageId: after,
             aborted: 'a refreshed entry lacks the child tag: the deployed lookup still drops it',
           };
       }
@@ -168,7 +169,7 @@ export async function runChildLabelReindex({
       images: imageIds.length,
       probe: probe.length,
       probeVerified,
-      lastImageId,
+      lastImageId: after,
       aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
     };
 

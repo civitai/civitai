@@ -24,7 +24,9 @@ import { booleanString } from '~/utils/zod-helpers';
  *   chunkSize - default 500. Image ids per selection page, WD14 check, lookup and refresh; ids per
  *               queue push.
  *   after     - default 0. Only images above this id; resume from the last run's `lastImageId`.
- *   maxChunks - optional. Select at most this many chunks, so one request stays short.
+ *               A run that returns `aborted` hands back its own `after`, so it is retried whole.
+ *   maxChunks - default 20. Select at most this many chunks, so one request stays short; a dry
+ *               run counts only those, so raise it to count the whole selection.
  */
 
 const schema = z.object({
@@ -32,7 +34,7 @@ const schema = z.object({
   dryRun: booleanString().default(true),
   chunkSize: z.coerce.number().int().min(1).max(5000).default(500),
   after: z.coerce.number().int().min(0).default(0),
-  maxChunks: z.coerce.number().int().min(1).optional(),
+  maxChunks: z.coerce.number().int().min(1).default(20),
 });
 
 export default WebhookEndpoint(async (req, res) => {
