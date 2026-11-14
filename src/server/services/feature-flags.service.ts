@@ -462,8 +462,7 @@ const featureFlags = createFeatureFlags({
   semanticArticleSearch: { availability: [], fliptKey: 'semantic-article-search' },
   // Comic search on /search/comics, the same way.
   semanticComicSearch: { availability: [], fliptKey: 'semantic-comic-search' },
-  // The challenges feed's search box, answered by the semantic search; off, the box is hidden.
-  // Dark: Flipt is its only switch.
+  // Semantic search on the challenges feed. Dark: Flipt is its only switch.
   semanticChallengeSearch: { availability: [], fliptKey: 'semantic-challenge-search' },
   // The semantic 3D model search endpoint. Dark: Flipt is its only switch.
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },

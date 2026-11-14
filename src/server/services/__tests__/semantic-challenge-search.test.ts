@@ -264,11 +264,12 @@ describe('searchSemanticChallenges', () => {
   });
 
   it("caps one creator's user challenges per page, but not System ones", async () => {
-    const ranked = [20, 21, 22, 23, 24, 1, 2, 3, 4, 5];
-    const { result } = run(ranked);
+    const userIds = [20, 21, 22, 23, 24];
+    const systemIds = [1, 2, 3, 4, 5];
+    const { result } = run([...userIds, ...systemIds]);
     const { items } = await result;
-    expect(items.filter((c) => c.source === 'User')).toHaveLength(MAX_HITS_PER_USER);
-    expect(items.map((c) => c.id)).toEqual([20, 21, 22, 1, 2, 3, 4, 5]);
+    // The creator's best-ranked user challenges up to the cap, then every System one.
+    expect(items.map((c) => c.id)).toEqual([...userIds.slice(0, MAX_HITS_PER_USER), ...systemIds]);
   });
 
   it('a refused query searches nothing', async () => {
