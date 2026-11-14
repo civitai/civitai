@@ -222,6 +222,51 @@ async function markLeftForUser<T extends { cosmeticId: number; rewardDefinitionI
 }
 
 /**
+ * For each holding, how many of its box's catalog entries for the holder's `team` are still left
+ * for them, by `markLeftForUser`'s rule (owned from any source, or drawn from this box, is not
+ * left). Two reads for all the holdings together, so a job checking many holders reads per page,
+ * not per holder.
+ */
+export async function countLeftForHolders(
+  client: Prisma.TransactionClient,
+  holdings: {
+    boxDefinitionId: number;
+    userId: number;
+    team: string | undefined;
+    catalog: BoxCatalogEntry[];
+  }[]
+): Promise<number[]> {
+  if (!holdings.length) return [];
+  const userIds = [...new Set(holdings.map((h) => h.userId))];
+  const boxIds = [...new Set(holdings.map((h) => h.boxDefinitionId))];
+  const cosmeticIds = [...new Set(holdings.flatMap((h) => h.catalog.map((e) => e.cosmeticId)))];
+  const owned = cosmeticIds.length
+    ? await client.$queryRaw<{ userId: number; cosmeticId: number }[]>`
+        SELECT DISTINCT "userId", "cosmeticId" FROM "UserCosmetic"
+        WHERE "userId" = ANY(${userIds}::int[]) AND "cosmeticId" = ANY(${cosmeticIds}::int[])`
+    : [];
+  const drawn = await client.$queryRaw<
+    { userId: number; boxDefinitionId: number; rewardDefinitionId: number }[]
+  >`
+    SELECT DISTINCT "userId", "boxDefinitionId", "rewardDefinitionId" FROM "BoxOpening"
+    WHERE "userId" = ANY(${userIds}::int[]) AND "boxDefinitionId" = ANY(${boxIds}::int[])
+      AND "rewardType" = ${ITEM_TYPE.cosmetic}`;
+  const ownedKeys = new Set(owned.map((o) => `${o.userId}:${o.cosmeticId}`));
+  const drawnKeys = new Set(
+    drawn.map((d) => `${d.userId}:${d.boxDefinitionId}:${d.rewardDefinitionId}`)
+  );
+  return holdings.map(
+    ({ boxDefinitionId, userId, team, catalog }) =>
+      catalog.filter(
+        (entry) =>
+          isForTeam(entry.team, team) &&
+          !ownedKeys.has(`${userId}:${entry.cosmeticId}`) &&
+          !drawnKeys.has(`${userId}:${boxDefinitionId}:${entry.rewardDefinitionId}`)
+      ).length
+  );
+}
+
+/**
  * Everything this box holds for this user, read live: its enabled contents for their `team`, each
  * marked whether it is still `left` for them.
  */

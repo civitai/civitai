@@ -10,7 +10,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
 import { lockItemHolder } from '~/server/services/item-holder-lock';
 import type { BoxCatalogEntry } from '~/server/services/mystery-box.service';
-import { getBoxCatalog, getBoxPoolForUser } from '~/server/services/mystery-box.service';
+import {
+  countLeftForHolders,
+  getBoxCatalog,
+  getBoxPoolForUser,
+} from '~/server/services/mystery-box.service';
 import { continueBoxTakedowns } from '~/server/services/mystery-box-takedown.service';
 import {
   BOX_REFUND_DESCRIPTIONS,
@@ -28,10 +32,11 @@ const log = (level: 'info' | 'error', message: string, data: Record<string, unkn
 
 type Holding = { boxDefinitionId: number; userId: number; held: number; params: unknown };
 
-/** Reads one run shares: each box's catalog, and each event holder's team. */
+/** Reads one run shares: each box's catalog, each event holder's team, each pack charge's account. */
 type ScanReads = {
   catalogs: Map<number, BoxCatalogEntry[]>;
   teams: Map<string, Promise<string | undefined>>;
+  packAccounts: Map<string, Promise<string>>;
 };
 
 function holderTeam(reads: ScanReads, event: string, userId: number) {
@@ -46,37 +51,30 @@ function holderTeam(reads: ScanReads, event: string, userId: number) {
   return team;
 }
 
+type TeamedHolding = Holding & { team: string | undefined };
+
 /**
- * Unlocked, on the replica, so a holder with nothing over the pool costs no lock and no write
- * connection. A lagging replica only defers an excess to the scan's next pass; the locked read decides, and
- * never takes the replica's catalog. An unreadable replica falls through to the locked read.
+ * Which of a page's holdings may hold more boxes than their pool, read unlocked on the replica in
+ * two reads for the page, so a holder with nothing over costs no lock and no write connection. A
+ * lagging replica only defers an excess to the scan's next pass; the locked read decides, and never
+ * takes the replica's catalog. An unreadable replica sends every holding to the locked read.
  */
-async function withinPoolOnReplica(
-  { boxDefinitionId, userId, held }: Holding,
-  team: string | undefined,
-  catalogs: Map<number, BoxCatalogEntry[]>
-) {
+async function mayBeOverPool(page: TeamedHolding[], reads: ScanReads) {
   try {
-    let catalog = catalogs.get(boxDefinitionId);
-    if (!catalog) {
-      catalog = await getBoxCatalog(dbRead, boxDefinitionId);
-      catalogs.set(boxDefinitionId, catalog);
-    }
-    const pool = await getBoxPoolForUser(dbRead, { boxDefinitionId, userId, team, catalog });
-    return held <= pool.length;
+    for (const boxId of new Set(page.map((h) => h.boxDefinitionId)))
+      if (!reads.catalogs.has(boxId)) reads.catalogs.set(boxId, await getBoxCatalog(dbRead, boxId));
+    const left = await countLeftForHolders(
+      dbRead,
+      page.map((h) => ({ ...h, catalog: reads.catalogs.get(h.boxDefinitionId) ?? [] }))
+    );
+    return page.map((h, i) => h.held > left[i]);
   } catch {
-    return false;
+    return page.map(() => true);
   }
 }
 
-async function overPoolBoxes(holding: Holding, reads: ScanReads) {
-  const { boxDefinitionId, userId, params } = holding;
-  // Read before the transaction: the team lookup isn't on its connection. Read only: this job
-  // places no one in a team.
-  const team = isEventShopItemData(params)
-    ? await holderTeam(reads, params.event, userId)
-    : undefined;
-  if (await withinPoolOnReplica(holding, team, reads.catalogs)) return [];
+/** The boxes this holding holds beyond its pool, newest first, read under the holder lock. */
+async function overPoolBoxes({ boxDefinitionId, userId, team }: TeamedHolding) {
   return dbWrite.$transaction(async (tx) => {
     await lockItemHolder(tx, userId);
     const pool = await getBoxPoolForUser(tx, { boxDefinitionId, userId, team });
@@ -97,11 +95,20 @@ async function overPoolBoxes(holding: Holding, reads: ScanReads) {
  * Takes one held pack box back and stamps the purchase `meta.packOverPoolRefunds[<boxItemId>]`, so
  * the share is owed from here until it is paid. Null when the box is gone (opened, or refunded).
  */
-async function claimPackBox(item: { id: bigint; sourceKey: string }, userId: number) {
+async function claimPackBox(
+  item: { id: bigint; sourceKey: string },
+  userId: number,
+  reads: ScanReads
+) {
   const packBox = parsePackBoxSourceKey(item.sourceKey);
   if (!packBox) return null;
   // Throws, leaving the box held, when the share couldn't be paid back.
-  await packChargeAccountType(packBox.transactionId);
+  let account = reads.packAccounts.get(packBox.transactionId);
+  if (!account) {
+    account = packChargeAccountType(packBox.transactionId);
+    reads.packAccounts.set(packBox.transactionId, account);
+  }
+  await account;
   return dbWrite.$transaction(async (tx) => {
     await lockItemHolder(tx, userId);
     const deleted = await tx.$executeRaw`
@@ -182,7 +189,7 @@ async function payOwedPackShares(failed: { userId: number; error: string }[]) {
 }
 
 const PAGE = 200;
-/** Within the job's 30 minute lock, with room to finish the page in hand. */
+/** Under the job's lockExpiration, leaving room to finish the page in hand. */
 const DEFAULT_BUDGET_MS = 20 * 60 * 1000;
 
 type ScanCursor = { boxDefinitionId: number; userId: number };
@@ -240,7 +247,7 @@ export async function refundOverPoolBoxes({
   let after = await readScanCursor();
   let done = false;
   // A catalog read late in the run only defers an excess or sends it to the locked read.
-  const reads: ScanReads = { catalogs: new Map(), teams: new Map() };
+  const reads: ScanReads = { catalogs: new Map(), teams: new Map(), packAccounts: new Map() };
   while (!done && Date.now() < deadline) {
     // Holder first: the keyset is then a range on the (holderType, holderId, itemDefinitionId)
     // index. The replica's counts only filter; the locked read recounts.
@@ -256,11 +263,26 @@ export async function refundOverPoolBoxes({
       ORDER BY i."holderId", i."itemDefinitionId"
       LIMIT ${pageSize}`;
     done = page.length < pageSize;
+    const teamed: TeamedHolding[] = [];
     for (const holding of page) {
       holdingsChecked++;
+      const { params, userId } = holding;
+      try {
+        // Read only: this job places no one in a team.
+        const team = isEventShopItemData(params)
+          ? await holderTeam(reads, params.event, userId)
+          : undefined;
+        teamed.push({ ...holding, team });
+      } catch (error) {
+        failed.push({ userId, error: errorMessage(error) });
+      }
+    }
+    const suspect = await mayBeOverPool(teamed, reads);
+    for (const [i, holding] of teamed.entries()) {
+      if (!suspect[i]) continue;
       let boxes: { id: bigint; sourceKey: string }[];
       try {
-        boxes = await overPoolBoxes(holding, reads);
+        boxes = await overPoolBoxes(holding);
       } catch (error) {
         failed.push({ userId: holding.userId, error: errorMessage(error) });
         continue;
@@ -269,7 +291,7 @@ export async function refundOverPoolBoxes({
         try {
           // A pack box is only taken back here; its share is paid, and its holder told, below.
           if (parsePackBoxSourceKey(box.sourceKey)) {
-            await claimPackBox(box, holding.userId);
+            await claimPackBox(box, holding.userId, reads);
             continue;
           }
           const outcome = await refundBoxPurchase({

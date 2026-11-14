@@ -61,6 +61,18 @@ vi.mock('~/server/services/notification.service', () => notifications);
 vi.mock('~/server/services/mystery-box.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MysteryBoxService>()),
   getBoxCatalog: async () => [],
+  countLeftForHolders: async (
+    client: unknown,
+    holdings: { boxDefinitionId: number; userId: number; team?: string; catalog: unknown }[]
+  ) => {
+    const onReplica = client === (await import('~/server/db/client')).dbRead;
+    if (onReplica && holder.replicaDown) throw new Error('replica down');
+    return holdings.map((h) => {
+      holder.poolReads.push({ onReplica, team: h.team, catalog: h.catalog });
+      const key = `${h.boxDefinitionId}:${h.userId}`;
+      return (onReplica ? holder.replicaPool.get(key) : undefined) ?? holder.pool.get(key) ?? 0;
+    });
+  },
   getBoxPoolForUser: async (
     client: unknown,
     p: { boxDefinitionId: number; userId: number; team?: string; catalog?: unknown }
@@ -162,6 +174,7 @@ beforeAll(async () => {
       "purchasedAt" timestamp NOT NULL DEFAULT now()
     );
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
+    CREATE TABLE "UserCosmetic" ("userId" int NOT NULL, "cosmeticId" int NOT NULL, "claimKey" text NOT NULL DEFAULT 'claimed');
     INSERT INTO "User" (id) VALUES (${SELLER});
     INSERT INTO "Cosmetic" (id, name, type) VALUES (${HAT}, 'Hat', 'Badge');
   `);
@@ -532,6 +545,37 @@ describe('refundBoxPurchase', () => {
     expect(outcome).toMatchObject({ status: 'failed', error: expect.stringContaining('by hand') });
     expect(await heldCount()).toBe(1);
     expect((await purchaseOf('p1')).refunded).toBe(false);
+  });
+});
+
+describe('countLeftForHolders', () => {
+  it("counts each holder's left entries for their team, in one read for the page", async () => {
+    const { countLeftForHolders } = await vi.importActual<typeof MysteryBoxService>(
+      '~/server/services/mystery-box.service'
+    );
+    const entry = (cosmeticId: number, team?: string) =>
+      ({ cosmeticId, rewardDefinitionId: cosmeticId + 10, team } as never);
+    const catalog = [entry(1), entry(2, 'Pink'), entry(3, 'Blue')];
+    await q(`INSERT INTO "UserCosmetic" ("userId", "cosmeticId") VALUES (201, 1)`);
+    await q(
+      `INSERT INTO "BoxOpening" ("boxItemId", "boxDefinitionId", "boxVersion", "userId", "boxSourceKey",
+         "tierId", "contentId", "rewardDefinitionId", "rewardType", "tierWeight", "eligibleWeight",
+         "tierRoll", "tierPoolSize", "itemRoll", "rewardStatus")
+       VALUES (9001, 1, 1, 202, 'k', 0, 0, 13, 'cosmetic', 10, 100, 0, 1, 0, 'granted')`
+    );
+    const raw = pgliteRaw(holder.db);
+
+    const left = await countLeftForHolders({ $queryRaw: raw.queryRaw } as never, [
+      // Owns 1; 3 is another team's.
+      { boxDefinitionId: 1, userId: 201, team: 'Pink', catalog },
+      // Drew 13 (cosmetic 3) from box 1; 2 is another team's.
+      { boxDefinitionId: 1, userId: 202, team: 'Blue', catalog },
+      // A draw from box 1 leaves box 2's entry left.
+      { boxDefinitionId: 2, userId: 202, team: 'Blue', catalog },
+    ]);
+
+    expect(left).toEqual([1, 1, 2]);
+    await q(`DELETE FROM "UserCosmetic"`);
   });
 });
 
