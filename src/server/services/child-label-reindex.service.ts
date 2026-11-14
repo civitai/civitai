@@ -81,7 +81,7 @@ type StoredCollectionDocument = {
  * Of the collections any route reaches these images by, the ones whose stored search document
  * shows one of them. The stored document, not today's rows, decides: a document built when its
  * collection showed one of these images still does, until it is rebuilt. A batch whose documents
- * cannot be read is queued whole.
+ * cannot be read is queued whole, and a candidate with no document is queued too.
  */
 async function collectionIdsShowingImages(imageIds: number[]) {
   const wanted = new Set(imageIds);
@@ -94,6 +94,7 @@ async function collectionIdsShowingImages(imageIds: number[]) {
   });
   const shown: number[] = [];
   let unread = 0;
+  let missing = 0;
   for (const batch of chunkIds(candidates.collectionIds, DOCUMENT_READ_BATCH)) {
     try {
       if (!searchClient) throw new Error('search client not configured');
@@ -104,16 +105,21 @@ async function collectionIdsShowingImages(imageIds: number[]) {
           fields: ['id', 'image', 'images'],
           limit: batch.length,
         });
+      const read = new Set<number>();
       for (const doc of results) {
+        read.add(doc.id);
         const docImageIds = [doc.image?.id, ...(doc.images ?? []).map((image) => image.id)];
         if (docImageIds.some((id) => id !== undefined && wanted.has(id))) shown.push(doc.id);
       }
+      const absent = batch.filter((id) => !read.has(id));
+      shown.push(...absent);
+      missing += absent.length;
     } catch {
       shown.push(...batch);
       unread += batch.length;
     }
   }
-  return { collectionIds: shown, truncated: candidates.truncated, unread };
+  return { collectionIds: shown, truncated: candidates.truncated, unread, missing };
 }
 
 /** The models and collections whose search documents show these images, a chunk at a time. */
@@ -122,14 +128,16 @@ async function documentIdsForImages(imageIds: number[], chunkSize: number) {
   const collectionIds = new Set<number>();
   let truncated = false;
   let unread = 0;
+  let missing = 0;
   for (const chunk of chunkIds(imageIds, chunkSize)) {
     for (const id of await ids(modelIdsForImagesSql(chunk))) modelIds.add(id);
     const collections = await collectionIdsShowingImages(chunk);
     for (const id of collections.collectionIds) collectionIds.add(id);
     truncated ||= collections.truncated;
     unread += collections.unread;
+    missing += collections.missing;
   }
-  return { modelIds: [...modelIds], collectionIds: [...collectionIds], truncated, unread };
+  return { modelIds: [...modelIds], collectionIds: [...collectionIds], truncated, unread, missing };
 }
 
 const holdsChildTag = (entry?: { tags: number[] }) =>
@@ -237,7 +245,7 @@ export async function runChildLabelReindex({
       aborted: 'the collection lookup failed: retry from the same `after`',
     };
   }
-  const { modelIds, collectionIds, truncated, unread } = documents;
+  const { modelIds, collectionIds, truncated, unread, missing } = documents;
   const models = await queueModelsReindex(modelIds, { dryRun, chunkSize });
   const collectionsQueued = dryRun
     ? 0
@@ -254,6 +262,7 @@ export async function runChildLabelReindex({
     collections: collectionIds.length,
     collectionsTruncated: truncated,
     collectionsUnread: unread,
+    collectionsMissing: missing,
     collectionsQueued,
   };
 }

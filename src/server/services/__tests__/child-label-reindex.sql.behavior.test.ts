@@ -100,12 +100,27 @@ beforeEach(async () => {
     [82, 500],
   ])
     storedDocs.set(id, { images: [{ id: image }] });
-  getDocuments.mockImplementation(async ({ filter }: { filter: string }) => {
-    const ids = (filter.match(/\d+/g) ?? []).map(Number);
-    return {
-      results: ids.filter((id) => storedDocs.has(id)).map((id) => ({ id, ...storedDocs.get(id) })),
-    };
-  });
+  // As Meilisearch: a page of `limit` documents (20 when unset), only the `fields` asked for.
+  getDocuments.mockImplementation(
+    async ({
+      filter,
+      limit = 20,
+      fields,
+    }: {
+      filter: string;
+      limit?: number;
+      fields?: string[];
+    }) => {
+      const ids = (filter.match(/\d+/g) ?? []).map(Number).sort((a, b) => a - b);
+      const docs = ids
+        .filter((id) => storedDocs.has(id))
+        .slice(0, limit)
+        .map((id) => ({ id, ...storedDocs.get(id), unrelated: true } as Record<string, unknown>));
+      const pick = (doc: Record<string, unknown>) =>
+        fields ? Object.fromEntries(fields.filter((f) => f in doc).map((f) => [f, doc[f]])) : doc;
+      return { results: docs.map(pick) };
+    }
+  );
   dbMock.dbWrite.$queryRaw.mockImplementation(run);
   // The fixed lookup: a refreshed entry holds the child tag, read past the per-process L1 only.
   fetch.mockImplementation(async (ids: number[], opts?: { bypassLocal?: boolean }) =>
@@ -266,6 +281,7 @@ describe('child-label reindex: reindex', () => {
       images: 3,
       collections: 7,
       collectionsUnread: 0,
+      collectionsMissing: 0,
       collectionsQueued: 7,
     });
   });
@@ -281,6 +297,26 @@ describe('child-label reindex: reindex', () => {
     storedDocs.set(75, { images: [{ id: 31 }] });
     await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
     expect(queuedCollections()).not.toContain(75);
+  });
+
+  it('reads every document of a batch past the default page of 20', async () => {
+    const extra = Array.from({ length: 25 }, (_, i) => 900 + i);
+    for (const id of extra) storedDocs.set(id, { images: [{ id: 3 }] });
+    await db.exec(
+      `INSERT INTO "CollectionItem" ("collectionId", "imageId") VALUES ${extra
+        .map((id) => `(${id}, 3)`)
+        .join(',')}`
+    );
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toEqual(expect.arrayContaining(extra));
+    expect(result).toMatchObject({ collections: 32, collectionsMissing: 0, collectionsUnread: 0 });
+  });
+
+  it('queues and counts a candidate collection with no stored document', async () => {
+    storedDocs.delete(72);
+    const result = await runChildLabelReindex({ step: 'reindex', dryRun: false, chunkSize: 500 });
+    expect(queuedCollections()).toContain(72);
+    expect(result).toMatchObject({ collections: 7, collectionsMissing: 1, collectionsUnread: 0 });
   });
 
   it('queues only the batch whose documents it cannot read', async () => {
