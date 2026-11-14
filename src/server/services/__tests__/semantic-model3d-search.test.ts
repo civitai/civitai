@@ -73,7 +73,12 @@ const { PG, R } = NsfwLevel;
 /** An eligible 3D model `id` with its own scanned thumbnail `id * 10`, and its feed card. */
 async function model(
   id: number,
-  { owner = id, level = PG, thumb = level, tags = [] as number[] } = {}
+  {
+    owner = id,
+    level = PG,
+    thumb = level,
+    tags = [],
+  }: { owner?: number; level?: number; thumb?: number; tags?: number[] } = {}
 ) {
   await h.pg!.query(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [owner]);
   await h.pg!.query(
