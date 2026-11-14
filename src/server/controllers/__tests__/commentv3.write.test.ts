@@ -33,8 +33,8 @@ const m = vi.hoisted(() => ({
   metric: vi.fn(async (_: unknown) => undefined),
   authors: vi.fn(async (..._a: unknown[]) => (_id: number): object => ({})),
   authorRow: vi.fn(async (): Promise<object | undefined> => undefined),
-  song: vi.fn(
-    async (_db: unknown, _imageId: number): Promise<{ durationSec: number | null } | null> => null
+  song: vi.fn<(db: unknown, imageId: number) => Promise<{ durationSec: number | null } | null>>(
+    async () => null
   ),
 }));
 

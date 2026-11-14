@@ -21,7 +21,9 @@ const read = vi.hoisted(() => ({
   getCommentLock: vi.fn(async () => ({ locked: false })),
   resolveModelPageCommentId: vi.fn(async (_db: unknown, _modelId: number, id: number) => id),
   countSectionComments: vi.fn(async () => ({ visible: 20, hidden: 3 })),
-  getTimedComments: vi.fn(async (..._a: unknown[]): Promise<ReadService.TimedComment[]> => []),
+  getTimedComments: vi.fn<(...args: unknown[]) => Promise<ReadService.TimedComment[]>>(
+    async () => []
+  ),
 }));
 vi.mock('~/server/services/commentv3/read.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReadService>()),
@@ -65,7 +67,7 @@ const authors = vi.hoisted(() =>
   vi.fn(async (..._a: unknown[]) => (_id: number) => ({}))
 );
 const pictures = vi.hoisted(() =>
-  vi.fn(async (_ids: number[]): Promise<Record<number, unknown>> => ({}))
+  vi.fn<(ids: number[]) => Promise<Record<number, unknown>>>(async () => ({}))
 );
 vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
