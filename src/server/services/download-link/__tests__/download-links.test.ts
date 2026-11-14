@@ -169,6 +169,7 @@ import linkHandler from '~/pages/api/download/l/[id]';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
 import { clearGateReadCache } from '~/server/services/download-link/generation-fetch.service';
 import { mintProviderLink } from '~/server/services/download-link/download-link.service';
+import type { DownloadLinkCredential } from '~/server/services/download-link/download-link.store';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 
 // ---------------------------------------------------------------------------------------------
@@ -1138,7 +1139,7 @@ describe('mint limits', () => {
 });
 
 describe('provider links', () => {
-  const ORCH = { kind: 'apikey', id: '555' } as const;
+  const ORCH: DownloadLinkCredential = { kind: 'apikey', id: '555' };
   const UNPUBLISHED = 120;
   const mintFor = (modelVersionId: number, now?: number, credential = ORCH) =>
     mintProviderLink(
