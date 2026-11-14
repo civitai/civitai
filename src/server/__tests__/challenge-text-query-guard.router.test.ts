@@ -94,6 +94,15 @@ describe('challenge.getInfinite text query guard', () => {
     expect(Flags.intersection(level, ~sfwBrowsingLevelsFlag)).toBe(0);
   });
 
+  it('a minor verdict narrows an unfiltered feed too', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    // No requested level on a non-green site: the feed would apply no level filter (0).
+    await caller(VIEWER).getInfinite({ query: 'young' });
+    const level = h.feed.mock.calls[0][0].browsingLevel as number;
+    expect(level).toBeGreaterThan(0);
+    expect(Flags.intersection(level, ~sfwBrowsingLevelsFlag)).toBe(0);
+  });
+
   it('a Cancelled-only filter with a refused query gets no results', async () => {
     h.includesInappropriate.mockReturnValue('inappropriate');
     const result = await caller(VIEWER).getInfinite({
