@@ -35,6 +35,12 @@ export function ConfirmedStepConsentBody({
         {copy.priceLine}
       </Text>
 
+      {copy.fundingLine && (
+        <Text size="sm" data-testid="block-confirmed-step-funding">
+          {copy.fundingLine}
+        </Text>
+      )}
+
       {copy.dailyLimitLine && (
         <Text size="sm" data-testid="block-confirmed-step-daily-limit">
           {copy.dailyLimitLine}
