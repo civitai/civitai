@@ -623,16 +623,95 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.clawedBack).toBe(560);
   });
 
-  // Unreachable while creator boxes are not sold; kept so the first sale without a record is loud.
-  it('leaves a creator box sale with no payout record to a moderator, against the creator', async () => {
+  it('leaves a creator box payout the ledger shows unreversed to a moderator, for what was paid', async () => {
     const boxId = await seedBox({ sellerId: CREATOR });
-    await seedOpening(boxId);
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
 
     const result = await takedown();
 
     expect(result.failures).toEqual([
-      expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId }),
+      expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId, amount: 560 }),
     ]);
+  });
+
+  it('files no clawback for a late payout already reversed on the ledger', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === 'refund-payout-1' ? { externalTransactionId: id } : null
+    );
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it('files no clawback for a late payout whose own reversal the sweep is still finishing', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId, {
+      meta: { payoutReversal: { transactionId: 'payout-1', at: 'x' } },
+    });
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it('leaves the whole price to a moderator when the ledger cannot be read after the refund', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId);
+    // The box refund goes by prefix (`refundMultiAccountTransaction`); the ledger read that fails
+    // is the clawback check's.
+    buzz.getMultiAccountTransactionsByPrefix.mockRejectedValue(new Error('buzz down'));
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        stage: 'clawback',
+        userId: CREATOR,
+        boxId,
+        amount: 800,
+        error: expect.stringContaining(
+          `${sourceKey} has no recorded payouts and its ledger could not be read`
+        ),
+      }),
+    ]);
+  });
+
+  // The payout failed, or landed after the refund began and reversed itself: nothing is owed.
+  it('files no clawback for a creator box sale whose ledger shows no unreversed payout', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
   });
 });
 

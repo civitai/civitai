@@ -65,6 +65,9 @@ describe('payment intent keys', () => {
         })
       ).rejects.toThrow();
     }
+    // Still held after the last of them: the next attempt is the same action.
+    await withPaymentIntentKey('intent', async (key) => void keys.push(key));
+    expect(keys).toHaveLength(3);
     expect(new Set(keys).size).toBe(1);
   });
 

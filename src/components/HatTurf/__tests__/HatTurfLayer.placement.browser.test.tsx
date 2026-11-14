@@ -665,3 +665,78 @@ describe('the hats follow the picture when it moves without resizing', () => {
     await vi.waitFor(() => expect(top()).toBeCloseTo((CARD.height - 132 - 80) / 2, 0));
   });
 });
+
+describe('how many hats a card draws, and the overflow chip', () => {
+  const POSE = { x: 0.5, y: 0.4, scale: 0.12, rotation: 0, flip: false };
+  const crowd = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: 100 + i,
+      userId: 100 + i,
+      team: 'blue',
+      cosmeticId: 11,
+      data: { ...POSE, x: 0.1 + (i % 8) * 0.1 },
+      createdAt: new Date(Date.now() - i * 60_000),
+    }));
+  // 14 hats counted on the image, more than any card draws.
+  const render = (
+    card: { width: number; height: number },
+    layer: Partial<React.ComponentProps<typeof HatTurfLayer>>,
+    drawn = 12
+  ) =>
+    renderWithProviders(
+      <TurfSummaryContext.Provider
+        value={{
+          event: 'birthday2026',
+          arm: 'control',
+          team: 'blue',
+          images: {
+            5: {
+              shown: { blue: 14 },
+              counted: { blue: 14 },
+              leader: 'blue',
+              leaderCosmeticId: 11,
+              hatted: false,
+              hattedTeam: null,
+            },
+          },
+          open: {},
+          stickers: {},
+          joined: true,
+          watch: () => () => undefined,
+        }}
+      >
+        <HatTurfCardProvider>
+          <div style={{ position: 'relative', overflow: 'hidden', ...card }}>
+            <img
+              src={svg(card.width, card.height)}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+            <HatTurfLayer imageId={5} stickers={crowd(drawn)} {...layer} />
+          </div>
+        </HatTurfCardProvider>
+      </TurfSummaryContext.Provider>
+    );
+  const hats = () => document.body.querySelectorAll('[data-testid="hat-turf-hat"]').length;
+
+  test('a feed card draws 10 hats and no "+N" chip', async () => {
+    render({ width: 300, height: 400 }, {});
+    await vi.waitFor(() => expect(hats()).toBe(10));
+    expect(q('hat-turf-more')).toBeNull();
+  });
+
+  test('a narrow feed card draws 3 hats and no chip', async () => {
+    render(CARD, {});
+    await vi.waitFor(() => expect(hats()).toBe(3));
+    expect(q('hat-turf-more')).toBeNull();
+  });
+
+  test('the image detail keeps its "+N more" button', async () => {
+    const onMore = vi.fn();
+    render({ width: 300, height: 400 }, { source: 'image-detail', drawLimit: 10, onMore });
+    await vi.waitFor(() => expect(q('hat-turf-more')?.textContent).toContain('+4 more'));
+    expect(hats()).toBe(10);
+    q('hat-turf-more')!.click();
+    expect(onMore).toHaveBeenCalledOnce();
+  });
+});

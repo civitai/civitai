@@ -132,7 +132,10 @@ export async function updateByStripeConnectAccount({
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
-      }).catch();
+      }).catch(() => {
+        // The row is already written: a throw here would fail the webhook after the write.
+        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      });
     }
   } else if (stripeAccount.requirements?.disabled_reason) {
     // If we're here, user is not good to go!
@@ -151,7 +154,10 @@ export async function updateByStripeConnectAccount({
         category: NotificationCategory.System,
         key: `creators-program-rejected-stripe:${crypto.randomUUID()}`,
         details: {},
-      }).catch();
+      }).catch(() => {
+        // The row is already written: a throw here would fail the webhook after the write.
+        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      });
     }
   } else if (stripeAccount.details_submitted) {
     updated = await dbWrite.userPaymentConfiguration.update({

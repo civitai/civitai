@@ -525,8 +525,8 @@ const rightsAffirmedSchema = z
 const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
 
 // Minted by the client once per submission and resent on its retries. The fee is charged under an
-// id derived from it, so a retry after an unanswered submit cannot charge again. Optional: a client
-// from before keys gets a new charge id per call, as before.
+// id derived from it, so a retry after an unanswered submit cannot charge again. Optional: without
+// one, every call is a new submission charged under a new id, with no dedup.
 const submissionIdempotencyKeySchema = z.string().uuid().optional();
 
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;

@@ -86,11 +86,15 @@ export const schema = z.object({
   // → the existing 400 path fires. (The `if (!id)` guard below still covers a
   // legitimately absent id.)
   id: z.coerce.number().int().gt(0).lte(2147483647),
-  epoch: z.number().optional(),
+  // Read only for a caller who may pick the epoch (see `epochSchema`); everyone else is answered as
+  // if it were absent, so a malformed value refuses nobody else.
+  epoch: z.unknown().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
   // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
 });
+
+const epochSchema = z.coerce.number().int();
 
 type VersionRow = {
   id: number;
@@ -418,6 +422,7 @@ export default MixedAuthEndpoint(async function handler(
   // Only the owner, a moderator, a grantee or the service token gets a freshly signed url; anyone
   // else the gate serves (`log`, or `enforce-anon` with a credential) keeps the stored one.
   let mayResign = false;
+  let maySelectEpoch = false;
   // Decided before the epoch is read, so a refused caller gets the same answer whatever the
   // version's training results hold.
   if (useEpochUrl) {
@@ -438,12 +443,24 @@ export default MixedAuthEndpoint(async function handler(
       // 404 to a caller who would be served.
       if (caller.withhold) return res.status(404).json({ error: 'Model not found' });
       mayResign = caller.callerClass !== 'anonymous' && caller.callerClass !== 'other';
+      maySelectEpoch = ['owner', 'moderator', 'orchestrator'].includes(caller.callerClass);
     } else {
       mayResign =
         orchestrator ||
         ((user?.id === modelVersion.modelUserId || !!user?.isModerator) &&
           !(await isScopeRefused()));
+      maySelectEpoch = mayResign;
     }
+  }
+
+  let requestedEpoch: number | undefined;
+  if (maySelectEpoch && results.data.epoch !== undefined) {
+    const parsed = epochSchema.safeParse(results.data.epoch);
+    if (!parsed.success)
+      return res.status(400).json({ error: z.prettifyError(parsed.error) ?? 'Invalid epoch' });
+    requestedEpoch = parsed.data;
+    // The body varies by ?epoch= for this caller; keep it out of shared caches.
+    res.setHeader('Cache-Control', 'private, no-store');
   }
 
   const targetFile = useEpochUrl
@@ -472,10 +489,10 @@ export default MixedAuthEndpoint(async function handler(
     const epoch =
       trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
-          return e.epoch_number === results.data.epoch;
+          return e.epoch_number === requestedEpoch;
         }
 
-        return e.epochNumber === results.data.epoch;
+        return e.epochNumber === requestedEpoch;
       }) ??
       // Non-mutating last-element read. `epochs?.pop()` would MUTATE the
       // metadata object this handler was handed, and it is the only reader here

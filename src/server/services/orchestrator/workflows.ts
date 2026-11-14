@@ -458,10 +458,11 @@ export async function submitWorkflow({
       body.allowMatureContent === false &&
       message === 'Prompt requires mature content but workflow does not allow it'
     ) {
-      // `nsfwLevel: 'pg13'` is only set for private or epoch resources (orchestration-new.service).
+      // `nsfwLevel: 'pg13'` is set for private or epoch resources, sfwOnly workflows and base models
+      // that restrict mature generation (output-restrictions.ts).
       if (body.nsfwLevel === 'pg13')
         message =
-          'The prompt has been blocked due to mature content, which private and in-training resources cannot generate';
+          'The prompt has been blocked due to mature content, which the resources or workflow in this generation cannot produce';
       else if (body.currencies?.includes('green'))
         message =
           'The prompt has been blocked due to mature content, which is not allowed on this site';

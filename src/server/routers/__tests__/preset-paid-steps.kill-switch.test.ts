@@ -7,6 +7,7 @@ import type * as GenerationService from '~/server/services/generation/generation
  *   - comics smart create, before the chapter or any panel is written (it queues panels for the
  *     background job, which would otherwise fail them one by one);
  *   - comics planChapterPanels, before the paid story plan;
+ *   - comics enhancePromptText, before the paid prompt enhancement;
  *   - orchestrator iterateGenerate, before the paid prompt enhancement.
  */
 
@@ -83,6 +84,10 @@ const planPanels = (user: { isModerator: boolean; tier?: string }) =>
   comicsRouter
     .createCaller(ctxFor(user))
     .planChapterPanels({ projectId: 11, storyDescription: 'a story' });
+const enhancePromptText = (user: { isModerator: boolean; tier?: string }) =>
+  comicsRouter
+    .createCaller(ctxFor(user))
+    .enhancePromptText({ projectId: 11, chapterPosition: 0, prompt: 'a cat' });
 const iterate = (user: { isModerator: boolean; tier?: string }) =>
   orchestratorRouter.createCaller(ctxFor(user)).iterateGenerate({ prompt: 'a cat' });
 
@@ -101,6 +106,10 @@ beforeEach(() => {
   resetEnv();
   dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: false, bannedAt: null } as never);
   dbMock.dbRead.comicProject.findUnique.mockResolvedValue({ userId: USER_ID } as never);
+  dbMock.dbRead.comicChapter.findUnique.mockResolvedValue({
+    project: { userId: USER_ID },
+  } as never);
+  dbMock.dbRead.comicReference.findMany.mockResolvedValue([] as never);
 });
 
 describe('comics smart create obeys the generation kill switch', () => {
@@ -146,6 +155,7 @@ describe('comics smart create obeys the generation kill switch', () => {
 
 describe.each([
   ['comics planChapterPanels', planPanels, () => h.planChapterPanels],
+  ['comics enhancePromptText', enhancePromptText, () => h.enhanceComicPrompt],
   ['orchestrator iterateGenerate', iterate, () => h.enhanceComicPrompt],
 ])('%s obeys the generation kill switch', (_, call, paidStep) => {
   it.each([
