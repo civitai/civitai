@@ -23,9 +23,9 @@ const walk = (dir: string): string[] =>
     return name.endsWith('.tsx') && !name.includes('.test.') ? [full] : [];
   });
 
-// The element's own text: `<Tag` up to its first `/>` or `>` that closes the opening tag. Props
-// here hold objects and calls but no JSX, so the first `/>` (self-closing) or the first `>` that
-// follows a `}` or a quote at line end is the end of the tag.
+// The element's own text: `<Tag` up to the first `/>`, or the first `>` that is the first
+// non-space character on its line (Prettier's closing bracket). Props here hold no JSX, so either
+// one ends the opening tag.
 const openingTags = (source: string, tag: string) => {
   const found: string[] = [];
   const re = new RegExp(`<${tag}\\b`, 'g');
