@@ -9,7 +9,8 @@ import {
  * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. The
  * bar writes the URL only when its text is committed (Enter, blur, the clear button), never as you
  * type: each applied query is a semantic search, and the service can't take one per keystroke. Each
- * commit is a history entry, so Back returns to the previous search. A URL change from elsewhere (first load, Back, the feed's Clear search) re-seeds the bar instead.
+ * commit pushes a history entry; a URL change from elsewhere (first load, Back to the previous
+ * search, the feed's Clear search) re-seeds the bar instead.
  *
  * Our own writes are told apart by VALUE, against every write still in flight, not just the last:
  * a second write can go out before the router shows the first, and a last-write-only check would
