@@ -62,11 +62,7 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   // No other easy way to hide the block if the feature is disabled
   if (props.metadata.link?.includes('/articles') && !features.articles) return null;
 
-  return (
-    <HomeBlockWrapper py={32}>
-      <CollectionHomeBlockContent {...props} />
-    </HomeBlockWrapper>
-  );
+  return <CollectionHomeBlockContent {...props} />;
 };
 
 const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
@@ -137,6 +133,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   // A block this viewer may not see answers not-found: render nothing rather than an empty frame.
   if (!isLoading && !homeBlock) return null;
+  // A Flag Race row with no flags today (between race days, or before the first) hides, header and all.
+  if (flagEvent && !isLoading && !loadingPreferences && !items.length) return null;
 
   const link = metadata.link || `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
@@ -258,77 +256,79 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     (!currentUser || metadata.descriptionAlwaysVisible);
 
   return (
-    <div
-      style={
-        {
-          '--count': items.length ?? 0,
-          '--rows': rows,
-        } as React.CSSProperties
-      }
-    >
-      <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
-        {MetaDataTop}
-      </Box>
-      {isLoading || loadingPreferences ? (
-        <div
-          className={clsx(classes.grid, {
-            [classes.gridRow]: !!flagEvent,
-            [classes.gridFlag]: !!flagEvent,
-          })}
-        >
-          {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-          {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
-            <AspectRatio ratio={7 / 9} key={index} className="m-2">
-              <Skeleton width="100%" />
-            </AspectRatio>
-          ))}
-        </div>
-      ) : (
-        <div
-          className={clsx(classes.grid, {
-            [classes.gridRow]: !!flagEvent,
-            [classes.gridFlag]: !!flagEvent,
-          })}
-        >
-          <FlagRowProviders row={flagRow}>
-            <RemixFlyoutLayoutProvider layout="side">
-              <ImagesProvider
-                hideReactionCount={collection?.mode === CollectionMode.Contest}
-                hideHatTurf={collectionHidesHatTurf(collection)}
-                images={type === 'image' ? (items as any) : undefined}
-              >
-                <ReactionSettingsProvider
-                  settings={{
-                    hideReactionCount: collection?.mode === CollectionMode.Contest,
-                    hideReactions: collection && contestCollectionReactionsHidden(collection),
-                  }}
-                >
-                  {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-                  {items.map((item) => (
-                    <div key={item.id} className="p-2">
-                      {type === 'model' && <ModelCard data={item as any} forceInView />}
-                      {type === 'image' && <ImageCard data={item as any} />}
-                      {type === 'post' && <PostCard data={item as any} />}
-                      {type === 'article' && <ArticleCard data={item as any} />}
-                    </div>
-                  ))}
-                </ReactionSettingsProvider>
-              </ImagesProvider>
-            </RemixFlyoutLayoutProvider>
-          </FlagRowProviders>
-        </div>
-      )}
-
-      {metadata.footer && (
-        <Stack mt="md">
-          <div className="mb-2 text-sm">
-            <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
-              {metadata.footer}
-            </CustomMarkdown>
+    <HomeBlockWrapper py={32}>
+      <div
+        style={
+          {
+            '--count': items.length ?? 0,
+            '--rows': rows,
+          } as React.CSSProperties
+        }
+      >
+        <Box mb="md" className={clsx({ [classes.meta]: useGrid })}>
+          {MetaDataTop}
+        </Box>
+        {isLoading || loadingPreferences ? (
+          <div
+            className={clsx(classes.grid, {
+              [classes.gridRow]: !!flagEvent,
+              [classes.gridFlag]: !!flagEvent,
+            })}
+          >
+            {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+            {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
+              <AspectRatio ratio={7 / 9} key={index} className="m-2">
+                <Skeleton width="100%" />
+              </AspectRatio>
+            ))}
           </div>
-        </Stack>
-      )}
-    </div>
+        ) : (
+          <div
+            className={clsx(classes.grid, {
+              [classes.gridRow]: !!flagEvent,
+              [classes.gridFlag]: !!flagEvent,
+            })}
+          >
+            <FlagRowProviders row={flagRow}>
+              <RemixFlyoutLayoutProvider layout="side">
+                <ImagesProvider
+                  hideReactionCount={collection?.mode === CollectionMode.Contest}
+                  hideHatTurf={collectionHidesHatTurf(collection)}
+                  images={type === 'image' ? (items as any) : undefined}
+                >
+                  <ReactionSettingsProvider
+                    settings={{
+                      hideReactionCount: collection?.mode === CollectionMode.Contest,
+                      hideReactions: collection && contestCollectionReactionsHidden(collection),
+                    }}
+                  >
+                    {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+                    {items.map((item) => (
+                      <div key={item.id} className="p-2">
+                        {type === 'model' && <ModelCard data={item as any} forceInView />}
+                        {type === 'image' && <ImageCard data={item as any} />}
+                        {type === 'post' && <PostCard data={item as any} />}
+                        {type === 'article' && <ArticleCard data={item as any} />}
+                      </div>
+                    ))}
+                  </ReactionSettingsProvider>
+                </ImagesProvider>
+              </RemixFlyoutLayoutProvider>
+            </FlagRowProviders>
+          </div>
+        )}
+
+        {metadata.footer && (
+          <Stack mt="md">
+            <div className="mb-2 text-sm">
+              <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+                {metadata.footer}
+              </CustomMarkdown>
+            </div>
+          </Stack>
+        )}
+      </div>
+    </HomeBlockWrapper>
   );
 };
 
