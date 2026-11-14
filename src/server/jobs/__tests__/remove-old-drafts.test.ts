@@ -156,6 +156,8 @@ describe('removeOldDrafts', () => {
 
       expect(readPredicate()).toBe(
         `WHERE m.status IN ('Draft', 'Deleted') ` +
+          `AND NOT ( m.mode::text IS NOT DISTINCT FROM 'TakenDown' ` +
+          `OR (m.status::text = 'Deleted' AND m."deletedBy" IS NOT NULL AND m."deletedBy" <> m."userId") ) ` +
           `AND m."updatedAt" < now() - INTERVAL '30 days' ` +
           `AND mm."downloadCount" < 10 ` +
           `AND m."availability" != 'Private'::"Availability" ` +

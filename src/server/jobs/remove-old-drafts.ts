@@ -10,6 +10,13 @@ import { chunk } from 'lodash-es';
 
 const log = createLogger('remove-old-drafts');
 
+/** A model a moderator acted on is kept: taken down, or deleted by someone other than its owner.
+ *  An owner's own delete, and an account delete (no actor), stay reapable. */
+const moderatedSql = (m: Prisma.Sql) => Prisma.sql`(
+  ${m}.mode::text IS NOT DISTINCT FROM 'TakenDown'
+  OR (${m}.status::text = 'Deleted' AND ${m}."deletedBy" IS NOT NULL AND ${m}."deletedBy" <> ${m}."userId")
+)`;
+
 /**
  * The reaping schedule now lives in `src/server/common/draft-reaping.ts` and is
  * re-exported here so existing importers keep working.
@@ -135,6 +142,9 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
     FROM "Model" m
     JOIN "ModelMetric" mm ON mm."modelId" = m.id
     WHERE m.status IN ('Draft', 'Deleted')
+      -- The same rule as moderatedSql, written out so the pinned predicate shows it.
+      AND NOT ( m.mode::text IS NOT DISTINCT FROM 'TakenDown'
+        OR (m.status::text = 'Deleted' AND m."deletedBy" IS NOT NULL AND m."deletedBy" <> m."userId") )
       -- REAP_AGE_DAYS. Abandonment threshold: lowering this WIDENS what is
       -- destroyed. Not part of the fence below, and not tied to its window.
       AND m."updatedAt" < now() - INTERVAL '30 days'
@@ -240,6 +250,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
           SELECT m.id FROM "Model" m
           WHERE m.id = ANY(${deletable})
             AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+            AND NOT ${moderatedSql(Prisma.raw('m'))}
         ),
         ${keepHeldReviewsCte(reviewsOnModelsSql(Prisma.sql`SELECT id FROM doomed`), true)}
         DELETE FROM "Model" m
