@@ -23,6 +23,7 @@ import {
   dropReplacedRatingMarkerSql,
   restoreReplacedRatingMarkerSql,
   storedListingTextHash,
+  suppressComFaceIntentRelockSql,
 } from '~/server/services/model-com-face-intent.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
@@ -264,7 +265,7 @@ export async function resolveLockReviewAppeal({
       });
       throw throwBadRequestError(LOCK_REVIEW_MATCH_CHECK_FAILED);
     });
-  const { claimed, unlocked } = await dbWrite.$transaction(async (tx) => {
+  const { claimed, unlocked, dispute } = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<
       {
         id: number;
@@ -277,10 +278,12 @@ export async function resolveLockReviewAppeal({
         detectionHeld: boolean;
         lockSource: string | null;
         verdictMeta: unknown;
+        intentPromptId: number | null;
       }[]
     >`
       SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
         m.meta->'systemNsfwLock'->>'source' AS "lockSource",
+        (m.meta->'comFaceIntent'->>'promptId')::int AS "intentPromptId",
         jsonb_build_object('systemNsfwLock', m.meta->'systemNsfwLock',
           'comFaceIntent', jsonb_build_object('laterVerdict', m.meta->'comFaceIntent'->'laterVerdict')
         ) AS "verdictMeta",
@@ -339,16 +342,15 @@ export async function resolveLockReviewAppeal({
         await tx.$executeRaw`
           UPDATE "Model" SET meta = ${withoutSystemNsfwLockSql('meta')} WHERE id = ${modelId}
         `;
-        // Lifting the nsfw lock rules the listing is not made for sexual content: the stored
-        // intent detection stops refusing a civitai.com version for this text. The rating marker
-        // the intent lock replaced comes back only when the lock lifted is the intent check's;
-        // under any other lock that old marker is stale, and goes.
-        await tx.$executeRaw(
-          row.lockSource === COM_FACE_INTENT_LOCK_SOURCE
-            ? restoreReplacedRatingMarkerSql(modelId)
-            : dropReplacedRatingMarkerSql(modelId)
-        );
-        await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
+        // SQL twin of comFaceIntentMetaAfterModeratorUnlock: keep the two in step.
+        if (row.lockSource === COM_FACE_INTENT_LOCK_SOURCE) {
+          await tx.$executeRaw(restoreReplacedRatingMarkerSql(modelId));
+          await tx.$executeRaw(overturnComFaceIntentSql(modelId, ruledTextHash));
+        } else {
+          await tx.$executeRaw(dropReplacedRatingMarkerSql(modelId));
+          if (ruledTextHash)
+            await tx.$executeRaw(suppressComFaceIntentRelockSql(modelId, ruledTextHash));
+        }
       }
     }
 
@@ -382,8 +384,29 @@ export async function resolveLockReviewAppeal({
     ])
       await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity }, tx);
 
-    return { claimed, unlocked: lift };
+    return {
+      claimed,
+      unlocked: lift,
+      dispute: asked.dispute === COM_FACE_INTENT_DISPUTE ? row : null,
+    };
   });
+
+  // The job logs its own approvals where it judges them; a second sample here would count them twice.
+  if (dispute && !asDisputeJob) {
+    const context = dispute.context as Record<string, unknown> | null;
+    logToAxiom({
+      type: 'info',
+      name: 'model-com-face-intent-dispute',
+      message: 'moderator-ruled',
+      appealId,
+      modelId,
+      approved: approve,
+      unlocked,
+      autoReview: context?.autoReview ?? null,
+      autoReviewAttempts: context?.autoReviewAttempts ?? null,
+      firstPromptId: dispute.intentPromptId,
+    }).catch(() => undefined);
+  }
 
   if (unlocked.length) await preventReplicationLag('model', modelId);
   // The ruling is committed: a failed notice must not read as a failed ruling, which cannot be retried.
