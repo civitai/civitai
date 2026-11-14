@@ -34,8 +34,12 @@ vi.mock('../db', () => ({
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../notifications', () => ({ getNotifications: () => ({ createNotification }) }));
 
-const { takedownServiceOffering, getReportServiceOfferingId, getReportedServiceOfferings } =
-  await import('../service-offering-takedown.service');
+const {
+  takedownServiceOffering,
+  releaseServiceOffering,
+  getReportServiceOfferingId,
+  getReportedServiceOfferings,
+} = await import('../service-offering-takedown.service');
 
 const migration = (name: string) =>
   readFileSync(
@@ -76,10 +80,15 @@ beforeEach(async () => {
   await pg.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "Report" (id serial PRIMARY KEY);
+    CREATE TABLE "Image" (id int PRIMARY KEY);
+    CREATE TABLE "EntityModeration" ("entityType" text NOT NULL, "entityId" int NOT NULL,
+      status text NOT NULL, "triggeredLabels" text[] NOT NULL DEFAULT '{}', result jsonb);
   `);
   await pg.exec(migration('20261025120000_creator_services_foundation'));
   await pg.exec(migration('20261028150000_creator_service_max_nsfw_level'));
   await pg.exec(migration('20261028170000_creator_service_offering_takedown'));
+  await pg.exec(migration('20270106120000_service_offering_content_scan'));
+  await pg.exec(migration('20261016150000_text_scan_hold'));
   await pg.exec(`
     INSERT INTO "User" (id, username) VALUES (${SELLER}, 'badgesmith');
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", status, "updatedAt")
@@ -173,5 +182,122 @@ describe('service offering takedown from the report queue', () => {
       })
     ).toBeNull();
     expect(createNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('releasing a held service offering from the report queue', () => {
+  const ingestion = async () =>
+    (
+      await pg.query<{ ingestion: string; scannedAt: Date | null }>(
+        `SELECT ingestion::text, "scannedAt" FROM "ServiceOffering" WHERE id = $1`,
+        [OFFERING]
+      )
+    ).rows[0];
+  const hold = () =>
+    pg.query(`UPDATE "ServiceOffering" SET ingestion = 'Blocked' WHERE id = $1`, [OFFERING]);
+
+  const seen = async () =>
+    (
+      await pg.query<{ updatedAt: Date }>(
+        `SELECT "updatedAt" FROM "ServiceOffering" WHERE id = $1`,
+        [OFFERING]
+      )
+    ).rows[0].updatedAt;
+  const release = async (seenUpdatedAt?: Date, offeringId = OFFERING) =>
+    releaseServiceOffering({
+      offeringId,
+      seenUpdatedAt: seenUpdatedAt ?? (await seen()),
+      moderatorId: MOD,
+    });
+
+  it('shows a held offering again and records the moderator', async () => {
+    await hold();
+    const released = await release();
+    expect(released).toMatchObject({ id: OFFERING, ingestion: 'Scanned', changed: true });
+    expect((await ingestion()).scannedAt).not.toBeNull();
+    expect(recordModActivity).toHaveBeenCalledWith({
+      userId: MOD,
+      entityType: 'serviceOffering',
+      entityId: OFFERING,
+      activity: 'release',
+    });
+  });
+
+  it('leaves an offering whose check is still running as it is', async () => {
+    // The migration leaves existing offerings Pending.
+    const released = await release();
+    expect(released).toMatchObject({ ingestion: 'Pending', changed: false });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('is null for an offering that no longer exists', async () => {
+    expect(await release(new Date(), 999)).toBeNull();
+  });
+
+  it('leaves a held offering with a pending csam hold until that hold is decided', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'h', 'text', 'r', now())`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({
+      ingestion: 'Blocked',
+      changed: false,
+      csamHeld: true,
+    });
+    expect(recordModActivity).not.toHaveBeenCalled();
+
+    await pg.query(`UPDATE "TextScanHold" SET status = 'Dismissed'`);
+    expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
+  });
+
+  it('leaves a held offering with a csam verdict whose hold was never written, until a moderator dismisses that text', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
+       VALUES ('ServiceOffering', $1, 'Succeeded', '{csam}', '{"version": 1, "textHash": "h2"}')`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Blocked', changed: false, csamHeld: true });
+
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, meta, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'h2', 'text', 'r', 'Dismissed', '{"decision":"dismiss"}', now())`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
+  });
+
+  it('releases a held offering whose verdict found nothing', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "EntityModeration" ("entityType", "entityId", status, "triggeredLabels", result)
+       VALUES ('ServiceOffering', $1, 'Succeeded', '{}', '{"version": 1, "textHash": "h2"}')`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Scanned', changed: true });
+  });
+
+  it('leaves a held offering hidden for good once its csam hold was decided as a removal', async () => {
+    await hold();
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, "textHash", text, reason, status, "updatedAt")
+       VALUES ('ServiceOffering', $1, 'csam', 'h', 'text', 'r', 'Confirmed', now())`,
+      [OFFERING]
+    );
+    expect(await release()).toMatchObject({ ingestion: 'Blocked', changed: false, csamHeld: true });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('leaves a held offering edited since the moderator read it', async () => {
+    await hold();
+    const read = await seen();
+    await pg.query(
+      `UPDATE "ServiceOffering" SET title = 'Edited', "updatedAt" = "updatedAt" + interval '1 second' WHERE id = $1`,
+      [OFFERING]
+    );
+    expect(await release(read)).toMatchObject({ ingestion: 'Blocked', changed: false });
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 });

@@ -166,6 +166,7 @@ import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
 import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
+import { serviceOfferingIngestionReconcile } from '~/server/jobs/service-offering-ingestion-reconcile';
 import { articleContentLinkHold } from '~/server/jobs/article-content-link-hold';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
@@ -349,6 +350,7 @@ export const jobs: Job[] = [
   textScanChatWindowsJob,
   textScanNewUsersJob,
   articleIngestionReconcile,
+  serviceOfferingIngestionReconcile,
   articleContentLinkHold,
   expireStrikesJob,
   processTimedUnmutesJob,

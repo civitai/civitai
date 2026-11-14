@@ -6,6 +6,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCreatorShopVisible } from '~/server/services/creator-shop.service';
 import { createMessage, upsertDealChat } from '~/server/services/chat.service';
 import {
+  counterpartyOfferingTitle,
   getDealPartiesWithTitle,
   notifyServiceDeal,
   notifyServiceDealTransition,
@@ -46,7 +47,12 @@ import {
   type ServiceDealReasonCode,
 } from '~/shared/constants/creator-services.constants';
 import { Flags } from '~/shared/utils/flags';
-import type { ServiceDealEventType, ServiceDealStatus } from '~/shared/utils/prisma/enums';
+import {
+  ServiceOfferingIngestionStatus,
+  type ServiceDealEventType,
+  type ServiceDealStatus,
+} from '~/shared/utils/prisma/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   dealActions,
   dealActorRole,
@@ -262,6 +268,23 @@ const notBlockedBetween = (buyer: Prisma.Sql, seller: Prisma.Sql) => Prisma.sql`
       OR (ue."userId" = ${seller} AND ue."targetUserId" = ${buyer}))
 )`;
 
+/**
+ * `serviceOfferingShowableWhere`, as SQL, but without the viewer's rating cut: the cover only has to
+ * be rated, and the rating is compared through `offeringLevel`. Change the two together.
+ */
+const offeringShowable = Prisma.sql`(o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus"
+  AND (o."coverImageId" IS NULL OR EXISTS (
+    SELECT 1 FROM "Image" ci
+    WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
+      AND ci."needsReview" IS NULL AND ci."tosViolation" = false AND ci."nsfwLevel" > 0
+  )))`;
+
+// The stored rating with the cover's folded in, so a cover rated since the last recompute counts.
+const offeringLevel = Prisma.sql`LEAST(GREATEST(o."maxNsfwLevel", COALESCE((
+    SELECT ci."nsfwLevel" FROM "Image" ci
+    WHERE ci."id" = o."coverImageId" AND ci."ingestion" = 'Scanned'::"ImageIngestionStatus"
+  ), 0)), ${NsfwLevel.XXX}::int)`;
+
 type OfferingRow = {
   id: number;
   sellerId: number;
@@ -273,6 +296,7 @@ type OfferingRow = {
   deliveryDays: number;
   blocked: boolean;
   sellerOk: boolean;
+  showable: boolean;
   maxNsfwLevel: number;
 };
 
@@ -327,13 +351,15 @@ export async function requestServiceDeal({
       (SELECT count(*)::int FROM "ServiceDeal" d
         WHERE d."offeringId" = o."id" AND d."status" IN (${OPEN})) AS "open",
       NOT ${notBlockedBetween(Prisma.sql`${buyerId}::int`, Prisma.sql`o."sellerId"`)} AS "blocked",
-      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk", o."maxNsfwLevel"
+      ${sellerInGoodStanding(Prisma.sql`o."sellerId"`)} AS "sellerOk",
+      ${offeringShowable} AS "showable", ${offeringLevel} AS "maxNsfwLevel"
     FROM "ServiceOffering" o WHERE o."id" = ${offeringId}::int`;
   // A mature service on a domain that does not serve it is hidden there, so it is not found.
   if (
     !offering ||
     offering.status !== 'Active' ||
     !offering.sellerOk ||
+    !offering.showable ||
     !(offering.maxNsfwLevel & servableLevels)
   )
     throw throwNotFoundError('Service not found');
@@ -373,7 +399,7 @@ export async function requestServiceDeal({
         "updatedAt", "maxNsfwLevel")
       SELECT o."id", ${buyerId}::int, o."sellerId", o."price", ${buzzType}::"ServiceBuzzType",
         0, o."revisionsIncluded", o."deliveryDays", o."previewKind", 'Requested'::"ServiceDealStatus",
-        ${requestText}::text, now(), o."maxNsfwLevel"
+        ${requestText}::text, now(), ${offeringLevel}
       FROM "ServiceOffering" o
       WHERE o."id" = ${offeringId}::int
         AND o."status" = 'Active'::"ServiceOfferingStatus"
@@ -382,9 +408,10 @@ export async function requestServiceDeal({
         AND o."deliveryDays" = ${expectedDeliveryDays}::int
         AND o."sellerId" <> ${buyerId}::int
         -- serviceRequestAllowed: SFW always; mature only where served, to a buyer who opted in.
-        AND (o."maxNsfwLevel" <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
-          (o."maxNsfwLevel" & ${servableLevels}::int) <> 0
-          AND (o."maxNsfwLevel" & ${consentLevels}::int) <> 0
+        AND ${offeringShowable}
+        AND (${offeringLevel} <= ${SERVICE_SFW_MAX_NSFW_LEVEL}::int OR (
+          (${offeringLevel} & ${servableLevels}::int) <> 0
+          AND (${offeringLevel} & ${consentLevels}::int) <> 0
         ))
         -- One unanswered request per buyer per offering: a retried or doubled submit must not
         -- become a second deal and a second hold. Race-free under the offering lock above.
@@ -468,8 +495,9 @@ export const declineServiceDeal = async ({
 
 /**
  * Only a CONFIRMED hold can be accepted (the migration's `ServiceDeal_held_before_work` refuses
- * the rest too), and not across a block made since the request, and not once a moderator has taken
- * the offering down: a pending request then leaves only by decline, withdraw or expiry, each refunded.
+ * the rest too), and not across a block made since the request, nor while the offering is taken
+ * down or not through its content checks: a pending request then leaves only by decline, withdraw
+ * or expiry, each refunded.
  */
 export async function acceptServiceDeal({ dealId, userId }: { dealId: number; userId: number }) {
   await requireTransition({
@@ -480,20 +508,27 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
     event: 'Accepted',
     where: Prisma.sql`"sellerId" = ${userId}::int AND "heldAt" IS NOT NULL
       AND ${notBlockedBetween(Prisma.sql`"buyerId"`, Prisma.sql`"sellerId"`)}
-      AND NOT EXISTS (SELECT 1 FROM "ServiceOffering" o
-        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NOT NULL)`,
+      AND EXISTS (SELECT 1 FROM "ServiceOffering" o
+        WHERE o."id" = "ServiceDeal"."offeringId" AND o."removedReason" IS NULL
+          AND o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus")`,
     set: Prisma.sql`, "acceptedAt" = now(), "dueAt" = now() + make_interval(days => "deliveryDays")`,
   }).catch(async (error) => {
     // The claim above is what refuses it; this only says why, instead of "moved on", which would
     // send the seller back to the same Accept button. Scoped to the seller's own pending request,
     // so it reveals nothing to anyone else and a deal that has moved on still gets "moved on".
-    const [takenDown] = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT o."id" FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+    const [offering] = await dbWrite.$queryRaw<{ takenDown: boolean; checked: boolean }[]>`
+      SELECT o."removedReason" IS NOT NULL AS "takenDown",
+        o."ingestion" = 'Scanned'::"ServiceOfferingIngestionStatus" AS "checked"
+      FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
       WHERE d."id" = ${dealId}::int AND d."sellerId" = ${userId}::int
-        AND d."status" = 'Requested'::"ServiceDealStatus" AND o."removedReason" IS NOT NULL`;
-    if (takenDown)
+        AND d."status" = 'Requested'::"ServiceDealStatus"`;
+    if (offering?.takenDown)
       throw throwBadRequestError(
         'A moderator removed this service, so this request can only be declined.'
+      );
+    if (offering && !offering.checked)
+      throw throwBadRequestError(
+        'This service is being reviewed, so this request cannot be accepted until that is done.'
       );
     throw error;
   });
@@ -524,7 +559,8 @@ async function openDealChat(dealId: number) {
     content: dealAcceptedChatLine({
       dealId,
       sellerName: deal.sellerName,
-      title: deal.title,
+      // The chat is the buyer's too.
+      title: counterpartyOfferingTitle(deal),
     }),
   });
 }
@@ -918,6 +954,27 @@ export async function countOpenDealsByOffering(offeringIds: number[]) {
   return new Map(rows.map((row) => [row.offeringId, row.open]));
 }
 
+/** A held offering's text and cover stay with its seller and moderators. */
+function offeringAsSeen(
+  {
+    ingestion,
+    ...offering
+  }: {
+    id: number;
+    title: string;
+    coverImageId: number | null;
+    ingestion: ServiceOfferingIngestionStatus;
+  },
+  seesLive: boolean
+) {
+  if (seesLive || ingestion === ServiceOfferingIngestionStatus.Scanned) return offering;
+  return {
+    ...offering,
+    title: counterpartyOfferingTitle({ ...offering, ingestion }),
+    coverImageId: null,
+  };
+}
+
 export async function getServiceDealView({
   dealId,
   userId,
@@ -933,7 +990,9 @@ export async function getServiceDealView({
   const deal = await dbWrite.serviceDeal.findUnique({
     where: { id: dealId },
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
+      offering: {
+        select: { id: true, title: true, coverImageId: true, removedReason: true, ingestion: true },
+      },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
       events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
@@ -947,6 +1006,7 @@ export async function getServiceDealView({
     SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
   const { removedReason, ...offering } = deal.offering;
   const offeringTakenDown = removedReason != null;
+  const seesLiveOffering = isModerator || deal.sellerId === userId;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
@@ -962,7 +1022,7 @@ export async function getServiceDealView({
     mature: isMatureServiceLevel(deal.maxNsfwLevel),
     /** A muted viewer can leave the deal with a reason code, but their free text is dropped. */
     viewerMuted: !!viewer?.muted,
-    offering,
+    offering: offeringAsSeen(offering, seesLiveOffering),
     /** Seller and moderators only, and never the reason, which reaches the seller by notification. */
     offeringTakenDown: seesTakedown && offeringTakenDown,
     buyer: deal.buyer,
@@ -1048,7 +1108,9 @@ export async function listMyServiceDeals({
     orderBy: { id: 'desc' },
     take: limit + 1,
     include: {
-      offering: { select: { id: true, title: true, coverImageId: true, removedReason: true } },
+      offering: {
+        select: { id: true, title: true, coverImageId: true, removedReason: true, ingestion: true },
+      },
       buyer: { select: dealUserSelect },
       seller: { select: dealUserSelect },
     },
@@ -1069,7 +1131,7 @@ export async function listMyServiceDeals({
       status: deal.status,
       disputeResolution: deal.disputeResolution,
       maxNsfwLevel: deal.maxNsfwLevel,
-      offering,
+      offering: offeringAsSeen(offering, role === 'seller'),
       offeringTakenDown: role === 'seller' && removedReason != null,
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,

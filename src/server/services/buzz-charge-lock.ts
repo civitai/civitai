@@ -7,7 +7,7 @@ import {
   PAYMENT_REFUNDED_MESSAGE,
   paymentOutcomeUnknown,
 } from '~/server/services/buzz-keyed-charge';
-import { isPrismaLockTimeout, throwBadRequestError } from '~/server/utils/errorHandling';
+import { isPrismaLockTimeout, sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 
 /**
  * Serialises what two requests with one client key do with ONE charge: record it once, and never
@@ -54,6 +54,13 @@ export const CHARGE_LOCKED_READ = { timeoutMs: 3_000, retries: 0 };
 export const CHARGE_LOCKED_REFUND = { timeoutMs: 10_000, retries: 0 };
 /** Between refund attempts after a failed record (`recordKeyedCharge`'s `refundAttempts`), times the attempt. */
 export const CHARGE_REFUND_RETRY_PAUSE_MS = 250;
+/**
+ * `recordKeyedCharge`'s `refundAttempts` for a record refusal the caller treats as routine (an
+ * appeal already pending, a crucible past its entry cutoff): a retry of the action is refused before
+ * it reaches the charge, so it cannot continue from one, and a single failed refund would leave the
+ * fee charged for nothing.
+ */
+export const ROUTINE_REFUSAL_REFUND_ATTEMPTS = 3;
 
 /**
  * After a charge succeeded, how an error from the record step reaches the user. A refusal (a 4xx:
@@ -203,7 +210,7 @@ export async function recordKeyedCharge<T>(
         break;
       } catch (refundError) {
         if (attempt >= refundAttempts) throw refundError;
-        await new Promise((resolve) => setTimeout(resolve, CHARGE_REFUND_RETRY_PAUSE_MS * attempt));
+        await sleep(CHARGE_REFUND_RETRY_PAUSE_MS * attempt);
       }
     }
     throw recordFailed(error);

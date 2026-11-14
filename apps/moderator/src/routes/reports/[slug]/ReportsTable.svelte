@@ -575,6 +575,8 @@
                 </Badge>
                 {#if offering.removedReason}
                   <Badge variant="outline">taken down by a moderator</Badge>
+                {:else if offering.ingestion === 'Blocked'}
+                  <Badge variant="outline">held by its content check</Badge>
                 {/if}
               </p>
               <p class="mb-1 text-sm text-dark-2">
@@ -661,6 +663,19 @@
                   Take down service
                 </Button>
               {/if}
+            {/if}
+            {#if offering && !offering.removedReason && offering.ingestion === 'Blocked'}
+              <p class="mt-3 mb-2 text-sm">
+                Its content check is holding this service off the site. Releasing shows it again and sets this report
+                Unactioned. Read the title and description first.
+              </p>
+              <form method="POST" action="?/releaseServiceOffering" use:enhance={offeringForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <input type="hidden" name="seenUpdatedAt" value={new Date(offering.updatedAt).toISOString()} />
+                <Button type="submit" size="sm" variant="outline" disabled={offeringForm.submitting}>
+                  Release service
+                </Button>
+              </form>
             {/if}
             {#if offeringForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{offeringForm.error}</p>

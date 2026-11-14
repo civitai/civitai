@@ -335,7 +335,7 @@ export const donateToGoal = async ({
         fromAccountTypes: [buzzType],
         // The creator receives what the donor gave. Naming no destination let the
         // buzz service apply its yellow default, so a green donation reached the
-        // creator as yellow — 137 legs / 85,210 Buzz since green launched.
+        // creator as yellow.
         toAccountType: buzzType,
         toAccountId: goal.userId,
         externalTransactionIdPrefix,

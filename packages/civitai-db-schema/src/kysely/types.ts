@@ -140,6 +140,7 @@ import type {
   StorylineWhoCanContinue,
   StorylineFollowScope,
   ServiceOfferingStatus,
+  ServiceOfferingIngestionStatus,
   ServicePreviewKind,
   ServiceBuzzType,
   ServiceDealStatus,
@@ -1343,7 +1344,7 @@ export type BlockScopeInvocation = {
    */
   oauth_client_id: string | null;
   /**
-   * Discriminates the token population that made the call. THREE values, and this
+   * Discriminates the token population that made the call. FOUR values, and this
    * comment is the single source for the generated type docs, so keep it complete:
    * * `'app-block'`      — an App Block block-token, the historical default.
    * * `'external-oauth'` — a standard external OAuth access token verified at
@@ -1356,6 +1357,9 @@ export type BlockScopeInvocation = {
    * load-bearing discriminator rather than a label. Written
    * only from the verified `privateRun` token claim; see
    * `scope-activity-predicate.ts`.
+   * * `'viewer-consent'` — not an app call: the VIEWER changed their daily Buzz limit for
+   * the app in host UI. Shown on the viewer's own Activity feed,
+   * excluded from the app owner's analytics.
    * Free-text with NO CHECK constraint — the value space is enforced in TypeScript
    * (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
    * backfill to `'app-block'` via the column DEFAULT.
@@ -5645,9 +5649,27 @@ export type ServiceOffering = {
   acceptsBlue: Generated<boolean>;
   previewKind: Generated<ServicePreviewKind>;
   /**
-   * The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+   * The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+   * seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+   * `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
    */
   maxNsfwLevel: Generated<number>;
+  /**
+   * The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+   * written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+   * copies it here.
+   */
+  declaredNsfwLevel: number | null;
+  /**
+   * Where the title and description are in their content check.
+   */
+  ingestion: Generated<ServiceOfferingIngestionStatus>;
+  /**
+   * The check submitted for the current text. Cleared when the text changes, so a result for
+   * earlier text is not applied to it.
+   */
+  scanWorkflowId: string | null;
+  scannedAt: Timestamp | null;
   deliveryDays: number;
   revisionsIncluded: Generated<number>;
   maxOpenDeals: number | null;

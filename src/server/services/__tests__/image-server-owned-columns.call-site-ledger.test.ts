@@ -80,6 +80,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
+  'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
   'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
@@ -313,6 +314,11 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   'src/server/services/challenge.service.ts#upsertChallengeEvent': {
     calls: 1,
     decision: 'moderator-route',
+  },
+  // A service cover the seller supplies by id must be their own image, or the offering's current cover.
+  'src/server/services/creator-service.service.ts#resolveServiceCoverImageId': {
+    calls: 1,
+    decision: 'assertOwnership',
   },
   // The crucible inputs' cover and hero schemas have no `id`.
   'src/server/services/crucible.service.ts#createCrucible': {
@@ -605,6 +611,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       'imageId: image?.id ?? imageRecord?.id',
     ],
     decision: 'moderator-route',
+  },
+  'src/server/services/creator-service.service.ts#upsertServiceOffering': {
+    writes: ['coverImageId', 'coverImageId'],
+    decision: 'resolver',
   },
   'src/server/services/crucible.service.ts#createCrucible': {
     writes: ['imageId', 'heroImageId'],

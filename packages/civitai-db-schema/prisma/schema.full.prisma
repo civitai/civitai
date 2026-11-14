@@ -2295,6 +2295,7 @@ model Image {
   appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  serviceOfferingCovers  ServiceOffering[]      @relation("ServiceOfferingCover")
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
@@ -4884,7 +4885,7 @@ model BlockScopeInvocation {
   /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
   /// OauthClient it references (an audit trail must outlive the app).
   oauthClientId    String?  @map("oauth_client_id")
-  /// Discriminates the token population that made the call. THREE values, and this
+  /// Discriminates the token population that made the call. FOUR values, and this
   /// comment is the single source for the generated type docs, so keep it complete:
   ///   * `'app-block'`      — an App Block block-token, the historical default.
   ///   * `'external-oauth'` — a standard external OAuth access token verified at
@@ -4897,6 +4898,9 @@ model BlockScopeInvocation {
   ///                          load-bearing discriminator rather than a label. Written
   ///                          only from the verified `privateRun` token claim; see
   ///                          `scope-activity-predicate.ts`.
+  ///   * `'viewer-consent'` — not an app call: the VIEWER changed their daily Buzz limit for
+  ///                          the app in host UI. Shown on the viewer's own Activity feed,
+  ///                          excluded from the app owner's analytics.
   /// Free-text with NO CHECK constraint — the value space is enforced in TypeScript
   /// (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
   /// backfill to `'app-block'` via the column DEFAULT.
@@ -11041,6 +11045,13 @@ enum ServiceOfferingStatus {
   Removed
 }
 
+enum ServiceOfferingIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 /// What the seller shows before the buyer accepts. `None` skips the preview: the
 /// buyer accepts the delivery on trust.
 enum ServicePreviewKind {
@@ -11139,11 +11150,24 @@ model ServiceOffering {
   title             String
   description       String
   coverImageId      Int?
+  coverImage        Image?                @relation("ServiceOfferingCover", fields: [coverImageId], references: [id], onDelete: SetNull)
   price             Int
   acceptsBlue       Boolean               @default(false)
   previewKind       ServicePreviewKind    @default(Image)
-  /// The highest content rating delivered: one NsfwLevel value, PG..XXX. Copied onto each deal.
+  /// The offering's rating: one NsfwLevel value, PG..XXX, copied onto each deal. Seeded from the
+  /// seller's pick on create, then set by `updateServiceOfferingNsfwLevels`: the highest of
+  /// `declaredNsfwLevel`, the text scan's level and the scanned cover's level.
   maxNsfwLevel      Int                   @default(2)
+  /// The rating the seller picked. It can raise `maxNsfwLevel`, never lower it. Null on a row last
+  /// written before this column existed, whose pick is still `maxNsfwLevel`; the next recompute
+  /// copies it here.
+  declaredNsfwLevel Int?
+  /// Where the title and description are in their content check.
+  ingestion         ServiceOfferingIngestionStatus @default(Pending)
+  /// The check submitted for the current text. Cleared when the text changes, so a result for
+  /// earlier text is not applied to it.
+  scanWorkflowId    String?
+  scannedAt         DateTime?
   deliveryDays      Int
   revisionsIncluded Int                   @default(0)
   maxOpenDeals      Int?
@@ -11166,6 +11190,7 @@ model ServiceOffering {
   @@unique([id, sellerId])
   @@index([sellerId, status])
   @@index([status, createdAt])
+  @@index([coverImageId])
 }
 
 model ServiceOfferingReport {
