@@ -56,6 +56,14 @@ async function loadCaller(flag: 'true' | 'false') {
         await sleep();
         return 'pong';
       }),
+      oauth: publicProcedure.query(async () => {
+        await sleep();
+        return 'pong';
+      }),
+      banned: publicProcedure.query(async () => {
+        await sleep();
+        return 'pong';
+      }),
     }),
   });
   return createCallerFactory(appRouter);
@@ -152,5 +160,34 @@ describe('publicProcedure records caller-class seconds only when TRPC_CALLER_MET
     const byCaller = await secondsFor('probe.keyed');
     expect(Object.keys(byCaller)).toEqual(['api_key']);
     expect(byCaller.api_key).toBeGreaterThanOrEqual(0.004);
+  });
+
+  it('ON: an OAuth token (subject set, no API key id) counts as api_key', async () => {
+    // The shape `getRequestCredential` puts on the context for an OAuth bearer token. A browser
+    // user agent, so a context whose subject went unread would land on anon_browser instead.
+    const createCaller = await loadCaller('true');
+    await createCaller(
+      ctxFor(null, { 'user-agent': 'Mozilla/5.0' }, { subject: { type: 'oauth', id: 'client-1' } })
+    ).probe.oauth();
+
+    const byCaller = await secondsFor('probe.oauth');
+    expect(Object.keys(byCaller)).toEqual(['api_key']);
+    expect(byCaller.api_key).toBeGreaterThanOrEqual(0.004);
+  });
+
+  it('ON: a banned viewer (bannedUser set, no user) counts as session', async () => {
+    // `trpcViewer` moves a banned account off `user` onto `bannedUser`; it is still signed in.
+    const createCaller = await loadCaller('true');
+    await createCaller(
+      ctxFor(
+        null,
+        { 'user-agent': 'Mozilla/5.0' },
+        { user: undefined, bannedUser: { id: 7, bannedAt: new Date('2026-01-01') } }
+      )
+    ).probe.banned();
+
+    const byCaller = await secondsFor('probe.banned');
+    expect(Object.keys(byCaller)).toEqual(['session']);
+    expect(byCaller.session).toBeGreaterThanOrEqual(0.004);
   });
 });
