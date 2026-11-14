@@ -130,16 +130,22 @@ describe('modelModerationAdapter.applyResult', () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   });
 
-  it('flips nsfw, without locking it, when a level label triggers', async () => {
+  it('flips nsfw and locks it, with its marker, when a level label triggers', async () => {
     await modelModerationAdapter.applyResult?.(applyArgs(['Suggestive']));
 
     const flip = flipCall();
     expect(flip).toBeDefined();
-    expect(flip?.sql).not.toContain('array_append');
-    // No origin marker: this check has no clean-read path to release the owner from it.
-    expect(flip?.sql).not.toMatch(/'systemNsfwLock',\s*jsonb_build_object\('source'/);
-    // source, the system actor on the applied record, then the model id.
-    expect(flip?.values).toEqual(['xguard-text-moderation', constants.system.user.id, 1]);
+    expect(flip?.sql).toContain(
+      `array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')`
+    );
+    expect(flip?.sql).toMatch(/'systemNsfwLock',\s*jsonb_build_object\('source'/);
+    // source, the system actor on the applied record, source again, then the model id.
+    expect(flip?.values).toEqual([
+      'xguard-text-moderation',
+      constants.system.user.id,
+      'xguard-text-moderation',
+      1,
+    ]);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
@@ -193,17 +199,14 @@ describe('modelModerationAdapter.applyResult', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it.each([['already nsfw', { nsfw: true, nsfwLevel: 60 }]])(
-    'leaves an unlocked model %s as it is',
-    async (_, row) => {
-      dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow(row));
+  // As on main: the xguard check locks a model the owner already rated mature.
+  it('locks an unlocked model already nsfw', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(modelRow({ nsfw: true, nsfwLevel: 60 }));
 
-      await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
+    await modelModerationAdapter.applyResult?.(applyArgs(['Explicit']));
 
-      expect(flipCall()).toBeUndefined();
-      expect(updateModelNsfwLevels).not.toHaveBeenCalled();
-    }
-  );
+    expect(flipCall()?.sql).toContain('array_append');
+  });
 
   describe('when a moderator has locked nsfw', () => {
     // A stored lock is a moderator's call — minor-flagging sets nsfw:false and locks it.

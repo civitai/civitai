@@ -1282,6 +1282,16 @@ describe('upsertModel — content flags the row ends up with', () => {
         expect(updateData()).toEqual(expect.objectContaining({ nsfw: false }));
       });
 
+      it('keeps an xguard rating through the owner untick, as it is locked', async () => {
+        mockStored({
+          nsfw: true,
+          lockedProperties: ['nsfw'],
+          meta: { systemNsfwLock: { source: 'xguard-text-moderation', at: scanLock.at } },
+        });
+        await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: false });
+        expect(updateData().nsfw).not.toBe(false);
+      });
+
       it('never blocks on a marker no clean read can release (an older xguard rating)', async () => {
         mockStored({
           nsfw: true,

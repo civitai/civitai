@@ -280,20 +280,21 @@ describe('the scan on a restricted model', () => {
   });
 
   // A marker blocks the owner (assertScanRatingKept) only where a clean read can release it.
-  it('leaves no origin marker from the xguard check, flipped or already mature', async () => {
+  // As on main: the owner's way out of an xguard rating is the lock or rating review.
+  it('locks an xguard rating with its marker, flipped or already mature', async () => {
     await seed({});
     expect(
       await applySystemModelNsfwFlag({ model: scanned(), source: 'xguard-text-moderation' })
     ).toBe('applied');
-    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: [] });
-    expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
+    expect((await row()).meta.systemNsfwLock).toMatchObject({ source: 'xguard-text-moderation' });
 
     await seed({ nsfw: true });
     await applySystemModelNsfwFlag({
       model: scanned({ nsfw: true }),
       source: 'xguard-text-moderation',
     });
-    expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
+    expect(await row()).toMatchObject({ nsfw: true, lockedProperties: ['nsfw'] });
   });
 
   it('rates a model listed on .com by its face, so removing the face later leaves it mature', async () => {

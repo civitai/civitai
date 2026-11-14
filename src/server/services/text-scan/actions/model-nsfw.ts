@@ -89,7 +89,7 @@ export async function applySystemModelNsfwFlag({
   // owner cannot undo it alone while the text it was read from stands (`assertScanRatingKept`).
   // A model with a complete .com face is rated too: the face keeps it on .com, and a face that goes
   // away by any path (re-check, cover, owner) leaves the rating standing.
-  if (!heldLead && model.nsfw) {
+  if (!heldLead && model.nsfw && !locksRating(source)) {
     if (stampsRatingMarker(source)) await markScanRating(dbWrite, model.id, source);
     return 'skipped_nsfw';
   }
@@ -131,9 +131,15 @@ export async function applySystemModelNsfwFlag({
 
 /**
  * Only a check with a way out of `assertScanRatingKept` (a rescan that reads the text as not mature
- * drops its marker) leaves the marker on an unlocked rating; any other raises nsfw with no guard.
+ * drops its marker) leaves the marker on an unlocked rating.
  */
 const stampsRatingMarker = (source: string) => SCAN_RATING_SOURCES.includes(source);
+
+/**
+ * The xguard check keeps its rating as it always was: nsfw with the lock and its marker, even on a
+ * model already mature. The owner's way out is the lock or rating review (Moderation Lead, 11/14).
+ */
+const locksRating = (source: string) => source === 'xguard-text-moderation';
 
 /**
  * Drops the text scan's own origin marker after it reads the text as not mature: the owner's way
@@ -165,8 +171,9 @@ async function markScanRating(db: RawDb, modelId: number, source: string) {
 }
 
 /**
- * Rates the model NSFW without locking it, so the owner can still add a .com face; `meta.systemNsfwLock`
- * is then the only record the rating was automatic. Guarded in the WHERE, not by a caller's read: a
+ * Rates the model NSFW. The text scan does not lock it, so the owner can still add a .com face, and
+ * `meta.systemNsfwLock` is then the only record the rating was automatic; the xguard check locks it
+ * (`locksRating`). Guarded in the WHERE, not by a caller's read: a
  * moderator lock or ruling landing in between would otherwise be overwritten. SFW-only is cleared,
  * as it cannot stand with nsfw, and a lead records what it replaced so a moderator can put the
  * owner's rating back. `heldLead`: only while the lead is still there and unapplied, so a ruling
@@ -182,6 +189,11 @@ async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boo
     UPDATE "Model" m
     SET nsfw = TRUE,
         "sfwOnly" = FALSE,
+        "lockedProperties" = ${
+          locksRating(source)
+            ? Prisma.sql`array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw')`
+            : Prisma.sql`m."lockedProperties"`
+        },
         meta = ${asJsonbObjectSql('m.meta')} || CASE
           WHEN m."sfwOnly" OR ${asJsonbObjectSql(
             'm.meta'
@@ -197,7 +209,7 @@ async function flipRow(db: RawDb, modelId: number, source: string, heldLead: boo
               'ruling', 'autoApply', 'by', ${SYSTEM_USER_ID}::int,
               'restriction', COALESCE(m.meta->'restrictedNsfwVerdict'->>'restriction', 'sfwOnly')))
         ) ELSE '{}'::jsonb END || ${
-          stampsRatingMarker(source)
+          stampsRatingMarker(source) || locksRating(source)
             ? Prisma.sql`jsonb_build_object(
           'systemNsfwLock', jsonb_build_object('source', ${source}::text, 'at', now())
         )`
