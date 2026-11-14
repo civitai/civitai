@@ -1,5 +1,10 @@
 import type { PrismaClient } from '@prisma/client';
 import { chunk, partition } from 'lodash-es';
+import {
+  moderatorActedBeforeDeleteSql,
+  statusAtDeleteKnownSql,
+  unpublishedByOtherSql,
+} from '~/server/common/model-moderator-action';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -183,17 +188,17 @@ export const userScoreCheckpointKeys = [...Object.keys(scoreFetchers), TIER_GRAN
 
 // A model taken down by anyone but its owner stops counting; one the owner unpublished or deleted
 // keeps its points. A missing actor counts as the owner: nothing shows a moderator acted.
-const unpublishedByOther = `COALESCE(m.meta->>'unpublishedBy' <> m."userId"::text, false)`;
+const unpublishedByOther = unpublishedByOtherSql('m');
 const LIVE_MODEL_COUNTS = `(m.status IN ('Published', 'Scheduled')
   OR (m.status = 'Unpublished' AND NOT ${unpublishedByOther}))`;
 // An owner can delete a model a moderator already took down, so a delete keeps only what the model
 // held when it was deleted: `statusAtDelete` where the delete recorded it, else the takedown marks.
 const DELETED_MODEL_COUNTS = `(m.status = 'Deleted'
   AND COALESCE(m."deletedBy" = m."userId", true)
-  AND CASE WHEN m.meta ? 'statusAtDelete'
-    THEN m.meta->>'statusAtDelete' IN ('Published', 'Scheduled')
-      OR (m.meta->>'statusAtDelete' = 'Unpublished' AND NOT ${unpublishedByOther})
-    ELSE NOT (m.meta ? 'unpublishedReason') AND NOT ${unpublishedByOther}
+  AND CASE WHEN ${statusAtDeleteKnownSql('m')}
+    THEN m.meta->>'statusAtDelete' IN ('Published', 'Scheduled', 'Unpublished')
+      AND NOT ${moderatorActedBeforeDeleteSql('m')}
+    ELSE NOT ${moderatorActedBeforeDeleteSql('m')}
   END)`;
 export const MODEL_COUNTS_TOWARD_SCORE = `(${LIVE_MODEL_COUNTS} OR ${DELETED_MODEL_COUNTS})`;
 
