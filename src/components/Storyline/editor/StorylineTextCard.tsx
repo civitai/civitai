@@ -5,7 +5,10 @@ import { useState } from 'react';
 import { usePendingSave, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
-import { STORYLINE_TEXT_CONTROLS } from '~/components/Storyline/editor/storyline-text.utils';
+import {
+  STORYLINE_TEXT_CONTROLS,
+  STORYLINE_TEXT_HEADING_LEVELS,
+} from '~/components/Storyline/editor/storyline-text.utils';
 import type { PostEditTextDetail } from '~/server/services/post.service';
 import { STORYLINE_TEXT_MAX_LENGTH } from '~/shared/utils/storyline';
 import { useDebouncer } from '~/utils/debouncer';
@@ -78,6 +81,7 @@ export function StorylineTextCard({ text }: { text: PostEditTextDetail }) {
         value={value}
         onChange={handleChange}
         includeControls={[...STORYLINE_TEXT_CONTROLS]}
+        headingLevels={STORYLINE_TEXT_HEADING_LEVELS}
         placeholder="Write what happens next..."
         editorSize="md"
         disabled={remove.isPending}

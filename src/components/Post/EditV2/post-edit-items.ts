@@ -54,3 +54,16 @@ export function reorderPayload({
   ).map((item) => ({ type: item.type, id: item.key.id }));
   return { id: postId, imageIds, items };
 }
+
+/**
+ * The indexes an image-only reorder gives `reordered`, in order: what the server writes
+ * (`imageOnlyReorder`). On a post with text items the images trade the slots they already hold, so
+ * every text keeps its place; otherwise they are numbered from 0.
+ */
+export function imageOnlyReorderIndexes(
+  reordered: Array<{ index?: number | null }>,
+  hasText: boolean
+) {
+  if (!hasText) return reordered.map((_, i) => i);
+  return reordered.map((image) => image.index ?? 0).sort((a, b) => a - b);
+}
