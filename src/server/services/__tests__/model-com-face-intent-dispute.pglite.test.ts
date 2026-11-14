@@ -88,4 +88,12 @@ describe('the dispute job selection', () => {
     expect(judged()).toBe(1);
     expect(await retried()).toEqual([1]);
   });
+
+  it('marks a judged dispute so the next run skips it', async () => {
+    mocks.verdict.mockResolvedValue({ status: 'detected', reason: 'r' });
+    await processComFaceIntentDisputes();
+    vi.clearAllMocks();
+    await processComFaceIntentDisputes();
+    expect(judged()).toBe(0);
+  });
 });

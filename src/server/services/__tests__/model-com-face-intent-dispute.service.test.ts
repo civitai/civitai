@@ -101,6 +101,26 @@ describe('processComFaceIntentDisputes', () => {
     expect(appealWrites()).toEqual([['later-verdict', 1]]);
   });
 
+  it.each([
+    [
+      "its marker is not the intent check's",
+      {
+        meta: {
+          ...recorded,
+          systemNsfwLock: { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' },
+        },
+      },
+    ],
+    ['the nsfw lock is gone', { lockedProperties: [] }],
+  ])('never approves when %s', async (_, fields) => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute(fields)] as never);
+    mocks.verdict.mockResolvedValue({ status: 'allowed' });
+
+    expect(await processComFaceIntentDisputes()).toMatchObject({ 'needs-moderator': 1 });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(appealWrites()).toEqual([['needs-moderator', 1]]);
+  });
+
   it('never approves once a moderator has ruled on the lock since it was set', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([dispute()] as never);
     mocks.verdict.mockResolvedValue({ status: 'allowed' });

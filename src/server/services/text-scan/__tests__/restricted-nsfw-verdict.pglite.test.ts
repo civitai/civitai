@@ -269,6 +269,21 @@ describe('the scan on a restricted model', () => {
       expect((await row()).meta).not.toHaveProperty('systemNsfwLock');
     });
 
+    it('drops a scan marker an intent lock parked, so lifting that lock does not bring it back', async () => {
+      await seed({
+        nsfw: true,
+        locked: ['nsfw'],
+        meta: {
+          systemNsfwLock: { source: 'com-face-intent', at: 'x' },
+          comFaceIntent: { detected: true, priorSystemNsfwLock: SYSTEM_LOCK },
+        },
+      });
+      await applyModelNsfwTextScan(clean);
+      const { meta } = await row();
+      expect(meta.comFaceIntent).toEqual({ detected: true });
+      expect(meta.systemNsfwLock).toMatchObject({ source: 'com-face-intent' });
+    });
+
     it.each([
       ['another check', { meta: { systemNsfwLock: { source: 'com-face-intent', at: 'x' } } }],
       ['a lock', { locked: ['nsfw'], meta: { systemNsfwLock: SYSTEM_LOCK } }],

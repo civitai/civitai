@@ -151,6 +151,15 @@ const locksRating = (source: string) => !SCAN_RATING_SOURCES.includes(source);
  * out of `assertScanRatingKept`. Never under a lock, nor another check's marker.
  */
 async function dropScanRatingMarker(db: RawDb, modelId: number) {
+  // A scan marker an intent lock parked goes too, so lifting that lock does not bring it back.
+  await db.$executeRaw`
+    UPDATE "Model" m
+    SET meta = m.meta #- '{comFaceIntent,priorSystemNsfwLock}'
+    WHERE m.id = ${modelId}
+      AND m.meta->'comFaceIntent'->'priorSystemNsfwLock'->>'source' = ANY(${[
+        ...SCAN_RATING_SOURCES,
+      ]}::text[])
+  `;
   await db.$executeRaw`
     UPDATE "Model" m
     SET meta = m.meta - 'systemNsfwLock'

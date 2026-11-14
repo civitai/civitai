@@ -1240,6 +1240,23 @@ describe('upsertModel — content flags the row ends up with', () => {
       });
 
       // A rescan dedups on the scanned text, so an edit alone may bring no fresh verdict.
+      // SFW-only has no lead handoff, unlike minor and POI.
+      it('refuses ticking SFW-only to clear the rating', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false, minor: false, sfwOnly: true })
+        ).rejects.toThrow(SCAN_RATING_KEPT_MESSAGE);
+      });
+
+      // As on main, where the scan's lock kept nsfw and the SFW-only flow was then refused.
+      it('refuses the private flow on a scan-rated model, keeping the rating', async () => {
+        mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
+        await expect(
+          privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, nsfw: false })
+        ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
+        expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      });
+
       it('still refuses when the same save edits the text', async () => {
         mockStored({ nsfw: true, lockedProperties: [], meta: { systemNsfwLock: scanLock } });
         await expect(

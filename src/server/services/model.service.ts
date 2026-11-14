@@ -3995,7 +3995,9 @@ async function assertScanRatingKept({
     (data[key] !== undefined ? data[key] : before[key as keyof typeof before]) as
       | (typeof data)[K]
       | undefined;
-  if (after('minor') || after('poi') || after('sfwOnly')) return;
+  // A minor or POI flag hands the verdict to a moderator as a lead (`applyRaisedRestrictions`);
+  // SFW-only has no such handoff, so it is held to the guard like any other save.
+  if (after('minor') || after('poi')) return;
 
   const hasFace = (face: { sfwName?: string | null; sfwCoverImageId?: number | null }) =>
     face.sfwName != null && face.sfwCoverImageId != null;
@@ -7396,6 +7398,10 @@ export const privateModelFromTraining = async ({
   if (!model) return null;
 
   const isOwner = model.userId === user.id || user.isModerator;
+  // The text scan's rating carries no lock, but this flow keeps it as main kept the scan's locked
+  // rating: the owner's nsfw value is dropped, as for a locked setting.
+  const scanRatingSource = (model.meta as ModelMeta | null)?.systemNsfwLock?.source;
+  const keepsScanRating = !!scanRatingSource && SCAN_RATING_SOURCES.includes(scanRatingSource);
   if (!isOwner) return null;
 
   if (data.name !== undefined && isModelNameTooLong(data.name, model.name))
@@ -7417,7 +7423,9 @@ export const privateModelFromTraining = async ({
 
   enforceLockedProperties({
     data,
-    storedLockedProperties: model.lockedProperties,
+    storedLockedProperties: keepsScanRating
+      ? [...model.lockedProperties, 'nsfw']
+      : model.lockedProperties,
     isModerator: user.isModerator,
   });
 
