@@ -155,6 +155,75 @@ describe('getCreatorJourney', () => {
   });
 });
 
+describe('milestone rarity', () => {
+  const visibleTier = definition({
+    key: 'score:open',
+    track: 'score',
+    threshold: 10,
+    hidden: false,
+  });
+  const hiddenTier = definition({ key: 'score:secret', track: 'score', threshold: 20 });
+  const visibleActivity = {
+    ...definition({ key: 'create:models-1', track: 'create', threshold: 1, hidden: false }),
+    cosmetic: null,
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown; track?: unknown };
+    }) =>
+      args?.where?.key
+        ? [visibleActivity]
+        : args?.where?.track === 'score'
+        ? [visibleTier, hiddenTier]
+        : []) as never);
+    // The stored count can predate a change to a definition.
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: {
+        at: Date.now(),
+        creators: 200,
+        holders: { 'score:open': 50, 'score:secret': 2, 'create:models-1': 1 },
+      },
+    } as never);
+  });
+
+  it('gives each visible tile its share of creators', async () => {
+    const journey = await getCreatorJourney(1);
+    expect(journey.tiers[0].rarity).toBe(25);
+    expect(journey.activity.milestones[0].rarity).toBe(0.5);
+  });
+
+  it('follows the current definition over the stored count, earned or not', async () => {
+    expect((await getCreatorJourney(1)).tiers[1].rarity).toBeNull();
+
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: new Date('2026-10-01'), milestone: hiddenTier },
+    ] as never);
+    const journey = await getCreatorJourney(1);
+    expect(journey.tiers[1].key).toBe('score:secret');
+    expect(journey.tiers[1].rarity).toBeNull();
+  });
+
+  it('shows no share before the first count, and still loads when the count is unreadable', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+
+    dbMock.dbRead.keyValue.findUnique.mockRejectedValue(new Error('down'));
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+  });
+
+  // A job that stopped running would otherwise show the last count forever.
+  it('shows no share once the count is days old', async () => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'creator-journey:milestone-rarity',
+      value: { at: weekAgo, creators: 200, holders: { 'score:open': 50 } },
+    } as never);
+    expect((await getCreatorJourney(1)).tiers[0].rarity).toBeNull();
+  });
+});
+
 describe('earned dates', () => {
   // A silent grant with no moment of its own stamps achievedAt and seenAt together.
   it('withholds the date of a grant whose moment was never observed', async () => {
