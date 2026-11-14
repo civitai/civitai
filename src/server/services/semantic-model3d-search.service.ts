@@ -18,6 +18,7 @@ import {
   type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
+  MAX_HITS_PER_USER,
   collectPage,
   searchServiceSource,
   type CandidateFilter,
@@ -30,8 +31,7 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 
-/** One creator's 3D models shown on a page at most, so a prolific creator cannot fill it. */
-export const MAX_HITS_PER_USER = 3;
+export { MAX_HITS_PER_USER };
 
 type HydratedModel3D = Awaited<ReturnType<typeof getModel3DFeedItemsByIds>>[number];
 

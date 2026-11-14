@@ -19,6 +19,7 @@ import {
 } from '~/server/services/semantic-query-guard';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
+  MAX_HITS_PER_USER,
   collectPage,
   resolveTagIds,
   resolveUserIds,
@@ -31,8 +32,7 @@ import { Flags } from '~/shared/utils/flags';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 
-/** One creator's articles shown on a page at most, so a prolific author cannot fill it. */
-export const MAX_HITS_PER_USER = 3;
+export { MAX_HITS_PER_USER };
 
 type HydratedArticle = Awaited<ReturnType<typeof getArticles>>['items'][number];
 

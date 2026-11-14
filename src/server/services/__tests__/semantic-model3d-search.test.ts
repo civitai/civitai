@@ -90,10 +90,10 @@ async function model(
 
 let sent: CandidateFilter[];
 const ranking =
-  (ids: number[]): CandidateSource =>
+  (ids: number[], correctedQuery?: string): CandidateSource =>
   async ({ filter, offset, limit }) => {
     sent.push(filter);
-    return { ids: ids.slice(offset, offset + limit) };
+    return { ids: ids.slice(offset, offset + limit), correctedQuery };
   };
 
 const MOD = { id: 501, isModerator: true } as SessionUser;
@@ -103,12 +103,18 @@ const search = (
     browsingLevel = PG,
     user,
     tagIds,
-  }: { browsingLevel?: number; user?: SessionUser; tagIds?: number[] } = {}
+    correctedQuery,
+  }: {
+    browsingLevel?: number;
+    user?: SessionUser;
+    tagIds?: number[];
+    correctedQuery?: string;
+  } = {}
 ) =>
   searchSemanticModels3D({
     input: { query: 'robot', browsingLevel, tagIds, limit: 10 },
     user,
-    candidateSource: ranking(ids),
+    candidateSource: ranking(ids, correctedQuery),
   });
 const shown = (r: { items: { id: number }[] }) => r.items.map((m) => m.id);
 
@@ -187,18 +193,41 @@ describe('semantic 3D model search', () => {
     await model(2, { tags: [66] });
     await model(3, { tags: [5] });
     for (const id of [10, 11, 12, 13]) await model(id, { owner: 7, tags: [5] });
-    expect(shown(await search([1, 2, 3, 10, 11, 12, 13]))).toEqual([3, 10, 11, 12]);
-    expect(MAX_HITS_PER_USER).toBe(3);
+    const result = await search([1, 2, 3, 10, 11, 12, 13]);
+    expect(shown(result)).toEqual([3, 10, 11, 12]);
+    expect(result.items.filter((m) => m.userId === 7)).toHaveLength(MAX_HITS_PER_USER);
     await model(20);
     expect(shown(await search([20, 3], { tagIds: [5] }))).toEqual([3]);
   });
 
-  it('searches a minor query at the safe levels only, gate and re-check both', async () => {
-    h.includesInappropriate.mockReturnValue('minor');
+  it("narrows a non-moderator's minor query to the safe levels, gate and re-check both", async () => {
+    // The containment clamp lifted, so the viewer's own R level is what the verdict narrows.
+    h.evalBoolean.mockReturnValue({ enabled: false });
     await model(1);
     await model(2, { thumb: R });
     const viewer = { id: 500, isModerator: false } as SessionUser;
+    expect(shown(await search([2, 1], { browsingLevel: PG | R, user: viewer }))).toEqual([2, 1]);
+    expect(sent[0].gate).toMatchObject({ nsfwLevels: [PG, R] });
+
+    sent = [];
+    h.includesInappropriate.mockReturnValue('minor');
     expect(shown(await search([2, 1], { browsingLevel: PG | R, user: viewer }))).toEqual([1]);
     expect(sent[0].gate).toMatchObject({ nsfwLevels: expect.not.arrayContaining([R]) });
+  });
+
+  it('refuses a refused query before asking the index', async () => {
+    h.includesInappropriate.mockReturnValue('poi');
+    await model(1);
+    expect(shown(await search([1], { user: MOD }))).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it("returns nothing when the service's spelling correction is refused", async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'poi' : false
+    );
+    await model(1);
+    expect(shown(await search([1], { correctedQuery: 'corrected' }))).toEqual([]);
+    expect(shown(await search([1], { correctedQuery: 'fine' }))).toEqual([1]);
   });
 });
