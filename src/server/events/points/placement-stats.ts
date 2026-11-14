@@ -1,3 +1,4 @@
+import { TupleParam } from '@clickhouse/client';
 import { createHash } from 'crypto';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
@@ -16,7 +17,7 @@ let skipUntil = 0;
 // One read per user at a time on this pod; the cache lock does the same across pods.
 const perUser = createSingleFlight();
 
-type Placement = {
+export type Placement = {
   cosmeticId: number;
   claimKey: string;
   entityType: string;
@@ -33,6 +34,34 @@ async function openPlacements(event: string, userId: number) {
   `;
 }
 
+// The query's params as the client sends them. Placements go as TupleParam: a plain JS array is
+// sent as a ClickHouse Array, which the Array(Tuple(...)) param rejects.
+export function placementViewsParams(
+  event: string,
+  userId: number,
+  placements: Placement[],
+  now: Date
+) {
+  return {
+    event,
+    userId,
+    from: formatClickhouseDateTime64(
+      new Date(Math.min(...placements.map((p) => p.startedAt.getTime())))
+    ),
+    to: formatClickhouseDateTime64(now),
+    placements: placements.map(
+      (p) =>
+        new TupleParam([
+          p.cosmeticId,
+          p.claimKey,
+          p.entityType,
+          p.entityId,
+          formatClickhouseDateTime64(p.startedAt),
+        ])
+    ),
+  };
+}
+
 async function queryPlacementViews(
   event: string,
   userId: number,
@@ -46,21 +75,7 @@ async function queryPlacementViews(
       format: 'JSONEachRow',
       abort_signal: AbortSignal.timeout((QUERY_CAP_S + 2) * 1000),
       clickhouse_settings: { max_execution_time: QUERY_CAP_S },
-      query_params: {
-        event,
-        userId,
-        from: formatClickhouseDateTime64(
-          new Date(Math.min(...placements.map((p) => p.startedAt.getTime())))
-        ),
-        to: formatClickhouseDateTime64(now),
-        placements: placements.map((p) => [
-          p.cosmeticId,
-          p.claimKey,
-          p.entityType,
-          p.entityId,
-          formatClickhouseDateTime64(p.startedAt),
-        ]),
-      },
+      query_params: placementViewsParams(event, userId, placements, now),
     });
     const rows = await result.json<PlacementViews>();
     return placements.map(({ cosmeticId, claimKey }) => {
