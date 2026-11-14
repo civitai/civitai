@@ -16,11 +16,14 @@ const NONE: PlayerTimedComment[] = [];
 // Past this share of the strip a label opens leftwards from its avatar, so it stays on the strip.
 const LABEL_FLIP_AT = 0.6;
 
-/** The current song's timed comments, while the listener shows them on the waveform. */
+/**
+ * The current song's timed comments, and whether the listener shows them on the waveform. They are
+ * read while hidden too, so hiding them keeps the bar's layout: the strip's row stays, empty.
+ */
 export function usePlayerTimedComments(songId: number) {
   const show = useMusicPlayerStore((s) => s.showTimedComments);
-  const { data } = trpc.commentv3.getTimed.useQuery({ imageId: songId }, { enabled: show });
-  return show ? data ?? NONE : NONE;
+  const { data } = trpc.commentv3.getTimed.useQuery({ imageId: songId });
+  return { comments: data ?? NONE, show };
 }
 
 const share = (timestampSec: number, duration: number) =>
@@ -58,15 +61,18 @@ export function TimedCommentStrip({
           onClick={() => seekMusicPlayer(comment.timestampSec)}
           onPointerEnter={() => setHoveredId(comment.id)}
           onPointerLeave={() => setHoveredId((id) => (id === comment.id ? null : id))}
-          className="absolute top-0.5 flex size-5 -translate-x-1/2 items-center justify-center overflow-hidden rounded-full border-2 border-gray-0 bg-gray-2 transition-transform hover:z-10 hover:scale-110 dark:border-dark-6 dark:bg-dark-4"
+          // A 24px target around the 20px avatar (Pencil `C81HVQ`).
+          className="group/avatar absolute top-0 flex size-6 -translate-x-1/2 items-center justify-center rounded-full hover:z-10"
           style={{ left: `${share(comment.timestampSec, duration) * 100}%` }}
         >
-          <UserAvatar
-            user={comment.user}
-            avatarSize={16}
-            withHoverCard={false}
-            withDecorations={false}
-          />
+          <span className="flex size-5 items-center justify-center overflow-hidden rounded-full border-2 border-gray-0 bg-gray-2 transition-transform group-hover/avatar:scale-110 dark:border-dark-6 dark:bg-dark-4">
+            <UserAvatar
+              user={comment.user}
+              avatarSize={16}
+              withHoverCard={false}
+              withDecorations={false}
+            />
+          </span>
         </button>
       ))}
       {label && <TimedCommentLabel comment={label} at={share(label.timestampSec, duration)} />}
@@ -99,7 +105,7 @@ function TimedCommentLabel({ comment, at }: { comment: PlayerTimedComment; at: n
         />
       </span>
       <span className="min-w-0 truncate">
-        <span className="font-semibold">{comment.user.username}</span>
+        {comment.user.username}
         {'  '}
         {comment.text}
       </span>

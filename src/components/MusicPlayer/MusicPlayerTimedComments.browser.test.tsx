@@ -118,18 +118,19 @@ describe('timed comments on the bar’s waveform', () => {
     expect(seekMusicPlayer).toHaveBeenCalledWith(150);
   });
 
-  test('the toggle hides them and stops reading them; it shows them again', async () => {
+  test('the toggle hides them without moving the waveform; it shows them again', async () => {
     await renderWithProviders(<MusicPlayerBar />);
     await expect.poll(() => avatar(1)).toBeTruthy();
+    const waveformTop = () => document.querySelector('[role="slider"]')!.getBoundingClientRect().top;
+    const topBefore = waveformTop();
     const hide = page.getByRole('button', { name: 'Hide timed comments', exact: true });
     await expect.element(hide).toHaveAttribute('aria-pressed', 'true');
     await userEvent.click(hide);
     await expect.poll(strip).toBeNull();
     expect(player().showTimedComments).toBe(false);
-    const reads = timedComments.requests.length;
+    expect(waveformTop()).toBe(topBefore);
     await at(51);
     expect(labels()).toEqual([]);
-    expect(timedComments.requests.length).toBe(reads);
 
     const show = page.getByRole('button', { name: 'Show timed comments', exact: true });
     await expect.element(show).toHaveAttribute('aria-pressed', 'false');

@@ -406,7 +406,7 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT : accentAt(50);
   const timedComments = usePlayerTimedComments(track.id);
-  const withStrip = timedComments.length > 0;
+  const withStrip = timedComments.comments.length > 0;
 
   const seekFromPointer = (e: PointerEvent<HTMLElement>) =>
     seekMusicPlayer(timeFromPointer(e.clientX, e.currentTarget.getBoundingClientRect(), duration));
@@ -417,13 +417,17 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
         {formatPlaybackTime(currentTime)}
       </span>
       <div className="flex min-w-0 flex-1 flex-col">
-        {withStrip && (
-          <TimedCommentStrip
-            comments={timedComments}
-            duration={duration}
-            currentTime={currentTime}
-          />
-        )}
+        {withStrip &&
+          (timedComments.show ? (
+            <TimedCommentStrip
+              comments={timedComments.comments}
+              duration={duration}
+              currentTime={currentTime}
+            />
+          ) : (
+            // Hidden, the strip keeps its row so the waveform does not jump.
+            <div aria-hidden className="h-6 shrink-0" />
+          ))}
         <div
           ref={sliderRef}
           role="slider"

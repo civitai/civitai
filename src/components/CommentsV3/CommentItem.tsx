@@ -105,7 +105,7 @@ export function CommentItem({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4">
           {!author ? (
             <Text size="sm" c="dimmed" fs="italic">
               This comment was deleted
@@ -113,7 +113,7 @@ export function CommentItem({
           ) : concealed ? (
             <HiddenCommentLabel onShow={reveal} />
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               <UserAvatar
                 user={author}
                 size="md"
@@ -122,12 +122,12 @@ export function CommentItem({
                 withUsername
                 badge={badge ? <CommentBadge {...badge} /> : null}
               />
-              <Text c="dimmed" size="xs" mt={2}>
-                <DaysFromNow date={comment.createdAt} />
-              </Text>
               {comment.timestampSec != null && (
                 <CommentTimeChip timestampSec={comment.timestampSec} />
               )}
+              <Text c="dimmed" size="xs" mt={2}>
+                <DaysFromNow date={comment.createdAt} />
+              </Text>
               {comment.pinnedAt && (
                 <ThemeIcon size="sm" color="orange">
                   <IconPinned size={16} stroke={2} />
@@ -151,11 +151,13 @@ export function CommentItem({
           )}
 
           {author && (
-            <CommentMenu
-              comment={comment}
-              lockedAbove={lockedAbove}
-              onEdit={() => setEditing(true)}
-            />
+            <div className="shrink-0">
+              <CommentMenu
+                comment={comment}
+                lockedAbove={lockedAbove}
+                onEdit={() => setEditing(true)}
+              />
+            </div>
           )}
         </div>
 

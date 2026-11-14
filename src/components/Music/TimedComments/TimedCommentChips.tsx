@@ -1,5 +1,5 @@
 import { Button } from '@mantine/core';
-import { IconClockHour4, IconPlayerPlayFilled } from '@tabler/icons-react';
+import { IconHourglass, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { Tooltip } from '~/components/MantineOverlays';
 import type { SongTimeChoice } from '~/components/Music/TimedComments/SongCommentsContext';
 import { useSongComments } from '~/components/Music/TimedComments/SongCommentsContext';
@@ -15,7 +15,7 @@ export function SongTimeChip({ choice }: { choice: SongTimeChoice }) {
       size="compact-xs"
       radius="xl"
       variant={choice.on ? 'light' : 'default'}
-      leftSection={<IconClockHour4 size={14} />}
+      leftSection={<IconHourglass size={11} />}
       aria-pressed={choice.on}
       disabled={!choice.available}
       onClick={choice.toggle}
@@ -41,9 +41,11 @@ export function CommentTimeChip({ timestampSec }: { timestampSec: number }) {
     <Button
       type="button"
       size="compact-xs"
-      radius="xl"
+      // Pencil `D16w5R`: radius 4, 11px bold.
+      radius="sm"
       variant="light"
-      leftSection={<IconPlayerPlayFilled size={10} />}
+      className="text-[11px] font-bold"
+      leftSection={<IconPlayerPlayFilled size={9} />}
       aria-label={`Play from ${time}`}
       onClick={() => song.playFrom(timestampSec)}
     >
