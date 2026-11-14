@@ -1,0 +1,87 @@
+name: feed-go
+
+# apps/feed-go is the one Go module in the repo (a port of `image.getImagesAsPostsInfinite`; see
+# apps/feed-go/DESIGN.md). It is not a pnpm workspace member (no package.json), so none of the
+# Node suites see it: apps.yml's typecheck and suite ledgers enumerate apps by package.json.
+# This workflow is its only gate: gofmt, vet, the unit tests and a build of the binary.
+#
+# A draft PR skips this job, as in apps.yml, unless it carries the `full-ci` label; full-ci.yml
+# dispatches this workflow when the label is added. A push to `main` is unfiltered.
+on:
+  pull_request:
+    branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'apps/feed-go/**'
+      - '.github/workflows/feed-go.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/feed-go/**'
+      - '.github/workflows/feed-go.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feed-go-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: feed-go vet + test + build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/feed-go
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/feed-go/go.mod
+          cache-dependency-path: apps/feed-go/go.sum
+
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-formatted (run gofmt -w apps/feed-go):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # `-json` so the step below can count the tests that actually ran: a package that silently
+      # compiled to zero tests would otherwise still exit 0.
+      - name: go test
+        run: |
+          status=0
+          go test -race -count=1 -json ./... > test.json || status=$?
+          jq -j 'select(.Action=="output") | .Output' test.json
+          exit $status
+
+      - name: Assert the tests ran
+        if: always()
+        run: |
+          set -euo pipefail
+          passed=$(jq -r 'select(.Action=="pass" and .Test!=null) | .Test' test.json | wc -l)
+          failed=$(jq -r 'select(.Action=="fail" and .Test!=null) | .Test' test.json | wc -l)
+          pkgs=$(jq -r 'select(.Action=="pass" and .Test==null) | .Package' test.json | sort -u | wc -l)
+          echo "passed tests: $passed, failed tests: $failed, passing packages: $pkgs"
+          # Positive control: the module has 11 packages with tests (auth, browsing, config, dbpool,
+          # feed, hydrate, server, shadow, superjson, sysredis, trpc) and well over 60 passing tests and
+          # subtests. A count below these floors means tests stopped being discovered, not that they
+          # passed. Raise the package floor when a package gains its first test.
+          [ "$failed" -eq 0 ]
+          [ "$pkgs" -ge 11 ]
+          [ "$passed" -ge 60 ]
+
+      - name: go build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/feed-go ./cmd/feed-go
