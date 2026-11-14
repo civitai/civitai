@@ -227,7 +227,8 @@ export function handleRequest(
       });
       const origin: RequestOrigin = {
         headers: req.headers,
-        remoteAddress: req.socket.remoteAddress,
+        // Optional: a request handed to `handleRequest` directly need not carry a socket.
+        remoteAddress: req.socket?.remoteAddress,
       };
       const restricted = opts.regionRestricted ?? regionRestricted;
       const principal = await authenticate(
