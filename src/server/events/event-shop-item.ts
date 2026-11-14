@@ -123,6 +123,18 @@ export async function getEventBuyerTeam(eventName: string, userId: number) {
 }
 
 /**
+ * A holder's team in an event, for a job that reads their box's pool. Read only: unlike
+ * `getEventBuyerTeam` it places no one. Undefined when the event has no teams; throws when the
+ * event or the team can't be read.
+ */
+export async function readEventHolderTeam(eventName: string, userId: number) {
+  const event = (await loadEvents()).find((e) => e.name === eventName);
+  if (!event) throw new Error(`Event ${eventName} is not registered`);
+  if (!event.teams.length) return undefined;
+  return event.getUserTeam(userId, { strict: true });
+}
+
+/**
  * How a viewer sees an event's mystery boxes: whether they may buy (the event is playable for them)
  * and which team's contents to show. Null when the event is unregistered, unloadable or closed to
  * them, or their team can't be read. Read only: unlike `getEventBuyerTeam` it places no one, so the

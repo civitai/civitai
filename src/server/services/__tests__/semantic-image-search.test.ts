@@ -11,6 +11,7 @@ import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-se
 import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
@@ -25,6 +26,7 @@ const h = vi.hoisted(() => {
       vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
+    getBlockedNsfwWords: vi.fn<(text?: string) => string[]>(),
     isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
     evalBoolean: vi.fn<() => { enabled: unknown }>(),
     fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
@@ -40,6 +42,10 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,
   includesMinor: h.includesMinor,
+}));
+vi.mock('~/utils/metadata/audit-base', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getBlockedNsfwWords: h.getBlockedNsfwWords,
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({
@@ -144,12 +150,14 @@ function visibleOnly(visible: Set<number>) {
 }
 
 beforeEach(() => {
+  installFakeCacheRedis();
   h.fakeGetAllImages = undefined;
   h.queryWithTimeout.mockReset().mockRejectedValue(new Error('stop here'));
   h.stripBenignPhrases.mockReset().mockImplementation(async (text: string) => text);
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
+  h.getBlockedNsfwWords.mockReset().mockReturnValue([]);
   h.isFlipt.mockReset().mockResolvedValue(false);
   h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
@@ -304,6 +312,27 @@ describe('tags that cannot be browsed', () => {
   });
 });
 
+describe('Made On-site and Metadata only', () => {
+  it('applies both to hydration only, not the anchor check', async () => {
+    const hydrated: unknown[] = [];
+    h.fakeGetAllImages = async (args) => {
+      const { fromPlatform, withMeta } = args as { fromPlatform?: boolean; withMeta?: boolean };
+      hydrated.push({ fromPlatform, withMeta });
+      return visibleOnly(new Set([5]))(args);
+    };
+    const { source } = rankedSource([5]);
+    await searchSemanticImages({
+      input: input({ fromPlatform: true, withMeta: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(hydrated).toEqual([
+      { fromPlatform: undefined, withMeta: false },
+      { fromPlatform: true, withMeta: true },
+    ]);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],
@@ -445,36 +474,18 @@ describe('filters', () => {
     expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
-  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+  it.each([
+    ['a moderator', { id: 501, isModerator: true } as SessionUser],
+    ['a non-moderator', VIEWER],
+  ])('leaves the base-model licence rule to hydration for %s at NSFW levels', async (_, user) => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
       input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: { id: 501, isModerator: true } as SessionUser,
-      candidateSource: source,
-    });
-    const [restricted] = calls[0].filter.mustNot as {
-      must: { key: string; match: { any: unknown[] } }[];
-    }[];
-    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
-    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
-  });
-
-  it('keeps the base-model rule for a non-moderator searching at an NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({
-      input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: VIEWER,
+      user,
       candidateSource: source,
     });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
-    expect(calls[0].filter.mustNot).toHaveLength(1);
-  });
-
-  it('drops the base-model rule when the gate holds no NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
-    expect(calls[0].filter.mustNot).toEqual([]);
+    expect(calls[0].filter.mustNot ?? []).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -670,6 +681,20 @@ describe('the query audit and the browsing level', () => {
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
+  // The search boxes refuse these words too; this is the request that skips the box.
+  it('refuses a query with a blocked word from a non-moderator, before asking the index', async () => {
+    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
+    const { result, calls } = await run({});
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('lets a moderator search a query with a blocked word', async () => {
+    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
+    const { result } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    expect(result.items.map((i) => i.id)).toEqual([101]);
+  });
+
   const clampOn = () => h.evalBoolean.mockReturnValue({ enabled: true });
 
   it('lifts the clamp when the key is present and disabled', async () => {
@@ -755,6 +780,44 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  it('audits a correction that changes between hydration rounds of one page', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    h.fakeGetAllImages = visibleOnly(new Set([1, 150]));
+    const source: CandidateSource = async ({ offset, limit }) => ({
+      ids: Array.from({ length: limit }, (_, i) => offset + i + 1),
+      correctedQuery: offset < 100 ? 'fine' : 'corrected',
+    });
+    const result = await searchSemanticImages({
+      input: textQuery({ limit: 50 }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(result.items).toEqual([]);
+  });
+
+  it('refuses a cached later page whose correction fails the audit, without asking the service again', async () => {
+    h.includesInappropriate.mockImplementation(({ prompt }) =>
+      prompt === 'corrected' ? 'minor' : false
+    );
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    let calls = 0;
+    const source: CandidateSource = async () => {
+      calls++;
+      return { ids: Array.from({ length: 100 }, (_, i) => 101 + i), correctedQuery: 'corrected' };
+    };
+    const page2 = () =>
+      searchSemanticImages({
+        input: textQuery({ cursor: 100 }),
+        user: VIEWER,
+        candidateSource: source,
+      });
+    expect((await page2()).items).toEqual([]);
+    expect((await page2()).items).toEqual([]);
+    expect(calls).toBe(1);
   });
 
   it("keeps a moderator's requested level", async () => {

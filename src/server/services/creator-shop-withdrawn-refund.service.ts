@@ -17,6 +17,7 @@ import { CREATOR_SHOP_HISTORY_LIMIT } from '~/server/services/creator-shop.data'
 import { createNotification } from '~/server/services/notification.service';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { withRetries } from '~/server/utils/errorHandling';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 /**
  * Refunds the buyers of a Creator Shop item that was withdrawn after it sold (rejected by a
@@ -103,7 +104,7 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 
 /** Refunds one transaction unless its `refund-<id>` is already on the ledger. */
 async function refundOnce(transactionId: string, description: string) {
-  if (await getTransactionByExternalId(`refund-${transactionId}`)) return;
+  if (await getTransactionByExternalId(refundExternalTransactionId(transactionId))) return;
   await withRetries(
     () => refundTransactionOnce(transactionId, description),
     MONEY_RETRIES,
@@ -112,7 +113,7 @@ async function refundOnce(transactionId: string, description: string) {
 }
 
 /** The purchase's debits and payouts, or why they can't be reversed. The dry run reads this too. */
-async function readPurchaseLedger(purchase: {
+export async function readPurchaseLedger(purchase: {
   buzzTransactionId: string;
   userId: number;
   unitAmount: number;
@@ -576,7 +577,9 @@ async function planLegs(
         transactionId,
         accountId,
         amount,
-        alreadyRefunded: !!(await getTransactionByExternalId(`refund-${transactionId}`)),
+        alreadyRefunded: !!(await getTransactionByExternalId(
+          refundExternalTransactionId(transactionId)
+        )),
       }))
     ),
   };

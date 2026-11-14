@@ -1,5 +1,6 @@
 import { QdrantClient, type Schemas } from '@qdrant/js-client-rest';
 import { config } from '@/config';
+import { retryOnceOnConnectionError } from '@/common/utils/connection-errors';
 import { logger } from '@/utils/logger';
 import type { ImagePayload } from './source';
 
@@ -72,6 +73,18 @@ export type CollectionSpec<P> = {
 export const SITE_REPLICATION = { replicationFactor: 2, writeConsistencyFactor: 1 } as const;
 const IMAGE_COLLECTION: CollectionSpec<ImagePayload> = { indexes: PAYLOAD_INDEXES, quantile: 1.0 };
 
+/** The client every vector store is built on. */
+export function qdrantClient() {
+  const { qdrantUrl, qdrantApiKey } = config.vectorSync;
+  return new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey });
+}
+
+/**
+ * Marks a call as safe to repeat (see retryOnceOnConnectionError). Do not wrap the bootstrap
+ * creates (collection, payload index, alias): a repeat may fail as already existing.
+ */
+const idempotent = retryOnceOnConnectionError;
+
 export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
   constructor(
     readonly client: QdrantClient,
@@ -80,14 +93,16 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
   ) {}
 
   static fromConfig() {
-    const { qdrantUrl, qdrantApiKey, collection } = config.vectorSync;
-    return new VectorStore(new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }), collection);
+    return new VectorStore(qdrantClient(), config.vectorSync.collection);
+  }
+
+  async exists() {
+    return (await idempotent(() => this.client.collectionExists(this.collection))).exists;
   }
 
   /** Creates the collection, payload indexes and alias if missing. Safe to re-run. */
   async bootstrap({ alias = config.vectorSync.alias }: { alias?: string } = {}) {
-    const { exists } = await this.client.collectionExists(this.collection);
-    if (!exists) {
+    if (!(await this.exists())) {
       // Mirrors the configuration the vector-search benchmark measured.
       await this.client.createCollection(this.collection, {
         vectors: { size: VECTOR_DIMENSIONS, distance: 'Cosine', on_disk: true },
@@ -103,7 +118,7 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
       logger.info({ collection: this.collection }, 'vector-sync: created collection');
     }
 
-    const info = await this.client.getCollection(this.collection);
+    const info = await idempotent(() => this.client.getCollection(this.collection));
     for (const [field, schema] of this.spec.indexes) {
       if (info.payload_schema?.[field]) continue;
       await this.client.createPayloadIndex(this.collection, {
@@ -113,7 +128,7 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
       });
     }
 
-    const { aliases } = await this.client.getAliases();
+    const { aliases } = await idempotent(() => this.client.getAliases());
     const current = aliases.find((a) => a.alias_name === alias);
     // Only claims a free alias. Moving one that points elsewhere is a cutover, done by hand.
     if (!current) {
@@ -154,7 +169,7 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     if (!stored.profile && got.profile) missing.profile = got.profile;
     if (!stored.videoProfile && got.videoProfile) missing.videoProfile = got.videoProfile;
     if (Object.keys(missing).length) {
-      await this.client.updateCollection(this.collection, { metadata: missing });
+      await idempotent(() => this.client.updateCollection(this.collection, { metadata: missing }));
       const after = await this.readStamp();
       if (stampConflicts(after, got)) throw new ModelMismatchError(after, got);
     }
@@ -172,59 +187,65 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
   private stamped = false;
 
   private async readStamp(): Promise<Partial<ModelStamp>> {
-    const info = await this.client.getCollection(this.collection);
+    const info = await idempotent(() => this.client.getCollection(this.collection));
     return (info.config.metadata ?? {}) as Partial<ModelStamp>;
   }
 
   async upsert(points: VectorPoint<P>[]) {
     if (!points.length) return;
-    await this.client.upsert(this.collection, { wait: true, points });
+    await idempotent(() => this.client.upsert(this.collection, { wait: true, points }));
   }
 
   async delete(ids: number[]) {
     if (!ids.length) return;
-    await this.client.delete(this.collection, { wait: true, points: ids });
+    await idempotent(() => this.client.delete(this.collection, { wait: true, points: ids }));
   }
 
   /** Overwrites the payload of points that exist; ids with no point are ignored by the caller. */
   async setPayloads(payloads: Map<number, P>) {
     if (!payloads.size) return;
-    await this.client.batchUpdate(this.collection, {
-      wait: true,
-      operations: [...payloads].map(([id, payload]) => ({
-        overwrite_payload: { payload, points: [id] },
-      })),
-    });
+    await idempotent(() =>
+      this.client.batchUpdate(this.collection, {
+        wait: true,
+        operations: [...payloads].map(([id, payload]) => ({
+          overwrite_payload: { payload, points: [id] },
+        })),
+      })
+    );
   }
 
   /** The named payload fields of the points among `ids` that exist. */
   async payloadFields(ids: number[], fields: Array<keyof P & string>) {
     if (!ids.length) return new Map<number, Partial<P>>();
-    const points = await this.client.retrieve(this.collection, {
-      ids,
-      with_payload: { include: fields },
-      with_vector: false,
-    });
+    const points = await idempotent(() =>
+      this.client.retrieve(this.collection, {
+        ids,
+        with_payload: { include: fields },
+        with_vector: false,
+      })
+    );
     return new Map(points.map((p) => [Number(p.id), (p.payload ?? {}) as Partial<P>]));
   }
 
   /** Merges keys into the collection metadata. */
   async setMetadata(metadata: Record<string, string | number>) {
-    await this.client.updateCollection(this.collection, { metadata });
+    await idempotent(() => this.client.updateCollection(this.collection, { metadata }));
   }
 
   async count() {
-    return (await this.client.count(this.collection, { exact: true })).count;
+    return (await idempotent(() => this.client.count(this.collection, { exact: true }))).count;
   }
 
   /** The subset of `ids` that have a point. */
   async existing(ids: number[]): Promise<Set<number>> {
     if (!ids.length) return new Set();
-    const points = await this.client.retrieve(this.collection, {
-      ids,
-      with_payload: false,
-      with_vector: false,
-    });
+    const points = await idempotent(() =>
+      this.client.retrieve(this.collection, {
+        ids,
+        with_payload: false,
+        with_vector: false,
+      })
+    );
     return new Set(points.map((p) => Number(p.id)));
   }
 
@@ -234,13 +255,15 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     let offset: string | number | undefined;
     if (!values.length) return ids;
     do {
-      const page = await this.client.scroll(this.collection, {
-        filter: { must: [{ key: field, match: { any: values } }] },
-        offset,
-        limit: pageSize,
-        with_payload: false,
-        with_vector: false,
-      });
+      const page = await idempotent(() =>
+        this.client.scroll(this.collection, {
+          filter: { must: [{ key: field, match: { any: values } }] },
+          offset,
+          limit: pageSize,
+          with_payload: false,
+          with_vector: false,
+        })
+      );
       ids.push(...page.points.map((p) => Number(p.id)));
       offset = page.next_page_offset == null ? undefined : (page.next_page_offset as number);
     } while (offset !== undefined);
@@ -252,12 +275,14 @@ export class VectorStore<P extends Record<string, unknown> = ImagePayload> {
     const ids: number[] = [];
     let offset: number | undefined = lo;
     while (offset !== undefined && offset < hi) {
-      const page = await this.client.scroll(this.collection, {
-        offset,
-        limit: pageSize,
-        with_payload: false,
-        with_vector: false,
-      });
+      const page = await idempotent(() =>
+        this.client.scroll(this.collection, {
+          offset,
+          limit: pageSize,
+          with_payload: false,
+          with_vector: false,
+        })
+      );
       for (const point of page.points) {
         const id = Number(point.id);
         if (id >= hi) return ids;

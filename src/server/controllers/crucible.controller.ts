@@ -108,7 +108,25 @@ export const getInfiniteCruciblesHandler = async ({
   return { items: await withEntryCounts(items), nextCursor };
 };
 
-export const getCrucibleByIdHandler = async ({
+/** The cover's review fields decide visibility on the server; they never reach the client. */
+const withoutCoverReview = <
+  I extends { needsReview?: unknown; tosViolation?: unknown },
+  T extends { image: I | null }
+>(
+  crucible: T | null
+) => {
+  if (!crucible) return crucible;
+  if (!crucible.image) return crucible as T & { image: null };
+  const { needsReview: _review, tosViolation: _tos, ...image } = crucible.image;
+  return { ...crucible, image };
+};
+
+export const getCrucibleByIdHandler = async (args: {
+  input: GetCrucibleByIdSchema;
+  ctx: Context;
+}) => withoutCoverReview(await crucibleForViewer(args));
+
+const crucibleForViewer = async ({
   input,
   ctx,
 }: {

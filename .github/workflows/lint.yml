@@ -158,13 +158,15 @@ name: Lint
 # four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
 # `github.event.pull_request.labels`, the PR's CURRENT label set, on every
 # opened/synchronize/reopened/ready_for_review run until the label is removed.
-# apps.yml honours the same label, behind its own `paths:` filter. To get it on
-# every PR:
-#   gh pr create ... --label full-ci     or     gh pr edit <n> --add-label full-ci
+# apps.yml honours the same label, behind its own `paths:` filter. Add it only when
+# the change touches code the unit or component suites cover and the PR is near
+# merge-ready, not on every PR: while it is on, every push runs the four shards.
+#   gh pr edit <n> --add-label full-ci
 #
 # ADDING the label does not fire this workflow: `types` deliberately omits
 # `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
-# and apps.yml on the PR branch, so the full suite starts at once; read its header
+# and apps.yml on the PR branch, so the full suite starts at once (not when the PR's own run on
+# that commit already started the shards, e.g. a PR opened with the label); read its header
 # for why (a run started by any other label overlays the PR's real check results).
 # scripts/__tests__/full-ci-label.test.ts pins this shape.
 on:
@@ -221,17 +223,22 @@ permissions:
 
 # One group per ref, for pull requests AND pushes. On a PR `github.ref` is
 # `refs/pull/N/merge`, so a new push to the branch cancels the in-flight run.
-# On a push to `main` it is `refs/heads/main`, so a newer commit on `main`
-# cancels the run for the older one that is still going.
+# On a push to `main` it is `refs/heads/main`, and there the group QUEUES rather
+# than cancels: the running `main` run finishes, at most one newer push waits
+# behind it, and a still-newer push replaces the waiting one (GitHub's rule for a
+# pending run in a group).
 #
-# That last part is a deliberate trade, not an oversight. Until 2026-10 a push
-# grouped by `github.sha`, so every commit on `main` kept its own full run (10+
-# jobs) alive. On a busy day that queued dozens of `main` runs behind the PR
-# runs on a plan with a fixed concurrent-job limit. The newest commit's run
-# checks a tree that contains every older commit, so `main` still gets a
-# verdict; what is given up is a per-commit verdict for intermediate commits,
-# which show as `cancelled`. To pin a break to one of them, push a branch at
-# that commit and dispatch this workflow on it (`only` narrows it to one suite).
+# Why queue, not cancel, on `main`. Until 2026-10 a push grouped by `github.sha`,
+# so every commit on `main` kept its own full run (10+ jobs) alive and dozens of
+# `main` runs queued behind PRs on a plan with a fixed concurrent-job limit. That
+# was fixed by cancelling instead, but `main` takes pushes faster than a run
+# takes, so cancel-in-progress left most push runs `cancelled` with no verdict.
+# Queueing costs about the same runner time and finishes far more of them (the
+# replay behind this: docs/testing/reading-ci-results.md, "CI cost
+# measurements"). The newest finished run checks a tree that contains every older
+# commit; a commit whose run was replaced while waiting shows as `cancelled`. To pin a
+# break to one of them, push a branch at that commit and dispatch this workflow
+# on it (`only` narrows it to one suite).
 #
 # A `ready_for_review` run shares the PR's `refs/pull/N/merge` group, so it
 # cancels a still-running draft ESLint run. That is fine: the ready run runs
@@ -243,7 +250,7 @@ permissions:
 # `dispatch-` prefix keeps these groups disjoint from the PR and push ones.
 concurrency:
   group: lint-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   eslint:
@@ -532,8 +539,8 @@ jobs:
     # not skip push: drafts skip this job and `main` has no required checks, so
     # test-file type errors from draft or red-merged PRs otherwise reach `main`
     # unmeasured and every later PR inherits the red. On `main` it renders red and
-    # blocks nothing. A newer push cancels the run in flight, so in a burst the error
-    # shows on the last commit of the burst; check the cancelled runs before it.
+    # blocks nothing. Push runs queue (see `concurrency`), so in a burst a commit whose
+    # waiting run was replaced shows `cancelled`; the error shows on the next finished one.
     if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck-tests') }}
     timeout-minutes: 30
     steps:
@@ -735,6 +742,8 @@ jobs:
       KYSELY_HOT_READS_9_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-10 suite (its own `hot_reads_10_parity` schema).
       KYSELY_HOT_READS_10_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-11 suite (its own `hot_reads_11_parity` schema).
+      KYSELY_HOT_READS_11_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # The image_delivery_lookup(url) parity suite: creates and drops its own database and roles
       # on this server, so it needs the superuser URL.
       IMAGE_DELIVERY_LOOKUP_FN_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres

@@ -36,6 +36,7 @@ import {
 } from '@civitai/shared/mystery-box';
 import { dbRead, dbWrite } from './db';
 import { ACCOUNT_STANDING_REBUST_MS, REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
+import { writeMayHaveLanded } from '@civitai/buzz';
 import { getBuzz } from './buzz';
 import { bustKeyBestEffort, bustUserCosmeticCaches } from './cache';
 import { logAxiomError } from './axiom';
@@ -259,6 +260,7 @@ export type ModEndpoint =
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
+  | 'cosmetic/refund-box-purchase'
   | 'messages/claim'
   | 'messages/release'
   | 'creator-services/resolve-dispute'
@@ -1023,10 +1025,11 @@ export async function sendBuzz(input: {
     });
   } catch (e) {
     console.error('[user-actions] buzz transaction failed', e);
-    // A write we stopped waiting for may still commit after we look: a lookup that finds nothing
-    // then means "not yet", not "never".
-    const name = (e as { name?: string } | null)?.name;
-    const timedOut = name === 'TimeoutError' || name === 'AbortError';
+    // A write that may have reached the service may still commit after we look: a lookup that
+    // finds nothing then means "not yet", not "never". That is every failure but a connection
+    // that never opened and a refusal the service answered, including the runtime's own transport
+    // timeout (a TypeError), which is how a hung write ends when the client sets no deadline.
+    const mayHaveLanded = writeMayHaveLanded(e);
     // A timeout or a 5xx does not say the write did not happen, so ask the ledger before telling a
     // moderator it failed: "failed" invites a resubmit, and a resubmit of a write that landed is a
     // second grant (or deduction).
@@ -1039,7 +1042,7 @@ export async function sendBuzz(input: {
     } catch (lookupError) {
       console.error('[user-actions] buzz lookup after a failed write failed', lookupError);
     }
-    if (landed === undefined || (!landed && timedOut))
+    if (landed === undefined || (!landed && mayHaveLanded))
       return {
         ok: false,
         error:
@@ -1191,13 +1194,32 @@ export async function refundShopPurchase(input: {
   const purchase = await dbWrite
     .selectFrom('UserCosmeticShopPurchases as p')
     .innerJoin('CosmeticShopItem as csi', 'csi.id', 'p.shopItemId')
-    .select(['p.refunded', 'p.meta', 'csi.itemDefinitionId'])
+    .leftJoin('ItemDefinition as d', 'd.id', 'csi.itemDefinitionId')
+    .select(['p.refunded', 'p.meta', 'csi.itemDefinitionId', 'd.sellerId'])
     .where('p.buzzTransactionId', '=', input.buzzTransactionId)
     .where('p.userId', '=', input.userId)
     .executeTakeFirst();
 
   if (!purchase) return { ok: false, error: 'That purchase does not belong to this user.' };
   if (purchase.refunded) return { ok: false, error: 'That purchase is already refunded.' };
+  // A creator's box paid its creator, so its refund returns the Buzz and reverses that payout, which
+  // only the main app can do.
+  if (purchase.sellerId != null) {
+    const result = await callModEndpoint(
+      'cosmetic/refund-box-purchase',
+      { userId: input.userId, buzzTransactionId: input.buzzTransactionId },
+      'Mystery box refund'
+    );
+    if (!result.ok) return result;
+    await logAction('shopRefund', input.userId, input.moderatorId);
+    return result.body.payoutFailures
+      ? {
+          ok: true,
+          warning:
+            "The buyer's Buzz is back, but the creator's payout was not reversed. Reverse it in the Buzz panel.",
+        }
+      : { ok: true };
+  }
   const pack = purchase.itemDefinitionId != null ? boxPackTermsOf(purchase.meta) : undefined;
 
   let removed: RemovedHolding[];
@@ -1252,14 +1274,20 @@ export async function refundShopPurchase(input: {
  * the moderator returns the Buzz by hand, so they are told what is the takedown's to pay.
  */
 function packTakedownWarning(meta: unknown, unitAmount: number, size: number) {
-  const claimed = Object.keys(
-    (meta as { packTakedownRefunds?: Record<string, unknown> } | null)?.packTakedownRefunds ?? {}
-  ).length;
+  // A takedown's and the unopenable-box refund's, each keyed by box: a box is paid back by one of them.
+  const byBox = meta as {
+    packTakedownRefunds?: Record<string, unknown>;
+    packOverPoolRefunds?: Record<string, unknown>;
+  } | null;
+  const claimed = Object.keys({
+    ...byBox?.packTakedownRefunds,
+    ...byBox?.packOverPoolRefunds,
+  }).length;
   if (!claimed) return undefined;
   const share = Math.floor(unitAmount / size);
-  return `A takedown pays back ${claimed} of this pack's boxes (${
+  return `${claimed} of this pack's boxes (${
     claimed * share
-  } Buzz) itself; return only the rest.`;
+  } Buzz) are paid back on their own; return only the rest.`;
 }
 
 /**

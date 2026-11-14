@@ -40,11 +40,13 @@ const { BaseModelListContent } = await import('~/components/generation_v2/inputs
 const { SearchableMultiSelectRefinementList } = await import(
   '~/components/Search/CustomSearchComponents'
 );
-const { baseModelSelectData, ecosystemByKey, getEcosystemDisplayItems } = await import(
-  '~/shared/constants/basemodel.constants'
-);
+const {
+  baseModelSelectData,
+  ecosystemByKey,
+  getEcosystemDisplayItems,
+  matureRestrictedBaseModels,
+} = await import('~/shared/constants/basemodel.constants');
 const { getWorkflowsForEcosystem } = await import('~/shared/generation/config/workflows');
-const { nsfwRestrictedBaseModels } = await import('~/server/common/constants');
 
 const RED = { green: false, blue: true, red: false };
 const GREEN = { green: true, blue: false, red: false };
@@ -179,7 +181,9 @@ describe('base model filter (Models and Images)', () => {
       expect(optionHasBadge(bm), bm).toBe(false);
     // Hidden bases are not offered, so the count is the restricted ones the filter lists.
     const offered = new Set(baseModelSelectData.flatMap((g) => g.items.map((i) => i.value)));
-    expect(badges()).toHaveLength(nsfwRestrictedBaseModels.filter((b) => offered.has(b)).length);
+    expect(badges()).toHaveLength(
+      matureRestrictedBaseModels('images').filter((b) => offered.has(b)).length
+    );
   });
 
   test('marks nothing on .com', async () => {

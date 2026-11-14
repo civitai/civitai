@@ -127,6 +127,53 @@ describe('the csam hold decision record, against the real label store', () => {
     expect(await labels()).toMatchObject([{ value: 'not_csam', reason: 'dismiss' }]);
   });
 
+  describe('a held storyline text item', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.textScanHold.findFirst.mockResolvedValue({
+        id: 12,
+        status: 'Pending',
+        entityType: 'PostText',
+        entityId: 31,
+        userId: 900,
+        text: 'held text',
+        textHash: 'h',
+        meta: null,
+      });
+      dbMock.dbWrite.postText.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    });
+
+    it('is released by a dismissal', async () => {
+      await decide('dismiss');
+      expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
+        where: { id: 31 },
+        data: { csamHeld: false },
+      });
+    });
+
+    it.each(['remove', 'remove_ban'] as const)(
+      'is held from readers by a %s decision, even if its scan never marked it held',
+      async (decision) => {
+        await decide(decision);
+        expect(dbMock.dbWrite.postText.updateMany).toHaveBeenCalledWith({
+          where: { id: 31 },
+          data: { csamHeld: true },
+        });
+      }
+    );
+
+    it('stays held when removed, its content kept', async () => {
+      await decide('remove');
+      expect(dbMock.dbWrite.postText.updateMany).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { csamHeld: false } })
+      );
+      expect(dbMock.dbWrite.postText.delete).not.toHaveBeenCalled();
+      // The control: the removal was decided and recorded.
+      expect(await labels()).toEqual([
+        { value: 'csam', reason: 'remove', subjectType: 'post_text_text', subjectId: '31' },
+      ]);
+    });
+  });
+
   it('records one label per hold: the same source ref twice adds nothing', async () => {
     await decide('remove');
     // The mocked final update does not run, so the claim it would have cleared is cleared here.

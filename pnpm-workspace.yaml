@@ -2,3 +2,6 @@ packages:
   - '.'
   - 'packages/*'
   - 'apps/*'
+  # apps/feed-go is a Go module. Its package.json only carries the release version for
+  # scripts/release-app.mjs, so it stays out of the workspace (no lockfile importer, no install).
+  - '!apps/feed-go'

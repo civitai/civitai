@@ -1,5 +1,6 @@
 import type { NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import type { IncomingMessage } from 'http';
 
 /**
  * Values of `OTEL_HTTP_INSTRUMENTATION` that turn the inbound HTTP instrumentation OFF.
@@ -60,8 +61,22 @@ export function isHttpInstrumentationEnabled(env: NodeJS.ProcessEnv = process.en
  *     read differently; span metrics that drop `next.bubble` spans do not.
  */
 export function buildOtelInstrumentations(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  options: {
+    /**
+     * Root pre-sampling's ignore hook (`otel-root-presample` flag, default off). Take it from
+     * `buildHeadSampling` together with the sampler and id generator it was built with; see
+     * ~/server/otel-root-presample.
+     */
+    ignoreIncomingRequestHook?: (request: IncomingMessage) => boolean;
+  } = {}
 ): NodeSDKConfiguration['instrumentations'] {
   if (!isHttpInstrumentationEnabled(env)) return [];
-  return [new HttpInstrumentation({ ignoreOutgoingRequestHook: () => true })];
+  const { ignoreIncomingRequestHook } = options;
+  return [
+    new HttpInstrumentation({
+      ignoreOutgoingRequestHook: () => true,
+      ...(ignoreIncomingRequestHook === undefined ? {} : { ignoreIncomingRequestHook }),
+    }),
+  ];
 }

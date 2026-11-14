@@ -21,6 +21,8 @@ export const SECTION_OWNERS: Record<CommentEntityType, (owner: string) => string
   appListing: (o) => `SELECT serial_id FROM app_listings WHERE user_id = ${o}`,
   crucible: (o) => `SELECT id FROM "Crucible" WHERE "userId" = ${o}`,
   storyline: (o) => `SELECT id FROM "Storyline" WHERE "userId" = ${o}`,
+  postText: (o) =>
+    `SELECT t.id FROM "PostText" t JOIN "Post" p ON p.id = t."postId" WHERE p."userId" = ${o}`,
   comicChapter: (o) =>
     `SELECT ch.id FROM "ComicChapter" ch JOIN "ComicProject" p ON p.id = ch."projectId" WHERE p."userId" = ${o}`,
 };
@@ -32,8 +34,15 @@ export const BLOCK_HIDE_READ_TIMEOUT_MS = 5_000;
 export const BLOCK_HIDE_MAX_COMMENTS = 10_000;
 export const BLOCK_HIDE_BATCH_SIZE = 1_000;
 
+/**
+ * Types whose enum value a later hand-applied migration adds: casting them before it lands would
+ * fail every block. No comment can exist on them until then.
+ */
+export const SECTION_TYPES_AWAITING_ENUM: readonly CommentEntityType[] = ['postText'];
+
 export const blockHideCandidatesSql = `WITH owned (t, id) AS (
 ${Object.entries(SECTION_OWNERS)
+  .filter(([type]) => !SECTION_TYPES_AWAITING_ENUM.includes(type as CommentEntityType))
   .map(
     ([type, owned]) => `  SELECT '${type}'::"CommentEntityType", x.id FROM (${owned('$2')}) x (id)`
   )
