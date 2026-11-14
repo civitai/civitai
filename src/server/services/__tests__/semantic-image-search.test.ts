@@ -12,6 +12,7 @@ import type { SessionUser } from '~/types/session';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { installFakeCacheRedis } from '~/__tests__/mocks/fake-cache-redis';
+import { blockedNSFW } from '@civitai/mod-utils/prompt-audit/lists';
 
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
@@ -26,7 +27,6 @@ const h = vi.hoisted(() => {
       vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
     includesPoi: vi.fn<(prompt?: string) => string | false>(),
     includesMinor: vi.fn<(prompt?: string) => boolean>(),
-    getBlockedNsfwWords: vi.fn<(text?: string) => string[]>(),
     isFlipt: vi.fn<(flag: string) => Promise<boolean>>(),
     evalBoolean: vi.fn<() => { enabled: unknown }>(),
     fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
@@ -42,10 +42,6 @@ vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   includesInappropriate: h.includesInappropriate,
   includesPoi: h.includesPoi,
   includesMinor: h.includesMinor,
-}));
-vi.mock('~/utils/metadata/audit-base', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getBlockedNsfwWords: h.getBlockedNsfwWords,
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => ({
@@ -157,7 +153,6 @@ beforeEach(() => {
   h.includesInappropriate.mockReset().mockReturnValue(false);
   h.includesPoi.mockReset().mockReturnValue(false);
   h.includesMinor.mockReset().mockReturnValue(false);
-  h.getBlockedNsfwWords.mockReset().mockReturnValue([]);
   h.isFlipt.mockReset().mockResolvedValue(false);
   h.evalBoolean.mockReset().mockReturnValue({ enabled: false });
   h.fliptClient = { evaluateBoolean: () => h.evalBoolean() };
@@ -699,17 +694,23 @@ describe('the query audit and the browsing level', () => {
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
-  // The search boxes refuse these words too; this is the request that skips the box.
+  const blockedWordQuery = `a ${blockedNSFW[0]} fox`;
+
   it('refuses a query with a blocked word from a non-moderator, before asking the index', async () => {
-    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
-    const { result, calls } = await run({});
+    const { result, calls } = await run({ query: blockedWordQuery });
+    expect(result.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a blocked word even when the benign-phrase pass strips it', async () => {
+    h.stripBenignPhrases.mockResolvedValue('a fox');
+    const { result, calls } = await run({ query: blockedWordQuery });
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
   });
 
   it('lets a moderator search a query with a blocked word', async () => {
-    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
-    const { result } = await run({ browsingLevel: ALL_LEVELS }, MOD);
+    const { result } = await run({ query: blockedWordQuery, browsingLevel: ALL_LEVELS }, MOD);
     expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
