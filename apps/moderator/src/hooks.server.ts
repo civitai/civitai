@@ -68,7 +68,6 @@ async function handleBatchRoute(
   if (sent.length !== 1) return noStore(401);
   const token = parseCookieHeader(cookieHeader)[name];
 
-  // Only a general session may join a batch by its cookie; a held one is bound to its code's batch.
   const session = await (tier === 'held'
     ? resolveHeldSession(token).then(
         (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [], join: undefined }

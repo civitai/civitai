@@ -382,6 +382,33 @@ describe('one general sign-in a day', () => {
     expect(await batchesOf(token)).toHaveLength(20);
   });
 
+  it("a code signs in fresh when the cookie's session is full or another moderator's", async () => {
+    const token = (await signIn('review', GENERAL))!;
+    const ids = Array.from({ length: 19 }, (_, i) => `B${String(i).padStart(21, '0')}`);
+    ids.forEach((id) => seedBatch(id, 'general'));
+    for (const id of ids) expect(await open('review', id, token)).toBe(200);
+    const full = await batchesOf(token);
+    expect(full).toHaveLength(20);
+
+    const fresh = await signIn('review', GENERAL_2, token);
+    expect(fresh).not.toBeNull();
+    expect(fresh).not.toBe(token);
+    expect(await batchesOf(fresh!)).toEqual([H(GENERAL_2)]);
+    expect(await batchesOf(token)).toEqual(full);
+
+    const OTHER_MOD = { ...MOD, id: 999, username: 'mod999' };
+    verifyToken.mockResolvedValueOnce({ ...CLAIMS, sub: '999' });
+    getSessionUserById.mockImplementation(async (id: number) => (id === 999 ? OTHER_MOD : MOD));
+    const started = await startPost('review', OTHER_VIEWER, OTHER_MOD);
+    expect(started.status).toBe(303);
+    const code = new URL(started.headers.get('location')!).searchParams.get('code')!;
+    const res = await exchange('review', code, `${COOKIE.review}=${fresh}`);
+    expect(res.status).toBe(204);
+    const theirs = new RegExp(`${COOKIE.review}=([^;]+)`).exec(res.headers.get('set-cookie')!)![1];
+    expect(theirs).not.toBe(fresh);
+    expect(await batchesOf(fresh!)).toEqual([H(GENERAL_2)]);
+  });
+
   it('a batch whose minting key is revoked, or that is no longer live, is refused and not joined', async () => {
     const token = (await signIn('review', GENERAL))!;
     mintingKeyLive.mockResolvedValueOnce(false);
