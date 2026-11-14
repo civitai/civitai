@@ -3,6 +3,9 @@ import { articleDocument, removeSpoilers } from '@/vector-sync/articles/document
 import { articleDomain, articleRefFromEvent } from '@/vector-sync/articles/domain';
 import { getArticleDocs } from '@/vector-sync/articles/source';
 import { contentRoute, OUTBOX_TOPIC, selectDomains } from '@/vector-sync/content/consumer';
+import { nextRefreshIds } from '@/vector-sync/domain/refresh';
+import { syncIds } from '@/vector-sync/domain/sync';
+import type { ArticlePayload } from '@/vector-sync/articles/source';
 
 describe('article eligibility and payload, against the real query', () => {
   // One excluded article per clause of ARTICLE_ELIGIBLE_SQL, so dropping any clause fails.
@@ -132,4 +135,56 @@ describe('article embedding switch', () => {
       else process.env.VECTOR_ARTICLE_EMBED_ENABLED = own;
     }
   });
+});
+
+describe('article refresh walk', () => {
+  test('an article whose event flushed while embedding was off gets its point on the next pass', async () => {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp);
+      CREATE TABLE "Tag" (id int PRIMARY KEY, name text);
+      CREATE TABLE "TagsOnArticle" ("articleId" int, "tagId" int);
+      CREATE TABLE "Article" (id int PRIMARY KEY, title text, content text, "nsfwLevel" int,
+        "publishedAt" timestamp, "userId" int, "coverId" int, "isOfficial" boolean, status text,
+        ingestion text, "tosViolation" boolean, availability text, unlisted boolean);
+      INSERT INTO "User" VALUES (7, 'someone', NULL);
+      INSERT INTO "Article" VALUES (1, 'A', '<p>Body</p>', 1, '2026-01-01', 7, NULL, false,
+        'Published', 'Scanned', false, 'Public', false);
+    `);
+    const points = new Map<number, ArticlePayload>();
+    const store = {
+      payloadFields: async (ids: number[]) =>
+        new Map(ids.flatMap((id) => (points.has(id) ? [[id, points.get(id)!] as const] : []))),
+      delete: async (ids: number[]) => ids.forEach((id) => points.delete(id)),
+      setPayloads: async (p: Map<number, ArticlePayload>) =>
+        p.forEach((payload, id) => points.set(id, payload)),
+      upsert: async (ps: { id: number; payload: ArticlePayload }[]) =>
+        ps.forEach((p) => points.set(p.id, p.payload)),
+      assertModel: async () => undefined,
+    };
+    const embedder = {
+      embed: async (
+        inputs: { id: string }[],
+        o: { onVectors?: (v: Map<number, number[]>) => Promise<void> } = {}
+      ) => {
+        const vectors = new Map(inputs.map((i) => [Number(i.id), [1]]));
+        await o.onVectors?.(vectors);
+        return { vectors, failed: [], stamp: undefined };
+      },
+    };
+    const db = pg as unknown as Parameters<typeof nextRefreshIds>[0];
+    try {
+      // The live event, flushed while the lane could not embed: no point, and nothing retries it.
+      await syncIds(getArticleDocs, [1], { pg, store, embedder: null } as never);
+      expect(points.has(1)).toBe(false);
+
+      expect(articleDomain.refresh).toBeDefined();
+      const { ids } = await nextRefreshIds(db, articleDomain, 0, articleDomain.refresh!.batch);
+      await syncIds(getArticleDocs, ids, { pg, store, embedder } as never);
+      expect(points.has(1)).toBe(true);
+    } finally {
+      await pg.close();
+    }
+  }, 60_000);
 });
