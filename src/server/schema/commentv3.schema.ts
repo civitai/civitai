@@ -63,6 +63,8 @@ export const createCommentV3Schema = z.object({
   /** A reply; its own row then decides the section, not `entityType`/`entityId`. */
   parentId: z.number().int().positive().optional(),
   content,
+  /** Where in the song a timed comment sits; only a top-level comment on a song may carry one. */
+  timestampSec: z.number().min(0).optional(),
 });
 
 export type UpdateCommentV3Input = z.infer<typeof updateCommentV3Schema>;
@@ -70,6 +72,9 @@ export const updateCommentV3Schema = z.object({ id: z.number().int().positive(),
 
 export type CommentV3IdInput = z.infer<typeof commentV3IdSchema>;
 export const commentV3IdSchema = z.object({ id: z.number().int().positive() });
+
+export type GetTimedCommentsInput = z.infer<typeof getTimedCommentsSchema>;
+export const getTimedCommentsSchema = z.object({ imageId: z.number().int().positive() });
 
 export type CommentSectionInput = z.infer<typeof commentSectionSchema>;
 export const commentSectionSchema = z.object({

@@ -77,6 +77,8 @@ type PlayerData = {
   /** Null: the default spot. */
   minimizedPosition: MinimizedPosition | null;
   playback: MusicPlayback | null;
+  /** Timed comments on the bar's waveform; the listener's choice, kept per browser. */
+  showTimedComments: boolean;
 };
 
 type PlayerActions = {
@@ -121,6 +123,7 @@ type PlayerActions = {
   reportTime: (currentTime: number) => void;
   /** The audio element's own length, once known. */
   reportDuration: (durationSec: number) => void;
+  toggleTimedComments: () => void;
 };
 
 export type MusicPlayerState = PlayerData & PlayerActions;
@@ -163,10 +166,31 @@ function restoreOrder(original: MusicTrack[], current: MusicTrack[]) {
   ];
 }
 
+export const TIMED_COMMENTS_KEY = 'music-player:timed-comments';
+
+type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem'>;
+
+function defaultStorage(): PreferenceStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readShowTimedComments(storage: PreferenceStorage | null) {
+  try {
+    return storage?.getItem(TIMED_COMMENTS_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
 export function createMusicPlayerStore({
   random = Math.random,
   now = Date.now,
-}: { random?: () => number; now?: () => number } = {}) {
+  storage = defaultStorage(),
+}: { random?: () => number; now?: () => number; storage?: PreferenceStorage | null } = {}) {
   let nextPlaybackId = 1;
   // Position and listen sampling change on every `timeupdate`; nothing renders from them.
   let position = 0;
@@ -286,6 +310,7 @@ export function createMusicPlayerStore({
       muted: false,
       shuffle: false,
       repeat: 'off',
+      showTimedComments: readShowTimedComments(storage),
 
       playTrack: (track, options) => {
         if (!options?.list) return startFrom(track, null);
@@ -434,6 +459,13 @@ export function createMusicPlayerStore({
         const played = Math.min(currentTime - sample.time, (at - sample.at) / 1000);
         if (played > 0)
           set({ playback: { ...playback, listenedSec: playback.listenedSec + played } });
+      },
+      toggleTimedComments: () => {
+        const showTimedComments = !get().showTimedComments;
+        set({ showTimedComments });
+        try {
+          storage?.setItem(TIMED_COMMENTS_KEY, showTimedComments ? 'on' : 'off');
+        } catch {}
       },
       reportDuration: (durationSec) => {
         const { playback } = get();

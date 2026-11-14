@@ -1,3 +1,4 @@
+import { decode } from 'he';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { commentTrackTypes } from '~/server/clickhouse/tracker';
 import type { CommentEntityType } from '~/shared/utils/prisma/enums';
@@ -13,6 +14,7 @@ import type {
   GetCommentRepliesInput,
   GetCommentSectionInput,
   GetCommentThreadInput,
+  GetTimedCommentsInput,
   CreateCommentV3Input,
   UpdateCommentV3Input,
 } from '~/server/schema/commentv3.schema';
@@ -47,6 +49,11 @@ import {
   toggleSectionMute,
   toggleCommentMute,
 } from '~/server/services/commentv3/section.service';
+import {
+  getCommentSong,
+  type TimedCommentMetadata,
+} from '~/server/services/commentv3/timed-comments.service';
+import { SONGS_UNAVAILABLE_MESSAGE } from '~/shared/form-graph/generation/audio/song-metadata';
 import { emptyReactionCounts } from '~/shared/utils/comment-reactions';
 import {
   type CommentV3Item,
@@ -58,9 +65,14 @@ import {
   countSectionComments,
   getCommentSection,
   getCommentThread,
+  getTimedComments,
   resolveModelPageCommentId,
 } from '~/server/services/commentv3/read.service';
-import { getCosmeticsAndProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  getCosmeticsAndProfilePicturesForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
+import { removeTags } from '~/utils/string-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -142,6 +154,42 @@ export async function getCommentSectionHandler({
   return { ...(await withAuthors(page)), locked: lock.locked, counts };
 }
 
+const TIMED_COMMENT_TEXT_LENGTH = 140;
+
+/**
+ * A song's timed comments for the player's waveform, as plain text, under the section's own
+ * visibility and exclusions. None while songs are off for the viewer.
+ */
+export async function getTimedCommentsHandler({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetTimedCommentsInput;
+}) {
+  if (!ctx.features?.music) return [];
+  const section = { entityType: 'image', entityId: input.imageId };
+  const [, viewer] = await Promise.all([
+    assertSectionVisible(section, ctx),
+    viewerFor(ctx, section),
+  ]);
+  const comments = await getTimedComments(kyselyV3Read, section, viewer);
+  const pictures = comments.length
+    ? await getProfilePicturesForUsers([...new Set(comments.map((c) => c.user.id))])
+    : {};
+  return comments.map(({ content, ...comment }) => {
+    const text = decode(removeTags(content));
+    return {
+      ...comment,
+      text:
+        text.length > TIMED_COMMENT_TEXT_LENGTH
+          ? `${text.slice(0, TIMED_COMMENT_TEXT_LENGTH - 1)}…`
+          : text,
+      user: { ...comment.user, profilePicture: pictures[comment.user.id] ?? null },
+    };
+  });
+}
+
 /** A reply or deep link names a comment; its surface comes from the stored row, never the input. */
 async function resolveComment(ctx: Context, commentId: number) {
   const entity = await getCommentEntity(kyselyV3Read, commentId);
@@ -204,7 +252,7 @@ export async function getCommentThreadHandler({
   };
 }
 
-async function asNewItem(row: StoredCommentV3) {
+async function asNewItem(row: StoredCommentV3, metadata?: TimedCommentMetadata) {
   const [author, lookup] = await Promise.all([
     kyselyV3Read
       .selectFrom('User')
@@ -231,6 +279,7 @@ async function asNewItem(row: StoredCommentV3) {
     reactions: emptyReactionCounts(),
     myReactions: [],
     replyCount: 0,
+    timestampSec: metadata?.timestampSec ?? null,
   } satisfies Omit<CommentV3Item, 'user'> & { user: CommentV3Item['user'] };
 }
 
@@ -291,6 +340,30 @@ async function assertCanWrite(
   });
 }
 
+/**
+ * The metadata a new comment stores for `timestampSec`, built here from that number alone. A time is
+ * only for a top-level comment on a song, within the song's stored length.
+ */
+async function timedCommentMetadata(
+  ctx: ProtectedContext,
+  section: Entity,
+  isReply: boolean,
+  timestampSec: number | undefined
+): Promise<TimedCommentMetadata | undefined> {
+  if (timestampSec === undefined) return undefined;
+  if (!ctx.features?.music) throw throwAuthorizationError(SONGS_UNAVAILABLE_MESSAGE);
+  if (isReply) throw throwBadRequestError('A reply cannot be pinned to a time in the song.');
+  const song =
+    section.entityType === 'image' ? await getCommentSong(kyselyV3Read, section.entityId) : null;
+  if (!song) throw throwBadRequestError('Only a comment on a song can be pinned to a time.');
+  // Without a stored length the time cannot be checked against the song.
+  if (song.durationSec === null)
+    throw throwBadRequestError('This song cannot take comments at a time.');
+  if (timestampSec > song.durationSec)
+    throw throwBadRequestError('That time is past the end of the song.');
+  return { timestampSec: Math.floor(timestampSec) };
+}
+
 const getLiveComment = async (id: number | null | undefined) => {
   const row = id ? await getStoredComment(prismaRunner(dbWrite), id) : undefined;
   return row && !row.deletedAt ? row : undefined;
@@ -312,12 +385,14 @@ export async function createCommentV3Handler({
   const section: Entity = parent ?? input;
   await assertSectionVisible(section, ctx);
   await assertCanWrite(ctx, section, input.content, [parent]);
+  const metadata = await timedCommentMetadata(ctx, section, !!parent, input.timestampSec);
 
   const row = await writeNewComment({
     userId,
     section,
     parent,
     content: input.content,
+    metadata,
     track: ctx.track,
   });
   const surface = commentSurface(section.entityType);
@@ -328,7 +403,7 @@ export async function createCommentV3Handler({
   if (tracked) ctx.track.comment({ ...tracked, nsfw: false }).catch(handleLogError);
   surface.onCreated?.(row, ctx);
   void onCommentCreated({ userId, entityType: section.entityType, entityId: section.entityId });
-  return asNewItem(row);
+  return asNewItem(row, metadata);
 }
 
 /** An edit by the author or a moderator. */

@@ -12,7 +12,7 @@ import {
   songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
 import type { SongImage } from '~/components/MusicPlayer/PostSong';
-import { songTrack } from '~/components/MusicPlayer/PostSong';
+import { playSongWithCreatorList, songTrack } from '~/components/MusicPlayer/PostSong';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useMusicPlayerStore, useMusicPlayheadStore } from '~/store/music-player.store';
 import { formatPlaybackTime } from '~/utils/audio-player';
@@ -57,14 +57,7 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
   const isCurrent = useMusicPlayerStore((s) => s.current?.id === image.id);
   const playing = useMusicPlayerStore((s) => s.current?.id === image.id && s.playing);
 
-  // Up next reads "Next from <name>", so the list is named by the creator alone.
-  const play = (startAtSec?: number) =>
-    store().playFromList({
-      name: image.user.username || moreFrom.name,
-      tracks: [image, ...moreFrom.songs].map(songTrack),
-      index: 0,
-      startAtSec,
-    });
+  const play = (startAtSec?: number) => playSongWithCreatorList(image, moreFrom, startAtSec);
   const togglePlay = () => (isCurrent ? store().togglePlay() : play());
   const lyricsState = !revealed
     ? 'hidden'
@@ -82,9 +75,9 @@ function SongDetailStageContent({ image, revealed }: { image: SongImage; reveale
       data-testid="song-detail-stage"
       className="flex size-full flex-col gap-6 overflow-y-auto px-4 pb-6 pt-1 text-white @md:flex-row @md:items-center @md:justify-center @md:gap-10 @md:overflow-hidden @md:px-16 @md:py-10 @lg:gap-16"
       style={
-        (accent
-          ? { '--music-accent': accent.accent, '--music-accent-2': accent.accent2 }
-          : undefined) as CSSProperties
+        accent
+          ? ({ '--music-accent': accent.accent, '--music-accent-2': accent.accent2 } as CSSProperties)
+          : undefined
       }
     >
       <div className="flex w-full shrink-0 flex-col gap-3.5 @md:w-80 @md:gap-[18px] @lg:w-[400px]">

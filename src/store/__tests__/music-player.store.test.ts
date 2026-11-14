@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MusicTrack } from '~/store/music-player.store';
-import { createMusicPlayerStore } from '~/store/music-player.store';
+import { createMusicPlayerStore, TIMED_COMMENTS_KEY } from '~/store/music-player.store';
 
 const track = (id: number, durationSec = 200): MusicTrack => ({
   id,
@@ -518,5 +518,55 @@ describe('restoring the last song after a reload', () => {
     get().restore({ track: a, positionSec: 42 });
     get().playTrack(b);
     expect(get().playback?.startAtSec).toBe(0);
+  });
+});
+
+describe('timed comments on the waveform', () => {
+  const memory = (initial?: string) => {
+    const map = new Map<string, string>(initial ? [[TIMED_COMMENTS_KEY, initial]] : []);
+    return {
+      map,
+      getItem: (key: string) => map.get(key) ?? null,
+      setItem: (key: string, value: string) => void map.set(key, value),
+    };
+  };
+
+  it('are shown until the listener turns them off, and the choice is kept for the next visit', () => {
+    const storage = memory();
+    const first = createMusicPlayerStore({ storage });
+    expect(first.getState().showTimedComments).toBe(true);
+    first.getState().toggleTimedComments();
+    expect(first.getState().showTimedComments).toBe(false);
+
+    const next = createMusicPlayerStore({ storage });
+    expect(next.getState().showTimedComments).toBe(false);
+    next.getState().toggleTimedComments();
+    expect(createMusicPlayerStore({ storage }).getState().showTimedComments).toBe(true);
+  });
+
+  it('stay on when storage is blocked or holds something else', () => {
+    const blocked = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    const store = createMusicPlayerStore({ storage: blocked });
+    expect(store.getState().showTimedComments).toBe(true);
+    store.getState().toggleTimedComments();
+    expect(store.getState().showTimedComments).toBe(false);
+    expect(createMusicPlayerStore({ storage: memory('maybe') }).getState().showTimedComments).toBe(
+      true
+    );
+  });
+
+  it('survive closing the player', () => {
+    const store = createMusicPlayerStore({ storage: memory() });
+    store.getState().toggleTimedComments();
+    store.getState().playTrack(a);
+    store.getState().close();
+    expect(store.getState().showTimedComments).toBe(false);
   });
 });

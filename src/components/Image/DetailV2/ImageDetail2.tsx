@@ -804,7 +804,11 @@ function ImageDetail2Content() {
                         icon={<IconBrandWechat />}
                         storageKey="discussion"
                       >
-                        <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                        <ImageDetailComments
+                          imageId={image.id}
+                          userId={image.user.id}
+                          song={isSong ? image : undefined}
+                        />
                       </CollapsibleCard>
                       {isSong && <SongMoreFromCard song={image} />}
                       <ImageContestCollectionDetails

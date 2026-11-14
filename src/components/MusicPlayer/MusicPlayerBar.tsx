@@ -3,6 +3,7 @@ import {
   IconArrowsDiagonalMinimize2,
   IconArrowsShuffle,
   IconBookmark,
+  IconMessage,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconPlayerSkipBackFilled,
@@ -40,6 +41,10 @@ import {
   SongArt,
   songCreatorHref,
 } from '~/components/MusicPlayer/MusicPlayerParts';
+import {
+  TimedCommentStrip,
+  usePlayerTimedComments,
+} from '~/components/MusicPlayer/MusicPlayerTimedComments';
 import { MusicUpNextPanel } from '~/components/MusicPlayer/MusicUpNextPanel';
 import { useMusicPlayerCover } from '~/components/MusicPlayer/useMusicPlayerCover';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -269,7 +274,8 @@ function CreatorLine({
   error: boolean;
   className: string;
 }) {
-  if (error) return <span className={clsx('truncate', className)}>Couldn&apos;t play this song</span>;
+  if (error)
+    return <span className={clsx('truncate', className)}>Couldn&apos;t play this song</span>;
   return (
     <NextLink
       href={songCreatorHref(track.creator.username)}
@@ -399,6 +405,8 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
   const bars = useMemo(() => (peaks ? resamplePeaks(peaks, barCount) : null), [peaks, barCount]);
   const progress = playbackProgress(currentTime, duration);
   const played = playing ? ACCENT : accentAt(50);
+  const timedComments = usePlayerTimedComments(track.id);
+  const withStrip = timedComments.comments.length > 0;
 
   const seekFromPointer = (e: PointerEvent<HTMLElement>) =>
     seekMusicPlayer(timeFromPointer(e.clientX, e.currentTarget.getBoundingClientRect(), duration));
@@ -408,54 +416,70 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
       <span className={clsx('w-[34px] shrink-0 text-xs', dimmed)}>
         {formatPlaybackTime(currentTime)}
       </span>
-      <div
-        ref={sliderRef}
-        role="slider"
-        tabIndex={0}
-        aria-label="Song progress"
-        aria-valuemin={0}
-        aria-valuemax={Math.round(duration)}
-        aria-valuenow={Math.round(currentTime)}
-        aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
-        className="relative flex h-12 min-w-0 flex-1 cursor-pointer touch-none items-center"
-        style={{ '--waveform-played': played } as CSSProperties}
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
-          seekFromPointer(e);
-        }}
-        onPointerMove={(e) => {
-          if (e.buttons === 1) seekFromPointer(e);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowRight') seekMusicPlayer(currentTime + SEEK_STEP_SECONDS);
-          else if (e.key === 'ArrowLeft') seekMusicPlayer(currentTime - SEEK_STEP_SECONDS);
-          else return;
-          e.preventDefault();
-        }}
-      >
-        {bars ? (
-          <>
-            <WaveformBars
-              peaks={bars}
-              progress={progress}
-              className="justify-between"
-              barClassName="min-w-px max-w-[3px] flex-1 rounded-[2px]"
-              unplayedClassName="bg-gray-4 dark:bg-dark-3"
+      <div className="flex min-w-0 flex-1 flex-col">
+        {withStrip &&
+          (timedComments.show ? (
+            <TimedCommentStrip
+              comments={timedComments.comments}
+              duration={duration}
+              currentTime={currentTime}
             />
-            <div
-              aria-hidden
-              className="absolute inset-y-0 w-0.5 bg-black dark:bg-white"
-              style={{ left: `${progress * 100}%` }}
-            />
-          </>
-        ) : (
-          <div className="h-1 w-full overflow-hidden rounded-full bg-gray-4 dark:bg-dark-3">
-            <div
-              className="h-full"
-              style={{ width: `${progress * 100}%`, backgroundColor: played }}
-            />
-          </div>
-        )}
+          ) : (
+            // Hidden, the strip keeps its row so the waveform does not jump.
+            <div aria-hidden className="h-6 shrink-0" />
+          ))}
+        <div
+          ref={sliderRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="Song progress"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration)}
+          aria-valuenow={Math.round(currentTime)}
+          aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
+          className={clsx(
+            'relative flex w-full min-w-0 cursor-pointer touch-none items-center',
+            withStrip ? 'h-10' : 'h-12'
+          )}
+          style={{ '--waveform-played': played } as CSSProperties}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            seekFromPointer(e);
+          }}
+          onPointerMove={(e) => {
+            if (e.buttons === 1) seekFromPointer(e);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight') seekMusicPlayer(currentTime + SEEK_STEP_SECONDS);
+            else if (e.key === 'ArrowLeft') seekMusicPlayer(currentTime - SEEK_STEP_SECONDS);
+            else return;
+            e.preventDefault();
+          }}
+        >
+          {bars ? (
+            <>
+              <WaveformBars
+                peaks={bars}
+                progress={progress}
+                className="justify-between"
+                barClassName="min-w-px max-w-[3px] flex-1 rounded-[2px]"
+                unplayedClassName="bg-gray-4 dark:bg-dark-3"
+              />
+              <div
+                aria-hidden
+                className="absolute inset-y-0 w-0.5 bg-black dark:bg-white"
+                style={{ left: `${progress * 100}%` }}
+              />
+            </>
+          ) : (
+            <div className="h-1 w-full overflow-hidden rounded-full bg-gray-4 dark:bg-dark-3">
+              <div
+                className="h-full"
+                style={{ width: `${progress * 100}%`, backgroundColor: played }}
+              />
+            </div>
+          )}
+        </div>
       </div>
       <span className={clsx('shrink-0 text-xs', dimmed)}>{formatPlaybackTime(duration)}</span>
     </>
@@ -465,6 +489,7 @@ function Timeline({ track, playing }: { track: MusicTrack; playing: boolean }) {
 function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | null }) {
   const muted = useMusicPlayerStore((s) => s.muted);
   const volume = useMusicPlayerStore((s) => s.volume);
+  const showTimedComments = useMusicPlayerStore((s) => s.showTimedComments);
   const [upNextOpen, setUpNextOpen] = useState(false);
   const [upNextButton, setUpNextButton] = useState<HTMLButtonElement | null>(null);
   const closeUpNext = useCallback(() => setUpNextOpen(false), []);
@@ -481,6 +506,14 @@ function Controls({ track, accent }: { track: MusicTrack; accent: MusicAccent | 
           <IconBookmark size={18} />
         </IconButton>
       </LoginRedirect>
+      <IconButton
+        label={showTimedComments ? 'Hide timed comments' : 'Show timed comments'}
+        aria-pressed={showTimedComments}
+        onClick={() => store().toggleTimedComments()}
+        style={showTimedComments ? { backgroundColor: accentAt(15), color: ACCENT } : undefined}
+      >
+        <IconMessage size={18} />
+      </IconButton>
       <IconButton
         ref={setUpNextButton}
         label="Up next"

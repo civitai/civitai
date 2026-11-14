@@ -6,7 +6,11 @@ import { redis } from '~/server/redis/client';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { checkSongPlayRateLimit, songPlayActor } from '~/server/utils/song-play-rate-limit';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { isCountablePlay, SONG_PLAY_MIN_LISTEN_SEC } from '~/shared/utils/song-play';
+import {
+  isCountablePlay,
+  SONG_PLAY_MIN_LISTEN_SEC,
+  storedSongDurationSec,
+} from '~/shared/utils/song-play';
 
 /**
  * Song plays: "Play = 30 s listened or full track if shorter", the owner's own plays included. The client is
@@ -44,11 +48,7 @@ async function readPublicSong(imageId: number) {
     WHERE ${Prisma.join([Prisma.sql`i.id = ${imageId}`, ...imageVisibilityConditions({})], ' AND ')}
   `);
   if (!song || song.type !== MediaType.audio) return null;
-  const durationSec =
-    typeof song.duration === 'number' && Number.isFinite(song.duration) && song.duration > 0
-      ? song.duration
-      : null;
-  return { durationSec };
+  return { durationSec: storedSongDurationSec(song.duration) };
 }
 
 /** The song when this requester's play of it may count; null when the song or requester is refused. */

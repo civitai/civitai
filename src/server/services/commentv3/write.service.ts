@@ -109,12 +109,14 @@ export async function insertComment(
     entityId,
     parentId,
     content,
+    metadata,
   }: {
     userId: number;
     entityType: string;
     entityId: number;
     parentId?: number | null;
     content: string;
+    metadata?: Record<string, unknown>;
   }
 ) {
   let parent: StoredCommentV3 | undefined;
@@ -153,10 +155,18 @@ export async function insertComment(
 
   const created = await first<StoredCommentV3>(
     db,
-    `INSERT INTO "CommentV3" ("entityType", "entityId", "parentId", "replyToId", "userId", content)
-     VALUES ($1::"CommentEntityType", $2, $3, $4, $5, $6)
+    `INSERT INTO "CommentV3" ("entityType", "entityId", "parentId", "replyToId", "userId", content, metadata)
+     VALUES ($1::"CommentEntityType", $2, $3, $4, $5, $6, $7::jsonb)
      RETURNING ${COLUMNS}`,
-    [entityType, entityId, attachTo, replyToId, userId, content]
+    [
+      entityType,
+      entityId,
+      attachTo,
+      replyToId,
+      userId,
+      content,
+      metadata ? JSON.stringify(metadata) : null,
+    ]
   );
   if (!created) throw new Error('CommentV3 insert returned no row');
   return created;

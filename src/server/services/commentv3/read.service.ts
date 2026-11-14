@@ -56,6 +56,8 @@ export type CommentV3Item = {
   /** This viewer's reactions; empty when signed out. */
   myReactions: ReviewReactions[];
   replyCount: number;
+  /** Where in the song a timed comment sits; null on any other comment. */
+  timestampSec: number | null;
 };
 
 /** A parent's opened replies: their ids in order, and where the next page starts, if any. */
@@ -87,6 +89,7 @@ type Row = {
   username: string | null;
   userDeletedAt: Date | null;
   userImage: string | null;
+  timestampSec: number | null;
 };
 
 // Arrays travel as one comma-joined string: pg and PGlite send array parameters differently.
@@ -95,9 +98,11 @@ const intArray = (ids: number[]) => sql`string_to_array(${ids.join(',')}, ',')::
 // A tombstone is never pinned, whatever pinnedAt it kept from before the delete cleared it.
 const PINNED_AT = sql`(CASE WHEN c."deletedAt" IS NULL THEN c."pinnedAt" END)`;
 
+const TIMESTAMP_SEC = sql`(c.metadata->>'timestampSec')::float8`;
+
 const COLUMNS = sql`c.id, c."parentId", c."replyToId", c.depth, c.content, c."createdAt", c."updatedAt",
   ${PINNED_AT} AS "pinnedAt", c.hidden, c."tosViolation", c.locked, c."reactionCount", c."deletedAt", c."userId",
-  u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage"`;
+  u.username, u."deletedAt" AS "userDeletedAt", u.image AS "userImage", ${TIMESTAMP_SEC} AS "timestampSec"`;
 
 /** Whether a row's ToS state and author let this viewer see it. `alias` names the CommentV3 row. */
 const allowedTo = (v: CommentV3Viewer, alias: string) => {
@@ -252,6 +257,7 @@ async function decorate(
     reactions: (r.deletedAt === null && reactions.get(r.id)) || emptyReactionCounts(),
     myReactions: (r.deletedAt === null && myReactions.get(r.id)) || [],
     replyCount: replies.get(r.id) ?? 0,
+    timestampSec: r.deletedAt === null ? r.timestampSec : null,
   }));
 }
 
@@ -553,4 +559,49 @@ export async function getCommentLock(
                : sql`false`
            } AS comment`.execute(db);
   return { locked: !!rows[0]?.topic || !!rows[0]?.comment };
+}
+
+export type TimedComment = {
+  id: number;
+  timestampSec: number;
+  /** The comment's HTML; the caller turns it into the label's text. */
+  content: string;
+  user: { id: number; username: string | null; image: string | null };
+};
+
+export const TIMED_COMMENTS_LIMIT = 200;
+
+/**
+ * A song's timed comments for the player's waveform, by time: live top-level comments this viewer
+ * may see, hidden ones left out, at most `limit`.
+ */
+export async function getTimedComments(
+  db: CommentV3Db,
+  entity: { entityType: string; entityId: number },
+  viewer: CommentV3Viewer,
+  { limit = TIMED_COMMENTS_LIMIT }: { limit?: number } = {}
+): Promise<TimedComment[]> {
+  const { rows } = await sql<{
+    id: number;
+    timestampSec: number;
+    content: string;
+    userId: number;
+    username: string | null;
+    userImage: string | null;
+  }>`
+    SELECT c.id, ${TIMESTAMP_SEC} AS "timestampSec", c.content, c."userId", u.username,
+           u.image AS "userImage"
+      FROM "CommentV3" c JOIN "User" u ON u.id = c."userId"
+     WHERE c."entityType" = ${entity.entityType}::"CommentEntityType" AND c."entityId" = ${
+    entity.entityId
+  }
+       AND c."parentId" IS NULL AND NOT c.hidden AND ${liveTo(viewer, 'c')}
+       AND c.metadata ? 'timestampSec'
+     ORDER BY 2, c.id LIMIT ${limit}`.execute(db);
+  return rows.map((r) => ({
+    id: r.id,
+    timestampSec: r.timestampSec,
+    content: r.content,
+    user: { id: r.userId, username: r.username, image: r.userImage },
+  }));
 }
