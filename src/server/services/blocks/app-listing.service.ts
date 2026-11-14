@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import {
   matureRatingsAllowed,
@@ -53,6 +52,7 @@ import {
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
   listingIconUrl,
+  listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
 import {
   listingMediaImageSelect,
@@ -825,7 +825,7 @@ export async function getListingPreviewForReview(args: { listingId: string }): P
       screenshots: row.screenshots.flatMap((s) => {
         const image = s.image?.url
           ? reviewImage(s.image, (i) =>
-              i.url ? getEdgeUrl(i.url, { width: LISTING_SCREENSHOT_WIDTH }) : null
+              i.url ? listingMediaEdgeUrl(i.url, LISTING_SCREENSHOT_WIDTH) : null
             )
           : null;
         return image ? [{ ...image, caption: s.caption ?? null }] : [];

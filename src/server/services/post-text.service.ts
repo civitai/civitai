@@ -157,9 +157,12 @@ export async function getStorylineTextStubs({
 }
 
 /**
- * A post's text items as `post.get` serves them, for a viewer the caller has already let see the
- * post. Its author and moderators get every row; anyone else only scanned, unrefused, unheld text
- * within `browsingLevel` (no storyline ceiling: `post.get` is not storyline-scoped).
+ * A post's text items as `post.get` serves them to the reader surfaces (reader, image detail, post
+ * page), for a viewer the caller has already let see the post. A refused or held text is never
+ * served here, its author and moderators included: they review it in the editor and Mod Studio.
+ * The author and moderators also get unscanned text, which the page marks as pending review;
+ * anyone else only scanned text within `browsingLevel` (no storyline ceiling: `post.get` is not
+ * storyline-scoped).
  */
 export async function getPostTextsForViewer({
   postId,
@@ -171,10 +174,21 @@ export async function getPostTextsForViewer({
   seesAll: boolean;
 }) {
   const rows = await dbRead.postText.findMany({
-    where: { postId, ...(seesAll ? {} : readableTextWhere) },
-    select: { id: true, index: true, content: true, nsfwLevel: true, refused: true },
+    where: {
+      postId,
+      ...(seesAll ? { refused: false, csamHeld: false } : readableTextWhere),
+    },
+    select: {
+      id: true,
+      index: true,
+      content: true,
+      nsfwLevel: true,
+      refused: true,
+      csamHeld: true,
+    },
   });
   return rows
+    .filter((row) => !row.refused && !row.csamHeld)
     .filter(
       (row) =>
         seesAll ||
