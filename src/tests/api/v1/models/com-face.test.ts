@@ -34,6 +34,7 @@ vi.mock('~/server/trpc', async (importOriginal) => ({
 import handler from '~/pages/api/v1/models/com-face';
 import {
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
 } from '~/shared/utils/model-sfw-face';
 
@@ -213,6 +214,7 @@ describe('POST /api/v1/models/com-face', () => {
 
   it.each([
     [COM_FACE_REFUSED_MESSAGE, /in the model editor/, 422],
+    [COM_FACE_REFUSED_EDIT_MESSAGE, /in the model editor/, 400],
     [COM_FACE_CHECK_UNAVAILABLE_MESSAGE, /Couldn't check/, 400],
   ])(
     'tells the card which fields a refused draft read, apart from a check that failed',

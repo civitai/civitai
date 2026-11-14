@@ -22,6 +22,8 @@ import {
   overturnComFaceIntentSql,
 } from '~/server/services/model-com-face-intent.service';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
+import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { POI_HASH_MATCH_KEY } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
@@ -73,9 +75,15 @@ export async function getLockReviewState({
   if (!model || model.userId !== userId) return null;
 
   const requestable = requestableLocks(model);
+  // The intent check's lock only while no moderator has ruled on it since, a rejected review included:
+  // a refiled dispute after a moderator upheld the lock goes to a moderator, never the job.
+  const marker = (model.meta as ModelMeta | null)?.systemNsfwLock;
+  const markedAt = readSystemNsfwLockAt(model.meta);
   const comFaceIntent =
     requestable.includes('nsfw') &&
-    (model.meta as ModelMeta | null)?.systemNsfwLock?.source === COM_FACE_INTENT_LOCK_SOURCE;
+    marker?.source === COM_FACE_INTENT_LOCK_SOURCE &&
+    !!markedAt &&
+    !(await moderatorRuledNsfwSince(modelId, markedAt, { alsoRejections: true }));
   if (!requestable.length) return { requestable, pending: false, reopensAt: null, comFaceIntent };
 
   const latest = await db.appeal.findFirst({
@@ -188,8 +196,12 @@ export async function assertLockReviewAllowed({
       )}.`
     );
   // An nsfw lock the listing intent check added is re-judged by a job before a moderator sees it.
+  // Only a request naming the nsfw lock alone: the job's approval lifts every lock a request names,
+  // and the others are a moderator's.
   const dispute =
-    state.comFaceIntent && locks.includes('nsfw') ? COM_FACE_INTENT_DISPUTE : undefined;
+    state.comFaceIntent && locks.length === 1 && locks[0] === 'nsfw'
+      ? COM_FACE_INTENT_DISPUTE
+      : undefined;
   return lockReviewContext(locks as RequestableLock[], dispute);
 }
 

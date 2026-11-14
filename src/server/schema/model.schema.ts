@@ -433,6 +433,8 @@ export type ComFaceIntentRecord = {
   textHash: string;
   at: string;
   overturnedAt?: string;
+  /** The scan's rating marker the intent lock replaced, put back when that lock is lifted. */
+  priorSystemNsfwLock?: { source: string; at: string };
 };
 
 export type ModelMeta = Partial<{
@@ -508,14 +510,14 @@ export type ModelMeta = Partial<{
   /** A system check (not a moderator) added the nsfw lock. Server-owned. The save-time text
    *  filter also records which field set it off, for the owner's explanation. */
   systemNsfwLock: { source: string; at: string } & Partial<MatureLockAttribution>;
-  /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
-   *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
-   *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com
-   *  cover clears it. Server-owned. */
   /** The listing intent check's verdict at .com-face time, kept while the listing text it read
    *  (`textHash`) is unchanged so a repeat attempt is not re-judged. `overturnedAt`: a dispute or a
    *  moderator lifted the lock it set. `reason` is for moderators only. Server-owned. */
   comFaceIntent: ComFaceIntentRecord;
+  /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
+   *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
+   *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com
+   *  cover clears it. Server-owned. */
   comFaceRemoved: {
     at: string;
     sfwCoverImageId: number;

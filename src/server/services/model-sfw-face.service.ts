@@ -9,7 +9,10 @@ import {
   readSfwModelNamesViaPrisma,
 } from '~/server/services/hot-reads-7.reads';
 import { logToAxiom } from '~/server/logging/client';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
 import {
+  COM_FACE_INTENT_LOCK_SOURCE,
   type ComFaceIntentListing,
   comFaceIntentFields,
   comFaceIntentTextHash,
@@ -26,6 +29,7 @@ import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants'
 import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
 } from '~/shared/utils/model-sfw-face';
 import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
@@ -137,7 +141,11 @@ const fieldLabels: Record<SfwFaceCheckField, string> = {
   versions: 'version names and trigger words',
 };
 
-export { COM_FACE_CHECK_UNAVAILABLE_MESSAGE, COM_FACE_REFUSED_MESSAGE };
+export {
+  COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
+  COM_FACE_REFUSED_MESSAGE,
+};
 
 /** The intent check's verdict. `reason` is for moderators and logs only; never send it to the owner. */
 export type ComFaceIntentVerdict =
@@ -179,54 +187,75 @@ export async function checkComFaceIntentVerdict({
 
 /**
  * The owner's verdict on this listing text: the stored one while the text is unchanged, else a fresh
- * check, stored. A fresh detection on the model's own stored listing locks its nsfw rating
- * (`lockForComFaceIntent`), which the owner can dispute. Nothing is read or stored unless `userId`
+ * check, stored. A detection of the model's own stored listing on a mature model locks its nsfw
+ * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
+ * first made while the model was not mature, unless a moderator has ruled on its rating since.
+ * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
  * owns the model.
  */
 async function resolveComFaceIntent({
   modelId,
   userId,
   ...listing
-}: ComFaceIntentListing & { modelId?: number; userId?: number }): Promise<ComFaceIntentVerdict> {
+}: ComFaceIntentListing & { modelId?: number; userId?: number }): Promise<
+  ComFaceIntentVerdict & { disputable?: boolean }
+> {
   const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
   const model = found && found.userId === userId ? found : null;
   const textHash = comFaceIntentTextHash(listing);
   const stored = model ? reusableComFaceIntent(model.meta, textHash) : null;
-  if (stored)
-    return stored.detected ? { status: 'detected', reason: stored.reason } : { status: 'allowed' };
 
-  const verdict = await checkComFaceIntentVerdict(listing);
-  if (!model || verdict.status === 'unavailable') return verdict;
-  const detected = verdict.status === 'detected';
-  await recordComFaceIntent(model.id, {
-    detected,
-    textHash,
-    ...(detected && verdict.reason && { reason: verdict.reason }),
-    ...(verdict.promptId && { promptId: verdict.promptId }),
-  });
+  let verdict: ComFaceIntentVerdict;
+  if (stored)
+    verdict = stored.detected
+      ? { status: 'detected', reason: stored.reason }
+      : { status: 'allowed' };
+  else {
+    verdict = await checkComFaceIntentVerdict(listing);
+    if (!model || verdict.status === 'unavailable') return verdict;
+    await recordComFaceIntent(model.id, {
+      detected: verdict.status === 'detected',
+      textHash,
+      ...(verdict.status === 'detected' && verdict.reason && { reason: verdict.reason }),
+      ...(verdict.promptId && { promptId: verdict.promptId }),
+    });
+  }
+  if (!model || verdict.status !== 'detected') return verdict;
+
+  const meta = model.meta as ModelMeta | null;
+  const intentLocked =
+    !!model.lockedProperties?.includes('nsfw') &&
+    meta?.systemNsfwLock?.source === COM_FACE_INTENT_LOCK_SOURCE;
+  if (intentLocked) return { ...verdict, disputable: true };
+
   // Locked only for the text the model lists now, never for an unsaved edit or a draft.
   const storedHash = comFaceIntentTextHash({
     name: model.name,
     description: model.description,
     triggerWords: listing.triggerWords,
   });
-  if (detected && storedHash === textHash)
-    await lockForComFaceIntent(model.id, textHash).catch((error: Error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'model-com-face-intent',
-        message: 'lock not added',
-        modelId: model.id,
-        error: error.message,
-      })
-    );
-  return verdict;
+  if (storedHash !== textHash || !model.nsfw) return verdict;
+  // A stored detection a moderator has ruled past (an unlock from the model form) is not re-applied.
+  const recordedAt = stored && meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;
+  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) return verdict;
+
+  const locked = await lockForComFaceIntent(model.id, textHash).catch((error: Error) => {
+    logToAxiom({
+      type: 'error',
+      name: 'model-com-face-intent',
+      message: 'lock not added',
+      modelId: model.id,
+      error: error.message,
+    });
+    return false;
+  });
+  return { ...verdict, disputable: locked };
 }
 
 /**
  * Refuses a .com face for a model whose own listing the intent check flags. Fails closed: no
- * verdict is a refusal. The check also re-runs after a listing edit on a model that keeps a face
- * (`recheckComFace`).
+ * verdict is a refusal. The refusal offers the dispute only while there is a lock to dispute. The
+ * check also re-runs after a listing edit on a model that keeps a face (`recheckComFace`).
  */
 export async function assertComFaceAllowed(
   args: ComFaceIntentListing & { modelId?: number; userId?: number }
@@ -243,7 +272,9 @@ export async function assertComFaceAllowed(
       modelId: args.modelId,
       reason: verdict.reason,
     }).catch(() => undefined);
-    throw throwBadRequestError(COM_FACE_REFUSED_MESSAGE);
+    throw throwBadRequestError(
+      verdict.disputable ? COM_FACE_REFUSED_MESSAGE : COM_FACE_REFUSED_EDIT_MESSAGE
+    );
   }
 }
 

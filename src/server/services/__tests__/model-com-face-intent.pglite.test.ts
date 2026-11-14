@@ -80,6 +80,21 @@ describe('lockForComFaceIntent', () => {
     expect(activities).toHaveLength(1);
   });
 
+  it("keeps the scan's rating marker it replaces on the verdict", async () => {
+    await seed();
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    await db.query(
+      `UPDATE "Model" SET meta = meta || jsonb_build_object('systemNsfwLock', $2::jsonb) WHERE id = $1`,
+      [MODEL, JSON.stringify(scan)]
+    );
+
+    expect(await lockForComFaceIntent(MODEL, 'h')).toBe(true);
+
+    const { meta } = await row();
+    expect(meta.systemNsfwLock.source).toBe('com-face-intent');
+    expect(meta.comFaceIntent.priorSystemNsfwLock).toEqual(scan);
+  });
+
   it.each([
     ['not mature', { nsfw: false }],
     ['flagged a minor', { minor: true }],

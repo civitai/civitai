@@ -53,6 +53,8 @@ export async function processComFaceIntentDisputes() {
     WHERE a."entityType" = 'Model' AND a.status = 'Pending' AND a.category IS NULL
       AND a.context->>'kind' = ${LOCK_REVIEW_KIND}
       AND a.context->>'dispute' = ${COM_FACE_INTENT_DISPUTE}
+      -- Only the nsfw lock: an approval lifts every lock the request names.
+      AND a.context->'locks' = '["nsfw"]'::jsonb
       AND NOT (a.context ? 'autoReview')
     ORDER BY a."createdAt"
     LIMIT ${BATCH_SIZE}

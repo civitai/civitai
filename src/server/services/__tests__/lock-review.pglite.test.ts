@@ -303,6 +303,21 @@ describe('approving a lock review', () => {
     expect(meta.comFaceIntent).toEqual({ ...intent, overturnedAt: expect.any(String) });
   });
 
+  it('puts back the text-scan rating marker the intent lock replaced', async () => {
+    const scan = { source: 'text-scan', at: '2026-01-01T00:00:00.000Z' };
+    await seed({
+      locked: ['nsfw'],
+      meta: {
+        [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-02-01T00:00:00.000Z' },
+        comFaceIntent: { detected: true, textHash: 'h', at: 'x', priorSystemNsfwLock: scan },
+      },
+    });
+
+    await approve();
+
+    expect((await modelMeta())[SYSTEM_NSFW_LOCK_META_KEY]).toEqual(scan);
+  });
+
   it('leaves the listing intent detection standing on a rejection', async () => {
     const intent = { detected: true, textHash: 'h', at: '2026-01-01T00:00:00.000Z' };
     await seed({ locked: ['nsfw'], meta: { comFaceIntent: intent } });
@@ -743,6 +758,39 @@ describe("an owner's request", () => {
     expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({
         context: { kind: 'lock-review', locks: ['nsfw'], dispute: 'comFaceIntent' },
+      })
+    );
+  });
+
+  it('files a request naming other locks beside the intent lock as an ordinary review', async () => {
+    ownModel({
+      lockedProperties: ['nsfw', 'tags'],
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-01-01' } },
+    });
+
+    await createEntityAppealHandler({ input: request(['nsfw', 'tags']), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw', 'tags'] } })
+    );
+  });
+
+  it('files a refiled dispute as an ordinary review once a moderator has ruled on the lock', async () => {
+    ownModel({
+      meta: { [SYSTEM_NSFW_LOCK_META_KEY]: { source: 'com-face-intent', at: '2026-01-01' } },
+    });
+    dbMock.dbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+
+    await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
+    );
+    expect(dbMock.dbWrite.modActivity.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          activity: { in: expect.arrayContaining(['rejectLockReview']) },
+        }),
       })
     );
   });

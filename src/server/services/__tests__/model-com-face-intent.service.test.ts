@@ -26,9 +26,11 @@ vi.mock('~/server/services/model-com-face-intent.service', async (importOriginal
 }));
 
 import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   assertComFaceAllowed,
   COM_FACE_CHECK_UNAVAILABLE_MESSAGE,
+  COM_FACE_REFUSED_EDIT_MESSAGE,
   COM_FACE_REFUSED_MESSAGE,
 } from '~/server/services/model-sfw-face.service';
 
@@ -69,14 +71,48 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
     expect(mockPreviewComFaceIntent).not.toHaveBeenCalled();
   });
 
-  it('refuses again on a stored detection for unchanged text, without re-judging or re-locking', async () => {
+  it('refuses again on a stored detection for unchanged text without re-judging, and locks a model since marked mature', async () => {
     mockRead.mockResolvedValue(
-      model({ comFaceIntent: { detected: true, textHash: hash, at: 'x' } })
+      model({ comFaceIntent: { detected: true, textHash: hash, at: '2026-01-01T00:00:00Z' } })
     );
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
       COM_FACE_REFUSED_MESSAGE
     );
     expect(mockPreviewComFaceIntent).not.toHaveBeenCalled();
+    expect(mockLock).toHaveBeenCalledWith(7, hash);
+  });
+
+  it('does not re-apply a stored detection a moderator has ruled past, and offers no dispute', async () => {
+    mockRead.mockResolvedValue(
+      model({ comFaceIntent: { detected: true, textHash: hash, at: '2026-01-01T00:00:00Z' } })
+    );
+    dbMock.dbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+    await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
+      COM_FACE_REFUSED_EDIT_MESSAGE
+    );
+    expect(mockLock).not.toHaveBeenCalled();
+  });
+
+  it('offers no dispute on a model that is not mature, which is refused but not locked', async () => {
+    mockRead.mockResolvedValue({ ...model(), nsfw: false });
+    mockPreviewComFaceIntent.mockResolvedValue(intent(true));
+    await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
+      COM_FACE_REFUSED_EDIT_MESSAGE
+    );
+    expect(mockLock).not.toHaveBeenCalled();
+  });
+
+  it("offers the dispute when the lock is already the intent check's", async () => {
+    mockRead.mockResolvedValue({
+      ...model({
+        comFaceIntent: { detected: true, textHash: hash, at: 'x' },
+        systemNsfwLock: { source: 'com-face-intent', at: 'x' },
+      }),
+      lockedProperties: ['nsfw'],
+    });
+    await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
+      COM_FACE_REFUSED_MESSAGE
+    );
     expect(mockLock).not.toHaveBeenCalled();
   });
 
@@ -112,7 +148,7 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     await expect(
       assertComFaceAllowed({ ...stored, name: 'New unsaved title', modelId: 7, userId: 1 })
-    ).rejects.toThrow(COM_FACE_REFUSED_MESSAGE);
+    ).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
     expect(mockRecord).toHaveBeenCalled();
     expect(mockLock).not.toHaveBeenCalled();
   });
@@ -132,7 +168,7 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
     );
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 2 })).rejects.toThrow(
-      COM_FACE_REFUSED_MESSAGE
+      COM_FACE_REFUSED_EDIT_MESSAGE
     );
     expect(mockRecord).not.toHaveBeenCalled();
     expect(mockLock).not.toHaveBeenCalled();

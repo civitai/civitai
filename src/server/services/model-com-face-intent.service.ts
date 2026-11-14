@@ -92,6 +92,8 @@ export async function recordComFaceIntent(
  * a locked-setting review. Guarded in the WHERE: only while the stored verdict is still this
  * detection for this text, not overturned, and no lock, minor or real-person flag is on.
  * A model that is not mature keeps listing by its images, so it is refused a face but not locked.
+ * A text-scan rating marker it replaces is kept on the verdict and put back when the lock is lifted
+ * (`overturnComFaceIntentSql`): an allowed dispute rules on the intent, not on the rating.
  */
 export async function lockForComFaceIntent(modelId: number, textHash: string) {
   const locked = await dbWrite.$transaction(async (tx) => {
@@ -100,7 +102,12 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
       SET "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
           meta = ${asJsonbObjectSql('m.meta')} || jsonb_build_object(
             'systemNsfwLock',
-            jsonb_build_object('source', ${COM_FACE_INTENT_LOCK_SOURCE}::text, 'at', now())
+            jsonb_build_object('source', ${COM_FACE_INTENT_LOCK_SOURCE}::text, 'at', now()),
+            'comFaceIntent',
+            (m.meta->'comFaceIntent') || CASE
+              WHEN jsonb_typeof(m.meta->'systemNsfwLock') = 'object'
+              THEN jsonb_build_object('priorSystemNsfwLock', m.meta->'systemNsfwLock')
+              ELSE '{}'::jsonb END
           )
       WHERE m.id = ${modelId}
         AND m.nsfw AND NOT m.minor AND NOT m.poi AND NOT m."sfwOnly"
@@ -119,11 +126,14 @@ export async function lockForComFaceIntent(modelId: number, textHash: string) {
   return locked;
 }
 
-/** Marks the stored detection overturned (a dispute or a moderator lifted its lock), inside the
- *  caller's statement batch. */
+/** Marks the stored detection overturned (a dispute or a moderator lifted its lock) and puts back
+ *  the rating marker its lock replaced. Runs after the caller cleared the lock's own marker. */
 export const overturnComFaceIntentSql = (modelId: number) => Prisma.sql`
   UPDATE "Model"
-  SET meta = jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text))
+  SET meta = jsonb_set(meta, '{comFaceIntent,overturnedAt}', to_jsonb(now()::text)) || CASE
+    WHEN jsonb_typeof(meta->'comFaceIntent'->'priorSystemNsfwLock') = 'object'
+    THEN jsonb_build_object('systemNsfwLock', meta->'comFaceIntent'->'priorSystemNsfwLock')
+    ELSE '{}'::jsonb END
   WHERE id = ${modelId}
     AND jsonb_typeof(meta->'comFaceIntent') = 'object'
     AND meta->'comFaceIntent'->>'detected' = 'true'
