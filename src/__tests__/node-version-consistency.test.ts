@@ -631,10 +631,10 @@ describe('node version is pinned and consistent across the repo', () => {
 
   it('every cache mount has the id its ledger entry pins, per libc', () => {
     // The pnpm store must differ per libc (see CACHE_MOUNT_IDS); the ledger also fails when a
-    // cache mount is added or removed, so a new one cannot silently be shared.
+    // cache target is added or removed, so a new one cannot silently be shared.
     const mounts = cacheMounts(dockerfileText, LIBCS);
     expect(
-      mounts.map((m) => m.target).sort(),
+      [...new Set(mounts.map((m) => m.target))].sort(),
       `${DOCKERFILE}'s cache mounts changed. Add the new one to CACHE_MOUNT_IDS and decide ` +
         `whether the musl and glibc builds may share it: anything that can hold native or ` +
         `install-script output must not.`

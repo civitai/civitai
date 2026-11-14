@@ -51,8 +51,8 @@ describe('registerFliptSnapshotStore', () => {
     expect(redisMock.withSysReadDeadline).toHaveBeenCalledTimes(1);
   });
 
-  // save() reads the meta key through the same kv.get, so a stalled sysRedis bounds it with the
-  // same deadline as load().
+  // Invariant guard: save() reads the meta key through the same kv.get, so a stalled sysRedis
+  // bounds it with the same deadline as load().
   it("save()'s meta read also goes through the sysRedis read deadline", async () => {
     registerFliptSnapshotStore();
     redisMock.sysRedis.get.mockResolvedValue(null);

@@ -395,7 +395,7 @@ function MyApp(props: CustomAppProps) {
                                       {...cookies.referrals}
                                       pending={referralsPending}
                                     >
-                                      <FiltersProvider isRed={domain === 'red'}>
+                                      <FiltersProvider>
                                         <AdsProvider gated={adsGated}>
                                           <HiddenPreferencesProvider>
                                             <CivitaiLinkProvider>

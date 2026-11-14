@@ -33,10 +33,10 @@ import {
   type OwedBoxRefund,
   type OwedPackBoxRefund,
 } from '~/server/services/mystery-box-takedown.service';
-import { boxPackTermsOf, parsePackBoxSourceKey } from '@civitai/shared/mystery-box';
 import { getPrefixRefundState, refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
 import { detectEmptyLoopSeam } from '~/server/utils/animation-loop-seam';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { packBoxShareOf, refundPackBoxShare } from '~/server/services/mystery-box-refund.service';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { constants } from '~/server/common/constants';
@@ -70,7 +70,6 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
-  getMultiAccountTransactionsByPrefix,
   refundMultiAccountTransaction,
   refundTransaction,
 } from '~/server/services/buzz.service';
@@ -113,6 +112,7 @@ import { assertNotInLiveMysteryPack } from '~/server/services/creator-mystery-pa
 import { reviewMysteryPack } from '~/server/services/creator-mystery-pack-approve.service';
 import { lockShopItem } from '~/server/services/creator-shop-lock';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 // The shop-item shape, which already carries the creator and lister for
 // attribution. Only used by the creator storefront.
@@ -634,8 +634,7 @@ export const submitCreatorShopItem = async ({
   // Captured out of the transaction so the hash can be queued after it commits
   // — the request is a network round-trip and has no business inside a write
   // transaction, and a cosmetic that exists without a hash is invisible to
-  // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
-  // were creator submissions.
+  // review.
   let submittedCosmeticId: number | undefined;
   // The fee is charged and the listing written together; refunded only if the write fails.
   const created = await withSubmissionFee(
@@ -2476,62 +2475,6 @@ const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
 type PrefixRefund = Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
 
 /**
- * One pack box's share of the pack charge, or null when the purchase records no usable pack terms.
- * The last box also takes the rounding remainder, so a whole pack taken down returns exactly its price.
- */
-function packBoxShareOf(owed: OwedPackBoxRefund) {
-  let pack: ReturnType<typeof boxPackTermsOf>;
-  try {
-    pack = boxPackTermsOf(owed.purchaseMeta);
-  } catch {
-    return null;
-  }
-  if (!pack) return null;
-  const share = Math.floor(owed.unitAmount / pack.size);
-  const isLastBox = parsePackBoxSourceKey(owed.boxSourceKey)?.n === pack.size;
-  return isLastBox ? owed.unitAmount - share * (pack.size - 1) : share;
-}
-
-/**
- * Pays one pack box its share of the pack's charge, into the account the charge came from. Its
- * external id is the box's own, so a retry after a landed attempt is refused as a duplicate (409),
- * which is read as paid; it doesn't start with the charge's prefix, so it is never listed as part of
- * the charge. Returns the Buzz paid.
- */
-async function refundPackBoxShare(owed: OwedPackBoxRefund, title: string) {
-  const amount = packBoxShareOf(owed);
-  if (amount === null) throw new Error(`Purchase ${owed.buzzTransactionId} records no pack terms`);
-  if (amount <= 0) return 0;
-  const accountTypes = new Set(
-    (await getMultiAccountTransactionsByPrefix(owed.buzzTransactionId)).map(
-      (leg) => leg.accountType
-    )
-  );
-  // A pack is paid from one account; a split charge has no single place to return a share to.
-  if (accountTypes.size !== 1)
-    throw new Error(
-      `Pack charge ${owed.buzzTransactionId} has ${accountTypes.size} account types; refund it by hand`
-    );
-  const [toAccountType] = [...accountTypes];
-  try {
-    await takedownMoneyMove(() =>
-      createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: owed.userId,
-        toAccountType,
-        amount,
-        type: TransactionType.Refund,
-        description: `Cosmetic removed - ${title}`,
-        externalTransactionId: `takedown-pack-share:${owed.boxSourceKey}`,
-      })
-    );
-  } catch (error) {
-    if (getBuzzApiStatus(error) !== 409) throw error;
-  }
-  return amount;
-}
-
-/**
  * A purchase's refund, finished when an earlier attempt reversed part of it: a lost response, or a
  * run that died before recording it, makes the prefix refund answer 409 and reverse nothing, so
  * every retry would read a refunded buyer as owed. Reports every leg now reversed, as the plain
@@ -2563,7 +2506,7 @@ async function refundPurchasePrefix(input: {
   return {
     refundedTransactions: reversed.map((leg) => ({
       originalTransactionId: leg.transactionId,
-      refundTransactionId: `refund-${leg.transactionId}`,
+      refundTransactionId: refundExternalTransactionId(leg.transactionId),
       accountType: leg.accountType,
       amount: leg.amount,
       originalExternalTransactionId: leg.externalTransactionId,
@@ -2571,6 +2514,22 @@ async function refundPurchasePrefix(input: {
     totalRefunded: reversed.reduce((sum, leg) => sum + leg.amount, 0),
     externalTransactionIdPrefix: input.externalTransactionIdPrefix,
   } satisfies PrefixRefund;
+}
+
+/**
+ * The purchase's `:sell:` payout legs with no refund on the ledger, by whichever run made it (this
+ * refund, or the payout's own reversal when it landed on a sale already refunded). A reversal the
+ * payout recorded and the sweep has yet to finish is the sweep's, not a moderator's.
+ */
+async function unreversedPayoutLegs(buzzTransactionId: string, meta: Prisma.JsonValue) {
+  const owedReversal = (meta as { payoutReversal?: { transactionId?: string } } | null)
+    ?.payoutReversal?.transactionId;
+  const { missing } = await getPrefixRefundState(buzzTransactionId);
+  return missing.filter(
+    (leg) =>
+      (leg.externalTransactionId ?? '').startsWith(`${buzzTransactionId}:sell:`) &&
+      leg.transactionId !== owedReversal
+  );
 }
 
 const logTakedown = (level: 'info' | 'error', message: string, data: MixedObject) =>
@@ -2882,6 +2841,7 @@ export const takedownCosmeticShopItem = async ({
   // Openers lose what they drew with everyone else below, so each is paid back the box's price
   // (Justin, 2026-10-21). A box no one paid for is marked refunded and returns nothing.
   const boxRefundedUserIds: number[] = [];
+  let boxGrantedUserIds: number[] = [];
   let boxRefundedValue = 0;
   if (item.cosmeticId != null) {
     const cosmeticId = item.cosmeticId;
@@ -2889,8 +2849,10 @@ export const takedownCosmeticShopItem = async ({
       (error) => ({
         openings: 0,
         failed: [{ userId: 0, boxItemId: 'any', error: errorMessage(error) }],
+        grantedUserIds: [] as number[],
       })
     );
+    boxGrantedUserIds = boxClaims.grantedUserIds;
     for (const { userId, boxItemId, error } of boxClaims.failed) {
       failures.push({
         stage: 'box',
@@ -2968,16 +2930,26 @@ export const takedownCosmeticShopItem = async ({
           recordedPayouts,
           new Set(refund.refundedTransactions.map((t) => t.originalTransactionId))
         );
-      // A platform box paid only the bank. A creator's box paid its creator, in a split only the
-      // record knows, so like a pack it is left to a moderator.
-      else if (!recordedPayouts && purchase.sellerId !== null)
-        failures.push({
-          stage: 'clawback',
-          userId: purchase.sellerId,
-          amount: purchase.unitAmount,
-          boxId: purchase.boxDefinitionId,
-          error: `Box purchase ${purchase.buzzTransactionId} has no recorded payouts; the creator's share cannot be re-derived`,
-        });
+      // A platform box paid only the bank. A creator's box with no record may never have paid its
+      // creator (the payout failed, or landed after the refund began and reversed itself), so the
+      // ledger decides: only a payout leg the refund above didn't reverse is left to a moderator.
+      else if (!recordedPayouts && purchase.sellerId !== null) {
+        const unreversed = await unreversedPayoutLegs(
+          purchase.buzzTransactionId,
+          purchase.meta
+        ).catch(() => null);
+        if (unreversed === null || unreversed.length)
+          failures.push({
+            stage: 'clawback',
+            userId: purchase.sellerId,
+            amount: unreversed?.reduce((sum, leg) => sum + leg.amount, 0) ?? purchase.unitAmount,
+            boxId: purchase.boxDefinitionId,
+            error:
+              unreversed === null
+                ? `Box purchase ${purchase.buzzTransactionId} has no recorded payouts and its ledger could not be read`
+                : `Box purchase ${purchase.buzzTransactionId} paid its creator and the payout was not reversed`,
+          });
+      }
     }
 
     let owedPackBoxes: OwedPackBoxRefund[] = [];
@@ -2993,7 +2965,7 @@ export const takedownCosmeticShopItem = async ({
     for (const owed of owedPackBoxes) {
       let amount = 0;
       try {
-        amount = await refundPackBoxShare(owed, item.title);
+        amount = await refundPackBoxShare(owed, `Cosmetic removed - ${item.title}`);
       } catch (error) {
         // Still owed: "Retry takedown" pays it, on the same external id.
         failures.push({
@@ -3230,12 +3202,24 @@ export const takedownCosmeticShopItem = async ({
       details: { title: item.title, reason },
     });
   }
-  for (const userId of new Set([...refundedUserIds, ...boxRefundedUserIds])) {
+  const paidBack = new Set([...refundedUserIds, ...boxRefundedUserIds]);
+  for (const userId of paidBack) {
     await createNotification({
       type: 'cosmetic-shop-item-taken-down',
       userId,
       category: NotificationCategory.System,
       key: `cosmetic-shop-item-taken-down:${id}:${userId}`,
+      details: { title: item.title },
+    });
+  }
+  // The refund notice would tell them Buzz came back; for a granted box none was paid.
+  for (const userId of boxGrantedUserIds) {
+    if (paidBack.has(userId)) continue;
+    await createNotification({
+      type: 'cosmetic-shop-item-removed',
+      userId,
+      category: NotificationCategory.System,
+      key: `cosmetic-shop-item-removed:${id}:${userId}`,
       details: { title: item.title },
     });
   }

@@ -1,5 +1,8 @@
 import { raiseNsfwLevelText } from '@civitai/shared/rated-entity-sql';
 import { NsfwLevel } from '~/server/common/enums';
+import { heldUserSql } from '@civitai/shared/held-media';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
+import { STORYLINE_MINOR_CEILING } from '~/shared/utils/storyline';
 
 /**
  * Storyline visibility as SQL text, for callers that build raw strings (the notification
@@ -7,14 +10,60 @@ import { NsfwLevel } from '~/server/common/enums';
  * the caller's; the defaults are the feed query's.
  */
 
+/** Chapter 1 shown to readers, with `published` as the publication test on its post `rp`. */
+const storylineRootText = ({ rc = 'rc', rp = 'rp', ru = 'ru' }, published: string) =>
+  `(${rp}.id IS NOT NULL AND ${rc}."removedAt" IS NULL
+  AND ${rp}."tosViolation" = false AND ${ru}."bannedAt" IS NULL AND ${ru}."deletedAt" IS NULL
+  AND ${rp}."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND ${published})`;
+
 /**
  * `getStorylineRootHiddenReason` is null: chapter 1 `rc`, its post `rp` and that post's author
  * `ru`. Change it with that function.
  */
 export const storylineRootVisibleText = ({ rc = 'rc', rp = 'rp', ru = 'ru' } = {}) =>
-  `(${rp}.id IS NOT NULL AND ${rc}."removedAt" IS NULL
-  AND ${rp}."tosViolation" = false AND ${ru}."bannedAt" IS NULL AND ${ru}."deletedAt" IS NULL
-  AND ${rp}."nsfwLevel" NOT IN (0, ${NsfwLevel.Blocked}) AND ${rp}."publishedAt" < now())`;
+  storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" < now()`);
+
+/**
+ * A Pending csam hold on text item `rt`. The hold is written before `csamHeld` is set, and not in
+ * one transaction, so a failed apply leaves the item pending with the flag still false.
+ */
+const postTextPendingCsamHoldText = (rt: string) =>
+  `EXISTS (SELECT 1 FROM "TextScanHold" th WHERE th."entityType" = 'PostText'
+    AND th."entityId" = ${rt}.id AND th.label = 'csam' AND th.status = 'Pending')`;
+
+/** `storylineCeiling` for storyline `st`, as text; `storylineCeilingSql` is the service's Prisma form. */
+export const storylineCeilingText = (st = 'st') =>
+  `(CASE WHEN ${st}."minorByScan" THEN LEAST(${st}."maxNsfwLevel", ${STORYLINE_MINOR_CEILING}) ELSE ${st}."maxNsfwLevel" END)`;
+
+/**
+ * `storylineLevelAllowed` for chapter 1's post `rp` under storyline `st`'s ceiling: no level bit
+ * above it. Above it, readers get the chapter as a tombstone, so the search document leaves its
+ * text out. Unrated and Blocked posts are the eligibility rule's to refuse.
+ */
+export const storylineRootWithinCeilingText = ({ st = 'st', rp = 'rp' } = {}) =>
+  `((${rp}."nsfwLevel" & ~(${storylineCeilingText(st)} * 2 - 1)) = 0)`;
+
+/**
+ * Which storylines the semantic search may return: the feed's gates for an outside reader, plus
+ * chapter 1's post Public, because its text is indexed. Publication time is left to the query
+ * (rootPublishedAt), so a scheduled chapter 1 needs no event. The event-engine's
+ * STORYLINE_ELIGIBLE_SQL copy is held to this by storyline-eligibility.parity.test.ts.
+ */
+export const storylineSemanticEligibleText = ({
+  st = 'st',
+  u = 'u',
+  rc = 'rc',
+  rp = 'rp',
+  ru = 'ru',
+} = {}) =>
+  `(${st}."tosViolation" = false AND ${u}."bannedAt" IS NULL AND ${u}."deletedAt" IS NULL
+  AND ${storylineRootText({ rc, rp, ru }, `${rp}."publishedAt" IS NOT NULL`)}
+  AND ${rp}.availability = 'Public'
+  AND NOT ${heldUserSql(`${st}."userId"`)} AND NOT ${heldUserSql(`${rp}."userId"`)}
+  AND NOT EXISTS (SELECT 1 FROM "Image" ri WHERE ri."postId" = ${rp}.id
+    AND ${semanticImageHeldText('ri')})
+  AND NOT EXISTS (SELECT 1 FROM "PostText" rt WHERE rt."postId" = ${rp}.id
+    AND (rt."csamHeld" OR ${postTextPendingCsamHoldText('rt')})))`;
 
 /**
  * The level `isStorylineOutsideLevel` judges a storyline `st` by: chapter 1's post `rp` (the

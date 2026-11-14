@@ -6,11 +6,13 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
 import { imageInputSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   STORYLINE_CAPTION_MAX_LENGTH,
   STORYLINE_CEILING_LEVELS,
   STORYLINE_PATH_LIMIT,
 } from '~/shared/utils/storyline';
+import { COMMENT_ALLOWED_TAGS, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 
 const ceilingSchema = z
   .number()
@@ -64,6 +66,27 @@ export const setStorylineImageCaptionSchema = z.object({
   imageId: z.number().int().positive(),
   content: z.string().trim().max(STORYLINE_CAPTION_MAX_LENGTH),
 });
+
+export const addStorylineTextSchema = z.object({
+  postId: z.number().int().positive(),
+  /** Shares `Image.index`'s number space on the post: the item it follows, or the first index − 1. */
+  index: z.number().int().min(-PG_INT4_MAX).max(PG_INT4_MAX),
+});
+
+/** A comment's tags plus headings and lists. The added tags carry no attributes. */
+export const STORYLINE_TEXT_ALLOWED_TAGS = [...COMMENT_ALLOWED_TAGS, 'h2', 'h3', 'ul', 'ol', 'li'];
+
+export const setStorylineTextSchema = z.object({
+  id: z.number().int().positive(),
+  // Text only: the scan rates words, so media in a text item would go unrated.
+  content: getSanitizedStringSchema({
+    allowedTags: STORYLINE_TEXT_ALLOWED_TAGS,
+    // The shared attributes, less the text-align style they give headings.
+    allowedAttributes: { ...DEFAULT_ALLOWED_ATTRIBUTES, h2: [], h3: [] },
+  }),
+});
+
+export const storylineTextIdSchema = z.object({ id: z.number().int().positive() });
 
 export const storylinePostImageCaptionsSchema = z.object({ postId: z.number().int().positive() });
 

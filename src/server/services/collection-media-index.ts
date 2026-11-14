@@ -195,14 +195,14 @@ async function coverIndexExists() {
  * bounded — the index is 7,712 kB — so it is kept rather than given one of its own.
  * The cover leg is included only when its index is valid; see `coverIndexExists`.
  */
-function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
+function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean, db: typeof dbWrite) {
   const ids = Prisma.join(imageIds);
   const coverLeg = includeCover
     ? Prisma.sql`
       UNION
       SELECT c.id AS "collectionId" FROM "Collection" c WHERE c."imageId" IN (${ids})`
     : Prisma.empty;
-  return dbWrite.$queryRaw<{ collectionId: number }[]>`
+  return db.$queryRaw<{ collectionId: number }[]>`
     SELECT DISTINCT x."collectionId" FROM (
       SELECT ci."collectionId" FROM "CollectionItem" ci WHERE ci."imageId" IN (${ids})
       ${coverLeg}
@@ -240,19 +240,21 @@ function imageLegsSql(imageIds: number[], cap: number, includeCover: boolean) {
 /**
  * Resolve the collections whose documents show any of the given images.
  *
- * Reads through `dbWrite` so a just-committed transaction is visible — the replica may
- * still be behind, and a missed row here is a permanently stale document, not a late
- * one. Never throws: callers run this immediately before their delete, so an exception
+ * Reads through `dbWrite` by default so a just-committed transaction is visible — the
+ * replica may still be behind, and a missed row here is a permanently stale document, not
+ * a late one. A bulk caller with no write of its own to see passes `dbRead`. Never throws: callers run this immediately before their delete, so an exception
  * would cancel the deletion the user actually asked for.
  */
 export async function getCollectionIdsForImages({
   imageIds,
   source = 'unknown',
   cap = DEFAULT_COLLECTION_CAP,
+  db = dbWrite,
 }: {
   imageIds: number[];
   source?: string;
   cap?: number;
+  db?: typeof dbWrite;
 }): Promise<CollectionsToRebuild> {
   const uniqueImageIds = [...new Set(imageIds)];
   if (!uniqueImageIds.length) return EMPTY;
@@ -282,7 +284,7 @@ export async function getCollectionIdsForImages({
     }).catch(() => undefined);
 
   try {
-    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover), cap);
+    return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover, db), cap);
   } catch (error) {
     logFailure(
       'collection-media-index-resolve-failed',

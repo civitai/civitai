@@ -39,6 +39,7 @@ import type { MediaViewer } from '~/server/utils/image-media-visibility';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { getImageGenerationFields } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // assertImageVisibleToViewer reads through Kysely, not Prisma's `$queryRaw`. Its statements get the
 // answers this file's `$queryRaw` fakes give, without counting as `$queryRaw` calls (answerLike).
@@ -160,8 +161,15 @@ const SELF: Viewer = { userId: OWNER };
 const MOD: Viewer = { userId: VIEWER, isModerator: true };
 
 /** A request context: on the mature domain unless `canViewNsfw` is false, optionally a crawler. */
-function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false } = {}) {
+function ctxFor(viewer: Viewer, { canViewNsfw = true, crawler = false, scopedToken = false } = {}) {
   return {
+    // A personal key limited to reading models; no key fields is a browser session.
+    ...(scopedToken && {
+      apiKeyId: 9,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: TokenScope.ModelsRead,
+    }),
     user: viewer.userId ? { id: viewer.userId, isModerator: viewer.isModerator } : undefined,
     features: { canViewNsfw },
     req: { headers: crawler ? { 'x-civitai-verified-bot': 'googlebot' } : {} },
@@ -576,6 +584,15 @@ describe('getImageGenerationData source media', () => {
   ] as const)('keeps an R source for %s', async (_label, viewer, options) => {
     await seedEdit(4);
     expect(await linksFor(viewer, options)).toBe(true);
+  });
+
+  it.each([
+    ["the output's owner", SELF],
+    ["the source's owner", { userId: SOURCE_OWNER }],
+    ['a moderator', MOD],
+  ] as const)('withholds an R source from %s on a scoped token', async (_label, viewer) => {
+    await seedEdit(4);
+    expect(await linksFor(viewer, { canViewNsfw: false, scopedToken: true })).toBe(false);
   });
 
   it('keeps a PG source for a signed-out viewer', async () => {

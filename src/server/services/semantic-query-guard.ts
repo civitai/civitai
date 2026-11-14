@@ -16,9 +16,10 @@ import { countQueryVerdict } from '~/server/metrics/semantic-search.metrics';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
 import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 
 export type QueryTracker = Pick<Tracker, 'action'>;
-export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'error' | false;
+export type QueryRefusal = 'minor' | 'poi' | 'poi-minor' | 'blocked' | 'error' | false;
 
 /**
  * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
@@ -92,6 +93,9 @@ export async function semanticQueryRefusal(
     if (verdict && includesMinor(audited)) return 'poi-minor';
     if (verdict) return verdict;
     if ((disablePoi || !isModerator) && includesPoi(audited)) return 'poi';
+    // Mirrors the search boxes, which a request can skip: raw text, since the benign phrases do not
+    // carve out this list, and moderators exempt.
+    if (!isModerator && getBlockedNsfwWords(query).length) return 'blocked';
     return false;
   } catch {
     return 'error';

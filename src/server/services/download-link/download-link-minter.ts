@@ -6,6 +6,7 @@ import {
   isAllowlistedMinter,
   secretEpoch,
 } from '~/server/services/download-link/download-link.store';
+import { getRequestCredential } from '~/server/auth/request-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
@@ -64,4 +65,15 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
   const credential: DownloadLinkCredential = { kind: 'apikey', id: String(session.apiKeyId) };
   if (!isAllowlistedMinter(credential)) return { ok: false, status: 403 };
   return { ok: true, credential };
+}
+
+/**
+ * The personal ApiKey a request authenticated with through its `Authorization` header, as a link
+ * credential; null for anything else. Reads `req.context`, so it runs after the session resolves.
+ */
+export function headerApiKeyCredential(req: NextApiRequest): DownloadLinkCredential | null {
+  if (!req.headers.authorization || requestCarriesQueryToken(req)) return null;
+  const { apiKeyId, subject } = getRequestCredential(req);
+  if (subject?.type !== 'apiKey' || apiKeyId == null) return null;
+  return { kind: 'apikey', id: String(apiKeyId) };
 }

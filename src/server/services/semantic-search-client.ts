@@ -82,6 +82,9 @@ function gateConditions(collection: SearchCollection, gate: ViewerGate | undefin
   const levels = { any: gate.nsfwLevels };
   const must: QdrantCondition[] = [{ key: 'nsfwLevel', match: levels }];
   const must_not: QdrantCondition[] = [];
+  // A 3D model is embedded from its thumbnail, rated apart from the model. A point without the
+  // field matches nothing, so one written before it existed is never served.
+  if (collection === 'models3d') must.push({ key: 'thumbnailNsfwLevel', match: levels });
 
   if (gate.kind === 'challenge') {
     if (!gate.domainBuzzType) refuse(collection, 'no domain currency');
