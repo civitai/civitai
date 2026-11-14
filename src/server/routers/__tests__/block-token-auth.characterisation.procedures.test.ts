@@ -621,8 +621,8 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
     ),
     'rate limited': E(
       'TOO_MANY_REQUESTS',
-      'Rate limit exceeded, please retry shortly.',
-      ['checkBlockCatalogRateLimit("bki_char")'],
+      'Too many generation sources saved — slow down.',
+      ['checkBlockGenerationSourceUserRateLimit(42)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     "session user is not the token subject (session user's run flag off)": E(
@@ -1483,13 +1483,14 @@ const EXPECTED: Record<string, Record<CellName, Expect>> = {
       ['bridge-auth:ok']
     ),
   },
-  // The publish preamble without the publish bucket (its limit is the per-user `rateLimit`
-  // middleware, which does not run under test), then the ownership guard refuses the fixture.
+  // The publish preamble, then its OWN per-user bucket (keyed on the subject, no moderator
+  // exemption; the per-user `rateLimit` middleware does not run under test), then the ownership
+  // guard refuses the fixture.
   'blocks.persistGenerationSource': {
     'valid token': E(
       'FORBIDDEN',
       'workflow is not in this app subqueue',
-      [],
+      ['checkBlockGenerationSourceUserRateLimit(42)'],
       ['bridge-auth:ok', 'hydrate:42', 'subject-gate:ok:42']
     ),
     'garbage token': E('UNAUTHORIZED', 'invalid block token', [], ['bridge-auth:threw']),

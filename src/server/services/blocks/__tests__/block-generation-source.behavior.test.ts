@@ -105,6 +105,8 @@ const OTHER_APP = 'appblk-beta';
 const VIEWER = 42;
 const OTHER_USER = 7;
 const WF = 'wf_src_1';
+/** A request budget long enough for the in-process fetch and store, short enough to wait out. */
+const SHORT_BUDGET_MS = 3_000;
 const ALLOWED_OUTPUT = 'https://orchestration.civitai.com/v2/blobs/a.png';
 const OFF_HOST_OUTPUT = 'https://evil.example/b.png';
 const SECOND_OUTPUT = 'https://orchestration.civitai.com/v2/blobs/c.png';
@@ -490,10 +492,9 @@ describe('🔴 gate seam: app-block-source-scanned-rows ON, the real gate, an Ap
       createdId = created.id;
       return created;
     });
-    // The whole call against fake timers, so its own wait runs out with the row still pending.
-    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
-    const out = await settle(persist());
-    vi.useRealTimers();
+    // A short budget on real timers, so the call's own wait runs out with the row still pending.
+    // (Fake timers would race the request deadline against the real fetch / store / database work.)
+    const out = await persist({ budgetMs: SHORT_BUDGET_MS });
     expect(out.ready).toBe(false);
     expect(out.imageId).toBe(createdId);
     expect(await gate(out.url)).toBe(`refused: ${APP_SOURCE_PENDING_MESSAGE}`);
@@ -618,9 +619,7 @@ describe('🔴 gate seam on the textToImage path (flag on): the persisted url as
       createdId = created.id;
       return created;
     });
-    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
-    const out = await settle(persist());
-    vi.useRealTimers();
+    const out = await persist({ budgetMs: SHORT_BUDGET_MS });
     expect(out.ready).toBe(false);
 
     const source = { url: out.url, width: out.width, height: out.height };
@@ -631,5 +630,49 @@ describe('🔴 gate seam on the textToImage path (flag on): the persisted url as
 
     await scan(createdId);
     expect((await textToImageGate(source)).verdict).toBe('accepted');
+  });
+});
+
+describe('🔴 the deadline bounds the whole request, the fetch included', () => {
+  it('a fetch that never answers aborts at the deadline with a clear error, and writes no row', async () => {
+    // Like a real fetch: it settles only when its signal aborts.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            const signal = init?.signal;
+            if (signal?.aborted) return reject(signal.reason);
+            signal?.addEventListener('abort', () => reject(signal.reason));
+          })
+      )
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const start = Date.now();
+    const error = await settle(persist()).then(
+      () => null,
+      (e: unknown) => e
+    );
+    const elapsed = Date.now() - start;
+    vi.useRealTimers();
+    expect(error).toMatchObject({
+      code: 'TIMEOUT',
+      message: 'the generation output took too long to save — try again',
+    });
+    expect(elapsed).toBeGreaterThanOrEqual(GENERATION_SOURCE_DEADLINE_MS);
+    expect(elapsed).toBeLessThan(GENERATION_SOURCE_DEADLINE_MS + 5_000);
+    expect(holder.stored).toHaveLength(0);
+    expect(createImage).not.toHaveBeenCalled();
+    const { rows } = await holder.db.query<{ n: number }>(`SELECT count(*)::int AS n FROM "Image"`);
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('the budget is the request’s: a call whose budget is already spent writes nothing', async () => {
+    const error = await persist({ budgetMs: 0 }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(error).toMatchObject({ code: 'TIMEOUT' });
+    expect(createImage).not.toHaveBeenCalled();
   });
 });

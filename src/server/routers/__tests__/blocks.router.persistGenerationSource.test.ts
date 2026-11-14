@@ -19,6 +19,7 @@ const {
   mockCheckPublishRate,
   mockCheckCatalogRate,
   mockCheckUploadAppRate,
+  mockCheckGenSourceUserRate,
   mockPersistSource,
   mockGetOrchestratorToken,
   mockGetWorkflow,
@@ -31,6 +32,7 @@ const {
   mockCheckPublishRate: vi.fn(),
   mockCheckCatalogRate: vi.fn(),
   mockCheckUploadAppRate: vi.fn(),
+  mockCheckGenSourceUserRate: vi.fn(),
   mockPersistSource: vi.fn(),
   mockGetOrchestratorToken: vi.fn(),
   mockGetWorkflow: vi.fn(),
@@ -58,6 +60,7 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockPostAppRateLimit: vi.fn(),
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckPublishRate(...a),
   checkBlockUploadAppRateLimit: (...a: unknown[]) => mockCheckUploadAppRate(...a),
+  checkBlockGenerationSourceUserRateLimit: (...a: unknown[]) => mockCheckGenSourceUserRate(...a),
 }));
 vi.mock('~/server/services/blocks/block-generation-source.service', () => ({
   persistBlockGenerationSource: (...a: unknown[]) => mockPersistSource(...a),
@@ -146,6 +149,7 @@ beforeEach(() => {
   mockCheckPublishRate.mockResolvedValue({ allowed: true });
   mockCheckCatalogRate.mockResolvedValue({ allowed: true });
   mockCheckUploadAppRate.mockResolvedValue({ allowed: true });
+  mockCheckGenSourceUserRate.mockResolvedValue({ allowed: true });
   mockPersistSource.mockResolvedValue(RESULT);
   mockGetOrchestratorToken.mockResolvedValue('orch-token');
   mockGetWorkflow.mockResolvedValue({ id: 'wf_1' });
@@ -185,6 +189,20 @@ describe('blocks.persistGenerationSource', () => {
     expect(mockCheckPublishRate).not.toHaveBeenCalled();
     expect(mockCheckCatalogRate).not.toHaveBeenCalled();
     expect(mockCheckUploadAppRate).not.toHaveBeenCalled();
+  });
+
+  it('🔴 charges the per-user generation-source bucket once, keyed on the token subject', async () => {
+    await call();
+    expect(mockCheckGenSourceUserRate.mock.calls).toEqual([[VIEWER_ID]]);
+  });
+
+  it('a refusal by that bucket is TOO_MANY_REQUESTS and never reaches the service', async () => {
+    mockCheckGenSourceUserRate.mockResolvedValue({ allowed: false, retryAfterSeconds: 9 });
+    await expect(call()).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Too many generation sources saved — slow down.',
+    });
+    expect(mockPersistSource).not.toHaveBeenCalled();
   });
 
   it('mints the orchestrator token only when the service asks for the workflow', async () => {
