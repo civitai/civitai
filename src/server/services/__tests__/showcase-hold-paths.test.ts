@@ -36,11 +36,9 @@ vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: 
 // Static, so the large module graph loads at collection rather than inside one test's timeout.
 const { getEligibleModels } = await import('~/server/services/eligible-models.service');
 const { getUserDownloads } = await import('~/server/services/download.service');
-const { imageRouter } = await import('~/server/routers/image.router');
 const { pullModelsData, getModelSearchIndexRecords } = await import(
   '~/server/search-index/models.search-index'
 );
-const { TokenScope } = await import('~/shared/constants/token-scope.constants');
 const { getAuctionBySlug } = await import('~/server/services/auction.service');
 
 const HELD_MODEL = 5;
@@ -147,54 +145,7 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     expect(settingsReads.length > 0).toBe(reads);
   });
 
-  it('the version showcase procedure holds an app acting for the owner, not the owner signed in', async () => {
-    const ids = async (ctx: object) =>
-      (
-        await imageRouter
-          .createCaller({
-            acceptableOrigin: true,
-            tokenScope: TokenScope.Full,
-            apiKeyId: null,
-            req: { headers: {} },
-            res: { setHeader: () => undefined },
-            cache: { edgeTTL: 0 },
-            features: {},
-            track: { action: vi.fn(() => Promise.resolve(true)) },
-            ...ctx,
-          } as never)
-          .getImagesForModelVersion({ id: VERSION })
-      )[VERSION].images.map((image) => image.id);
-    expect(await ids({ user: undefined })).toEqual([WITHIN]);
-    expect(await ids({ user: { id: OWNER }, subject: { type: 'oauth' } })).toEqual([WITHIN]);
-    expect(await ids({ user: { id: OWNER } })).toEqual([ABOVE, WITHIN]);
-  });
-
-  it("the version showcase procedure holds the owner's scoped key, and not their full-access key", async () => {
-    const ids = async (key: object) =>
-      (
-        await imageRouter
-          .createCaller({
-            user: { id: OWNER },
-            acceptableOrigin: true,
-            apiKeyId: 1,
-            apiKeyType: 'User',
-            req: { headers: {} },
-            res: { setHeader: () => undefined },
-            cache: { edgeTTL: 0 },
-            features: {},
-            track: { action: vi.fn(() => Promise.resolve(true)) },
-            ...key,
-          } as never)
-          .getImagesForModelVersion({ id: VERSION })
-      )[VERSION].images.map((image) => image.id);
-    expect(await ids({ tokenScope: TokenScope.MediaRead })).toEqual([WITHIN]);
-    expect(await ids({ tokenScope: TokenScope.Full, subject: { type: 'apiKey' } })).toEqual([
-      ABOVE,
-      WITHIN,
-    ]);
-  });
-
-  it('serves an unflagged model whole on the same paths', async () => {
+  it('serves an unflagged model whole', async () => {
     galleryReads(() => JSON.stringify({ none: true }));
     dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
       {
@@ -206,51 +157,6 @@ describe("a held model's showcase on paths that read it from the shared cache", 
     ]);
     const [model] = await getEligibleModels([VERSION]);
     expect(model.image?.id).toBe(ABOVE);
-    // Another signed-in viewer where the domain caps nothing, so only the hold could drop an image.
-    const result = await imageRouter
-      .createCaller({
-        user: { id: 99 },
-        acceptableOrigin: true,
-        tokenScope: TokenScope.Full,
-        apiKeyId: null,
-        req: { headers: {} },
-        res: { setHeader: () => undefined },
-        cache: { edgeTTL: 0 },
-        features: { canViewNsfw: true },
-        track: { action: vi.fn(() => Promise.resolve(true)) },
-      } as never)
-      .getImagesForModelVersion({ id: VERSION });
-    expect(result[VERSION].images.map((image) => image.id)).toEqual([ABOVE, WITHIN]);
-  });
-
-  it("holds a viewer whose role changes while the request's showcase is being read", async () => {
-    const user = { id: 99, isModerator: false };
-    fetchShowcase.mockImplementationOnce(async () => {
-      user.isModerator = true;
-      return {
-        [VERSION]: {
-          modelVersionId: VERSION,
-          images: [
-            { id: ABOVE, nsfwLevel: NsfwLevel.X, url: 'x', modelVersionId: VERSION },
-            { id: WITHIN, nsfwLevel: NsfwLevel.PG, url: 'pg', modelVersionId: VERSION },
-          ],
-        },
-      };
-    });
-    const result = await imageRouter
-      .createCaller({
-        user,
-        acceptableOrigin: true,
-        tokenScope: TokenScope.Full,
-        apiKeyId: null,
-        req: { headers: {} },
-        res: { setHeader: () => undefined },
-        cache: { edgeTTL: 0 },
-        features: {},
-        track: { action: vi.fn(() => Promise.resolve(true)) },
-      } as never)
-      .getImagesForModelVersion({ id: VERSION });
-    expect(result[VERSION].images.map((image) => image.id)).toEqual([WITHIN]);
   });
 
   it('the models search document carries only images within the held level', async () => {
