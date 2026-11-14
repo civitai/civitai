@@ -8,8 +8,10 @@ import type { CandidateFilter, CandidateSource } from '~/server/services/semanti
 import type { SessionUser } from '~/types/session';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   pg: null as null | PGlite,
   // The feed card of each id, as getModel3DFeedItemsByIds reads it: owner and tags.
   cards: new Map<number, { userId: number; tags: number[] }>(),
@@ -20,6 +22,10 @@ const h = vi.hoisted(() => ({
   fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
 }));
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/services/model3d.service', () => ({
   getModel3DFeedItemsByIds: async ({ ids }: { ids: number[] }) => {
     h.fetched.push(ids);
@@ -235,4 +241,20 @@ describe('semantic 3D model search', () => {
     expect(shown(await search([1], { correctedQuery: 'corrected' }))).toEqual([]);
     expect(shown(await search([1], { correctedQuery: 'fine' }))).toEqual([1]);
   });
+});
+
+describeSemanticAuditContract({
+  index: 'models3d',
+  run: async ({ source, user, cursor }) => {
+    for (const id of [1, 2]) await model(id);
+    return searchSemanticModels3D({
+      input: { query: 'robot', browsingLevel: PG, limit: 10, cursor },
+      user,
+      candidateSource: source,
+    });
+  },
+  ids: [1, 2],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

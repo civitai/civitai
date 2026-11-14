@@ -9,6 +9,7 @@ import { ImageSort } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
+  beginSemanticAudit,
   queryVerdictLevel,
   recordRefusal,
   isNonModClampOn,
@@ -94,6 +95,12 @@ export async function searchSemanticImages({
   const addonsFor = (level: number) =>
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
+  const audit = beginSemanticAudit({
+    index: IMAGE_COLLECTION,
+    viewer: user,
+    query: input.query,
+    firstPage: !input.cursor,
+  });
   const refusalOf = async (text: string, stage: QueryStage) => {
     const refusal = await semanticQueryRefusal(text, {
       browsingLevel,
@@ -101,11 +108,12 @@ export async function searchSemanticImages({
       isModerator: user?.isModerator,
     });
     recordRefusal(track, refusal, text, 'images_semantic', stage);
+    audit.verdict(refusal);
     return refusal;
   };
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return emptyPage();
+  if (verdictLevel === 'refuse') return audit.done(emptyPage(), browsingLevel);
   if (verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
@@ -198,6 +206,7 @@ export async function searchSemanticImages({
     },
   };
 
+  const viewer = { isModerator: !!user?.isModerator };
   const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
@@ -211,8 +220,9 @@ export async function searchSemanticImages({
     candidates: async (offset, limit) => {
       const result = await timed(
         'candidates',
-        cachedSource({ query, filter, offset, limit, sort: input.sort })
+        cachedSource({ query, filter, offset, limit, viewer, sort: input.sort })
       );
+      audit.candidates(result);
       // The service embeds its spelling correction, not the text audited above.
       const corrected = result.correctedQuery;
       if (!correctedRefusal && corrected !== undefined && corrected !== input.query) {
@@ -229,6 +239,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return emptyPage();
-  return { ...page, correctedQuery };
+  if (correctedRefusal) return audit.done(emptyPage(), level);
+  return audit.done({ ...page, correctedQuery }, level);
 }

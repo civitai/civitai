@@ -6,9 +6,16 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createSingleFlight } from '~/server/utils/cache-helpers';
 import { withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readGuardStatus,
+  UNKNOWN_GUARD_STATUS,
+  type GuardStatus,
+} from '~/server/services/semantic-guard-status';
 import {
   buildQdrantFilter,
   type CandidateSource,
+  type GuardRead,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
 
@@ -16,7 +23,8 @@ import {
 // aligned so viewers whose hydration drops different images still share them past page 1.
 export const CANDIDATE_BLOCK = 100;
 
-type Block = { ids: number[]; correctedQuery?: string };
+type Block = { ids: number[]; correctedQuery?: string; guard?: GuardRead };
+type Read = { block: Block; hit: boolean };
 
 // Identical misses in flight on this pod share one service call.
 const blockFlight = createSingleFlight();
@@ -32,46 +40,67 @@ const readBlock = (key: CandidateKey) =>
  * non-mods. Nothing in it is per user: refusals run before the source, and hydration after it, per
  * viewer. One wrapper serves one search request, so its blocks are also memoized across that
  * request's hydration rounds.
+ *
+ * With the audit flag on, the key also carries the guard's mode and version, so an enforce flip or a
+ * new artifact stops serving blocks the old guard judged. An unreadable status skips Redis.
  */
 export function withCandidateCache(
   collection: SearchCollection,
   source: CandidateSource,
-  viewerClass: 'mod' | 'user'
+  viewerClass: 'mod' | 'user',
+  guardStatus: () => Promise<GuardStatus> = readGuardStatus
 ): CandidateSource {
-  const fetched = new Map<string, Promise<Block>>();
+  const fetched = new Map<string, Promise<Read>>();
+  let guardKey: Promise<string | undefined> | undefined;
+  const guardKeyOnce = () =>
+    (guardKey ??= isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_AUDIT).then((on) =>
+      on ? guardStatus().then((s) => s.key) : undefined
+    ));
 
-  return async ({ query, filter, offset, limit, sort }) => {
+  return async (args) => {
+    const { query, filter, offset, limit, sort } = args;
     const qdrantFilter = buildQdrantFilter(collection, filter);
+    const guard = await guardKeyOnce();
+    const uncached = guard === UNKNOWN_GUARD_STATUS.key;
     const fetchBlock = (start: number) =>
       withBulkheadSlotOrBusy(`semantic-search:${collection}`, env.SEMANTIC_SEARCH_CONCURRENCY, () =>
-        source({ query, filter, offset: start, limit: CANDIDATE_BLOCK, sort })
-      ).then((fresh): Block => ({ ids: fresh.ids, correctedQuery: fresh.correctedQuery }));
+        source({ ...args, offset: start, limit: CANDIDATE_BLOCK })
+      ).then(
+        (fresh): Block => ({
+          ids: fresh.ids,
+          correctedQuery: fresh.correctedQuery,
+          guard: fresh.guard,
+        })
+      );
     const keyOf = (start: number) =>
       `${REDIS_KEYS.SEMANTIC_SEARCH.CANDIDATES}:${collection}:${createHash('sha256')
-        .update(JSON.stringify({ query, qdrantFilter, sort, start, viewerClass }))
+        .update(JSON.stringify({ query, qdrantFilter, sort, start, viewerClass, guard }))
         .digest('hex')}` as const;
     const write = (key: CandidateKey, block: Block) =>
-      clusterCacheGuard.writeBestEffort('semantic candidates set', () =>
-        redis.packed.set(key, block, { EX: CacheTTL.md })
-      );
+      uncached
+        ? undefined
+        : clusterCacheGuard.writeBestEffort('semantic candidates set', () =>
+            redis.packed.set(key, block, { EX: CacheTTL.md })
+          );
 
     const block = (start: number) => {
       const key = keyOf(start);
       let pending = fetched.get(key);
       if (!pending) {
-        pending = (async () => {
-          const cached = await readBlock(key);
+        pending = (async (): Promise<Read> => {
+          const cached = uncached ? null : await readBlock(key);
           semanticSearchCandidateCache().inc({
             index: collection,
             result: cached ? 'hit' : 'miss',
           });
-          if (cached) return cached;
+          if (cached) return { block: cached, hit: true };
           // The shared call keeps the service's own timeout: no single caller's abort ends it.
-          return blockFlight(key, async () => {
+          const fresh = await blockFlight(key, async () => {
             const fresh = await fetchBlock(start);
             void write(key, fresh);
             return fresh;
           });
+          return { block: fresh, hit: false };
         })();
         fetched.set(key, pending);
         pending.catch(() => fetched.delete(key));
@@ -82,20 +111,20 @@ export function withCandidateCache(
     const first = Math.floor(offset / CANDIDATE_BLOCK) * CANDIDATE_BLOCK;
     const starts: number[] = [];
     for (let start = first; start < offset + limit; start += CANDIDATE_BLOCK) starts.push(start);
-    let blocks = await Promise.all(starts.map(block));
+    let reads = await Promise.all(starts.map(block));
     // Blocks cached apart can disagree on the spelling correction. The viewer audits one correction
     // per response, so a disagreeing range is fetched again in one go.
-    if (new Set(blocks.map((b) => b.correctedQuery)).size > 1) {
-      blocks = await Promise.all(starts.map(fetchBlock));
-      blocks.forEach((b, i) => {
+    if (new Set(reads.map((r) => r.block.correctedQuery)).size > 1) {
+      reads = (await Promise.all(starts.map(fetchBlock))).map((b) => ({ block: b, hit: false }));
+      reads.forEach((r, i) => {
         const key = keyOf(starts[i]);
-        fetched.set(key, Promise.resolve(b));
-        void write(key, b);
+        fetched.set(key, Promise.resolve(r));
+        void write(key, r.block);
       });
     }
 
     const ids: number[] = [];
-    for (const b of blocks) {
+    for (const { block: b } of reads) {
       ids.push(...b.ids);
       // A short block is the end of the ranking.
       if (b.ids.length < CANDIDATE_BLOCK) break;
@@ -103,7 +132,9 @@ export function withCandidateCache(
     return {
       ids: ids.slice(offset - first, offset - first + limit),
       // Every block keeps the correction, so the viewer's audit of it runs on any page.
-      correctedQuery: blocks[0].correctedQuery,
+      correctedQuery: reads[0].block.correctedQuery,
+      guard: reads[0].block.guard,
+      cacheHit: reads[0].hit,
     };
   };
 }

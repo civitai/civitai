@@ -1,6 +1,8 @@
+import { trace } from '@opentelemetry/api';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 /** One creator's hits shown on a page at most, so a prolific creator cannot fill it. */
 export const MAX_HITS_PER_USER = 3;
@@ -131,25 +133,69 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
   return { must, must_not };
 }
 
-/** Ranked ids, and the query as the service's spelling correction rewrote it, if it did. */
+const GUARD_OUTCOMES = ['pass', 'flag', 'unknown', 'unavailable', 'mismatch', 'error'] as const;
+/** `none`: no guard ran on the text, a word refusal ended the search or the query was by image. */
+export type GuardOutcome = (typeof GUARD_OUTCOMES)[number] | 'none';
+
+/** The search service's query-guard verdict. Server-only: never part of a response to the browser. */
+export type GuardRead = {
+  outcome: GuardOutcome;
+  rules: string[];
+  mode: string;
+  version: string | null;
+};
+
+export const GUARD_NONE: GuardRead = { outcome: 'none', rules: [], mode: '', version: null };
+const GUARD_UNKNOWN: GuardRead = { outcome: 'unknown', rules: [], mode: '', version: null };
+
+/** A service without the full guard result (missing, or `refused` alone) reads as `unknown`. */
+export function readGuard(raw: unknown): GuardRead {
+  if (!raw || typeof raw !== 'object') return GUARD_UNKNOWN;
+  const g = raw as Record<string, unknown>;
+  if (!GUARD_OUTCOMES.includes(g.outcome as never)) return GUARD_UNKNOWN;
+  return {
+    outcome: g.outcome as GuardOutcome,
+    rules: Array.isArray(g.rules) ? g.rules.filter((r): r is string => typeof r === 'string') : [],
+    mode: typeof g.mode === 'string' ? g.mode : '',
+    version: typeof g.version === 'string' ? g.version : null,
+  };
+}
+
+/** Who the search is for, from the session: never from request input. */
+export type SearchViewer = { isModerator: boolean };
+
+/**
+ * Ranked ids, the query as the service's spelling correction rewrote it (if it did), and the
+ * guard's verdict on the text. `cacheHit` is set by the candidate cache.
+ */
 export type CandidateSource = (args: {
   query: SearchQuery;
   filter: CandidateFilter;
   offset: number;
   limit: number;
+  viewer: SearchViewer;
   // newest: the service orders its best matches by date and pages within them. Text queries only.
   sort?: 'relevance' | 'newest';
-}) => Promise<{ ids: number[]; correctedQuery?: string }>;
+}) => Promise<{ ids: number[]; correctedQuery?: string; guard?: GuardRead; cacheHit?: boolean }>;
 
-async function searchServiceRequest<T>(path: string, body: unknown, notFound: string): Promise<T> {
+export function searchServiceUrl(path: string) {
   if (!env.SEARCH_SERVICE_URL)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Semantic search is not set up' });
-  const res = await fetch(`${env.SEARCH_SERVICE_URL.replace(/\/+$/, '')}${path}`, {
+  return `${env.SEARCH_SERVICE_URL.replace(/\/+$/, '')}${path}`;
+}
+
+export const searchServiceAuth = (): Record<string, string> =>
+  env.SEARCH_SERVICE_TOKEN ? { authorization: `Bearer ${env.SEARCH_SERVICE_TOKEN}` } : {};
+
+async function searchServiceRequest<T>(
+  path: string,
+  body: unknown,
+  notFound: string,
+  headers: Record<string, string> = {}
+): Promise<T> {
+  const res = await fetch(searchServiceUrl(path), {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(env.SEARCH_SERVICE_TOKEN ? { authorization: `Bearer ${env.SEARCH_SERVICE_TOKEN}` } : {}),
-    },
+    headers: { 'content-type': 'application/json', ...searchServiceAuth(), ...headers },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(SEARCH_SERVICE_TIMEOUT_MS),
   }).catch((err) => {
@@ -162,6 +208,12 @@ async function searchServiceRequest<T>(path: string, body: unknown, notFound: st
   return (await res.json()) as T;
 }
 
+/** The OTEL traceId, so the service's guard log line joins the semanticSearchAudit row. */
+function requestIdHeader(): Record<string, string> {
+  const traceId = trace.getActiveSpan()?.spanContext().traceId;
+  return traceId ? { 'x-request-id': traceId } : {};
+}
+
 /**
  * The cluster search service: text through `/v1/search` (embedding and spelling correction are
  * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
@@ -171,8 +223,10 @@ export function searchServiceSource(
   collection: SearchCollection,
   { notFoundMessage = 'Not found' }: { notFoundMessage?: string } = {}
 ): CandidateSource {
-  return async ({ query, filter, offset, limit, sort }) => {
+  return async ({ query, filter, offset, limit, viewer, sort }) => {
     const qdrantFilter = buildQdrantFilter(collection, filter);
+    const audit = await isFlipt(FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_AUDIT);
+    const headers = audit ? requestIdHeader() : {};
     if ('similarTo' in query) {
       // The source is always its own best match.
       qdrantFilter.must_not.push({ has_id: [query.similarTo] });
@@ -188,15 +242,17 @@ export function searchServiceSource(
           params: { quantization: { rescore: true, oversampling: 2 } },
           with_payload: false,
         },
-        notFoundMessage
+        notFoundMessage,
+        headers
       );
-      return { ids: result.points.map((p) => Number(p.id)) };
+      return { ids: result.points.map((p) => Number(p.id)), guard: GUARD_NONE };
     }
 
-    const { corrected, changes, hits } = await searchServiceRequest<{
+    const { corrected, changes, hits, guard } = await searchServiceRequest<{
       corrected: string;
       changes: unknown[];
       hits: { id: number | string }[];
+      guard?: unknown;
     }>(
       '/v1/search',
       {
@@ -207,12 +263,17 @@ export function searchServiceSource(
         limit,
         // Only when asked: a relevance search sends the request it always has.
         ...(sort === 'newest' ? { sort } : {}),
+        ...(audit
+          ? { browsing_levels: filter.gate.nsfwLevels, viewer_is_moderator: viewer.isModerator }
+          : {}),
       },
-      notFoundMessage
+      notFoundMessage,
+      headers
     );
     return {
       ids: hits.map((h) => Number(h.id)),
       correctedQuery: changes.length ? corrected : undefined,
+      guard: readGuard(guard),
     };
   };
 }
@@ -239,17 +300,26 @@ export function auditedTextCandidates({
   source,
   text,
   filter,
+  viewer,
   audit,
 }: {
   source: CandidateSource;
   text: string;
   filter: CandidateFilter;
+  viewer: SearchViewer;
   audit: (correction: string) => Promise<unknown>;
 }) {
-  const state = { correctedQuery: undefined as string | undefined, refused: false, returned: 0 };
+  const state = {
+    correctedQuery: undefined as string | undefined,
+    refused: false,
+    returned: 0,
+    // The first call's: every call of one search carries the same query.
+    first: undefined as { guard?: GuardRead; cacheHit?: boolean } | undefined,
+  };
   let audited = false;
   const candidates = async (offset: number, limit: number) => {
-    const result = await source({ query: { text }, filter, offset, limit });
+    const result = await source({ query: { text }, filter, offset, limit, viewer });
+    state.first ??= { guard: result.guard, cacheHit: result.cacheHit };
     if (!audited && result.correctedQuery !== undefined) {
       audited = true;
       state.refused = result.correctedQuery !== text && !!(await audit(result.correctedQuery));
