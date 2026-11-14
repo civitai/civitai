@@ -256,7 +256,7 @@ describe('reveals', () => {
     ]);
   });
 
-  it('shows a special unlock as the earned list does, with no share', async () => {
+  it('shows a special unlock as the earned list does', async () => {
     dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
       { achievedAt: seen, seenAt: null, milestone: special },
     ] as never);
