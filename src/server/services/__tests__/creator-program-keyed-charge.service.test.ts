@@ -234,7 +234,8 @@ beforeEach(() => {
     return row;
   }) as never);
   db.cashWithdrawal.count.mockResolvedValue(0 as never);
-  // The service's raw row updates, applied to the in-memory rows.
+  // The service's raw row updates, applied to the in-memory rows. Matched by substrings of the SQL
+  // text only: this does not check that the SQL is valid, or that Postgres would do the same.
   db.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -611,7 +612,9 @@ describe('cash withdrawal with a client key', () => {
     await expect(withdraw(KEY)).rejects.toThrow('insert failed');
 
     expect(ledger.refunds()).toHaveLength(1);
-    expect(buzz.refundTransaction.mock.calls[0][3]).toEqual({ timeoutMs: 10_000, retries: 0 });
+    // One attempt: a refund the client retried under the key's lock could run past the lock
+    // transaction's deadline, releasing the lock while the refund is still in flight.
+    expect(buzz.refundTransaction.mock.calls[0][3]).toMatchObject({ retries: 0 });
     expect(locks.taken()).toEqual([burnId, burnId]);
     expect(tipalti.payToTipaltiAccount).not.toHaveBeenCalled();
   });

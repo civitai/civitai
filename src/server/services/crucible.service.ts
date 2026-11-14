@@ -7,6 +7,7 @@ import {
   CHARGE_LOCKED_READ,
   CHARGE_LOCKED_REFUND,
   recordKeyedCharge,
+  ROUTINE_REFUSAL_REFUND_ATTEMPTS,
 } from '~/server/services/buzz-charge-lock';
 import { isDefined } from '~/utils/type-guards';
 import dayjs from '~/shared/utils/dayjs';
@@ -2359,7 +2360,6 @@ export const submitEntry = async ({
       } else {
         await assertCanPayFee();
 
-        // Generate transaction prefix for potential refunds
         const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
 
         await chargeFee(transactionPrefix);
@@ -2410,7 +2410,7 @@ export const submitEntry = async ({
             ),
           // A refusal at the entry cutoff is routine, and a retry is then refused before it reaches
           // the charge, so the refund is retried here (each attempt its own short transaction).
-          refundAttempts: ENTRY_REFUND_ATTEMPTS,
+          refundAttempts: ROUTINE_REFUSAL_REFUND_ATTEMPTS,
         }
       );
     };

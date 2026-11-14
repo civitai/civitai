@@ -334,19 +334,41 @@ describe('a crucible entry fee across an unknown outcome', () => {
 
   // The first charge spent the balance and the retry's lookup has not seen it yet, so the app's
   // balance check refuses. The charge is looked up again before that refusal stands.
+  // Listings: one before charging, then up to four re-reads after the refusal (three retry delays).
+  // Three hidden: the lookup before charging and the first two re-reads miss, the third finds it.
   it('a retry refused for balance while its earlier charge is held continues from that charge', async () => {
     ledger.setBalance(USER, FEE);
     ledger.queueFault('lose-response');
     ledger.queueFault('lose-response');
     await expect(enter(KEY)).rejects.toThrow();
     ledger.clearFaults();
-    ledger.hideNextLookups(1);
+    buzz.getMultiAccountTransactionsByPrefix.mockClear();
+    ledger.hideNextLookups(3);
 
     await enter(KEY);
 
+    expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledTimes(4);
     expect(ledger.charges()).toHaveLength(1);
     expect(entries).toHaveLength(1);
     expect(pool).toBe(FEE);
+  });
+
+  // Five hidden: the lookup before charging and all four re-reads miss, so the refusal stands.
+  it('a balance refusal stands when every re-read after it misses the held charge', async () => {
+    ledger.setBalance(USER, FEE);
+    ledger.queueFault('lose-response');
+    ledger.queueFault('lose-response');
+    await expect(enter(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    buzz.getMultiAccountTransactionsByPrefix.mockClear();
+    ledger.hideNextLookups(5);
+
+    await expect(enter(KEY)).rejects.toThrow(/short/);
+
+    expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledTimes(5);
+    expect(ledger.charges()).toHaveLength(1);
+    expect(entries).toHaveLength(0);
+    expect(pool).toBe(0);
   });
 
   it('a new entry (a new key) charges again', async () => {

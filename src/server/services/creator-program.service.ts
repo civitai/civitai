@@ -654,11 +654,9 @@ export async function bankBuzz(
       if (amount <= 0) throw new Error('Amount exceeds cap');
 
       if (keyedId !== undefined && keyed) {
-        // An unknown outcome is resent once under the same id; a resend that fails too is "may
-        // have gone through" and the client keeps its key. The ledger is the deposit's only
-        // record (the banked total is read from it), so there is no row to write under a lock.
-        // The amount is not compared here either: a read-back that finds an earlier attempt's
-        // deposit (its lookup above lagged) may hold a differently clamped amount.
+        // matchAmount: false on purpose; an earlier attempt may have banked a differently
+        // clamped amount. The ledger is the only record of the deposit, so there is no row to
+        // write under a lock.
         await keyed.chargeByExternalId(
           { ...deposit(), externalTransactionId: keyedId },
           { reusable: true, declinedMessage, matchAmount: false }
@@ -1053,7 +1051,6 @@ export async function withdrawCash(userId: number, amount: number, idempotencyKe
 
   try {
     if (idempotencyKey === undefined) {
-      // Create withdrawal record
       const { id } = await dbWrite.cashWithdrawal.create({
         data: {
           userId,
@@ -1069,7 +1066,6 @@ export async function withdrawCash(userId: number, amount: number, idempotencyKe
 
       data.withdrawalId = id;
 
-      // Burn full amount
       const { transactionId } = await createBuzzTransaction({
         amount,
         fromAccountId: userId,
@@ -1086,7 +1082,6 @@ export async function withdrawCash(userId: number, amount: number, idempotencyKe
 
       data.transactionId = transactionId as string;
 
-      // Update withdrawal record
       await dbWrite.$executeRaw`
         UPDATE "CashWithdrawal"
         SET "transactionId" = ${transactionId}, status = 'InternalValue'

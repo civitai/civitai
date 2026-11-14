@@ -195,17 +195,40 @@ describe('an appeal fee across an unknown outcome', () => {
   // The ledger checks the balance before it looks at ids, so a retry whose lookup has not seen the
   // earlier charge yet is declined for the balance that charge spent. The charge is looked up
   // again before the decline stands: a 400 would release the client's key with the fee held.
+  // Listings: one before charging, then up to four re-reads after the refusal (three retry delays).
+  // Three hidden: the lookup before charging and the first two re-reads miss, the third finds it.
   it('a retry declined for balance while its earlier charge is held continues from that charge', async () => {
     ledger.setBalance(USER, FEE);
     loseEveryAnswer();
     await expect(appeal(KEY)).rejects.toThrow();
     ledger.clearFaults();
-    ledger.hideNextLookups(1);
+    buzz.getMultiAccountTransactionsByPrefix.mockClear();
+    ledger.hideNextLookups(3);
 
     await appeal(KEY);
 
+    expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledTimes(4);
     expect(ledger.charges()).toHaveLength(1);
     expect(appeals).toHaveLength(1);
+  });
+
+  // Five hidden: the lookup before charging and all four re-reads miss, so the decline stands.
+  it('a decline stands when every re-read after it misses the held charge', async () => {
+    ledger.setBalance(USER, FEE);
+    loseEveryAnswer();
+    await expect(appeal(KEY)).rejects.toThrow();
+    ledger.clearFaults();
+    buzz.getMultiAccountTransactionsByPrefix.mockClear();
+    ledger.hideNextLookups(5);
+
+    await expect(appeal(KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'There was an error creating the appeal transaction.',
+    });
+
+    expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledTimes(5);
+    expect(ledger.charges()).toHaveLength(1);
+    expect(appeals).toHaveLength(0);
   });
 
   it('a retry after the appeal was recorded (response lost) answers with it and charges nothing more', async () => {
@@ -286,6 +309,34 @@ describe('an appeal fee across an unknown outcome', () => {
 
     await expect(appeal(KEY)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(ledger.refunds()).toHaveLength(1);
+  });
+
+  // Both refusals are routine, and a retry of the appeal is refused by the handler before it
+  // reaches the charge, so one failed refund attempt must not leave the fee charged.
+  it.each([
+    [
+      'the image is no longer appealable',
+      () => dbMock.dbWrite.$executeRaw.mockResolvedValueOnce(0 as never),
+    ],
+    [
+      'a concurrent submit took the one pending slot',
+      () =>
+        dbMock.dbWrite.appeal.create.mockRejectedValueOnce(
+          new Prisma.PrismaClientKnownRequestError('unique', {
+            code: 'P2002',
+            clientVersion: 'test',
+          })
+        ),
+    ],
+  ])('a refund that fails once after %s is retried: refunded, no appeal', async (_, refuse) => {
+    refuse();
+    buzz.refundMultiAccountTransaction.mockRejectedValueOnce(new Error('buzz down'));
+
+    await expect(appeal(KEY)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    expect(ledger.refunds()).toHaveLength(1);
+    expect(appeals).toHaveLength(0);
   });
 
   it('a new appeal (a new key) charges again', async () => {
