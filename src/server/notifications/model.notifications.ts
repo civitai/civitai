@@ -380,6 +380,8 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
+        -- The reaper keeps a taken-down draft, so it is not warned.
+        AND m.mode::text IS DISTINCT FROM 'TakenDown'
         AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days' AND NOW() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
         AND m."availability" != 'Private'::"Availability"
         -- EXISTS, not a JOIN, but the same semantics as the reaper's INNER

@@ -152,6 +152,7 @@ const ALLOWED_TABLES = ['Model', 'ModelMetric'];
 const ALLOWED_COLUMN_REFS = [
   'm.availability',
   'm.id',
+  'm.mode',
   'm.name',
   'm.status',
   'm.updatedAt',
@@ -171,6 +172,15 @@ const SHARED_VALUE_TERMS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('a taken-down draft', () => {
+  it('is neither warned nor reaped', async () => {
+    const reaper = await reaperSql();
+    const notification = notificationSql();
+    expect(notification).toContain(`m.mode::text IS DISTINCT FROM 'TakenDown'`);
+    expect(reaper).toContain(`m.mode::text IS NOT DISTINCT FROM 'TakenDown'`);
+  });
 });
 
 describe('old-draft notification excludes a reapable model only via its named exclusions', () => {
