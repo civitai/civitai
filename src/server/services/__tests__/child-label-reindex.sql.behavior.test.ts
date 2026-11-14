@@ -163,6 +163,7 @@ describe('child-label reindex: bust', () => {
       refreshed: 2,
       verified: 0,
       lastImageId: 0,
+      done: false,
       aborted: expect.any(String),
     });
   });
@@ -249,6 +250,7 @@ describe('child-label reindex: reindex', () => {
       probe: 2,
       probeVerified: 0,
       lastImageId: 0,
+      done: false,
       aborted: expect.any(String),
     });
   });
@@ -298,4 +300,33 @@ describe('child-label reindex: reindex', () => {
     expect(queueModelsReindex).toHaveBeenCalledWith([50], { dryRun: true, chunkSize: 500 });
     expect(result).toMatchObject({ collections: 8, collectionsQueued: 0 });
   });
+});
+
+describe('child-label reindex: done', () => {
+  for (const step of ['bust', 'reindex'] as const) {
+    it(`step=${step} past maxChunks is not done and resumes after the last selected image`, async () => {
+      const result = await runChildLabelReindex({
+        step,
+        dryRun: false,
+        chunkSize: 1,
+        maxChunks: 2,
+      });
+      expect(result).toMatchObject({ images: 2, lastImageId: 2, done: false });
+    });
+
+    it(`step=${step} whose selection runs out within maxChunks is done`, async () => {
+      const result = await runChildLabelReindex({
+        step,
+        dryRun: false,
+        chunkSize: 2,
+        maxChunks: 5,
+      });
+      expect(result).toMatchObject({ images: 3, lastImageId: 3, done: true });
+    });
+
+    it(`a dry run of step=${step} reports done the same way`, async () => {
+      const result = await runChildLabelReindex({ step, dryRun: true, chunkSize: 1, maxChunks: 2 });
+      expect(result).toMatchObject({ images: 2, lastImageId: 2, done: false });
+    });
+  }
 });

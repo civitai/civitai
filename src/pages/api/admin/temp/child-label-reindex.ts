@@ -9,9 +9,13 @@ import { booleanString } from '~/utils/zod-helpers';
  *
  * Hidden admin route. Guarded by WEBHOOK_TOKEN via `?token=` query param.
  *
- * Usage, in this order:
+ * Usage, in this order. Repeat each step with `after=<lastImageId>` from its last response until
+ * that response says `done: true`, then start the next step from `after=0`:
  *   POST /api/admin/temp/child-label-reindex?token=$WEBHOOK_TOKEN&step=bust&dryRun=false
  *   POST /api/admin/temp/child-label-reindex?token=$WEBHOOK_TOKEN&step=reindex&dryRun=false
+ *
+ * `done` is true only when the selection ran out before `maxChunks`; a response with `aborted` is
+ * never done.
  *
  * Params (query):
  *   step      - required. `bust`: refresh each selected image's tagIdsForImagesCache entry from the

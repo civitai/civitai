@@ -104,16 +104,15 @@ export async function runChildLabelReindex({
   after = 0,
   maxChunks,
 }: ChildLabelReindexOptions) {
-  const imageIds = await selectImageIds(
-    after,
-    chunkSize,
-    maxChunks ? maxChunks * chunkSize : undefined
-  );
+  const limit = maxChunks ? maxChunks * chunkSize : undefined;
+  const imageIds = await selectImageIds(after, chunkSize, limit);
+  const lastImageId = imageIds[imageIds.length - 1];
+  // A selection that filled the limit may have more past it; the next run finds out.
+  const done = limit === undefined || imageIds.length < limit;
   if (step === 'bust') {
     const chunks = chunkIds(imageIds, chunkSize);
     let refreshed = 0;
     let verified = 0;
-    let lastImageId: number | undefined;
     if (!dryRun) {
       for (const [index, chunk] of chunks.entries()) {
         await tagIdsForImagesCache.refresh(chunk);
@@ -124,7 +123,6 @@ export async function runChildLabelReindex({
         });
         const ok = chunk.filter((id) => holdsChildTag(entries[id])).length;
         verified += ok;
-        lastImageId = chunk[chunk.length - 1];
         if (index === 0 && ok < chunk.length)
           return {
             step,
@@ -135,6 +133,7 @@ export async function runChildLabelReindex({
             verified,
             // Resume where this run started, so the next run retries the failed chunk.
             lastImageId: after,
+            done: false,
             aborted: 'a refreshed entry lacks the child tag: the deployed lookup still drops it',
           };
       }
@@ -147,10 +146,10 @@ export async function runChildLabelReindex({
       refreshed,
       verified,
       lastImageId,
+      done,
     };
   }
 
-  const lastImageId = imageIds[imageIds.length - 1];
   // Documents are rebuilt from the cache, so a reindex waits until the first and last image of
   // every bust chunk read back fixed: a bust that stopped early fails it.
   const probe = [
@@ -170,6 +169,7 @@ export async function runChildLabelReindex({
       probe: probe.length,
       probeVerified,
       lastImageId: after,
+      done: false,
       aborted: 'cached entries lack the child tag: run step=bust on a pod with the fix first',
     };
 
@@ -185,6 +185,7 @@ export async function runChildLabelReindex({
     probe: probe.length,
     probeVerified,
     lastImageId,
+    done,
     models,
     collections: collectionIds.length,
     collectionsTruncated: truncated,
