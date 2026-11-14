@@ -445,7 +445,8 @@ async function chargeAndGrantKeyedTopUp({
   });
 
   const claimKey = stickerTopUpGrantClaimKey(prefix);
-  const token = randomUUID();
+  // Widened to string, as acquireEntryLock does: the typed client answers SET with the value's type.
+  const token: string = randomUUID();
   let claimed: boolean;
   try {
     claimed =
