@@ -145,19 +145,19 @@ var stringCases = []struct {
 	{"unit separator", "\x1f", `"\u001f"`},
 	{"space is not escaped", " ", `" "`},
 	{"DEL is not escaped", "\x7f", "\"\x7f\""},
-	{"line separator", "a b", `"a b"`},
-	{"paragraph separator", " ", `" "`},
+	{"line separator", "a\u2028b", `"a\u2028b"`},
+	{"paragraph separator", "\u2029", `"\u2029"`},
 	{"html is not escaped", "<a href='x'>&amp;</a>", `"<a href='x'>&amp;</a>"`},
-	{"invalid byte", "\xff", `"�"`},
-	{"invalid bytes in text", "a\xfe\xffb", `"a��b"`},
-	{"truncated multibyte", "x\xe2\x82", `"x��"`},
-	{"truncated multibyte mid-string", "\xe2\x82z", `"��z"`},
-	{"surrogate half", "\xed\xa0\x80", `"���"`},
-	{"overlong encoding", "\xc0\xaf", `"��"`},
+	{"invalid byte", "\xff", `"\ufffd"`},
+	{"invalid bytes in text", "a\xfe\xffb", `"a\ufffd\ufffdb"`},
+	{"truncated multibyte", "x\xe2\x82", `"x\ufffd\ufffd"`},
+	{"truncated multibyte mid-string", "\xe2\x82z", `"\ufffd\ufffdz"`},
+	{"surrogate half", "\xed\xa0\x80", `"\ufffd\ufffd\ufffd"`},
+	{"overlong encoding", "\xc0\xaf", `"\ufffd\ufffd"`},
 	{"two-byte rune", "café", "\"café\""},
 	{"three-byte rune", "€5", "\"€5\""},
 	{"emoji", "hi 😀!", "\"hi 😀!\""},
-	{"mixed", "\"\\\n é\x01", `"\"\\\n ` + "é" + `\u0001"`},
+	{"mixed", "\"\\\n\u2028é\x01", `"\"\\\n\u2028` + "é" + `\u0001"`},
 }
 
 func TestAppendStringLiterals(t *testing.T) {
@@ -194,7 +194,7 @@ func TestAppendStringMatchesEncodingJSON(t *testing.T) {
 		corpus = append(corpus, string([]byte{byte(b)}), "a"+string([]byte{byte(b)})+"z")
 	}
 	pieces := []string{
-		" ", " ", "‧", "‪", "�", "\U0010ffff", "é", "😀", "<", ">", "&",
+		"\u2028", "\u2029", "\u2027", "\u202a", "\ufffd", "\U0010ffff", "é", "😀", "<", ">", "&",
 		"\xed\xa0\x80", "\xed\xbf\xbf", // UTF-8-encoded surrogates: invalid in Go
 		"\xe2\x80", "\xf0\x9f\x98", "\xf4\x90\x80\x80", "\xc0\x80",
 	}

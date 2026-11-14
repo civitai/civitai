@@ -316,7 +316,7 @@ const hexDigits = "0123456789abcdef"
 // appendString appends s as a quoted JSON string, byte-for-byte what encoding/json writes with
 // SetEscapeHTML(false) (it mirrors appendString in encoding/json/encode.go): `"` and `\` are
 // backslash-escaped, \b \f \n \r \t get their short escapes, other bytes < 0x20 become \u00XX in
-// lowercase hex, U+2028/U+2029 become  / , and each invalid UTF-8 byte becomes �.
+// lowercase hex, U+2028/U+2029 become \u2028/\u2029, and each invalid UTF-8 byte becomes \ufffd.
 // <, > and & are left alone. It differs from JSON.stringify only in the U+2028/U+2029 escapes and the
 // invalid-UTF-8 replacement — both decode to the same string on the client.
 //
@@ -355,12 +355,12 @@ func appendString(dst []byte, s string) []byte {
 		c, size := utf8.DecodeRuneInString(s[i:])
 		if c == utf8.RuneError && size == 1 {
 			dst = append(dst, s[start:i]...)
-			dst = append(dst, `�`...)
+			dst = append(dst, `\ufffd`...)
 			i++
 			start = i
 			continue
 		}
-		if c == ' ' || c == ' ' {
+		if c == '\u2028' || c == '\u2029' {
 			dst = append(dst, s[start:i]...)
 			dst = append(dst, '\\', 'u', '2', '0', '2', hexDigits[c&0xF])
 			i += size
