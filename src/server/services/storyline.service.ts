@@ -884,16 +884,19 @@ export const createRootChapter = (
   });
 
 /**
+ * Advisory-lock class (`pg_advisory_xact_lock(int4, int4)`) serialising one user's starts from one
+ * spark image, so two at once cannot both miss the unwritten storyline and each create one.
+ */
+export const STORYLINE_SPARK_START_LOCK_CLASS = 0x53544c31;
+
+/**
  * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
  */
-export async function findUnwrittenSparkStoryline({
-  userId,
-  sparkImageId,
-}: {
-  userId: number;
-  sparkImageId: number;
-}) {
-  const [row] = await dbWrite.$queryRaw<{ id: number; title: string }[]>`
+export async function findUnwrittenSparkStoryline(
+  { userId, sparkImageId }: { userId: number; sparkImageId: number },
+  db: Db = dbWrite
+) {
+  const [row] = await db.$queryRaw<{ id: number; title: string }[]>`
     SELECT s.id, s.title FROM "Storyline" s
     WHERE s."userId" = ${userId} AND s."sparkImageId" = ${sparkImageId}
       AND s."tosViolation" = false
@@ -936,23 +939,21 @@ export async function createStoryline({
   if (!isStorylineCeilingLevel(maxNsfwLevel)) throw throwBadRequestError('Invalid maximum rating');
   await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
   if (sparkImageId) await assertStorylineSpark({ imageId: sparkImageId, userId, maxNsfwLevel });
-  if (sparkImageId && !postId) {
-    const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId });
-    if (unwritten) {
-      // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
-      await dbWrite.storyline.update({
-        where: { id: unwritten.id },
-        data: { title, maxNsfwLevel, whoCanContinue: whoCanContinue ?? 'Anyone' },
-      });
-      if (title !== unwritten.title)
-        scanEntityInBackground({ entityType: 'Storyline', entityId: unwritten.id });
-      return { id: unwritten.id, rootChapterId: null };
-    }
-  }
-
-  let created: { id: number; rootChapterId: number | null };
+  let created: { id: number; rootChapterId: number | null; reusedTitle?: string };
   try {
     created = await dbWrite.$transaction(async (tx) => {
+      if (sparkImageId && !postId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STORYLINE_SPARK_START_LOCK_CLASS}::int, hashtext(${userId}::text || ':' || ${sparkImageId}::text)::int)`;
+        const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
+        if (unwritten) {
+          // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
+          await tx.storyline.update({
+            where: { id: unwritten.id },
+            data: { title, maxNsfwLevel, whoCanContinue: whoCanContinue ?? 'Anyone' },
+          });
+          return { id: unwritten.id, rootChapterId: null, reusedTitle: unwritten.title };
+        }
+      }
       if (postId) await assertPostCanBeChapter(tx, { postId, authorId: userId, maxNsfwLevel });
       const storyline = await tx.storyline.create({
         data: { userId, title, maxNsfwLevel, whoCanContinue, sparkImageId },
@@ -984,9 +985,11 @@ export async function createStoryline({
     if (isUniqueViolation(error)) throw throwBadRequestError('This post is already in a storyline');
     throw error;
   }
-  scanEntityInBackground({ entityType: 'Storyline', entityId: created.id });
-  if (created.rootChapterId && sparkImageId) void onStorySparked(created.id);
-  return created;
+  const { reusedTitle, ...result } = created;
+  if (reusedTitle !== title)
+    scanEntityInBackground({ entityType: 'Storyline', entityId: result.id });
+  if (result.rootChapterId && sparkImageId) void onStorySparked(result.id);
+  return result;
 }
 
 export const STORYLINE_SPARK_REFUSALS = {
