@@ -7701,6 +7701,10 @@ enum JobQueueType {
   ImageStorageDelete
   CdnAccessSync
   ImageCdnPersistRetry
+  /// A user queued for the CSAM report archiver (a separate service). Written and consumed only
+  /// by that service's own database functions. No job in this app processes these rows; the
+  /// moderator queue-health panel only counts them.
+  CsamArchive
 }
 
 /// What the image CDN has been told about one stored url: `Denied`, or `Retracted` (denied, with
@@ -8427,10 +8431,6 @@ model ReportAutomated {
   report    Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
   metadata  Json     @default("{}")
   createdAt DateTime @default(now())
-}
-
-model RestrictedBaseModels {
-  baseModel String @id
 }
 
 // ============================================

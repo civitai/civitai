@@ -7,6 +7,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { refundExternalTransactionId } from '~/server/services/buzz-refund-id';
 
 export type PrefixRefundResult = {
   /** Legs this call reversed, and the Buzz they returned. */
@@ -58,7 +59,10 @@ export async function refundTransactionOnce(
   details?: MixedObject,
   opts?: { readLedgerFirst?: boolean }
 ): Promise<{ transactionId: string; created: boolean }> {
-  if (opts?.readLedgerFirst && (await getTransactionByExternalId(`refund-${transactionId}`)))
+  if (
+    opts?.readLedgerFirst &&
+    (await getTransactionByExternalId(refundExternalTransactionId(transactionId)))
+  )
     return { transactionId, created: false };
   try {
     const result = await refundTransaction(transactionId, description, details);
@@ -71,7 +75,7 @@ export async function refundTransactionOnce(
 
 async function isConflictWithRefundOnLedger(error: unknown, transactionId: string) {
   if (getBuzzApiStatus(error) !== 409) return false;
-  return !!(await getTransactionByExternalId(`refund-${transactionId}`));
+  return !!(await getTransactionByExternalId(refundExternalTransactionId(transactionId)));
 }
 
 type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
@@ -92,7 +96,7 @@ export async function getPrefixRefundState(
     ? await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix, opts)
     : await getMultiAccountTransactionsByPrefix(externalTransactionIdPrefix);
   for (const leg of legs) {
-    const refundId = `refund-${leg.transactionId}`;
+    const refundId = refundExternalTransactionId(leg.transactionId);
     const refund = opts
       ? await getTransactionByExternalId(refundId, opts)
       : await getTransactionByExternalId(refundId);

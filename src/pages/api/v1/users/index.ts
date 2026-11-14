@@ -8,6 +8,18 @@ import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+
+/** `avatarNsfw` is a numeric rating only on the search path; anything else serves no avatar. */
+function withPublicAvatarUrl<U extends { avatarUrl?: string | null; avatarNsfw?: unknown }>(
+  user: U
+): U {
+  if (!('avatarUrl' in user)) return user;
+  const nsfwLevel = typeof user.avatarNsfw === 'number' ? user.avatarNsfw : 0;
+  const shown = avatarAtLevel({ nsfwLevel }, publicBrowsingLevelsFlag);
+  return { ...user, avatarUrl: shown ? user.avatarUrl : null };
+}
 
 const schema = getAllUsersInput.extend({
   email: z.never().optional(),
@@ -26,7 +38,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const users = await apiCaller.user.getAll({ ...query, limit, include });
 
     return res.status(200).json({
-      items: users ?? [],
+      items: (users ?? []).map(withPublicAvatarUrl),
     });
   } catch (error) {
     // ORDER MATTERS, and both arms end in `handleEndpointError` — there is no

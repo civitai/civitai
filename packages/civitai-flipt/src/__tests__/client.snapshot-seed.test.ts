@@ -176,9 +176,8 @@ describe('the snapshot round trip between processes', () => {
   });
 });
 
-// A process that alone cannot reach Flipt, past its first attempt. Regression: before, the first
-// seed was final: failed retries never reloaded the store, so the process evaluated its boot-time
-// snapshot however many newer ones its siblings saved.
+// A process that alone cannot reach Flipt, past its first attempt: it must follow newer snapshots
+// saved by siblings.
 describe('a seeded process while Flipt stays down', () => {
   const offData = { namespace: { key: 'default' }, flags: [flag('default-on-flag', false)] };
 
@@ -259,18 +258,26 @@ describe('a seeded process while Flipt stays down', () => {
     expect(flipt.isEnabledSync('default-on-flag')).toBe(false);
   });
 
-  // Invariant guard (green on main too): the age limit admits the first seed only. A seeded
-  // snapshot is never dropped for age, or a fleet-wide outage longer than the limit would turn
-  // every seeded process's flags off at once while live processes keep theirs.
+  // The age limit admits the first seed only. A seeded snapshot is never dropped for age, or a
+  // fleet-wide outage longer than the limit would turn every seeded process's flags off at once
+  // while live processes keep theirs.
   it('keeps serving the seeded state after it passes the age limit', async () => {
-    const { store } = memoryStore({ savedAt: Date.now() - 60_000, data: snapshotData });
-    const flipt = client(await downUrl(), store);
+    const seededAt = Date.now() - 60_000;
+    const { store } = memoryStore({ savedAt: seededAt, data: snapshotData });
+    const flipt = retryingClient(await downUrl(), store);
     expect(await flipt.isEnabled('default-on-flag')).toBe(true); // seeded, well inside the limit
 
-    // A day and an hour later, Flipt still down, nothing newer stored.
-    const realNow = Date.now();
-    vi.spyOn(Date, 'now').mockReturnValue(realNow + ON + 60 * 60 * 1000);
+    // A day and an hour later, Flipt still down, and the store holds nothing newer: the same
+    // snapshot, now itself over the limit.
+    let loads = 0;
+    store.load = async () => {
+      loads++;
+      return { savedAt: seededAt, data: snapshotData };
+    };
+    vi.spyOn(Date, 'now').mockReturnValue(seededAt + ON + 60 * 60 * 1000);
+    await retryUntil(flipt, () => loads >= 3);
 
+    expect(loads).toBeGreaterThanOrEqual(3); // positive control: retries ran under the pinned clock
     expect(flipt.isEnabledSync('default-on-flag')).toBe(true);
     expect(await flipt.isEnabled('default-on-flag')).toBe(true);
   });
