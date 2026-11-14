@@ -20,6 +20,7 @@ import {
   getCommentSection,
   countSectionComments,
   getCommentThread,
+  getTimedComments,
   resolveModelPageCommentId,
 } from '~/server/services/commentv3/read.service';
 
@@ -118,6 +119,7 @@ beforeAll(async () => {
   pg = new PGlite({ extensions: { ltree } });
   await pg.exec(FIXTURE);
   await pg.exec(migration('20261110120000_comment_v3_schema'));
+  await pg.exec(migration('20271114120000_comment_v3_metadata'));
   await pg.exec(SETUP);
   db = new Kysely({ dialect: dialect(pg) }) as unknown as CommentV3Db;
 });
@@ -431,5 +433,59 @@ describe('getCommentLock', () => {
     } finally {
       await pg.exec(`UPDATE "CommentTopic" SET locked = false WHERE "entityType" = 'article'`);
     }
+  });
+});
+
+// Song 20's comments: 1000 at 0:30 and 1001 at 0:05 (timed), 1002 untimed, 1003 a reply carrying a
+// time, 1004 hidden, 1005 removed for ToS, 1006 deleted, 1007 by the excluded user 6.
+describe('timed comments on a song', () => {
+  const SONG = { entityType: 'image', entityId: 20 };
+  beforeAll(async () => {
+    await pg.exec(`
+      INSERT INTO "Image" VALUES (20) ON CONFLICT DO NOTHING;
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('image', 20) ON CONFLICT DO NOTHING;
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "userId", content, metadata, hidden, "tosViolation", "deletedAt") VALUES
+        (1000, 'image', 20, NULL, 2, '<p>the <b>drop</b></p>', '{"timestampSec": 30}', false, false, NULL),
+        (1001, 'image', 20, NULL, 3, '<p>intro</p>', '{"timestampSec": 5}', false, false, NULL),
+        (1002, 'image', 20, NULL, 4, '<p>untimed</p>', NULL, false, false, NULL),
+        (1003, 'image', 20, 1000, 4, '<p>reply</p>', '{"timestampSec": 40}', false, false, NULL),
+        (1004, 'image', 20, NULL, 4, '<p>hidden</p>', '{"timestampSec": 41}', true, false, NULL),
+        (1005, 'image', 20, NULL, 4, '<p>removed</p>', '{"timestampSec": 42}', false, true, NULL),
+        (1006, 'image', 20, NULL, 4, '', '{"timestampSec": 43}', false, false, now()),
+        (1007, 'image', 20, NULL, 6, '<p>excluded</p>', '{"timestampSec": 44}', false, false, NULL);
+    `);
+  });
+
+  it('lists the live top-level timed comments this viewer may see, by time', async () => {
+    const timed = await getTimedComments(db, SONG, reader);
+    expect(timed).toEqual([
+      {
+        id: 1001,
+        timestampSec: 5,
+        content: '<p>intro</p>',
+        user: { id: 3, username: 'u3', image: null },
+      },
+      {
+        id: 1000,
+        timestampSec: 30,
+        content: '<p>the <b>drop</b></p>',
+        user: { id: 2, username: 'u2', image: null },
+      },
+    ]);
+  });
+
+  it('stops at the cap', async () => {
+    expect((await getTimedComments(db, SONG, reader, { limit: 1 })).map((c) => c.id)).toEqual([
+      1001,
+    ]);
+  });
+
+  it('puts the time on the comment in the section, and none on an untimed one', async () => {
+    const page = await getCommentSection(db, SONG, reader, {
+      sort: ThreadSort.Oldest,
+      replyDepth: 0,
+    });
+    expect(item(page, 1000).timestampSec).toBe(30);
+    expect(item(page, 1002).timestampSec).toBeNull();
   });
 });
